@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { runAgentTurn } from '@/lib/tauri'
 import {
   Bot,
   SendHorizonal,
@@ -72,15 +72,29 @@ function App() {
     setIsLoading(true)
 
     try {
-      // 调用 Tauri 后端（后续接入 LLM）
-      const response = await invoke<string>('greet', { name: userMsg.content }).catch(
-        () => '欢迎使用 If2Ai！后端 LLM 接口正在开发中，请稍候。'
-      )
+      // 调用 Tauri 后端
+      const response = await runAgentTurn(activeId, userMsg.content)
 
       const assistantMsg: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: response,
+        content: response.message,
+        timestamp: new Date(),
+      }
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeId
+            ? { ...c, messages: [...updatedConv.messages, assistantMsg], updatedAt: new Date() }
+            : c
+        )
+      )
+    } catch (err) {
+      // 错误展示（友好错误消息，不暴露内部错误细节）
+      const errorMessage = err instanceof Error ? err.message : 'Agent 执行失败，请稍后重试。'
+      const assistantMsg: Message = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: `错误: ${errorMessage}`,
         timestamp: new Date(),
       }
       setConversations((prev) =>
