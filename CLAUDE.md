@@ -29,9 +29,10 @@
 5. LINT   → 强制运行 lint 合约（见下方 Lint 合约）：cargo fmt + clippy + test 全部通过方可继续
 6. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
 7. FIX    → 如果有失败的 gate 或 lint，修复代码，回到步骤 5
-8. REVIEW → 运行自动 review 命令（无需 sub-agent）：
-           python -m harness.runner review --slice <id> --workspace .
-           输出 REVIEW_PASS 才能继续；REVIEW_FAIL 则回到步骤 5
+8. REVIEW → 使用 code-reviewer sub-agent 审查代码（`.claude/agents/code-reviewer.md`）：
+           直接说「Use the code-reviewer subagent to review slice <id>」
+           或运行备用命令：python -m harness.runner review --slice <id> --workspace .
+           sub-agent/命令输出 REVIEW_PASS 才能继续；REVIEW_FAIL 则回到步骤 5
 9. FIX    → 如果 review 有 FAIL 条目，修复，回到步骤 5
 10. COMMIT → git commit（见下方提交规范）
 11. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
@@ -123,7 +124,17 @@ python -m harness.runner run \
 
 ## 自动 Code Review 规范
 
-Review 步骤**不需要 sub-agent**。直接运行以下命令：
+Review 步骤使用项目内置的 **code-reviewer sub-agent**（`.claude/agents/code-reviewer.md`）。
+
+### 首选方式：调用 sub-agent
+
+```
+Use the code-reviewer subagent to review slice <id>
+```
+
+Claude Code 会自动委托给 code-reviewer sub-agent，它会：读取 git diff → 检查 coding-style 规范 → 验证 review_checklist → 输出 `REVIEW_PASS` 或 `REVIEW_FAIL`。
+
+### 备用方式：命令行（无 sub-agent 时）
 
 ```bash
 python -m harness.runner review --slice <id> --workspace .
