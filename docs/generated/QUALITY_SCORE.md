@@ -52,6 +52,7 @@
 
 | 日期       | 事件                                     |
 | ---------- | ---------------------------------------- |
+| 2026-04-12 | Slice 1.11 重新实现：run_agent_turn 使用真实 ConversationRuntime + MockApiClient + ToolRegistryExecutor bridges |
 | 2026-04-11 | 项目初始化，Phase 1 开始                 |
 | 2026-04-11 | Slice 1.1 完成：Rust 模块骨架建立        |
 | 2026-04-11 | 前端迁移完成：Svelte → React + shadcn/ui |

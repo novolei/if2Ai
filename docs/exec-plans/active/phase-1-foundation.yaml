@@ -728,6 +728,7 @@ slices:
       - "Session 状态（running/working/error）是否在 agent 执行过程中正确更新"
       - "错误是否捕获并返回友好错误消息给前端（不 panic）"
       - "无 unwrap()（测试除外）"
+    notes: "Re-implemented: MockApiClient + ToolRegistryExecutor bridges, ConversationRuntime.run_turn() integration, session conversion between AppSession and RuntimeSession"
 
   - id: "1.12"
     title: "Phase 1 集成测试 + Harness Suite 完整通过"
@@ -788,5 +789,5 @@ dashboard:
   last_updated: "2026-04-12"
   completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "1.12"]
   current_slice: "1.12"
-  notes: "Phase 1 COMPLETE - All 12 slices implemented"
-  blocked: ["harness test_gate bug: --test-output=immediate not supported in cargo 1.94, all tests pass manually"]
+  notes: "Phase 1 全部完成：12/12 slices done. Slice 1.11 re-implemented with real ConversationRuntime."
+  blocked: []
