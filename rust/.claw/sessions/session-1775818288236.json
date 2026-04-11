@@ -1,0 +1,1 @@
+{"messages":[{"blocks":[{"text":"只回复 ok","type":"text"}],"role":"user"},{"blocks":[{"text":"ok","type":"text"}],"role":"assistant","usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":2635,"output_tokens":23}}],"version":1}
