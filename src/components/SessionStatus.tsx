@@ -44,7 +44,7 @@ export function SessionStatus({ status, label, className }: SessionStatusProps) 
         className={cn(
           'font-mono text-sm leading-none',
           config.color,
-          config.animate && 'animate-spin'
+          'animate' in config && config.animate && 'animate-spin'
         )}
       >
         {config.icon}
