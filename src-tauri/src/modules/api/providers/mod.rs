@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::error::ApiError;
-use crate::types::{MessageRequest, MessageResponse};
+use crate::api::error::ApiError;
+use crate::api::types::{MessageRequest, MessageResponse};
 
 pub mod claw_provider;
 pub mod openai_compat;

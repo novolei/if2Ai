@@ -3,17 +3,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use runtime::{
+use serde::Deserialize;
+
+use crate::api::error::ApiError;
+
+use super::{Provider, ProviderFuture};
+use crate::api::sse::SseParser;
+use crate::api::types::{MessageRequest, MessageResponse, StreamEvent};
+use crate::runtime::oauth::{
     load_oauth_credentials, save_oauth_credentials, OAuthConfig, OAuthRefreshRequest,
     OAuthTokenExchangeRequest,
 };
-use serde::Deserialize;
-
-use crate::error::ApiError;
-
-use super::{Provider, ProviderFuture};
-use crate::sse::SseParser;
-use crate::types::{MessageRequest, MessageResponse, StreamEvent};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -469,7 +469,7 @@ fn resolve_saved_oauth_token_set(
         expires_at: refreshed.expires_at,
         scopes: refreshed.scopes,
     };
-    save_oauth_credentials(&runtime::OAuthTokenSet {
+    save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
         access_token: resolved.access_token.clone(),
         refresh_token: resolved.refresh_token.clone(),
         expires_at: resolved.expires_at,
@@ -686,7 +686,7 @@ async fn expect_success(response: reqwest::Response) -> Result<reqwest::Response
     })
 }
 
-const fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 409 | 429 | 500 | 502 | 503 | 504)
 }
 
@@ -890,7 +890,7 @@ mod tests {
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        save_oauth_credentials(&runtime::OAuthTokenSet {
+        save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
             access_token: "saved-access-token".to_string(),
             refresh_token: Some("refresh".to_string()),
             expires_at: Some(now_unix_timestamp() + 300),
@@ -929,7 +929,7 @@ mod tests {
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        save_oauth_credentials(&runtime::OAuthTokenSet {
+        save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
             access_token: "expired-access-token".to_string(),
             refresh_token: Some("refresh-token".to_string()),
             expires_at: Some(1),
@@ -961,7 +961,7 @@ mod tests {
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        save_oauth_credentials(&runtime::OAuthTokenSet {
+        save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
             access_token: "saved-access-token".to_string(),
             refresh_token: Some("refresh".to_string()),
             expires_at: Some(now_unix_timestamp() + 300),
@@ -985,7 +985,7 @@ mod tests {
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        save_oauth_credentials(&runtime::OAuthTokenSet {
+        save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
             access_token: "expired-access-token".to_string(),
             refresh_token: Some("refresh-token".to_string()),
             expires_at: Some(1),
@@ -1017,7 +1017,7 @@ mod tests {
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        save_oauth_credentials(&runtime::OAuthTokenSet {
+        save_oauth_credentials(&crate::runtime::oauth::OAuthTokenSet {
             access_token: "expired-access-token".to_string(),
             refresh_token: Some("refresh-token".to_string()),
             expires_at: Some(1),

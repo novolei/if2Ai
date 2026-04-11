@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 
-use crate::compact::{
+use crate::runtime::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
-use crate::config::RuntimeFeatureConfig;
-use crate::hooks::{HookRunResult, HookRunner};
-use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
-use crate::session::{ContentBlock, ConversationMessage, Session};
-use crate::usage::{TokenUsage, UsageTracker};
+use crate::runtime::config::RuntimeFeatureConfig;
+use crate::runtime::hooks::{HookRunResult, HookRunner};
+use crate::runtime::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
+use crate::runtime::session::{ContentBlock, ConversationMessage, Session};
+use crate::runtime::usage::{TokenUsage, UsageTracker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
@@ -399,15 +399,15 @@ mod tests {
         ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
         StaticToolExecutor,
     };
-    use crate::compact::CompactionConfig;
-    use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
-    use crate::permissions::{
+    use crate::runtime::compact::CompactionConfig;
+    use crate::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use crate::runtime::permissions::{
         PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
         PermissionRequest,
     };
-    use crate::prompt::{ProjectContext, SystemPromptBuilder};
-    use crate::session::{ContentBlock, MessageRole, Session};
-    use crate::usage::TokenUsage;
+    use crate::runtime::prompt::{ProjectContext, SystemPromptBuilder};
+    use crate::runtime::session::{ContentBlock, MessageRole, Session};
+    use crate::runtime::usage::TokenUsage;
     use std::path::PathBuf;
 
     struct ScriptedApiClient {

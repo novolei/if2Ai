@@ -210,6 +210,13 @@ Review: PASS
 3. 停止执行，**不要自动开始下一个 Phase**
 4. 输出：`HUMAN_CHECKPOINT_REACHED: Phase X 全部完成，请人工 review 后继续`
 
+> **全自动模式（仅在人类明确授权后启用）**：  
+> 如果人类在启动前声明"全自动执行，无需 checkpoint 停止"，则在步骤 4 之后额外执行：  
+> `python -m harness.runner promote --workspace .`  
+> 该命令自动将 index.md 中下一 Phase 标记为 `[当前]`，并将对应 YAML 的 `phase_status` 改为 `active`，  
+> 然后继续回到步骤 1 执行下一 Phase。  
+> **默认行为是停止等待人工**，不要自行切换到全自动模式。
+
 ---
 
 ## Phase 规划流程（下一个 Phase 的 YAML 由谁创建）
@@ -300,6 +307,10 @@ grep -B1 "status: pending" docs/exec-plans/active/<current-phase>.yaml
 
 # 验证新生成的 Phase YAML 格式
 python -m harness.runner check-slice --file docs/exec-plans/active/<new-phase>.yaml
+
+# Phase 切换：预览 + 执行（人工 review 后运行，或全自动模式下由 executor 调用）
+python -m harness.runner promote --workspace . --dry-run   # 预览，不修改文件
+python -m harness.runner promote --workspace .             # 正式切换到下一 Phase
 
 # 生成 git diff 用于 review
 git diff --staged

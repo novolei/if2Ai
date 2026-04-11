@@ -5,6 +5,8 @@ Usage (called by executor or manually):
   python -m harness.runner run --slice 1.2.1 --workspace /path/to/project
   python -m harness.runner run --slice 1.2.1 --workspace . --suite harness/suites/agent_basic.yaml
   python -m harness.runner check-slice --file docs/exec-plans/active/phase-1-foundation.yaml
+  python -m harness.runner promote --workspace .          # semi-auto: promote next draft phase
+  python -m harness.runner promote --workspace . --dry-run  # preview only
 
 Exit codes:
   0  = all gates passed
@@ -85,6 +87,92 @@ def cmd_check_slice(args: argparse.Namespace) -> int:
         return 1
 
     print(f"✅ {len(slices)} slices validated OK in {slice_file}", file=sys.stderr)
+    return 0
+
+
+def cmd_promote(args: argparse.Namespace) -> int:
+    """Promote the next draft phase to active, and mark the current phase as completed.
+
+    Updates two files atomically:
+      1. docs/exec-plans/index.md   — [当前] → [已完成], next [草稿] → [当前]
+      2. next phase YAML            — phase_status: draft → active
+
+    Usage:
+        python -m harness.runner promote --workspace .
+        python -m harness.runner promote --workspace . --dry-run
+    """
+    import re
+    import yaml  # type: ignore
+
+    workspace = Path(args.workspace).resolve()
+    index_path = workspace / "docs" / "exec-plans" / "index.md"
+    active_dir = workspace / "docs" / "exec-plans" / "active"
+
+    if not index_path.exists():
+        print(f"ERROR: {index_path} not found", file=sys.stderr)
+        return 2
+
+    index_text = index_path.read_text()
+
+    # ── find current and next phase rows in index.md ────────────────────────
+    # Matches lines like: | **[当前]** | Phase 1 | ... | `path/to/file.yaml` | ... |
+    current_pat = re.compile(r"\|\s*\*\*\[当前\]\*\*\s*\|.*?`([^`]+\.yaml)`", re.IGNORECASE)
+    draft_pat   = re.compile(r"\|\s*\[草稿\]\s*\|.*?`([^`]+\.yaml)`", re.IGNORECASE)
+
+    current_match = current_pat.search(index_text)
+    draft_match   = draft_pat.search(index_text)
+
+    if not current_match:
+        print("ERROR: no [当前] phase found in index.md", file=sys.stderr)
+        return 2
+    if not draft_match:
+        print("INFO: no [草稿] phase found — nothing to promote.", file=sys.stderr)
+        return 0
+
+    current_yaml_rel = current_match.group(1)
+    next_yaml_rel    = draft_match.group(1)
+    next_yaml_path   = workspace / next_yaml_rel
+
+    if not next_yaml_path.exists():
+        print(f"ERROR: next phase YAML not found: {next_yaml_path}", file=sys.stderr)
+        return 2
+
+    # ── preview ─────────────────────────────────────────────────────────────
+    print(f"  Current phase YAML : {current_yaml_rel}  →  [已完成]")
+    print(f"  Next phase YAML    : {next_yaml_rel}      →  [当前]  (phase_status: active)")
+
+    if args.dry_run:
+        print("\n  [dry-run] No files changed.")
+        return 0
+
+    # ── update index.md ─────────────────────────────────────────────────────
+    # 1. first draft row → [当前]
+    new_index = draft_pat.sub(
+        lambda m: m.group(0).replace("[草稿]", "**[当前]**", 1),
+        index_text,
+        count=1,
+    )
+    # 2. current [当前] row → [已完成]
+    new_index = current_pat.sub(
+        lambda m: m.group(0).replace("**[当前]**", "[已完成]", 1),
+        new_index,
+        count=1,
+    )
+
+    if not args.dry_run:
+        index_path.write_text(new_index)
+        print(f"  ✅ Updated {index_path.relative_to(workspace)}")
+
+    # ── update next phase YAML ───────────────────────────────────────────────
+    yaml_text = next_yaml_path.read_text()
+    if "phase_status: draft" in yaml_text:
+        yaml_text = yaml_text.replace("phase_status: draft", "phase_status: active", 1)
+        next_yaml_path.write_text(yaml_text)
+        print(f"  ✅ Updated {next_yaml_rel}  (phase_status: active)")
+    else:
+        print(f"  ⚠️  phase_status: draft not found in {next_yaml_rel} — skipped YAML update")
+
+    print("\n  Promotion complete. Run `python -m harness.runner status` to verify.")
     return 0
 
 
@@ -252,6 +340,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--git", action="store_true", help="Include recent git commits"
     )
     st_p.set_defaults(func=cmd_status)
+
+    # ── promote ───────────────────────────────────────────────────────────────
+    pr_p = sub.add_parser(
+        "promote",
+        help="Promote next draft phase to active (updates index.md + phase YAML)",
+    )
+    pr_p.add_argument(
+        "--workspace", default=".", help="Workspace root (default: .)"
+    )
+    pr_p.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without writing files"
+    )
+    pr_p.set_defaults(func=cmd_promote)
 
     return parser
 

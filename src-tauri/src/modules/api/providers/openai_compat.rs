@@ -4,8 +4,8 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::ApiError;
-use crate::types::{
+use crate::api::error::ApiError;
+use crate::api::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,
     MessageResponse, MessageStartEvent, MessageStopEvent, OutputContentBlock, StreamEvent,
@@ -906,7 +906,7 @@ async fn expect_success(response: reqwest::Response) -> Result<reqwest::Response
     })
 }
 
-const fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 409 | 429 | 500 | 502 | 503 | 504)
 }
 
@@ -939,8 +939,8 @@ mod tests {
         build_chat_completion_request, chat_completions_endpoint, normalize_finish_reason,
         openai_tool_choice, parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig,
     };
-    use crate::error::ApiError;
-    use crate::types::{
+    use crate::api::error::ApiError;
+    use crate::api::types::{
         InputContentBlock, InputMessage, MessageRequest, ToolChoice, ToolDefinition,
         ToolResultContentBlock,
     };
