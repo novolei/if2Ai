@@ -883,45 +883,50 @@ pub struct TrainingResources {
 
 ## 实现路线
 
-### Phase 2: RL-Training 基础 (4-6 周)
+### Phase 3 Slice 3.3: RL 基线 — 轨迹收集 + 奖励计算 (当前实现)
 
-#### 第 1-2 周: 基础架构
+**状态**: pending | **实现文件**: `src-tauri/src/modules/runtime/trajectory.rs`, `reward.rs`
+
+本 slice 仅实现 RL 基线基础设施，不包含完整训练循环：
+
+- [x] TrajectoryCollector (JSONL 写入 ~/.if2ai/trajectories/)
+- [x] Trajectory struct + TrajectoryObserver trait
+- [x] RewardFunction trait + RewardCalculator
+- [x] 内置奖励函数: TaskCompletionReward, LengthPenaltyReward
+
+**不在本 slice 范围内** (后续 slice 实现):
+- Atropos API 服务器 (轨迹存储) → 规划中
+- BaseEnvironment trait / GSM8K 环境 → 规划中
+- Tinker API 客户端 / LoRA 适配器 / GRPO → 规划中
+- rl_list_environments / rl_start_training Tauri Commands → 规划中
+
+### 后续扩展 (Phase 3 之后)
+
+#### 环境系统和训练器集成
 
 - [ ] Atropos API 服务器 (轨迹存储)
 - [ ] Trajectory 数据结构和 GAE 计算
 - [ ] RolloutGroup 组织逻辑
 - [ ] SQLite 日志和检查点存储
-
-#### 第 2-3 周: 环境系统
-
 - [ ] BaseEnvironment trait 定义
 - [ ] GSM8K 环境实现
 - [ ] 数据集加载管道 (HuggingFace)
 - [ ] Scoring verifier 系统
-
-#### 第 3-4 周: 训练器集成
-
 - [ ] Tinker API 客户端
 - [ ] LoRA 适配器集成
 - [ ] GRPO 损失函数实现
 - [ ] Adam 优化器集成
 - [ ] 模型检查点保存
 
-#### 第 4-5 周: Tauri Commands
+#### Tauri Commands
 
 - [ ] rl_list_environments
 - [ ] rl_select_environment
 - [ ] rl_start_training (3 进程编排)
 - [ ] rl_check_status (WandB 集成)
-
-#### 第 5-6 周: 测试和完善
-
 - [ ] rl_test_inference (OpenRouter)
-- [ ] 错误处理和恢复
-- [ ] 性能优化
-- [ ] 文档和示例
 
-### Phase 3: 扩展和优化 (6-8 周)
+#### 高级特性
 
 - [ ] HumanEval 环境
 - [ ] MATH 环境

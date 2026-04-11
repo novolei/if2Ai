@@ -196,7 +196,7 @@ slices:
 
   - id: "1.6"
     title: "SessionManager 实现（会话创建 / 消息追加 / 持久化到本地文件）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/session-persistence.md"
     impl_targets:
       - src-tauri/src/modules/session/mod.rs     # 必须新建此模块
@@ -450,7 +450,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5"]
-  current_slice: "1.6"
+  completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6"]
+  current_slice: "1.7"
   blocked: []
-  notes: "slice 1.5 complete: ToolRegistry, bash, file_read, json_parse implemented"
+  notes: "slice 1.6 complete: SessionManager with JSON persistence implemented"
