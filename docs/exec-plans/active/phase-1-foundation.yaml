@@ -61,7 +61,7 @@ slices:
 
   - id: "1.3"
     title: "ConversationRuntime 核心实现（Agent 对话循环）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/agent-loop.md"
     impl_targets:
       - src-tauri/src/modules/runtime/conversation.rs
@@ -207,7 +207,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-11"
-  completed_slices: ["1.1", "1.2"]
-  current_slice: "1.3"
+  completed_slices: ["1.1", "1.2", "1.3"]
+  current_slice: "1.4"
   blocked: []
-  notes: "slice 1.1 已完成（源码迁移）。slice 1.2 已完成：52 个编译错误已修复，124 测试全部通过（serially）。准备执行 slice 1.3：ConversationRuntime 核心实现。"
+  notes: "slice 1.3 已完成：ConversationRuntime 核心实现，6 测试全部通过。准备执行 slice 1.4：ProviderManager 实现。"

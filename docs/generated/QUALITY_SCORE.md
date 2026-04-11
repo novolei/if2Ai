@@ -24,7 +24,7 @@
 | ----- | ---------------------------- | ---------- |
 | 1.1   | 建立 Rust 模块骨架           | ✅ done    |
 | 1.2   | 修复所有编译错误（52 个）    | ✅ done    |
-| 1.3   | ConversationRuntime 核心实现 | 🔴 pending |
+| 1.3   | ConversationRuntime 核心实现 | ✅ done    |
 | 1.4   | ProviderManager 实现         | 🔴 pending |
 | 1.5   | ToolRegistry + 3 个基础工具  | 🔴 pending |
 | 1.6   | SessionManager 实现          | 🔴 pending |
@@ -51,3 +51,4 @@
 | 2026-04-11 | Slice 1.1 完成：Rust 模块骨架建立        |
 | 2026-04-11 | 前端迁移完成：Svelte → React + shadcn/ui |
 | 2026-04-11 | Slice 1.2 完成：52 个编译错误全部修复，124 测试通过 |
+| 2026-04-11 | Slice 1.3 完成：ConversationRuntime 核心实现，6 测试通过 |
