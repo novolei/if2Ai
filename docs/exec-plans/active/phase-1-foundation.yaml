@@ -43,7 +43,7 @@ slices:
   - id: "1.2"
     title: "修复所有 Rust 编译错误（52 个错误）"
     status: done
-    design_ref: "COMPILATION_ERRORS_CHECKLIST.md"
+    design_ref: "docs/design-docs/system-architecture-framework.md"
     impl_targets:
       - src-tauri/src/modules/api/providers/claw_provider.rs
       - src-tauri/src/modules/api/providers/openai_compat.rs
@@ -127,7 +127,7 @@ slices:
 
   - id: "1.5"
     title: "ToolRegistry 与 3 个基础工具（bash / file_read / json_parse）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-system.md"
     impl_targets:
       - src-tauri/src/modules/tools/registry.rs   # 必须新建此文件
@@ -450,7 +450,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["1.1", "1.2", "1.3", "1.4"]
-  current_slice: "1.5"
+  completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5"]
+  current_slice: "1.6"
   blocked: []
-  notes: "slice 1.4 complete: ProviderManager, MockProvider implemented"
+  notes: "slice 1.5 complete: ToolRegistry, bash, file_read, json_parse implemented"

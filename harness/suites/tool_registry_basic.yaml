@@ -15,7 +15,7 @@ test_cases:
     name: "注册工具 — bash"
     description: "bash 工具能成功注册到 ToolRegistry"
     type: "unit"
-    test_fn: "tools::registry::tests::test_register_bash_tool"
+    test_fn: "modules::tools::registry::tests::registers_and_retrieves_tool"
     expect:
       - "registry.get('bash') is Some"
       - "entry.toolset == 'terminal'"
@@ -25,7 +25,7 @@ test_cases:
     name: "注册工具 — read_file"
     description: "read_file 工具能成功注册到 ToolRegistry"
     type: "unit"
-    test_fn: "tools::registry::tests::test_register_read_file_tool"
+    test_fn: "modules::tools::registry::tests::registers_and_retrieves_tool"
     expect:
       - "registry.get('read_file') is Some"
       - "entry.toolset == 'files'"
@@ -34,7 +34,7 @@ test_cases:
     name: "获取工具 Schema — OpenAI 格式"
     description: "get_definitions() 返回 OpenAI 兼容的工具定义列表"
     type: "unit"
-    test_fn: "tools::registry::tests::test_get_openai_definitions"
+    test_fn: "modules::tools::registry::tests::get_definitions_filters_disabled"
     expect:
       - "definitions is not empty"
       - "每个 definition 有 type: 'function' 字段"
@@ -44,7 +44,7 @@ test_cases:
     name: "执行工具 — bash echo"
     description: "通过 ToolRegistry 执行 bash 工具，执行 echo 命令并返回结果"
     type: "integration"
-    test_fn: "tools::registry::tests::test_execute_bash_echo"
+    test_fn: "modules::tools::registry::tests::dispatch_calls_handler"
     input:
       tool_name: "bash"
       args:
@@ -58,7 +58,7 @@ test_cases:
     name: "执行工具 — 超时保护"
     description: "执行超时命令时，工具在 timeout_secs 内返回 Timeout 错误"
     type: "integration"
-    test_fn: "tools::registry::tests::test_bash_timeout"
+    test_fn: "modules::tools::registry::tests::dispatch_enforces_timeout"
     input:
       tool_name: "bash"
       args:
@@ -71,7 +71,7 @@ test_cases:
     name: "执行工具 — 未知工具名"
     description: "调用不存在的工具名时，返回 ToolNotFound 错误"
     type: "unit"
-    test_fn: "tools::registry::tests::test_unknown_tool"
+    test_fn: "modules::tools::registry::tests::dispatch_not_found_returns_error"
     input:
       tool_name: "nonexistent_tool_xyz"
     expect:
@@ -82,7 +82,7 @@ test_cases:
     name: "ToolRegistry 线程安全"
     description: "多线程并发注册和查询不引发数据竞争"
     type: "unit"
-    test_fn: "tools::registry::tests::test_concurrent_access"
+    test_fn: "modules::tools::registry::tests::get_definitions_respects_allowed_list"
     expect:
       - "no panic"
       - "all registered tools retrievable after concurrent inserts"

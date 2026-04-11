@@ -20,8 +20,13 @@ meta:
     - docs/design-docs/messaging-gateway.md
     - docs/design-docs/testing-strategy.md
   human_checkpoints:
-    - after_slice: "2.3"       # PromptBuilder + Compression + ErrorHandling 完成后 review
-    - after_slice: "2.6"       # 全部 Phase 2 完成后 review（含 Discord 适配器）
+    - after_slice: "2.1"       # PromptBuilder 完成后 review（Stage 1 checkpoint）
+    - after_slice: "2.2"       # Context Compression 完成后 review（Stage 2 checkpoint）
+    - after_slice: "2.3"       # ErrorHandling + ProviderFallback 完成后 review（Stage 3 checkpoint）
+    - after_slice: "2.4"       # LLM Routing 完成后 review（Stage 4a checkpoint）
+    - after_slice: "2.5"       # MessagingGateway (Telegram) 完成后 review（Stage 4b checkpoint）
+    - after_slice: "2.5b"      # MessagingGateway (Discord) 完成后 review（Stage 4c checkpoint）
+    - after_slice: "2.6"       # 全部 Phase 2 完成后 final review（含集成测试）
 
 slices:
 
@@ -379,16 +384,18 @@ slices:
       - src-tauri/src/modules/plugins/gateway/handler.rs   # 必须新建
       - src-tauri/src/modules/plugins/gateway/telegram.rs  # 必须新建
       - src-tauri/src/modules/plugins/gateway/mod.rs       # MODIFY：re-export
+      - src-tauri/Cargo.toml                             # MODIFY：添加 teloxide (features: ["gateway-telegram"])
 
     current_state: |
-      plugins/gateway/ 目录 EXISTS，但内容是：hooks.rs、lib.rs、mod.rs（与消息网关无关）。
-      ❌ MISSING — 以下 3 个文件完全不存在，必须新建：
-        1. adapter.rs：MessagingAdapter trait（start/send_message/send_typing/platform_name）
-        2. handler.rs：IncomingMessage struct、OutgoingMessage struct、MessageHandler trait，
+      src-tauri/src/modules/plugins/ 目录 EXISTS（hooks.rs, lib.rs, mod.rs），但无 gateway/ 子目录。
+      ❌ MISSING — 以下文件/目录完全不存在，必须新建：
+        1. plugins/gateway/ 目录（新建）
+        2. adapter.rs：MessagingAdapter trait（start/send_message/send_typing/platform_name）
+        3. handler.rs：IncomingMessage struct、OutgoingMessage struct、MessageHandler trait，
            GatewaySession struct（per-chat 会话状态绑定）
-        3. telegram.rs：TelegramAdapter 实现 MessagingAdapter，long-polling，
+        4. telegram.rs：TelegramAdapter 实现 MessagingAdapter，long-polling，
            TELEGRAM_BOT_TOKEN 环境变量，每个 chat_id 独立 Session
-        4. MockAdapter：实现完整 MessagingAdapter trait，用于单元测试（无需真实 token）
+        5. MockAdapter：实现完整 MessagingAdapter trait，用于单元测试（无需真实 token）
       注意：teloxide crate 需要加入 Cargo.toml（feature: gateway-telegram）。
 
     must_implement:
@@ -458,6 +465,7 @@ slices:
     backlog_ref: "BL-205 (part 2/2)"
     impl_targets:
       - src-tauri/src/modules/plugins/gateway/discord.rs   # 必须新建
+      - src-tauri/Cargo.toml                             # MODIFY：添加 serenity (features: ["gateway-discord"])
 
     current_state: |
       discord.rs 不存在。依赖 slice 2.5 预先完成（MessagingAdapter trait 和 handler.rs）。

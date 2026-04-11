@@ -7,11 +7,11 @@
 
 ## 📋 全部计划总览
 
-| 状态 | Phase | 标题 | 文件 | Backlog |
-|------|-------|------|------|---------|
-| **[当前]** | Phase 1 | 核心框架搭建 | `docs/exec-plans/active/phase-1-foundation.yaml` | BL-101~108 |
-| [草稿] | Phase 2 | 高级特性 | `docs/exec-plans/active/phase-2-advanced-features.yaml` | BL-201~205 |
-| [草稿] | Phase 3 | 扩展生态 | `docs/exec-plans/active/phase-3-ecosystem.yaml` | BL-301~303 |
+| 状态       | Phase   | 标题         | 文件                                                    | Backlog    |
+| ---------- | ------- | ------------ | ------------------------------------------------------- | ---------- |
+| **[当前]** | Phase 1 | 核心框架搭建 | `docs/exec-plans/active/phase-1-foundation.yaml`        | BL-101~108 |
+| [草稿]     | Phase 2 | 高级特性     | `docs/exec-plans/active/phase-2-advanced-features.yaml` | BL-201~205 |
+| [草稿]     | Phase 3 | 扩展生态     | `docs/exec-plans/active/phase-3-ecosystem.yaml`         | BL-301~303 |
 
 > **草稿说明**：Phase 2 和 Phase 3 已预生成供规划参考，在 Phase 1 的 `human_checkpoint` 通过前不应执行。  
 > 激活方式：将对应 YAML 文件中的 `phase_status: draft` 改为 `active`，并将本表中状态改为 `[当前]`。

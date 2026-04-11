@@ -171,12 +171,16 @@ def cmd_diff_gate(args: argparse.Namespace) -> int:
     changed_files = list(set(changed_files))
 
     code_extensions = {".rs", ".ts", ".tsx", ".js", ".jsx", ".py"}
-    doc_only_patterns = {"docs/", "QUALITY_SCORE", ".yaml", ".yml", ".md"}
+    # Exclude harness infra, docs, and integration-test harness files.
+    # Use path-prefix checks, not substring (avoids false exclusions on "test" in paths).
+    exclude_prefixes = ("harness/", "docs/", "spec/")
+    exclude_suffixes = (".test.", ".spec.", "_test.", "_spec.")
 
     code_files = [
         f for f in changed_files
         if any(f.endswith(ext) for ext in code_extensions)
-        and not any(pat in f for pat in {"harness/", "docs/", "test", "spec"})
+        and not f.startswith(exclude_prefixes)
+        and not any(f.endswith(suf) for suf in exclude_suffixes)
     ]
 
     # Count lines changed in code files
@@ -286,8 +290,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         is_test_file = "test" in fpath.name or "tests" in str(fpath)
         lines = fpath.read_text(errors="replace").splitlines()
         in_test_block = False
-        prev_line = ""
-        for i, line in enumerate(lines, 1):
+        for i, line in enumerate(lines):
             if "#[cfg(test)]" in line or "#[test]" in line:
                 in_test_block = True
             # reset test block heuristic at module boundary
@@ -297,14 +300,25 @@ def cmd_review(args: argparse.Namespace) -> int:
             rel = fpath.relative_to(workspace)
             if not (is_test_file or in_test_block):
                 if re.search(r'\.(unwrap|expect)\s*\(', line):
-                    unwrap_violations.append(f"{rel}:{i}")
+                    unwrap_violations.append(f"{rel}:{i+1}")
                 if re.search(r'\b(todo!|unimplemented!)\s*\(', line):
-                    todo_violations.append(f"{rel}:{i}")
+                    todo_violations.append(f"{rel}:{i+1}")
             if secret_pat.search(line):
-                secret_violations.append(f"{rel}:{i}")
-            if pub_fn_pat.match(line) and not doc_pat.match(prev_line):
-                undoc_violations.append(f"{rel}:{i}  {line.strip()[:60]}")
-            prev_line = line
+                secret_violations.append(f"{rel}:{i+1}")
+            # Check if this line is a pub fn and has no preceding doc comment.
+            # Walk backwards to collect all consecutive doc-comment / attribute lines.
+            if pub_fn_pat.match(line):
+                has_doc = False
+                for j in range(i - 1, -1, -1):
+                    prev = lines[j].strip()
+                    if doc_pat.match(lines[j]):
+                        has_doc = True
+                        break
+                    # Stop at first non-doc, non-attribute line
+                    if prev and not prev.startswith("//") and not prev.startswith("#["):
+                        break
+                if not has_doc:
+                    undoc_violations.append(f"{rel}:{i+1}  {line.strip()[:60]}")
 
     check("no unwrap()/expect() outside tests",
           len(unwrap_violations) == 0,
@@ -424,11 +438,19 @@ def cmd_promote(args: argparse.Namespace) -> int:
         index_path.write_text(new_index)
         print(f"  ✅ Updated {index_path.relative_to(workspace)}")
 
-    # ── update next phase YAML ───────────────────────────────────────────────
-    yaml_text = next_yaml_path.read_text()
-    if "phase_status: draft" in yaml_text:
-        yaml_text = yaml_text.replace("phase_status: draft", "phase_status: active", 1)
-        next_yaml_path.write_text(yaml_text)
+    # ── update next phase YAML via proper YAML parsing ──────────────────────
+    import yaml  # type: ignore
+    with next_yaml_path.open() as f:
+        yaml_data = yaml.safe_load(f)
+
+    updated = False
+    if isinstance(yaml_data, dict) and yaml_data.get("phase_status") == "draft":
+        yaml_data["phase_status"] = "active"
+        updated = True
+
+    if updated:
+        with next_yaml_path.open("w") as f:
+            yaml.safe_dump(yaml_data, f, allow_unicode=True, sort_keys=False)
         print(f"  ✅ Updated {next_yaml_rel}  (phase_status: active)")
     else:
         print(f"  ⚠️  phase_status: draft not found in {next_yaml_rel} — skipped YAML update")

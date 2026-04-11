@@ -25,12 +25,12 @@ docs/generated/
 
 ## 谁生成什么
 
-| 文件 | 生成者 | 生成时机 | 生成方式 |
-|------|--------|---------|---------|
-| `QUALITY_SCORE.md` | **Executor** (Claude Code) | 每个 Phase 完成后 | 读取 `.harness-reports/` 聚合 |
-| `reports/phase-N-summary.md` | **Executor** (Claude Code) | 到达 `human_checkpoint` 时 | 汇总 slice 执行结果 |
-| `api-snapshots/if2ai-backend.json` | **cargo doc** | CI 或手动触发 | `cargo rustdoc --output-format json` |
-| `harness/suites/*.yaml` | **AI** (Copilot / Claude) | 创建每个 Phase exec-plan 时 | 根据 design-docs 中的接口定义生成 |
+| 文件                               | 生成者                     | 生成时机                    | 生成方式                             |
+| ---------------------------------- | -------------------------- | --------------------------- | ------------------------------------ |
+| `QUALITY_SCORE.md`                 | **Executor** (Claude Code) | 每个 Phase 完成后           | 读取 `.harness-reports/` 聚合        |
+| `reports/phase-N-summary.md`       | **Executor** (Claude Code) | 到达 `human_checkpoint` 时  | 汇总 slice 执行结果                  |
+| `api-snapshots/if2ai-backend.json` | **cargo doc**              | CI 或手动触发               | `cargo rustdoc --output-format json` |
+| `harness/suites/*.yaml`            | **AI** (Copilot / Claude)  | 创建每个 Phase exec-plan 时 | 根据 design-docs 中的接口定义生成    |
 
 ---
 
@@ -47,18 +47,19 @@ Executor 每次写 `QUALITY_SCORE.md` 时必须遵循以下格式：
 
 ## Phase 完成状态
 
-| Phase | 状态 | 完成时间 | 编译 | 测试 | Harness |
-|-------|------|---------|------|------|---------|
-| Phase 1 | ✅ | YYYY-MM-DD | ✅ PASS | ✅ PASS | ✅ 9/9 |
-| Phase 2 | 🔄 | — | — | — | — |
-| Phase 3 | ⏳ | — | — | — | — |
+| Phase   | 状态 | 完成时间   | 编译    | 测试    | Harness |
+| ------- | ---- | ---------- | ------- | ------- | ------- |
+| Phase 1 | ✅   | YYYY-MM-DD | ✅ PASS | ✅ PASS | ✅ 9/9  |
+| Phase 2 | 🔄   | —          | —       | —       | —       |
+| Phase 3 | ⏳   | —          | —       | —       | —       |
 
 ## 当前 Phase 详情
 
-| Slice | 标题 | 状态 | Gate |
-|-------|------|------|------|
-| 1.1 | 模块骨架 | ✅ done | compile ✅ |
-| 1.2 | 修复编译错误 | 🔴 pending | — |
+| Slice | 标题         | 状态       | Gate       |
+| ----- | ------------ | ---------- | ---------- |
+| 1.1   | 模块骨架     | ✅ done    | compile ✅ |
+| 1.2   | 修复编译错误 | 🔴 pending | —          |
+
 ...
 
 ## 代码质量指标
@@ -81,17 +82,18 @@ Executor 每次写 `QUALITY_SCORE.md` 时必须遵循以下格式：
 
 **命名规范**：
 
-| exec-plan 中的 suite_path | 对应文件 | 对应 slice |
-|--------------------------|---------|-----------|
-| `harness/suites/tool_registry_basic.yaml` | 工具注册基础测试 | 1.5 |
-| `harness/suites/e2e_conversation.yaml` | E2E 对话流程 | 1.8 |
-| `harness/suites/phase1_integration.yaml` | Phase 1 集成 | 1.9 |
-| `harness/suites/context_compression.yaml` | 上下文压缩 | 2.2 |
-| `harness/suites/phase2_integration.yaml` | Phase 2 集成 | 2.6 |
-| `harness/suites/self_improvement_baseline.yaml` | RL 基线 | 3.3 |
-| `harness/suites/phase3_integration.yaml` | Phase 3 集成 | 3.4 |
+| exec-plan 中的 suite_path                       | 对应文件         | 对应 slice |
+| ----------------------------------------------- | ---------------- | ---------- |
+| `harness/suites/tool_registry_basic.yaml`       | 工具注册基础测试 | 1.5        |
+| `harness/suites/e2e_conversation.yaml`          | E2E 对话流程     | 1.8        |
+| `harness/suites/phase1_integration.yaml`        | Phase 1 集成     | 1.9        |
+| `harness/suites/context_compression.yaml`       | 上下文压缩       | 2.2        |
+| `harness/suites/phase2_integration.yaml`        | Phase 2 集成     | 2.6        |
+| `harness/suites/self_improvement_baseline.yaml` | RL 基线          | 3.3        |
+| `harness/suites/phase3_integration.yaml`        | Phase 3 集成     | 3.4        |
 
 **Suite YAML 必须包含**：
+
 - `suite_id`：唯一标识符
 - `target_pass_rate`：通过率阈值（通常 1.0）
 - `runner`：运行器类型（`cargo_test` 或 `llm_eval`）

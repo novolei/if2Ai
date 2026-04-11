@@ -137,7 +137,7 @@ impl ConversationRuntime {
 ```
 
 **对标**: `run_agent.py` (9,200 行)  
-**If2Ai**: `crates/runtime/src/conversation.rs` (500+ 行) ✅ 80%
+**If2Ai**: `src-tauri/src/modules/runtime/conversation.rs` (500+ 行) ✅ 80%
 
 **设计文档**: [agent-loop.md](./agent-loop.md)
 
@@ -184,7 +184,7 @@ pub struct ContextCompressor {
 ```
 
 **对标**: `agent/prompt_builder.py` + `context_compressor.py` (500 行)  
-**If2Ai**: `crates/runtime/src/prompt.rs` (部分实现)  
+**If2Ai**: `src-tauri/src/modules/runtime/prompt.rs` (部分实现)  
 **完成度**: ⏳ 30%
 
 **所需增强**:
@@ -240,7 +240,7 @@ pub enum RoutingStrategy {
 ```
 
 **对标**: `runtime_provider.py` + `anthropic_adapter.py` (1,200 行)  
-**If2Ai**: `crates/api/src/client.rs` + `providers/` (1,200 行) ✅ 70%
+**If2Ai**: `src-tauri/src/modules/api/client.rs` + `providers/` (1,200 行) ✅ 70%
 
 **设计文档**: [provider-resolution.md](./provider-resolution.md)
 
@@ -292,7 +292,7 @@ pub struct ToolBackendManager {
 ```
 
 **对标**: `model_tools.py` + `tools/registry.py` (800 行)  
-**If2Ai**: `crates/tools/src/` (600 行) ✅ 90%
+**If2Ai**: `src-tauri/src/modules/tools/` (600 行) ✅ 90%
 
 **设计文档**: [tool-system.md](./tool-system.md)
 
@@ -374,7 +374,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - ⏳ 向量搜索（Phase 2）
 
 **对标**: `hermes_state.py` (600 行)  
-**If2Ai**: `crates/runtime/src/session.rs` (800 行) ✅ 80%
+**If2Ai**: `src-tauri/src/modules/runtime/session.rs` (800 行) ✅ 80%
 
 **设计文档**: [session-persistence.md](./session-persistence.md)
 
@@ -463,7 +463,7 @@ pub trait ContextEngine: Send + Sync {
 ```
 
 **对标**: `hermes_cli/plugins.py` + 特化的 memory/context_engine (400 行)  
-**If2Ai**: `crates/plugins/src/` (400+ 行) ✅ 85%
+**If2Ai**: `src-tauri/src/modules/plugins/` (400+ 行) ✅ 85%
 
 **设计文档**: 计划中
 
@@ -526,7 +526,7 @@ pub enum ACPNotification {
 ```
 
 **对标**: `acp_adapter/` (200+ 行)  
-**If2Ai**: `crates/lsp/src/` (基础实现) ✅ 70%
+**If2Ai**: `src-tauri/src/modules/runtime/lsp.rs` (LSP 客户端) ✅ 70%
 
 ---
 

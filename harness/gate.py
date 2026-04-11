@@ -145,7 +145,11 @@ def _symbol_check_gate(workspace_root: Path, checks: list[dict]) -> GateResult:
 
         try:
             content = target_file.read_text(encoding="utf-8", errors="replace")
-            if pattern in content:
+            # Use line-anchored regex: pattern must start at beginning of a line (ignoring leading whitespace)
+            # This avoids false positives from matches inside comments, strings, or partial tokens.
+            import re
+            anchored = re.compile(rf"^\s*{re.escape(pattern)}", re.MULTILINE)
+            if anchored.search(content):
                 passes.append(f"  ✅  {label}")
             else:
                 failures.append(f"  ❌  NOT FOUND: '{pattern}' in {check['file']}\n       → {label}")

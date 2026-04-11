@@ -27,11 +27,11 @@ P3: AgentSelfImprovement + IDE/LSP Bridge + JSON-RPC API Server
 
 ### BL-101 修复 Rust 编译错误
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 — 阻塞后续所有任务 |
-| **状态** | 🔴 pending |
-| **design_ref** | `COMPILATION_ERRORS_CHECKLIST.md` |
+| 字段             | 值                                                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **优先级**       | P0 — 阻塞后续所有任务                                                                                                 |
+| **状态**         | 🔴 pending                                                                                                            |
+| **design_ref**   | `COMPILATION_ERRORS_CHECKLIST.md`                                                                                     |
 | **impl_targets** | `src-tauri/src/modules/api/providers/claw_provider.rs`, `openai_compat.rs`, `src-tauri/src/modules/runtime/config.rs` |
 
 **任务描述**：修复 52 个 Rust 编译错误，使 `cargo check -p if2ai-backend` 零错误通过。
@@ -53,6 +53,7 @@ P3: AgentSelfImprovement + IDE/LSP Bridge + JSON-RPC API Server
 ```
 
 **验收标准**：
+
 - `cargo check -p if2ai-backend` 无错误
 - `cargo check -p if2ai-backend` 无 warning（或 warning 数量不增加）
 
@@ -60,12 +61,12 @@ P3: AgentSelfImprovement + IDE/LSP Bridge + JSON-RPC API Server
 
 ### BL-102 ConversationRuntime 核心循环
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/agent-loop.md` + `docs/design-docs/agent-orchestrator.md` |
-| **impl_targets** | `src-tauri/src/modules/runtime/conversation.rs` |
+| 字段             | 值                                                                          |
+| ---------------- | --------------------------------------------------------------------------- |
+| **优先级**       | P0                                                                          |
+| **状态**         | 🔴 pending                                                                  |
+| **design_ref**   | `docs/design-docs/agent-loop.md` + `docs/design-docs/agent-orchestrator.md` |
+| **impl_targets** | `src-tauri/src/modules/runtime/conversation.rs`                             |
 
 **任务描述**：实现 `ConversationRuntime` 核心对话循环，这是整个 Agent 系统的心脏。
 
@@ -98,6 +99,7 @@ impl ConversationRuntime {
 ```
 
 **循环状态机**（来自 agent-orchestrator.md）：
+
 1. 加载/初始化对话历史
 2. 构建系统提示 (`PromptBuilder`)
 3. 调用 LLM API（流式）
@@ -108,6 +110,7 @@ impl ConversationRuntime {
 8. 保存 session
 
 **验收标准**：
+
 - `cargo test -p if2ai-backend runtime::conversation` 全部通过
 - 能处理无工具调用的单轮对话
 - 能处理 1+ 次工具调用的多轮对话
@@ -117,12 +120,12 @@ impl ConversationRuntime {
 
 ### BL-103 ProviderManager — 多 LLM 支持
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/provider-resolution.md` + `docs/design-docs/llm-routing.md` |
-| **impl_targets** | `src-tauri/src/modules/api/providers/` (全部文件) |
+| 字段             | 值                                                                            |
+| ---------------- | ----------------------------------------------------------------------------- |
+| **优先级**       | P0                                                                            |
+| **状态**         | 🔴 pending                                                                    |
+| **design_ref**   | `docs/design-docs/provider-resolution.md` + `docs/design-docs/llm-routing.md` |
+| **impl_targets** | `src-tauri/src/modules/api/providers/` (全部文件)                             |
 
 **任务描述**：实现统一的 LLM 提供商管理，支持 OpenAI / Anthropic / 国内提供商，含故障转移。
 
@@ -152,21 +155,23 @@ pub trait LLMProvider: Send + Sync {
 
 **支持的提供商**（来自 llm-routing.md）：
 
-| 提供商 | 环境变量 | 优先级 |
-|--------|---------|--------|
-| OpenAI | `OPENAI_API_KEY` | 高 |
-| Anthropic | `ANTHROPIC_API_KEY` | 高 |
-| OpenRouter | `OPENROUTER_API_KEY` | 中 |
-| Kimi | `KIMI_API_KEY` | 中 |
-| Deepseek | `DEEPSEEK_API_KEY` | 中 |
-| LocalOllama | (无需密钥) | 低 |
+| 提供商      | 环境变量             | 优先级 |
+| ----------- | -------------------- | ------ |
+| OpenAI      | `OPENAI_API_KEY`     | 高     |
+| Anthropic   | `ANTHROPIC_API_KEY`  | 高     |
+| OpenRouter  | `OPENROUTER_API_KEY` | 中     |
+| Kimi        | `KIMI_API_KEY`       | 中     |
+| Deepseek    | `DEEPSEEK_API_KEY`   | 中     |
+| LocalOllama | (无需密钥)           | 低     |
 
 **故障转移逻辑**：
+
 - 按优先级选择第一个 `is_available()` 的提供商
 - 请求失败时自动尝试下一个提供商
 - 所有提供商失败时返回 `Err(AgentError::AllProvidersExhausted)`
 
 **验收标准**：
+
 - `cargo test -p if2ai-backend api::providers` 全部通过
 - 至少 OpenAI + Anthropic 两个提供商正确实现
 - Mock provider 用于测试
@@ -175,11 +180,11 @@ pub trait LLMProvider: Send + Sync {
 
 ### BL-104 ToolRegistry + 基础工具集
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/tool-system.md` |
+| 字段             | 值                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| **优先级**       | P0                                                                                   |
+| **状态**         | 🔴 pending                                                                           |
+| **design_ref**   | `docs/design-docs/tool-system.md`                                                    |
 | **impl_targets** | `src-tauri/src/modules/tools/registry.rs`, `src-tauri/src/modules/tools/executor.rs` |
 
 **任务描述**：实现工具注册表和执行器，并提供 3 个基础工具。
@@ -212,13 +217,14 @@ impl ToolRegistry {
 
 **必须提供的基础工具**：
 
-| 工具名 | toolset | 描述 |
-|--------|---------|------|
-| `bash` | `terminal` | 执行 shell 命令（沙箱化） |
-| `read_file` | `files` | 读取文件内容 |
-| `write_file` | `files` | 写入文件内容 |
+| 工具名       | toolset    | 描述                      |
+| ------------ | ---------- | ------------------------- |
+| `bash`       | `terminal` | 执行 shell 命令（沙箱化） |
+| `read_file`  | `files`    | 读取文件内容              |
+| `write_file` | `files`    | 写入文件内容              |
 
 **验收标准**：
+
 - `cargo test -p if2ai-backend tools::` 全部通过
 - 三个基础工具可以正常注册和调用
 - 超时工具调用能正确返回错误
@@ -227,11 +233,11 @@ impl ToolRegistry {
 
 ### BL-105 SessionManager — 会话持久化
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/session-persistence.md` + `docs/design-docs/data-schema.md` |
+| 字段             | 值                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| **优先级**       | P0                                                                                     |
+| **状态**         | 🔴 pending                                                                             |
+| **design_ref**   | `docs/design-docs/session-persistence.md` + `docs/design-docs/data-schema.md`          |
 | **impl_targets** | `src-tauri/src/modules/session/manager.rs`, `src-tauri/src/modules/session/storage.rs` |
 
 **任务描述**：基于 SQLite 实现会话和消息的持久化存储。
@@ -280,6 +286,7 @@ impl SessionManager {
 ```
 
 **验收标准**：
+
 - `cargo test -p if2ai-backend session::` 全部通过
 - 会话 CRUD 操作正确工作
 - 消息序列化/反序列化一致
@@ -288,11 +295,11 @@ impl SessionManager {
 
 ### BL-106 Tauri Commands — IPC 网关
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/entry-points-design.md` + `docs/design-docs/module-boundaries-and-integration.md` |
+| 字段             | 值                                                                                                        |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| **优先级**       | P0                                                                                                        |
+| **状态**         | 🔴 pending                                                                                                |
+| **design_ref**   | `docs/design-docs/entry-points-design.md` + `docs/design-docs/module-boundaries-and-integration.md`       |
 | **impl_targets** | `src-tauri/src/commands/agent.rs`, `src-tauri/src/commands/session.rs`, `src-tauri/src/commands/tools.rs` |
 
 **任务描述**：实现 Tauri IPC 命令，作为前端 React 和后端 Rust 之间的桥梁。
@@ -342,6 +349,7 @@ pub struct AppState {
 ```
 
 **验收标准**：
+
 - `cargo check -p if2ai-backend` 包含 commands 模块，无错误
 - Tauri 应用启动时所有命令正确注册
 - 前端可以通过 `invoke('run_agent_turn', {...})` 调用
@@ -350,11 +358,11 @@ pub struct AppState {
 
 ### BL-107 前端 IPC 接入 — React 对接后端
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P1 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/entry-points-design.md` |
+| 字段             | 值                                                                              |
+| ---------------- | ------------------------------------------------------------------------------- |
+| **优先级**       | P1                                                                              |
+| **状态**         | 🔴 pending                                                                      |
+| **design_ref**   | `docs/design-docs/entry-points-design.md`                                       |
 | **impl_targets** | `src/App.tsx`, `src/hooks/useAgent.ts` (新建), `src/hooks/useSession.ts` (新建) |
 
 **任务描述**：将现有 React UI (`src/App.tsx`) 的 placeholder 替换为真实的 Tauri IPC 调用。
@@ -366,29 +374,32 @@ pub struct AppState {
 ```typescript
 // src/hooks/useSession.ts
 export function useSession() {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const createSession = () => invoke<SessionDto>('create_session');
-  const listSessions = () => invoke<SessionSummary[]>('list_sessions');
-  return { sessions, createSession, listSessions };
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const createSession = () => invoke<SessionDto>('create_session')
+  const listSessions = () => invoke<SessionSummary[]>('list_sessions')
+  return { sessions, createSession, listSessions }
 }
 
 // src/hooks/useAgent.ts
 export function useAgent(sessionId: string) {
   const sendMessage = (msg: string) =>
-    invoke<AgentTurnResponse>('run_agent_turn', { sessionId, userMessage: msg });
+    invoke<AgentTurnResponse>('run_agent_turn', { sessionId, userMessage: msg })
 
   // 流式版本：监听 Tauri event
   const sendMessageStream = (msg: string, onChunk: (chunk: string) => void) => {
-    const unlisten = listen('agent_stream_chunk', (e) => onChunk(e.payload as string));
-    invoke('run_agent_turn_stream', { sessionId, userMessage: msg });
-    return unlisten; // 调用方负责 unlisten
-  };
+    const unlisten = listen('agent_stream_chunk', (e) =>
+      onChunk(e.payload as string)
+    )
+    invoke('run_agent_turn_stream', { sessionId, userMessage: msg })
+    return unlisten // 调用方负责 unlisten
+  }
 
-  return { sendMessage, sendMessageStream };
+  return { sendMessage, sendMessageStream }
 }
 ```
 
 **验收标准**：
+
 - 界面可以创建新对话
 - 界面可以列出历史会话
 - 发送消息后能收到 Agent 回复并显示
@@ -398,12 +409,12 @@ export function useAgent(sessionId: string) {
 
 ### BL-108 Phase 1 集成测试
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P1 |
-| **状态** | 🔴 pending |
-| **design_ref** | `docs/design-docs/testing-strategy.md` + `docs/design-docs/harness-testing.md` |
-| **impl_targets** | `src-tauri/src/tests/integration/`, `harness/suites/phase1_basic.yaml` |
+| 字段             | 值                                                                             |
+| ---------------- | ------------------------------------------------------------------------------ |
+| **优先级**       | P1                                                                             |
+| **状态**         | 🔴 pending                                                                     |
+| **design_ref**   | `docs/design-docs/testing-strategy.md` + `docs/design-docs/harness-testing.md` |
+| **impl_targets** | `src-tauri/src/tests/integration/`, `harness/suites/phase1_basic.yaml`         |
 
 **任务描述**：编写 Phase 1 集成测试，验证完整的 Tauri → Rust 路径。
 
@@ -428,6 +439,7 @@ async fn test_budget_exhausted()
 ```
 
 **验收标准**：
+
 - `cargo test -p if2ai-backend` 100% pass
 - `python -m harness.runner run --slice 1.9 --workspace .` 通过
 
@@ -439,13 +451,14 @@ async fn test_budget_exhausted()
 
 ### BL-201 PromptBuilder — 动态提示词构建
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0（Phase 2 首批） |
-| **design_ref** | `docs/design-docs/prompt-builder.md` |
+| 字段             | 值                                        |
+| ---------------- | ----------------------------------------- |
+| **优先级**       | P0（Phase 2 首批）                        |
+| **design_ref**   | `docs/design-docs/prompt-builder.md`      |
 | **impl_targets** | `src-tauri/src/modules/runtime/prompt.rs` |
 
 **核心功能**：
+
 - 从 `AgentDefinition` 构建角色描述（名称、角色、能力、语气）
 - 将工具定义转换为 OpenAI / Claude 格式
 - 支持语言切换（中文 / 英文）
@@ -470,16 +483,18 @@ impl PromptBuilder {
 
 ### BL-202 ContextCompression — 长对话压缩
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0（Phase 2 首批） |
-| **design_ref** | `docs/design-docs/context-compression.md` |
+| 字段             | 值                                             |
+| ---------------- | ---------------------------------------------- |
+| **优先级**       | P0（Phase 2 首批）                             |
+| **design_ref**   | `docs/design-docs/context-compression.md`      |
 | **impl_targets** | `src-tauri/src/modules/runtime/compression.rs` |
 
 **压缩触发条件**（来自 context-compression.md）：
+
 - 当前 tokens > `window_size * compression_threshold`（默认 50%）
 
 **三步压缩算法**：
+
 1. **Prune**：移除工具调用的中间消息（保留最终结果）
 2. **Protect**：保留头部（前 N 条）+ 尾部（后 M 条）
 3. **Summarize**：对中间消息调用一次 LLM 生成摘要，替换原始消息
@@ -500,10 +515,10 @@ impl ContextCompressor {
 
 ### BL-203 ErrorHandling — 统一错误处理和恢复
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P0（Phase 2 首批） |
-| **design_ref** | `docs/design-docs/error-handling.md` |
+| 字段             | 值                                       |
+| ---------------- | ---------------------------------------- |
+| **优先级**       | P0（Phase 2 首批）                       |
+| **design_ref**   | `docs/design-docs/error-handling.md`     |
 | **impl_targets** | `src-tauri/src/modules/runtime/error.rs` |
 
 **错误分类**（来自 error-handling.md）：
@@ -534,17 +549,19 @@ pub enum AgentError {
 
 ### BL-204 Memory System — 跨会话记忆
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P1（Phase 2 第二批） |
-| **design_ref** | `docs/design-docs/memory-system.md` |
+| 字段             | 值                                     |
+| ---------------- | -------------------------------------- |
+| **优先级**       | P1（Phase 2 第二批）                   |
+| **design_ref**   | `docs/design-docs/memory-system.md`    |
 | **impl_targets** | `src-tauri/src/modules/memory/` (全部) |
 
 **内置记忆**（无需外部服务）：
+
 - `MEMORY.md`：Agent 观察到的事实
 - `USER.md`：用户偏好和身份信息
 
 **Honcho 集成**（可选，需要 API key）：
+
 - 跨会话用户建模
 - 辩证问答（dialectic Q&A）
 - 语义搜索
@@ -568,18 +585,18 @@ pub struct MemoryManager {
 
 ### BL-205 MessagingGateway — 多平台消息接入
 
-| 字段 | 值 |
-|------|-----|
-| **优先级** | P2（Phase 2 最后一批） |
-| **design_ref** | `docs/design-docs/messaging-gateway.md` |
+| 字段             | 值                                       |
+| ---------------- | ---------------------------------------- |
+| **优先级**       | P2（Phase 2 最后一批）                   |
+| **design_ref**   | `docs/design-docs/messaging-gateway.md`  |
 | **impl_targets** | `src-tauri/src/modules/plugins/gateway/` |
 
 **第一期支持的平台**（按优先级）：
 
-| 平台 | 环境变量 | 接入方式 |
-|------|---------|---------|
+| 平台     | 环境变量             | 接入方式           |
+| -------- | -------------------- | ------------------ |
 | Telegram | `TELEGRAM_BOT_TOKEN` | Polling or Webhook |
-| Discord | `DISCORD_BOT_TOKEN` | WebSocket |
+| Discord  | `DISCORD_BOT_TOKEN`  | WebSocket          |
 
 **统一消息接口**：
 
@@ -600,49 +617,49 @@ pub trait MessagingAdapter: Send + Sync {
 
 ### BL-301 Agent Self-Improvement (RL-Training)
 
-| **design_ref** | `docs/design-docs/agent-self-improvement.md` |
-|----------------|----------------------------------------------|
-| **描述** | 基于 GRPO 的强化学习，Agent 根据任务结果自我迭代 |
-| **依赖** | BL-108 集成测试（提供训练数据）、BL-204 Memory System |
+| **design_ref** | `docs/design-docs/agent-self-improvement.md`          |
+| -------------- | ----------------------------------------------------- |
+| **描述**       | 基于 GRPO 的强化学习，Agent 根据任务结果自我迭代      |
+| **依赖**       | BL-108 集成测试（提供训练数据）、BL-204 Memory System |
 
 ### BL-302 IDE / LSP Bridge
 
 | **design_ref** | `docs/design-docs/entry-points-design.md` (Phase 3 部分) |
-|----------------|----------------------------------------------|
-| **描述** | 通过 stdio JSON-RPC 接入 VSCode / Cursor 等 IDE |
-| **依赖** | BL-106 Tauri Commands（命令体系复用） |
+| -------------- | -------------------------------------------------------- |
+| **描述**       | 通过 stdio JSON-RPC 接入 VSCode / Cursor 等 IDE          |
+| **依赖**       | BL-106 Tauri Commands（命令体系复用）                    |
 
 ### BL-303 JSON-RPC API Server
 
 | **design_ref** | `docs/design-docs/entry-points-design.md` (Phase 2 部分) |
-|----------------|----------------------------------------------|
-| **描述** | 暴露 HTTP API 供第三方调用 Agent |
-| **依赖** | BL-106 Tauri Commands（逻辑层复用） |
+| -------------- | -------------------------------------------------------- |
+| **描述**       | 暴露 HTTP API 供第三方调用 Agent                         |
+| **依赖**       | BL-106 Tauri Commands（逻辑层复用）                      |
 
 ---
 
 ## 设计文档 ↔ Backlog 映射表
 
-| 设计文档 | 对应 Backlog 条目 | Phase |
-|---------|-----------------|-------|
-| system-architecture-framework.md | 整体指导，无直接 backlog | — |
-| module-boundaries-and-integration.md | BL-101 (修复编译), BL-106 (AppState) | P1 |
-| entry-points-design.md | BL-106 (Tauri Commands), BL-107 (前端接入), BL-302, BL-303 | P1/P3 |
-| agent-loop.md | BL-102 (ConversationRuntime) | P1 |
-| agent-orchestrator.md | BL-102 (循环逻辑) | P1 |
-| provider-resolution.md | BL-103 (ProviderManager) | P1 |
-| llm-routing.md | BL-103 (故障转移) | P1 |
-| tool-system.md | BL-104 (ToolRegistry) | P1 |
-| session-persistence.md | BL-105 (SessionManager) | P1 |
-| data-schema.md | BL-105 (SQLite Schema) | P1 |
-| prompt-builder.md | BL-201 (PromptBuilder) | P2 |
-| context-compression.md | BL-202 (ContextCompression) | P2 |
-| error-handling.md | BL-203 (ErrorHandling) | P2 |
-| memory-system.md | BL-204 (MemorySystem) | P2 |
-| messaging-gateway.md | BL-205 (MessagingGateway) | P2 |
-| agent-self-improvement.md | BL-301 (RL-Training) | P3 |
-| testing-strategy.md | BL-108 (集成测试) + 所有 acceptance | 贯穿 |
-| harness-testing.md | harness/gate.py + harness/runner.py | 贯穿 |
+| 设计文档                             | 对应 Backlog 条目                                          | Phase |
+| ------------------------------------ | ---------------------------------------------------------- | ----- |
+| system-architecture-framework.md     | 整体指导，无直接 backlog                                   | —     |
+| module-boundaries-and-integration.md | BL-101 (修复编译), BL-106 (AppState)                       | P1    |
+| entry-points-design.md               | BL-106 (Tauri Commands), BL-107 (前端接入), BL-302, BL-303 | P1/P3 |
+| agent-loop.md                        | BL-102 (ConversationRuntime)                               | P1    |
+| agent-orchestrator.md                | BL-102 (循环逻辑)                                          | P1    |
+| provider-resolution.md               | BL-103 (ProviderManager)                                   | P1    |
+| llm-routing.md                       | BL-103 (故障转移)                                          | P1    |
+| tool-system.md                       | BL-104 (ToolRegistry)                                      | P1    |
+| session-persistence.md               | BL-105 (SessionManager)                                    | P1    |
+| data-schema.md                       | BL-105 (SQLite Schema)                                     | P1    |
+| prompt-builder.md                    | BL-201 (PromptBuilder)                                     | P2    |
+| context-compression.md               | BL-202 (ContextCompression)                                | P2    |
+| error-handling.md                    | BL-203 (ErrorHandling)                                     | P2    |
+| memory-system.md                     | BL-204 (MemorySystem)                                      | P2    |
+| messaging-gateway.md                 | BL-205 (MessagingGateway)                                  | P2    |
+| agent-self-improvement.md            | BL-301 (RL-Training)                                       | P3    |
+| testing-strategy.md                  | BL-108 (集成测试) + 所有 acceptance                        | 贯穿  |
+| harness-testing.md                   | harness/gate.py + harness/runner.py                        | 贯穿  |
 
 ---
 

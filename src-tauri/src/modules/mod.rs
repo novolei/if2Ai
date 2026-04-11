@@ -6,11 +6,13 @@
 //! - tools: Tool system and execution
 //! - commands: Command processing
 //! - plugins: Plugin system
+//! - session: Session management with JSON persistence
 
 pub mod api;
 pub mod commands;
 pub mod plugins;
 pub mod runtime;
+pub mod session;
 pub mod tools;
 
 #[allow(unused_imports)]
@@ -21,5 +23,7 @@ pub use commands::*;
 pub use plugins::*;
 #[allow(unused_imports)]
 pub use runtime::*;
+#[allow(unused_imports)]
+pub use session::*;
 #[allow(unused_imports)]
 pub use tools::*;

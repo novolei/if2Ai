@@ -281,54 +281,118 @@ let state = AppState {
 };
 ```
 
-### 2.4 前端集成 (Svelte)
+### 2.4 前端集成 (React + TypeScript)
 
-```ts
-// src/lib/agent.ts
+```tsx
+// src/lib/tauri.ts — Tauri IPC 封装层
 import { invoke } from '@tauri-apps/api/tauri';
+
+export interface AgentTurnResponse {
+  message: string;
+  session_id: string;
+  tool_calls?: ToolCall[];
+  tokens?: TokenUsage;
+}
+
+export interface SessionMeta {
+  id: string;
+  title: string;
+  created_at: string;
+}
 
 export async function runAgentTurn(
   sessionId: string,
-  message: string
-): Promise<AgentResponse> {
-  return await invoke<AgentResponse>('run_agent_turn', {
+  userMessage: string
+): Promise<AgentTurnResponse> {
+  return await invoke<AgentTurnResponse>('run_agent_turn', {
     sessionId,
-    userMessage: message,
+    userMessage,
   });
 }
 
-// src/components/ChatView.svelte
-<script>
-  let messages: Message[] = [];
-  let inputText = '';
-  let isLoading = false;
+export async function listSessions(): Promise<SessionMeta[]> {
+  return await invoke<SessionMeta[]>('list_sessions');
+}
 
-  async function handleSendMessage() {
-    isLoading = true;
+export async function deleteSession(id: string): Promise<void> {
+  return await invoke<void>('delete_session', { id });
+}
+
+// src/App.tsx — React 组件
+import { useState, useCallback } from 'react';
+import { runAgentTurn } from './lib/tauri';
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export default function App() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string>('');
+
+  const handleSendMessage = useCallback(async () => {
+    if (!inputText.trim() || isLoading) return;
+
+    const userMsg = inputText;
+    setInputText('');
+    setIsLoading(true);
+
+    // 添加用户消息到 UI
+    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+
     try {
-      const response = await runAgentTurn($sessionId, inputText);
-      messages = [...messages, { role: 'user', content: inputText }];
-      messages = [...messages, { role: 'assistant', content: response.content }];
-      inputText = '';
+      const response = await runAgentTurn(sessionId, userMsg);
+      // 添加助手响应到 UI
+      setMessages(prev => [...prev, { role: 'assistant', content: response.message }]);
+      if (response.session_id && !sessionId) {
+        setSessionId(response.session_id);
+      }
     } catch (err) {
-      console.error('Failed to run agent:', err);
+      // 错误展示（友好错误消息，不暴露内部细节）
+      const errorMessage = err instanceof Error ? err.message : 'Agent execution failed';
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Error: ${errorMessage}`
+      }]);
     } finally {
-      isLoading = false;
+      setIsLoading(false);
     }
-  }
-</script>
+  }, [inputText, isLoading, sessionId]);
 
-<div class="chat-container">
-  {#each messages as msg}
-    <div class="message" class:assistant={msg.role === 'assistant'}>
-      {msg.content}
+  return (
+    <div className="chat-container">
+      <div className="messages">
+        {messages.map((msg, i) => (
+          <div key={i} className={`message ${msg.role}`}>
+            {msg.content}
+          </div>
+        ))}
+      </div>
+      <div className="input-area">
+        <input
+          value={inputText}
+          onChange={e => setInputText(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+          placeholder="Type a message..."
+          disabled={isLoading}
+        />
+        <button onClick={handleSendMessage} disabled={isLoading || !inputText.trim()}>
+          {isLoading ? 'Sending...' : 'Send'}
+        </button>
+      </div>
     </div>
-  {/each}
-</div>
-
-<input bind:value={inputText} placeholder="Type a message..." />
-<button on:click={handleSendMessage} disabled={isLoading}>Send</button>
+  );
+}
 ```
+
+**关键实现要点**：
+- `src/lib/tauri.ts` 封装所有 `invoke` 调用，App.tsx **不直接调用** `@tauri-apps/api`
+- `isLoading` 状态在发送中禁用按钮，防止重复提交
+- 错误消息对用户友好（不暴露 Rust 内部错误细节）
+- TypeScript 类型与 Rust `RunAgentTurnResponse` 完全一致
 
 ---
 

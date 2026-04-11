@@ -4,7 +4,7 @@
 **最后更新**: 2026-04-11  
 **对标**: Hermes Agent `run_agent.py` (~9200 行)  
 **实现语言**: Rust  
-**关键文件**: `crates/runtime/src/conversation.rs` + `crates/api/src/client.rs`
+**关键文件**: `src-tauri/src/modules/runtime/conversation.rs` + `src-tauri/src/modules/api/client.rs`
 
 ---
 
@@ -362,13 +362,13 @@ impl ConversationRuntime {
 
 ## 6. 代码位置映射
 
-| Hermes 模块             | 行数 | If2Ai 位置                         | 状态   |
-| ----------------------- | ---- | ---------------------------------- | ------ |
-| run_agent.py            | 9200 | crates/runtime/src/conversation.rs | ✅ 80% |
-| prompt_builder.py       | 600  | crates/runtime/src/prompt.rs       | ⏳ 50% |
-| model_tools.py          | 400  | crates/tools/src/lib.rs            | ✅ 90% |
-| agent/context_engine.py | 300  | crates/runtime/src/compact.rs      | ⏳ 30% |
-| hermes_state.py         | 500  | crates/runtime/src/session.rs      | ✅ 85% |
+| Hermes 模块             | 行数 | If2Ai 位置                                          | 状态   |
+| ----------------------- | ---- | --------------------------------------------------- | ------ |
+| run_agent.py            | 9200 | src-tauri/src/modules/runtime/conversation.rs       | ✅ 80% |
+| prompt_builder.py       | 600  | src-tauri/src/modules/runtime/prompt.rs             | ⏳ 50% |
+| model_tools.py          | 400  | src-tauri/src/modules/tools/registry.rs             | ✅ 90% |
+| agent/context_engine.py | 300  | src-tauri/src/modules/runtime/compact.rs            | ⏳ 30% |
+| hermes_state.py         | 500  | src-tauri/src/modules/runtime/session.rs            | ✅ 85% |
 
 ---
 
@@ -435,7 +435,7 @@ def test_tool_calling():
 ## 参考资源
 
 - [Hermes Agent Loop](https://hermes-agent.nousresearch.com/docs/developer-guide/agent-loop)
-- [Claw Code conversation.rs](../../rust/crates/runtime/src/conversation.rs)
+- [Claw Code conversation.rs](../../../src-tauri/src/modules/runtime/conversation.rs)
 - [OpenAI Message Format](https://platform.openai.com/docs/guides/function-calling)
 - [Anthropic Messages API](https://docs.anthropic.com/)
 
