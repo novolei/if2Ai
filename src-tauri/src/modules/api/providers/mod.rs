@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::api::error::ApiError;
-use crate::api::types::{MessageRequest, MessageResponse};
+use crate::modules::api::error::ApiError;
+use crate::modules::api::types::{MessageRequest, MessageResponse};
 
 pub mod claw_provider;
 pub mod openai_compat;
@@ -24,6 +24,7 @@ pub trait Provider {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ProviderKind {
     ClawApi,
     Xai,
@@ -202,6 +203,7 @@ pub fn detect_provider_kind(model: &str) -> ProviderKind {
 }
 
 #[must_use]
+#[allow(dead_code)]
 pub fn max_tokens_for_model(model: &str) -> u32 {
     let canonical = resolve_model_alias(model);
     if canonical.contains("opus") {

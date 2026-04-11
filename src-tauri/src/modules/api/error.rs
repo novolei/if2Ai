@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum ApiError {
     MissingCredentials {
         provider: &'static str,
@@ -33,6 +34,7 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    #[allow(dead_code)]
     #[must_use]
     pub const fn missing_credentials(
         provider: &'static str,

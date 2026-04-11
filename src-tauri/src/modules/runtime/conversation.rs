@@ -1,14 +1,16 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 
-use crate::runtime::compact::{
+use super::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
-use crate::runtime::config::RuntimeFeatureConfig;
-use crate::runtime::hooks::{HookRunResult, HookRunner};
-use crate::runtime::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
-use crate::runtime::session::{ContentBlock, ConversationMessage, Session};
-use crate::runtime::usage::{TokenUsage, UsageTracker};
+use super::config::RuntimeFeatureConfig;
+use super::hooks::{HookRunResult, HookRunner};
+use super::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
+use super::session::{ContentBlock, ConversationMessage, Session};
+use super::usage::{TokenUsage, UsageTracker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
@@ -395,19 +397,19 @@ impl ToolExecutor for StaticToolExecutor {
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use crate::modules::runtime::compact::CompactionConfig;
+    use crate::modules::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use crate::modules::runtime::conversation::{
         ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
         StaticToolExecutor,
     };
-    use crate::runtime::compact::CompactionConfig;
-    use crate::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
-    use crate::runtime::permissions::{
+    use crate::modules::runtime::permissions::{
         PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
         PermissionRequest,
     };
-    use crate::runtime::prompt::{ProjectContext, SystemPromptBuilder};
-    use crate::runtime::session::{ContentBlock, MessageRole, Session};
-    use crate::runtime::usage::TokenUsage;
+    use crate::modules::runtime::prompt::{ProjectContext, SystemPromptBuilder};
+    use crate::modules::runtime::session::{ContentBlock, MessageRole, Session};
+    use crate::modules::runtime::usage::TokenUsage;
     use std::path::PathBuf;
 
     struct ScriptedApiClient {
@@ -726,9 +728,8 @@ mod tests {
         }
 
         let mut session = Session::new();
-        session
-            .messages
-            .push(crate::session::ConversationMessage::assistant_with_usage(
+        session.messages.push(
+            crate::modules::runtime::session::ConversationMessage::assistant_with_usage(
                 vec![ContentBlock::Text {
                     text: "earlier".to_string(),
                 }],
@@ -738,7 +739,8 @@ mod tests {
                     cache_creation_input_tokens: 2,
                     cache_read_input_tokens: 1,
                 }),
-            ));
+            ),
+        );
 
         let runtime = ConversationRuntime::new(
             session,

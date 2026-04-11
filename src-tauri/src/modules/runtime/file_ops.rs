@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::cmp::Reverse;
 use std::fs;
 use std::io;

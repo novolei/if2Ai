@@ -1,9 +1,10 @@
-use crate::error::ApiError;
-use crate::providers::claw_provider::{self, AuthSource, ClawApiClient};
-use crate::providers::openai_compat::{self, OpenAiCompatClient, OpenAiCompatConfig};
-use crate::providers::{self, Provider, ProviderKind};
-use crate::types::{MessageRequest, MessageResponse, StreamEvent};
+use super::error::ApiError;
+use super::providers::claw_provider::{self, AuthSource, ClawApiClient};
+use super::providers::openai_compat::{self, OpenAiCompatClient, OpenAiCompatConfig};
+use super::providers::{self, Provider, ProviderKind};
+use super::types::{MessageRequest, MessageResponse, StreamEvent};
 
+#[allow(dead_code)]
 async fn send_via_provider<P: Provider>(
     provider: &P,
     request: &MessageRequest,
@@ -11,6 +12,7 @@ async fn send_via_provider<P: Provider>(
     provider.send_message(request).await
 }
 
+#[allow(dead_code)]
 async fn stream_via_provider<P: Provider>(
     provider: &P,
     request: &MessageRequest,
@@ -19,12 +21,14 @@ async fn stream_via_provider<P: Provider>(
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ProviderClient {
     ClawApi(ClawApiClient),
     Xai(OpenAiCompatClient),
     OpenAi(OpenAiCompatClient),
 }
 
+#[allow(dead_code)]
 impl ProviderClient {
     pub fn from_model(model: &str) -> Result<Self, ApiError> {
         Self::from_model_with_default_auth(model, None)
@@ -84,11 +88,13 @@ impl ProviderClient {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum MessageStream {
     ClawApi(claw_provider::MessageStream),
     OpenAiCompat(openai_compat::MessageStream),
 }
 
+#[allow(dead_code)]
 impl MessageStream {
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
@@ -109,11 +115,13 @@ impl MessageStream {
 pub use claw_provider::{
     oauth_token_is_expired, resolve_saved_oauth_token, resolve_startup_auth_source, OAuthTokenSet,
 };
+#[allow(dead_code)]
 #[must_use]
 pub fn read_base_url() -> String {
     claw_provider::read_base_url()
 }
 
+#[allow(dead_code)]
 #[must_use]
 pub fn read_xai_base_url() -> String {
     openai_compat::read_base_url(OpenAiCompatConfig::xai())
@@ -121,7 +129,7 @@ pub fn read_xai_base_url() -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::providers::{detect_provider_kind, resolve_model_alias, ProviderKind};
+    use crate::modules::api::providers::{detect_provider_kind, resolve_model_alias, ProviderKind};
 
     #[test]
     fn resolves_existing_and_grok_aliases() {

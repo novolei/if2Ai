@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::json::JsonValue;
-use crate::sandbox::{FilesystemIsolationMode, SandboxConfig};
+use super::json::JsonValue;
+use super::sandbox::{FilesystemIsolationMode, SandboxConfig};
 
 pub const CLAW_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 
@@ -507,7 +509,7 @@ fn read_optional_json_object(
 
     let parsed = match JsonValue::parse(&contents) {
         Ok(parsed) => parsed,
-        Err(error) if is_legacy_config => return Ok(None),
+        Err(_error) if is_legacy_config => return Ok(None),
         Err(error) => return Err(ConfigError::Parse(format!("{}: {error}", path.display()))),
     };
     let Some(object) = parsed.as_object() else {
@@ -938,12 +940,12 @@ fn push_unique(target: &mut Vec<String>, value: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use crate::modules::runtime::config::{
         ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ResolvedPermissionMode,
         CLAW_SETTINGS_SCHEMA_NAME,
     };
-    use crate::json::JsonValue;
-    use crate::sandbox::FilesystemIsolationMode;
+    use crate::modules::runtime::json::JsonValue;
+    use crate::modules::runtime::sandbox::FilesystemIsolationMode;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 

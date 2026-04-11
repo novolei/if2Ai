@@ -3,7 +3,7 @@ use std::process::Command;
 
 use serde_json::json;
 
-use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+use super::config::{RuntimeFeatureConfig, RuntimeHookConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
@@ -299,8 +299,8 @@ impl CommandWithStdin {
 
 #[cfg(test)]
 mod tests {
-    use super::{HookRunResult, HookRunner};
-    use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use crate::modules::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use crate::modules::runtime::hooks::{HookRunResult, HookRunner};
 
     #[test]
     fn allows_exit_code_zero_and_captures_stdout() {

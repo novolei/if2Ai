@@ -1,4 +1,6 @@
-use crate::runtime::session::{ContentBlock, ConversationMessage, MessageRole, Session};
+#![allow(dead_code)]
+
+use super::session::{ContentBlock, ConversationMessage, MessageRole, Session};
 
 const COMPACT_CONTINUATION_PREAMBLE: &str =
     "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n";
@@ -501,11 +503,13 @@ fn extract_summary_timeline(summary: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use crate::modules::runtime::compact::{
         collect_key_files, compact_session, estimate_session_tokens, format_compact_summary,
         get_compact_continuation_message, infer_pending_work, should_compact, CompactionConfig,
     };
-    use crate::runtime::session::{ContentBlock, ConversationMessage, MessageRole, Session};
+    use crate::modules::runtime::session::{
+        ContentBlock, ConversationMessage, MessageRole, Session,
+    };
 
     #[test]
     fn formats_compact_summary_like_upstream() {

@@ -3,6 +3,7 @@
 mod commands;
 mod modules;
 
+#[allow(unused_imports)]
 use tauri::Manager;
 
 #[tauri::command]

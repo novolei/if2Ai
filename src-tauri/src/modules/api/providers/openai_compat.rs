@@ -1,11 +1,13 @@
+#![allow(dead_code)]
+
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::api::error::ApiError;
-use crate::api::types::{
+use crate::modules::api::error::ApiError;
+use crate::modules::api::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,
     MessageResponse, MessageStartEvent, MessageStopEvent, OutputContentBlock, StreamEvent,
@@ -939,8 +941,8 @@ mod tests {
         build_chat_completion_request, chat_completions_endpoint, normalize_finish_reason,
         openai_tool_choice, parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig,
     };
-    use crate::api::error::ApiError;
-    use crate::api::types::{
+    use crate::modules::api::error::ApiError;
+    use crate::modules::api::types::{
         InputContentBlock, InputMessage, MessageRequest, ToolChoice, ToolDefinition,
         ToolResultContentBlock,
     };

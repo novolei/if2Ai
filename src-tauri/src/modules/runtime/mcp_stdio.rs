@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::io;
 use std::process::Stdio;
@@ -8,9 +10,9 @@ use serde_json::Value as JsonValue;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-use crate::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
-use crate::mcp::mcp_tool_name;
-use crate::mcp_client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
+use super::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
+use super::mcp::mcp_tool_name;
+use super::mcp_client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
@@ -815,12 +817,12 @@ mod tests {
     use serde_json::json;
     use tokio::runtime::Builder;
 
-    use crate::config::{
+    use crate::modules::runtime::config::{
         ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
         McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
     };
-    use crate::mcp::mcp_tool_name;
-    use crate::mcp_client::McpClientBootstrap;
+    use crate::modules::runtime::mcp::mcp_tool_name;
+    use crate::modules::runtime::mcp_client::McpClientBootstrap;
 
     use super::{
         spawn_mcp_stdio_process, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
@@ -1136,8 +1138,10 @@ mod tests {
         McpClientBootstrap::from_scoped_config("stdio server", &config)
     }
 
-    fn script_transport(script_path: &Path) -> crate::mcp_client::McpStdioTransport {
-        crate::mcp_client::McpStdioTransport {
+    fn script_transport(
+        script_path: &Path,
+    ) -> crate::modules::runtime::mcp_client::McpStdioTransport {
+        crate::modules::runtime::mcp_client::McpStdioTransport {
             command: python_command(),
             args: vec![script_path.to_string_lossy().into_owned()],
             env: BTreeMap::new(),
@@ -1225,7 +1229,7 @@ mod tests {
     fn rejects_non_stdio_bootstrap() {
         let config = ScopedMcpServerConfig {
             scope: ConfigSource::Local,
-            config: McpServerConfig::Sdk(crate::config::McpSdkServerConfig {
+            config: McpServerConfig::Sdk(crate::modules::runtime::config::McpSdkServerConfig {
                 name: "sdk-server".to_string(),
             }),
         };
@@ -1323,7 +1327,7 @@ mod tests {
             .expect("runtime");
         runtime.block_on(async {
             let script_path = write_echo_script();
-            let transport = crate::mcp_client::McpStdioTransport {
+            let transport = crate::modules::runtime::mcp_client::McpStdioTransport {
                 command: "/bin/sh".to_string(),
                 args: vec![script_path.to_string_lossy().into_owned()],
                 env: BTreeMap::from([("MCP_TEST_TOKEN".to_string(), "direct-secret".to_string())]),

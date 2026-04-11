@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::{ConfigError, ConfigLoader, RuntimeConfig};
-use lsp::LspContextEnrichment;
+use super::config::{ConfigError, ConfigLoader, RuntimeConfig};
+use super::lsp::LspContextEnrichment;
 
 #[derive(Debug)]
 pub enum PromptBuildError {
@@ -506,7 +508,7 @@ mod tests {
         render_instruction_content, render_instruction_files, truncate_instruction_content,
         ContextFile, ProjectContext, SystemPromptBuilder, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     };
-    use crate::config::ConfigLoader;
+    use crate::modules::runtime::config::ConfigLoader;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -520,7 +522,10 @@ mod tests {
     }
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::test_env_lock()
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[test]

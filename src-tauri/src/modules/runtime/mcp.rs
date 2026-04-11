@@ -1,4 +1,6 @@
-use crate::config::{McpServerConfig, ScopedMcpServerConfig};
+#![allow(dead_code)]
+
+use super::config::{McpServerConfig, ScopedMcpServerConfig};
 
 const CLAUDEAI_SERVER_PREFIX: &str = "claude.ai ";
 const CCR_PROXY_PATH_MARKERS: [&str; 2] = ["/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"];
@@ -132,7 +134,7 @@ fn render_env_signature(map: &std::collections::BTreeMap<String, String>) -> Str
         .join(";")
 }
 
-fn render_oauth_signature(oauth: Option<&crate::config::McpOAuthConfig>) -> String {
+fn render_oauth_signature(oauth: Option<&super::config::McpOAuthConfig>) -> String {
     oauth.map_or_else(String::new, |oauth| {
         format!(
             "{}|{}|{}|{}",
@@ -205,7 +207,7 @@ fn percent_decode(value: &str) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::config::{
+    use crate::modules::runtime::config::{
         ConfigSource, McpRemoteServerConfig, McpServerConfig, McpStdioServerConfig,
         McpWebSocketServerConfig, ScopedMcpServerConfig,
     };

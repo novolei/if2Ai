@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 
-use crate::config::{McpOAuthConfig, McpServerConfig, ScopedMcpServerConfig};
-use crate::mcp::{mcp_server_signature, mcp_tool_prefix, normalize_name_for_mcp};
+use super::config::{McpOAuthConfig, McpServerConfig, ScopedMcpServerConfig};
+use super::mcp::{mcp_server_signature, mcp_tool_prefix, normalize_name_for_mcp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpClientTransport {
@@ -121,7 +123,7 @@ impl McpClientAuth {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::config::{
+    use crate::modules::runtime::config::{
         ConfigSource, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
         McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
     };

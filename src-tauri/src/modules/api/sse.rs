@@ -1,5 +1,5 @@
-use crate::error::ApiError;
-use crate::types::StreamEvent;
+use super::error::ApiError;
+use super::types::StreamEvent;
 
 #[derive(Debug, Default)]
 pub struct SseParser {
@@ -103,7 +103,9 @@ pub fn parse_frame(frame: &str) -> Result<Option<StreamEvent>, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::{parse_frame, SseParser};
-    use crate::types::{ContentBlockDelta, MessageDelta, OutputContentBlock, StreamEvent, Usage};
+    use crate::modules::api::types::{
+        ContentBlockDelta, MessageDelta, OutputContentBlock, StreamEvent, Usage,
+    };
 
     #[test]
     fn parses_single_frame() {
@@ -116,7 +118,7 @@ mod tests {
         assert_eq!(
             event,
             Some(StreamEvent::ContentBlockStart(
-                crate::types::ContentBlockStartEvent {
+                crate::modules::api::types::ContentBlockStartEvent {
                     index: 0,
                     content_block: OutputContentBlock::Text {
                         text: "Hi".to_string(),
@@ -141,7 +143,7 @@ mod tests {
         assert_eq!(
             events,
             vec![StreamEvent::ContentBlockDelta(
-                crate::types::ContentBlockDeltaEvent {
+                crate::modules::api::types::ContentBlockDeltaEvent {
                     index: 0,
                     delta: ContentBlockDelta::TextDelta {
                         text: "Hello".to_string(),
@@ -171,7 +173,7 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                StreamEvent::MessageDelta(crate::types::MessageDeltaEvent {
+                StreamEvent::MessageDelta(crate::modules::api::types::MessageDeltaEvent {
                     delta: MessageDelta {
                         stop_reason: Some("tool_use".to_string()),
                         stop_sequence: None,
@@ -183,7 +185,7 @@ mod tests {
                         output_tokens: 2,
                     },
                 }),
-                StreamEvent::MessageStop(crate::types::MessageStopEvent {}),
+                StreamEvent::MessageStop(crate::modules::api::types::MessageStopEvent {}),
             ]
         );
     }
@@ -207,7 +209,7 @@ mod tests {
         assert_eq!(
             event,
             Some(StreamEvent::ContentBlockDelta(
-                crate::types::ContentBlockDeltaEvent {
+                crate::modules::api::types::ContentBlockDeltaEvent {
                     index: 0,
                     delta: ContentBlockDelta::TextDelta {
                         text: "Hello".to_string(),
@@ -228,7 +230,7 @@ mod tests {
         assert_eq!(
             event,
             Some(StreamEvent::ContentBlockStart(
-                crate::types::ContentBlockStartEvent {
+                crate::modules::api::types::ContentBlockStartEvent {
                     index: 0,
                     content_block: OutputContentBlock::Thinking {
                         thinking: String::new(),
@@ -256,7 +258,7 @@ mod tests {
         assert_eq!(
             thinking_event,
             Some(StreamEvent::ContentBlockDelta(
-                crate::types::ContentBlockDeltaEvent {
+                crate::modules::api::types::ContentBlockDeltaEvent {
                     index: 0,
                     delta: ContentBlockDelta::ThinkingDelta {
                         thinking: "step 1".to_string(),
@@ -267,7 +269,7 @@ mod tests {
         assert_eq!(
             signature_event,
             Some(StreamEvent::ContentBlockDelta(
-                crate::types::ContentBlockDeltaEvent {
+                crate::modules::api::types::ContentBlockDeltaEvent {
                     index: 0,
                     delta: ContentBlockDelta::SignatureDelta {
                         signature: "sig_123".to_string(),

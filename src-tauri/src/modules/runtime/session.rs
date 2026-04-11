@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -5,8 +7,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::json::{JsonError, JsonValue};
-use crate::usage::TokenUsage;
+use super::json::{JsonError, JsonValue};
+use super::usage::TokenUsage;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -383,7 +385,7 @@ fn required_u32(object: &BTreeMap<String, JsonValue>, key: &str) -> Result<u32, 
 #[cfg(test)]
 mod tests {
     use super::{ContentBlock, ConversationMessage, MessageRole, Session};
-    use crate::usage::TokenUsage;
+    use crate::modules::runtime::usage::TokenUsage;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 

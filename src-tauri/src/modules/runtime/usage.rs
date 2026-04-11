@@ -1,4 +1,6 @@
-use crate::session::Session;
+#![allow(dead_code)]
+
+use super::session::Session;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_INPUT_COST_PER_MILLION: f64 = 15.0;
@@ -212,7 +214,9 @@ impl UsageTracker {
 #[cfg(test)]
 mod tests {
     use super::{format_usd, pricing_for_model, TokenUsage, UsageTracker};
-    use crate::session::{ContentBlock, ConversationMessage, MessageRole, Session};
+    use crate::modules::runtime::session::{
+        ContentBlock, ConversationMessage, MessageRole, Session,
+    };
 
     #[test]
     fn tracks_true_cumulative_usage() {
