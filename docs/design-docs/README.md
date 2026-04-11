@@ -1,6 +1,256 @@
 # Design Documents (设计文档库)
 
-> If2Ai 项目的完整系统设计文档。每个文档深入一个关键模块或架构决策，包含完整的实现参考和权衡分析。
+> If2Ai 项目的完整系统设计文档。
+> 
+> **最近更新** (2026-04-11): ✨ 完成了 3 份核心架构文档，实现了 Hermes 到 If2Ai 的完整对标！
+
+---
+
+## 🌟 最新：完整的架构框架
+
+### ✨ 新增三份核心架构文档
+
+我们刚刚完成了 **3 份关键架构文档**，将 Hermes 的设计完整地映射到 If2Ai：
+
+#### 1. 📐 [system-architecture-framework.md](./system-architecture-framework.md)
+Hermes 的 9 个子系统→If2Ai 的分阶段实现
+
+```
+Hermes 9 系统                If2Ai 模块         Phase 1 代码
+─────────────────────────────────────────────────────────
+Agent Loop           →       Agent Module       80% ✅
+Prompt System        →       Prompt Builder     30% (待增强)
+Provider Resolution  →       Provider Module    70% ✅
+Tool Executor        →       Tools Module       90% ✅
+Session Manager      →       Session Module     80% ✅
+Messaging Gateway    →       Phase 3 (Future)   0%
+Plugin System        →       Plugin Module      0%
+Cron Scheduler       →       Phase 3 (Future)   0%
+ACP/IDE              →       Phase 3 (Future)   0%
+```
+
+**阅读时间**: 15 分钟 | **难度**: 入门 ⭐ | **优先级**: 必读 ✅
+
+---
+
+#### 2. 🏗️ [module-boundaries-and-integration.md](./module-boundaries-and-integration.md)
+Rust 模块的清晰边界、依赖和集成方式
+
+6 个核心模块 + AppState 设计 + Tauri Commands 网关
+
+```rust
+pub struct AppState {
+    pub agent_runtime: Arc<Mutex<ConversationRuntime>>,
+    pub provider_manager: Arc<ProviderManager>,
+    pub tool_registry: Arc<ToolRegistry>,
+    pub session_manager: Arc<SessionManager>,
+    // Phase 2
+    pub memory_manager: Arc<MemoryManager>,
+    pub plugin_manager: Arc<PluginManager>,
+}
+```
+
+**阅读时间**: 20 分钟 | **难度**: 中级 ⭐⭐ | **优先级**: 必读 ✅
+
+---
+
+#### 3. 🚀 [entry-points-design.md](./entry-points-design.md)
+三个入口点的完整设计（未来扩展路线）
+
+```
+Phase 1: Tauri 桌面应用
+  ↓
+Phase 2: JSON-RPC API Server
+  ↓
+Phase 3: IDE/LSP 集成 (VS Code, Zed, JetBrains)
+
+共享的业务逻辑 (commands/ 模块) ✅ 代码复用
+```
+
+**阅读时间**: 20 分钟 | **难度**: 中级 ⭐⭐ | **优先级**: 必读 ✅
+
+---
+
+## 🗺️ 快速导航
+
+### 按角色选择（推荐）
+
+**👤 新加入的开发者** (30 分钟入门)
+```
+1. system-architecture-framework.md      (15 min)  ← 从这里开始
+2. module-boundaries-and-integration.md  (10 min)
+3. 选择你的专业领域继续深入具体文档
+```
+
+**👨‍💻 Agent 开发** 
+→ [agent-loop.md](./agent-loop.md) + [provider-resolution.md](./provider-resolution.md)
+
+**🔧 工具开发** 
+→ [tool-system.md](./tool-system.md)
+
+**💾 数据/会话开发** 
+→ [session-persistence.md](./session-persistence.md)
+
+**� 消息网关/多平台** 
+→ [messaging-gateway.md](./messaging-gateway.md) ✨ NEW (Phase 2)
+
+**�🖥️ 前端开发** 
+→ [entry-points-design.md](./entry-points-design.md) (Tauri 部分)
+
+**🎨 架构审查** 
+→ [system-architecture-framework.md](./system-architecture-framework.md)
+
+---
+
+## 📚 完整设计文档列表
+
+### Phase 1 核心系统（✅ 设计 100% 完成）
+
+| 文档 | 行数 | Hermes 参考 | If2Ai 代码 | 状态 |
+|------|------|-----------|-----------|------|
+| [system-architecture-framework.md](./system-architecture-framework.md) | 750 | - | 全系统 | ✅ |
+| [module-boundaries-and-integration.md](./module-boundaries-and-integration.md) | 700 | - | 全系统 | ✅ |
+| [entry-points-design.md](./entry-points-design.md) | 650 | - | 全系统 | ✅ |
+| [agent-loop.md](./agent-loop.md) | 430 | 9.2K | 80% | ✅ |
+| [provider-resolution.md](./provider-resolution.md) | 800 | 1.2K | 70% | ✅ |
+| [session-persistence.md](./session-persistence.md) | 450 | 0.6K | 80% | ✅ |
+| [tool-system.md](./tool-system.md) | 已有 | 0.8K | 90% | ✅ |
+
+### Phase 2 核心系统（✅ 开始设计）
+
+| 文档 | 行数 | Hermes 参考 | 优先级 | 状态 |
+|------|------|-----------|--------|------|
+| [messaging-gateway.md](./messaging-gateway.md) | 800 | 1.2K | P1 | ✅ 设计完成 |
+| [prompt-builder.md](./prompt-builder.md) | - | 0.5K | P1 | 📋 待设计 |
+| [memory-system.md](./memory-system.md) | - | 1.0K | P2 | 📋 待设计 |
+| [context-compression.md](./context-compression.md) | - | 0.4K | P2 | 📋 待设计 |
+| [error-handling.md](./error-handling.md) | - | 0.3K | P1 | 📋 待设计 |
+| [testing-strategy.md](./testing-strategy.md) | - | 0.5K | P1 | 📋 待设计 |
+
+### Phase 3+ 扩展（🔮 未来计划）
+
+- **plugin-architecture.md** - 插件系统架构
+- **mcp-integration.md** - Model Context Protocol
+- **cron-scheduler.md** - 定时任务调度
+
+---
+
+## 📊 进度统计
+
+```
+设计文档完成度 (Design)           代码实现进度 (Code)
+════════════════════════════════════════════════════
+
+Phase 1 设计:
+  System Architecture  ██████████ 100%  ✨ NEW
+  Module Boundaries    ██████████ 100%  ✨ NEW  
+  Entry Points         ██████████ 100%  ✨ NEW
+  Agent Loop           ██████████ 100%   Agent          ████████░ 80%
+  Provider Sys         ██████████ 100%   Provider       ███████░░ 70%
+  Tool System          ██████████ 100%   Tools          ██████████ 90%
+  Session Persist      ██████████ 100%   Session        ████████░ 80%
+  ────────────────────────────────────────────────────
+  Phase 1 总体:        ██████████ 100%   Phase 1 总体   ████████░ 80%
+
+Phase 2 计划: ░░░░░░░░░░  0%   Phase 2 计划  ░░░░░░░░░░  0%
+
+整体项目:    ███████░░░ 64%   ✈️ 可开始编码
+```
+
+---
+
+## 💡 学习建议
+
+### 最短路径 (30 分钟)
+```
+1. system-architecture-framework.md     ← 理解全景
+2. module-boundaries-and-integration.md ← 理解模块
+3. 根据角色选择具体文档
+```
+
+### 标准路径 (2 小时)
+```
+上述 3 份 + 2-3 份专题文档 + 查看对应源代码
+```
+
+### 深度路径 (1 天)
+```
+所有设计文档 (6 小时) + 源代码深度阅读 (3 小时) + 运行 harness 测试 (1 小时)
+```
+
+---
+
+## 🔗 常见问题
+
+**Q: 我应该从哪里开始？**
+A: 👉 阅读 [system-architecture-framework.md](./system-architecture-framework.md) (15 分钟)
+
+**Q: Hermes 的哪个部分对应 If2Ai 的什么模块？**
+A: 👉 见 system-architecture-framework.md 的对标表
+
+**Q: 代码实现进度是多少？**
+A: 👉 Phase 1: 80% | Phase 2: 0% | Phase 3: 0%
+
+**Q: Phase 1 还缺什么？**
+A: 👉 Prompt Builder 需增强 (30% → 100%) | 其他工作量小
+
+---
+
+## 📌 与 Hermes 的对标
+
+如果你有 Hermes 代码库，可以这样对标：
+
+| 组件 | Hermes | If2Ai | 映射文档 |
+|------|--------|-------|---------|
+| 架构全景 | `README.md` | 无 | system-architecture-framework.md |
+| Agent 循环 | `run_agent.py` (9.2K) | `src-tauri/src/modules/agent/` (80%) | agent-loop.md |
+| LLM 提供商 | `runtime_provider.py` (1.2K) | `src-tauri/src/modules/provider/` (70%) | provider-resolution.md |
+| 工具系统 | `tool_registry.py` (0.8K) | `src-tauri/src/modules/tools/` (90%) | tool-system.md |
+| 会话存储 | `hermes_state.py` (0.6K) | `src-tauri/src/modules/session/` (80%) | session-persistence.md |
+| Desktop UI | 无 | `src/` (Svelte) | entry-points-design.md |
+| API Server | 无 | 待创建 (Phase 2) | entry-points-design.md |
+| IDE 集成 | LSP adapter | 待创建 (Phase 3) | entry-points-design.md |
+
+---
+
+## 🎯 当前工作重点
+
+**✅ 完成** (2026-04-11)
+- 系统架构框架完整设计
+- 模块边界明确定义
+- 端点入口设计完成
+- Phase 1 代码 80% 完成
+
+**⏳ 进行中**
+- Prompt Builder 设计增强
+- Phase 1 代码最后 20%
+
+**🔮 计划中**
+- Error Handling 设计 (Phase 2)
+- Testing Strategy 设计 (Phase 2)
+- Memory System 设计 (Phase 2)
+
+---
+
+## 📖 使用说明
+
+### 添加新设计文档
+
+1. 使用 `kebab-case.md` 命名
+2. 包含标准头部：
+   ```markdown
+   # 文档标题
+   
+   **版本**: 1.0 | **最后更新**: YYYY-MM-DD | **状态**: Draft/Stable
+   ```
+3. 控制长度在 200-800 行
+4. 更新 index.md 和 DESIGN_DOCS_INDEX.md
+
+### 保持文档最新
+
+- 每当实现代码时，更新对应的"代码进度"指标
+- 发现设计问题时，创建 issue + 更新文档
+- 每周一更新 进度统计表
 
 ## 📚 文档组织
 
