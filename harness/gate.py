@@ -120,6 +120,69 @@ def _gate(name: str, cmd: list[str], cwd: Path, timeout: int) -> GateResult:
 # Gate implementations
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _symbol_check_gate(workspace_root: Path, checks: list[dict]) -> GateResult:
+    """
+    Inner helper: verify that required symbols (functions/structs/traits) exist
+    in specific source files using grep.
+
+    Each check entry:
+      file: "src-tauri/src/modules/runtime/conversation.rs"
+      grep: "pub async fn run_conversation"
+      label: "run_conversation() — agent-loop.md §2.2"   # optional, for reporting
+    """
+    t0 = time.monotonic()
+    failures: list[str] = []
+    passes: list[str] = []
+
+    for check in checks:
+        target_file = workspace_root / check["file"]
+        pattern = check["grep"]
+        label = check.get("label", pattern)
+
+        if not target_file.exists():
+            failures.append(f"  MISSING FILE  {check['file']} — {label}")
+            continue
+
+        try:
+            content = target_file.read_text(encoding="utf-8", errors="replace")
+            if pattern in content:
+                passes.append(f"  ✅  {label}")
+            else:
+                failures.append(f"  ❌  NOT FOUND: '{pattern}' in {check['file']}\n       → {label}")
+        except Exception as e:
+            failures.append(f"  ❌  READ ERROR: {check['file']}: {e}")
+
+    elapsed = time.monotonic() - t0
+    output = "\n".join(passes + failures)
+    if failures:
+        return GateResult(
+            gate="symbol_check",
+            status=GateStatus.FAIL,
+            duration_s=elapsed,
+            output=output,
+            error=f"{len(failures)} required symbol(s) not found — implement them per design_ref",
+        )
+    return GateResult(
+        gate="symbol_check",
+        status=GateStatus.PASS,
+        duration_s=elapsed,
+        output=output,
+    )
+
+
+def symbol_gate(
+    workspace_root: Path,
+    checks: list[dict],
+) -> GateResult:
+    """
+    Standalone symbol existence gate (called directly, not via suite YAML).
+
+    Checks that required public functions/structs/traits exist in source files.
+    Used as a quick sanity check that impl_targets were actually modified.
+    """
+    return _symbol_check_gate(workspace_root, checks)
+
+
 def compile_gate(workspace_root: Path, package: str = "if2ai-backend") -> GateResult:
     """
     Layer 1: cargo check — syntax and type correctness.
@@ -194,6 +257,9 @@ def behavior_gate(
     runner_type = suite_data.get("runner", "cargo_test")
     test_cases = suite_data.get("test_cases", [])
 
+    if runner_type == "symbol_check":
+        return _symbol_check_gate(workspace_root, test_cases)
+
     if runner_type != "cargo_test":
         return GateResult(
             gate="behavior_gate",
@@ -262,6 +328,7 @@ def run_all_gates(
     package: str = "if2ai-backend",
     test_filter: Optional[str] = None,
     suite_path: Optional[str] = None,
+    symbol_checks: Optional[list] = None,
     skip_behavior: bool = False,
 ) -> HarnessReport:
     """
@@ -289,6 +356,13 @@ def run_all_gates(
     report.results.append(r1)
     if not r1.passed:
         return report
+
+    # Layer 1b — symbol existence check (verifies impl_targets were actually modified)
+    if symbol_checks:
+        r1b = symbol_gate(workspace_root, symbol_checks)
+        report.results.append(r1b)
+        if not r1b.passed:
+            return report
 
     # Layer 2
     r2 = test_gate(workspace_root, package, test_filter)

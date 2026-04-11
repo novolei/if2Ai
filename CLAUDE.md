@@ -25,37 +25,45 @@
 1. READ   → 读取 exec-plan，找到第一个 status: pending 的 slice
 2. READ   → 读取该 slice 的 design_ref 文档（必须，不能跳过）
 3. READ   → 读取 impl_targets 中的现有文件（理解当前状态）
-4. IMPL   → 实现代码，严格遵守 design_ref 中的接口定义；遵守 coding-style-and-lint-contract.md 的 Code Shape / Modularization 规则
-5. LINT   → 强制运行 lint 合约（见下方 Lint 合约）：cargo fmt + clippy + test 全部通过方可继续
-6. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
-7. FIX    → 如果有失败的 gate 或 lint，修复代码，回到步骤 5
-8. REVIEW → 使用 code-reviewer sub-agent 审查代码（`.claude/agents/code-reviewer.md`）：
+4. GAP    → **先做 gap analysis，再动笔**：
+           a. 读取 slice 的 `current_state` 字段，确认哪些文件存在、哪些对应接口缺失
+           b. 读取 slice 的 `must_implement` 字段，逐条确认每个签名是否在文件中已存在
+           c. 如果 impl_targets 中的文件已存在，**逐段对照 design_ref 验证接口一致性**
+           d. 列出 "TO-DO LIST"：缺失的函数/struct/文件，**此列表必须非空才能继续**
+           ❌ 如果 gap analysis 发现所有接口都已存在 → 说明 current_state 有误或 design_ref
+              定义需要细化，必须停下来检查，而不是直接跳到步骤 5
+5. IMPL   → 按 gap analysis 的 TO-DO LIST 实现代码，严格遵守 design_ref 中的接口定义；
+           遵守 coding-style-and-lint-contract.md 的 Code Shape / Modularization 规则
+6. LINT   → 强制运行 lint 合约（见下方 Lint 合约）：cargo fmt + clippy + test 全部通过方可继续
+7. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
+8. FIX    → 如果有失败的 gate 或 lint，修复代码，回到步骤 5
+9. REVIEW → 使用 code-reviewer sub-agent 审查代码（`.claude/agents/code-reviewer.md`）：
            直接说「Use the code-reviewer subagent to review slice <id>」
            或运行备用命令：python -m harness.runner review --slice <id> --workspace .
            sub-agent/命令输出 REVIEW_PASS 才能继续；REVIEW_FAIL 则回到步骤 5
-9. FIX      → 如果 review 有 FAIL 条目，修复，回到步骤 5
-10. DIFF-GATE → 运行 python -m harness.runner diff-gate --workspace .
+10. FIX      → 如果 review 有 FAIL 条目，修复，回到步骤 5
+11. DIFF-GATE → 运行 python -m harness.runner diff-gate --workspace .
              输出 DIFF_GATE PASS 才能继续；
              DIFF_GATE FAIL 意味着没有写代码，必须回到步骤 4 实现代码。
              ❌ 严禁：仅凭迁移来的旧代码已通过测试就标记 slice done
-11. COMMIT → git commit（见下方提交规范）
-12. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
-13. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
-14. REPORT → 更新 docs/generated/QUALITY_SCORE.md（追加变更记录一行）
-15. STATUS → 运行 python -m harness.runner status --workspace . 并将输出写入执行日志
-16. NEXT   → 回到步骤 1，处理下一个 slice
+12. COMMIT → git commit（见下方提交规范）
+13. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
+14. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
+15. REPORT → 更新 docs/generated/QUALITY_SCORE.md（追加变更记录一行）
+16. STATUS → 运行 python -m harness.runner status --workspace . 并将输出写入执行日志
+17. NEXT   → 回到步骤 1，处理下一个 slice
 ```
 
 **停止条件**：所有 slice 都是 `status: done`，或遇到 `human_checkpoint`。
 
 > **⚠️ 代码实现原则（最高优先级）**：  
 > 每个 slice 的 `impl_targets` 列出了需要创建或修改的文件。  
-> **impl_targets 中的每个文件都必须被本 slice 的实现修改过**，否则不能进入步骤 10 DIFF-GATE。  
+> **impl_targets 中的每个文件都必须被本 slice 的实现修改过**，否则不能进入步骤 11 DIFF-GATE。  
 > 如果 impl_targets 中的文件已经存在（迁移来的旧代码），你**必须逐行对照 design_ref 验证接口定义**，修复不一致之处，并补充缺失的接口。  
 > 「测试已通过」**不等于**「接口正确实现」——旧代码可能存在错误的接口，测试只测了已有函数。
 
 > **🔁 自动继续原则（重要）**：  
-> 完成一个 slice 的步骤 15 NEXT 后，**立即自动开始下一个 pending slice，不要暂停、不要询问用户是否继续**。  
+> 完成一个 slice 的步骤 17 NEXT 后，**立即自动开始下一个 pending slice，不要暂停、不要询问用户是否继续**。  
 > 唯一允许停下来等待人工的场合是：遇到 `human_checkpoint`，或 gate 失败超过 3 次进入 blocked 状态。  
 > 对于设计文档中的歧义或依赖缺失（如 ProviderManager 未实现），选择保守方案（用 trait + mock）自行决策并在 commit message 中说明，不要停下来询问。
 
@@ -81,7 +89,7 @@
 | 按有界上下文分模块，不按文件大小                    | Modularization   | review                     |
 | 新增 `allow(...)` 必须在代码或 slice 记录中说明理由 | Lint Contract    | review                     |
 
-### 强制 Lint 合约（步骤 5 LINT）
+### 强制 Lint 合约（步骤 6 LINT）
 
 每个 slice 在提交前 **必须全部通过**：
 
@@ -160,15 +168,15 @@ python -m harness.runner review --slice <id> --workspace .
 
 该命令自动检查：
 
-| 检查项 | 说明 |
-|--------|------|
-| `cargo fmt --check` | 格式是否符合规范 |
-| `cargo clippy -D warnings` | 无 lint 警告 |
-| `no unwrap()/expect()` | 非测试代码中无不安全调用 |
-| `no todo!()/unimplemented!()` | 无未完成占位符 |
-| `no hardcoded secrets` | 无硬编码 API key |
-| `pub fn has /// doc comment` | 公开函数有文档注释 |
-| slice review_checklist | 打印当前 slice 的检查项供人工参考 |
+| 检查项                        | 说明                              |
+| ----------------------------- | --------------------------------- |
+| `cargo fmt --check`           | 格式是否符合规范                  |
+| `cargo clippy -D warnings`    | 无 lint 警告                      |
+| `no unwrap()/expect()`        | 非测试代码中无不安全调用          |
+| `no todo!()/unimplemented!()` | 无未完成占位符                    |
+| `no hardcoded secrets`        | 无硬编码 API key                  |
+| `pub fn has /// doc comment`  | 公开函数有文档注释                |
+| slice review_checklist        | 打印当前 slice 的检查项供人工参考 |
 
 输出 `REVIEW_PASS` → 继续步骤 9  
 输出 `REVIEW_FAIL` → 修复对应条目，回到步骤 5
@@ -306,15 +314,15 @@ cat docs/references/coding-style-and-lint-contract.md
 # 激活 harness 虚拟环境（首次需要：python3 -m venv .venv && .venv/bin/pip install pyyaml）
 source .venv/bin/activate
 
-# 步骤 5 LINT — 每个 slice 必须全部通过
+# 步骤 6 LINT — 每个 slice 必须全部通过
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# 步骤 8 REVIEW — 自动静态审查（替代 sub-agent）
+# 步骤 9 REVIEW — 自动静态审查（替代 sub-agent）
 python -m harness.runner review --slice <id> --workspace .
 
-# 步骤 10 DIFF-GATE — 验证有实际代码变更（严禁 docs-only 完成 slice）
+# 步骤 11 DIFF-GATE — 验证有实际代码变更（严禁 docs-only 完成 slice）
 python -m harness.runner diff-gate --workspace .
 
 # 验证 exec-plan 格式

@@ -27,12 +27,36 @@ def cmd_run(args: argparse.Namespace) -> int:
     from harness.gate import run_all_gates
 
     workspace = Path(args.workspace).resolve()
+
+    # Extract symbol checks from slice YAML if available
+    symbol_checks: list = []
+    slice_yaml_path = _find_slice_yaml(workspace, args.slice)
+    if slice_yaml_path:
+        try:
+            import yaml  # type: ignore
+            with open(slice_yaml_path) as f:
+                plan = yaml.safe_load(f)
+            slices = plan.get("slices", []) if isinstance(plan, dict) else []
+            for s in slices:
+                if str(s.get("id", "")) == str(args.slice):
+                    for acc in s.get("acceptance", []):
+                        if acc.get("type") == "symbol":
+                            symbol_checks.append({
+                                "file": acc["file"],
+                                "grep": acc["grep"],
+                                "label": acc.get("label", acc["grep"]),
+                            })
+                    break
+        except Exception:
+            pass  # Non-fatal: symbol checks are best-effort
+
     report = run_all_gates(
         slice_id=args.slice,
         workspace_root=workspace,
         package=args.package,
         test_filter=args.test_filter or None,
         suite_path=args.suite or None,
+        symbol_checks=symbol_checks or None,
         skip_behavior=args.skip_behavior,
     )
 
@@ -49,6 +73,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         out_path.write_text(report.to_json())
 
     return 0 if report.passed else 1
+
+
+def _find_slice_yaml(workspace: Path, slice_id: str) -> "Path | None":
+    """Locate the exec-plan YAML file containing the given slice id."""
+    active_dir = workspace / "docs" / "exec-plans" / "active"
+    if not active_dir.exists():
+        return None
+    for yaml_file in active_dir.glob("*.yaml"):
+        try:
+            content = yaml_file.read_text()
+            if f'id: "{slice_id}"' in content or f"id: '{slice_id}'" in content:
+                return yaml_file
+        except Exception:
+            pass
+    return None
 
 
 def cmd_check_slice(args: argparse.Namespace) -> int:

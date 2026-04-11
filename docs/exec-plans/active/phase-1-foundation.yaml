@@ -65,20 +65,70 @@ slices:
     design_ref: "docs/design-docs/agent-loop.md"
     impl_targets:
       - src-tauri/src/modules/runtime/conversation.rs
+
+    # ── 当前状态（executor 必须阅读此字段，了解缺什么后再动笔）─────────────
+    current_state: |
+      文件EXISTS。已有：ConversationRuntime<C,T>（泛型）、run_turn()、TurnSummary、
+      RuntimeError(message: String)、ToolExecutor trait、StaticToolExecutor。
+      ❌ MISSING — 以下接口在文件中完全不存在，必须新增：
+        1. run_conversation() 多轮对话方法（agent-loop.md §2.2）
+        2. RuntimeError 枚举变体：MaxIterationsExceeded、PermissionDenied、SessionError
+           （现在只有一个 message 字段的 struct，不是 enum with variants）
+        3. token budget 检查：run_turn() 循环内，每次调用 LLM 前检查剩余 token
+        4. build_system_prompt() 方法（agent-loop.md §3.2）
+        5. ConversationRuntime 的泛型参数改为依赖 ProviderManager trait（slice 1.4 完成后对接）
+
+    # ── 必须实现的接口（对应 design_ref 章节）──────────────────────────────
+    must_implement:
+      - |
+        // agent-loop.md §2.2 — 目前 MISSING
+        pub async fn run_conversation(
+            &mut self,
+            user_message: String,
+        ) -> Result<TurnSummary, RuntimeError>
+      - |
+        // agent-loop.md §3.3 — 现在的 RuntimeError 是 struct，必须改成 enum
+        pub enum RuntimeError {
+            ApiError(String),
+            ToolError(String),
+            PermissionDenied(String),
+            SessionError(String),
+            ConfigError(String),
+            MaxIterationsExceeded,
+        }
+      - |
+        // agent-loop.md §3.2 — 目前 MISSING
+        fn build_system_prompt(&self) -> Result<String, RuntimeError>
+      - |
+        // agent-loop.md §3.1 — run_turn() 内 LLM 调用前必须有此检查
+        // 伪代码：if self.token_budget_exceeded() { return Err(RuntimeError::MaxIterationsExceeded); }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "run_conversation"
+        label: "run_conversation() — agent-loop.md §2.2"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "MaxIterationsExceeded"
+        label: "RuntimeError::MaxIterationsExceeded — agent-loop.md §3.3"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "build_system_prompt"
+        label: "build_system_prompt() — agent-loop.md §3.2"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::conversation"
         expect: "all tests pass"
     review_checklist:
-      - "ConversationRuntime struct 字段与 agent-loop.md#core-structs 一致"
-      - "run() 方法实现了 agent-loop.md#conversation-loop 中描述的状态机"
-      - "LLM 调用通过 ProviderManager trait，不硬编码具体 provider"
-      - "token budget 检查在每次 LLM 调用前执行"
-      - "错误传播使用 ? 操作符，函数签名返回 Result<_, AgentError>"
-      - "异步代码使用 tokio runtime，无 std::thread::spawn"
-    harness_suite: ~  # Layer 3 在 1.5 完成后启用
+      - "run_conversation() 是否实现了 agent-loop.md §2.2 的多轮状态机（用户消息 → LLM → 工具 → 循环）"
+      - "RuntimeError 是否改为 enum，包含 MaxIterationsExceeded / PermissionDenied / SessionError"
+      - "run_turn() 循环内是否有 token budget 检查（见 agent-loop.md §3.1）"
+      - "build_system_prompt() 是否按 agent-loop.md §3.2 的槽位顺序构建提示"
+      - "错误传播使用 ? 操作符，函数签名返回 Result<_, RuntimeError>"
+      - "无 unwrap()（测试除外）"
+    harness_suite: ~
 
   # ───────────── Stage 2: Provider / LLM 集成 ───────────────────────────────
 
@@ -87,40 +137,128 @@ slices:
     status: pending
     design_ref: "docs/design-docs/provider-resolution.md"
     impl_targets:
-      - src-tauri/src/modules/api/providers/
+      - src-tauri/src/modules/api/providers/manager.rs   # 必须新建此文件
+
+    current_state: |
+      providers/ 目录EXISTS，已有：Provider trait（简单）、ClawApiClient、OpenAiCompatClient。
+      ❌ MISSING — 以下接口不存在，必须新建 manager.rs：
+        1. ProviderManager 结构体（按名称注册/选择 provider）
+        2. ProviderManager::register(name, client) 方法
+        3. ProviderManager::get(name) -> Option<Arc<dyn Provider>>
+        4. ProviderManager::create_message(name, request) 统一调用入口
+        5. MockProvider（固定响应，用于测试，无需真实 API key）
+
+    must_implement:
+      - |
+        // provider-resolution.md §2.2 — 必须新建 manager.rs
+        pub struct ProviderManager {
+            providers: HashMap<String, Arc<dyn Provider>>,
+            default_provider: String,
+        }
+        impl ProviderManager {
+            pub fn new(default_provider: impl Into<String>) -> Self
+            pub fn register(&mut self, name: impl Into<String>, provider: Arc<dyn Provider>)
+            pub fn get(&self, name: &str) -> Option<Arc<dyn Provider>>
+            pub async fn create_message(
+                &self,
+                provider_name: &str,
+                request: MessageRequest,
+            ) -> Result<MessageResponse, ApiError>
+        }
+      - |
+        // provider-resolution.md §测试支持 — 用于 mock 测试
+        pub struct MockProvider {
+            responses: Vec<MessageResponse>,  // 预设的响应序列
+        }
+        impl Provider for MockProvider { ... }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/api/providers/manager.rs"
+        grep: "pub struct ProviderManager"
+        label: "ProviderManager struct — provider-resolution.md §2.2"
+      - type: symbol
+        file: "src-tauri/src/modules/api/providers/manager.rs"
+        grep: "MockProvider"
+        label: "MockProvider for testing — provider-resolution.md"
       - type: test
         cmd: "cargo test -p if2ai-backend -- api::providers"
         expect: "all tests pass"
     review_checklist:
-      - "Provider trait 与 provider-resolution.md#provider-trait 定义完全一致"
-      - "ProviderManager 支持按名称动态选择 provider"
-      - "Mock provider 返回可配置的固定响应，用于测试"
-      - "所有 HTTP 调用使用 reqwest，错误正确映射到 ApiError"
-      - "API key 通过环境变量读取，不硬编码"
+      - "manager.rs 是否新建并且 register/get/create_message 方法都已实现"
+      - "MockProvider 是否实现 Provider trait，能返回可配置的固定响应"
+      - "API key 通过环境变量或构造函数传入，不硬编码"
+      - "ProviderManager 在 providers/mod.rs 中 pub use 导出"
+      - "无 unwrap()（测试除外）"
 
   - id: "1.5"
     title: "ToolRegistry 与 3 个基础工具（bash / file_read / json_parse）"
     status: pending
     design_ref: "docs/design-docs/tool-system.md"
     impl_targets:
-      - src-tauri/src/modules/tools/
+      - src-tauri/src/modules/tools/registry.rs   # 必须新建此文件
+      - src-tauri/src/modules/tools/builtin/       # 必须新建此目录下的工具文件
+
+    current_state: |
+      tools/lib.rs EXISTS，已有：GlobalToolRegistry、ToolRegistry（简单列表）、execute_tool()。
+      ❌ MISSING — 以下接口不存在，必须新建：
+        1. ToolRegistry 需重写为 DashMap-based（注册/查询/分发），见 tool-system.md §核心组件
+        2. register(entry: ToolEntry) -> Result<()>
+        3. get(name: &str) -> Option<ToolEntry>  
+        4. dispatch(name: &str, args: &JsonValue) -> Result<String>（异步，有超时）
+        5. get_definitions(toolset_names, disabled, quiet) -> Vec<JsonValue>
+        6. bash 工具实现（沙箱：超时 30s + 禁止 rm -rf / 危险命令列表）
+        7. file_read 工具实现（读取文件内容，有大小限制）
+        8. json_parse 工具实现（解析 JSON 字符串并格式化输出）
+
+    must_implement:
+      - |
+        // tool-system.md §1 ToolRegistry — 重写 registry，新建 registry.rs
+        pub struct ToolRegistry {
+            tools: Arc<DashMap<String, ToolEntry>>,
+        }
+        impl ToolRegistry {
+            pub fn new() -> Self
+            pub fn register(&self, entry: ToolEntry) -> Result<(), String>
+            pub fn get(&self, name: &str) -> Option<ToolEntry>
+            pub async fn dispatch(&self, name: &str, args: &serde_json::Value) -> Result<String, ToolError>
+            pub fn get_definitions(&self, allowed: Option<&[String]>) -> Vec<serde_json::Value>
+        }
+      - |
+        // tool-system.md §具体工具 — 新建 builtin/bash.rs
+        pub fn bash_tool_entry() -> ToolEntry  // 包含 30s 超时 + 危险命令黑名单
+      - |
+        // tool-system.md §具体工具 — 新建 builtin/file_read.rs  
+        pub fn file_read_tool_entry() -> ToolEntry  // 包含 1MB 大小限制
+      - |
+        // tool-system.md §具体工具 — 新建 builtin/json_parse.rs
+        pub fn json_parse_tool_entry() -> ToolEntry
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "pub struct ToolRegistry"
+        label: "ToolRegistry struct — tool-system.md §1"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "pub async fn dispatch"
+        label: "dispatch() — tool-system.md §1"
       - type: test
         cmd: "cargo test -p if2ai-backend -- tools"
         expect: "all tests pass"
       - type: harness
         suite: "harness/suites/tool_registry_basic.yaml"
     review_checklist:
-      - "Tool trait 与 tool-system.md#tool-interface 定义一致"
-      - "ToolRegistry.register() 和 .get() 方法实现"
-      - "bash 工具有沙箱限制（超时 + 禁止危险命令）"
-      - "每个工具有对应的单元测试"
-      - "工具返回结构化的 ToolResult，不直接返回字符串"
+      - "registry.rs 是否新建，ToolRegistry 基于 DashMap 实现"
+      - "dispatch() 是否有超时保护（tokio::time::timeout）"
+      - "bash 工具是否有危险命令黑名单检查（rm -rf, sudo 等）"
+      - "file_read 工具是否有文件大小限制（> 1MB 时截断或报错）"
+      - "每个工具有至少 1 个单元测试"
+      - "无 unwrap()（测试除外）"
 
   # ───────────── Stage 3: Session + Tauri IPC + 前端接线 ───────────────────
 
@@ -129,55 +267,200 @@ slices:
     status: pending
     design_ref: "docs/design-docs/session-persistence.md"
     impl_targets:
-      - src-tauri/src/modules/commands/session.rs
+      - src-tauri/src/modules/session/mod.rs     # 必须新建此模块
+      - src-tauri/src/modules/session/manager.rs # 必须新建此文件
+
+    current_state: |
+      src-tauri/src/modules/commands/session.rs 不存在（原 impl_target 路径有误）。
+      src-tauri/src/modules/commands/ 里只有 lib.rs（斜杠命令）和 mod.rs，无 session 管理。
+      ❌ MISSING — 整个 SessionManager 模块不存在，必须从零新建：
+        1. Session 数据结构（id, title, messages, created_at, token_count）
+        2. SessionManager 结构体
+        3. create_session(title) -> Result<Session>
+        4. restore_session(id) -> Result<Session>（从文件读）
+        5. add_user_message(session_id, content) -> Result<()>
+        6. add_assistant_message(session_id, content, tool_calls, tokens) -> Result<()>
+        7. list_sessions() -> Result<Vec<SessionMeta>>
+        8. delete_session(id) -> Result<()>
+        9. 持久化：每个会话存 ~/.if2ai/sessions/<id>.json
+
+    must_implement:
+      - |
+        // session-persistence.md §数据结构
+        pub struct Session {
+            pub id: String,          // UUID v4
+            pub title: String,
+            pub messages: Vec<ConversationMessage>,
+            pub created_at: String,  // RFC3339
+            pub token_count: u64,
+        }
+        pub struct SessionMeta { pub id: String, pub title: String, pub created_at: String }
+      - |
+        // session-persistence.md §SessionManager
+        pub struct SessionManager { sessions_dir: PathBuf }
+        impl SessionManager {
+            pub fn new(sessions_dir: PathBuf) -> Self
+            pub async fn create_session(&self, title: impl Into<String>) -> Result<Session, SessionError>
+            pub async fn restore_session(&self, id: &str) -> Result<Session, SessionError>
+            pub async fn save_session(&self, session: &Session) -> Result<(), SessionError>
+            pub async fn add_message(&self, session_id: &str, msg: ConversationMessage) -> Result<(), SessionError>
+            pub async fn list_sessions(&self) -> Result<Vec<SessionMeta>, SessionError>
+            pub async fn delete_session(&self, id: &str) -> Result<(), SessionError>
+        }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "pub struct SessionManager"
+        label: "SessionManager — session-persistence.md"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "create_session"
+        label: "create_session() — session-persistence.md"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "restore_session"
+        label: "restore_session() — session-persistence.md"
       - type: test
-        cmd: "cargo test -p if2ai-backend -- commands::session"
+        cmd: "cargo test -p if2ai-backend -- session"
         expect: "all tests pass"
     review_checklist:
-      - "Session data schema 与 data-schema.md 中定义一致"
-      - "持久化到 ~/.if2ai/sessions/*.json（使用 tauri::path::app_data_dir）"
-      - "Session ID 使用 UUID v4"
-      - "消息追加操作是幂等的"
+      - "session/manager.rs 是否从零新建（不是修改现有的 commands/lib.rs）"
+      - "Session ID 是否使用 UUID v4（uuid crate）"
+      - "持久化路径是否使用 PathBuf，支持 ~/.if2ai/sessions/ 或可配置路径"
+      - "JSON 序列化使用 serde_json，不手动拼接字符串"
+      - "文件读写失败是否映射到 SessionError 而非 panic"
 
   - id: "1.7"
-    title: "Tauri Commands 网关（send_message / list_sessions / get_session）"
+    title: "Tauri Commands 网关（run_agent_turn / list_sessions / list_tools）"
     status: pending
     design_ref: "docs/design-docs/entry-points-design.md"
     impl_targets:
-      - src-tauri/src/commands/
+      - src-tauri/src/commands/agent.rs    # 必须新建
+      - src-tauri/src/commands/session.rs  # 必须新建
+      - src-tauri/src/commands/mod.rs      # 修改：re-export + AppState 定义
+      - src-tauri/src/lib.rs               # 修改：注册所有 commands
+
+    current_state: |
+      src-tauri/src/commands/mod.rs 存在但只有一行注释，无任何 tauri command。
+      src-tauri/src/commands/agent.rs 不存在。
+      src-tauri/src/commands/session.rs 不存在。
+      src-tauri/src/lib.rs 是否有 invoke_handler 注册未知，需检查。
+      ❌ MISSING — 所有 Tauri IPC 命令从零新建：
+        1. AppState 结构体（持有 SessionManager + ToolRegistry）
+        2. run_agent_turn(state, session_id, user_message) -> Result<RunAgentTurnResponse, String>
+        3. run_conversation(state, session_id, user_message) -> Result<String, String>
+        4. list_sessions(state) -> Result<Vec<SessionMeta>, String>
+        5. delete_session(state, id) -> Result<(), String>
+        6. list_tools(state) -> Result<Vec<ToolInfo>, String>
+        7. 在 tauri::Builder 中 invoke_handler 注册以上所有命令
+
+    must_implement:
+      - |
+        // entry-points-design.md §2.2 — agent.rs
+        #[derive(serde::Serialize)]
+        pub struct RunAgentTurnResponse { pub message: String, pub session_id: String }
+
+        #[tauri::command]
+        pub async fn run_agent_turn(
+            state: tauri::State<'_, AppState>,
+            session_id: String,
+            user_message: String,
+        ) -> Result<RunAgentTurnResponse, String>
+      - |
+        // entry-points-design.md §2.2 — mod.rs 中的 AppState
+        pub struct AppState {
+            pub session_manager: Arc<SessionManager>,
+            pub tool_registry: Arc<ToolRegistry>,
+        }
+        impl AppState { pub fn new() -> Self }
+      - |
+        // entry-points-design.md §2.2 — session.rs
+        #[tauri::command]
+        pub async fn list_sessions(state: tauri::State<'_, AppState>) -> Result<Vec<SessionMeta>, String>
+
+        #[tauri::command]
+        pub async fn delete_session(state: tauri::State<'_, AppState>, id: String) -> Result<(), String>
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tauri::command"
+        label: "#[tauri::command] in agent.rs — entry-points-design.md §2.2"
+      - type: symbol
+        file: "src-tauri/src/commands/mod.rs"
+        grep: "pub struct AppState"
+        label: "AppState — entry-points-design.md §2.2"
+      - type: symbol
+        file: "src-tauri/src/commands/session.rs"
+        grep: "list_sessions"
+        label: "list_sessions command — entry-points-design.md §2.2"
       - type: test
         cmd: "cargo test -p if2ai-backend -- commands"
+        expect: "all tests pass"
     review_checklist:
-      - "所有 Tauri command 函数使用 #[tauri::command] 标注"
-      - "AppState 通过 State<AppState> 注入，不使用全局变量"
-      - "命令返回值序列化为 JSON，前端可直接消费"
-      - "错误返回 String（Tauri 要求），包含足够的诊断信息"
+      - "命令函数是否全部有 #[tauri::command] 宏"
+      - "AppState 是否通过 State<AppState> 注入，不使用全局变量"
+      - "错误返回格式是否为 Result<T, String>（Tauri 要求）"
+      - "AppState 是否在 lib.rs 的 tauri::Builder 中 .manage(AppState::new()) 注册"
+      - "invoke_handler 是否包含所有新命令"
+      - "无 unwrap()（测试除外）"
 
   - id: "1.8"
     title: "前端接线：React App 通过 invoke 调用 Tauri Commands，实现完整对话循环"
     status: pending
-    design_ref: "docs/design-docs/entry-points-design.md#tauri-ui"
+    design_ref: "docs/design-docs/entry-points-design.md"
     impl_targets:
-      - src/App.tsx
-      - src/lib/tauri.ts
+      - src/lib/tauri.ts    # 必须新建
+      - src/App.tsx         # 修改：接入 tauri.ts 的 invoke 封装
+
+    current_state: |
+      src/lib/ 目录存在，但只有 utils.ts，无 tauri.ts。
+      src/App.tsx 存在但内容不明，需检查是否有 @tauri-apps/api invoke 调用。
+      ❌ MISSING — 前端 Tauri 接入层完全不存在：
+        1. src/lib/tauri.ts：封装所有 invoke 调用（App.tsx 不直接调用 @tauri-apps/api）
+        2. App.tsx 的消息发送逻辑接入 tauri.ts
+        3. 发送中（loading）状态管理
+        4. 错误显示（友好错误，不暴露内部错误详情）
+
+    must_implement:
+      - |
+        // entry-points-design.md §2 Tauri UI — src/lib/tauri.ts（新建）
+        export interface AgentTurnResponse { message: string; session_id: string }
+        export async function runAgentTurn(sessionId: string, userMessage: string): Promise<AgentTurnResponse>
+        export async function listSessions(): Promise<SessionMeta[]>
+        export async function deleteSession(id: string): Promise<void>
+      - |
+        // App.tsx 必须修改，使用 runAgentTurn() 而非直接 invoke()
+        // 必须有：loading state（发送中禁用按钮）、error state（显示错误消息）
+        // import { runAgentTurn } from './lib/tauri'
+
     acceptance:
+      - type: symbol
+        file: "src/lib/tauri.ts"
+        grep: "runAgentTurn"
+        label: "runAgentTurn() wrapper — entry-points-design.md §2"
+      - type: symbol
+        file: "src/lib/tauri.ts"
+        grep: "invoke"
+        label: "invoke() called inside tauri.ts, not App.tsx"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "from './lib/tauri'"
+        label: "App.tsx imports from tauri.ts, not @tauri-apps/api directly"
       - type: compile
-        cmd: "npx vite build"
+        cmd: "npx tsc --noEmit"
         expect: "zero errors"
-      - type: harness
-        suite: "harness/suites/e2e_conversation.yaml"
     review_checklist:
-      - "invoke 调用封装在 src/lib/tauri.ts 中，App.tsx 不直接调用 @tauri-apps/api"
-      - "流式响应使用 listen() 而非轮询"
-      - "发送中的加载状态正确显示"
-      - "错误消息对用户友好（不暴露内部错误详情）"
-      - "useEffect 依赖数组正确，无内存泄漏"
+      - "src/lib/tauri.ts 是否新建且包含所有 invoke 封装"
+      - "App.tsx 是否改为 import { runAgentTurn } from './lib/tauri' 而非直接调 @tauri-apps/api"
+      - "发送中（isPending）状态是否正确禁用发送按钮"
+      - "错误消息是否对用户友好（不暴露 Rust 内部错误细节）"
+      - "TypeScript 类型是否与 Rust 命令返回值一致"
 
   # ───────────── Stage 4: 集成验证 ─────────────────────────────────────────
 
@@ -186,21 +469,49 @@ slices:
     status: pending
     design_ref: "docs/design-docs/testing-strategy.md"
     impl_targets:
-      - harness/suites/
+      - harness/suites/phase1_integration.yaml   # 修改：补全 test_cases
+      - src-tauri/src/integration_tests.rs        # 必须新建：端到端集成测试
+
+    current_state: |
+      harness/suites/phase1_integration.yaml 存在但 test_cases 可能不完整。
+      src-tauri/src/integration_tests.rs 不存在。
+      ❌ MISSING — 端到端测试覆盖不足：
+        1. integration_tests.rs：用 MockProvider + StaticToolExecutor 验证完整 agent 循环
+        2. phase1_integration.yaml：必须有覆盖 ConversationRuntime / ProviderManager /
+           ToolRegistry / SessionManager 的 test_cases
+        3. cargo test 覆盖率达到 >= 60%（核心模块）
+
+    must_implement:
+      - |
+        // testing-strategy.md §集成测试
+        // src-tauri/src/integration_tests.rs — 新建
+        #[tokio::test]
+        async fn test_full_agent_turn_with_mock_provider() { ... }
+        // 覆盖：创建 Session → run_turn() → 保存 Session → 验证消息历史
+      - |
+        // harness/suites/phase1_integration.yaml — 补全 test_cases，至少包含：
+        // - agent_turn_basic: 单轮对话验证 ConversationRuntime
+        // - session_create_and_list: 验证 SessionManager
+        // - tool_dispatch_bash: 验证 ToolRegistry.dispatch()
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/integration_tests.rs"
+        grep: "test_full_agent_turn"
+        label: "integration test exists — testing-strategy.md"
       - type: test
         cmd: "cargo test -p if2ai-backend"
-        expect: "coverage >= 60%"
+        expect: "all tests pass"
       - type: harness
         suite: "harness/suites/phase1_integration.yaml"
     review_checklist:
-      - "所有 Phase 1 slice 的 acceptance 条件全部通过"
+      - "integration_tests.rs 是否新建，使用 MockProvider，不依赖真实 API"
+      - "所有 slice 1.3-1.8 的新增公开函数是否都有对应测试"
+      - "phase1_integration.yaml 的 test_cases 是否涵盖全部核心路径"
       - "没有 TODO / FIXME / unwrap() 在非测试代码中"
-      - "harness phase1_integration suite 全绿"
-      - "DASHBOARD.md 中 Phase 1 状态更新为 COMPLETE"
-      - "准备好接受人工 review（见 meta.human_checkpoints）"
+      - "Phase 1 所有 symbol_check acceptance 全部通过"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard — executor 每次完成 slice 后更新此区域
