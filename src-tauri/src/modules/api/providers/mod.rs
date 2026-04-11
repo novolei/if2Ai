@@ -5,6 +5,7 @@ use crate::modules::api::error::ApiError;
 use crate::modules::api::types::{MessageRequest, MessageResponse};
 
 pub mod claw_provider;
+pub mod manager;
 pub mod openai_compat;
 
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;

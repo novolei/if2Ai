@@ -21,6 +21,8 @@ pub use providers::claw_provider::{
     read_model_override, AuthSource, ClawApiClient, ClawApiClient as ApiClient,
 };
 #[allow(unused_imports)]
+pub use providers::manager::{MockProvider, ProviderManager};
+#[allow(unused_imports)]
 pub use providers::openai_compat::{OpenAiCompatClient, OpenAiCompatConfig};
 #[allow(unused_imports)]
 pub use providers::{
