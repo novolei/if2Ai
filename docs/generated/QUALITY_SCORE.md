@@ -12,7 +12,7 @@
 
 | Phase              | 状态            | 完成时间 | 编译         | 测试 | Harness |
 | ------------------ | --------------- | -------- | ------------ | ---- | ------- |
-| Phase 1 — 核心框架 | 🔄 进行中       | —        | ✅ 0 errors  | —    | —       |
+| Phase 1 — 核心框架 | ✅ 已完成        | —        | ✅ 0 errors  | ✅   | ⏳      |
 | Phase 2 — 高级特性 | ⏳ 等待 Phase 1 | —        | —            | —    | —       |
 | Phase 3 — 扩展生态 | ⏳ 等待 Phase 2 | —        | —            | —    | —       |
 
@@ -27,10 +27,10 @@
 | 1.3   | ConversationRuntime 核心实现 | ✅ done    |
 | 1.4   | ProviderManager 实现         | ✅ done    |
 | 1.5   | ToolRegistry + 3 个基础工具  | ✅ done    |
-| 1.6   | SessionManager 实现          | 🔴 pending |
-| 1.7   | Tauri Commands 网关          | 🔴 pending |
-| 1.8   | 前端接线（React invoke）     | 🔴 pending |
-| 1.9   | Phase 1 集成测试             | 🔴 pending |
+| 1.6   | SessionManager 实现          | ✅ done    |
+| 1.7   | Tauri Commands 网关          | ✅ done    |
+| 1.8   | 前端接线（React invoke）     | ✅ done    |
+| 1.9   | Phase 1 集成测试             | ✅ done    |
 
 ---
 
@@ -54,3 +54,8 @@
 | 2026-04-11 | Slice 1.3 完成：ConversationRuntime 核心实现，6 测试通过 |
 | 2026-04-11 | Slice 1.4 完成：ProviderManager 实现，28 测试通过 |
 | 2026-04-11 | Slice 1.5 完成：ToolRegistry 与基础工具，3 测试通过 |
+| 2026-04-11 | Slice 1.6 完成：SessionManager 实现，6 测试通过 |
+| 2026-04-11 | Slice 1.7 完成：Tauri Commands 网关 |
+| 2026-04-11 | Slice 1.8 完成：前端接线，vite build 成功 |
+| 2026-04-11 | Slice 1.9 完成：Phase 1 集成测试，124 测试通过 |
+| 2026-04-11 | **HUMAN_CHECKPOINT_REACHED**: Phase 1 全部 9 个 slice 完成 |
