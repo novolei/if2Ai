@@ -23,11 +23,13 @@ use crate::modules::api::types::{OutputContentBlock, Usage};
 /// let mut manager = ProviderManager::new("claude".to_string());
 /// manager.register("claude", Arc::new(MockProvider::with_response("Hello!")));
 /// ```
+#[allow(dead_code)]
 pub struct ProviderManager {
     providers: HashMap<String, Arc<dyn Provider<Stream = MockStream>>>,
     default_provider: String,
 }
 
+#[allow(dead_code)]
 impl ProviderManager {
     /// Creates a new ProviderManager with the specified default provider.
     #[must_use]
@@ -89,6 +91,7 @@ impl ProviderManager {
 }
 
 /// MockStream is a simple mock stream for testing.
+#[allow(dead_code)]
 pub struct MockStream {
     content: Option<Vec<OutputContentBlock>>,
 }
@@ -122,11 +125,13 @@ impl tokio::io::AsyncRead for MockStream {
 
 /// MockProvider is a test provider that returns fixed responses.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MockProvider {
     responses: Vec<MessageResponse>,
     call_count: Cell<usize>,
 }
 
+#[allow(dead_code)]
 impl MockProvider {
     /// Creates a MockProvider with a single repeated response containing text content.
     #[must_use]
@@ -251,6 +256,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::arc_with_non_send_sync)]
     async fn registers_and_retrieves_provider() {
         let mut manager = ProviderManager::new("test".to_string());
         let provider = Arc::new(MockProvider::with_response("test response"));
@@ -264,6 +270,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::arc_with_non_send_sync)]
     async fn create_message_uses_correct_provider() {
         let mut manager = ProviderManager::new("mock".to_string());
         manager.register("mock", Arc::new(MockProvider::with_response("hello")));
@@ -285,6 +292,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::arc_with_non_send_sync)]
     async fn create_message_default_uses_default_provider() {
         let mut manager = ProviderManager::new("default".to_string());
         manager.register(

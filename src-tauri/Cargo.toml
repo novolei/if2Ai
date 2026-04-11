@@ -16,6 +16,7 @@ glob = "0.3"
 regex = "1"
 walkdir = "2"
 sha2 = "0.9"
+dashmap = "5"
 
 [build-dependencies]
 tauri-build = "2"
