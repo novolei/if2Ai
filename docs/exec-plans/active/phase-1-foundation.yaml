@@ -1,0 +1,213 @@
+# Phase 1: 核心框架搭建 (Foundation)
+# ─────────────────────────────────────────────────────────────────────────────
+# 格式说明：
+#   每个 slice 是 executor 的最小独立工作单元。
+#   executor 按 slices 顺序执行，遇到 status: done 的跳过。
+#   必须通过 acceptance 中所有检查 + review_checklist 才能标记为 done。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: 1
+  title: "核心框架搭建 (Foundation)"
+  owner: "@architects"
+  design_docs:
+    - docs/design-docs/system-architecture-framework.md
+    - docs/design-docs/module-boundaries-and-integration.md
+    - docs/design-docs/entry-points-design.md
+  human_checkpoints:
+    - after_slice: "1.3"   # Phase 1 完成后需要人工 review 后才能进 Phase 2
+
+slices:
+
+  # ───────────── Stage 1: Rust 模块骨架 ─────────────────────────────────────
+
+  - id: "1.1"
+    title: "建立 Rust 模块骨架（runtime / api / tools / commands / plugins）"
+    status: done
+    design_ref: "docs/design-docs/module-boundaries-and-integration.md"
+    impl_targets:
+      - src-tauri/src/modules/runtime/mod.rs
+      - src-tauri/src/modules/api/mod.rs
+      - src-tauri/src/modules/tools/mod.rs
+      - src-tauri/src/modules/commands/mod.rs
+      - src-tauri/src/modules/plugins/mod.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+    review_checklist:
+      - "模块层级是否与 module-boundaries-and-integration.md 中的结构一致"
+      - "所有 mod.rs 是否有 pub use 导出公开接口"
+      - "无循环依赖（runtime 不能 use api，api 可以被 runtime 使用）"
+    notes: "源文件已从 /rust/crates 迁移，骨架完成"
+
+  - id: "1.2"
+    title: "修复所有 Rust 编译错误（52 个错误）"
+    status: pending
+    design_ref: "COMPILATION_ERRORS_CHECKLIST.md"
+    impl_targets:
+      - src-tauri/src/modules/api/providers/claw_provider.rs
+      - src-tauri/src/modules/api/providers/openai_compat.rs
+      - src-tauri/src/modules/runtime/config.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+        expect: "zero errors"
+    review_checklist:
+      - "所有跨模块引用使用 crate::modules::* 路径，而非旧的 crate:: 前缀"
+      - "const fn 中不调用非 const 方法"
+      - "所有闭包参数类型明确"
+      - "无 unwrap()——仅允许在测试代码中使用"
+      - "cargo check 输出零 error、warnings 数量不增加"
+
+  - id: "1.3"
+    title: "ConversationRuntime 核心实现（Agent 对话循环）"
+    status: pending
+    design_ref: "docs/design-docs/agent-loop.md"
+    impl_targets:
+      - src-tauri/src/modules/runtime/conversation.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::conversation"
+        expect: "all tests pass"
+    review_checklist:
+      - "ConversationRuntime struct 字段与 agent-loop.md#core-structs 一致"
+      - "run() 方法实现了 agent-loop.md#conversation-loop 中描述的状态机"
+      - "LLM 调用通过 ProviderManager trait，不硬编码具体 provider"
+      - "token budget 检查在每次 LLM 调用前执行"
+      - "错误传播使用 ? 操作符，函数签名返回 Result<_, AgentError>"
+      - "异步代码使用 tokio runtime，无 std::thread::spawn"
+    harness_suite: ~  # Layer 3 在 1.5 完成后启用
+
+  # ───────────── Stage 2: Provider / LLM 集成 ───────────────────────────────
+
+  - id: "1.4"
+    title: "ProviderManager 实现（OpenAI / Anthropic / 本地 Mock）"
+    status: pending
+    design_ref: "docs/design-docs/provider-resolution.md"
+    impl_targets:
+      - src-tauri/src/modules/api/providers/
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- api::providers"
+        expect: "all tests pass"
+    review_checklist:
+      - "Provider trait 与 provider-resolution.md#provider-trait 定义完全一致"
+      - "ProviderManager 支持按名称动态选择 provider"
+      - "Mock provider 返回可配置的固定响应，用于测试"
+      - "所有 HTTP 调用使用 reqwest，错误正确映射到 ApiError"
+      - "API key 通过环境变量读取，不硬编码"
+
+  - id: "1.5"
+    title: "ToolRegistry 与 3 个基础工具（bash / file_read / json_parse）"
+    status: pending
+    design_ref: "docs/design-docs/tool-system.md"
+    impl_targets:
+      - src-tauri/src/modules/tools/
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools"
+        expect: "all tests pass"
+      - type: harness
+        suite: "harness/suites/tool_registry_basic.yaml"
+    review_checklist:
+      - "Tool trait 与 tool-system.md#tool-interface 定义一致"
+      - "ToolRegistry.register() 和 .get() 方法实现"
+      - "bash 工具有沙箱限制（超时 + 禁止危险命令）"
+      - "每个工具有对应的单元测试"
+      - "工具返回结构化的 ToolResult，不直接返回字符串"
+
+  # ───────────── Stage 3: Session + Tauri IPC + 前端接线 ───────────────────
+
+  - id: "1.6"
+    title: "SessionManager 实现（会话创建 / 消息追加 / 持久化到本地文件）"
+    status: pending
+    design_ref: "docs/design-docs/session-persistence.md"
+    impl_targets:
+      - src-tauri/src/modules/commands/session.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands::session"
+        expect: "all tests pass"
+    review_checklist:
+      - "Session data schema 与 data-schema.md 中定义一致"
+      - "持久化到 ~/.if2ai/sessions/*.json（使用 tauri::path::app_data_dir）"
+      - "Session ID 使用 UUID v4"
+      - "消息追加操作是幂等的"
+
+  - id: "1.7"
+    title: "Tauri Commands 网关（send_message / list_sessions / get_session）"
+    status: pending
+    design_ref: "docs/design-docs/entry-points-design.md"
+    impl_targets:
+      - src-tauri/src/commands/
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands"
+    review_checklist:
+      - "所有 Tauri command 函数使用 #[tauri::command] 标注"
+      - "AppState 通过 State<AppState> 注入，不使用全局变量"
+      - "命令返回值序列化为 JSON，前端可直接消费"
+      - "错误返回 String（Tauri 要求），包含足够的诊断信息"
+
+  - id: "1.8"
+    title: "前端接线：React App 通过 invoke 调用 Tauri Commands，实现完整对话循环"
+    status: pending
+    design_ref: "docs/design-docs/entry-points-design.md#tauri-ui"
+    impl_targets:
+      - src/App.tsx
+      - src/lib/tauri.ts
+    acceptance:
+      - type: compile
+        cmd: "npx vite build"
+        expect: "zero errors"
+      - type: harness
+        suite: "harness/suites/e2e_conversation.yaml"
+    review_checklist:
+      - "invoke 调用封装在 src/lib/tauri.ts 中，App.tsx 不直接调用 @tauri-apps/api"
+      - "流式响应使用 listen() 而非轮询"
+      - "发送中的加载状态正确显示"
+      - "错误消息对用户友好（不暴露内部错误详情）"
+      - "useEffect 依赖数组正确，无内存泄漏"
+
+  # ───────────── Stage 4: 集成验证 ─────────────────────────────────────────
+
+  - id: "1.9"
+    title: "Phase 1 集成测试 + Harness Suite 完整通过"
+    status: pending
+    design_ref: "docs/design-docs/testing-strategy.md"
+    impl_targets:
+      - harness/suites/
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "coverage >= 60%"
+      - type: harness
+        suite: "harness/suites/phase1_integration.yaml"
+    review_checklist:
+      - "所有 Phase 1 slice 的 acceptance 条件全部通过"
+      - "没有 TODO / FIXME / unwrap() 在非测试代码中"
+      - "harness phase1_integration suite 全绿"
+      - "DASHBOARD.md 中 Phase 1 状态更新为 COMPLETE"
+      - "准备好接受人工 review（见 meta.human_checkpoints）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard — executor 每次完成 slice 后更新此区域
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-11"
+  completed_slices: ["1.1"]
+  current_slice: "1.2"
+  blocked: []
+  notes: "slice 1.1 已完成（源码迁移）。slice 1.2 是当前瓶颈：52 个编译错误待修复。"

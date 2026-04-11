@@ -33,3 +33,9 @@ Thumbs.db
 
 # Build
 dist-tauri/
+
+# Python harness venv
+.venv/
+
+# Harness reports
+.harness-reports/
