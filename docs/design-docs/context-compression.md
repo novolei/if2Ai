@@ -72,15 +72,15 @@ impl ContextWindowManager {
     pub fn available_tokens(&self) -> u32 {
         self.window_size - self.reserved_for_response
     }
-    
+
     pub fn utilization_ratio(&self, current_tokens: u32) -> f32 {
         current_tokens as f32 / self.available_tokens() as f32
     }
-    
+
     pub fn should_compress(&self, current_tokens: u32) -> bool {
         self.utilization_ratio(current_tokens) > self.compression_threshold
     }
-    
+
     pub fn compression_needed_tokens(&self, current_tokens: u32) -> u32 {
         // 计算需要释放多少 tokens 来恢复到 30% 利用率
         let target = (self.available_tokens() as f32 * 0.3) as u32;
@@ -115,42 +115,42 @@ impl CompressionPipeline {
         tokens_to_free: u32,
     ) -> Result<CompressionStats> {
         let mut stats = CompressionStats::default();
-        
+
         // Phase 1: Prune 不重要的消息
         let (pruned_messages, pruned_tokens) = self.pruner.prune(messages);
         stats.tokens_freed_by_pruning = pruned_tokens;
-        
+
         if pruned_tokens >= tokens_to_free {
             *messages = pruned_messages;
             return Ok(stats);
         }
-        
+
         // Phase 2: 标记保护范围
         let (head_range, tail_range) = self.protector.identify_ranges(
             &pruned_messages,
             self.window_manager.protected_head_size,
             self.window_manager.protected_tail_size,
         );
-        
+
         // Phase 3: 确定要总结的范围
         let middle_range = head_range.end..tail_range.start;
         if middle_range.is_empty() {
             *messages = pruned_messages;
             return Ok(stats);
         }
-        
+
         // Phase 4: 生成总结
         let middle_messages = &pruned_messages[middle_range.clone()];
         let summary = self.summarizer.summarize(middle_messages).await?;
         stats.summary = summary.clone();
         stats.messages_summarized = middle_messages.len();
-        
+
         // Phase 5: 重建消息列表
         let mut compressed = Vec::new();
         compressed.extend_from_slice(&pruned_messages[..head_range.end]);
         compressed.push(Message::summary(summary));
         compressed.extend_from_slice(&pruned_messages[tail_range.start..]);
-        
+
         *messages = compressed;
         Ok(stats)
     }
@@ -176,10 +176,10 @@ impl MessagePruner {
     pub fn prune(&self, messages: &[Message]) -> (Vec<Message>, u32) {
         let mut pruned = Vec::new();
         let mut tokens_freed = 0;
-        
+
         for msg in messages {
             let importance = self.score_importance(msg);
-            
+
             match importance {
                 MessageImportance::Critical => {
                     pruned.push(msg.clone());
@@ -201,10 +201,10 @@ impl MessagePruner {
                 }
             }
         }
-        
+
         (pruned, tokens_freed)
     }
-    
+
     fn score_importance(&self, msg: &Message) -> MessageImportance {
         match msg.role {
             MessageRole::System => MessageImportance::Critical,
@@ -248,19 +248,19 @@ impl ContextSummarizer {
             .map(|msg| format!("{}: {}", msg.role, msg.content))
             .collect::<Vec<_>>()
             .join("\n\n");
-        
+
         let summary_prompt = format!(
             "Summarize the following conversation in 2-3 sentences, \
              highlighting any decisions, findings, or important context:\n\n{}",
             context_text
         );
-        
+
         let response = self.llm_provider.complete(
             &[Message::user(summary_prompt)],
             &[],
             false,  // 不流式
         ).await?;
-        
+
         Ok(response.content)
     }
 }
@@ -294,7 +294,7 @@ impl Message {
 pub struct MemorySystem {
     // 层级 1: 会话内存（紧凑）
     pub session_context: ContextWindowManager,
-    
+
     // 层级 2: 持久化外部内存（可选，扩展容量）
     pub persistent_memory: Option<Arc<dyn MemoryStore>>,
 }
@@ -307,7 +307,7 @@ pub trait MemoryStore: Send + Sync {
         key: &str,
         value: &str,
     ) -> Result<()>;
-    
+
     // 检索记忆
     async fn retrieve(
         &self,
@@ -315,7 +315,7 @@ pub trait MemoryStore: Send + Sync {
         query: &str,
         limit: usize,
     ) -> Result<Vec<(String, f32)>>;  // (content, similarity_score)
-    
+
     // 删除过期记忆
     async fn cleanup_old(&self, older_than_days: u32) -> Result<()>;
 }
@@ -334,7 +334,7 @@ impl MemoryStore for VectorMemoryStore {
         limit: usize,
     ) -> Result<Vec<(String, f32)>> {
         let query_embedding = self.embedding_model.embed(query).await?;
-        
+
         self.db.search(
             session_id,
             &query_embedding,
@@ -368,23 +368,23 @@ impl CompressionHistory {
     pub fn total_compressions(&self) -> usize {
         self.compressions.len()
     }
-    
+
     pub fn average_compression_ratio(&self) -> f32 {
         if self.compressions.is_empty() {
             return 1.0;
         }
-        
+
         let total_freed: u32 = self.compressions.iter()
             .map(|s| s.total_tokens_freed)
             .sum();
-        
+
         let total_before: u32 = self.compressions.iter()
             .map(|s| s.triggered_at_tokens)
             .sum();
-        
+
         1.0 - (total_freed as f32 / total_before as f32)
     }
-    
+
     pub fn effective_capacity(&self) -> u32 {
         // 考虑压缩效率下的有效上下文容量
         let base = 4096;  // 典型的上下文窗口
@@ -400,16 +400,16 @@ impl CompressionHistory {
 context_compression:
   window_size: 4096
   reserved_for_response: 512
-  compression_threshold: 0.5          # 50% 时触发
-  protected_head_size: 512            # 保留前 512 tokens  
-  protected_tail_size: 512            # 保留后 512 tokens
+  compression_threshold: 0.5 # 50% 时触发
+  protected_head_size: 512 # 保留前 512 tokens
+  protected_tail_size: 512 # 保留后 512 tokens
   pruning_enabled: true
   summarization_enabled: true
   summary_max_tokens: 200
-  
+
 persistent_memory:
   enabled: true
-  store: weaviate                     # or: pinecone, milvus
+  store: weaviate # or: pinecone, milvus
   embedding_model: sentence-transformers/all-mpnet-base-v2
   similarity_threshold: 0.7
 ```
@@ -420,27 +420,26 @@ persistent_memory:
 
 ```yaml
 test_case:
-  name: "Long Conversation Compression"
-  scenario: "100+ 条消息的对话，验证压缩有效但不丢失关键信息"
-  steps:
-    1. 生成 100 条消息的对话历史（~8000 tokens）
+  name: 'Long Conversation Compression'
+  scenario: '100+ 条消息的对话，验证压缩有效但不丢失关键信息'
+  steps: 1. 生成 100 条消息的对话历史（~8000 tokens）
     2. 触发 compression pipeline
     3. 验证压缩后 tokens < 50%
     4. 验证关键信息（user intent）被保留
     5. 对压缩后的消息继续 Agent 推理
     6. 验证输出质量无显著下降
-  
+
   evaluators:
     - name: correctness
       config:
-        similarity_to_original: "> 0.85"  # 输出与原始对话的相似度
+        similarity_to_original: '> 0.85' # 输出与原始对话的相似度
     - name: behavior
       config:
-        compressions_triggered: ">= 1"
-        tokens_freed: "> 4000"
+        compressions_triggered: '>= 1'
+        tokens_freed: '> 4000'
     - name: performance
       config:
-        total_token_usage: "< 50% of uncompressed"
+        total_token_usage: '< 50% of uncompressed'
 ```
 
 ---

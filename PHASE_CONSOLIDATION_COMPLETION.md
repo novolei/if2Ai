@@ -12,6 +12,7 @@
 ### ✅ 核心目标：建立唯一的工作代码库
 
 **需求** (原始):
+
 > "现在请你将 /Users/ryanliu/Documents/IfAI/if2Ai/src-tauri 合并成一个可以用于项目的文件夹，使其成为最初的开发 codebase"
 
 **结果**:
@@ -72,6 +73,7 @@ if2Ai/
 ```
 
 **问题**:
+
 - ❌ 两个库需要同步
 - ❌ 不清楚哪个是唯一的真相
 - ❌ 开发混乱（改哪个？）
@@ -103,6 +105,7 @@ if2Ai/
 ```
 
 **优点**:
+
 - ✅ 唯一的真相来源
 - ✅ 完整的自包含库
 - ✅ 清晰的模块组织
@@ -115,14 +118,14 @@ if2Ai/
 
 ### 源码整合
 
-| 来源 | 文件数 | 位置 |
-|-----|-------|------|
-| runtime/ | 18 | src-tauri/src/modules/runtime/ |
-| api/ | 5+ | src-tauri/src/modules/api/ |
-| tools/ | 1+ | src-tauri/src/modules/tools/ |
-| commands/ | 1+ | src-tauri/src/modules/commands/ |
-| plugins/ | 1+ | src-tauri/src/modules/plugins/ |
-| **总计** | **33+** | **集中到 src-tauri** |
+| 来源      | 文件数  | 位置                            |
+| --------- | ------- | ------------------------------- |
+| runtime/  | 18      | src-tauri/src/modules/runtime/  |
+| api/      | 5+      | src-tauri/src/modules/api/      |
+| tools/    | 1+      | src-tauri/src/modules/tools/    |
+| commands/ | 1+      | src-tauri/src/modules/commands/ |
+| plugins/  | 1+      | src-tauri/src/modules/plugins/  |
+| **总计**  | **33+** | **集中到 src-tauri**            |
 
 ### 文件结构
 
@@ -159,12 +162,14 @@ modules/mod.rs                  (模块聚合)
 ### 2. 导出链
 
 **src-tauri/src/lib.rs**:
+
 ```rust
 pub mod modules;
 pub use modules::*;
 ```
 
 **src-tauri/src/modules/mod.rs**:
+
 ```rust
 pub mod runtime;
 pub mod api;
@@ -174,6 +179,7 @@ pub mod plugins;
 ```
 
 **src-tauri/src/modules/runtime/mod.rs**:
+
 ```rust
 pub mod conversation;
 pub mod prompt;
@@ -208,6 +214,7 @@ build.rs (Tauri 构建脚本)
 **原因**: 源码来自独立的 crates，使用了相对导入如 `use runtime::`
 
 **解决**: 调整导入路径为统一库中的路径
+
 ```rust
 // 旧:
 use runtime::OAuthTokenSet;
@@ -227,6 +234,7 @@ use crate::modules::runtime::OAuthTokenSet;
 **原因**: StatusCode 方法在 const fn 中调用
 
 **解决**: 移除 `const` 或使用其他方式
+
 ```rust
 // 旧:
 const fn is_retryable(status: StatusCode) -> bool {
@@ -250,6 +258,7 @@ fn is_retryable(status: StatusCode) -> bool {
 **原因**: 编译器无法推导泛型参数
 
 **解决**: 添加明确的类型注解
+
 ```rust
 let data: MyType = serde_json::from_str(json)?;
 ```
@@ -306,6 +315,7 @@ Step 5: 验收编译                     [ ] 1 小时
 ```
 
 **成功标志**:
+
 ```
 ✅ cargo check -p if2ai-backend --lib 输出:
    Checking if2ai-backend v0.1.0
@@ -396,13 +406,13 @@ if2Ai/src-tauri 是一个：
 ```
 决定 1: src-tauri 作为唯一的工作库
   理由: 它是最终的编译目标，应该包含所有源码
-  
+
 决定 2: /rust 作为历史存档保留（可选删除）
   理由: 保留历史记录，便于追溯
-  
+
 决定 3: 统一的模块导出体系
   理由: 明确的依赖关系，易于维护
-  
+
 决定 4: 完整的设计文档
   理由: 代码即记录的哲学
 ```
@@ -418,6 +428,7 @@ if2Ai/src-tauri 是一个：
 接下来的 1-2 天，我们将通过修复编译错误来最终验证这个新的架构。完成后，If2Ai 就可以以一个完整的、统一的、高质量的代码库的形态，开始下一阶段的功能实现和集成开发。
 
 **核心成就**:
+
 - ✅ 33+ 个源文件成功整合
 - ✅ 完整的模块体系建立
 - ✅ 清晰的导出层级确立
@@ -430,4 +441,3 @@ if2Ai/src-tauri 是一个：
 **最后更新**: 2026-04-11 21:27  
 **分支**: feature/consolidate-codebase  
 **提交**: feat: codebase consolidation - source files integrated
-

@@ -1,0 +1,126 @@
+# Phase 3: 扩展生态 (Ecosystem)
+# ─────────────────────────────────────────────────────────────────────────────
+# 前置条件：Phase 2 全部 slice 状态为 done，且人工 review 通过。
+# phase_status: draft → 由人类改为 active 方可让 executor 执行
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: 3
+  phase_status: draft          # draft | active | completed
+  title: "扩展生态 (Ecosystem)"
+  owner: "@architects"
+  depends_on_phase: 2
+  design_docs:
+    - docs/design-docs/entry-points-design.md    # Phase 3 部分：API Server + IDE Bridge
+    - docs/design-docs/agent-self-improvement.md
+    - docs/design-docs/testing-strategy.md
+  human_checkpoints:
+    - after_slice: "3.2"       # API Server + IDE Bridge 完成后 review
+    - after_slice: "3.4"       # 全部 Phase 3 完成后 review
+
+slices:
+
+  # ───────────── Stage 1: 多入口点扩展 ─────────────────────────────────────
+
+  - id: "3.1"
+    title: "JSON-RPC API Server — HTTP 入口（第三方调用）"
+    status: pending
+    design_ref: "docs/design-docs/entry-points-design.md"
+    backlog_ref: "BL-303"
+    impl_targets:
+      - src-tauri/src/commands/api_server.rs
+      - src-tauri/src/modules/runtime/http_server.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::http_server"
+        expect: "all tests pass"
+    review_checklist:
+      - "HTTP server 基于 axum，端口可配置（默认 11434，避免与 Ollama 冲突）"
+      - "POST /v1/chat — 接收消息，返回 Agent 响应（OpenAI 兼容格式）"
+      - "GET /v1/sessions — 列出会话"
+      - "接口定义与 entry-points-design.md#api-server 一致"
+      - "请求鉴权通过 Bearer token（从环境变量 IF2AI_API_KEY 读取）"
+      - "server 在独立 tokio task 中运行，不阻塞 Tauri 主线程"
+
+  - id: "3.2"
+    title: "IDE/LSP Bridge — stdio JSON-RPC 接入（VSCode / Cursor）"
+    status: pending
+    design_ref: "docs/design-docs/entry-points-design.md"
+    backlog_ref: "BL-302"
+    impl_targets:
+      - src-tauri/src/modules/runtime/lsp_bridge.rs
+      - src-tauri/src/commands/lsp.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::lsp_bridge"
+        expect: "all tests pass"
+    review_checklist:
+      - "LSP Bridge 通过 stdin/stdout 传输 JSON-RPC 2.0 消息"
+      - "支持 initialize / textDocument/didOpen / agent/runTurn 三个请求"
+      - "实现与 entry-points-design.md#lsp-bridge 协议规范一致"
+      - "错误响应格式符合 JSON-RPC 2.0 规范"
+      - "bridge 以单独二进制模式运行（cargo run --bin lsp-bridge）"
+
+  # ───────────── Stage 2: Agent 自我进化 ───────────────────────────────────
+
+  - id: "3.3"
+    title: "Agent Self-Improvement — RL 基线（轨迹收集 + 奖励计算）"
+    status: pending
+    design_ref: "docs/design-docs/agent-self-improvement.md"
+    backlog_ref: "BL-301"
+    impl_targets:
+      - src-tauri/src/modules/runtime/trajectory.rs
+      - src-tauri/src/modules/runtime/reward.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::trajectory runtime::reward"
+        expect: "all tests pass"
+      - type: harness
+        suite: "harness/suites/self_improvement_baseline.yaml"
+    review_checklist:
+      - "TrajectoryCollector 记录每次 Agent 执行的完整轨迹（消息序列 + 工具调用 + 结果）"
+      - "RewardCalculator 计算任务完成度分数（0.0 ~ 1.0）"
+      - "轨迹数据序列化为 JSONL 格式，写入 ~/.if2ai/trajectories/"
+      - "奖励函数可扩展（trait 设计，允许自定义奖励函数）"
+      - "与 harness TestCase 的 expected_output 集成，用于自动评分"
+      - "不修改现有 ConversationRuntime 核心逻辑，通过 observer 模式注入"
+
+  # ───────────── Stage 3: Phase 3 集成验证 ─────────────────────────────────
+
+  - id: "3.4"
+    title: "Phase 3 集成测试 + 全生态端到端验证"
+    status: pending
+    design_ref: "docs/design-docs/testing-strategy.md"
+    impl_targets:
+      - harness/suites/phase3_integration.yaml
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "coverage >= 75%"
+      - type: harness
+        suite: "harness/suites/phase3_integration.yaml"
+    review_checklist:
+      - "所有 Phase 3 slice 的 acceptance 条件全部通过"
+      - "从 Tauri UI 发起对话 → 可通过 API Server 同步看到会话（多入口一致性）"
+      - "轨迹收集不影响 Agent 响应延迟（< 50ms overhead）"
+      - "harness phase3_integration suite 全绿"
+      - "docs/generated/QUALITY_SCORE.md 已更新到 Phase 3 COMPLETE 状态"
+      - "准备好接受人工 review（见 meta.human_checkpoints after_slice: 3.4）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-11"
+  completed_slices: []
+  current_slice: "3.1"         # 当 Phase 3 激活时，从这里开始
+  blocked: []
+  notes: "DRAFT — 等待 Phase 2 全部完成并人工 review 后，由人类将 phase_status 改为 active"

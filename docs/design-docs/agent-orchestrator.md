@@ -26,23 +26,23 @@ pub async fn run_conversation(
 ) -> Result<ConversationResult> {
     // Phase 1: 预处理
     let mut messages = self.load_or_init_history(conversation_history);
-    
+
     // Phase 2: 主循环（迭代预算管理）
     while !self.iteration_budget.is_exhausted() {
         // 2a. 构建提示词
         let system_prompt = self.prompt_builder.build(&messages)?;
         messages.push(Message::user(user_message.clone()));
-        
+
         // 2b. 调用 LLM（流式处理）
         let response = self.llm_client.stream_response(
             &system_prompt,
             &messages,
             &self.tool_definitions(),
         ).await?;
-        
+
         // 2c. 处理流式响应
         messages.push(Message::assistant(response.content.clone()));
-        
+
         // 2d. 解析和执行工具调用
         if !response.tool_calls.is_empty() {
             let results = self.execute_tools(&response.tool_calls).await?;
@@ -51,14 +51,14 @@ pub async fn run_conversation(
             // Agent 已完成推理
             break;
         }
-        
+
         // 2e. 管理上下文
         self.maybe_compress_context(&mut messages)?;
     }
-    
+
     // Phase 3: 持久化
     self.save_session(&messages).await?;
-    
+
     Ok(ConversationResult {
         messages,
         metrics: self.collect_metrics(),
@@ -77,14 +77,14 @@ pub struct BudgetTracker {
         max_iterations: u32,           // 默认 20
         current_iteration: u32,
     },
-    
+
     // 层级 2: 上下文窗口预算
     pub context_budget: ContextBudget {
         total_tokens: u32,             // 模型的窗口大小（如 4096）
         used_tokens: u32,              // 已用 token 数
         compression_threshold: f32,    // 默认 50%
     },
-    
+
     // 层级 3: Token/成本预算（可选）
     pub token_budget: TokenBudget {
         max_tokens: Option<u32>,
@@ -107,16 +107,16 @@ impl BudgetTracker {
         if self.iteration_budget.current_iteration >= self.iteration_budget.max_iterations {
             return Err(BudgetError::IterationsExhausted);
         }
-        
+
         // 消费预算
         self.context_budget.used_tokens += tokens_to_use;
         self.iteration_budget.current_iteration += iteration_increment;
-        
+
         Ok(())
     }
-    
+
     pub fn should_compress(&self) -> bool {
-        let usage_ratio = self.context_budget.used_tokens as f32 
+        let usage_ratio = self.context_budget.used_tokens as f32
             / self.context_budget.total_tokens as f32;
         usage_ratio > self.context_budget.compression_threshold
     }
@@ -166,7 +166,7 @@ impl LLMClientLifecycle {
             }
         }
     }
-    
+
     pub async fn switch_model(
         &mut self,
         provider: &str,
@@ -198,27 +198,27 @@ impl ToolExecutor {
     ) -> Result<Vec<ToolResult>> {
         // Phase 1: 验证和依赖检查
         let sorted_calls = self.resolve_dependencies(&tool_calls)?;
-        
+
         // Phase 2: 分组执行
         let (parallel, sequential) = self.partition_calls(&sorted_calls);
-        
+
         let mut results = Vec::new();
-        
+
         // Phase 2a: 并行执行（无依赖）
         let parallel_results = futures::future::join_all(
             parallel.iter().map(|call| self.execute_single(call, task_context))
         ).await;
         results.extend(parallel_results);
-        
+
         // Phase 2b: 顺序执行（有依赖或需要同步）
         for call in sequential {
             let result = self.execute_single(&call, task_context).await?;
             results.push(result);
         }
-        
+
         Ok(results)
     }
-    
+
     async fn execute_single(
         &self,
         call: &ToolCall,
@@ -226,10 +226,10 @@ impl ToolExecutor {
     ) -> Result<ToolResult> {
         // 安全性检查
         self.registry.validate_tool_call(call)?;
-        
+
         // 执行
         let result = self.registry.dispatch(&call.name, &call.args).await?;
-        
+
         // 结果处理
         Ok(ToolResult {
             tool_call_id: call.id.clone(),
@@ -250,17 +250,17 @@ pub struct OrchestratorState {
     pub session_id: String,
     pub user_id: String,
     pub created_at: DateTime<Utc>,
-    
+
     // 运行时状态
     pub messages: Vec<Message>,
     pub tool_definitions: Vec<Tool>,
     pub budgets: BudgetTracker,
-    
+
     // 执行快照
     pub primary_runtime: RuntimeSnapshot,
     pub fallback_chain: Vec<RuntimeSnapshot>,
     pub rate_limit_state: RateLimitTracker,
-    
+
     // 性能指标
     pub metrics: ExecutionMetrics {
         total_tokens: u32,
@@ -289,11 +289,11 @@ pub enum OrchestratorError {
     RateLimit { retry_after: Duration },
     ContextExhausted,           // 触发压缩
     TokenLimitExceeded,         // 切换到更小模型
-    
+
     // 可转移（尝试备用提供商）
     ProviderUnavailable,
     InvalidAPIKey,
-    
+
     // 致命（无法恢复）
     InvalidToolCall,
     UserInterruption,
@@ -317,7 +317,7 @@ pub struct OrchestrationMetrics {
     tokens_generated: u32,
     tools_called: Vec<String>,
     context_compression_triggered: bool,
-    
+
     // 聚合指标
     pub total_iterations: u32,
     pub total_tokens: u32,
@@ -354,28 +354,31 @@ pub async fn run_agent_command(
 
 ## 性能特征
 
-| 指标 | 目标 | 说明 |
-|------|------|------|
-| 首次响应 | < 500ms | 包括 LLM 延迟 |
-| 工具执行 | 并行 8 个 | 取决于工具依赖 |
-| 内存占用 | < 500MB | 单个会话 |
-| 消息历史 | 支持 10000+ 条 | 带自动压缩 |
+| 指标     | 目标           | 说明           |
+| -------- | -------------- | -------------- |
+| 首次响应 | < 500ms        | 包括 LLM 延迟  |
+| 工具执行 | 并行 8 个      | 取决于工具依赖 |
+| 内存占用 | < 500MB        | 单个会话       |
+| 消息历史 | 支持 10000+ 条 | 带自动压缩     |
 
 ## 测试策略
 
 ### 单元测试
+
 - 预算消费和检查
 - 依赖解析算法
 - 错误分类逻辑
 - 状态转换
 
 ### 集成测试
+
 - 完整对话循环
 - 工具执行和结果整合
 - 上下文压缩触发
 - 提供商故障转移
 
 ### Harness 评估
+
 - Agent 信息收集能力
 - 工具用法合适性
 - 预算 SLA 遵守

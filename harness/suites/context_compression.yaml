@@ -1,0 +1,67 @@
+# Harness Suite: Context Compression
+# 引用自: phase-2-advanced-features.yaml slice 2.2 acceptance
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "context_compression"
+name: "Context Compression Tests"
+description: "验证 ContextCompressor 的触发逻辑、压缩正确性和 session 集成"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+test_cases:
+
+  - id: "cc-001"
+    name: "should_compress — 未超阈值"
+    description: "tokens 使用率小于 50% 时不触发压缩"
+    type: "unit"
+    test_fn: "runtime::compression::tests::test_no_compress_below_threshold"
+    input:
+      window_size: 8000
+      current_tokens: 3000    # 37.5%，低于 50%
+    expect:
+      - "should_compress() == false"
+
+  - id: "cc-002"
+    name: "should_compress — 超过阈值"
+    description: "tokens 使用率超过 50% 时触发压缩"
+    type: "unit"
+    test_fn: "runtime::compression::tests::test_compress_above_threshold"
+    input:
+      window_size: 8000
+      current_tokens: 4500    # 56.25%，超过 50%
+    expect:
+      - "should_compress() == true"
+
+  - id: "cc-003"
+    name: "压缩结果 — 消息数量减少"
+    description: "10 条消息压缩后数量严格小于 10"
+    type: "unit"
+    test_fn: "runtime::compression::tests::test_compression_reduces_messages"
+    input:
+      messages_count: 10
+      protected_head: 2
+      protected_tail: 2
+    expect:
+      - "compressed_count < 10"
+      - "first 2 messages unchanged"
+      - "last 2 messages unchanged"
+
+  - id: "cc-004"
+    name: "压缩后包含摘要消息"
+    description: "中间被压缩的消息被替换为一条 is_summary=true 的摘要消息"
+    type: "unit"
+    test_fn: "runtime::compression::tests::test_summary_message_inserted"
+    expect:
+      - "compressed messages contain exactly 1 message with is_summary=true"
+      - "summary message role is 'system' or 'assistant'"
+      - "summary message content is not empty"
+
+  - id: "cc-005"
+    name: "压缩事件记录到 session"
+    description: "压缩完成后，session 的 compression_events 字段有新记录"
+    type: "integration"
+    test_fn: "runtime::compression::tests::test_compression_event_recorded"
+    expect:
+      - "session.compression_events.len() == 1"
+      - "event.messages_before > event.messages_after"
+      - "event.timestamp is recent"

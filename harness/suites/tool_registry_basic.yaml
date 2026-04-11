@@ -1,0 +1,88 @@
+# Harness Suite: Tool Registry Basic
+# 引用自: phase-1-foundation.yaml slice 1.5 acceptance
+# 用途: 验证 ToolRegistry 的注册、查询、执行功能
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "tool_registry_basic"
+name: "Tool Registry Basic Tests"
+description: "验证 ToolRegistry 能正确注册工具、查询工具定义、执行工具并返回结构化结果"
+target_pass_rate: 1.0          # 100%，全部必须通过
+runner: "cargo_test"           # 使用 cargo test 模式（非 LLM 调用）
+
+test_cases:
+
+  - id: "tr-001"
+    name: "注册工具 — bash"
+    description: "bash 工具能成功注册到 ToolRegistry"
+    type: "unit"
+    test_fn: "tools::registry::tests::test_register_bash_tool"
+    expect:
+      - "registry.get('bash') is Some"
+      - "entry.toolset == 'terminal'"
+      - "entry.disabled == false"
+
+  - id: "tr-002"
+    name: "注册工具 — read_file"
+    description: "read_file 工具能成功注册到 ToolRegistry"
+    type: "unit"
+    test_fn: "tools::registry::tests::test_register_read_file_tool"
+    expect:
+      - "registry.get('read_file') is Some"
+      - "entry.toolset == 'files'"
+
+  - id: "tr-003"
+    name: "获取工具 Schema — OpenAI 格式"
+    description: "get_definitions() 返回 OpenAI 兼容的工具定义列表"
+    type: "unit"
+    test_fn: "tools::registry::tests::test_get_openai_definitions"
+    expect:
+      - "definitions is not empty"
+      - "每个 definition 有 type: 'function' 字段"
+      - "每个 definition 的 function.name 与注册名一致"
+
+  - id: "tr-004"
+    name: "执行工具 — bash echo"
+    description: "通过 ToolRegistry 执行 bash 工具，执行 echo 命令并返回结果"
+    type: "integration"
+    test_fn: "tools::registry::tests::test_execute_bash_echo"
+    input:
+      tool_name: "bash"
+      args:
+        command: "echo hello_harness"
+    expect:
+      - "result.is_ok()"
+      - "result.output contains 'hello_harness'"
+      - "result.exit_code == 0"
+
+  - id: "tr-005"
+    name: "执行工具 — 超时保护"
+    description: "执行超时命令时，工具在 timeout_secs 内返回 Timeout 错误"
+    type: "integration"
+    test_fn: "tools::registry::tests::test_bash_timeout"
+    input:
+      tool_name: "bash"
+      args:
+        command: "sleep 100"   # 远超 timeout
+    expect:
+      - "result.is_err()"
+      - "error type is ToolError::Timeout"
+
+  - id: "tr-006"
+    name: "执行工具 — 未知工具名"
+    description: "调用不存在的工具名时，返回 ToolNotFound 错误"
+    type: "unit"
+    test_fn: "tools::registry::tests::test_unknown_tool"
+    input:
+      tool_name: "nonexistent_tool_xyz"
+    expect:
+      - "result.is_err()"
+      - "error type is ToolError::NotFound"
+
+  - id: "tr-007"
+    name: "ToolRegistry 线程安全"
+    description: "多线程并发注册和查询不引发数据竞争"
+    type: "unit"
+    test_fn: "tools::registry::tests::test_concurrent_access"
+    expect:
+      - "no panic"
+      - "all registered tools retrievable after concurrent inserts"

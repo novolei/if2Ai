@@ -22,6 +22,7 @@ src-tauri (唯一工作库)
 ```
 
 迁移完成后：
+
 - ✅ src-tauri 是唯一的活跃代码库
 - ✅ 所有 bug 修复和功能开发都在 src-tauri
 - ✅ 不存在"两个版本需要同步"的问题
@@ -165,7 +166,7 @@ cd src-tauri
 # 编辑 modules/agent/mod.rs
 cat > src/modules/agent/mod.rs << 'EOF'
 //! Agent Loop Module (Migrated from /rust/crates/runtime)
-//! 
+//!
 //! This is now the single source of truth for agent execution.
 //! All agent loop development happens here.
 
@@ -424,28 +425,28 @@ use crate::modules::{
 };
 
 /// Global Application State
-/// 
+///
 /// Single point of entry for all modules
 /// This is the ONLY way to access subsystems
-/// 
+///
 /// Design: docs/design-docs/module-boundaries-and-integration.md
 #[derive(Clone)]
 pub struct AppState {
     /// Agent Loop - 对话循环
     pub agent_runtime: Arc<Mutex<ConversationRuntime>>,
-    
+
     /// Provider System - LLM 提供商管理
     pub provider_manager: Arc<ProviderManager>,
-    
+
     /// Tool System - 工具执行
     pub tool_registry: Arc<ToolRegistry>,
-    
+
     /// Session Management - 对话存储
     pub session_manager: Arc<SessionManager>,
-    
+
     /// Memory System - 用户记忆 (now part of SSOT)
     pub memory_manager: Arc<MemoryManager>,
-    
+
     /// Plugin System - 扩展机制
     pub plugin_manager: Arc<PluginManager>,
 }
@@ -456,16 +457,16 @@ impl AppState {
     pub async fn new() -> Result<Self> {
         log::info!("🚀 初始化 If2Ai AppState (Single Source of Truth)");
         log::info!("📚 所有源码都在 src-tauri 中");
-        
+
         // 1. 初始化无依赖的系统
         let provider_manager = ProviderManager::new().await?;
         let tool_registry = ToolRegistry::new();
         let plugin_manager = PluginManager::new().await?;
-        
+
         // 2. 初始化存储系统
         let session_manager = SessionManager::new().await?;
         let memory_manager = MemoryManager::new().await?;
-        
+
         // 3. 初始化 Agent 循环 (依赖于上述所有)
         let agent_runtime = ConversationRuntime::new(
             provider_manager.clone(),
@@ -474,7 +475,7 @@ impl AppState {
             memory_manager.clone(),
             plugin_manager.clone(),
         ).await?;
-        
+
         Ok(Self {
             agent_runtime: Arc::new(Mutex::new(agent_runtime)),
             provider_manager: Arc::new(provider_manager),
@@ -484,7 +485,7 @@ impl AppState {
             plugin_manager: Arc::new(plugin_manager),
         })
     }
-    
+
     /// 验证所有子系统就绪
     pub async fn health_check(&self) -> HealthStatus {
         HealthStatus {
@@ -535,7 +536,7 @@ pub async fn run_agent_turn(
 ) -> Result<String> {
     let mut agent = state.agent_runtime.lock()
         .map_err(|e| format!("Lock error: {}", e))?;
-    
+
     let response = agent.run_turn(message).await?;
     Ok(response.text)
 }
@@ -640,6 +641,7 @@ echo "  3. All future work in src-tauri only"
 ## 核对清单
 
 迁移前:
+
 - [ ] /rust 中所有 crates 都能编译
 - [ ] src-tauri/ 已有基本 Tauri 配置
 - [ ] 9 份设计文档已阅读
@@ -647,12 +649,14 @@ echo "  3. All future work in src-tauri only"
 - [ ] 有足够时间完成 (8-10 小时不间断)
 
 迁移中:
+
 - [ ] 每两个模块后运行 cargo test
 - [ ] 所有 imports 符合设计
 - [ ] 模块能正确初始化
 - [ ] 没有编译错误
 
 迁移后:
+
 - [ ] `cargo build --release` 成功
 - [ ] `cargo test` 所有通过
 - [ ] `cargo tauri dev` 启动成功
@@ -663,13 +667,13 @@ echo "  3. All future work in src-tauri only"
 
 ## 核心区别: v1 vs v2
 
-| 方面 | v1 (双库) | v2 (单一SOT) |
-|------|---------|------------|
-| /rust 角色 | 参考库（持续维护） | 源码来源（迁移后冻结） |
-| src-tauri 角色 | 从 /rust 参考 | 唯一工作库 |
-| 开发位置 | 两个地方 | 只在 src-tauri |
-| 同步问题 | 需要定期对齐 | 无同步问题 |
-| 维护复杂度 | 高 | 低 |
+| 方面           | v1 (双库)          | v2 (单一SOT)           |
+| -------------- | ------------------ | ---------------------- |
+| /rust 角色     | 参考库（持续维护） | 源码来源（迁移后冻结） |
+| src-tauri 角色 | 从 /rust 参考      | 唯一工作库             |
+| 开发位置       | 两个地方           | 只在 src-tauri         |
+| 同步问题       | 需要定期对齐       | 无同步问题             |
+| 维护复杂度     | 高                 | 低                     |
 
 **v2 是更清晰、更简单、更可维护的模型。**
 
@@ -677,5 +681,4 @@ echo "  3. All future work in src-tauri only"
 
 **版本**: 2.0 (Single Source of Truth)  
 **状态**: ✅ 准备执行  
-**目标**: 建立唯一真实版本，消除二元性  
-
+**目标**: 建立唯一真实版本，消除二元性

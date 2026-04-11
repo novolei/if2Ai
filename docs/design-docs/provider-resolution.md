@@ -4,7 +4,7 @@
 **最后更新**: 2026-04-11  
 **对标**: Hermes Provider Runtime (~500 行)  
 **实现语言**: Rust  
-**关键文件**: `crates/api/src/` (providers, client, types)  
+**关键文件**: `crates/api/src/` (providers, client, types)
 
 ---
 
@@ -13,6 +13,7 @@
 ### 1.1 在 Hermes 中的角色
 
 Hermes Provider 系统负责：
+
 - 🔌 支持 18+ LLM 提供商
 - 🔐 OAuth 和 API 密钥管理
 - 🔀 提供商选择和别名解析
@@ -23,6 +24,7 @@ Hermes Provider 系统负责：
 ### 1.2 在 Claw Code 中的现状
 
 **现有实现**（`src/providers/`）：
+
 ```
 ✅ ProviderClient - 统一客户端接口
 ✅ Anthropic 兼容支持 (AWS, Prompt Caching)
@@ -60,6 +62,7 @@ Hermes Provider 系统负责：
 ### 2.2 关键类型定义
 
 #### ProviderClient 统一接口
+
 ```rust
 pub struct ProviderClient {
     kind: ProviderKind,
@@ -103,6 +106,7 @@ impl ProviderClient {
 ```
 
 #### 提供商配置
+
 ```rust
 pub struct ProviderConfig {
     pub base_url: String,              // API 端点
@@ -129,10 +133,10 @@ pub struct FeatureFlags {
 pub enum ApiMode {
     /// OpenAI 标准格式 (GPT-4, OpenRouter 等)
     ChatCompletions,
-    
+
     /// Anthropic Messages API (Claude 等)
     AnthropicMessages,
-    
+
     /// 其他兼容格式
     Custom(String),
 }
@@ -310,7 +314,7 @@ impl ModelRouter {
     /// 获取模型的推荐提供商
     pub fn recommend_provider(&self, model: &str) -> Option<String> {
         let model = self.resolve_model(model);
-        
+
         for (provider, models) in &self.providers {
             if models.iter().any(|m| m == &model) {
                 return Some(provider.clone());
@@ -364,7 +368,7 @@ impl CredentialStore {
     pub async fn save(&self, cred: StoredCredential) -> Result<()> {
         let mut cache = self.cache.write().await;
         cache.insert(cred.provider.clone(), cred.clone());
-        
+
         // 保存到文件（加密）
         self.persist(&cache)?;
         Ok(())
@@ -373,7 +377,7 @@ impl CredentialStore {
     /// 获取凭证（带过期检查）
     pub async fn get(&self, provider: &str) -> Option<StoredCredential> {
         let cache = self.cache.read().await;
-        
+
         if let Some(cred) = cache.get(provider) {
             // 检查是否过期
             if let Some(expires) = cred.expires_at {
@@ -422,7 +426,7 @@ impl AnthropicConfig {
             "claude-3-5-sonnet-20240620",
         ]
     }
-    
+
     pub fn features(&self) -> FeatureFlags {
         FeatureFlags {
             supports_streaming: true,
@@ -517,24 +521,25 @@ pub struct CustomConfig {
 
 ## 5. 与 Hermes 的对齐
 
-| 功能 | Hermes | If2Ai 现状 | 计划 |
-|------|--------|----------|------|
-| 多提供商支持（18+） | ✅ | ✅ 70% | Phase 2 完整 |
-| OAuth 流程 | ✅ | ✅ | ✅ 完成 |
-| API 密钥管理 | ✅ | ✅ | ✅ 完成 |
-| 凭证缓存 | ✅ | ✅ | ✅ 完成 |
-| 自动降级 | ✅ | ⏳ 部分 | Phase 2 完善 |
-| 模型别名 | ✅ | ✅ 70% | Phase 2 完整 |
-| 凭证池（轮换） | ✅ | ❌ | Phase 2 |
-| 流式响应 | ✅ | ✅ | ✅ 完成 |
-| 速率限制处理 | ✅ | ⏳ 基础 | Phase 2 |
-| 成本追踪 | ✅ | ❌ | Phase 3 |
+| 功能                | Hermes | If2Ai 现状 | 计划         |
+| ------------------- | ------ | ---------- | ------------ |
+| 多提供商支持（18+） | ✅     | ✅ 70%     | Phase 2 完整 |
+| OAuth 流程          | ✅     | ✅         | ✅ 完成      |
+| API 密钥管理        | ✅     | ✅         | ✅ 完成      |
+| 凭证缓存            | ✅     | ✅         | ✅ 完成      |
+| 自动降级            | ✅     | ⏳ 部分    | Phase 2 完善 |
+| 模型别名            | ✅     | ✅ 70%     | Phase 2 完整 |
+| 凭证池（轮换）      | ✅     | ❌         | Phase 2      |
+| 流式响应            | ✅     | ✅         | ✅ 完成      |
+| 速率限制处理        | ✅     | ⏳ 基础    | Phase 2      |
+| 成本追踪            | ✅     | ❌         | Phase 3      |
 
 ---
 
 ## 6. 集成检查清单
 
 ### Phase 1
+
 - [x] 基础 ProviderClient
 - [x] Anthropic 支持
 - [x] OpenAI 兼容支持
@@ -544,6 +549,7 @@ pub struct CustomConfig {
 - [ ] 完整的模型别名
 
 ### Phase 2
+
 - [ ] 凭证池 + 轮换
 - [ ] 自动降级逻辑
 - [ ] 更多提供商（Grok, Ollama 等）
@@ -551,6 +557,7 @@ pub struct CustomConfig {
 - [ ] 成本计算
 
 ### Phase 3+
+
 - [ ] 多区域部署
 - [ ] 负载均衡
 - [ ] 提供商管理 UI
@@ -560,6 +567,7 @@ pub struct CustomConfig {
 ## 7. 配置示例
 
 ### 环境变量
+
 ```bash
 # Anthropic
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -581,6 +589,7 @@ export CUSTOM_API_URL="http://localhost:8000/v1"
 ```
 
 ### 配置文件 (~/.claw/config.yaml)
+
 ```yaml
 default_provider: anthropic
 providers:
@@ -597,7 +606,7 @@ providers:
     organization: $OPENAI_ORG_ID
 
   custom:
-    base_url: http://localhost:11434/v1  # Ollama
+    base_url: http://localhost:11434/v1 # Ollama
     model: llama2
     api_key: optional
 

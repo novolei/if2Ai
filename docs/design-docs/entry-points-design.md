@@ -139,6 +139,7 @@ Phase 3 (4-8 周):
 ### 2.2 Tauri 命令接口
 
 **初始化**:
+
 ```rust
 // src-tauri/src/main.rs
 fn main() {
@@ -160,6 +161,7 @@ fn main() {
 ```
 
 **Command 层** (`src-tauri/src/commands/agent.rs`):
+
 ```rust
 #[tauri::command]
 pub async fn run_agent_turn(
@@ -173,19 +175,19 @@ pub async fn run_agent_turn(
         .restore_session(&session_id)
         .await
         .map_err(|e| format!("Session load failed: {}", e))?;
-    
+
     // Step 2: 创建运行时（或复用已有的）
     let mut runtime = state
         .agent_factory
         .create_runtime_for_session(&session)
         .map_err(|e| format!("Runtime creation failed: {}", e))?;
-    
+
     // Step 3: 执行一turn
     let response = runtime
         .run_turn(user_message)
         .await
         .map_err(|e| format!("Agent execution failed: {}", e))?;
-    
+
     // Step 4: 保存消息和元数据
     state
         .session_manager
@@ -198,7 +200,7 @@ pub async fn run_agent_turn(
         )
         .await
         .map_err(|e| format!("Message save failed: {}", e))?;
-    
+
     // Step 5: 返回结果
     Ok(RunAgentTurnResponse {
         content: response.message,
@@ -223,7 +225,7 @@ pub async fn run_conversation(
         let result = run_agent_turn(state.clone(), session_id.clone(), msg).await?;
         results.push(result);
     }
-    
+
     Ok(Summary {
         total_turns: results.len(),
         total_cost: results.iter().map(|r| r.tokens.cost).sum(),
@@ -234,6 +236,7 @@ pub async fn run_conversation(
 ### 2.3 会话管理
 
 **建立新会话**:
+
 ```
 Tauri UI: Click "New Chat" Button
     │
@@ -261,6 +264,7 @@ UI stores session_id in Svelte store
 ```
 
 **会话持久化**:
+
 ```rust
 pub struct AppState {
     session_manager: Arc<SessionManager>,
@@ -427,7 +431,7 @@ pub struct ApiServer {
 impl ApiServer {
     pub async fn start(self) -> std::io::Result<()> {
         let app_state = self.app_state.clone();
-        
+
         HttpServer::new(move || {
             App::new()
                 .app_data(web::Data::new(app_state.clone()))
@@ -459,7 +463,7 @@ async fn handle_rpc_request(
     let method = body["method"].as_str().unwrap_or("");
     let params = &body["params"];
     let id = body["id"].clone();
-    
+
     // 调用对应的 command handler
     let result = match method {
         "run_agent_turn" => {
@@ -477,7 +481,7 @@ async fn handle_rpc_request(
             }));
         }
     };
-    
+
     // 返回 JSON-RPC 响应
     web::Json(json!({
         "jsonrpc": "2.0",
@@ -571,12 +575,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const serverModule = context.asAbsolutePath(
     path.join('..', 'target', 'release', 'if2ai-lsp')
   );
-  
+
   const serverOptions = {
     run: { command: serverModule },
     debug: { command: serverModule, args: ['--debug'] }
   };
-  
+
   const clientOptions = {
     documentSelector: [
       { scheme: 'file', language: 'typescript' },
@@ -584,29 +588,29 @@ export async function activate(context: vscode.ExtensionContext) {
       { scheme: 'file', language: 'rust' },
     ],
   };
-  
+
   client = new LanguageClient(
     'if2ai-lsp',
     'If2Ai Agent LSP',
     serverOptions,
     clientOptions
   );
-  
+
   client.start();
-  
+
   // 注册命令
   context.subscriptions.push(
     vscode.commands.registerCommand('if2ai.runInContext', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      
+
       const selectedCode = editor.document.getText(editor.selection);
       const response = await client.sendRequest('run_in_context', {
         prompt: 'Explain and improve this code:',
         files: [editor.document.fileName],
         code: selectedCode,
       });
-      
+
       // 在 sidebar 中显示结果
       showResultPanel(response);
     })
@@ -619,7 +623,7 @@ function showResultPanel(response: any) {
     'If2Ai Result',
     vscode.ViewColumn.Beside
   );
-  
+
   panel.webview.html = getWebviewContent(response);
 }
 ```
@@ -632,15 +636,15 @@ function showResultPanel(response: any) {
 
 ```
 Tauri (Phase 1):
-User Input → Svelte UI → invoke('run_agent_turn') 
+User Input → Svelte UI → invoke('run_agent_turn')
 → Tauri Command → Agent → Response → UI Update
 
 API (Phase 2):
-HTTP Client → POST /rpc → JSON-RPC Handler 
+HTTP Client → POST /rpc → JSON-RPC Handler
 → Agent → JSON Response → HTTP Client
 
 IDE (Phase 3):
-Editor Context → LSP Client → stdio JSON-RPC 
+Editor Context → LSP Client → stdio JSON-RPC
 → LSP Server → Agent → LSP Notification → Editor
 ```
 
@@ -661,7 +665,7 @@ mod commands {
             // 核心逻辑，所有入口点都调用这个
         }
     }
-    
+
     pub mod session { ... }
     pub mod tools { ... }
     pub mod memory { ... }

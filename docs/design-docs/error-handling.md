@@ -41,7 +41,7 @@ pub enum AgentError {
         message: String,
         retriable: bool,
     },
-    
+
     // === Layer 2: 工具执行错误 ===
     ToolError {
         tool_name: String,
@@ -49,14 +49,14 @@ pub enum AgentError {
         message: String,
         retriable: bool,
     },
-    
+
     // === Layer 3: 上下文错误 ===
     ContextError {
         error_type: ContextErrorType,
         message: String,
         recovery_action: Option<String>,
     },
-    
+
     // === Layer 4: 系统错误 ===
     SystemError {
         error_type: SystemErrorType,
@@ -70,18 +70,18 @@ pub enum LLMErrorType {
     Timeout { duration_secs: u32 },
     ConnectionError(String),
     DNSResolution(String),
-    
+
     // API 错误
     InvalidAPIKey,
     RateLimited { retry_after_secs: u32 },
     QuotaExceeded,
     InvalidRequest { reason: String },
-    
+
     // 模型错误
     ModelNotFound,
     ModelDisabled,
     InsufficientTokens,
-    
+
     // 其他
     ProviderDown,
     UnexpectedResponse(String),
@@ -95,15 +95,15 @@ pub enum ToolErrorType {
     InvalidParameters { reason: String },
     Timeout { duration_secs: u32 },
     ExecutionFailed(String),
-    
+
     // 权限错误
     PermissionDenied { resource: String },
     SecurityViolation { violation: String },
-    
+
     // 资源错误
     ResourceUnavailable { reason: String },
     OutOfMemory,
-    
+
     // 依赖错误
     DependencyNotSatisfied { dependency: String },
     ConfigurationMissing { key: String },
@@ -179,7 +179,7 @@ impl RetryStrategy {
         }
         unreachable!()
     }
-    
+
     fn calculate_backoff(&self, attempt: u32) -> Duration {
         match &self.backoff_strategy {
             BackoffStrategy::Fixed { wait_ms } => Duration::millis(*wait_ms as u64),
@@ -209,14 +209,14 @@ pub struct ProviderTransferStrategy {
 impl ProviderTransferStrategy {
     pub async fn execute(&mut self) -> Result<RecoveryOutcome> {
         if self.current_fallback_index >= self.fallback_providers.len() {
-            return Ok(RecoveryOutcome::Failed { 
-                reason: "All fallback providers exhausted".to_string() 
+            return Ok(RecoveryOutcome::Failed {
+                reason: "All fallback providers exhausted".to_string()
             });
         }
-        
+
         let next_provider = &self.fallback_providers[self.current_fallback_index];
         self.current_fallback_index += 1;
-        
+
         Ok(RecoveryOutcome::Transferred {
             next_provider: next_provider.provider_name.clone(),
         })
@@ -234,7 +234,7 @@ impl ContextCompressionStrategy {
         messages: &mut Vec<Message>,
     ) -> Result<RecoveryOutcome> {
         let stats = self.compressor.compress(messages).await?;
-        
+
         Ok(RecoveryOutcome::Recovered {
             action: format!(
                 "Compressed {} messages, freed {} tokens",
@@ -258,10 +258,10 @@ impl ModelDowngradeStrategy {
                 reason: "No fallback models available".to_string(),
             });
         }
-        
+
         let (provider, model) = &self.available_models[self.current_index];
         self.current_index += 1;
-        
+
         Ok(RecoveryOutcome::Recovered {
             action: format!("Switched to {}/{}", provider, model),
         })
@@ -283,7 +283,7 @@ impl ErrorHandler {
         // Step 1: 错误分类和日志
         let error_class = self.classify_error(&error);
         self.error_log.log(&error, &error_class);
-        
+
         // Step 2: 检查熔断器状态
         if self.circuit_breaker.is_open() {
             return Err(AgentError::SystemError {
@@ -293,16 +293,16 @@ impl ErrorHandler {
                 message: "System is in failure recovery mode".to_string(),
             });
         }
-        
+
         // Step 3: 选择并执行恢复策略
         let mut applicable_strategies = self.strategies
             .iter()
             .filter(|s| s.is_applicable(&error))
             .collect::<Vec<_>>();
-        
+
         // 按优先级排序
         applicable_strategies.sort_by_key(|s| std::cmp::Reverse(s.priority()));
-        
+
         for strategy in applicable_strategies {
             match strategy.execute().await {
                 Ok(outcome) => {
@@ -316,11 +316,11 @@ impl ErrorHandler {
                 }
             }
         }
-        
+
         // Step 4: 所有策略都失败 → 记录并返回
         Err(error)
     }
-    
+
     fn classify_error(&self, error: &AgentError) -> ErrorClass {
         match error {
             AgentError::LLMError { error_type, .. } => {
@@ -377,7 +377,7 @@ impl CircuitBreaker {
     pub fn is_open(&self) -> bool {
         matches!(self.state.blocking_lock(), CircuitBreakerState::Open { .. })
     }
-    
+
     pub fn record_failure(&self) {
         let mut state = self.state.blocking_lock();
         match *state {
@@ -392,7 +392,7 @@ impl CircuitBreaker {
             _ => {}
         }
     }
-    
+
     pub fn record_success(&self) {
         let mut state = self.state.blocking_lock();
         *state = CircuitBreakerState::Closed { failure_count: 0 };
@@ -443,7 +443,7 @@ impl GracefulDegradation {
         });
         warn!("Graceful degradation activated: {}", reason);
     }
-    
+
     pub async fn deactivate(&mut self) {
         self.fallback_mode = false;
         // 重新加载所有工具
@@ -457,19 +457,18 @@ impl GracefulDegradation {
 
 ```yaml
 test_case:
-  name: "Error Recovery"
-  scenario: "Primary LLM 返回速率限制错误，验证自动恢复"
-  steps:
-    1. Mock OpenAI API 返回 429 Too Many Requests
+  name: 'Error Recovery'
+  scenario: 'Primary LLM 返回速率限制错误，验证自动恢复'
+  steps: 1. Mock OpenAI API 返回 429 Too Many Requests
     2. 触发 Agent 推理
     3. 验证系统自动执行指数退避
     4. 验证请求在延迟后重试成功
-  
+
   evaluators:
     - name: behavior
       config:
-        retries_attempted: ">= 1"
-        backoff_strategy: "exponential"
+        retries_attempted: '>= 1'
+        backoff_strategy: 'exponential'
         final_success: true
 ```
 

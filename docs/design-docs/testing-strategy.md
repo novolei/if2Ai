@@ -36,6 +36,7 @@
 **覆盖率目标**: ≥ 80%
 
 #### 测试位置
+
 ```
 src-tauri/src/
 ├── modules/
@@ -48,12 +49,14 @@ src-tauri/src/
 ```
 
 #### 单元测试涵盖
+
 - ✅ 正常路径（Happy path）
 - ✅ 边界情况（Boundary cases）
 - ✅ 错误处理（Error cases）
 - ✅ 约束验证（Constraint validation）
 
 #### 例子
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -71,7 +74,7 @@ mod tests {
         let mut mock_llm = MockLLM::new();
         mock_llm.expect_complete()
             .returning(|_| Ok("response".to_string()));
-        
+
         let agent = Agent::with_llm(mock_llm);
         let result = agent.run("test").await;
         assert!(result.is_ok());
@@ -92,6 +95,7 @@ mod tests {
 **覆盖率目标**: 关键路径 100%
 
 #### 测试位置
+
 ```
 tests/
 ├── integration/
@@ -105,12 +109,14 @@ tests/
 ```
 
 #### 集成测试涵盖
+
 - ✅ Agent 和 Tool System 的交互
 - ✅ Prompt Builder 和 Context Compressor
 - ✅ LLM Router 的故障转移
 - ✅ Memory System 的持久化
 
 #### 例子
+
 ```python
 # tests/integration/test_agent_with_tools.py
 
@@ -130,7 +136,7 @@ def agent(mock_tools):
 async def test_agent_uses_tool(agent, mock_tools):
     """Agent should invoke calculator tool when needed"""
     result = await agent.run("What is 2+2?")
-    
+
     assert mock_tools['calculator'].called
     assert "4" in result.response
     assert result.metrics.tool_calls == 1
@@ -143,6 +149,7 @@ async def test_agent_uses_tool(agent, mock_tools):
 **覆盖率目标**: 关键用户路径（5-10 个）
 
 #### 测试位置
+
 ```
 tests/e2e/
 ├── chat_workflow.py
@@ -154,12 +161,14 @@ tests/e2e/
 ```
 
 #### E2E 测试涵盖
+
 - ✅ 用户启动对话到得到答案
 - ✅ 工具调用和结果处理
 - ✅ 错误处理和恢复
 - ✅ UI 交互和响应
 
 #### 例子
+
 ```python
 # tests/e2e/test_chat_workflow.py
 
@@ -170,19 +179,19 @@ class TestChatWorkflow:
         # 1. 加载应用
         page = await browser.new_page()
         await page.goto(f"http://localhost:{server.port}")
-        
+
         # 2. 输入问题
         input_field = page.locator('input[placeholder="Ask me anything"]')
         await input_field.fill("What is the capital of France?")
-        
+
         # 3. 提交
         submit_btn = page.locator('button:has-text("Send")')
         await submit_btn.click()
-        
+
         # 4. 等待响应
         response = page.locator('text=Paris')
         await response.wait_for()
-        
+
         # 5. 验证
         assert await response.is_visible()
 ```
@@ -195,14 +204,15 @@ class TestChatWorkflow:
 
 #### 评估维度
 
-| 维度 | 评估器 | 指标 |
-|------|-------|------|
-| 正确性 | CorrectnessEvaluator | 输出正确性 (0-1) |
-| 效率 | PerformanceEvaluator | Token 使用、时间、工具调用数 |
-| 行为 | BehaviorEvaluator | 工具使用模式、决策路径 |
-| 可靠性 | ReliabilityEvaluator | 错误恢复率、重试成功率 |
+| 维度   | 评估器               | 指标                         |
+| ------ | -------------------- | ---------------------------- |
+| 正确性 | CorrectnessEvaluator | 输出正确性 (0-1)             |
+| 效率   | PerformanceEvaluator | Token 使用、时间、工具调用数 |
+| 行为   | BehaviorEvaluator    | 工具使用模式、决策路径       |
+| 可靠性 | ReliabilityEvaluator | 错误恢复率、重试成功率       |
 
 #### Harness 测试位置
+
 ```
 harness/
 ├── tests/
@@ -220,15 +230,16 @@ harness/
 ```
 
 #### 例子
+
 ```yaml
 # harness/tests/agent_behavior.yaml
 
-name: "Agent Behavior Tests"
+name: 'Agent Behavior Tests'
 
 test_cases:
-  - name: "Math Problem"
-    prompt: "What is 2+2?"
-    expected_output: "4"
+  - name: 'Math Problem'
+    prompt: 'What is 2+2?'
+    expected_output: '4'
     evaluators:
       - type: correctness
         config:
@@ -238,8 +249,8 @@ test_cases:
           max_tokens: 100
           max_duration: 5.0
     assertions:
-      - output_contains: "4"
-      - tools_used: ["calculator"]
+      - output_contains: '4'
+      - tools_used: ['calculator']
       - duration_lt: 5.0
 ```
 
@@ -247,26 +258,27 @@ test_cases:
 
 ### Rust 后端
 
-| 模块 | 目标 | 说明 |
-|------|------|------|
-| Agent Orchestrator | ≥ 85% | 核心逻辑 |
-| Tool System | ≥ 85% | 工具注册和执行 |
-| LLM Router | ≥ 75% | 提供商切换（模拟外部调用） |
-| Context Compressor | ≥ 90% | 算法验证 |
-| Memory System | ≥ 80% | 存储和检索 |
-| Prompt Builder | ≥ 80% | 提示词构建 |
-| Commands | ≥ 70% | Tauri 命令处理（UI 测试） |
+| 模块               | 目标  | 说明                       |
+| ------------------ | ----- | -------------------------- |
+| Agent Orchestrator | ≥ 85% | 核心逻辑                   |
+| Tool System        | ≥ 85% | 工具注册和执行             |
+| LLM Router         | ≥ 75% | 提供商切换（模拟外部调用） |
+| Context Compressor | ≥ 90% | 算法验证                   |
+| Memory System      | ≥ 80% | 存储和检索                 |
+| Prompt Builder     | ≥ 80% | 提示词构建                 |
+| Commands           | ≥ 70% | Tauri 命令处理（UI 测试）  |
 
 ### Svelte 前端
 
-| 模块 | 目标 | 说明 |
-|------|------|------|
-| 核心组件 | ≥ 80% | Chat, Dashboard 等 |
-| 状态管理 | ≥ 85% | Store 逻辑 |
-| 工具函数 | ≥ 90% | Utils, Formatters |
-| 集成 | UI Tests | 浏览器测试 |
+| 模块     | 目标     | 说明               |
+| -------- | -------- | ------------------ |
+| 核心组件 | ≥ 80%    | Chat, Dashboard 等 |
+| 状态管理 | ≥ 85%    | Store 逻辑         |
+| 工具函数 | ≥ 90%    | Utils, Formatters  |
+| 集成     | UI Tests | 浏览器测试         |
 
 ### 整体目标
+
 - **代码覆盖率**: ≥ 80%
 - **路径覆盖率**: 关键路径 100%
 - **E2E 流程**: 5+ 个主要工作流
@@ -304,29 +316,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      
+
       # 1. 单元测试
       - name: Unit Tests
         run: cargo test --all
-      
+
       # 2. 覆盖率检查
       - name: Code Coverage
         run: cargo tarpaulin --fail-under 80
-      
+
       # 3. 集成测试
       - name: Integration Tests
         run: pytest tests/integration
-      
+
       # 4. Harness 评估
       - name: Harness Evaluation
         run: python -m harness runner suite --ci-mode
-      
+
       # 5. E2E 测试（可选，计划中）
       - name: E2E Tests
         run: |
           npm run build
           pytest tests/e2e --e2e
-      
+
       # 6. 结果上传
       - name: Upload Results
         uses: codecov/codecov-action@v2
@@ -335,12 +347,14 @@ jobs:
 ## 📋 测试清单
 
 ### 新功能前
+
 - [ ] 编写单元测试（TDD 风格或实现后）
 - [ ] 添加集成测试路径
 - [ ] 在 Harness 中创建评估用例
 - [ ] 编写功能文档
 
 ### PR 前
+
 - [ ] 运行 `cargo test --all`
 - [ ] 检查覆盖率 ≥ 80%
 - [ ] 运行 `pytest tests/integration`
@@ -348,6 +362,7 @@ jobs:
 - [ ] 本地手动测试（关键路径）
 
 ### 合并前
+
 - [ ] CI 通过所有检查
 - [ ] 代码审查检查测试质量
 - [ ] 无新的警告（clippy）
@@ -355,6 +370,7 @@ jobs:
 ## 🧪 Mock 和 Fixture 策略
 
 ### Mock 原则
+
 - ✅ Mock 外部依赖（LLM、数据库、网络）
 - ✅ Mock 不稳定的行为（随机数、时间）
 - ❌ 不 Mock 核心业务逻辑
@@ -406,6 +422,7 @@ E2E 失败 → 需人工审查
 ## 🎓 测试最佳实践
 
 ### 1. 清晰的测试名称
+
 ```rust
 // ✅ GOOD
 #[test]
@@ -417,21 +434,23 @@ fn test1() { ... }
 ```
 
 ### 2. Arrange-Act-Assert 模式
+
 ```rust
 #[test]
 fn test_example() {
     // Arrange - 设置
     let agent = create_test_agent();
-    
+
     // Act - 执行
     let result = agent.run("test");
-    
+
     // Assert - 验证
     assert!(result.is_ok());
 }
 ```
 
 ### 3. 独立且可重复
+
 ```rust
 // ✅ GOOD - 完全独立
 #[test]
@@ -450,6 +469,7 @@ fn test_uses_global() {
 ```
 
 ### 4. 快速反馈
+
 ```bash
 # 分层运行 - 快速反馈
 cargo test --lib                    # < 1s
@@ -469,6 +489,7 @@ python -m harness runner quick      # < 30s
 **版本**: 0.1.0 | **最后更新**: 2026-04-11
 
 相关文档：
+
 - [DESIGN.md](../../DESIGN.md) - 设计原则
 - [harness/README.md](../../harness/README.md) - Harness 框架
 - [ARCHITECTURE.md](../../ARCHITECTURE.md) - 系统架构

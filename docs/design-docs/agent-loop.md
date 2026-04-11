@@ -4,7 +4,7 @@
 **最后更新**: 2026-04-11  
 **对标**: Hermes Agent `run_agent.py` (~9200 行)  
 **实现语言**: Rust  
-**关键文件**: `crates/runtime/src/conversation.rs` + `crates/api/src/client.rs`  
+**关键文件**: `crates/runtime/src/conversation.rs` + `crates/api/src/client.rs`
 
 ---
 
@@ -13,6 +13,7 @@
 ### 1.1 在 Hermes 中的角色
 
 Hermes Agent Loop（核心的 `AIAgent` 类）负责：
+
 - 🔄 同步协调 Agent 循环
 - 📝 维护对话历史（OpenAI 消息格式）
 - 🔗 集成 LLM 提供商选择
@@ -23,6 +24,7 @@ Hermes Agent Loop（核心的 `AIAgent` 类）负责：
 ### 1.2 在 Claw Code 中的现状
 
 **现有实现**（`src/conversation.rs`）：
+
 ```
 ✅ ConversationRuntime - 会话运行时
 ✅ ApiClient - 多提供商支持
@@ -61,6 +63,7 @@ Hermes Agent Loop（核心的 `AIAgent` 类）负责：
 ### 2.2 关键类型定义
 
 #### ConversationRuntime
+
 ```rust
 pub struct ConversationRuntime {
     api: Arc<ApiClient>,           // LLM 客户端
@@ -79,7 +82,7 @@ impl ConversationRuntime {
     ) -> Result<AssistantEvent, RuntimeError> {
         // 步骤 1-5（见上）
     }
-    
+
     /// 完整对话（多轮）
     pub async fn run_conversation(
         &mut self,
@@ -91,6 +94,7 @@ impl ConversationRuntime {
 ```
 
 #### Message 类型（OpenAI 兼容）
+
 ```rust
 pub struct ConversationMessage {
     pub role: MessageRole,     // "user", "assistant", "tool"
@@ -108,6 +112,7 @@ pub enum MessageRole {
 ```
 
 #### ToolCall 和执行
+
 ```rust
 pub struct ToolCall {
     pub id: String,
@@ -289,33 +294,36 @@ impl ConversationRuntime {
 ### 4.1 消息格式兼容性
 
 ✅ **完全兼容**：
+
 - OpenAI 消息格式 (role/content/tool_calls)
 - Tool choice 支持 (auto/required/none)
 - Tool result content blocks
 
 ✅ **部分支持**：
+
 - 流式响应（需扩展）
 - Extended thinking (Claude)
 - Multi-modal content (vision blocks)
 
 ### 4.2 功能覆盖
 
-| 功能 | Hermes | If2Ai 现状 | 计划 |
-|------|--------|----------|------|
-| 基础 Agent 循环 | ✅ | ✅ 90% | ✅ 完成 |
-| 消息历史管理 | ✅ | ✅ 100% | ✅ 完成 |
-| 工具执行 | ✅ 并发 | ⏳ 顺序 | Phase 2 并发 |
-| 系统提示构建 | ✅ | ✅ 75% | ⏳ 完善 |
-| 会话持久化 | ✅ | ✅ | ✅ 完成 |
-| 中断处理 | ✅ | ⏳ 基础 | ⏳ 完善 |
-| 预算追踪 | ✅ | ❌ | Phase 2 |
-| 上下文压缩 | ✅ | ❌ | Phase 2 |
-| Provider 降级 | ✅ | ⏳ 部分 | Phase 2 |
-| Prompt 缓存 | ✅ | ❌ | Phase 2 |
+| 功能            | Hermes  | If2Ai 现状 | 计划         |
+| --------------- | ------- | ---------- | ------------ |
+| 基础 Agent 循环 | ✅      | ✅ 90%     | ✅ 完成      |
+| 消息历史管理    | ✅      | ✅ 100%    | ✅ 完成      |
+| 工具执行        | ✅ 并发 | ⏳ 顺序    | Phase 2 并发 |
+| 系统提示构建    | ✅      | ✅ 75%     | ⏳ 完善      |
+| 会话持久化      | ✅      | ✅         | ✅ 完成      |
+| 中断处理        | ✅      | ⏳ 基础    | ⏳ 完善      |
+| 预算追踪        | ✅      | ❌         | Phase 2      |
+| 上下文压缩      | ✅      | ❌         | Phase 2      |
+| Provider 降级   | ✅      | ⏳ 部分    | Phase 2      |
+| Prompt 缓存     | ✅      | ❌         | Phase 2      |
 
 ### 4.3 关键差异和计划
 
 **Hermes 的高级特性**（If2Ai Phase 2+）：
+
 1. **Context Compression** - LLM 总结中间消息
 2. **Budget Pressure** - 迭代预算警告（70%, 90%）
 3. **Tool Concurrency** - 并行工具执行
@@ -327,6 +335,7 @@ impl ConversationRuntime {
 ## 5. 集成检查清单
 
 ### Phase 1（当前）
+
 - [x] ConversationRuntime 完整实现
 - [x] OpenAI 兼容消息格式
 - [x] Tool 执行框架
@@ -335,6 +344,7 @@ impl ConversationRuntime {
 - [ ] 完整的会话序列化
 
 ### Phase 2
+
 - [ ] Tool 并发执行
 - [ ] Context compression (借助 Gemini 等)
 - [ ] Budget pressure warnings
@@ -342,6 +352,7 @@ impl ConversationRuntime {
 - [ ] Prompt caching (Anthropic)
 
 ### Phase 3+
+
 - [ ] Extended thinking
 - [ ] Multi-modal support
 - [ ] Advanced scheduling
@@ -351,19 +362,20 @@ impl ConversationRuntime {
 
 ## 6. 代码位置映射
 
-| Hermes 模块 | 行数 | If2Ai 位置 | 状态 |
-|-----------|------|----------|------|
-| run_agent.py | 9200 | crates/runtime/src/conversation.rs | ✅ 80% |
-| prompt_builder.py | 600 | crates/runtime/src/prompt.rs | ⏳ 50% |
-| model_tools.py | 400 | crates/tools/src/lib.rs | ✅ 90% |
-| agent/context_engine.py | 300 | crates/runtime/src/compact.rs | ⏳ 30% |
-| hermes_state.py | 500 | crates/runtime/src/session.rs | ✅ 85% |
+| Hermes 模块             | 行数 | If2Ai 位置                         | 状态   |
+| ----------------------- | ---- | ---------------------------------- | ------ |
+| run_agent.py            | 9200 | crates/runtime/src/conversation.rs | ✅ 80% |
+| prompt_builder.py       | 600  | crates/runtime/src/prompt.rs       | ⏳ 50% |
+| model_tools.py          | 400  | crates/tools/src/lib.rs            | ✅ 90% |
+| agent/context_engine.py | 300  | crates/runtime/src/compact.rs      | ⏳ 30% |
+| hermes_state.py         | 500  | crates/runtime/src/session.rs      | ✅ 85% |
 
 ---
 
 ## 7. 测试策略
 
 ### 单元测试
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -392,6 +404,7 @@ mod tests {
 ```
 
 ### 集成测试（Harness）
+
 ```python
 def test_agent_correctness():
     """Agent 能给出合理的回答"""
@@ -410,12 +423,12 @@ def test_tool_calling():
 
 ## 8. 性能指标
 
-| 指标 | 目标 | 度量方法 |
-|------|------|--------|
-| 平均响应时间 | <2s | benchmark |
-| 内存使用 | <500MB | valgrind |
-| Tool 执行时间 | <1s | profiling |
-| 会话加载时间 | <100ms | timing |
+| 指标          | 目标   | 度量方法  |
+| ------------- | ------ | --------- |
+| 平均响应时间  | <2s    | benchmark |
+| 内存使用      | <500MB | valgrind  |
+| Tool 执行时间 | <1s    | profiling |
+| 会话加载时间  | <100ms | timing    |
 
 ---
 

@@ -12,6 +12,7 @@
 ### 1.1 Hermes 的模块思想
 
 Hermes 采用**功能分片**策略：
+
 - 每个模块有单一职责
 - 模块间通过**注册表模式**通信
 - 可选模块通过 `check_fn` gating
@@ -75,11 +76,13 @@ if2Ai/
 **职责**: 对话运行循环、步骤调度
 
 **关键文件**:
+
 - `conversation.rs` - ConversationRuntime
 - `prompt.rs` - PromptBuilder
 - `mod.rs` - 模块公开接口
 
 **公开 API**:
+
 ```rust
 pub struct ConversationRuntime {
     api: Arc<ProviderManager>,
@@ -104,17 +107,20 @@ impl PromptBuilder {
 ```
 
 **依赖**:
+
 - `provider::ProviderManager` - LLM 调用
 - `tools::ToolExecutor` - 工具执行
 - `session::SessionManager` - 状态管理
 - `types::*` - 数据类型
 
 **被依赖者**:
+
 - `commands::agent` - Tauri 命令
 - 测试模块
 - 网关模块 (Phase 2)
 
 **内部结构**:
+
 ```
 agent/
 ├── __init__.rs        # 模块声明
@@ -132,11 +138,13 @@ agent/
 **职责**: LLM 提供商管理、凭证、模型路由
 
 **关键文件**:
+
 - `client.rs` - ProviderClient (统一接口)
 - `manager.rs` - ProviderManager (选择和路由)
 - `providers/` - 各个提供商实现
 
 **公开 API**:
+
 ```rust
 pub struct ProviderManager {
     clients: Arc<DashMap<ProviderKind, Arc<ProviderClient>>>,
@@ -148,7 +156,7 @@ impl ProviderManager {
         &self,
         preferred_model: Option<&str>,
     ) -> Result<Arc<ProviderClient>>;
-    
+
     pub async fn create_message(
         &self,
         request: MessageRequest,
@@ -167,6 +175,7 @@ impl ProviderClient {
 ```
 
 **支持的提供商**:
+
 ```rust
 pub enum ProviderKind {
     Anthropic { use_bedrock: bool },
@@ -179,6 +188,7 @@ pub enum ProviderKind {
 ```
 
 **路由策略**:
+
 ```rust
 pub enum RoutingStrategy {
     Auto {
@@ -192,15 +202,18 @@ pub enum RoutingStrategy {
 ```
 
 **依赖**:
+
 - 标准 HTTP 库 (reqwest)
 - OAuth 库
 - JSON 序列化
 
 **被依赖者**:
+
 - `agent::ConversationRuntime` - 调用 LLM
 - `commands::model` - 模型切换命令
 
 **内部结构**:
+
 ```
 provider/
 ├── mod.rs
@@ -224,11 +237,13 @@ provider/
 **职责**: 工具注册、执行、权限、后端管理
 
 **关键文件**:
+
 - `registry.rs` - ToolRegistry (中央注册)
 - `executor.rs` - ToolExecutor (执行引擎)
 - 各个工具文件
 
 **公开 API**:
+
 ```rust
 pub struct ToolRegistry {
     tools: Arc<DashMap<String, Arc<dyn Tool>>>,
@@ -261,6 +276,7 @@ impl ToolExecutor {
 ```
 
 **工具组织**:
+
 ```
 tools/
 ├── mod.rs
@@ -300,10 +316,12 @@ tools/
 ```
 
 **依赖**:
+
 - `agent::types` - 数据类型
 - Platform-specific 库 (tokio, std::process 等)
 
 **被依赖者**:
+
 - `agent::ConversationRuntime` - 执行工具
 - `commands::tools` - 工具管理命令
 
@@ -314,11 +332,13 @@ tools/
 **职责**: 会话存储、历史、元数据
 
 **关键文件**:
+
 - `storage.rs` - 数据库操作
 - `manager.rs` - SessionManager (业务逻辑)
 - `schema.rs` - SQLite schema
 
 **公开 API**:
+
 ```rust
 pub struct SessionManager {
     store: Arc<dyn SessionStore>,
@@ -351,16 +371,19 @@ pub struct Session {
 ```
 
 **依赖**:
+
 - `sqlx` - SQLite 驱动
 - `sqlite` - 数据库
 - `agent::types` - 消息类型
 
 **被依赖者**:
+
 - `agent::ConversationRuntime` - 保存历史
 - `commands::session` - 会话管理命令
 - 网关 (Phase 2)
 
 **内部结构**:
+
 ```
 session/
 ├── mod.rs
@@ -379,6 +402,7 @@ session/
 **职责**: SOUL/MEMORY/USER 数据管理
 
 **公开 API**:
+
 ```rust
 pub struct MemoryManager {
     soul: SoulStore,      // 永久的个性和能力
@@ -406,6 +430,7 @@ pub struct UserProfile {
 ```
 
 **依赖**:
+
 - `session::SessionStore` - 查询历史
 - Vector DB (Phase 2) - 语义搜索
 
@@ -416,6 +441,7 @@ pub struct UserProfile {
 **职责**: 插件发现、加载、注册
 
 **公开 API**:
+
 ```rust
 pub struct PluginManager {
     plugins: Arc<DashMap<String, Arc<dyn Plugin>>>,
@@ -436,12 +462,14 @@ pub struct PluginContext {
 ```
 
 **插件类型**:
+
 1. **Tool Plugins** - 贡献工具
 2. **Hook Plugins** - 注册生命周期 hook
 3. **Context Engine Plugins** - 自定义压缩引擎 (单选)
 4. **Memory Plugins** - 自定义记忆后端 (单选)
 
 **发现搜索路径**:
+
 ```
 1. ~/.hermes/plugins/        (用户插件)
 2. ./.hermes/plugins/        (项目插件)
@@ -465,20 +493,21 @@ pub async fn run_agent_turn(
 ) -> Result<AgentResponse, String> {
     // 1. 获取当前会话
     let mut session = state.session_manager.restore_session(&session_id).await?;
-    
+
     // 2. 调用 agent module
     let mut runtime = state.agent_runtime.clone();
     let response = runtime.run_turn(user_message).await?;
-    
+
     // 3. 保存到 session module
     state.session_manager.save_message(&session_id, &response.message).await?;
-    
+
     // 4. 返回结果到前端
     Ok(response)
 }
 ```
 
 **模块之间通过 AppState 共享**:
+
 ```rust
 pub struct AppState {
     pub agent_runtime: Arc<Mutex<ConversationRuntime>>,
@@ -525,6 +554,7 @@ memory/types.rs
 ```
 
 **统一的消息格式（OpenAI 兼容）**:
+
 ```rust
 pub struct Message {
     pub role: Role,  // user, assistant, system
@@ -636,6 +666,7 @@ if2Ai/rust/crates/
 ```
 
 **发布策略**:
+
 - Phase 1: 内部使用
 - Phase 2: 作为 workspace crates
 - Phase 3: 发布到 crates.io (可选)
@@ -675,6 +706,7 @@ harness/
 ```
 
 **集成测试场景**:
+
 ```python
 def test_full_agent_loop():
     """测试：User Message → Prompt → Provider → Tool → Response"""
@@ -745,6 +777,7 @@ if2ai-tools = { path = "../rust/crates/tools", version = "0.1" }
 ## 8. 模块演进路线
 
 ### Phase 1 (现在)
+
 - ✅ types modules
 - ✅ agent module (核心循环)
 - ✅ provider module (多提供商)
@@ -752,12 +785,14 @@ if2ai-tools = { path = "../rust/crates/tools", version = "0.1" }
 - ✅ session module (存储)
 
 ### Phase 2 (2-4 周)
+
 - ✅ memory module (SOUL/MEMORY/USER)
 - ✅ plugin module 完善
 - ⏳ hook system
 - ⏳ compression module
 
 ### Phase 3 (4-8 周)
+
 - ❌ gateway module (多平台)
 - ❌ cron module (定时任务)
 - 库发布 (crates.io)

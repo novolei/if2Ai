@@ -12,6 +12,7 @@
 ### 1.1 源码现状
 
 #### /rust 目录 (原始资本基础)
+
 ```
 rust/
 ├── Cargo.toml (workspace)
@@ -37,6 +38,7 @@ rust/
 ```
 
 #### /src-tauri 目录 (当前 Tauri 集成点)
+
 ```
 src-tauri/
 ├── src/
@@ -126,12 +128,14 @@ if2Ai/
 ### 2.2 关键决策
 
 **原则 1: /rust 作为"原始资本" (Immutable Foundation)**
+
 - 保持 /rust 作为完整的、经过验证的源码库
 - /rust 中的代码是所有实现的参考和来源
 - 不在 /rust 中进行增量修改 (避免"两个真实版本")
 - /rust + docs/ 一起形成"设计与实现的参考库"
 
 **原则 2: src-tauri 作为"实际工作区" (Working Codebase)**
+
 - src-tauri/ 是生产编译和运行的真实代码
 - 从 /rust 中：
   - 复制核心实现逻辑 (conversation.rs, client.rs 等)
@@ -140,6 +144,7 @@ if2Ai/
 - src-tauri/ 中反复迭代和优化
 
 **原则 3: 设计文档作为"契约" (Specification Contract)**
+
 - 设计文档（7 份 Phase 2 文档）定义"应该做什么"
 - /rust 实现定义"目前是怎样的"
 - src-tauri/ 编码定义"我们正在构建什么"
@@ -192,6 +197,7 @@ if2Ai/
 ### 3.1 模块边界设计 (module-boundaries-and-integration.md)
 
 **设计规划**:
+
 ```
 src-tauri/src/modules/
 ├── agent/             # Agent 循环
@@ -203,6 +209,7 @@ src-tauri/src/modules/
 ```
 
 **与 /rust 的对应**:
+
 ```
 rust/crates/
 ├── runtime/      → src-tauri/src/modules/agent/
@@ -220,6 +227,7 @@ rust/crates/
 ### 3.2 系统架构框架 (system-architecture-framework.md)
 
 **设计规划 (3 层)**:
+
 ```
 Layer 1: Entry Points (Tauri, API, IDE)
    ↓
@@ -229,6 +237,7 @@ Layer 3: Infrastructure (Session, Tools, Plugins)
 ```
 
 **实施方式**:
+
 ```
 src-tauri/main.rs
    ↓
@@ -246,6 +255,7 @@ SQLite, Tool Backends, Plugin Loaders
 ### 3.3 模块集成点 (AppState)
 
 **设计规划** (module-boundaries-and-integration.md):
+
 ```rust
 pub struct AppState {
     pub agent_runtime: Arc<Mutex<ConversationRuntime>>,
@@ -258,6 +268,7 @@ pub struct AppState {
 ```
 
 **实施方式** (从 /rust 源码中复制的类型):
+
 ```rust
 // src-tauri/src/app_state.rs
 pub struct AppState {
@@ -306,6 +317,7 @@ EOF
 ### 4.2 Step 2: 核心模块迁移 (4-6 小时)
 
 **处理步骤**:
+
 1. 读取 /rust/crates/runtime/src/lib.rs
 2. 提取关键类型和实现
 3. 复制到 src-tauri/src/modules/agent/
@@ -313,6 +325,7 @@ EOF
 5. 运行 `cargo check` 验证
 
 **示例** (agent 模块):
+
 ```bash
 # 1. 复制源文件
 cp rust/crates/runtime/src/lib.rs src-tauri/src/modules/agent/conversation.rs
@@ -346,19 +359,19 @@ use crate::modules::{
 pub struct AppState {
     /// 从 modules/agent 复制
     pub agent_runtime: Arc<Mutex<ConversationRuntime>>,
-    
+
     /// 从 modules/provider 复制
     pub provider_manager: Arc<ProviderManager>,
-    
+
     /// 从 modules/tools 复制
     pub tool_registry: Arc<ToolRegistry>,
-    
+
     /// 从 modules/session 复制
     pub session_manager: Arc<SessionManager>,
-    
+
     /// 从 modules/memory 复制 (Memory System 设计)
     pub memory_manager: Arc<MemoryManager>,
-    
+
     /// 从 modules/plugin 复制
     pub plugin_manager: Arc<PluginManager>,
 }
@@ -370,14 +383,14 @@ impl AppState {
         let session_manager = SessionManager::new().await?;
         let memory_manager = MemoryManager::new().await?;
         let plugin_manager = PluginManager::new().await?;
-        
+
         let agent_runtime = ConversationRuntime::new(
             provider_manager.clone(),
             tool_registry.clone(),
             session_manager.clone(),
             memory_manager.clone(),
         )?;
-        
+
         Ok(Self {
             agent_runtime: Arc::new(Mutex::new(agent_runtime)),
             provider_manager: Arc::new(provider_manager),
@@ -465,12 +478,12 @@ Sources  ←→  Design Docs
 
 ### 6.1 可能的问题
 
-| 问题 | 风险 | 缓解方案 |
-|------|------|--------|
-| 源码复制导致两份代码 | 不一致 | 保持 /rust 不变，src-tauri 为真实版本 |
-| 迁移期间编译失败 | 阻挡 | 逐个 crate 迁移，持续 cargo check |
-| 设计与实现脱节 | 混乱 | 每月同步会议，reviews 对标设计 |
-| 新人不理解源码结构 | 生产力↓ | 本文档 + DEVELOPER_GUIDE.md 同步更新 |
+| 问题                 | 风险    | 缓解方案                              |
+| -------------------- | ------- | ------------------------------------- |
+| 源码复制导致两份代码 | 不一致  | 保持 /rust 不变，src-tauri 为真实版本 |
+| 迁移期间编译失败     | 阻挡    | 逐个 crate 迁移，持续 cargo check     |
+| 设计与实现脱节       | 混乱    | 每月同步会议，reviews 对标设计        |
+| 新人不理解源码结构   | 生产力↓ | 本文档 + DEVELOPER_GUIDE.md 同步更新  |
 
 ### 6.2 质量保证
 
@@ -534,6 +547,7 @@ fn test_modules_follow_design() {
 ### 8.1 核心建议
 
 ✅ **需要立即执行**:
+
 1. 将 /rust 设定为"不可触碰的参考库" (Immutable Foundation)
 2. 将 src-tauri/ 设定为"生产工作区" (Working Codebase)
 3. 从 /rust 复制核心模块到 src-tauri/src/modules/
@@ -541,6 +555,7 @@ fn test_modules_follow_design() {
 5. 创建本文档作为源码管理的宪法
 
 ✅ **与设计文档的一致性**:
+
 - module-boundaries-and-integration.md ✓ 完全对齐
 - system-architecture-framework.md ✓ 完全支撑
 - agent-loop.md ✓ ConversationRuntime 直接复制
@@ -548,6 +563,7 @@ fn test_modules_follow_design() {
 - 7 份 Phase 2 文档 ✓ 指导持续开发
 
 ✅ **没有冲突**:
+
 - 设计文档中没有与该策略冲突的地方
 - 反而，本策略完美实现了设计文档的意图
 - 三者（源码、设计、实现）形成黄金三角
@@ -573,4 +589,3 @@ fn test_modules_follow_design() {
 **执行者**: 所有开发团队必须遵循此原则
 **审查者**: 架构师在每个 PR 中验证一致性
 **更新频率**: 每月审查一次，确保三方同步
-

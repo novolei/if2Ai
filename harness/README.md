@@ -29,6 +29,7 @@ harness/
 ## 🎯 核心概念
 
 ### 1. **Runner** (运行器)
+
 执行 Agent 的容器
 
 ```python
@@ -41,6 +42,7 @@ result = runner.run(prompt="Do something")
 ```
 
 ### 2. **Evaluator** (评估器)
+
 评估 Agent 行为的工具
 
 ```python
@@ -53,6 +55,7 @@ score = evaluator.evaluate(
 ```
 
 ### 3. **Fixture** (夹具)
+
 可复用的测试数据和 mock
 
 ```python
@@ -228,14 +231,14 @@ class MyEvaluator(BaseEvaluator):
 
 ```yaml
 # tests/suites/default.yaml
-name: "Default Test Suite"
-description: "Basic Agent functionality"
+name: 'Default Test Suite'
+description: 'Basic Agent functionality'
 
 fixtures:
   simple_agent:
     type: agent
     config: configs/simple_agent.yaml
-    
+
   math_tools:
     type: tools
     tools:
@@ -245,40 +248,41 @@ fixtures:
         spec: specs/search.yaml
 
 test_cases:
-  - name: "Simple Math"
-    description: "Agent can answer basic math"
+  - name: 'Simple Math'
+    description: 'Agent can answer basic math'
     agent_fixture: simple_agent
     tool_fixtures:
       - math_tools
-    prompt: "What is 2+2?"
-    expected_output: "4"
+    prompt: 'What is 2+2?'
+    expected_output: '4'
     evaluators:
       - name: correctness
         config:
-          match_strategy: "semantic"
+          match_strategy: 'semantic'
       - name: behavior
         config:
-          tools_used: ["calculator"]
-    tags: ["math", "basic"]
-    
-  - name: "Multi-step Problem"
-    description: "Agent can solve multi-step problems"
+          tools_used: ['calculator']
+    tags: ['math', 'basic']
+
+  - name: 'Multi-step Problem'
+    description: 'Agent can solve multi-step problems'
     agent_fixture: simple_agent
     tool_fixtures:
       - math_tools
-    prompt: "If I have 10 apples and you give me 5, how many do I have?"
-    expected_output: "15"
+    prompt: 'If I have 10 apples and you give me 5, how many do I have?'
+    expected_output: '15'
     evaluators:
       - name: correctness
       - name: behavior
         config:
-          tool_calls: {"calculator": 1}
-    tags: ["math", "multi-step"]
+          tool_calls: { 'calculator': 1 }
+    tags: ['math', 'multi-step']
 ```
 
 ## 📈 报告生成
 
 ### HTML 报告
+
 ```bash
 python -m harness runner report \
     --suite default \
@@ -287,6 +291,7 @@ python -m harness runner report \
 ```
 
 生成的报告包含：
+
 - ✅ 测试执行摘要
 - ✅ 每个测试的详细结果
 - ✅ 评估分数对比
@@ -294,6 +299,7 @@ python -m harness runner report \
 - ✅ 错误和失败分析
 
 ### JSON 报告
+
 ```bash
 python -m harness runner report \
     --suite default \
@@ -306,6 +312,7 @@ python -m harness runner report \
 ## 🔍 故障排查和调试
 
 ### 1. 启用详细日志
+
 ```bash
 python -m harness runner run \
     --config test.yaml \
@@ -314,6 +321,7 @@ python -m harness runner run \
 ```
 
 ### 2. 保存执行快照
+
 ```bash
 python -m harness runner run \
     --config test.yaml \
@@ -322,6 +330,7 @@ python -m harness runner run \
 ```
 
 ### 3. 使用交互式调试器
+
 ```bash
 python -m harness runner debug \
     --config test.yaml \
@@ -370,16 +379,19 @@ mock_tool = MockTool(
 ## 📋 最佳实践
 
 ### 1. 隔离测试
+
 - 每个测试应该独立运行
 - 使用 fixtures 隔离外部依赖
 - 清理每个测试的状态
 
 ### 2. 确定性结果
+
 - 使用种子值确保可复现性
 - Mock 非确定性操作（如 API 调用）
 - 避免依赖时间或随机数
 
 ### 3. 清晰的断言
+
 ```python
 # ✅ GOOD - 清晰的评估目标
 evaluator = CorrectnessEvaluator(
@@ -392,6 +404,7 @@ evaluator = CorrectnessEvaluator(
 ```
 
 ### 4. 定期运行
+
 - 在每个 PR 上运行完整测试套件
 - 保持测试夹具和 Mock 最新
 - 定期审查和更新测试
@@ -401,6 +414,7 @@ evaluator = CorrectnessEvaluator(
 ### VS Code 集成
 
 推荐安装 [Harness Runner](vscode-extension-link)：
+
 - 按一键运行测试
 - 内联查看结果
 - 快速查看执行跟踪
@@ -408,6 +422,7 @@ evaluator = CorrectnessEvaluator(
 ### CI/CD 集成
 
 在 GitHub Actions 中集成：
+
 ```yaml
 - name: Run Harness Tests
   run: python -m harness runner suite --suite default --ci-mode
@@ -425,24 +440,29 @@ python -m harness benchmark \
 ## 📚 进阶主题
 
 ### 自定义评估器
+
 见 [evaluators/custom-example.md](./evaluators/custom-example.md)
 
 ### 分布式运行
+
 见 [runners/distributed.md](./runners/distributed.md)（未来功能）
 
 ### Agent 对比分析
+
 见 [analysis/](./analysis/)
 
 ## 🚨 常见问题
 
 **Q: 为什么测试失败了，但看起来本应通过？**
 A: 检查：
+
 1. LLM 响应是否确定（使用 Mock）
 2. Tool Mock 是否与实际行为一致
 3. 评估器阈值是否太严格
 
 **Q: 如何加速测试？**
 A:
+
 1. 使用 Mock LLM 和工具
 2. 减少评估器数量
 3. 并行运行独立测试（coming soon）
@@ -461,6 +481,7 @@ A: 详见 [examples/](./examples/) 目录
 **版本**: 0.1.0 | **最后更新**: 2026-04-11
 
 相关文档：
+
 - [DESIGN.md](../DESIGN.md) - 设计原则
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - 系统架构
 - [docs/design-docs/testing-strategy.md](../docs/design-docs/testing-strategy.md) - 测试策略

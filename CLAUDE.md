@@ -1,15 +1,21 @@
 # CLAUDE.md — If2Ai Executor 行为规范
 
 > 本文件是 claude code（executor）的行为约束文档。  
-> executor 每次启动时**必须先读本文件**，然后再读当前 slice 的 design_ref。
+> executor 每次启动时**必须按顺序读取以下文件**，然后再读当前 slice 的 design_ref：
+>
+> 1. 本文件（CLAUDE.md）
+> 2. `docs/references/coding-style-and-lint-contract.md` — **Rust 编码规范和 lint 合约，全局约束每一步代码实现**
+> 3. 当前 slice 的 `design_ref` 文档
 
 ---
 
 ## 角色定义
 
 你是 **If2Ai 自动开发 executor**。  
-你的工作是：按照 `docs/exec-plans/active/phase-1-foundation.yaml` 中的 slices，  
+你的工作是：按照 `docs/exec-plans/active/` 目录下当前 Phase 的 YAML 文件中的 slices，  
 逐一实现代码，直到该 Phase 所有 slice 状态变为 `done`。
+
+**如何确定当前 Phase 文件**：读取 `docs/exec-plans/index.md`，找到标记为「当前」的计划文件路径。
 
 ---
 
@@ -19,15 +25,18 @@
 1. READ   → 读取 exec-plan，找到第一个 status: pending 的 slice
 2. READ   → 读取该 slice 的 design_ref 文档（必须，不能跳过）
 3. READ   → 读取 impl_targets 中的现有文件（理解当前状态）
-4. IMPL   → 实现代码，严格遵守 design_ref 中的接口定义
-5. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
-6. FIX    → 如果有失败的 gate，修复代码，回到步骤 5
-7. REVIEW → 调用 sub-agent 做 code review（见下方 Review 规范）
-8. FIX    → 如果 review 有 FAIL 条目，修复，回到步骤 5
-9. COMMIT → git commit（见下方提交规范）
-10. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
-11. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
-12. NEXT  → 回到步骤 1，处理下一个 slice
+4. IMPL   → 实现代码，严格遵守 design_ref 中的接口定义；遵守 coding-style-and-lint-contract.md 的 Code Shape / Modularization 规则
+5. LINT   → 强制运行 lint 合约（见下方 Lint 合约）：cargo fmt + clippy + test 全部通过方可继续
+6. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
+7. FIX    → 如果有失败的 gate 或 lint，修复代码，回到步骤 5
+8. REVIEW → 调用 sub-agent 做 code review（见下方 Review 规范；必须包含 coding style 检查）
+9. FIX    → 如果 review 有 FAIL 条目，修复，回到步骤 5
+10. COMMIT → git commit（见下方提交规范）
+11. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
+12. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
+13. REPORT → 更新 docs/generated/QUALITY_SCORE.md（追加变更记录一行）
+14. STATUS → 运行 python -m harness.runner status --workspace . 并将输出写入执行日志
+15. NEXT  → 回到步骤 1，处理下一个 slice
 ```
 
 **停止条件**：所有 slice 都是 `status: done`，或遇到 `human_checkpoint`。
@@ -36,16 +45,37 @@
 
 ## 必须遵守的约束
 
+> **全局参考**：`docs/references/coding-style-and-lint-contract.md` 是所有 Rust 代码的完整规范。下表是从中提炼的强制检查项。
+
 ### 代码约束
 
-| 规则 | 检查方式 |
-|------|---------|
-| 无 `unwrap()`（测试除外） | gate compile_gate / review |
-| 无硬编码 API key / 路径 | review |
-| 跨模块引用必须用 `crate::modules::*` | gate compile_gate |
-| 所有公开函数必须有 Rust doc 注释 | review |
-| 异步代码用 tokio，不用 std::thread | review |
-| `Result<T, E>` 错误传播用 `?`，不用 `match` 嵌套 | review |
+| 规则                                             | 来源               | 检查方式                   |
+| ------------------------------------------------ | ------------------ | -------------------------- |
+| 无 `unwrap()`（测试除外）                        | lint-contract      | gate compile_gate / review |
+| 无硬编码 API key / 路径                          | lint-contract      | review                     |
+| 跨模块引用必须用 `crate::modules::*`             | lint-contract      | gate compile_gate          |
+| 所有公开函数必须有 Rust doc 注释                 | lint-contract      | review                     |
+| 异步代码用 tokio，不用 std::thread               | lint-contract      | review                     |
+| `Result<T, E>` 错误传播用 `?`，不用 `match` 嵌套 | lint-contract     | review                     |
+| 默认用 `pub(crate)`，`pub` 仅在边界真实存在时    | Code Shape Rules   | review                     |
+| 一个文件只拥有一个有界职责                        | Code Shape Rules   | review                     |
+| `main.rs` / bin 只做编排，不含业务逻辑            | Code Shape Rules   | review                     |
+| 按有界上下文分模块，不按文件大小                  | Modularization     | review                     |
+| 新增 `allow(...)` 必须在代码或 slice 记录中说明理由 | Lint Contract    | review                     |
+
+### 强制 Lint 合约（步骤 5 LINT）
+
+每个 slice 在提交前 **必须全部通过**：
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+- 遵守 `rust/Cargo.toml` 中的 workspace lint 设置
+- clippy warning 视为重构或拆分模块的信号，不是可忽略的噪音
+- lint 失败时回到步骤 5，不允许带警告提交
 
 ### 禁止行为
 
@@ -55,6 +85,8 @@
 - ❌ 不允许一次提交多个 slice 的代码
 - ❌ 不允许跳过 slice（除非 status: skip，否则必须顺序执行）
 - ❌ 不允许使用 `todo!()` 或 `unimplemented!()` 留给以后
+- ❌ 不允许在 lint/fmt/clippy 未全部通过的情况下调用 REVIEW
+- ❌ 不允许在文档落后于代码时扩大 slice 范围（先更新文档）
 
 ---
 
@@ -92,7 +124,14 @@ python -m harness.runner run \
 调用 sub-agent 时，你的 prompt 必须包含：
 
 ```
-你是 If2Ai 代码审查员。请审查以下代码变更是否满足 review_checklist。
+你是 If2Ai 代码审查员。请审查以下代码变更是否满足 review_checklist 和编码规范。
+
+【编码规范（全局约束）】
+docs/references/coding-style-and-lint-contract.md 中的所有规则，重点检查：
+- Code Shape Rules：一文件一职责、pub(crate) 默认、main.rs 不含业务逻辑
+- Modularization Rules：按有界上下文分模块、不暴露不必要的 pub
+- Lint Contract：cargo fmt / clippy / test 是否已通过（executor 自报）
+- Completion Contract：文档是否与代码同步更新
 
 【设计文档片段】
 {slice.design_ref 中相关的 interface 定义部分}
@@ -104,7 +143,7 @@ python -m harness.runner run \
 {实际的 diff 内容}
 
 【输出格式】
-对每个 checklist 条目，输出：
+对每个 checklist 条目和编码规范条目，输出：
   PASS: <条目内容>
   或
   FAIL: <条目内容>
@@ -153,12 +192,12 @@ Review: PASS
 
 ## 遇到阻塞时的处理
 
-| 情况 | 行动 |
-|------|------|
+| 情况                             | 行动                                                      |
+| -------------------------------- | --------------------------------------------------------- |
 | gate 失败，修复超过 3 次仍不通过 | 在 exec-plan dashboard.blocked 中记录，停止并等待人工介入 |
-| design_ref 有歧义或矛盾 | 选择更保守的解释，在 commit message 中说明 |
-| 依赖的 slice 未完成 | 检查前序 slice，如果是 pending 先完成它 |
-| 编译错误超出当前 slice 范围 | 只修复与当前 slice 相关的错误，其他的记录到 blocked |
+| design_ref 有歧义或矛盾          | 选择更保守的解释，在 commit message 中说明                |
+| 依赖的 slice 未完成              | 检查前序 slice，如果是 pending 先完成它                   |
+| 编译错误超出当前 slice 范围      | 只修复与当前 slice 相关的错误，其他的记录到 blocked       |
 
 ---
 
@@ -173,17 +212,60 @@ Review: PASS
 
 ---
 
+## Phase 规划流程（下一个 Phase 的 YAML 由谁创建）
+
+**规则：executor 只执行已批准的 slice。规划权归人类。**
+
+流程如下：
+
+```
+人类收到 HUMAN_CHECKPOINT_REACHED 消息
+    ↓
+人类 review 已完成的代码
+    ↓
+人类触发："请根据 docs/design-docs/ 生成 Phase N+1 的 exec-plan YAML"
+    ↓
+AI（Copilot / Claude）读取相关 design-docs，生成 phase-N+1-xxx.yaml
+    ↓
+人类 review 并确认 slice 定义质量
+    ↓
+人类将文件放入 docs/exec-plans/active/ 并更新 docs/exec-plans/index.md
+    ↓
+Executor 继续执行新 Phase
+```
+
+### AI 生成新 Phase YAML 时的参考资料
+
+生成下一个 Phase 的 exec-plan 时，AI 应读取：
+
+| 来源 | 目的 |
+|------|------|
+| `docs/design-docs/README.md` | 了解整体架构层和各 Phase 对应的模块 |
+| `docs/design-docs/<相关模块>.md` | 获取接口定义和约束，作为 `design_ref` 和 `review_checklist` 来源 |
+| `docs/product-specs/index.md` | 了解产品功能需求，确定 slice 的业务目标 |
+| `docs/exec-plans/active/<当前Phase>.yaml` | 了解已完成的模块，避免重复，确保依赖顺序 |
+
+### 生成的 YAML 必须满足
+
+- 每个 slice 有明确的 `impl_targets`（具体文件路径）
+- `acceptance` 条目可被 `harness/runner.py` 直接执行
+- `review_checklist` 条目直接引用 `design_ref` 中的接口规范
+- slice 粒度：单人 1-2 天内可完成
+- 生成后运行验证：`python -m harness.runner check-slice --file <新文件路径>`
+
+---
+
 ## Dashboard 更新格式
 
 每次完成一个 slice 后，更新 exec-plan YAML 的 dashboard 区域：
 
 ```yaml
 dashboard:
-  last_updated: "YYYY-MM-DD"
-  completed_slices: ["1.1", "1.2", ...]  # 追加刚完成的 slice id
-  current_slice: "1.3"                   # 更新为下一个 pending slice
-  blocked: []                             # 如有阻塞，在此记录
-  notes: "简短描述当前状态"
+  last_updated: 'YYYY-MM-DD'
+  completed_slices: ['1.1', '1.2', ...] # 追加刚完成的 slice id
+  current_slice: '1.3' # 更新为下一个 pending slice
+  blocked: [] # 如有阻塞，在此记录
+  notes: '简短描述当前状态'
 ```
 
 ---
@@ -191,8 +273,17 @@ dashboard:
 ## 快速参考
 
 ```bash
+# 启动时必读（按顺序）
+cat CLAUDE.md
+cat docs/references/coding-style-and-lint-contract.md
+
 # 激活 harness 虚拟环境（首次需要：python3 -m venv .venv && .venv/bin/pip install pyyaml）
 source .venv/bin/activate
+
+# 步骤 5 LINT — 每个 slice 必须全部通过
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 
 # 验证 exec-plan 格式
 python -m harness.runner check-slice \
@@ -201,8 +292,14 @@ python -m harness.runner check-slice \
 # 运行单个 slice 的全部 gates
 python -m harness.runner run --slice <id> --workspace .
 
-# 查看当前 pending slices
-grep -B1 "status: pending" docs/exec-plans/active/phase-1-foundation.yaml
+# 查看当前 Phase 文件
+cat docs/exec-plans/index.md
+
+# 查看当前 pending slices（替换为实际的 Phase 文件名）
+grep -B1 "status: pending" docs/exec-plans/active/<current-phase>.yaml
+
+# 验证新生成的 Phase YAML 格式
+python -m harness.runner check-slice --file docs/exec-plans/active/<new-phase>.yaml
 
 # 生成 git diff 用于 review
 git diff --staged

@@ -1,0 +1,100 @@
+# Harness Suite: Phase 1 Integration
+# 引用自: phase-1-foundation.yaml slice 1.9 acceptance
+# 用途: Phase 1 全部功能的集成验证，是人工 review 前的最终质量门控
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "phase1_integration"
+name: "Phase 1 Integration — Full Stack Validation"
+description: "验证 Phase 1 所有组件协同工作：ToolRegistry + ProviderManager + SessionManager + ConversationRuntime + Tauri Commands"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+# 本 suite 按顺序运行以下子集
+includes:
+  - suite: "harness/suites/tool_registry_basic.yaml"
+    label: "工具注册表基础"
+  - suite: "harness/suites/e2e_conversation.yaml"
+    label: "E2E 对话流程"
+
+# 额外的集成测试（仅在 phase1_integration 中运行）
+test_cases:
+
+  - id: "pi-001"
+    name: "完整 Agent 对话 — 多轮工具调用链"
+    description: "用户发出任务 → Agent 调用多个工具 → 返回综合结果（模拟真实使用场景）"
+    type: "integration"
+    test_fn: "tests::integration::test_full_agent_conversation"
+    config:
+      max_turns: 5
+      provider: "mock"
+    input:
+      user_message: "读取 README.md 文件，然后把前 3 行写入 /tmp/summary.txt"
+      tool_sequence:   # mock provider 按顺序返回这些工具调用
+        - tool: "read_file"
+          args:
+            path: "README.md"
+        - tool: "write_file"
+          args:
+            path: "/tmp/summary.txt"
+            content: "<first 3 lines>"
+    expect:
+      - "response.is_ok()"
+      - "tool_calls_executed == 2"
+      - "final response mentions both tools"
+      - "total iterations <= 3"
+
+  - id: "pi-002"
+    name: "Provider 故障转移 — 主 provider 失败切换备用"
+    description: "主 provider 返回 RateLimit 错误后，自动切换到备用 Mock Provider"
+    type: "integration"
+    test_fn: "tests::integration::test_provider_fallback"
+    config:
+      primary_provider: "mock_failing"    # 前 2 次返回 RateLimit
+      fallback_provider: "mock_success"
+    input:
+      user_message: "测试故障转移"
+    expect:
+      - "response.is_ok()"
+      - "provider_switches == 1"
+      - "total_retries <= 3"
+
+  - id: "pi-003"
+    name: "AppState 初始化 — 完整启动流程"
+    description: "Tauri 应用启动时 AppState 正确初始化所有组件"
+    type: "integration"
+    test_fn: "tests::integration::test_app_state_init"
+    expect:
+      - "session_manager is initialized"
+      - "tool_registry has bash, read_file, write_file registered"
+      - "provider_manager has at least mock provider available"
+      - "no panics during initialization"
+
+  - id: "pi-004"
+    name: "数据库 Schema 迁移 — 全新安装"
+    description: "首次运行时数据库 schema 正确创建，所有表存在"
+    type: "integration"
+    test_fn: "tests::integration::test_db_schema_migration"
+    expect:
+      - "sessions table exists"
+      - "messages table exists with correct columns"
+      - "indexes created"
+      - "second run is idempotent (no errors)"
+
+  - id: "pi-005"
+    name: "Phase 1 代码质量门控"
+    description: "验证 Phase 1 代码满足基本质量要求"
+    type: "static"
+    test_fn: "tests::quality::test_phase1_code_quality"
+    checks:
+      - check: "no_unwrap_in_lib"
+        description: "非测试代码中无 .unwrap() 调用"
+        cmd: "grep -rn '\\.unwrap()' src-tauri/src --include='*.rs' | grep -v '#\\[cfg(test)\\]' | grep -v 'mod tests'"
+        expect: "empty output (no matches)"
+      - check: "no_todo_macro"
+        description: "无 todo!() 或 unimplemented!()"
+        cmd: "grep -rn 'todo!()\\|unimplemented!()' src-tauri/src --include='*.rs'"
+        expect: "empty output (no matches)"
+      - check: "no_hardcoded_keys"
+        description: "无硬编码 API key"
+        cmd: "grep -rn 'sk-\\|api_key.*=.*\"[a-zA-Z0-9]\\{20,\\}\"' src-tauri/src --include='*.rs'"
+        expect: "empty output (no matches)"

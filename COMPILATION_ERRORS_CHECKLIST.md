@@ -18,11 +18,13 @@ error[E0433]: failed to resolve: use of unresolved module or unlinked crate `run
 ```
 
 **受影响的文件**:
-- `src-tauri/src/modules/api/providers/claw_provider.rs:472` 
+
+- `src-tauri/src/modules/api/providers/claw_provider.rs:472`
   - 问题: 尝试访问 `runtime::OAuthTokenSet`
   - 修复: 改为 `crate::modules::runtime::OAuthTokenSet` 或 `super::super::runtime::OAuthTokenSet`
 
 **修复方案**:
+
 ```rust
 // 旧（来自独立的 crate）:
 use runtime::OAuthTokenSet;
@@ -32,6 +34,7 @@ use crate::modules::runtime::OAuthTokenSet;
 ```
 
 **受影响模块**:
+
 - api/providers/claw_provider.rs
 - api/providers/openai_compat.rs
 - 可能还有其他文件
@@ -45,15 +48,17 @@ use crate::modules::runtime::OAuthTokenSet;
 ```
 error[E0015]: cannot call non-const method `StatusCode::as_u16` in constant functions
    --> src-tauri/src/modules/api/providers/claw_provider.rs:690:21
-   
+
    690 |     matches!(status.as_u16(), 408 | 409 | 429 | 500 | 502 | 503 | 504)
 ```
 
 **受影响的文件**:
+
 - `src-tauri/src/modules/api/providers/claw_provider.rs:690`
 - `src-tauri/src/modules/api/providers/openai_compat.rs:910`
 
-**修复方案**: 
+**修复方案**:
+
 ```rust
 // 旧（常量函数）:
 const fn is_retryable(status: StatusCode) -> bool {
@@ -67,11 +72,12 @@ fn is_retryable(status: StatusCode) -> bool {
 ```
 
 **或者**:
+
 ```rust
 // 使用匹配模式而不是调用方法
 fn is_retryable(status: StatusCode) -> bool {
     use http::StatusCode;
-    matches!(status, 
+    matches!(status,
         StatusCode::REQUEST_TIMEOUT |
         StatusCode::CONFLICT |
         StatusCode::TOO_MANY_REQUESTS |
@@ -96,6 +102,7 @@ error[E0282]: type annotations needed
 **修复方案**: 添加明确的类型注解
 
 示例:
+
 ```rust
 // 旧:
 let data = serde_json::from_str(json_string)?;
@@ -114,7 +121,8 @@ let data: MyType = serde_json::from_str(json_string)?;
 error[E0432]: unresolved import
 ```
 
-**修复方案**: 
+**修复方案**:
+
 1. 检查 `src-tauri/src/modules/mod.rs` - 确保所有子模块都声明了
 2. 检查各模块的 `mod.rs` - 确保 pub use 了所有需要的项
 
@@ -127,11 +135,12 @@ error[E0432]: unresolved import
 ```
 error[E0277]: the size for values of type `str` cannot be known at compile time
    --> src-tauri/src/modules/api/providers/openai_compat.rs:781:19
-   
+
    781 |     .map(|value| normalize_finish_reason(&value)),
 ```
 
 **修复方案**:
+
 ```rust
 // 旧:
 .filter(|value| !value.is_empty())
@@ -151,11 +160,12 @@ error[E0277]: the size for values of type `str` cannot be known at compile time
 ```
 warning: unused variable: `error`
    --> src-tauri/src/modules/runtime/config.rs:510:13
-   
+
    510 |         Err(error) if is_legacy_config => return Ok(None),
 ```
 
 **修复方案**:
+
 ```rust
 // 旧:
 Err(error) if is_legacy_config => return Ok(None),
@@ -183,6 +193,7 @@ grep -rn "use crate::modules::runtime::" src-tauri/src/modules/api/
 ```
 
 **需要修改的文件**:
+
 - [ ] src-tauri/src/modules/api/providers/claw_provider.rs (line 472)
 - [ ] src-tauri/src/modules/api/providers/openai_compat.rs
 - [ ] 检查其他可能的交叉模块引用
@@ -190,6 +201,7 @@ grep -rn "use crate::modules::runtime::" src-tauri/src/modules/api/
 ### Step 2: 修正常量函数
 
 **需要修改的文件**:
+
 - [ ] src-tauri/src/modules/api/providers/claw_provider.rs (line 690)
 - [ ] src-tauri/src/modules/api/providers/openai_compat.rs (line 910)
 
@@ -310,9 +322,9 @@ let result: Result<Data, Error> = process();
 **预计修复时间**: 2-4 小时（取决于错误的交互复杂度）
 
 **建议方法**:
+
 1. 仔细阅读每个错误消息
 2. 理解错误的根本原因
 3. 参考本清单中的修复方案
 4. 逐个修复，每次编译验证
 5. 如果卡住，查看错误消息中的 help 提示
-

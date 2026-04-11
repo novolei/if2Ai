@@ -37,28 +37,28 @@ pub struct TestCase {
     pub id: String,
     pub name: String,
     pub description: String,
-    
+
     // 输入
     pub prompt: String,
     pub user_message: Option<String>,
     pub conversation_history: Option<Vec<Message>>,
-    
+
     // 配置
     pub agent_config: AgentConfig,
     pub tool_allowlist: Option<Vec<String>>,    // 限制使用的工具
     pub expected_tools: Option<Vec<String>>,   // 期望使用的工具
-    
+
     // 预期结果
     pub expected_output: Option<String>,
     pub expected_concepts: Option<Vec<String>>,  // 期望包含的概念
     pub should_contain: Option<Vec<String>>,
     pub should_not_contain: Option<Vec<String>>,
-    
+
     // 约束
     pub max_iterations: Option<u32>,
     pub max_tokens: Option<u32>,
     pub timeout_secs: u32,
-    
+
     // 标签
     pub tags: Vec<String>,                      // "research", "coding", "analysis"
     pub difficulty: String,                     // "easy", "medium", "hard"
@@ -87,7 +87,7 @@ pub fn create_foundational_suite() -> TestSuite {
                 tags: vec!["research".to_string()],
                 ..Default::default()
             },
-            
+
             // 文件处理
             TestCase {
                 name: "File Reading".to_string(),
@@ -96,7 +96,7 @@ pub fn create_foundational_suite() -> TestSuite {
                 tags: vec!["file_handling".to_string()],
                 ..Default::default()
             },
-            
+
             // 代码执行
             TestCase {
                 name: "Code Execution".to_string(),
@@ -105,7 +105,7 @@ pub fn create_foundational_suite() -> TestSuite {
                 tags: vec!["coding".to_string()],
                 ..Default::default()
             },
-            
+
             // 多步骤任务
             TestCase {
                 name: "Multi-step Task".to_string(),
@@ -135,22 +135,22 @@ pub struct LocalRunner {
 
 pub struct ExecutionResult {
     pub test_case_id: String,
-    
+
     // 执行信息
     pub final_output: String,
     pub messages: Vec<Message>,
     pub tool_calls: Vec<ToolCallRecord>,
-    
+
     // 元数据
     pub total_iterations: u32,
     pub total_tokens: u32,
     pub duration_secs: f32,
     pub error: Option<String>,
-    
+
     // 性能
     pub tool_execution_times: HashMap<String, u32>,  // ms
     pub llm_calls_count: u32,
-    
+
     // 时间戳
     pub started_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
@@ -168,21 +168,21 @@ pub struct ToolCallRecord {
 impl LocalRunner {
     pub async fn run(&self, test_case: &TestCase) -> Result<ExecutionResult> {
         let start_time = Utc::now();
-        
+
         // Phase 1: 设置代理配置
         let mut agent_state = self.prepare_agent(&test_case.agent_config)?;
-        
+
         // Phase 2: 限制工具（如果指定）
         if let Some(allowlist) = &test_case.tool_allowlist {
             agent_state.restrict_tools(allowlist);
         }
-        
+
         // Phase 3: 执行
         let result = timeout(
             Duration::from_secs(test_case.timeout_secs as u64),
             agent_state.run_conversation(&test_case.prompt, None)
         ).await??;
-        
+
         // Phase 4: 收集执行结果
         Ok(ExecutionResult {
             test_case_id: test_case.id.clone(),
@@ -254,15 +254,15 @@ impl Evaluator for CorrectnessEvaluator {
             "Evaluate the correctness of this output:\n{}",
             result.final_output
         );
-        
+
         let response = self.llm_scorer.complete(
             &[Message::user(scoring_prompt)],
             &[],
             false,
         ).await?;
-        
+
         let score = self.parse_score(&response.content)?;
-        
+
         Ok(EvaluationScore {
             evaluator_name: "correctness".to_string(),
             dimension: "output_quality".to_string(),
@@ -290,13 +290,13 @@ impl Evaluator for BehaviorEvaluator {
     async fn evaluate(&self, result: &ExecutionResult) -> Result<EvaluationScore> {
         let mut score = 1.0;
         let mut issues = Vec::new();
-        
+
         // 检查工具使用
         let used_tools: HashSet<String> = result.tool_calls
             .iter()
             .map(|c| c.tool_name.clone())
             .collect();
-        
+
         if let Some(expected) = &self.config.expected_tools {
             let expected_set: HashSet<String> = expected.iter().cloned().collect();
             if !expected_set.is_subset(&used_tools) {
@@ -305,7 +305,7 @@ impl Evaluator for BehaviorEvaluator {
                 issues.push(format!("Missing expected tools: {:?}", missing));
             }
         }
-        
+
         if let Some(disallowed) = &self.config.disallowed_tools {
             let disallowed_set: HashSet<String> = disallowed.iter().cloned().collect();
             if !used_tools.is_disjoint(&disallowed_set) {
@@ -314,7 +314,7 @@ impl Evaluator for BehaviorEvaluator {
                 issues.push(format!("Used disallowed tools: {:?}", found));
             }
         }
-        
+
         // 检查迭代计数
         if let Some((min, max)) = self.config.expected_iterations {
             if result.total_iterations < min || result.total_iterations > max {
@@ -325,9 +325,9 @@ impl Evaluator for BehaviorEvaluator {
                 ));
             }
         }
-        
+
         score = score.max(0.0);
-        
+
         Ok(EvaluationScore {
             evaluator_name: "behavior".to_string(),
             dimension: "execution_behavior".to_string(),
@@ -358,23 +358,23 @@ impl Evaluator for PerformanceEvaluator {
     async fn evaluate(&self, result: &ExecutionResult) -> Result<EvaluationScore> {
         let mut score = 1.0;
         let mut issues = Vec::new();
-        
+
         if let Some(max_dur) = self.config.max_duration_secs {
             if result.duration_secs > max_dur {
                 score -= 0.2 * (result.duration_secs / max_dur - 1.0).min(0.5);
                 issues.push(format!("Execution time {} > max {}", result.duration_secs, max_dur));
             }
         }
-        
+
         if let Some(max_tokens) = self.config.max_tokens {
             if result.total_tokens > max_tokens {
                 score -= 0.15 * ((result.total_tokens as f32 / max_tokens as f32 - 1.0).min(0.5));
                 issues.push(format!("Token usage {} > max {}", result.total_tokens, max_tokens));
             }
         }
-        
+
         score = score.max(0.0);
-        
+
         Ok(EvaluationScore {
             evaluator_name: "performance".to_string(),
             dimension: "execution_efficiency".to_string(),
@@ -395,7 +395,7 @@ pub struct ReliabilityEvaluator;
 impl Evaluator for ReliabilityEvaluator {
     async fn evaluate(&self, result: &ExecutionResult) -> Result<EvaluationScore> {
         let score = if result.error.is_none() { 1.0 } else { 0.0 };
-        
+
         Ok(EvaluationScore {
             evaluator_name: "reliability".to_string(),
             dimension: "execution_reliability".to_string(),
@@ -446,27 +446,27 @@ impl TestSuiteRunner {
     ) -> Result<TestResultSuite> {
         let start_time = Utc::now();
         let mut results = Vec::new();
-        
+
         // 并行或顺序执行测试用例
         for test_case in &suite.test_cases {
             // 执行
             let execution_result = self.runner.run(test_case).await?;
-            
+
             // 评估
             let mut evaluation_scores = Vec::new();
             for evaluator in &self.evaluators {
                 let score = evaluator.evaluate(&execution_result).await?;
                 evaluation_scores.push(score);
             }
-            
+
             // 汇总
             let overall_score = evaluation_scores
                 .iter()
                 .map(|s| s.score)
                 .sum::<f32>() / evaluation_scores.len() as f32;
-            
+
             let passed = overall_score >= 0.7;  // 70% 通过阈值
-            
+
             results.push(TestResult {
                 test_case_id: test_case.id.clone(),
                 execution_result,
@@ -475,17 +475,17 @@ impl TestSuiteRunner {
                 passed,
             });
         }
-        
+
         // 生成摘要
         let passed_count = results.iter().filter(|r| r.passed).count();
         let failed_count = results.len() - passed_count;
         let average_score = results.iter().map(|r| r.overall_score).sum::<f32>() / results.len() as f32;
-        
+
         let mut score_by_dimension = HashMap::new();
         // ... 计算维度平均分
-        
+
         let duration = (Utc::now() - start_time).num_seconds() as f32 / 1000.0;
-        
+
         Ok(TestResultSuite {
             suite_id: suite.id.clone(),
             results,
@@ -536,14 +536,14 @@ pub async fn run_comparison(
         run_version(&experiment.baseline_version, &experiment.test_suite_id),
         run_version(&experiment.candidate_version, &experiment.test_suite_id),
     );
-    
+
     let baseline_results = baseline?;
     let candidate_results = candidate?;
-    
+
     // 计算统计显著性
     let improvement = (candidate_results.summary.average_score - baseline_results.summary.average_score)
         / baseline_results.summary.average_score;
-    
+
     let winner = if improvement > 0.05 {
         "candidate"
     } else if improvement < -0.05 {
@@ -551,7 +551,7 @@ pub async fn run_comparison(
     } else {
         "tie"
     };
-    
+
     Ok(ComparisonResult {
         experiment_id: experiment.id.clone(),
         baseline_results,
@@ -602,7 +602,7 @@ impl Reporter {
             result.summary.average_score * 100.0
         )
     }
-    
+
     pub fn generate_json_report(result: &TestResultSuite) -> String {
         serde_json::to_string_pretty(result).unwrap()
     }
@@ -626,23 +626,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v3
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
+
       - name: Run Harness Tests
         run: |
           cargo test --test harness_integration
           python3 harness/runner.py --suite foundational --output junit.xml
-      
+
       - name: Upload Test Results
         if: always()
         uses: actions/upload-artifact@v3
@@ -651,7 +651,7 @@ jobs:
           path: |
             junit.xml
             test-report.html
-      
+
       - name: Comment PR with Results
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6

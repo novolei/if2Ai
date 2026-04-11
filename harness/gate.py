@@ -151,10 +151,16 @@ def test_gate(
 def behavior_gate(
     workspace_root: Path,
     suite_path: Optional[str] = None,
+    package: str = "if2ai-backend",
 ) -> GateResult:
     """
-    Layer 3: Python harness evaluate — Agent behavior matches design-docs.
-    Only runs if test_gate passed. Skipped if no suite_path is provided.
+    Layer 3: Harness behavior suite — validates Agent behavior matches design-docs.
+
+    Reads the suite YAML and dispatches based on the `runner` field:
+      - "cargo_test": runs `cargo test -- <test_fn>` for each test case
+      - other: skipped with a warning
+
+    Skipped if no suite_path is provided or suite file does not exist.
     """
     if not suite_path:
         return GateResult(
@@ -173,11 +179,75 @@ def behavior_gate(
             output=f"Suite not found: {suite_path} — skipped",
         )
 
-    return _gate(
-        "behavior_gate",
-        [sys.executable, "-m", "harness.runner", "run", "--suite", str(suite)],
-        cwd=workspace_root,
-        timeout=300,
+    try:
+        import yaml  # type: ignore
+        with suite.open() as f:
+            suite_data = yaml.safe_load(f)
+    except Exception as e:
+        return GateResult(
+            gate="behavior_gate",
+            status=GateStatus.FAIL,
+            duration_s=0.0,
+            error=f"Failed to parse suite YAML: {e}",
+        )
+
+    runner_type = suite_data.get("runner", "cargo_test")
+    test_cases = suite_data.get("test_cases", [])
+
+    if runner_type != "cargo_test":
+        return GateResult(
+            gate="behavior_gate",
+            status=GateStatus.SKIP,
+            duration_s=0.0,
+            output=f"Suite runner '{runner_type}' not yet supported — skipped",
+        )
+
+    if not test_cases:
+        return GateResult(
+            gate="behavior_gate",
+            status=GateStatus.SKIP,
+            duration_s=0.0,
+            output="Suite has no test_cases — skipped",
+        )
+
+    # Collect all test function names from the suite
+    test_fns = [tc["test_fn"] for tc in test_cases if tc.get("test_fn")]
+    if not test_fns:
+        return GateResult(
+            gate="behavior_gate",
+            status=GateStatus.SKIP,
+            duration_s=0.0,
+            output="No test_fn entries found in suite test_cases — skipped",
+        )
+
+    # Run all specified test functions in one cargo test invocation
+    # Cargo test filter supports multiple patterns separated by space but
+    # only one filter arg is accepted; run them individually and collect.
+    t0 = time.monotonic()
+    all_output: list[str] = []
+    for fn in test_fns:
+        cmd = [
+            "cargo", "test", "-p", package,
+            "--", fn, "--test-output=immediate",
+        ]
+        code, out, err = _run(cmd, cwd=workspace_root, timeout=120)
+        all_output.append(f"[{fn}]\n{out}{err}")
+        if code != 0:
+            elapsed = time.monotonic() - t0
+            return GateResult(
+                gate="behavior_gate",
+                status=GateStatus.FAIL,
+                duration_s=elapsed,
+                output="\n".join(all_output),
+                error=f"Test '{fn}' failed (exit {code})",
+            )
+
+    elapsed = time.monotonic() - t0
+    return GateResult(
+        gate="behavior_gate",
+        status=GateStatus.PASS,
+        duration_s=elapsed,
+        output=f"All {len(test_fns)} behavior tests passed\n" + "\n".join(all_output),
     )
 
 
@@ -228,7 +298,7 @@ def run_all_gates(
 
     # Layer 3
     if not skip_behavior:
-        r3 = behavior_gate(workspace_root, suite_path)
+        r3 = behavior_gate(workspace_root, suite_path, package)
         report.results.append(r3)
 
     return report

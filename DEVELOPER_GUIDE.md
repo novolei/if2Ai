@@ -5,12 +5,14 @@
 ## 🚀 5 分钟快速开始
 
 ### 1. 克隆项目并了解结构
+
 ```bash
 cd /Users/ryanliu/Documents/IfAI/if2Ai
 tree -L 2 -I 'node_modules|target'
 ```
 
 ### 2. 理解项目架构
+
 ```bash
 # 按这个顺序阅读文档（每个 5-10 分钟）
 1. AGENTS.md          # 导航地图（这个文件的内容目录）
@@ -19,6 +21,7 @@ tree -L 2 -I 'node_modules|target'
 ```
 
 ### 3. 查看你的第一个任务
+
 ```bash
 # 在活跃执行计划中找到任务
 cat docs/exec-plans/active/phase-1-foundation.md
@@ -28,6 +31,7 @@ cat docs/exec-plans/active/phase-1-foundation.md
 ```
 
 ### 4. 开始开发
+
 ```bash
 # 遵循 DESIGN.md 中的约束
 # 使用 Harness 框架验证你的工作
@@ -39,6 +43,7 @@ python -m harness runner run --config test.yaml
 ### 对于后端开发者 (Rust/Tokio)
 
 **第一天**: 架构和设计
+
 ```bash
 # 阅读这些文件（顺序很重要）
 → ARCHITECTURE.md                          # 系统全景
@@ -49,6 +54,7 @@ python -m harness runner run --config test.yaml
 ```
 
 **第二天**: 代码和实现
+
 ```bash
 # 浏览现有代码
 → src-tauri/src/main.rs              # 主入口
@@ -59,6 +65,7 @@ python -m harness runner run --config test.yaml
 ```
 
 **第三天**: 测试
+
 ```bash
 # 学习测试框架
 → docs/design-docs/testing-strategy.md
@@ -71,6 +78,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ### 对于前端开发者 (Svelte/TypeScript)
 
 **第一天**: UI 架构
+
 ```bash
 # 理解前端结构
 → ARCHITECTURE.md                    # 找到 UI 层
@@ -79,6 +87,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ```
 
 **第二天**: Tauri IPC
+
 ```bash
 # 了解前后端通信
 → docs/design-docs/tauri-ipc.md     # IPC 设计
@@ -89,6 +98,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ```
 
 **第三天**: 组件和状态
+
 ```bash
 # 创建你的第一个 Svelte 组件
 → src/components/                   # 组件目录
@@ -101,6 +111,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ### 对于质量/测试部门
 
 **第一天**: Harness 框架
+
 ```bash
 # 完整理解 Harness
 → harness/README.md                 # Harness 概览
@@ -109,6 +120,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ```
 
 **第二天**: 编写评估器
+
 ```bash
 # 创建自定义评估器
 → harness/evaluators/__init__.py    # 评估器实现
@@ -118,6 +130,7 @@ python -m harness runner run --config harness/tests/basic.yaml
 ```
 
 **第三天**: 测试套件
+
 ```bash
 # 创建测试套件
 → harness/tests/
@@ -184,7 +197,9 @@ if2Ai/
 ## 💡 核心概念快速参考
 
 ### Agent Orchestrator
+
 Agent 的核心引擎，负责：
+
 - 对话循环管理
 - 工具调用和结果处理
 - 上下文管理
@@ -193,7 +208,9 @@ Agent 的核心引擎，负责：
 **位置**: `src-tauri/src/modules/agents/`
 
 ### Tool System
+
 动态工具加载和执行：
+
 - Tool Registry（工具注册表）
 - 工具依赖解析
 - 并行执行
@@ -201,7 +218,9 @@ Agent 的核心引擎，负责：
 **位置**: `src-tauri/src/modules/tools/`
 
 ### Harness Framework
+
 测试和评估框架：
+
 - Runner（运行测试）
 - Evaluator（评估结果）
 - Fixture（测试数据）
@@ -211,6 +230,7 @@ Agent 的核心引擎，负责：
 ## 🔧 常用命令
 
 ### 项目设置
+
 ```bash
 # 安装依赖
 npm install
@@ -221,6 +241,7 @@ rustup update
 ```
 
 ### 开发
+
 ```bash
 # 启动开发服务器
 npm run tauri dev
@@ -232,6 +253,7 @@ npm run build
 ```
 
 ### 测试
+
 ```bash
 # 后端单元测试
 cargo test --all
@@ -244,6 +266,7 @@ python -m harness runner suite --suite default
 ```
 
 ### 文档
+
 ```bash
 # 预览 Markdown
 # 使用 VS Code 的 Markdown Preview
@@ -307,6 +330,7 @@ python -m harness runner suite --suite default
 
 **Q: 我想添加一个新工具，应该怎么做？**
 A:
+
 1. 在 `src-tauri/src/modules/tools/` 中创建工具实现
 2. 在 ToolRegistry 中注册
 3. 添加单元测试
@@ -314,6 +338,7 @@ A:
 
 **Q: 前后端如何通信？**
 A:
+
 1. 查看 `src-tauri/src/commands/` 中的示例
 2. 使用 `#[tauri::command]` 宏定义命令
 3. 从 Svelte 中使用 `invoke()` 调用
@@ -321,6 +346,7 @@ A:
 
 **Q: 我对架构决策有疑问？**
 A:
+
 1. 查看 `docs/design-docs/` 中的相关文档
 2. 检查决策日志中是否有记录
 3. 创建 GitHub Discussion
@@ -353,18 +379,21 @@ A:
 ## 🎓 最佳实践总结
 
 ### 代码质量
+
 - ✅ 编写易读的代码（对 AI 友好）
 - ✅ 遵循命名约定
 - ✅ 保持函数简洁 (< 50 行)
 - ✅ 添加关键逻辑的注释
 
 ### 测试
+
 - ✅ 编写单元、集成、Harness 测试
 - ✅ 目标覆盖率 ≥ 80%
 - ✅ 使用 Mock 确保确定性
 - ✅ 清晰的测试名称
 
 ### 文档
+
 - ✅ 更新对应设计文档
 - ✅ 包含示例代码
 - ✅ 保持文档新鲜

@@ -5,6 +5,7 @@
 ## 📍 快速开始导航
 
 如果你是...
+
 - **新人贡献者** → 查看 [ARCHITECTURE.md](./ARCHITECTURE.md) 了解系统全景，然后选择 [docs/exec-plans/active/](./docs/exec-plans/active/) 中的任务
 - **功能开发者** → 前往 [docs/product-specs/](./docs/product-specs/) 找到你负责的模块
 - **测试/质量** → 查看 [harness/](../harness/) 目录了解测试框架
@@ -15,6 +16,7 @@
 **If2Ai** 是一个 Tauri + Rust + Svelte 的智能体桌面应用，复刻 hermes-agent 框架。
 
 核心理念：
+
 - 🤖 Agent 优先的工程思维
 - 📋 代码库作为记录系统
 - 🔍 完整的可观测性和可评估性
@@ -22,23 +24,25 @@
 
 ## 📚 关键文档
 
-| 文档 | 目的 | 受众 |
-|------|------|------|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 系统架构全景图和模块关系 | 所有人 |
-| [DESIGN.md](./DESIGN.md) | 设计原则和决策框架 | 架构师、决策者 |
-| [docs/design-docs/](./docs/design-docs/) | 具体设计决策（分主题） | 实现者 |
-| [docs/product-specs/](./docs/product-specs/) | 产品规范和需求 | PM、开发者 |
-| [docs/exec-plans/](./docs/exec-plans/) | 执行计划和进度追踪 | 项目经理、开发者 |
-| [harness/README.md](../harness/README.md) | 测试和评估框架 | 测试、QA |
+| 文档                                         | 目的                     | 受众             |
+| -------------------------------------------- | ------------------------ | ---------------- |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)         | 系统架构全景图和模块关系 | 所有人           |
+| [DESIGN.md](./DESIGN.md)                     | 设计原则和决策框架       | 架构师、决策者   |
+| [docs/design-docs/](./docs/design-docs/)     | 具体设计决策（分主题）   | 实现者           |
+| [docs/product-specs/](./docs/product-specs/) | 产品规范和需求           | PM、开发者       |
+| [docs/exec-plans/](./docs/exec-plans/)       | 执行计划和进度追踪       | 项目经理、开发者 |
+| [harness/README.md](../harness/README.md)    | 测试和评估框架           | 测试、QA         |
 
 ## 🎯 当前执行计划
 
 **活跃计划** (查看 [docs/exec-plans/active/](./docs/exec-plans/active/))：
+
 1. Phase 1: 核心框架搭建
 2. Phase 2: Agent 系统实现
 3. Phase 3: 工具和命令系统
 
 **完成的计划** (查看 [docs/exec-plans/completed/](./docs/exec-plans/completed/))：
+
 - 项目初始化和目录结构
 
 ## 🔧 核心模块
@@ -58,6 +62,7 @@ if2Ai/
 ## 📖 文档维护规范
 
 所有文档遵循以下规则：
+
 - ✅ 使用结构化 Markdown，保持清晰层级
 - ✅ 包含"最后更新"时间戳
 - ✅ 定期运行文档检查（linter）
@@ -69,14 +74,16 @@ if2Ai/
 ## 🚀 如何开始
 
 ### 1. 理解整体架构
+
 ```bash
 # 阅读这些文件，顺序很重要
 → ARCHITECTURE.md         # 5 分钟：了解全景
-→ DESIGN.md               # 10 分钟：理解设计理念  
+→ DESIGN.md               # 10 分钟：理解设计理念
 → docs/design-docs/       # 15 分钟：深入具体设计
 ```
 
 ### 2. 查找你的任务
+
 ```bash
 # 在活跃计划中找到相关任务
 → docs/exec-plans/active/
@@ -87,6 +94,7 @@ if2Ai/
 ```
 
 ### 3. 实施和验证
+
 ```bash
 # 按照执行计划的步骤进行开发
 # 使用 harness 框架验证你的改动
@@ -109,6 +117,7 @@ If2Ai 工程遵循严格的架构约束（见 [DESIGN.md](./DESIGN.md)）：
 ## 🔄 反馈循环和迭代
 
 If2Ai 使用人类-智能体协作的开发模式：
+
 - 📝 提出任务 → 智能体执行 → 人类审查
 - 🔍 发现问题 → 转化为文档/约束 → 更新系统
 - 📊 评估结果 → 使用 harness 框架度量 → 调整
@@ -118,7 +127,8 @@ If2Ai 使用人类-智能体协作的开发模式：
 ## 💡 常见问题
 
 **Q: 我想添加一个新功能，应该从哪里开始？**
-A: 
+A:
+
 1. 在 [docs/design-docs/](./docs/design-docs/) 中创建一个设计文档
 2. 在 [docs/product-specs/](./docs/product-specs/) 中创建产品规范
 3. 在 [docs/exec-plans/active/](./docs/exec-plans/active/) 中创建执行计划

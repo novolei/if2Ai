@@ -70,14 +70,14 @@ if2Ai/
 
 ### 整合的源码统计
 
-| 来源 | 文件数 | 目标位置 |
-|-----|-------|--------|
-| /rust/crates/runtime | 18+ | src-tauri/src/modules/runtime/ |
-| /rust/crates/api | 多个 | src-tauri/src/modules/api/ |
-| /rust/crates/tools | 多个 | src-tauri/src/modules/tools/ |
-| /rust/crates/commands | 多个 | src-tauri/src/modules/commands/ |
-| /rust/crates/plugins | 多个 | src-tauri/src/modules/plugins/ |
-| **总计** | **33+ 个源文件** | **集中到 src-tauri** |
+| 来源                  | 文件数           | 目标位置                        |
+| --------------------- | ---------------- | ------------------------------- |
+| /rust/crates/runtime  | 18+              | src-tauri/src/modules/runtime/  |
+| /rust/crates/api      | 多个             | src-tauri/src/modules/api/      |
+| /rust/crates/tools    | 多个             | src-tauri/src/modules/tools/    |
+| /rust/crates/commands | 多个             | src-tauri/src/modules/commands/ |
+| /rust/crates/plugins  | 多个             | src-tauri/src/modules/plugins/  |
+| **总计**              | **33+ 个源文件** | **集中到 src-tauri**            |
 
 ---
 
@@ -207,12 +207,14 @@ resolver = "2"
 ### 模块导出层级
 
 **src-tauri/src/lib.rs**:
+
 ```rust
 pub mod modules;
 pub use modules::*;
 ```
 
 **src-tauri/src/modules/mod.rs**:
+
 ```rust
 pub mod runtime;
 pub mod api;
@@ -228,6 +230,7 @@ pub use plugins::*;
 ```
 
 **src-tauri/src/modules/runtime/mod.rs**:
+
 ```rust
 pub mod conversation;
 pub mod prompt;
@@ -286,13 +289,13 @@ src-tauri/src/
 
 ### 与设计文档的对应
 
-| 设计文档 | 实现位置 |
-|--------|--------|
-| agent-loop.md | src-tauri/src/modules/runtime/conversation.rs |
-| provider-resolution.md | src-tauri/src/modules/api/ |
-| session-persistence.md | src-tauri/src/modules/commands/ |
-| tool-system.md | src-tauri/src/modules/tools/ |
-| memory-system.md | src-tauri/src/modules/ (新增) |
+| 设计文档               | 实现位置                                      |
+| ---------------------- | --------------------------------------------- |
+| agent-loop.md          | src-tauri/src/modules/runtime/conversation.rs |
+| provider-resolution.md | src-tauri/src/modules/api/                    |
+| session-persistence.md | src-tauri/src/modules/commands/               |
+| tool-system.md         | src-tauri/src/modules/tools/                  |
+| memory-system.md       | src-tauri/src/modules/ (新增)                 |
 
 ---
 
@@ -300,13 +303,13 @@ src-tauri/src/
 
 ### 整合前后对比
 
-| 方面 | 整合前 | 整合后 |
-|------|------|------|
-| 源码库数量 | 2 个 (/rust + src-tauri) | 1 个 (src-tauri) |
-| 开发坐在地 | 分散（两个库） | 统一（仅 src-tauri） |
-| 使用库 | 参考库 | 生产库 |
-| 同步问题 | 需要定期对齐 | 无同步问题 |
-| 上手难度 | 高（需理解两库关系） | 低（只要看一个库） |
+| 方面       | 整合前                   | 整合后               |
+| ---------- | ------------------------ | -------------------- |
+| 源码库数量 | 2 个 (/rust + src-tauri) | 1 个 (src-tauri)     |
+| 开发坐在地 | 分散（两个库）           | 统一（仅 src-tauri） |
+| 使用库     | 参考库                   | 生产库               |
+| 同步问题   | 需要定期对齐             | 无同步问题           |
+| 上手难度   | 高（需理解两库关系）     | 低（只要看一个库）   |
 
 ### 完成情况
 
@@ -411,4 +414,3 @@ git push -u origin feature/consolidate-codebase
 **整合完成！🎉 现在you have a single, unified codebase ready for continuous development.**
 
 **下一步**: 执行编译测试并开始开发！
-

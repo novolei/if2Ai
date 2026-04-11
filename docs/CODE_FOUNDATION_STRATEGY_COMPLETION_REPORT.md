@@ -3,7 +3,7 @@
 **会话时间**: 2026-04-11 (延续第五期)  
 **完成状态**: ✅ **全部交付**  
 **核心产出**: 4 份文档 + 一致性验证  
-**下一步**: 立即执行源码迁移  
+**下一步**: 立即执行源码迁移
 
 ---
 
@@ -11,18 +11,18 @@
 
 ### 创建的文件 (4 份核心文档)
 
-| 文件名 | 类型 | 行数 | 用途 | 状态 |
-|------|------|------|------|------|
-| CODE_FOUNDATION_STRATEGY.md | 战略文档 | 700+ | 定义源码战略 + 三角关系 | ✅ 完成 |
-| CODE_MIGRATION_EXECUTION.md | 操作指南 | 800+ | 10 步迁移执行计划 | ✅ 完成 |
-| CONSISTENCY_VERIFICATION_REPORT.md | 验证报告 | 1,200+ | 一致性验证 + 零冲突证明 | ✅ 完成 |
-| CODE_FOUNDATION_COMPLETE_PACKAGE.md | 总覆盖 | 700+ | 三份文档的整体包装 | ✅ 完成 |
-| **总计** | **4 份文档** | **3,400+ 行** | **源码基础完整包** | **✅** |
+| 文件名                              | 类型         | 行数          | 用途                    | 状态    |
+| ----------------------------------- | ------------ | ------------- | ----------------------- | ------- |
+| CODE_FOUNDATION_STRATEGY.md         | 战略文档     | 700+          | 定义源码战略 + 三角关系 | ✅ 完成 |
+| CODE_MIGRATION_EXECUTION.md         | 操作指南     | 800+          | 10 步迁移执行计划       | ✅ 完成 |
+| CONSISTENCY_VERIFICATION_REPORT.md  | 验证报告     | 1,200+        | 一致性验证 + 零冲突证明 | ✅ 完成 |
+| CODE_FOUNDATION_COMPLETE_PACKAGE.md | 总覆盖       | 700+          | 三份文档的整体包装      | ✅ 完成 |
+| **总计**                            | **4 份文档** | **3,400+ 行** | **源码基础完整包**      | **✅**  |
 
 ### 更新的文件 (导航和索引)
 
-| 文件名 | 更新内容 | 状态 |
-|------|--------|------|
+| 文件名                                | 更新内容                       | 状态    |
+| ------------------------------------- | ------------------------------ | ------- |
 | docs/design-docs/DESIGN_DOCS_INDEX.md | 添加源码战略快导, 更新进度统计 | ✅ 完成 |
 
 ---
@@ -58,6 +58,7 @@ CODE_FOUNDATION_COMPLETE_PACKAGE.md (总览层)
 ### 关键验证成果
 
 ✅ **9 份设计文档 + 源码战略零冲突**
+
 ```
 Phase 1 (6 份):
 ├─ system-architecture-framework ← /rust crates 完全对标 ✅
@@ -76,6 +77,7 @@ Phase 2 (3 份):
 ```
 
 ✅ **依赖关系清晰，无循环**
+
 ```
 Tier 1: types, config (无依赖)
   ↓
@@ -89,6 +91,7 @@ Tier 4: reinforcement (依赖 Tier 3)
 ```
 
 ✅ **迁移计划可执行**
+
 ```
 10 步流程，每步 15-90 分钟
 总耗时: 8-10 小时
@@ -200,6 +203,7 @@ P2 (第 3 周+):
 ## 🚀 立即行动指南 (Next 24 hours)
 
 ### Hour 1: 阅读和理解
+
 ```
 15 min: CODE_FOUNDATION_COMPLETE_PACKAGE.md
 10 min: 快速扫 CODE_FOUNDATION_STRATEGY.md
@@ -207,6 +211,7 @@ P2 (第 3 周+):
 ```
 
 ### Hour 2-3: 环境准备
+
 ```
 5 min: cd /Users/ryanliu/Documents/IfAI/if2Ai
 10 min: git checkout -b feature/code-foundation-migration
@@ -216,6 +221,7 @@ P2 (第 3 周+):
 ```
 
 ### Hour 4-12: 执行迁移 (下一天)
+
 ```
 按照 CODE_MIGRATION_EXECUTION.md 中的 10 步
 每步 15-90 分钟
@@ -224,6 +230,7 @@ P2 (第 3 周+):
 ```
 
 ### Hour 13+: 验证和提交
+
 ```
 确认编译成功 (cargo build --release)
 确认测试通过 (cargo test)
@@ -268,12 +275,14 @@ P2 (第 3 周+):
 
 **Q1: 为什么需要这么详细的战略文档?**
 A: 因为这是"长期项目"。明确的战略能防止:
+
 - 架构漂移 (5 年后无法维护)
 - "两个真实版本" (团队困惑)
 - 技术债累积 (改一个模块改不了)
 
 **Q2: 迁移失败了怎么办?**
 A: 完全可以回滚:
+
 ```bash
 # 如果失败
 git reset --hard pre-migration-20260411
@@ -283,18 +292,21 @@ git reset --hard pre-migration-20260411
 
 **Q3: Phase 2 设计为什么只有 43%?**
 A: 因为 Phase 2 基于 Phase 1 的基础，Phase 1 必须先迁移完.
+
 - 核心 3 个特性 (Messaging, RL, Memory) 已设计完
 - 剩余 4 个 (error, testing, prompt, compression) 可以并行
 - 这不会阻止编码，只是补充细节
 
 **Q4: 我现在应该开始编码吗?**
 A: 不, 先迁移.
+
 - 迁移是一次性的一丝优化
 - 编码建立在迁移完成的基础上
 - 迁移完成后，编码会快 10 倍
 
 **Q5: 这个源码战略会改变吗?**
 A: 很可能.
+
 - 但改变会有明确的记录
 - 会更新所有相关文档
 - 不会出现"悄悄改变"的情况
@@ -370,16 +382,16 @@ A: 很可能.
 如果在执行中遇到:
 
 **设计问题**
-  → 更新 CODE_FOUNDATION_STRATEGY.md
+→ 更新 CODE_FOUNDATION_STRATEGY.md
 
 **操作问题**
-  → 更新 CODE_MIGRATION_EXECUTION.md 中的步骤
+→ 更新 CODE_MIGRATION_EXECUTION.md 中的步骤
 
 **验证失败**
-  → 更新 CONSISTENCY_VERIFICATION_REPORT.md
+→ 更新 CONSISTENCY_VERIFICATION_REPORT.md
 
 **新发现**
-  → 添加到 CODE_FOUNDATION_COMPLETE_PACKAGE.md
+→ 添加到 CODE_FOUNDATION_COMPLETE_PACKAGE.md
 
 所有改动都会被记录和追踪，形成改进循环。
 
@@ -407,7 +419,7 @@ A: 很可能.
 ### 培训建议
 
 ```
-Week 1: 
+Week 1:
   - 所有人读 CODE_FOUNDATION_COMPLETE_PACKAGE.md (75 min)
   - 清楚"神圣三角"的概念
 
@@ -429,20 +441,21 @@ Week 3:
 这不是"编写了很多文档"，而是"建立了一套完整的、可验证的、可维护的系统"。
 
 三份文档 (%CODE_FOUNDATION_STRATEGY/EXECUTION/VERIFICATION)
-+ 一总包 (COMPLETE_PACKAGE)
-= 一个自洽的知识体系
-→ 防止所有已知的架构陷阱
-→ 为持续 5+ 年的开发奠定基础
+
+- 一总包 (COMPLETE_PACKAGE)
+  = 一个自洽的知识体系
+  → 防止所有已知的架构陷阱
+  → 为持续 5+ 年的开发奠定基础
 
 ### 关键数字
 
-| 指标 | 数值 | 含义 |
-|------|------|------|
-| 设计文档完成度 | 71% | Phase 1 100% + Phase 2 43% |
-| 源码战略完整性 | 100% | 三角关系明确、维护方案完善 |
-| 验证的一致性 | 100% | 9 份设计 + 源码战略 = 0 冲突 |
-| 迁移风险 | 极低 | 详细步骤 + 回滚方案 + 检查点 |
-| 预期迁移耗时 | 8-10h | 或 4-5h (并行多人) |
+| 指标           | 数值  | 含义                         |
+| -------------- | ----- | ---------------------------- |
+| 设计文档完成度 | 71%   | Phase 1 100% + Phase 2 43%   |
+| 源码战略完整性 | 100%  | 三角关系明确、维护方案完善   |
+| 验证的一致性   | 100%  | 9 份设计 + 源码战略 = 0 冲突 |
+| 迁移风险       | 极低  | 详细步骤 + 回滚方案 + 检查点 |
+| 预期迁移耗时   | 8-10h | 或 4-5h (并行多人)           |
 
 ### 准备就绪
 
@@ -450,7 +463,7 @@ Week 3:
 ✅ 计划详细  
 ✅ 风险低  
 ✅ 可执行  
-✅ 可验证  
+✅ 可验证
 
 **可以立即开始源码迁移！**
 
@@ -459,5 +472,4 @@ Week 3:
 **文件**: CODE_FOUNDATION_STRATEGY_COMPLETION_REPORT.md  
 **完成时间**: 2026-04-11  
 **状态**: ✅ 已交付  
-**下一步**: 执行源码迁移 (CODE_MIGRATION_EXECUTION.md)  
-
+**下一步**: 执行源码迁移 (CODE_MIGRATION_EXECUTION.md)

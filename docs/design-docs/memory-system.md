@@ -77,12 +77,12 @@ pub struct BuiltInMemory {
     // MEMORY.md - 事实记录
     facts: Vec<MemoryFact>,              // 日期记录的观察
     observations: Vec<String>,           // Agent 观察到的事情
-    
+
     // USER.md - 用户身份
     user_preferences: HashMap<String, String>,
     user_identity: UserProfile,
     communication_style: String,
-    
+
     // 生命周期
     last_updated: DateTime<Utc>,
     session_id: String,
@@ -98,6 +98,7 @@ pub struct MemoryFact {
 ```
 
 **特点**:
+
 - 本地存储 (SQLite)
 - 手动编辑友好
 - 会话内快速访问
@@ -111,15 +112,15 @@ pub trait MemoryProvider: Send + Sync {
     // 基础操作
     async fn initialize(&mut self) -> Result<()>;
     async fn health_check(&self) -> Result<HealthStatus>;
-    
+
     // 记忆管理
     async fn store_memory(&self, memory: ExternalMemory) -> Result<String>;
     async fn recall_memories(&self, query: &str, limit: usize) -> Result<Vec<ExternalMemory>>;
     async fn search_memories(&self, query: &str) -> Result<Vec<SearchResult>>;
-    
+
     // 提供商特定的工具
     async fn get_tools(&self) -> Result<Vec<MemoryTool>>;
-    
+
     // 档案管理
     async fn create_profile(&self, profile_id: &str) -> Result<()>;
     async fn switch_profile(&mut self, profile_id: &str) -> Result<()>;
@@ -165,6 +166,7 @@ User (同一个真实人)
 ```
 
 **关键特性**:
+
 - **Dialectic Q&A**: Honcho 主动提出问题来澄清和扩展用户模型
 - **Semantic Search**: 向量化的记忆检索
 - **Multi-Agent**: 每个 agent 有自己的 AI peer，但共享用户理解
@@ -184,7 +186,7 @@ pub enum HonchoTool {
         description: "Get full user profile card from Honcho",
         output: UserProfileCard,
     },
-    
+
     Search {
         // honcho_search
         // 语义搜索用户记忆
@@ -192,7 +194,7 @@ pub enum HonchoTool {
         params: SearchParams,
         output: Vec<MemoryResult>,
     },
-    
+
     Context {
         // honcho_context
         // 获取 LLM 综合的上下文
@@ -200,7 +202,7 @@ pub enum HonchoTool {
         params: ContextRequest,
         output: String,  // LLM 生成的摘要
     },
-    
+
     Conclude {
         // honcho_conclude
         // 存储新发现的事实
@@ -230,11 +232,11 @@ pub struct HonchoConfig {
     pub workspace_id: String,
     pub api_key: String,
     pub api_url: Option<String>,       // 自托管时使用
-    
+
     // 档案配置
     pub ai_peer_name: String,          // "default", "coder", "writer"
     pub peer_name: String,              // 显示名称
-    
+
     // 行为配置
     pub recall_mode: RecallMode,        // "auto" | "manual"
     pub write_frequency: WriteFrequency, // "immediate" | "session_end" | "on_demand"
@@ -263,8 +265,8 @@ pub enum WriteFrequency {
 # 全局配置
 global:
   api_key: ${HONCHO_API_KEY}
-  workspace_id: "${HONCHO_WORKSPACE_ID}"
-  
+  workspace_id: '${HONCHO_WORKSPACE_ID}'
+
   # 自托管模式
   # api_url: "http://localhost:9000"
 
@@ -272,40 +274,40 @@ global:
 profiles:
   # 默认档案配置
   default:
-    ai_peer_name: "default"
-    peer_name: "Default Agent"
-    
-    recall_mode: "auto"
-    write_frequency: "immediate"
+    ai_peer_name: 'default'
+    peer_name: 'Default Agent'
+
+    recall_mode: 'auto'
+    write_frequency: 'immediate'
     observation_level: 2
-    
+
     # 自托管时的本地 cache
-    cache_dir: "${HOME}/.if2ai/memory/honcho/default"
-    cache_ttl: 3600  # seconds
-  
+    cache_dir: '${HOME}/.if2ai/memory/honcho/default'
+    cache_ttl: 3600 # seconds
+
   # 编程档案 (继承自 default)
   coder:
-    ai_peer_name: "coder"
-    peer_name: "Coder Agent"
-    
-    inherit_from: "default"
-    
+    ai_peer_name: 'coder'
+    peer_name: 'Coder Agent'
+
+    inherit_from: 'default'
+
     # 覆盖配置
-    observation_level: 3  # 更细致的编码风格观察
-    write_frequency: "session_end"
-  
+    observation_level: 3 # 更细致的编码风格观察
+    write_frequency: 'session_end'
+
   # 写作档案
   writer:
-    ai_peer_name: "writer"
-    peer_name: "Writer Agent"
-    
-    inherit_from: "default"
+    ai_peer_name: 'writer'
+    peer_name: 'Writer Agent'
+
+    inherit_from: 'default'
     observation_level: 2
-    write_frequency: "immediate"
+    write_frequency: 'immediate'
 
 # 档案创建时自动执行
 init_hooks:
-  - create_ai_peer      # 在 Honcho 中创建 peer
+  - create_ai_peer # 在 Honcho 中创建 peer
   - cache_initial_profile # 首次缓存配置
 ```
 
@@ -323,7 +325,7 @@ init_hooks:
                ├─► 获取 AI Peer 配置
                │
                └─► 预加载用户档案 (缓存)
-                   
+
 ┌──────────────────────────────────────┐
 │  Each Agent Turn                     │
 └──────────────┬───────────────────────┘
@@ -392,16 +394,16 @@ init_hooks:
 
 ### 8 个记忆提供商对比
 
-| 提供商 | 存储 | 成本 | 工具数 | 最适合 |
-|-------|------|------|-------|--------|
-| **Honcho** ⭐ | Cloud | 按需付费 | 4 | 用户建模 + 多代理 |
-| **OpenViking** | 自托管 | 免费 | 5 | 结构化知识 + 文件系统 |
-| **Mem0** | Cloud | 按需付费 | 3 | 自动 LLM 提取 |
-| **Hindsight** | Cloud/本地 | 免费/付费 | 3 | 知识图 + 实体关系 |
-| **Holographic** | 本地 SQLite | 免费 | 9 | 本地 + 高级查询 |
-| **RetainDB** | Cloud | $20/月 | 5 | 混合搜索 (Vector+BM25) |
-| **ByteRover** | 本地/Cloud | 免费/付费 | 3 | 便携式本地知识树 |
-| **Supermemory** | Cloud | 按需付费 | 4 | 语义检索 + 会话图 |
+| 提供商          | 存储        | 成本      | 工具数 | 最适合                 |
+| --------------- | ----------- | --------- | ------ | ---------------------- |
+| **Honcho** ⭐   | Cloud       | 按需付费  | 4      | 用户建模 + 多代理      |
+| **OpenViking**  | 自托管      | 免费      | 5      | 结构化知识 + 文件系统  |
+| **Mem0**        | Cloud       | 按需付费  | 3      | 自动 LLM 提取          |
+| **Hindsight**   | Cloud/本地  | 免费/付费 | 3      | 知识图 + 实体关系      |
+| **Holographic** | 本地 SQLite | 免费      | 9      | 本地 + 高级查询        |
+| **RetainDB**    | Cloud       | $20/月    | 5      | 混合搜索 (Vector+BM25) |
+| **ByteRover**   | 本地/Cloud  | 免费/付费 | 3      | 便携式本地知识树       |
+| **Supermemory** | Cloud       | 按需付费  | 4      | 语义检索 + 会话图      |
 
 ### Provider Registry
 
@@ -409,7 +411,7 @@ init_hooks:
 pub struct MemoryProviderRegistry {
     providers: HashMap<String, Arc<Box<dyn MemoryProvider>>>,
     active_provider: Option<String>,
-    
+
     config: ProviderConfig,
 }
 
@@ -422,29 +424,29 @@ impl MemoryProviderRegistry {
     ) -> Result<()> {
         // 验证配置
         provider.validate_config(&config)?;
-        
+
         // 初始化提供商
         let initialized = provider.initialize().await?;
-        
+
         // 注册
         self.providers.insert(provider_id.to_string(), Arc::new(initialized));
-        
+
         Ok(())
     }
-    
+
     pub async fn activate_provider(&mut self, provider_id: &str) -> Result<()> {
         if !self.providers.contains_key(provider_id) {
             return Err(format!("Provider {} not registered", provider_id).into());
         }
-        
+
         // 健康检查
         let provider = &self.providers[provider_id];
         provider.health_check().await?;
-        
+
         self.active_provider = Some(provider_id.to_string());
         Ok(())
     }
-    
+
     pub fn get_active_provider(&self) -> Result<Arc<Box<dyn MemoryProvider>>> {
         let provider_id = self.active_provider.as_ref()?;
         Ok(self.providers[provider_id].clone())
@@ -590,17 +592,17 @@ pub struct MemoryConfig {
     // 提供商选择
     pub enabled_providers: Vec<String>,
     pub active_provider: String,        // 当前活跃提供商
-    
+
     // 内置记忆
     pub built_in: BuiltInMemoryConfig,
-    
+
     // 提供商特定配置
     pub honcho: Option<HonchoConfig>,
     pub mem0: Option<Mem0Config>,
     pub hindsight: Option<HindsightConfig>,
     pub holographic: Option<HolographicConfig>,
     // ... etc for other providers
-    
+
     // 全局行为
     pub global_recall: RecallStrategy,
     pub global_write: WriteStrategy,
@@ -809,16 +811,16 @@ pub fn memory_built_in_tools() -> Vec<Tool> {
 
 ### Hermes 记忆系统
 
-| 特性 | Hermes | If2Ai | 进度 |
-|------|--------|-------|------|
-| 8 个提供商支持 | ✅ 完整 | 📋 设计完成 | 设计 100% |
-| Honcho 集成 | ✅ 完整 | 📋 设计完成 | 设计 100% |
-| 内置 MEMORY.md | ✅ | ✅ 部分 | 80% |
-| 内置 USER.md | ✅ | ✅ 部分 | 80% |
-| Recall Pipeline | ✅ | 📋 设计完成 | 设计 100% |
-| Write Pipeline | ✅ | 📋 设计完成 | 设计 100% |
-| 多档案支持 | ✅ | 📋 设计完成 | 设计 100% |
-| 提供商名作系统 | ✅ | 📋 计划 | 0% |
+| 特性            | Hermes  | If2Ai       | 进度      |
+| --------------- | ------- | ----------- | --------- |
+| 8 个提供商支持  | ✅ 完整 | 📋 设计完成 | 设计 100% |
+| Honcho 集成     | ✅ 完整 | 📋 设计完成 | 设计 100% |
+| 内置 MEMORY.md  | ✅      | ✅ 部分     | 80%       |
+| 内置 USER.md    | ✅      | ✅ 部分     | 80%       |
+| Recall Pipeline | ✅      | 📋 设计完成 | 设计 100% |
+| Write Pipeline  | ✅      | 📋 设计完成 | 设计 100% |
+| 多档案支持      | ✅      | 📋 设计完成 | 设计 100% |
+| 提供商名作系统  | ✅      | 📋 计划     | 0%        |
 
 ### Honcho 特定对齐
 
@@ -883,7 +885,7 @@ for fact in facts {
 ✅ **8 个提供商灵活选择** - 云、本地、混合等多种方案  
 ✅ **与 Agent Loop 深度集成** - 自动 recall + write  
 ✅ **多档案支持** - 每个 agent 有自己的角色，但共享用户理解  
-✅ **Hermes 完全对标** - 所有特性和工具都实现  
+✅ **Hermes 完全对标** - 所有特性和工具都实现
 
 ### 关键亮点
 
@@ -895,11 +897,12 @@ for fact in facts {
 ---
 
 **版本历史**:
+
 - v1.0 (2026-04-11) - 初始设计，完整 Honcho + 8 提供商对标
 
 **相关文档**:
+
 - 📖 [Hermes Memory Providers](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers)
 - 🏗️ [Agent Loop 设计](./agent-loop.md)
 - 📊 [Session Persistence 设计](./session-persistence.md)
 - 🔄 [RL-Training 设计](./agent-self-improvement.md)
-

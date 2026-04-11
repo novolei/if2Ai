@@ -32,7 +32,7 @@ pub struct PromptBuilder {
     tool_definitions: Vec<ToolDefinition>,
     conversation_context: Vec<Message>,
     examples: Vec<Example>,
-    
+
     // 配置
     config: PromptConfig,
 }
@@ -85,7 +85,7 @@ pub struct AgentDefinitionBuilder {
 impl AgentDefinitionBuilder {
     pub fn build(&self) -> String {
         let mut prompt = String::new();
-        
+
         // 部分 1: 基础角色定义
         prompt.push_str(&format!(
             "# Agent Role & Identity\n\n\
@@ -94,7 +94,7 @@ impl AgentDefinitionBuilder {
             self.agent.name,
             self.agent.role
         ));
-        
+
         // 部分 2: 能力范围
         if !self.agent.capabilities.is_empty() {
             prompt.push_str("## Capabilities\n\n");
@@ -103,7 +103,7 @@ impl AgentDefinitionBuilder {
             }
             prompt.push_str("\n");
         }
-        
+
         // 部分 3: 沟通风格
         prompt.push_str(&format!(
             "## Communication Style\n\n\
@@ -112,7 +112,7 @@ impl AgentDefinitionBuilder {
             self.agent.tone,
             self.agent.language_preferences.primary_language
         ));
-        
+
         // 部分 4: 道德准则
         if !self.agent.ethical_guidelines.is_empty() {
             prompt.push_str("## Ethical Guidelines\n\n");
@@ -121,7 +121,7 @@ impl AgentDefinitionBuilder {
             }
             prompt.push_str("\n");
         }
-        
+
         // 部分 5: 特殊指令
         if !self.agent.special_instructions.is_empty() {
             prompt.push_str("## Special Instructions\n\n");
@@ -130,7 +130,7 @@ impl AgentDefinitionBuilder {
             }
             prompt.push_str("\n");
         }
-        
+
         prompt
     }
 }
@@ -163,11 +163,11 @@ pub struct ToolExample {
 impl ToolDefinitionBuilder {
     pub fn build(&self) -> String {
         let mut prompt = String::from("# Available Tools\n\n");
-        
+
         for tool in &self.tools {
             prompt.push_str(&format!("## {}\n\n", tool.name));
             prompt.push_str(&format!("{}\n\n", tool.description));
-            
+
             // 参数文档
             prompt.push_str("**Parameters:**\n");
             for (param_name, param_schema) in &tool.parameters.properties {
@@ -184,7 +184,7 @@ impl ToolDefinitionBuilder {
                 ));
             }
             prompt.push_str("\n");
-            
+
             // 示例
             if let Some(examples) = &tool.examples {
                 prompt.push_str("**Examples:**\n");
@@ -198,7 +198,7 @@ impl ToolDefinitionBuilder {
                 }
                 prompt.push_str("\n");
             }
-            
+
             // 成本和安全注意
             if let Some(cost) = &tool.cost_estimate {
                 prompt.push_str(&format!("*Cost: {}*\n", cost));
@@ -206,13 +206,13 @@ impl ToolDefinitionBuilder {
             if let Some(safety) = &tool.safety_notes {
                 prompt.push_str(&format!("⚠️ *Safety Note: {}*\n", safety));
             }
-            
+
             prompt.push_str("\n");
         }
-        
+
         prompt
     }
-    
+
     pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
         self.tools
             .iter()
@@ -226,7 +226,7 @@ impl ToolDefinitionBuilder {
             }))
             .collect()
     }
-    
+
     pub fn to_claude_format(&self) -> Vec<serde_json::Value> {
         self.tools
             .iter()
@@ -252,20 +252,20 @@ impl ConversationContextBuilder {
     pub fn build(&self) -> (String, u32) {
         let mut prompt = String::from("# Conversation History\n\n");
         let mut tokens_used = 0;
-        
+
         for msg in &self.messages {
             let msg_text = format!("{}: {}\n\n", msg.role, msg.content);
             let msg_tokens = estimate_tokens(&msg_text);
-            
+
             if tokens_used + msg_tokens > self.max_tokens {
                 prompt.push_str("[... conversation truncated due to token limit ...]\n\n");
                 break;
             }
-            
+
             prompt.push_str(&msg_text);
             tokens_used += msg_tokens;
         }
-        
+
         (prompt, tokens_used)
     }
 }
@@ -289,18 +289,18 @@ pub struct Example {
 impl ExampleBuilder {
     pub fn build(&self) -> String {
         let mut prompt = String::from("# Examples\n\n");
-        
+
         for (idx, example) in self.examples.iter().enumerate() {
             prompt.push_str(&format!("## Example {}\n\n", idx + 1));
             prompt.push_str(&format!("**{}**\n\n", example.title));
             prompt.push_str(&format!("{}\n\n", example.description));
-            
+
             prompt.push_str("**User Input:**\n");
             prompt.push_str(&format!("{}\n\n", example.input_prompt));
-            
+
             prompt.push_str("**Expected Output:**\n");
             prompt.push_str(&format!("{}\n\n", example.expected_output));
-            
+
             if !example.tools_used.is_empty() {
                 prompt.push_str("**Tools Used:**\n");
                 for tool in &example.tools_used {
@@ -309,7 +309,7 @@ impl ExampleBuilder {
                 prompt.push_str("\n");
             }
         }
-        
+
         prompt
     }
 }
@@ -340,7 +340,7 @@ pub enum OutputFormat {
 impl OutputFormatSpec {
     pub fn build_instruction(&self) -> String {
         let mut instruction = String::from("# Output Format\n\n");
-        
+
         match &self.format_type {
             OutputFormat::Natural { structure } => {
                 instruction.push_str(&format!("Respond in {} format.\n\n", structure));
@@ -356,19 +356,19 @@ impl OutputFormatSpec {
                 instruction.push_str("\n\n");
             }
         }
-        
+
         if self.include_reasoning {
             instruction.push_str("Include your reasoning process.\n");
         }
-        
+
         if self.include_tool_calls {
             instruction.push_str("Explicitly list any tool calls made.\n");
         }
-        
+
         if self.include_confidence {
             instruction.push_str("Include a confidence score (0-1) for your final answer.\n");
         }
-        
+
         instruction
     }
 }
@@ -390,31 +390,31 @@ impl CompletePromptBuilder {
     pub fn build_system_prompt(&self) -> PromptResult {
         let mut sections = Vec::new();
         let mut total_tokens = 0;
-        
+
         // 1. Agent Definition
         let agent_part = self.agent_def_builder.build();
         total_tokens += estimate_tokens(&agent_part);
         sections.push(agent_part);
-        
+
         // 2. Tool Definitions
         let tools_part = self.tool_def_builder.build();
         total_tokens += estimate_tokens(&tools_part);
         sections.push(tools_part);
-        
+
         // 3. Examples (if enabled)
         if self.config.include_examples {
             let examples_part = self.example_builder.build();
             total_tokens += estimate_tokens(&examples_part);
             sections.push(examples_part);
         }
-        
+
         // 4. Output Format
         let format_part = self.format_spec.build_instruction();
         total_tokens += estimate_tokens(&format_part);
         sections.push(format_part);
-        
+
         let system_prompt = sections.join("\n");
-        
+
         PromptResult {
             system_prompt,
             estimated_tokens: total_tokens,
@@ -426,10 +426,10 @@ impl CompletePromptBuilder {
             ].into_iter().filter(|s| !s.is_empty()).collect(),
         }
     }
-    
+
     pub fn build_user_message(&self) -> PromptResult {
         let (context, tokens) = self.context_builder.build();
-        
+
         PromptResult {
             system_prompt: context,
             estimated_tokens: tokens,
@@ -450,21 +450,21 @@ pub struct PromptResult {
 ```yaml
 prompt_builder:
   agent_definition:
-    name: "Research Assistant"
-    role: "You are an expert research assistant..."
+    name: 'Research Assistant'
+    role: 'You are an expert research assistant...'
     capabilities:
       - Web Research
       - Data Analysis
       - Code Writing
     tone: professional
     language: en
-  
-  tool_format_style: OpenAI   # or: Claude, Custom
-  
+
+  tool_format_style: OpenAI # or: Claude, Custom
+
   include_examples: true
   include_agent_id: true
   max_context_tokens: 2000
-  
+
   output_format:
     format_type: structured
     include_reasoning: true
@@ -477,12 +477,12 @@ prompt_builder:
 
 ```yaml
 test_case:
-  name: "Prompt Quality Assessment"
-  prompt: "Analyze this dataset"
+  name: 'Prompt Quality Assessment'
+  prompt: 'Analyze this dataset'
   evaluators:
     - name: behavior
       config:
-        expected_tools: ["web_search", "analyze"]
+        expected_tools: ['web_search', 'analyze']
         reasoning_included: true
     - name: correctness
       config:

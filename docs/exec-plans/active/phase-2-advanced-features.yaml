@@ -1,0 +1,199 @@
+# Phase 2: 高级特性 (Advanced Features)
+# ─────────────────────────────────────────────────────────────────────────────
+# 前置条件：Phase 1 全部 slice 状态为 done，且人工 review 通过。
+# 本文件由 AI 根据 design-docs 生成，经人工 review 确认后可执行。
+# phase_status: draft → 由人类改为 active 方可让 executor 执行
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: 2
+  phase_status: draft          # draft | active | completed
+  title: "高级特性 (Advanced Features)"
+  owner: "@architects"
+  depends_on_phase: 1
+  design_docs:
+    - docs/design-docs/prompt-builder.md
+    - docs/design-docs/context-compression.md
+    - docs/design-docs/error-handling.md
+    - docs/design-docs/memory-system.md
+    - docs/design-docs/messaging-gateway.md
+    - docs/design-docs/testing-strategy.md
+  human_checkpoints:
+    - after_slice: "2.3"       # PromptBuilder + Compression + ErrorHandling 完成后 review
+    - after_slice: "2.6"       # 全部 Phase 2 完成后 review（含 Discord 适配器）
+
+slices:
+
+  # ───────────── Stage 1: 核心提示词和上下文管理 ────────────────────────────
+
+  - id: "2.1"
+    title: "PromptBuilder — 动态系统提示词构建"
+    status: pending
+    design_ref: "docs/design-docs/prompt-builder.md"
+    backlog_ref: "BL-201"
+    impl_targets:
+      - src-tauri/src/modules/runtime/prompt.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::prompt"
+        expect: "all tests pass"
+    review_checklist:
+      - "PromptBuilder struct 字段与 prompt-builder.md#core-structs 一致"
+      - "build() 方法返回完整的 system prompt 字符串"
+      - "支持 OpenAI 格式和 Claude 格式工具定义（由 ToolFormatStyle enum 控制）"
+      - "AgentDefinition 可配置 name / role / capabilities / tone"
+      - "语言切换（zh/en）通过 config 字段控制，不硬编码"
+      - "无 unwrap()，错误通过 PromptBuilderError 类型传播"
+
+  - id: "2.2"
+    title: "ContextCompression — 长对话自适应压缩"
+    status: pending
+    design_ref: "docs/design-docs/context-compression.md"
+    backlog_ref: "BL-202"
+    impl_targets:
+      - src-tauri/src/modules/runtime/compression.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::compression"
+        expect: "all tests pass"
+      - type: harness
+        suite: "harness/suites/context_compression.yaml"
+    review_checklist:
+      - "ContextWindowManager.should_compress() 在 tokens > threshold 时返回 true"
+      - "压缩流程：Prune → Protect Head/Tail → Summarize Middle，顺序正确"
+      - "protected_head_size / protected_tail_size 可通过配置修改"
+      - "摘要通过独立的 LLM 调用生成（非 inline 处理）"
+      - "压缩后对话历史长度严格 < 压缩前"
+      - "压缩事件写入 session 的 compression_events 字段"
+
+  - id: "2.3"
+    title: "ErrorHandling — 统一错误分类、重试与 Provider Fallback"
+    status: pending
+    design_ref: "docs/design-docs/error-handling.md"
+    backlog_ref: "BL-203"
+    impl_targets:
+      - src-tauri/src/modules/runtime/error.rs
+      - src-tauri/src/modules/api/fallback.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- runtime::error api::fallback"
+        expect: "all tests pass"
+    review_checklist:
+      - "AgentError enum 涵盖 error-handling.md 中三类（Recoverable/Transferable/Fatal）"
+      - "可恢复错误使用指数退避重试，最多 3 次"
+      - "可转移错误触发 ProviderManager 的 next_provider() 切换"
+      - "致命错误立即停止循环并向上层传播"
+      - "所有错误类型实现 std::error::Error trait"
+      - "重试逻辑有对应的单元测试（模拟 3 次失败后成功）"
+
+  # ───────────── Stage 2: 记忆系统 ──────────────────────────────────────────
+
+  - id: "2.4"
+    title: "MemorySystem — 内置记忆（MEMORY.md + USER.md）+ MemoryManager"
+    status: pending
+    design_ref: "docs/design-docs/memory-system.md"
+    backlog_ref: "BL-204"
+    impl_targets:
+      - src-tauri/src/modules/memory/builtin.rs
+      - src-tauri/src/modules/memory/manager.rs
+      - src-tauri/src/modules/memory/mod.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- memory"
+        expect: "all tests pass"
+    review_checklist:
+      - "MemoryProvider trait 定义 store() / retrieve() / inject_context() 三个方法"
+      - "BuiltInMemory 从 ~/.if2ai/MEMORY.md 和 USER.md 读取（文件不存在时创建空文件）"
+      - "inject_context() 将记忆作为 system prompt 的一部分注入消息历史"
+      - "MemoryManager 支持注册多个 provider（provider 列表）"
+      - "Honcho 集成作为可选 feature（feature flag: honcho），默认不启用"
+      - "记忆读写操作有对应错误处理（IO 错误不崩溃）"
+
+  - id: "2.5"
+    title: "MessagingGateway — Base Trait + Telegram 适配器"
+    status: pending
+    design_ref: "docs/design-docs/messaging-gateway.md"
+    backlog_ref: "BL-205 (part 1/2)"
+    impl_targets:
+      - src-tauri/src/modules/plugins/gateway/adapter.rs   # MessagingAdapter trait
+      - src-tauri/src/modules/plugins/gateway/handler.rs   # MessageHandler trait + Session 绑定
+      - src-tauri/src/modules/plugins/gateway/telegram.rs  # TelegramAdapter (polling)
+      - src-tauri/src/modules/plugins/gateway/mod.rs
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- plugins::gateway"
+        expect: "all tests pass"
+    review_checklist:
+      - "MessagingAdapter trait 定义 start() / send_message() / send_typing() / platform_name() 四个方法"
+      - "MessageHandler trait 定义 handle() 方法，接收标准化 IncomingMessage，返回 OutgoingMessage"
+      - "TelegramAdapter 使用 TELEGRAM_BOT_TOKEN 环境变量，不硬编码"
+      - "每个 chat_id 对应独立 Session（通过 SessionManager 创建和查找）"
+      - "消息处理在独立 tokio task 中运行，不阻塞 polling 主循环"
+      - "Telegram feature 通过 feature flag: gateway-telegram 控制编译"
+      - "MockAdapter 实现完整 MessagingAdapter trait，用于单元测试"
+
+  - id: "2.5b"
+    title: "MessagingGateway — Discord 适配器（WebSocket）"
+    status: pending
+    design_ref: "docs/design-docs/messaging-gateway.md"
+    backlog_ref: "BL-205 (part 2/2)"
+    impl_targets:
+      - src-tauri/src/modules/plugins/gateway/discord.rs   # DiscordAdapter (WebSocket)
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- plugins::gateway::discord"
+        expect: "all tests pass"
+    review_checklist:
+      - "DiscordAdapter 实现 MessagingAdapter trait，接口与 TelegramAdapter 完全一致"
+      - "DiscordAdapter 使用 DISCORD_BOT_TOKEN 环境变量，不硬编码"
+      - "WebSocket 连接断开时自动重连（指数退避，最多 5 次）"
+      - "Discord feature 通过 feature flag: gateway-discord 控制编译"
+      - "可与 TelegramAdapter 同时运行（并行 tokio tasks）"
+      - "MockDiscordAdapter 用于单元测试，无需真实 bot token"
+
+  # ───────────── Stage 3: Phase 2 集成验证 ─────────────────────────────────
+
+  - id: "2.6"
+    title: "Phase 2 集成测试 + 全 harness suites 完整通过"
+    status: pending
+    design_ref: "docs/design-docs/testing-strategy.md"
+    impl_targets:
+      - harness/suites/phase2_integration.yaml
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "coverage >= 70%"
+      - type: harness
+        suite: "harness/suites/phase2_integration.yaml"
+    review_checklist:
+      - "所有 Phase 2 slice 的 acceptance 条件全部通过（含 2.5 Telegram 和 2.5b Discord）"
+      - "PromptBuilder + ContextCompression + ErrorHandling 协同工作（集成测试证明）"
+      - "MemorySystem 在对话中正确注入上下文"
+      - "Telegram 和 Discord 两个 adapter 能同时注册到 GatewayManager，互不干扰"
+      - "harness phase2_integration suite 全绿"
+      - "docs/generated/QUALITY_SCORE.md 已更新到 Phase 2 状态"
+      - "准备好接受人工 review（见 meta.human_checkpoints after_slice: 2.6）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-11"
+  completed_slices: []
+  current_slice: "2.1"         # 当 Phase 2 激活时，从这里开始
+  blocked: []
+  notes: "DRAFT — 等待 Phase 1 全部完成并人工 review 后，由人类将 phase_status 改为 active。共 7 slices（含 2.5b Discord）"

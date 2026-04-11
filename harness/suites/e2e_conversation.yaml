@@ -1,0 +1,119 @@
+# Harness Suite: E2E Conversation
+# 引用自: phase-1-foundation.yaml slice 1.8 acceptance
+# 用途: 验证前端 → Tauri IPC → Rust → Mock LLM 的完整对话路径
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "e2e_conversation"
+name: "E2E Conversation Flow Tests"
+description: "验证完整对话路径：React UI invoke → Tauri Command → ConversationRuntime → Mock Provider → 返回响应"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+test_cases:
+
+  - id: "e2e-001"
+    name: "单轮对话 — 无工具调用"
+    description: "用户发送消息，Mock Provider 直接返回文本响应（无工具调用）"
+    type: "integration"
+    test_fn: "commands::tests::test_single_turn_no_tools"
+    input:
+      session_id: "test-session-001"
+      user_message: "你好，请介绍一下你自己"
+      mock_provider_response:
+        content: "我是 If2Ai 助手，很高兴为您服务。"
+        tool_calls: []
+    expect:
+      - "response.is_ok()"
+      - "response.content is not empty"
+      - "response.tool_calls_executed == 0"
+      - "session messages count == 2"   # user + assistant
+
+  - id: "e2e-002"
+    name: "单轮对话 — 含工具调用（bash）"
+    description: "Mock Provider 返回 bash 工具调用，Runtime 执行后再次调用 LLM 获取最终响应"
+    type: "integration"
+    test_fn: "commands::tests::test_single_turn_with_bash_tool"
+    input:
+      session_id: "test-session-002"
+      user_message: "列出当前目录的文件"
+      mock_provider_responses:
+        - content: ""
+          tool_calls:
+            - name: "bash"
+              args:
+                command: "ls -la"
+        - content: "当前目录包含以下文件：..."
+          tool_calls: []
+    expect:
+      - "response.is_ok()"
+      - "response.tool_calls_executed == 1"
+      - "response.content contains '文件'"
+      - "session messages count == 4"   # user + assistant(tool_call) + tool_result + assistant
+
+  - id: "e2e-003"
+    name: "超出 max_turns 预算"
+    description: "LLM 持续返回工具调用，超过 max_turns 后 Runtime 返回 BudgetExhausted 错误"
+    type: "integration"
+    test_fn: "commands::tests::test_budget_exhausted"
+    config:
+      max_turns: 3
+    input:
+      session_id: "test-session-003"
+      user_message: "无限循环任务"
+      mock_provider_response:
+        content: ""
+        tool_calls:
+          - name: "bash"
+            args:
+              command: "echo loop"
+        # 每次都返回工具调用（永不停止）
+        repeat: true
+    expect:
+      - "response.is_err()"
+      - "error is AgentError::BudgetExhausted"
+      - "iterations_used == 3"
+
+  - id: "e2e-004"
+    name: "会话持久化 — 保存和恢复"
+    description: "对话完成后消息写入 session，重新加载 session 后消息完整"
+    type: "integration"
+    test_fn: "commands::tests::test_session_persist_and_reload"
+    input:
+      session_id: "test-session-004"
+      messages:
+        - role: "user"
+          content: "测试消息 1"
+        - role: "assistant"
+          content: "测试回复 1"
+    expect:
+      - "saved session message count == 2"
+      - "reloaded session message content matches"
+      - "message order preserved"
+
+  - id: "e2e-005"
+    name: "列出会话 — list_sessions command"
+    description: "创建多个 session 后，list_sessions 返回正确数量和摘要"
+    type: "integration"
+    test_fn: "commands::tests::test_list_sessions"
+    input:
+      create_sessions: 3
+    expect:
+      - "result.is_ok()"
+      - "result.len() == 3"
+      - "each session has id, title, created_at"
+
+  - id: "e2e-006"
+    name: "并发对话 — 多 session 同时运行"
+    description: "两个不同 session 同时运行不互相干扰（状态隔离）"
+    type: "integration"
+    test_fn: "commands::tests::test_concurrent_sessions"
+    input:
+      sessions:
+        - id: "concurrent-session-a"
+          message: "会话 A 的消息"
+        - id: "concurrent-session-b"
+          message: "会话 B 的消息"
+    expect:
+      - "both sessions complete without error"
+      - "session A messages do not appear in session B"
+      - "session B messages do not appear in session A"

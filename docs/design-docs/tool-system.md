@@ -39,16 +39,16 @@ pub struct ToolEntry {
     pub toolset: String,                       // "web"
     pub description: String,
     pub emoji: String,                         // "🔍"
-    
+
     // 架构
     pub schema: JsonSchema,                    // OpenAI 兼容 format
     pub input_schema: JsonValue,
     pub output_schema: Option<JsonValue>,
-    
+
     // 实现
     pub handler: Arc<ToolHandler>,             // 执行函数
     pub is_async: bool,
-    
+
     // 控制
     pub check_fn: Option<fn() -> bool>,        // 可用性检查（如需 API 密钥）
     pub requires_env: Vec<String>,             // 必需的环境变量
@@ -70,24 +70,24 @@ impl ToolRegistry {
         self.tools.insert(entry.name.clone(), entry);
         Ok(())
     }
-    
+
     // 查询 API
     pub fn get(&self, name: &str) -> Option<ToolEntry> {
         self.tools.get(name).map(|r| r.value().clone())
     }
-    
-    pub fn get_definitions(&self, 
+
+    pub fn get_definitions(&self,
         toolset_names: &[String],
         disabled_toolsets: &[String],
         quiet: bool,
     ) -> Result<Vec<JsonValue>> {
         // 返回 OpenAI 格式的 tool schema 定义
     }
-    
+
     pub fn validate_tool_call(&self, call: &ToolCall) -> Result<()> {
         // 检查工具是否存在、参数是否有效
     }
-    
+
     // 执行 API
     pub async fn dispatch(
         &self,
@@ -96,24 +96,24 @@ impl ToolRegistry {
     ) -> Result<String> {
         let entry = self.get(name)
             .ok_or(ToolError::NotFound(name.to_string()))?;
-        
+
         // 可用性检查
         if let Some(check) = entry.check_fn {
             if !check() {
                 return Err(ToolError::Unavailable(name.to_string()));
             }
         }
-        
+
         // 环境检查
         for env_var in &entry.requires_env {
             if std::env::var(env_var).is_err() {
                 return Err(ToolError::MissingEnv(env_var.clone()));
             }
         }
-        
+
         // 执行
         let result = (entry.handler)(args).await?;
-        
+
         // 输出大小检查
         if let Some(max_size) = entry.max_result_size {
             if result.len() > max_size {
@@ -123,7 +123,7 @@ impl ToolRegistry {
                 });
             }
         }
-        
+
         Ok(result)
     }
 }
@@ -162,7 +162,7 @@ pub const TOOLSETS: &[(&str, &[&str])] = &[
     ("memory", &["read_memory", "write_memory"]),
     ("code", &["execute_code"]),
     ("delegation", &["delegate_task"]),
-    
+
     // 组合工具集
     ("minimal", &["web_search", "read_file"]),
     ("research", &["web_search", "web_extract", "read_file"]),
@@ -287,16 +287,16 @@ Tool: perception
 
 ### E. 其他工具
 
-| 工具 | 功能 | 关键特性 |
-|------|------|--------|
-| navigate | 浏览器导航 | Puppeteer/Playwright |
-| click, type | UI 交互 | 坐标或元素定位 |
-| screenshot | 截屏 | Base64 或文件保存 |
-| memory | 读写记忆库 | MEMORY.md + USER.md |
-| execute_code | 代码执行 | Python/Bash，超时保护 |
-| delegate_task | 创建子 Agent | 预算共享，中断传播 |
-| clarify | 澄清问题 | 要求用户输入 |
-| session_search | 搜索会话历史 | 向量搜索或全文搜索 |
+| 工具           | 功能         | 关键特性              |
+| -------------- | ------------ | --------------------- |
+| navigate       | 浏览器导航   | Puppeteer/Playwright  |
+| click, type    | UI 交互      | 坐标或元素定位        |
+| screenshot     | 截屏         | Base64 或文件保存     |
+| memory         | 读写记忆库   | MEMORY.md + USER.md   |
+| execute_code   | 代码执行     | Python/Bash，超时保护 |
+| delegate_task  | 创建子 Agent | 预算共享，中断传播    |
+| clarify        | 澄清问题     | 要求用户输入          |
+| session_search | 搜索会话历史 | 向量搜索或全文搜索    |
 
 ## Tool Executor（执行器）
 
@@ -314,10 +314,10 @@ impl ToolExecutor {
     ) -> Result<Vec<(ToolCall, Result<String>)>> {
         // Step 1: 解析依赖关系
         let sorted = self.dependency_resolver.sort(&tool_calls)?;
-        
+
         // Step 2: 分区为可并行执行的组
         let groups = self.partition_into_groups(&sorted);
-        
+
         // Step 3: 执行每组（组内并行，组间顺序）
         let mut results = Vec::new();
         for group in groups {
@@ -326,10 +326,10 @@ impl ToolExecutor {
             ).await;
             results.extend(group_results);
         }
-        
+
         Ok(results)
     }
-    
+
     async fn execute_single(&self, call: &ToolCall) -> (ToolCall, Result<String>) {
         match self.registry.dispatch(&call.name, &call.args).await {
             Ok(result) => (call.clone(), Ok(result)),
@@ -344,6 +344,7 @@ impl ToolExecutor {
 ### 添加新工具的步骤
 
 1. **定义 Tool Entry**
+
    ```rust
    let entry = ToolEntry {
        name: "my_tool".to_string(),
@@ -356,6 +357,7 @@ impl ToolExecutor {
    ```
 
 2. **实现 Handler**
+
    ```rust
    async fn my_tool_handler(args: &JsonValue) -> Result<String> {
        let param = args.get("param")?;
@@ -365,6 +367,7 @@ impl ToolExecutor {
    ```
 
 3. **注册工具**
+
    ```rust
    registry.register(entry)?;
    ```
@@ -380,13 +383,13 @@ impl ToolExecutor {
 
 ## 安全性考虑
 
-| 问题 | 缓解策略 |
-|------|--------|
-| 注入攻击 | 参数类型检查、escapement |
-| 过度执行 | 超时限制、并行数限制 |
+| 问题     | 缓解策略                   |
+| -------- | -------------------------- |
+| 注入攻击 | 参数类型检查、escapement   |
+| 过度执行 | 超时限制、并行数限制       |
 | 输出泄漏 | 输出大小检查、敏感数据过滤 |
-| 权限提升 | 沙箱隔离（Docker） |
-| API 滥用 | API 密钥管理、速率限制 |
+| 权限提升 | 沙箱隔离（Docker）         |
+| API 滥用 | API 密钥管理、速率限制     |
 
 ## 与 Harness 的集成
 
@@ -394,16 +397,16 @@ impl ToolExecutor {
 
 ```yaml
 test_case:
-  name: "Web Search Tool"
-  prompt: "What is the capital of France?"
+  name: 'Web Search Tool'
+  prompt: 'What is the capital of France?'
   evaluators:
     - name: behavior
       config:
-        tools_used: ["web_search"]
+        tools_used: ['web_search']
         max_tool_calls: 1
     - name: correctness
       config:
-        expected_output: "Paris"
+        expected_output: 'Paris'
 ```
 
 ---

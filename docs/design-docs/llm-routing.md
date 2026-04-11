@@ -70,7 +70,7 @@ impl LLMProviderConfig {
     pub fn is_available(&self) -> bool {
         is_enabled && std::env::var(&self.api_key_env).is_ok()
     }
-    
+
     pub fn api_key(&self) -> Result<String> {
         std::env::var(&self.api_key_env)
             .map_err(|_| ProviderError::MissingApiKey(self.api_key_env.clone()))
@@ -105,7 +105,7 @@ impl ProviderDetector {
             .map(|cfg| cfg.provider.clone())
             .collect()
     }
-    
+
     pub fn detect_primary(&self) -> Result<LLMProviderConfig> {
         // 返回优先级最高的可用提供商
         self.all_configs
@@ -115,18 +115,18 @@ impl ProviderDetector {
             .cloned()
             .ok_or(ProviderError::NoProviderAvailable)
     }
-    
+
     pub async fn probe_provider(&self, provider: &LLMProvider) -> Result<()> {
         // 发送测试请求以验证连接和凭证
         let config = self.get_config(provider)?;
         let client = create_client(&config)?;
-        
+
         let response = client.complete(
             &[Message::user("test".to_string())],
             &[],
             false,
         ).await?;
-        
+
         Ok(())
     }
 }
@@ -148,12 +148,12 @@ impl ProviderRouter {
         let primary = detector.detect_primary()?;
         let mut all_available = detector.detect_available_providers();
         all_available.remove_first(&primary);  // 移除主提供商
-        
+
         let fallback_chain = all_available
             .iter()
             .map(|p| detector.get_config(p))
             .collect::<Result<Vec<_>>>()?;
-        
+
         Ok(ProviderRouter {
             primary_config: primary,
             fallback_chain,
@@ -161,7 +161,7 @@ impl ProviderRouter {
             rate_limiter: Arc::new(RateLimitManager::new()),
         })
     }
-    
+
     pub async fn route_request<T: Request>(
         &mut self,
         request: &T,
@@ -174,17 +174,17 @@ impl ProviderRouter {
         } else {
             return Err(ProviderError::AllFallbacksExhausted);
         };
-        
+
         // 速率限制检查
         self.rate_limiter.check_and_consume(&config.provider)?;
-        
+
         // 创建客户端
         let client = create_provider_client(config)?;
-        
+
         // 发送请求
         client.complete(&request.messages, &request.tools, request.stream).await
     }
-    
+
     pub async fn switch_provider(
         &mut self,
         provider: &LLMProvider,
@@ -192,10 +192,10 @@ impl ProviderRouter {
     ) -> Result<()> {
         let config = self.detector.get_config(provider)?;
         self.detector.probe_provider(provider).await?;
-        
+
         self.primary_config = config;
         self.primary_config.model = model.to_string();
-        
+
         Ok(())
     }
 }
@@ -226,39 +226,39 @@ impl RateLimitManager {
     ) -> Result<()> {
         let mut limit = self.limits.get_mut(provider)
             .ok_or(ProviderError::UnknownProvider)?;
-        
+
         // 检查 window 是否过期
         if Utc::now() > limit.reset_time {
             limit.current_requests = 0;
             limit.current_tokens = 0;
             limit.reset_time = Utc::now() + Duration::minutes(1);
         }
-        
+
         if limit.current_requests >= limit.requests_per_minute {
             return Err(ProviderError::RateLimited {
                 retry_after: limit.reset_time - Utc::now(),
             });
         }
-        
+
         if limit.current_tokens + tokens > limit.tokens_per_minute {
             return Err(ProviderError::TokenLimitExceeded {
                 requested: tokens,
                 available: limit.tokens_per_minute - limit.current_tokens,
             });
         }
-        
+
         limit.current_requests += 1;
         limit.current_tokens += tokens;
         Ok(())
     }
-    
+
     pub fn apply_backoff(&self, provider: &LLMProvider, retry_count: u32) -> Duration {
         // 指数退避：2^n 秒，最多 60 秒
         let backoff = Duration::seconds(2_i64.pow(retry_count).min(60) as i64);
-        
+
         let mut limit = self.limits.get_mut(provider).unwrap();
         limit.retry_after = Some(backoff);
-        
+
         backoff
     }
 }
@@ -274,7 +274,7 @@ pub trait LLMClient: Send + Sync {
         tools: &[Tool],
         stream: bool,
     ) -> Result<LLMResponse>;
-    
+
     async fn stream_complete(
         &self,
         messages: &[Message],
@@ -323,16 +323,16 @@ impl OpenAICompatClient {
             "tools": self.format_tools(tools),
             "temperature": self.temperature,
         });
-        
+
         let response = self.http_client
             .post(&format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request_body)
             .send()
             .await?;
-        
+
         let data = response.json::<JsonValue>().await?;
-        
+
         Ok(LLMResponse {
             content: data["choices"][0]["message"]["content"].as_str().unwrap().to_string(),
             tool_calls: self.parse_tool_calls(&data),
@@ -355,12 +355,12 @@ pub enum ProviderError {
     Timeout,
     ConnectionError(String),
     TemporaryServiceError,
-    
+
     // 转移到备用提供商
     InvalidAPIKey,
     AccountQuotaExceeded,
     ModelNotAvailable,
-    
+
     // 致命错误
     MissingApiKey(String),
     NoProviderAvailable,
@@ -370,11 +370,11 @@ pub enum ProviderError {
 
 impl ProviderError {
     pub fn is_retryable(&self) -> bool {
-        matches!(self, 
+        matches!(self,
             RateLimited { .. } | Timeout | ConnectionError(_) | TemporaryServiceError
         )
     }
-    
+
     pub fn is_transferable(&self) -> bool {
         matches!(self,
             InvalidAPIKey | AccountQuotaExceeded | ModelNotAvailable
@@ -395,23 +395,23 @@ llm:
       api_key_env: OPENAI_API_KEY
       base_url: https://api.openai.com/v1
       priority: 100
-    
+
     - name: anthropic
       enabled: true
       model: claude-3-opus-20240229
       api_key_env: ANTHROPIC_API_KEY
       base_url: https://api.anthropic.com
       priority: 90
-    
+
     - name: openrouter
       enabled: true
       model: openai/gpt-4
       api_key_env: OPENROUTER_API_KEY
       base_url: https://openrouter.io/api/v1
       priority: 80
-    
+
     - name: deepseek
-      enabled: false  # 需要手动启用
+      enabled: false # 需要手动启用
       model: deepseek-chat
       api_key_env: DEEPSEEK_API_KEY
       base_url: https://api.deepseek.com
@@ -424,18 +424,17 @@ llm:
 
 ```yaml
 test_case:
-  name: "Provider Failover"
-  scenario: "Primary provider 返回错误，自动转移到备用提供商"
-  steps:
-    1. Mock OpenAI API 返回 503 Service Unavailable
+  name: 'Provider Failover'
+  scenario: 'Primary provider 返回错误，自动转移到备用提供商'
+  steps: 1. Mock OpenAI API 返回 503 Service Unavailable
     2. 执行 Agent 推理
     3. 验证系统自动切换到 Anthropic
     4. 验证响应成功取得
-  
+
   evaluators:
     - name: behavior
       config:
-        providers_used: ["anthropic"]  # 备用提供商应被使用
+        providers_used: ['anthropic'] # 备用提供商应被使用
         retries_attempted: 1
 ```
 
@@ -443,17 +442,17 @@ test_case:
 
 ```yaml
 test_case:
-  name: "Dynamic Model Switch"
-  prompt: "Analyze this complex code"
+  name: 'Dynamic Model Switch'
+  prompt: 'Analyze this complex code'
   setup:
-    primary_model: "gpt-3.5-turbo"  # 快速，便宜
-    fallback_model: "gpt-4-turbo"   # 更强大
-  trigger: "Output quality < threshold"
+    primary_model: 'gpt-3.5-turbo' # 快速，便宜
+    fallback_model: 'gpt-4-turbo' # 更强大
+  trigger: 'Output quality < threshold'
   evaluators:
     - name: model_switching
       config:
         should_switch: true
-        target_model: "gpt-4-turbo"
+        target_model: 'gpt-4-turbo'
 ```
 
 ---

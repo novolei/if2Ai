@@ -10,6 +10,7 @@
 ## 📋 阶段概览
 
 ### 目标功能集
+
 1. ✅ 单一 LLM 提供商 (OpenAI)
 2. ✅ 基本 Agent 循环 (Prompt → API → Response)
 3. ✅ 5-8 个核心工具
@@ -18,6 +19,7 @@
 6. ✅ Harness 集成测试
 
 ### 不在范围内
+
 - ❌ 多 LLM 提供商切换
 - ❌ Prompt 缓存 / 上下文压缩
 - ❌ Gateway 多平台消息
@@ -35,6 +37,7 @@
 **目标**：建立可扩展的模块架构
 
 **任务**：
+
 1. 扩展 `Cargo.toml` 依赖
 2. 创建模块目录结构
 3. 定义核心类型
@@ -42,6 +45,7 @@
 **文件修改**：
 
 **src-tauri/Cargo.toml** - 添加依赖：
+
 ```toml
 [dependencies]
 # ... existing ...
@@ -72,6 +76,7 @@ async-openai = "0.14"  # OpenAI client library
 ```
 
 **src-tauri/src/modules/mod.rs**：
+
 ```rust
 pub mod agent;
 pub mod tools;
@@ -84,6 +89,7 @@ pub use types::{Message, ToolCall, ToolResult};
 ```
 
 **新建** `src-tauri/src/modules/types.rs`：
+
 ```rust
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -147,6 +153,7 @@ impl ConversationHistory {
 ```
 
 **验收标准**：
+
 - [ ] Cargo.toml 编译无错
 - [ ] 所有模块路径都能导入
 - [ ] 类型定义支持 serde 序列化
@@ -158,6 +165,7 @@ impl ConversationHistory {
 **目标**：实现最小可用的 Agent 循环
 
 **新建** `src-tauri/src/modules/agent.rs`：
+
 ```rust
 use crate::modules::types::*;
 use crate::modules::providers::OpenAIProvider;
@@ -281,6 +289,7 @@ When you need to use a tool, call it using the function calling interface. Alway
 ```
 
 **验收标准**：
+
 - [ ] AIAgent 能初始化
 - [ ] run_conversation 签名正确
 - [ ] 编译无错且有 test 支持
@@ -290,6 +299,7 @@ When you need to use a tool, call it using the function calling interface. Alway
 #### 周五：提供商集成基础
 
 **新建** `src-tauri/src/modules/providers.rs`：
+
 ```rust
 use crate::modules::types::*;
 use async_openai::client::OpenAIClient;
@@ -357,6 +367,7 @@ pub struct ChatCompletionResponse {
 ```
 
 **验收标准**：
+
 - [ ] OpenAIProvider 能初始化
 - [ ] 类型定义完整
 - [ ] 为完整实现预留的占位符清晰
@@ -364,12 +375,14 @@ pub struct ChatCompletionResponse {
 ---
 
 **该周验收标准**：
+
 - [ ] 项目编译成功 (`cargo build`)
 - [ ] 所有模块路径可用
 - [ ] 核心类型定义完整
 - [ ] Agent 循环框架就位 (虽然不完整)
 
 **该周交付物**：
+
 - [ ] 更新的 Cargo.toml
 - [ ] modules/ 目录结构
 - [ ] types.rs 完整类型
@@ -389,11 +402,13 @@ pub struct ChatCompletionResponse {
 实现完整的 `chat_completion` 方法。参考 [async_openai 文档](https://docs.rs/async-openai/)。
 
 **关键任务**：
+
 - 将 `Message` 转换为 OpenAI `ChatCompletionRequestMessage`
 - 处理 tool_calls JSON 解析
 - 实现流式响应（可选 Phase 2）
 
 **测试**：
+
 ```bash
 # src-tauri/src/modules/providers.rs 中添加测试
 #[cfg(test)]
@@ -406,20 +421,21 @@ mod tests {
         let provider = OpenAIProvider::new(
             std::env::var("OPENAI_API_KEY").unwrap()
         );
-        
+
         let response = provider.chat_completion(
             "You are a helpful assistant",
             vec![],
             vec![],
             "gpt-4",
         ).await;
-        
+
         assert!(response.is_ok());
     }
 }
 ```
 
 **验收标准**：
+
 - [ ] API 调用不返回错误
 - [ ] 响应能正确解析
 - [ ] Tool calls 能正确提取
@@ -429,6 +445,7 @@ mod tests {
 #### 周三：Tool Registry + 执行
 
 **新建** `src-tauri/src/modules/tools/mod.rs`：
+
 ```rust
 pub mod registry;
 pub mod terminal;
@@ -438,6 +455,7 @@ pub use registry::ToolRegistry;
 ```
 
 **新建** `src-tauri/src/modules/tools/registry.rs`：
+
 ```rust
 use crate::modules::types::ToolCall;
 use std::collections::HashMap;
@@ -489,6 +507,7 @@ impl ToolRegistry {
 ```
 
 **新建** `src-tauri/src/modules/tools/terminal.rs`：
+
 ```rust
 use super::Tool;
 use async_trait::async_trait;
@@ -541,6 +560,7 @@ impl Tool for TerminalTool {
 ```
 
 **验收标准**：
+
 - [ ] ToolRegistry 编译成功
 - [ ] Terminal 工具能执行命令
 - [ ] 工具 schema 合法 JSON
@@ -550,6 +570,7 @@ impl Tool for TerminalTool {
 #### 周四-周五：内存系统 + Tauri 命令
 
 **新建** `src-tauri/src/modules/memory.rs`：
+
 ```rust
 use crate::modules::types::*;
 use chrono::{DateTime, Utc};
@@ -563,7 +584,7 @@ pub struct MemoryStore {
 impl MemoryStore {
     pub fn new(db_path: &str) -> Result<Self, anyhow::Error> {
         let connection = Connection::open(db_path)?;
-        
+
         // 初始化表
         connection.execute_batch(
             r#"
@@ -643,6 +664,7 @@ impl MemoryStore {
 ```
 
 **修改** `src-tauri/src/commands/mod.rs`：
+
 ```rust
 mod agent_commands;
 
@@ -650,6 +672,7 @@ pub use agent_commands::*;
 ```
 
 **新建** `src-tauri/src/commands/agent_commands.rs`：
+
 ```rust
 use crate::modules::{AIAgent, tools::ToolRegistry, types::*};
 use std::sync::Mutex;
@@ -667,10 +690,10 @@ pub async fn initialize_agent(
 ) -> Result<String, String> {
     let mut tools = ToolRegistry::new();
     // TODO: 注册工具
-    
+
     let agent = AIAgent::new(api_key, "gpt-4".to_string(), std::sync::Arc::new(tools));
     *state.agent.lock().unwrap() = Some(agent);
-    
+
     Ok("Agent initialized".to_string())
 }
 
@@ -686,9 +709,9 @@ pub async fn send_message(
         .as_ref()
         .ok_or("Agent not initialized")?
         .clone();
-    
+
     let mut history = state.history.lock().unwrap();
-    
+
     agent
         .run_conversation(message, &mut history)
         .await
@@ -705,6 +728,7 @@ pub fn get_conversation_history(
 ```
 
 **修改** `src-tauri/src/main.rs`：
+
 ```rust
 mod commands;
 mod modules;
@@ -736,6 +760,7 @@ fn main() {
 ```
 
 **验收标准**：
+
 - [ ] 项目编译成功
 - [ ] `tauri dev` 能启动
 - [ ] Tool registry 能注册工具
@@ -743,6 +768,7 @@ fn main() {
 ---
 
 **该周验收标准**：
+
 - [ ] OpenAI API 集成完整
 - [ ] Tool system 可扩展
 - [ ] SQLite 持久化就位
@@ -764,6 +790,7 @@ fn main() {
 每个工具遵循相同的 `Tool` trait 模式。
 
 **验收标准**：
+
 - [ ] 6-8 个工具都实现了 schema
 - [ ] 至少 3 个工具有实际执行逻辑
 - [ ] 单元测试覆盖 ≥70%
@@ -773,12 +800,14 @@ fn main() {
 #### 周三-周五：Svelte UI 制作
 
 **前端目标**：
+
 - Chat 消息显示
 - 输入框 + 发送按钮
 - 工具执行进度
 - 对话历史
 
 **src/App.svelte** - 完全重写：
+
 ```svelte
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core'
@@ -801,7 +830,7 @@ fn main() {
 
   async function handleSendMessage(text: string) {
     if (!text.trim()) return
-    
+
     loading = true
     try {
       const response = await invoke('send_message', { message: text })
@@ -816,8 +845,8 @@ fn main() {
 {#if !initialized}
   <div class="setup-panel">
     <h1>If2Ai - AI Agent</h1>
-    <input 
-      type="password" 
+    <input
+      type="password"
       placeholder="Enter OpenAI API Key"
       on:change={(e) => apiKey = e.target.value}
     />
@@ -849,6 +878,7 @@ fn main() {
 ```
 
 **src/components/ChatView.svelte** - 新建：
+
 ```svelte
 <script lang="ts">
   export let messages = []
@@ -905,6 +935,7 @@ fn main() {
 ```
 
 **src/components/InputPanel.svelte** - 新建：
+
 ```svelte
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
@@ -957,6 +988,7 @@ fn main() {
 ```
 
 **验收标准**：
+
 - [ ] Chat 界面能接收消息
 - [ ] Send 按钮能触发 Tauri 命令
 - [ ] 消息能正确显示和滚动
@@ -964,6 +996,7 @@ fn main() {
 ---
 
 **第 3 周验收标准**：
+
 - [ ] 8 个核心工具实现
 - [ ] 完整的 Chat UI
 - [ ] IPC 通讯工作正常
@@ -976,6 +1009,7 @@ fn main() {
 #### 周一-周二：端到端集成测试
 
 **创建** `src-tauri/src/lib.rs`：
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -1001,6 +1035,7 @@ mod tests {
 ```
 
 在 `harness/` 框架中添加完整的集成测试：
+
 ```python
 # harness/tests/test_agent_correctness.py
 class TestAgentCorrectness(HarnessTestCase):
@@ -1030,12 +1065,14 @@ class TestAgentCorrectness(HarnessTestCase):
 #### 周四-周五：文档 + Demo
 
 更新文档：
+
 1. **API 文档** - Rust doc comments
 2. **集成指南** - 如何添加新工具
 3. **部署指南** - 打包和运行
 4. **示例** - 预制的演示场景
 
 **验收标准**：
+
 - [ ] 所有测试通过 (`cargo test`)
 - [ ] Harness 评估器通过 ≥80% 的标准
 - [ ] README 更新完整
@@ -1046,6 +1083,7 @@ class TestAgentCorrectness(HarnessTestCase):
 ## 🎯 阶段验收标准（全局）
 
 ### 功能完整性
+
 - [ ] Single-turn Agent 循环完整
 - [ ] 最少 8 个工具可用
 - [ ] SQLite 持久化正常
@@ -1053,6 +1091,7 @@ class TestAgentCorrectness(HarnessTestCase):
 - [ ] 前端 UI 可用
 
 ### 代码品质
+
 - [ ] 单元测试 ≥70% 覆盖
 - [ ] 集成测试通过
 - [ ] 无 clippy 警告
@@ -1060,12 +1099,14 @@ class TestAgentCorrectness(HarnessTestCase):
 - [ ] 文档注释 ≥80%
 
 ### Harness 评估
+
 - [ ] 正确性：≥85%
 - [ ] 行为：≥80%
 - [ ] 性能：<2s 平均响应
 - [ ] 可靠性：≥95%
 
 ### 可维护性
+
 - [ ] 模块清晰分离
 - [ ] 依赖最小化
 - [ ] 文档同步更新
@@ -1075,12 +1116,12 @@ class TestAgentCorrectness(HarnessTestCase):
 
 ## 📊 里程碑总结表
 
-| 周 | 目标 | 交付物 | 验收 |
-|---|------|--------|------|
-| 1 | 框架初始化 | AST/types/provider | 编译通过 |
-| 2 | 核心集成 | Agent loop/tools/IPC | E2E 大体可行 |
-| 3 | 功能完整 | 8 工具 + UI | 完整对话流 |
-| 4 | 生产准备 | 测试/文档/打包 | 发布版本 |
+| 周  | 目标       | 交付物               | 验收         |
+| --- | ---------- | -------------------- | ------------ |
+| 1   | 框架初始化 | AST/types/provider   | 编译通过     |
+| 2   | 核心集成   | Agent loop/tools/IPC | E2E 大体可行 |
+| 3   | 功能完整   | 8 工具 + UI          | 完整对话流   |
+| 4   | 生产准备   | 测试/文档/打包       | 发布版本     |
 
 ---
 
@@ -1108,14 +1149,14 @@ cd src-tauri && cargo build --release
 
 ## 📚 参考资源
 
-| 资源 | 链接 |
-|------|------|
-| Hermes Agent 源码 | `~/Documents/IfAI/hermes-agent-main` |
-| If2Ai 项目 | `/Users/ryanliu/Documents/IfAI/if2Ai` |
-| 设计文档 | `docs/design-docs/` |
-| Harness 框架 | `harness/README.md` |
-| Tauri 文档 | https://tauri.app/docs |
-| async-openai | https://docs.rs/async-openai |
+| 资源              | 链接                                  |
+| ----------------- | ------------------------------------- |
+| Hermes Agent 源码 | `~/Documents/IfAI/hermes-agent-main`  |
+| If2Ai 项目        | `/Users/ryanliu/Documents/IfAI/if2Ai` |
+| 设计文档          | `docs/design-docs/`                   |
+| Harness 框架      | `harness/README.md`                   |
+| Tauri 文档        | https://tauri.app/docs                |
+| async-openai      | https://docs.rs/async-openai          |
 
 ---
 

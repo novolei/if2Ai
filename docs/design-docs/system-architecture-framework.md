@@ -112,6 +112,7 @@
 **职责**: 对话循环、消息处理、工具执行、错误处理、重试
 
 **关键类**:
+
 ```rust
 pub struct ConversationRuntime {
     api: Arc<ProviderManager>,
@@ -125,7 +126,7 @@ pub struct ConversationRuntime {
 
 impl ConversationRuntime {
     pub async fn run_turn(&mut self, user_message: String) -> Result<AssistantEvent>
-    
+
     // 内部步骤：
     // 1. build_prompt() - 构建系统提示
     // 2. call_llm() - 调用 LLM
@@ -147,6 +148,7 @@ impl ConversationRuntime {
 **职责**: 系统提示构建、动态内容注入、提示优化、缓存
 
 **组件**:
+
 ```rust
 pub struct PromptBuilder {
     agent_definition: AgentDefinition,      // 角色和能力
@@ -186,6 +188,7 @@ pub struct ContextCompressor {
 **完成度**: ⏳ 30%
 
 **所需增强**:
+
 - [ ] 完整的 SOUL/MEMORY/USER 支持
 - [ ] 提示板式模板（role-specific）
 - [ ] Anthropic 提示缓存集成
@@ -198,6 +201,7 @@ pub struct ContextCompressor {
 **职责**: LLM 提供商选择、凭证管理、模型路由、故障转移
 
 **关键类**:
+
 ```rust
 pub struct ProviderManager {
     clients: Arc<DashMap<ProviderKind, Arc<ProviderClient>>>,
@@ -247,6 +251,7 @@ pub enum RoutingStrategy {
 **职责**: 工具注册、执行调度、权限检查、后端管理
 
 **关键类**:
+
 ```rust
 pub struct ToolRegistry {
     tools: Arc<DashMap<String, Arc<dyn Tool>>>,
@@ -292,6 +297,7 @@ pub struct ToolBackendManager {
 **设计文档**: [tool-system.md](./tool-system.md)
 
 **工具数量对比**:
+
 - Hermes: 47 个工具 + 20 个工具集
 - If2Ai 计划: 20+ 个工具 + 10+ 个工具集 (Phase 1+2)
 
@@ -302,6 +308,7 @@ pub struct ToolBackendManager {
 **职责**: 对话历史持久化、元数据管理、搜索、压缩追踪
 
 **数据库设计**:
+
 ```sql
 -- 核心会话表
 CREATE TABLE sessions (
@@ -359,6 +366,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 ```
 
 **关键特性**:
+
 - ✅ SQLite + FTS5
 - ✅ 会话线性追踪（parent/child）
 - ✅ 成本计算
@@ -377,6 +385,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 **职责**: 多平台消息路由、用户授权、会话隔离、hook 系统
 
 **架构**:
+
 ```rust
 pub struct GatewayRunner {
     message_bus: Arc<MessageBus>,
@@ -413,6 +422,7 @@ pub struct HookManager {
 **If2Ai**: ❌ 0% (Phase 3 功能)
 
 **平台支持计划**:
+
 - Phase 1: 内部 API/JSON-RPC
 - Phase 2: Slack, Discord
 - Phase 3: Telegram, WhatsApp, 等等
@@ -424,6 +434,7 @@ pub struct HookManager {
 **职责**: 工具扩展、memory provider、context engine、CLI 命令
 
 **发现机制**:
+
 ```rust
 pub struct PluginManager {
     sources: vec![
@@ -463,6 +474,7 @@ pub trait ContextEngine: Send + Sync {
 **职责**: 定时 Agent 任务、job 管理、平台交付
 
 **数据格式**:
+
 ```json
 {
   "jobs": [
@@ -492,6 +504,7 @@ pub trait ContextEngine: Send + Sync {
 **职责**: VS Code/Zed/JetBrains 集成、stdio JSON-RPC
 
 **协议**:
+
 ```rust
 pub struct ACPServer {
     // JSON-RPC 2.0 over stdio
@@ -590,14 +603,14 @@ for each job:
 
 ### 4.1 Hermes 的 6 大原则
 
-| 原则 | 含义 | If2Ai 适配 |
-|-----|------|----------|
-| **Prompt 稳定性** | 系统提示在对话中途不变 | ✅ 实现 |
-| **可观测性** | 每个工具调用对用户可见 | ✅ 实现 |
-| **可中断性** | API 和工具可被中断 | ⏳ 基础实现 |
-| **平台无关** | 一个 AIAgent 类服务所有入口点 | ✅ 设计 |
-| **松耦合** | 可选系统使用注册表模式 | ✅ 实现 |
-| **配置隔离** | 每个配置独立的 HERMES_HOME | ✅ 实现 |
+| 原则              | 含义                          | If2Ai 适配  |
+| ----------------- | ----------------------------- | ----------- |
+| **Prompt 稳定性** | 系统提示在对话中途不变        | ✅ 实现     |
+| **可观测性**      | 每个工具调用对用户可见        | ✅ 实现     |
+| **可中断性**      | API 和工具可被中断            | ⏳ 基础实现 |
+| **平台无关**      | 一个 AIAgent 类服务所有入口点 | ✅ 设计     |
+| **松耦合**        | 可选系统使用注册表模式        | ✅ 实现     |
+| **配置隔离**      | 每个配置独立的 HERMES_HOME    | ✅ 实现     |
 
 ### 4.2 If2Ai 的额外原则
 
@@ -658,25 +671,26 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 
 ## 6. Hermes vs If2Ai 实现对比
 
-| 层 | Hermes | If2Ai Phase 1 | If2Ai Phase 2 | If2Ai Phase 3 |
-|----|--------|--------------|---------------|--------------|
-| **Entry Points** | 4 | 1 (Tauri) | 2 (+ API) | 3 (+ LSP) |
-| **Agent Loop** | ✅ 9.2K | ✅ 500 | ✅ 1K | ✅ 1.5K |
-| **Prompt System** | ✅ 500 | ⏳ 150 | ✅ 400 | ✅ 500 |
-| **Provider** | ✅ 1.2K | ✅ 800 | ✅ 1K | ✅ 1.5K |
-| **Tools** | ✅ 800 | ✅ 600 | ✅ 1K | ✅ 1.5K |
-| **Session** | ✅ 600 | ✅ 400 | ✅ 600 | ✅ 800 |
-| **Gateway** | ✅ 7.5K | ❌ 0 | ⏳ 2K | ✅ 5K |
-| **Plugin** | ✅ 400 | ✅ 400 | ✅ 500 | ✅ 600 |
-| **Cron** | ✅ 200 | ❌ 0 | ❌ 0 | ✅ 300 |
-| **ACP** | ✅ 200 | ✅ 100 | ✅ 200 | ✅ 300 |
-| **Total** | **~21K** | **~3K** | **~7K** | **~12K** |
+| 层                | Hermes   | If2Ai Phase 1 | If2Ai Phase 2 | If2Ai Phase 3 |
+| ----------------- | -------- | ------------- | ------------- | ------------- |
+| **Entry Points**  | 4        | 1 (Tauri)     | 2 (+ API)     | 3 (+ LSP)     |
+| **Agent Loop**    | ✅ 9.2K  | ✅ 500        | ✅ 1K         | ✅ 1.5K       |
+| **Prompt System** | ✅ 500   | ⏳ 150        | ✅ 400        | ✅ 500        |
+| **Provider**      | ✅ 1.2K  | ✅ 800        | ✅ 1K         | ✅ 1.5K       |
+| **Tools**         | ✅ 800   | ✅ 600        | ✅ 1K         | ✅ 1.5K       |
+| **Session**       | ✅ 600   | ✅ 400        | ✅ 600        | ✅ 800        |
+| **Gateway**       | ✅ 7.5K  | ❌ 0          | ⏳ 2K         | ✅ 5K         |
+| **Plugin**        | ✅ 400   | ✅ 400        | ✅ 500        | ✅ 600        |
+| **Cron**          | ✅ 200   | ❌ 0          | ❌ 0          | ✅ 300        |
+| **ACP**           | ✅ 200   | ✅ 100        | ✅ 200        | ✅ 300        |
+| **Total**         | **~21K** | **~3K**       | **~7K**       | **~12K**      |
 
 ---
 
 ## 7. If2Ai 的实现路线
 
 ### Phase 1: 核心循环 (现在 - 2 周)
+
 ✅ Agent Loop  
 ✅ Provider System  
 ✅ Tool System  
@@ -686,6 +700,7 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 **目标**: 可用的本地 Agent 应用
 
 ### Phase 2: 高级特性 (2-4 周)
+
 - Prompt System 完整
 - Memory System (SOUL/MEMORY/USER)
 - Context Compression
@@ -696,6 +711,7 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 **目标**: 功能完整、可靠、有记忆的 Agent
 
 ### Phase 3: 扩展系统 (4-8 周)
+
 - Gateway 完整 (14+ 平台)
 - Cron Scheduler
 - Plugin 市场
@@ -709,6 +725,7 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 ## 8. 快速导航
 
 ### 按子系统快速查找
+
 - **Agent Loop** → [agent-loop.md](./agent-loop.md)
 - **Provider** → [provider-resolution.md](./provider-resolution.md)
 - **Tools** → [tool-system.md](./tool-system.md)
@@ -720,6 +737,7 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 - **Testing** → [testing-strategy.md](./testing-strategy.md) (待)
 
 ### 按职能快速查找
+
 - **新人** → 本文档 → 选择子系统
 - **Agent 开发** → [agent-loop.md](./agent-loop.md) + [provider-resolution.md](./provider-resolution.md)
 - **工具开发** → [tool-system.md](./tool-system.md)
@@ -738,7 +756,8 @@ runtime/conversation.rs, commands/*.rs, gateway/*.rs
 
 ---
 
-**下一步**: 
+**下一步**:
+
 1. 阅读具体的子系统设计文档
 2. 查看代码实现
 3. 运行现有的测试
