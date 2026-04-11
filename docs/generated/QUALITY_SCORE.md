@@ -12,7 +12,7 @@
 
 | Phase              | 状态              | 完成时间 | 编译         | 测试 | Harness |
 | ------------------ | ----------------- | -------- | ------------ | ---- | ------- |
-| Phase 1 — 核心框架 | 🔄 进行中 (6/9)   | —        | ✅ 0 errors  | ✅   | ⏳      |
+| Phase 1 — 核心框架 | 🔄 进行中 (7/9)   | —        | ✅ 0 errors  | ✅   | ⏳      |
 | Phase 2 — 高级特性 | ⏳ 等待 Phase 1   | —        | —            | —    | —       |
 | Phase 3 — 扩展生态 | ⏳ 等待 Phase 2   | —        | —            | —    | —       |
 
@@ -28,7 +28,7 @@
 | 1.4   | ProviderManager 实现         | ✅ done    |                             |
 | 1.5   | ToolRegistry + 3 个基础工具  | ✅ done    | ToolRegistry + bash/file_read/json_parse |
 | 1.6   | SessionManager 实现          | ✅ done    | JSON file persistence, create/restore/delete |
-| 1.7   | Tauri Commands 网关          | ⏳ pending |                             |
+| 1.7   | Tauri Commands 网关          | ✅ done    | AppState + run_agent_turn/list_sessions/delete_session |
 | 1.8   | 前端接线（React invoke）     | ⏳ pending |                             |
 | 1.9   | Phase 1 集成测试             | ⏳ pending |                             |
 
@@ -42,7 +42,7 @@
 - **编译警告**: 少量（待 executor 逐 slice 清理）
 - **测试覆盖率**: 148 tests pass (serially)
 - **unwrap() 用量**: 少量（main.rs binary entry point + tools/lib.rs pre-existing）
-- **Phase 1 进度**: 6/9 slices done (1.1-1.6 done, 1.7-1.9 pending)
+- **Phase 1 进度**: 7/9 slices done (1.1-1.7 done, 1.8-1.9 pending)
 
 ---
 
@@ -63,3 +63,4 @@
 | 2026-04-12 | Slice 1.4 实现：ProviderManager、MockProvider、MockStream |
 | 2026-04-12 | Slice 1.6 完成：SessionManager + JSON 持久化，create/restore/delete |
 | 2026-04-12 | Phase 1 进度更新：6/9 slices done (1.1-1.6 complete) |
+| 2026-04-12 | Slice 1.7 完成：Tauri Commands gateway，AppState + run_agent_turn/list_sessions/delete_session |
