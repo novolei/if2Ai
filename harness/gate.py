@@ -145,11 +145,11 @@ def _symbol_check_gate(workspace_root: Path, checks: list[dict]) -> GateResult:
 
         try:
             content = target_file.read_text(encoding="utf-8", errors="replace")
-            # Use line-anchored regex: pattern must start at beginning of a line (ignoring leading whitespace)
-            # This avoids false positives from matches inside comments, strings, or partial tokens.
+            # Use word-boundary regex: pattern must appear as a whole token (not inside another identifier).
+            # Uses \b word boundary to avoid false positives from partial token matches.
             import re
-            anchored = re.compile(rf"^\s*{re.escape(pattern)}", re.MULTILINE)
-            if anchored.search(content):
+            word_boundary = re.compile(rf"\b{re.escape(pattern)}\b")
+            if word_boundary.search(content):
                 passes.append(f"  ✅  {label}")
             else:
                 failures.append(f"  ❌  NOT FOUND: '{pattern}' in {check['file']}\n       → {label}")

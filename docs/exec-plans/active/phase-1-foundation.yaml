@@ -344,7 +344,7 @@ slices:
 
   - id: "1.8"
     title: "前端接线：React App 通过 invoke 调用 Tauri Commands，实现完整对话循环"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/entry-points-design.md"
     impl_targets:
       - src/lib/tauri.ts    # 必须新建
@@ -394,34 +394,368 @@ slices:
       - "错误消息是否对用户友好（不暴露 Rust 内部错误细节）"
       - "TypeScript 类型是否与 Rust 命令返回值一致"
 
-  # ───────────── Stage 4: 集成验证 ─────────────────────────────────────────
+  # ───────────── Stage 4: Project System + Chat UI ──────────────────────────
+  # 新增 slices 实现多项目支持和完整聊天界面
+  # 用于验证 If2Ai 架构可行性的核心功能
 
   - id: "1.9"
+    title: "ProjectManager — Rust 后端（Project CRUD + Session ↔ Project 1:N 关联）"
+    status: pending
+    design_ref: "docs/design-docs/project-system.md"
+    impl_targets:
+      - src-tauri/src/modules/projects/mod.rs      # 必须新建：ProjectManager + Project 数据模型
+      - src-tauri/src/modules/projects/manager.rs  # 必须新建：Project 持久化到 ~/.if2ai/projects/
+      - src-tauri/src/commands/project.rs          # 必须新建：Tauri commands for projects
+      - src-tauri/src/commands/mod.rs              # 修改：添加 project commands + ProjectManager to AppState
+      - src-tauri/src/modules/session/manager.rs  # 修改：create_session_for_project + session.project_id
+      - src-tauri/src/lib.rs                      # 修改：re-export project modules
+
+    current_state: |
+      src-tauri/src/modules/projects/ 目录完全不存在。
+      src-tauri/src/commands/project.rs 不存在。
+      SessionManager 当前 session 路径为 ~/.if2ai/sessions/<id>.json（无 project_id）。
+      Session struct 无 project_id 字段，Session::new(title) 只接受一个参数。
+      ❌ MISSING — 从零新建 Project 系统：
+        1. Project / ProjectMeta / ProjectError 数据结构
+        2. ProjectManager：create/get/list/rename/delete_project
+        3. Session.project_id 字段（关联到 project）
+        4. SessionManager.create_session_for_project() + list_project_sessions()
+        5. Project 存储路径：~/.if2ai/projects/<id>/project.json
+        6. Session 存储路径改为：~/.if2ai/projects/<id>/sessions/<session_id>.json
+        7. AppState 新增 project_manager: Arc<ProjectManager>
+
+    must_implement:
+      - |
+        // project-system.md §2.1 数据模型 — 新建 projects/mod.rs
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        pub struct Project {
+            pub id: String,
+            pub name: String,
+            pub workdir: PathBuf,
+            pub created_at: String,
+            pub updated_at: String,
+        }
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        pub struct ProjectMeta {
+            pub id: String,
+            pub name: String,
+            pub workdir: String,
+            pub created_at: String,
+            pub session_count: usize,
+        }
+        #[derive(Debug, Clone)]
+        pub enum ProjectError {
+            NotFound(String),
+            AlreadyExists(String),
+            WorkdirNotFound(String),
+            ReadError(String),
+            WriteError(String),
+            InvalidData(String),
+        }
+      - |
+        // project-system.md §3 ProjectManager — 新建 projects/manager.rs
+        pub struct ProjectManager { projects_dir: PathBuf }
+        impl ProjectManager {
+            pub async fn create_project(&self, name: String, workdir: PathBuf) -> Result<Project, ProjectError>
+            pub async fn get_project(&self, id: &str) -> Result<Project, ProjectError>
+            pub async fn list_projects(&self) -> Result<Vec<ProjectMeta>, ProjectError>
+            pub async fn rename_project(&self, id: &str, new_name: String) -> Result<Project, ProjectError>
+            pub async fn delete_project(&self, id: &str) -> Result<(), ProjectError>
+        }
+      - |
+        // project-system.md §4.1 Session struct 修改 — session/manager.rs
+        // Session 新增 project_id 字段（兼容空字符串）
+        // Session::new(title) 改为 Session::new(title: String, project_id: String)
+        pub struct Session {
+            pub id: String,
+            pub project_id: String,  // NEW 字段（兼容空字符串）
+            pub title: String,
+            pub messages: Vec<ConversationMessage>,
+            pub created_at: String,
+            pub updated_at: String,
+            pub token_count: u64,
+        }
+      - |
+        // project-system.md §4.3 SessionManager 修改 — session/manager.rs
+        // 新增字段：projects_base_dir: PathBuf（~/.if2ai/projects/）
+        // 路径计算：project_id == "" → ~/.if2ai/sessions/<id>.json（仅旧数据）
+        //           project_id != "" → ~/.if2ai/projects/<project_id>/sessions/<id>.json
+        pub async fn create_session_for_project(
+            &self,
+            project_id: &str,
+            title: String,
+        ) -> Result<Session, SessionError>
+        pub async fn list_project_sessions(
+            &self,
+            project_id: &str,
+        ) -> Result<Vec<SessionMeta>, SessionError>
+        // 现有 create_session(title) 保留，改为调用 Session::new(title, String::new())
+      - |
+        // project-system.md §5.1 Tauri Commands — 新建 commands/project.rs
+        #[tauri::command]
+        pub async fn create_project(state: State<'_, AppState>, name: String, workdir: String) -> Result<Project, String>
+        #[tauri::command]
+        pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectMeta>, String>
+        #[tauri::command]
+        pub async fn get_project(state: State<'_, AppState>, id: String) -> Result<Project, String>
+        #[tauri::command]
+        pub async fn rename_project(state: State<'_, AppState>, id: String, new_name: String) -> Result<Project, String>
+        #[tauri::command]
+        pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), String>
+      - |
+        // project-system.md §5.2 Session Commands — session.rs 新增
+        #[tauri::command]
+        pub async fn create_session(state: State<'_, AppState>, project_id: String, title: String) -> Result<Session, String>
+        #[tauri::command]
+        pub async fn list_project_sessions(state: State<'_, AppState>, project_id: String) -> Result<Vec<SessionMeta>, String>
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/projects/manager.rs"
+        grep: "pub struct ProjectManager"
+        label: "ProjectManager — project-system.md §3"
+      - type: symbol
+        file: "src-tauri/src/modules/projects/manager.rs"
+        grep: "pub async fn create_project"
+        label: "create_project() — project-system.md §3"
+      - type: symbol
+        file: "src-tauri/src/modules/projects/manager.rs"
+        grep: "pub async fn delete_project"
+        label: "delete_project() — project-system.md §3"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "pub async fn create_session_for_project"
+        label: "create_session_for_project() — project-system.md §4.3"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "project_id"
+        label: "Session.project_id field — project-system.md §4.1"
+      - type: symbol
+        file: "src-tauri/src/modules/session/manager.rs"
+        grep: "projects_base_dir"
+        label: "SessionManager.projects_base_dir — dual-path storage"
+      - type: symbol
+        file: "src-tauri/src/commands/mod.rs"
+        grep: "project_manager"
+        label: "AppState.project_manager — project-system.md §5.3"
+      - type: symbol
+        file: "src-tauri/src/commands/project.rs"
+        grep: "pub async fn create_project"
+        label: "create_project Tauri command — project-system.md §5.1"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- projects"
+        expect: "all tests pass"
+    review_checklist:
+      - "Project 数据是否存储在 ~/.if2ai/projects/<id>/project.json"
+      - "Session 是否关联 project_id，存储在 project 子目录下"
+      - "delete_project 是否递归删除 project 下所有 session 文件"
+      - "create_project 时 workdir 是否通过 PathBuf::new() 验证存在"
+      - "AppState.project_manager 是否在 lib.rs 中 .manage() 注册"
+      - "无 unwrap()（测试除外）"
+
+  - id: "1.10"
+    title: "React 增强前端 — 项目左侧导航栏 + 欢迎界面 + 项目下拉选择"
+    status: pending
+    design_ref: "docs/design-docs/project-system.md"
+    impl_targets:
+      - src/lib/tauri.ts              # 修改：添加 Project API 封装
+      - src/components/ProjectRail.tsx # 必须新建：左侧项目导航栏组件
+      - src/components/WelcomeScreen.tsx # 必须新建：欢迎/空状态界面
+      - src/App.tsx                   # 修改：接入 ProjectRail + WelcomeScreen，实现项目切换
+
+    current_state: |
+      App.tsx 只有简单的对话列表（左 rail 显示"最近"），无 project 概念。
+      src/components/ 下只有 ui/ 目录（shadcn 组件），无 ProjectRail 或 WelcomeScreen。
+      tauri.ts 只有 Session 相关 API，无 Project API。
+      ❌ MISSING — 前端完全缺少 project 系统 UI：
+        1. ProjectRail：左侧导航栏（项目树，展开/折叠，显示 sessions）
+        2. WelcomeScreen：欢迎界面（下拉选择项目 + 新建项目按钮 + 开始新对话）
+        3. tauri.ts：添加 createProject / listProjects / deleteProject / renameProject API
+        4. App.tsx：将左侧 rail 替换为 ProjectRail，添加 WelcomeScreen 状态切换
+
+    must_implement:
+      - |
+        // project-system.md §6 — src/lib/tauri.ts（修改）
+        export interface Project { id, name, workdir, created_at, updated_at }
+        export interface ProjectMeta { id, name, workdir, created_at, session_count }
+        export async function createProject(name: string, workdir: string): Promise<Project>
+        export async function listProjects(): Promise<ProjectMeta[]>
+        export async function deleteProject(id: string): Promise<void>
+        export async function renameProject(id: string, newName: string): Promise<Project>
+        export async function createSession(projectId: string, title: string): Promise<Session>
+        export async function listProjectSessions(projectId: string): Promise<SessionMeta[]>
+      - |
+        // ProjectRail 组件 — src/components/ProjectRail.tsx
+        // 功能：
+        //   - 显示项目列表（可展开/折叠，显示项目下所有 sessions）
+        //   - 选中项目/session 高亮
+        //   - "新建对话" 按钮（在当前 project 下创建 session）
+        //   - 展开/折叠箭头 (ChevronRight / ChevronDown)
+        interface ProjectRailProps {
+          projects: ProjectMeta[]
+          activeProjectId: string | null
+          activeSessionId: string | null
+          onSelectProject: (id: string) => void
+          onSelectSession: (projectId: string, sessionId: string) => void
+          onNewChat: (projectId: string) => void
+          onDeleteProject: (id: string) => void
+          onDeleteSession: (projectId: string, sessionId: string) => void
+        }
+      - |
+        // WelcomeScreen 组件 — src/components/WelcomeScreen.tsx
+        // 功能：
+        //   - 显示项目下拉选择（点击切换当前 project）
+        //   - "新建项目" 按钮（打开系统目录选择 dialog）
+        //   - "在 [当前 project] 中开始新对话 →" 按钮
+        //   - 无 project 状态：只显示 "新建项目" 按钮
+        interface WelcomeScreenProps {
+          currentProject: Project | null
+          projects: ProjectMeta[]
+          onSelectProject: (id: string) => void
+          onCreateProject: (name: string, workdir: string) => void
+          onStartNewChat: (projectId: string) => void
+        }
+      - |
+        // App.tsx 修改
+        //   - 左侧 rail 替换为 <ProjectRail>
+        //   - 无活跃 session 时显示 <WelcomeScreen>
+        //   - 活跃 session 时显示聊天消息列表
+        //   - 状态：activeProject, activeSession, sessions (per project)
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+        expect: "zero errors"
+      - type: symbol
+        file: "src/lib/tauri.ts"
+        grep: "createProject"
+        label: "createProject() in tauri.ts"
+      - type: symbol
+        file: "src/components/ProjectRail.tsx"
+        grep: "ProjectRail"
+        label: "ProjectRail component exists"
+      - type: symbol
+        file: "src/components/WelcomeScreen.tsx"
+        grep: "WelcomeScreen"
+        label: "WelcomeScreen component exists"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "ProjectRail"
+        label: "App.tsx uses ProjectRail"
+    review_checklist:
+      - "ProjectRail 是否显示项目树（项目 → sessions），支持展开/折叠"
+      - "WelcomeScreen 是否在无活跃 session 时显示"
+      - "新建项目是否使用 @tauri-apps/plugin-dialog 进行目录选择"
+      - "切换 project 是否正确加载对应 sessions 到 left rail"
+      - "切换 session 是否切换聊天内容且不影响当前 session 状态"
+      - "TypeScript 类型是否完整（无 any 类型）"
+
+  - id: "1.11"
+    title: "Session 状态监控（Idle/Running/Error/Working）+ 真实 Agent 集成"
+    status: pending
+    design_ref: "docs/design-docs/project-system.md"
+    impl_targets:
+      - src/components/SessionStatus.tsx   # 必须新建：session 状态指示器组件
+      - src/App.tsx                       # 修改：添加 session 状态 state + 状态栏
+      - src-tauri/src/commands/agent.rs  # 修改：run_agent_turn 调用真实 ConversationRuntime
+
+    current_state: |
+      agent.rs 中 run_agent_turn 当前是 stub 实现（直接返回 Echo）。
+      前端 App.tsx 无 session 状态概念（无 Idle/Running/Working/Error）。
+      ❌ MISSING — 两件事缺失：
+        1. run_agent_turn 未调用 ConversationRuntime，无法与真实 AI 对话
+        2. 前端无 session 运行状态跟踪
+
+    must_implement:
+      - |
+        // Session 状态枚举 — src/App.tsx 或 src/lib/types.ts
+        type SessionStatus = 'idle' | 'running' | 'working' | 'error'
+        // frontend state:
+        // const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle')
+      - |
+        // SessionStatus 组件 — src/components/SessionStatus.tsx
+        // 根据 status 显示不同图标 + 颜色：
+        //   idle    → ○ 灰色
+        //   running → ◐ 蓝色 + spin animation
+        //   working → ● 绿色（工具执行中）
+        //   error   → ✕ 红色
+        interface SessionStatusProps { status: SessionStatus; label?: string }
+      - |
+        // 底部状态栏 — src/App.tsx
+        // <div className="flex justify-between px-4 py-1 border-t text-xs text-muted-foreground">
+        //   <span>Session: {sessionTitle} · Project: {projectName}</span>
+        //   <SessionStatus status={sessionStatus} />
+        // </div>
+      - |
+        // run_agent_turn 真实集成 — src-tauri/src/commands/agent.rs
+        // 1. 从 state.session_manager.restore_session(session_id) 恢复 session
+        // 2. Session.project_id 即为所属 project（session 在 project 子目录下存储）
+        // 3. 调用 ConversationRuntime.run_turn() 执行真实 agent 循环
+        // 4. 保存更新后的 session (state.session_manager.save_session)
+        // 5. 返回 RunAgentTurnResponse { message, session_id }
+        //
+        // 状态通过事件发射回前端（使用 tauri/events 或直接在响应中返回）
+        #[tauri::command]
+        pub async fn run_agent_turn(
+            state: State<'_, AppState>,
+            session_id: String,
+            user_message: String,
+        ) -> Result<RunAgentTurnResponse, String>
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "ConversationRuntime"
+        label: "run_agent_turn calls ConversationRuntime"
+      - type: symbol
+        file: "src/components/SessionStatus.tsx"
+        grep: "SessionStatus"
+        label: "SessionStatus component exists"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "sessionStatus"
+        label: "App.tsx has sessionStatus state"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands"
+        expect: "all tests pass"
+    review_checklist:
+      - "run_agent_turn 是否调用 ConversationRuntime（不是 stub echo）"
+      - "ConversationRuntime.run_turn() 是否传入正确的 ToolRegistry + ProviderManager"
+      - "Session 状态（running/working/error）是否在 agent 执行过程中正确更新"
+      - "错误是否捕获并返回友好错误消息给前端（不 panic）"
+      - "无 unwrap()（测试除外）"
+
+  - id: "1.12"
     title: "Phase 1 集成测试 + Harness Suite 完整通过"
     status: pending
     design_ref: "docs/design-docs/testing-strategy.md"
     impl_targets:
-      - harness/suites/phase1_integration.yaml   # 修改：补全 test_cases
+      - harness/suites/phase1_integration.yaml   # 修改：补全 test_cases + project-aware 测试
       - src-tauri/src/integration_tests.rs        # 必须新建：端到端集成测试
 
     current_state: |
-      harness/suites/phase1_integration.yaml 存在但 test_cases 可能不完整。
-      src-tauri/src/integration_tests.rs 不存在。
+      integration_tests.rs 存在但可能缺少 project-aware 测试。
+      phase1_integration.yaml 存在但 test_cases 可能不完整。
       ❌ MISSING — 端到端测试覆盖不足：
-        1. integration_tests.rs：用 MockProvider + StaticToolExecutor 验证完整 agent 循环
-        2. phase1_integration.yaml：必须有覆盖 ConversationRuntime / ProviderManager /
-           ToolRegistry / SessionManager 的 test_cases
+        1. integration_tests.rs：用 MockProvider 验证完整 agent 循环（含 ProjectManager）
+        2. phase1_integration.yaml：必须有覆盖 ProjectManager / Session ↔ Project 关联 / ConversationRuntime 的 test_cases
         3. cargo test 覆盖率达到 >= 60%（核心模块）
 
     must_implement:
       - |
         // testing-strategy.md §集成测试
-        // src-tauri/src/integration_tests.rs — 新建
+        // src-tauri/src/integration_tests.rs — 新建或补全
         #[tokio::test]
         async fn test_full_agent_turn_with_mock_provider() { ... }
-        // 覆盖：创建 Session → run_turn() → 保存 Session → 验证消息历史
+        // 覆盖：创建 Project → 创建 Session → run_turn() → 保存 → 验证消息历史
       - |
         // harness/suites/phase1_integration.yaml — 补全 test_cases，至少包含：
+        // - project_crud: ProjectManager 创建/列表/删除
+        // - session_project_association: session ↔ project 1:N 验证
         // - agent_turn_basic: 单轮对话验证 ConversationRuntime
         // - session_create_and_list: 验证 SessionManager
         // - tool_dispatch_bash: 验证 ToolRegistry.dispatch()
@@ -439,8 +773,8 @@ slices:
       - type: harness
         suite: "harness/suites/phase1_integration.yaml"
     review_checklist:
-      - "integration_tests.rs 是否新建，使用 MockProvider，不依赖真实 API"
-      - "所有 slice 1.3-1.8 的新增公开函数是否都有对应测试"
+      - "integration_tests.rs 是否使用 MockProvider，不依赖真实 API"
+      - "所有 slice 1.3-1.11 的新增公开函数是否都有对应测试"
       - "phase1_integration.yaml 的 test_cases 是否涵盖全部核心路径"
       - "没有 TODO / FIXME / unwrap() 在非测试代码中"
       - "Phase 1 所有 symbol_check acceptance 全部通过"
@@ -450,7 +784,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"]
-  current_slice: "1.8"
+  completed_slices: ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8"]
+  current_slice: "1.9"
   blocked: []
-  notes: "slice 1.7 complete: Tauri Commands gateway implemented with AppState and run_agent_turn/list_sessions/delete_session"
+  notes: "slices 1.9-1.12 reset: executor must implement Project system + Chat UI in order"
