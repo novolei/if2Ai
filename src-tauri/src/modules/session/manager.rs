@@ -87,6 +87,8 @@ impl SessionMeta {
 pub struct Session {
     /// Session ID (UUID v4).
     pub id: String,
+    /// Owning project ID (empty string for legacy sessions without project).
+    pub project_id: String,
     /// Session title.
     pub title: String,
     /// Conversation messages.
@@ -101,13 +103,18 @@ pub struct Session {
 
 #[allow(dead_code)]
 impl Session {
-    /// Create a new session with a title.
-    pub fn new(title: String) -> Self {
+    /// Create a new session with a title and optional project_id.
+    ///
+    /// # Arguments
+    /// * `title` - The session title
+    /// * `project_id` - The owning project ID (empty string for legacy sessions)
+    pub fn new(title: String, project_id: String) -> Self {
         let now = SystemTime::now();
         let now_str = format_time(now);
 
         Self {
             id: Uuid::new_v4().to_string(),
+            project_id,
             title,
             messages: Vec::new(),
             created_at: now_str.clone(),
@@ -117,26 +124,40 @@ impl Session {
     }
 }
 
-/// SessionManager handles session persistence to JSON files.
+/// SessionManager handles session persistence to JSON files with dual-path support.
+///
+/// Path rules:
+/// - `project_id == ""` → `~/.if2ai/sessions/<id>.json` (legacy path, read-only)
+/// - `project_id != ""` → `~/.if2ai/projects/<project_id>/sessions/<id>.json` (new path)
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SessionManager {
+    /// Legacy sessions directory: ~/.if2ai/sessions/ (for backward compatibility)
     sessions_dir: PathBuf,
+    /// Projects base directory: ~/.if2ai/projects/
+    projects_base_dir: PathBuf,
 }
 
 #[allow(dead_code)]
 impl SessionManager {
-    /// Creates a new SessionManager with the specified sessions directory.
+    /// Creates a new SessionManager with the specified directories.
+    ///
+    /// # Arguments
+    /// * `sessions_dir` - Legacy sessions directory (~/.if2ai/sessions/)
+    /// * `projects_base_dir` - Projects base directory (~/.if2ai/projects/)
     ///
     /// # Panics
     ///
     /// Panics if the sessions directory cannot be created.
     #[must_use]
-    pub fn new(sessions_dir: PathBuf) -> Self {
-        Self { sessions_dir }
+    pub fn new(sessions_dir: PathBuf, projects_base_dir: PathBuf) -> Self {
+        Self {
+            sessions_dir,
+            projects_base_dir,
+        }
     }
 
-    /// Initialize the sessions directory.
+    /// Initialize the sessions directory (legacy path).
     async fn init(&self) -> Result<(), SessionError> {
         fs::create_dir_all(&self.sessions_dir)
             .await
@@ -144,19 +165,59 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Get the path to a session file.
-    fn session_path(&self, id: &str) -> PathBuf {
-        self.sessions_dir.join(format!("{id}.json"))
+    /// Get the path to a session file based on project_id.
+    ///
+    /// Path rules:
+    /// - `project_id == ""` → `sessions_dir/<id>.json` (legacy path)
+    /// - `project_id != ""` → `projects_base_dir/<project_id>/sessions/<id>.json` (new path)
+    fn session_path(&self, id: &str, project_id: &str) -> PathBuf {
+        if project_id.is_empty() {
+            // Legacy path
+            self.sessions_dir.join(format!("{id}.json"))
+        } else {
+            // New project-scoped path
+            self.projects_base_dir
+                .join(project_id)
+                .join("sessions")
+                .join(format!("{id}.json"))
+        }
     }
 
-    /// Create a new session with the given title.
+    /// Create a new session with the given title (legacy, no project).
     pub async fn create_session(&self, title: impl Into<String>) -> Result<Session, SessionError> {
-        self.init().await?;
+        self._create_session_impl(title, String::new()).await
+    }
+
+    /// Create a new session within a specific project.
+    pub async fn create_session_for_project(
+        &self,
+        project_id: &str,
+        title: String,
+    ) -> Result<Session, SessionError> {
+        self._create_session_impl(title, project_id.to_string())
+            .await
+    }
+
+    /// Internal implementation for creating a session.
+    async fn _create_session_impl(
+        &self,
+        title: impl Into<String>,
+        project_id: String,
+    ) -> Result<Session, SessionError> {
+        if project_id.is_empty() {
+            self.init().await?;
+        } else {
+            // Ensure project sessions directory exists
+            let sessions_dir = self.projects_base_dir.join(&project_id).join("sessions");
+            fs::create_dir_all(&sessions_dir).await.map_err(|e| {
+                SessionError::WriteError(format!("failed to create sessions dir: {e}"))
+            })?;
+        }
 
         let title = title.into();
-        let session = Session::new(title);
+        let session = Session::new(title, project_id.clone());
 
-        if self.session_path(&session.id).exists() {
+        if self.session_path(&session.id, &project_id).exists() {
             return Err(SessionError::AlreadyExists(session.id.clone()));
         }
 
@@ -164,9 +225,51 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Restore a session from storage by ID.
-    pub async fn restore_session(&self, id: &str) -> Result<Session, SessionError> {
-        let path = self.session_path(id);
+    /// List sessions within a specific project (new path).
+    pub async fn list_project_sessions(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<SessionMeta>, SessionError> {
+        let sessions_dir = self.projects_base_dir.join(project_id).join("sessions");
+
+        if !sessions_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = fs::read_dir(&sessions_dir)
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read sessions dir: {e}")))?;
+
+        let mut sessions = Vec::new();
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read directory entry: {e}")))?
+        {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                let id = path.file_stem().unwrap().to_str().unwrap();
+                match self.restore_session_internal(id, project_id).await {
+                    Ok(session) => sessions.push(SessionMeta::from_session(&session)),
+                    Err(_) => continue, // Skip invalid files
+                }
+            }
+        }
+
+        // Sort by creation date, newest first
+        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+        Ok(sessions)
+    }
+
+    /// Restore a session from storage by ID (internal, project_id aware).
+    async fn restore_session_internal(
+        &self,
+        id: &str,
+        project_id: &str,
+    ) -> Result<Session, SessionError> {
+        let path = self.session_path(id, project_id);
 
         if !path.exists() {
             return Err(SessionError::NotFound(id.to_string()));
@@ -188,11 +291,56 @@ impl SessionManager {
         Ok(session)
     }
 
-    /// Save a session to storage.
-    pub async fn save_session(&self, session: &Session) -> Result<(), SessionError> {
-        self.init().await?;
+    /// Restore a session from storage by ID (auto-detects project_id from session).
+    pub async fn restore_session(&self, id: &str) -> Result<Session, SessionError> {
+        // First try legacy path
+        let legacy_path = self.session_path(id, "");
+        if legacy_path.exists() {
+            return self.restore_session_internal(id, "").await;
+        }
 
-        let path = self.session_path(&session.id);
+        // Then try new project-scoped paths by scanning projects
+        let mut entries = fs::read_dir(&self.projects_base_dir)
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read projects dir: {e}")))?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read directory entry: {e}")))?
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                let project_id = path.file_name().unwrap().to_str().unwrap();
+                let sessions_dir = path.join("sessions");
+                if sessions_dir.exists() {
+                    let session_path = sessions_dir.join(format!("{id}.json"));
+                    if session_path.exists() {
+                        return self.restore_session_internal(id, project_id).await;
+                    }
+                }
+            }
+        }
+
+        Err(SessionError::NotFound(id.to_string()))
+    }
+
+    /// Save a session to storage (uses session.project_id for path).
+    pub async fn save_session(&self, session: &Session) -> Result<(), SessionError> {
+        if session.project_id.is_empty() {
+            self.init().await?;
+        } else {
+            // Ensure project sessions directory exists
+            let sessions_dir = self
+                .projects_base_dir
+                .join(&session.project_id)
+                .join("sessions");
+            fs::create_dir_all(&sessions_dir).await.map_err(|e| {
+                SessionError::WriteError(format!("failed to create sessions dir: {e}"))
+            })?;
+        }
+
+        let path = self.session_path(&session.id, &session.project_id);
         let contents = serde_json::to_string_pretty(session)
             .map_err(|e| SessionError::WriteError(format!("failed to serialize session: {e}")))?;
 
@@ -226,7 +374,7 @@ impl SessionManager {
         self.save_session(&session).await
     }
 
-    /// List all sessions.
+    /// List all sessions (legacy path only, for backward compatibility).
     pub async fn list_sessions(&self) -> Result<Vec<SessionMeta>, SessionError> {
         self.init().await?;
 
@@ -243,10 +391,8 @@ impl SessionManager {
         {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
-                match self
-                    .restore_session(path.file_stem().unwrap().to_str().unwrap())
-                    .await
-                {
+                let id = path.file_stem().unwrap().to_str().unwrap();
+                match self.restore_session_internal(id, "").await {
                     Ok(session) => sessions.push(SessionMeta::from_session(&session)),
                     Err(_) => continue, // Skip invalid files
                 }
@@ -259,19 +405,46 @@ impl SessionManager {
         Ok(sessions)
     }
 
-    /// Delete a session.
+    /// Delete a session (attempts legacy path first, then new paths).
     pub async fn delete_session(&self, id: &str) -> Result<(), SessionError> {
-        let path = self.session_path(id);
-
-        if !path.exists() {
-            return Err(SessionError::NotFound(id.to_string()));
+        // First try legacy path
+        let legacy_path = self.session_path(id, "");
+        if legacy_path.exists() {
+            fs::remove_file(&legacy_path).await.map_err(|e| {
+                SessionError::WriteError(format!("failed to delete {}: {e}", legacy_path.display()))
+            })?;
+            return Ok(());
         }
 
-        fs::remove_file(&path).await.map_err(|e| {
-            SessionError::WriteError(format!("failed to delete {}: {e}", path.display()))
-        })?;
+        // Then try new project-scoped paths
+        let mut entries = fs::read_dir(&self.projects_base_dir)
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read projects dir: {e}")))?;
 
-        Ok(())
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| SessionError::ReadError(format!("failed to read directory entry: {e}")))?
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                let sessions_dir = path.join("sessions");
+                if sessions_dir.exists() {
+                    let session_path = sessions_dir.join(format!("{id}.json"));
+                    if session_path.exists() {
+                        fs::remove_file(&session_path).await.map_err(|e| {
+                            SessionError::WriteError(format!(
+                                "failed to delete {}: {e}",
+                                session_path.display()
+                            ))
+                        })?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        Err(SessionError::NotFound(id.to_string()))
     }
 }
 
@@ -294,7 +467,8 @@ mod tests {
     #[tokio::test]
     async fn create_and_restore_session() {
         let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
-        let manager = SessionManager::new(temp_dir.clone());
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
 
         let session = manager.create_session("Test Session").await.unwrap();
         assert_eq!(session.title, "Test Session");
@@ -311,7 +485,8 @@ mod tests {
     #[tokio::test]
     async fn add_message_to_session() {
         let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
-        let manager = SessionManager::new(temp_dir.clone());
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
 
         let session = manager.create_session("Test Session").await.unwrap();
         let msg = make_msg(MessageRole::User, "Hello, world!");
@@ -332,7 +507,8 @@ mod tests {
     #[tokio::test]
     async fn list_sessions() {
         let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
-        let manager = SessionManager::new(temp_dir.clone());
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
 
         manager.create_session("Session 1").await.unwrap();
         manager.create_session("Session 2").await.unwrap();
@@ -348,7 +524,8 @@ mod tests {
     #[tokio::test]
     async fn delete_session() {
         let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
-        let manager = SessionManager::new(temp_dir.clone());
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
 
         let session = manager.create_session("Test Session").await.unwrap();
         assert!(manager.restore_session(&session.id).await.is_ok());
@@ -363,7 +540,8 @@ mod tests {
     #[tokio::test]
     async fn restore_nonexistent_returns_error() {
         let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
-        let manager = SessionManager::new(temp_dir);
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir, projects_dir);
 
         let result = manager.restore_session("nonexistent-id").await;
         assert!(result.is_err());
