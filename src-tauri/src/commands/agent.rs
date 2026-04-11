@@ -2,6 +2,7 @@
 //!
 //! Provides the main agent execution command for Tauri.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::State;
@@ -9,6 +10,7 @@ use tokio::runtime::Handle;
 
 use crate::commands::AppState;
 use crate::modules::api::providers::claw_provider::ClawApiClient;
+use crate::modules::api::providers::claw_provider::AuthSource;
 use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
@@ -26,6 +28,44 @@ pub struct RunAgentTurnResponse {
     pub session_id: String,
 }
 
+/// Load LLM settings from ~/.claude/settings.json
+fn load_llm_settings() -> Option<(String, String, String)> {
+    let settings_path = PathBuf::from(&std::env::var("HOME").ok()?)
+        .join(".claude/settings.json");
+
+    let content = std::fs::read_to_string(&settings_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let base_url = json.get("env")?
+        .get("ANTHROPIC_BASE_URL")?
+        .as_str()?
+        .to_string();
+
+    let auth_token = json.get("env")?
+        .get("ANTHROPIC_AUTH_TOKEN")?
+        .as_str()?
+        .to_string();
+
+    let model = json.get("env")?
+        .get("ANTHROPIC_MODEL")?
+        .as_str()?
+        .to_string();
+
+    Some((base_url, auth_token, model))
+}
+
+/// Create a ClawApiClient using settings from ~/.claude/settings.json
+fn create_claw_client_from_settings() -> Result<(ClawApiClient, String), String> {
+    let (base_url, auth_token, model) = load_llm_settings()
+        .ok_or_else(|| "Failed to load settings from ~/.claude/settings.json".to_string())?;
+
+    let auth = AuthSource::BearerToken(auth_token);
+    let client = ClawApiClient::from_auth(auth)
+        .with_base_url(base_url);
+
+    Ok((client, model))
+}
+
 /// Convert application session to runtime session.
 ///
 /// The application session has extra metadata (id, title, etc.) that we don't need
@@ -37,7 +77,7 @@ fn app_session_to_runtime(app_session: &AppSession) -> RuntimeSession {
     }
 }
 
-/// Real API client that calls the Claw API (Claude).
+/// Real API client that calls the Claw API (Claude/MiniMax).
 ///
 /// This implements the `ApiClient` trait and makes real LLM API calls.
 struct RealApiClient {
@@ -202,16 +242,9 @@ pub async fn run_agent_turn(
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
 
-    // Create real API client (Claude)
-    let api_client = match ClawApiClient::from_env() {
-        Ok(client) => RealApiClient::new(client, "claude-sonnet-4-6".to_string()),
-        Err(e) => {
-            return Err(format!(
-                "Failed to initialize AI client: {}. Please check your ANTHROPIC_API_KEY environment variable.",
-                e
-            ));
-        }
-    };
+    // Create real API client using settings from ~/.claude/settings.json
+    let (claw_client, model) = create_claw_client_from_settings()?;
+    let api_client = RealApiClient::new(claw_client, model);
 
     // Create tool executor bridge
     let tool_executor = ToolRegistryExecutor::new(state.tool_registry.clone());
