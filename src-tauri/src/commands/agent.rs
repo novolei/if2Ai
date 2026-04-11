@@ -1,16 +1,17 @@
-//! Agent commands - run_agent_turn
+//! Agent commands - run_agent_turn and start_agent_stream
 //!
-//! Provides the main agent execution command for Tauri.
+//! Provides the main agent execution commands for Tauri.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use tauri::State;
-use tokio::runtime::Handle;
+use tauri::{AppHandle, Emitter, State};
+use tokio::time::timeout;
 
 use crate::commands::AppState;
-use crate::modules::api::providers::claw_provider::ClawApiClient;
 use crate::modules::api::providers::claw_provider::AuthSource;
+use crate::modules::api::providers::claw_provider::ClawApiClient;
 use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
@@ -19,6 +20,15 @@ use crate::modules::runtime::permissions::{PermissionMode, PermissionPolicy};
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::session::Session as AppSession;
 
+/// Event payload for streaming token updates
+#[derive(serde::Serialize, Clone)]
+struct StreamTokenPayload {
+    stream_id: String,
+    text: Option<String>,
+    thinking: Option<String>,
+    event_type: String,
+}
+
 /// Response from a run_agent_turn command.
 #[derive(serde::Serialize)]
 pub struct RunAgentTurnResponse {
@@ -26,35 +36,39 @@ pub struct RunAgentTurnResponse {
     pub message: String,
     /// The session ID.
     pub session_id: String,
+    /// Thinking content from the model (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 /// Load LLM settings from ~/.claude/settings.json
 fn load_llm_settings() -> Result<(String, String, String), String> {
-    let settings_path = PathBuf::from(
-        std::env::var("HOME").map_err(|_| "无法获取 HOME 目录".to_string())?
-    )
-        .join(".claude/settings.json");
+    let settings_path =
+        PathBuf::from(std::env::var("HOME").map_err(|_| "无法获取 HOME 目录".to_string())?)
+            .join(".claude/settings.json");
 
     let content = std::fs::read_to_string(&settings_path)
         .map_err(|e| format!("无法读取配置文件 ~/.claude/settings.json: {}", e))?;
 
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("配置文件格式错误: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("配置文件格式错误: {}", e))?;
 
-    let env = json.get("env")
-        .ok_or("配置文件缺少 env 字段")?;
+    let env = json.get("env").ok_or("配置文件缺少 env 字段")?;
 
-    let base_url = env.get("ANTHROPIC_BASE_URL")
+    let base_url = env
+        .get("ANTHROPIC_BASE_URL")
         .and_then(|v| v.as_str())
         .ok_or("配置文件缺少 ANTHROPIC_BASE_URL")?
         .to_string();
 
-    let auth_token = env.get("ANTHROPIC_AUTH_TOKEN")
+    let auth_token = env
+        .get("ANTHROPIC_AUTH_TOKEN")
         .and_then(|v| v.as_str())
         .ok_or("配置文件缺少 ANTHROPIC_AUTH_TOKEN")?
         .to_string();
 
-    let model = env.get("ANTHROPIC_MODEL")
+    let model = env
+        .get("ANTHROPIC_MODEL")
         .and_then(|v| v.as_str())
         .ok_or("配置文件缺少 ANTHROPIC_MODEL")?
         .to_string();
@@ -71,8 +85,7 @@ fn create_claw_client_from_settings() -> Result<(ClawApiClient, String), String>
     let (base_url, auth_token, model) = load_llm_settings()?;
 
     let auth = AuthSource::BearerToken(auth_token);
-    let client = ClawApiClient::from_auth(auth)
-        .with_base_url(base_url);
+    let client = ClawApiClient::from_auth(auth).with_base_url(base_url);
 
     Ok((client, model))
 }
@@ -98,12 +111,74 @@ struct RealApiClient {
 
 impl RealApiClient {
     fn new(provider: ClawApiClient, model: String) -> Self {
-        Self { provider, model }
+        Self {
+            provider,
+            model,
+        }
     }
 }
 
 impl ApiClient for RealApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        // Use block_in_place to run async code in a blocking context
+        // This allows us to call async functions from the sync stream method
+        let result = tokio::task::block_in_place(|| {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(async move {
+                let api_future = self.call_api(request);
+                timeout(Duration::from_secs(30), api_future).await
+            })
+        });
+
+        let response = result
+            .map_err(|_| RuntimeError::ApiError("API call timed out after 30 seconds".to_string()))?
+            .map_err(|e| RuntimeError::ApiError(e.to_string()))?;
+
+        // Convert MessageResponse to Vec<AssistantEvent>
+        let mut events = Vec::new();
+
+        for block in &response.content {
+            match block {
+                crate::modules::api::OutputContentBlock::Text { text } => {
+                    events.push(AssistantEvent::TextDelta(text.clone()));
+                }
+                crate::modules::api::OutputContentBlock::ToolUse { id, name, input } => {
+                    events.push(AssistantEvent::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: serde_json::to_string(input).unwrap_or_default(),
+                    });
+                }
+                crate::modules::api::OutputContentBlock::Thinking { thinking, .. } => {
+                    events.push(AssistantEvent::Thinking(thinking.clone()));
+                }
+                crate::modules::api::OutputContentBlock::RedactedThinking { .. } => {
+                    // Skip redacted thinking blocks - don't expose internal data
+                }
+            }
+        }
+
+        events.push(AssistantEvent::Usage(
+            crate::modules::runtime::usage::TokenUsage {
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
+                cache_read_input_tokens: response.usage.cache_read_input_tokens,
+            },
+        ));
+
+        events.push(AssistantEvent::MessageStop);
+
+        Ok(events)
+    }
+}
+
+impl RealApiClient {
+    /// Call the API asynchronously
+    async fn call_api(
+        &self,
+        request: ApiRequest,
+    ) -> Result<crate::modules::api::MessageResponse, crate::modules::api::ApiError> {
         // Convert ApiRequest to MessageRequest
         let messages: Vec<InputMessage> = request
             .messages
@@ -113,31 +188,28 @@ impl ApiClient for RealApiClient {
                     .blocks
                     .iter()
                     .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(InputContentBlock::Text {
-                            text: text.clone(),
-                        }),
+                        ContentBlock::Text { text } => {
+                            Some(InputContentBlock::Text { text: text.clone() })
+                        }
                         ContentBlock::ToolUse { id, name, input } => {
-                            // Parse the input JSON string into a Value
-                            let input_value: serde_json::Value = serde_json::from_str(input)
-                                .unwrap_or(serde_json::Value::Null);
+                            let input_value: serde_json::Value =
+                                serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
                             Some(InputContentBlock::ToolUse {
                                 id: id.clone(),
                                 name: name.clone(),
                                 input: input_value,
                             })
                         }
-                        ContentBlock::ToolResult { .. } => {
-                            // Skip tool results in the input conversion
-                            // They should be converted to user tool results in the request
-                            None
-                        }
+                        ContentBlock::ToolResult { .. } => None,
                     })
                     .collect();
 
                 let role = match msg.role {
                     crate::modules::runtime::session::MessageRole::System => "system".to_string(),
                     crate::modules::runtime::session::MessageRole::User => "user".to_string(),
-                    crate::modules::runtime::session::MessageRole::Assistant => "assistant".to_string(),
+                    crate::modules::runtime::session::MessageRole::Assistant => {
+                        "assistant".to_string()
+                    }
                     crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
                 };
 
@@ -161,45 +233,8 @@ impl ApiClient for RealApiClient {
             stream: false,
         };
 
-        // Use block_on to call async Provider from sync trait method
-        let response = Handle::current()
-            .block_on(self.provider.send_message(&api_request))
-            .map_err(|e| RuntimeError::ApiError(e.to_string()))?;
-
-        // Convert MessageResponse to Vec<AssistantEvent>
-        let mut events = Vec::new();
-
-        for block in &response.content {
-            match block {
-                crate::modules::api::OutputContentBlock::Text { text } => {
-                    events.push(AssistantEvent::TextDelta(text.clone()));
-                }
-                crate::modules::api::OutputContentBlock::ToolUse { id, name, input } => {
-                    events.push(AssistantEvent::ToolUse {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: serde_json::to_string(input).unwrap_or_default(),
-                    });
-                }
-                crate::modules::api::OutputContentBlock::Thinking { .. } => {
-                    // Skip thinking blocks for now
-                }
-                crate::modules::api::OutputContentBlock::RedactedThinking { .. } => {
-                    // Skip redacted thinking blocks
-                }
-            }
-        }
-
-        events.push(AssistantEvent::Usage(crate::modules::runtime::usage::TokenUsage {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
-            cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
-            cache_read_input_tokens: response.usage.cache_read_input_tokens,
-        }));
-
-        events.push(AssistantEvent::MessageStop);
-
-        Ok(events)
+        // Call the provider's async send_message method
+        self.provider.send_message(&api_request).await
     }
 }
 
@@ -212,21 +247,29 @@ struct ToolRegistryExecutor {
 
 impl ToolRegistryExecutor {
     fn new(tool_registry: Arc<crate::modules::tools::ToolRegistry>) -> Self {
-        Self { tool_registry }
+        Self {
+            tool_registry,
+        }
     }
 }
 
 impl ToolExecutor for ToolRegistryExecutor {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, crate::modules::runtime::conversation::ToolError> {
-        let args: serde_json::Value = serde_json::from_str(input)
-            .unwrap_or(serde_json::Value::Null);
+    fn execute(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+    ) -> Result<String, crate::modules::runtime::conversation::ToolError> {
+        let args: serde_json::Value =
+            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
 
-        // Use block_on to call async ToolRegistry from sync context
-        let result = Handle::current()
-            .block_on(self.tool_registry.dispatch(tool_name, args))
-            .map_err(|e: crate::modules::tools::ToolError| {
-                crate::modules::runtime::conversation::ToolError::new(e.to_string())
-            })?;
+        // Use block_in_place to run async code in a blocking context
+        let result = tokio::task::block_in_place(|| {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(self.tool_registry.dispatch(tool_name, args))
+        })
+        .map_err(|e: crate::modules::tools::ToolError| {
+            crate::modules::runtime::conversation::ToolError::new(e.to_string())
+        })?;
 
         Ok(result)
     }
@@ -243,6 +286,9 @@ pub async fn run_agent_turn(
     session_id: String,
     user_message: String,
 ) -> Result<RunAgentTurnResponse, String> {
+    eprintln!("[DEBUG] run_agent_turn called with session_id: {}, message: {}", session_id, user_message);
+    tracing::info!("[run_agent_turn] Starting - session_id: {}, message: {}", session_id, user_message);
+
     // Restore the session
     let app_session = state
         .session_manager
@@ -250,13 +296,19 @@ pub async fn run_agent_turn(
         .await
         .map_err(|e| e.to_string())?;
 
+    tracing::info!("[run_agent_turn] Session restored, {} messages", app_session.messages.len());
+
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
 
     // Create real API client using settings from ~/.claude/settings.json
     let (claw_client, model) = match create_claw_client_from_settings() {
-        Ok((client, model)) => (client, model),
+        Ok((client, model)) => {
+            tracing::info!("[run_agent_turn] API client created, model: {}", model);
+            (client, model)
+        }
         Err(e) => {
+            tracing::error!("[run_agent_turn] Failed to create API client: {}", e);
             return Err(format!(
                 "无法连接 AI 服务: {}. 请检查 ~/.claude/settings.json 配置是否正确。",
                 e
@@ -287,8 +339,12 @@ pub async fn run_agent_turn(
         system_prompt,
     );
 
+    tracing::info!("[run_agent_turn] Runtime created, calling run_turn with message: {}", user_message);
+
     // Run the conversation turn
     let result = runtime.run_turn(user_message.clone(), None);
+
+    tracing::info!("[run_agent_turn] run_turn completed, result: {:?}", result.is_ok());
 
     match result {
         Ok(summary) => {
@@ -307,6 +363,21 @@ pub async fn run_agent_turn(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+
+            // Extract thinking content from assistant messages
+            let thinking_content: Option<String> = {
+                let collected: Vec<String> = summary
+                    .assistant_messages
+                    .iter()
+                    .filter_map(|msg| msg.thinking.clone())
+                    .collect();
+                let joined = collected.join("\n\n");
+                if joined.is_empty() {
+                    None
+                } else {
+                    Some(joined)
+                }
+            };
 
             let final_text = if response_text.is_empty() {
                 "Agent completed the request.".to_string()
@@ -328,9 +399,11 @@ pub async fn run_agent_turn(
                 .await
                 .map_err(|e| e.to_string())?;
 
+            tracing::info!("[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}", final_text.len(), thinking_content.as_ref().map(|s| s.len()), session_id);
             Ok(RunAgentTurnResponse {
                 message: final_text,
                 session_id,
+                thinking: thinking_content,
             })
         }
         Err(e) => {
@@ -343,11 +416,14 @@ pub async fn run_agent_turn(
                     // Check for common network errors and provide friendly messages
                     if msg.contains("connection refused") {
                         "无法连接到 AI 服务服务器，请检查网络连接。".to_string()
-                    } else if msg.contains("timeout") {
+                    } else if msg.contains("timeout") || msg.contains("timed out") {
                         "AI 服务响应超时，请稍后重试。".to_string()
                     } else if msg.contains("dns") || msg.contains("Name or service not known") {
                         "无法解析 AI 服务地址，请检查网络配置。".to_string()
-                    } else if msg.contains("401") || msg.contains("403") {
+                    } else if msg.contains("401")
+                        || msg.contains("403")
+                        || msg.contains("invalid signature")
+                    {
                         "AI 服务认证失败，请检查 API 配置是否正确。".to_string()
                     } else if msg.contains("429") {
                         "AI 服务请求过于频繁，请稍后重试。".to_string()
@@ -373,4 +449,241 @@ pub async fn run_agent_turn(
             Err(error_message)
         }
     }
+}
+
+/// Start a streaming agent turn.
+///
+/// This command initiates a streaming response from the AI. It emits token events
+/// via Tauri's event system which the frontend can listen to for progressive updates.
+///
+/// # Arguments
+/// * `state` - Application state with session manager and tool registry
+/// * `app_handle` - Tauri app handle for emitting events
+/// * `session_id` - The session ID to continue
+/// * `user_message` - The user's message
+///
+/// # Returns
+/// A stream ID that the frontend uses to correlate events
+#[tauri::command]
+pub async fn start_agent_stream(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    session_id: String,
+    user_message: String,
+) -> Result<String, String> {
+    use crate::modules::api::StreamEvent as ApiStreamEvent;
+    use tauri::Manager;
+
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    eprintln!("[DEBUG] start_agent_stream called - stream_id: {}, session_id: {}, message: {}", stream_id, session_id, user_message);
+    tracing::info!("[start_agent_stream] Starting - stream_id: {}, session_id: {}", stream_id, session_id);
+
+    // Get the main window for emitting events
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or_else(|| "Failed to get main window".to_string())?;
+
+    // Restore the session
+    let app_session = state
+        .session_manager
+        .restore_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!("[start_agent_stream] Session restored, {} messages", app_session.messages.len());
+
+    // Create API client
+    let (claw_client, model) = create_claw_client_from_settings().map_err(|e| {
+        tracing::error!("[start_agent_stream] Failed to create API client: {}", e);
+        e
+    })?;
+
+    // Convert session messages to API format
+    let runtime_session = app_session_to_runtime(&app_session);
+    let messages: Vec<InputMessage> = runtime_session
+        .messages
+        .iter()
+        .filter_map(|msg| {
+            let content: Vec<InputContentBlock> = msg
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => {
+                        Some(InputContentBlock::Text { text: text.clone() })
+                    }
+                    ContentBlock::ToolUse { id, name, input } => {
+                        let input_value: serde_json::Value =
+                            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+                        Some(InputContentBlock::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input_value,
+                        })
+                    }
+                    ContentBlock::ToolResult { .. } => None,
+                })
+                .collect();
+
+            let role = match msg.role {
+                crate::modules::runtime::session::MessageRole::System => "system".to_string(),
+                crate::modules::runtime::session::MessageRole::User => "user".to_string(),
+                crate::modules::runtime::session::MessageRole::Assistant => "assistant".to_string(),
+                crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
+            };
+
+            Some(InputMessage { role, content })
+        })
+        .collect();
+
+    // Add the user's new message
+    let mut all_messages = messages;
+    all_messages.push(InputMessage::user_text(&user_message));
+
+    let api_request = MessageRequest {
+        model,
+        max_tokens: 4096,
+        messages: all_messages,
+        system: None,
+        tools: None,
+        tool_choice: None,
+        stream: true,
+    };
+
+    // Clone everything needed for the background task
+    let session_manager = state.session_manager.clone();
+    let app_session_clone = app_session.clone();
+    let user_message_clone = user_message.clone();
+
+    // Spawn a background task to process the stream
+    let stream_id_for_task = stream_id.clone();
+    let stream_id_return = stream_id.clone();
+    tokio::spawn(async move {
+        tracing::info!("[start_agent_stream] Spawned background task for stream_id: {}", stream_id_for_task);
+
+        // Start streaming
+        let mut stream = match claw_client.stream_message(&api_request).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("[start_agent_stream] Background task failed to start stream: {}", e);
+                let payload = StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None,
+                    thinking: None,
+                    event_type: "stream_error".to_string(),
+                };
+                let _ = window.emit("agent-token", payload);
+                return;
+            }
+        };
+
+        // Process stream events
+        let mut accumulated_text = String::new();
+        let mut accumulated_thinking = String::new();
+
+        loop {
+            match stream.next_event().await {
+                Ok(Some(event)) => {
+                    match event {
+                        ApiStreamEvent::ContentBlockDelta(delta_event) => {
+                            match delta_event.delta {
+                                crate::modules::api::ContentBlockDelta::TextDelta { text } => {
+                                    accumulated_text.push_str(&text);
+                                    let payload = StreamTokenPayload {
+                                        stream_id: stream_id_for_task.clone(),
+                                        text: Some(text),
+                                        thinking: None,
+                                        event_type: "text_delta".to_string(),
+                                    };
+                                    let _ = window.emit("agent-token", payload);
+                                }
+                                crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
+                                    accumulated_thinking.push_str(&thinking);
+                                    let payload = StreamTokenPayload {
+                                        stream_id: stream_id_for_task.clone(),
+                                        text: None,
+                                        thinking: Some(thinking),
+                                        event_type: "thinking_delta".to_string(),
+                                    };
+                                    let _ = window.emit("agent-token", payload);
+                                }
+                                crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
+                                crate::modules::api::ContentBlockDelta::InputJsonDelta { .. } => {}
+                            }
+                        }
+                        ApiStreamEvent::MessageStop(_) => {
+                            tracing::info!("[start_agent_stream] Background task stream complete");
+                            let payload = StreamTokenPayload {
+                                stream_id: stream_id_for_task.clone(),
+                                text: None,
+                                thinking: None,
+                                event_type: "stream_complete".to_string(),
+                            };
+                            let _ = window.emit("agent-token", payload);
+                            break;
+                        }
+                        ApiStreamEvent::ContentBlockStart(start_event) => {
+                            if matches!(start_event.content_block, crate::modules::api::OutputContentBlock::Thinking { .. }) {
+                                let payload = StreamTokenPayload {
+                                    stream_id: stream_id_for_task.clone(),
+                                    text: None,
+                                    thinking: None,
+                                    event_type: "thinking_start".to_string(),
+                                };
+                                let _ = window.emit("agent-token", payload);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(None) => {
+                    tracing::info!("[start_agent_stream] Background task stream ended naturally");
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("[start_agent_stream] Background task stream error: {}", e);
+                    let payload = StreamTokenPayload {
+                        stream_id: stream_id_for_task.clone(),
+                        text: None,
+                        thinking: None,
+                        event_type: "stream_error".to_string(),
+                    };
+                    let _ = window.emit("agent-token", payload);
+                    break;
+                }
+            }
+        }
+
+        // Update session with new messages
+        let mut updated_app_session = app_session_clone;
+        let user_msg = crate::modules::runtime::session::ConversationMessage {
+            role: crate::modules::runtime::session::MessageRole::User,
+            blocks: vec![ContentBlock::Text {
+                text: user_message_clone.clone(),
+            }],
+            usage: None,
+            thinking: None,
+        };
+        let assistant_msg = crate::modules::runtime::session::ConversationMessage {
+            role: crate::modules::runtime::session::MessageRole::Assistant,
+            blocks: vec![ContentBlock::Text {
+                text: accumulated_text.clone(),
+            }],
+            usage: None,
+            thinking: if accumulated_thinking.is_empty() {
+                None
+            } else {
+                Some(accumulated_thinking)
+            },
+        };
+        updated_app_session.messages.push(user_msg);
+        updated_app_session.messages.push(assistant_msg);
+
+        if let Err(e) = session_manager.save_session(&updated_app_session).await {
+            tracing::error!("[start_agent_stream] Failed to save session: {}", e);
+        }
+    });
+
+    // Return immediately with stream_id
+    tracing::info!("[start_agent_stream] Returning stream_id: {}", stream_id_return);
+    Ok(stream_id_return)
 }

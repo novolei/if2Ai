@@ -39,10 +39,13 @@ impl AppState {
 pub mod agent;
 pub mod project;
 pub mod session;
+pub mod window;
 
 #[allow(unused_imports)]
-pub use agent::{run_agent_turn, RunAgentTurnResponse};
+pub use agent::{run_agent_turn, start_agent_stream, RunAgentTurnResponse};
 #[allow(unused_imports)]
 pub use project::{create_project, delete_project, get_project, list_projects, rename_project};
 #[allow(unused_imports)]
-pub use session::{create_session, delete_session, list_project_sessions, list_sessions};
+pub use session::{create_session, delete_session, get_session, list_project_sessions, list_sessions};
+#[allow(unused_imports)]
+pub use window::{close_settings_window, open_settings_window};

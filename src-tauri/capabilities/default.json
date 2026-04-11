@@ -1,0 +1,13 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for If2Ai",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "dialog:default",
+    "dialog:allow-open"
+  ]
+}

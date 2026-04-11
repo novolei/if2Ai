@@ -4,6 +4,17 @@
 //! App.tsx 不直接调用 @tauri-apps/api。
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+
+/**
+ * 流式 Token 事件载荷
+ */
+export interface StreamTokenPayload {
+  stream_id: string;
+  text?: string;
+  thinking?: string;
+  event_type: 'text_delta' | 'thinking_delta' | 'thinking_start' | 'stream_complete' | 'stream_error';
+}
 
 /**
  * 助手消息响应
@@ -13,6 +24,8 @@ export interface AgentTurnResponse {
   message: string;
   /** 会话 ID */
   session_id: string;
+  /** 思考内容（如果有） */
+  thinking?: string;
   /** 工具调用（如果有） */
   tool_calls?: ToolCall[];
   /** Token 使用量（如果有） */
@@ -82,6 +95,41 @@ export async function runAgentTurn(
   return await invoke<AgentTurnResponse>('run_agent_turn', {
     sessionId,
     userMessage,
+  });
+}
+
+/**
+ * 开始流式 Agent 对话轮次
+ *
+ * @param sessionId - 会话 ID
+ * @param userMessage - 用户消息
+ * @returns 流 ID，用于关联事件
+ */
+export async function startAgentStream(
+  sessionId: string,
+  userMessage: string
+): Promise<string> {
+  return await invoke<string>('start_agent_stream', {
+    sessionId,
+    userMessage,
+  });
+}
+
+/**
+ * 监听流式 Token 事件
+ *
+ * @param streamId - 流 ID，用于过滤事件
+ * @param callback - 回调函数，接收 Token 事件
+ * @returns 取消监听函数
+ */
+export async function listenToStream(
+  streamId: string,
+  callback: (payload: StreamTokenPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<StreamTokenPayload>('agent-token', (event) => {
+    if (event.payload.stream_id === streamId) {
+      callback(event.payload);
+    }
   });
 }
 
@@ -183,4 +231,80 @@ export async function listProjectSessions(
   projectId: string
 ): Promise<SessionMeta[]> {
   return await invoke<SessionMeta[]>('list_project_sessions', { projectId });
+}
+
+/**
+ * 打开设置窗口
+ */
+export async function openSettingsWindow(): Promise<void> {
+  return await invoke<void>('open_settings_window');
+}
+
+/**
+ * 关闭设置窗口
+ */
+export async function closeSettingsWindow(): Promise<void> {
+  return await invoke<void>('close_settings_window');
+}
+
+/**
+ * 获取会话的完整信息（包括消息历史）
+ *
+ * @param id - 会话 ID
+ * @returns 完整的会话信息
+ */
+export async function getSession(
+  id: string
+): Promise<Session> {
+  return await invoke<Session>('get_session', { id });
+}
+
+/**
+ * 会话信息（包含消息）
+ */
+export interface Session {
+  id: string
+  project_id: string
+  title: string
+  messages: ConversationMessage[]
+  created_at: string
+  updated_at: string
+  token_count: number
+}
+
+/**
+ * 对话消息
+ */
+export interface ConversationMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  blocks: ContentBlock[]
+  usage?: TokenUsage
+  thinking?: string
+}
+
+/**
+ * 内容块
+ */
+export interface ContentBlock {
+  type: 'text' | 'tool_use' | 'tool_result'
+  text?: string
+  tool_use_id?: string
+  tool_name?: string
+  input?: string
+  output?: string
+  tool_use_block?: {
+    id: string
+    name: string
+    input: Record<string, unknown>
+  }
+}
+
+/**
+ * Token 使用量
+ */
+export interface TokenUsage {
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
 }

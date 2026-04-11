@@ -22,6 +22,11 @@ pub async fn create_project(
     name: String,
     workdir: String,
 ) -> Result<Project, String> {
+    tracing::info!(
+        "[Rust] create_project called with name={}, workdir={}",
+        name,
+        workdir
+    );
     let workdir_path = PathBuf::from(&workdir);
     state
         .project_manager

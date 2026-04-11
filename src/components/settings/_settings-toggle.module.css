@@ -1,0 +1,43 @@
+/* Settings Toggle Switch */
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--color-border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 200ms ease-out;
+  flex-shrink: 0;
+  border: none;
+}
+
+.toggle.active {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent-mint) 100%);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 200ms ease-out;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.toggle.active::after {
+  transform: translateX(20px);
+}
+
+.toggle:hover {
+  filter: brightness(0.95);
+}
+
+.toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

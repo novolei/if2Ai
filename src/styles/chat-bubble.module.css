@@ -1,0 +1,371 @@
+/* Chat Bubble Styles */
+
+/* ── 消息组 ── */
+.messageGroup {
+  display: flex;
+  flex-direction: column;
+  animation: msgIn 0.3s ease-out;
+  max-width: 100%;
+}
+
+.messageGroupUser {
+  align-items: flex-end;
+}
+
+.messageGroupAssistant {
+  align-items: flex-start;
+  padding-left: 0.25rem;
+}
+
+/* ── 头像行 ── */
+.avatarRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.avatarRowUser {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+.userAvatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-100);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.avatarName {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+/* ── 单条消息 ── */
+.message {
+  display: inline-block;
+  max-width: 100%;
+  min-width: auto;
+  text-align: left;
+}
+
+.message + .message {
+  margin-top: 0.25rem;
+}
+
+/* ── 消息气泡 ── */
+.messageUser {
+  background: var(--color-primary-soft);
+  padding: 0.5rem 0.875rem;
+  border-radius: 16px 16px 4px 16px;
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  word-break: normal;
+  overflow-wrap: break-word;
+  white-space: normal;
+  display: inline-block;
+}
+
+.messageAssistant {
+  display: block;
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  word-break: break-word;
+  width: 95%;
+  box-sizing: border-box;
+}
+
+/* ── 动画 ── */
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Typing indicator ── */
+.typingIndicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.6rem 0;
+  padding-left: 0.5rem;
+  animation: msgIn 0.3s ease-out;
+}
+
+.typingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: dotPulse 1.2s infinite;
+}
+
+.typingDot:nth-child(2) { animation-delay: 0.2s; }
+.typingDot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dotPulse {
+  0%, 60%, 100% { opacity: 0.4; }
+  30% { opacity: 1; }
+}
+
+/* ── 思考块 ── */
+.thinkingBlock {
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.thinkingBlockSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  user-select: none;
+  padding: 0.25rem 0;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.thinkingBlockSummary:hover {
+  background: var(--color-primary-soft);
+}
+
+.thinkingBlockSummary .thinkingDots {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.thinkingBlockSummary .thinkingDots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dotPulse 1.2s infinite;
+}
+
+.thinkingBlockSummary .thinkingDots span:nth-child(2) { animation-delay: 0.2s; }
+.thinkingBlockSummary .thinkingDots span:nth-child(3) { animation-delay: 0.4s; }
+
+.thinkingBlockArrow {
+  display: inline-block;
+  font-style: normal;
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+}
+
+.thinkingBlockArrowOpen {
+  transform: rotate(90deg);
+}
+
+.thinkingBlockBody {
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  background: var(--color-surface-base);
+  border-radius: 8px;
+  border: 1px solid var(--color-border-soft);
+}
+
+/* ── Markdown 内容样式 ── */
+.md-content {
+  line-height: 1.75;
+}
+
+/* 段落 */
+.md-content p {
+  margin: 0 0 0.65em 0;
+}
+
+.md-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* 内联代码 */
+.md-content code {
+  font-family: var(--font-mono, 'SF Mono', Consolas, monospace);
+  font-size: 0.85em;
+  background: var(--color-surface-base);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  color: var(--color-primary);
+}
+
+/* 代码块 - rehype-highlight */
+.md-content pre {
+  background: #282c34;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 0.85rem 0;
+  overflow-x: auto;
+  line-height: 1.6;
+  font-size: 0.875em;
+}
+
+.md-content pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 1em;
+  color: inherit;
+}
+
+/* 引用块 */
+.md-content blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding: 0.35rem 1rem;
+  margin: 0.75rem 0;
+  color: var(--color-text-secondary);
+  background: var(--color-primary-soft);
+  border-radius: 0 8px 8px 0;
+}
+
+.md-content blockquote p {
+  margin: 0;
+}
+
+/* 列表 */
+.md-content ul,
+.md-content ol {
+  padding-left: 1.4em;
+  margin: 0.4rem 0;
+}
+
+.md-content li {
+  margin: 0.25em 0;
+}
+
+.md-content li > p {
+  margin: 0;
+}
+
+/* 链接 */
+.md-content a {
+  color: var(--color-primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s, opacity 0.15s;
+  opacity: 0.9;
+}
+
+.md-content a:hover {
+  border-bottom-color: var(--color-primary);
+  opacity: 1;
+}
+
+/* 标题 - 无分隔线，用间距区分 */
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4,
+.md-content h5,
+.md-content h6 {
+  font-weight: 600;
+  margin: 1em 0 0.4em 0;
+  line-height: 1.35;
+  color: var(--color-text-primary);
+}
+
+.md-content h1 { font-size: 1.25em; }
+.md-content h2 { font-size: 1.15em; }
+.md-content h3 { font-size: 1.05em; }
+.md-content h4 { font-size: 1em; }
+
+/* 表格 */
+.md-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.85rem 0;
+  font-size: 0.9em;
+  display: block;
+  overflow-x: auto;
+}
+
+.md-content th,
+.md-content td {
+  border: 1px solid var(--color-border-soft);
+  padding: 0.5em 0.75em;
+  text-align: left;
+}
+
+.md-content th {
+  background: var(--color-surface-base);
+  font-weight: 600;
+}
+
+.md-content tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* 强调 */
+.md-content strong {
+  font-weight: 600;
+}
+
+.md-content em {
+  font-style: italic;
+}
+
+/* 删除线 */
+.md-content del {
+  opacity: 0.6;
+}
+
+/* 图片 */
+.md-content img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+}
+
+/* 任务列表 */
+.md-content input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--color-primary);
+}
+
+/* 分隔线 - 改为更柔和的样式 */
+.md-content hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--color-border-soft) 20%,
+    var(--color-border-soft) 80%,
+    transparent
+  );
+  margin: 1.5rem 0;
+}
+
+/* 流式光标 */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--color-primary);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursorBlink 1s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}

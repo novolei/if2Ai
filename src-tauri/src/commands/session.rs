@@ -68,3 +68,14 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Get a session with its messages (for restoring chat history).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn get_session(state: State<'_, AppState>, id: String) -> Result<Session, String> {
+    state
+        .session_manager
+        .restore_session(&id)
+        .await
+        .map_err(|e| e.to_string())
+}

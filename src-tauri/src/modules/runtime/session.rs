@@ -43,6 +43,9 @@ pub struct ConversationMessage {
     pub role: MessageRole,
     pub blocks: Vec<ContentBlock>,
     pub usage: Option<TokenUsage>,
+    /// Thinking content from the model (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,6 +157,7 @@ impl ConversationMessage {
             role: MessageRole::User,
             blocks: vec![ContentBlock::Text { text: text.into() }],
             usage: None,
+            thinking: None,
         }
     }
 
@@ -163,6 +167,7 @@ impl ConversationMessage {
             role: MessageRole::Assistant,
             blocks,
             usage: None,
+            thinking: None,
         }
     }
 
@@ -172,6 +177,7 @@ impl ConversationMessage {
             role: MessageRole::Assistant,
             blocks,
             usage,
+            thinking: None,
         }
     }
 
@@ -191,6 +197,7 @@ impl ConversationMessage {
                 is_error,
             }],
             usage: None,
+            thinking: None,
         }
     }
 
@@ -246,10 +253,12 @@ impl ConversationMessage {
             .map(ContentBlock::from_json)
             .collect::<Result<Vec<_>, _>>()?;
         let usage = object.get("usage").map(usage_from_json).transpose()?;
+        let thinking = object.get("thinking").and_then(|v| v.as_str()).map(String::from);
         Ok(Self {
             role,
             blocks,
             usage,
+            thinking,
         })
     }
 }

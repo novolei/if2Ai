@@ -26,6 +26,7 @@ pub enum AssistantEvent {
         name: String,
         input: String,
     },
+    Thinking(String),
     Usage(TokenUsage),
     MessageStop,
 }
@@ -361,6 +362,7 @@ fn build_assistant_message(
     let mut blocks = Vec::new();
     let mut finished = false;
     let mut usage = None;
+    let mut thinking = String::new();
 
     for event in events {
         match event {
@@ -368,6 +370,12 @@ fn build_assistant_message(
             AssistantEvent::ToolUse { id, name, input } => {
                 flush_text_block(&mut text, &mut blocks);
                 blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+            AssistantEvent::Thinking(content) => {
+                if !thinking.is_empty() {
+                    thinking.push('\n');
+                }
+                thinking.push_str(&content);
             }
             AssistantEvent::Usage(value) => usage = Some(value),
             AssistantEvent::MessageStop => {
@@ -383,14 +391,25 @@ fn build_assistant_message(
             "assistant stream ended without a message stop event".to_string(),
         ));
     }
-    if blocks.is_empty() {
+    if blocks.is_empty() && thinking.is_empty() {
         return Err(RuntimeError::ApiError(
             "assistant stream produced no content".to_string(),
         ));
     }
 
+    let thinking_result = if thinking.is_empty() {
+        None
+    } else {
+        Some(thinking)
+    };
+
     Ok((
-        ConversationMessage::assistant_with_usage(blocks, usage),
+        ConversationMessage {
+            role: crate::modules::runtime::session::MessageRole::Assistant,
+            blocks,
+            usage,
+            thinking: thinking_result,
+        },
         usage,
     ))
 }

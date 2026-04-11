@@ -122,10 +122,17 @@ pub struct ClawApiClient {
 }
 
 impl ClawApiClient {
+    /// Default timeout for HTTP requests
+    const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
     #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
+        let http = reqwest::ClientBuilder::new()
+            .timeout(Self::DEFAULT_TIMEOUT)
+            .build()
+            .expect("Failed to create HTTP client with timeout");
         Self {
-            http: reqwest::Client::new(),
+            http,
             auth: AuthSource::ApiKey(api_key.into()),
             base_url: DEFAULT_BASE_URL.to_string(),
             max_retries: DEFAULT_MAX_RETRIES,
@@ -136,8 +143,12 @@ impl ClawApiClient {
 
     #[must_use]
     pub fn from_auth(auth: AuthSource) -> Self {
+        let http = reqwest::ClientBuilder::new()
+            .timeout(Self::DEFAULT_TIMEOUT)
+            .build()
+            .expect("Failed to create HTTP client with timeout");
         Self {
-            http: reqwest::Client::new(),
+            http,
             auth,
             base_url: DEFAULT_BASE_URL.to_string(),
             max_retries: DEFAULT_MAX_RETRIES,
