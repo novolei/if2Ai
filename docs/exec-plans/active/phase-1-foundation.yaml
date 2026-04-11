@@ -61,47 +61,10 @@ slices:
 
   - id: "1.3"
     title: "ConversationRuntime 核心实现（Agent 对话循环）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/agent-loop.md"
     impl_targets:
       - src-tauri/src/modules/runtime/conversation.rs
-
-    # ── 当前状态（executor 必须阅读此字段，了解缺什么后再动笔）─────────────
-    current_state: |
-      文件EXISTS。已有：ConversationRuntime<C,T>（泛型）、run_turn()、TurnSummary、
-      RuntimeError(message: String)、ToolExecutor trait、StaticToolExecutor。
-      ❌ MISSING — 以下接口在文件中完全不存在，必须新增：
-        1. run_conversation() 多轮对话方法（agent-loop.md §2.2）
-        2. RuntimeError 枚举变体：MaxIterationsExceeded、PermissionDenied、SessionError
-           （现在只有一个 message 字段的 struct，不是 enum with variants）
-        3. token budget 检查：run_turn() 循环内，每次调用 LLM 前检查剩余 token
-        4. build_system_prompt() 方法（agent-loop.md §3.2）
-        5. ConversationRuntime 的泛型参数改为依赖 ProviderManager trait（slice 1.4 完成后对接）
-
-    # ── 必须实现的接口（对应 design_ref 章节）──────────────────────────────
-    must_implement:
-      - |
-        // agent-loop.md §2.2 — 目前 MISSING
-        pub async fn run_conversation(
-            &mut self,
-            user_message: String,
-        ) -> Result<TurnSummary, RuntimeError>
-      - |
-        // agent-loop.md §3.3 — 现在的 RuntimeError 是 struct，必须改成 enum
-        pub enum RuntimeError {
-            ApiError(String),
-            ToolError(String),
-            PermissionDenied(String),
-            SessionError(String),
-            ConfigError(String),
-            MaxIterationsExceeded,
-        }
-      - |
-        // agent-loop.md §3.2 — 目前 MISSING
-        fn build_system_prompt(&self) -> Result<String, RuntimeError>
-      - |
-        // agent-loop.md §3.1 — run_turn() 内 LLM 调用前必须有此检查
-        // 伪代码：if self.token_budget_exceeded() { return Err(RuntimeError::MaxIterationsExceeded); }
 
     acceptance:
       - type: compile
@@ -129,6 +92,7 @@ slices:
       - "错误传播使用 ? 操作符，函数签名返回 Result<_, RuntimeError>"
       - "无 unwrap()（测试除外）"
     harness_suite: ~
+    notes: "Implemented: RuntimeError enum, run_conversation(), build_system_prompt(), token budget check, max_token_budget field"
 
   # ───────────── Stage 2: Provider / LLM 集成 ───────────────────────────────
 
@@ -518,7 +482,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["1.1", "1.2"]
-  current_slice: "1.3"
+  completed_slices: ["1.1", "1.2", "1.3"]
+  current_slice: "1.4"
   blocked: []
-  notes: "slices 1.3-1.9 reset to pending: were incorrectly marked done without code implementation"
+  notes: "slice 1.3 complete: RuntimeError enum, run_conversation(), build_system_prompt(), token budget check implemented"
