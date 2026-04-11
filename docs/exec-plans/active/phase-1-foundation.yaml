@@ -98,43 +98,10 @@ slices:
 
   - id: "1.4"
     title: "ProviderManager 实现（OpenAI / Anthropic / 本地 Mock）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/provider-resolution.md"
     impl_targets:
       - src-tauri/src/modules/api/providers/manager.rs   # 必须新建此文件
-
-    current_state: |
-      providers/ 目录EXISTS，已有：Provider trait（简单）、ClawApiClient、OpenAiCompatClient。
-      ❌ MISSING — 以下接口不存在，必须新建 manager.rs：
-        1. ProviderManager 结构体（按名称注册/选择 provider）
-        2. ProviderManager::register(name, client) 方法
-        3. ProviderManager::get(name) -> Option<Arc<dyn Provider>>
-        4. ProviderManager::create_message(name, request) 统一调用入口
-        5. MockProvider（固定响应，用于测试，无需真实 API key）
-
-    must_implement:
-      - |
-        // provider-resolution.md §2.2 — 必须新建 manager.rs
-        pub struct ProviderManager {
-            providers: HashMap<String, Arc<dyn Provider>>,
-            default_provider: String,
-        }
-        impl ProviderManager {
-            pub fn new(default_provider: impl Into<String>) -> Self
-            pub fn register(&mut self, name: impl Into<String>, provider: Arc<dyn Provider>)
-            pub fn get(&self, name: &str) -> Option<Arc<dyn Provider>>
-            pub async fn create_message(
-                &self,
-                provider_name: &str,
-                request: MessageRequest,
-            ) -> Result<MessageResponse, ApiError>
-        }
-      - |
-        // provider-resolution.md §测试支持 — 用于 mock 测试
-        pub struct MockProvider {
-            responses: Vec<MessageResponse>,  // 预设的响应序列
-        }
-        impl Provider for MockProvider { ... }
 
     acceptance:
       - type: compile
@@ -156,6 +123,7 @@ slices:
       - "API key 通过环境变量或构造函数传入，不硬编码"
       - "ProviderManager 在 providers/mod.rs 中 pub use 导出"
       - "无 unwrap()（测试除外）"
+    notes: "Implemented: ProviderManager, MockProvider, MockStream, create_message, create_message_default"
 
   - id: "1.5"
     title: "ToolRegistry 与 3 个基础工具（bash / file_read / json_parse）"
@@ -482,7 +450,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["1.1", "1.2", "1.3"]
-  current_slice: "1.4"
+  completed_slices: ["1.1", "1.2", "1.3", "1.4"]
+  current_slice: "1.5"
   blocked: []
-  notes: "slice 1.3 complete: RuntimeError enum, run_conversation(), build_system_prompt(), token budget check implemented"
+  notes: "slice 1.4 complete: ProviderManager, MockProvider implemented"
