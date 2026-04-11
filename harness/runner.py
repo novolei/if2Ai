@@ -91,6 +91,92 @@ def cmd_check_slice(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diff_gate(args: argparse.Namespace) -> int:
+    """Verify that the current git diff contains actual source code changes.
+
+    A slice cannot be marked done if only documentation/YAML files were changed.
+    This gate fails if there are no .rs or .ts/.tsx code file changes since the
+    last commit (or since a specified base ref).
+
+    Exit codes:
+      0 = code changes found (gate passes)
+      1 = no code changes found (gate fails — slice must not be marked done)
+      2 = usage error
+    """
+    import subprocess
+
+    workspace = Path(args.workspace).resolve()
+    base_ref = args.base or "HEAD~1"
+    min_lines = args.min_lines
+
+    # Get changed files between base_ref and working tree (staged + unstaged)
+    result = subprocess.run(
+        ["git", "diff", "--name-only", base_ref, "HEAD"],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # Try just staged changes if HEAD~1 fails (first commit case)
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--cached"],
+            cwd=workspace, capture_output=True, text=True,
+        )
+
+    changed_files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+
+    # Also include unstaged changes
+    result2 = subprocess.run(
+        ["git", "diff", "--name-only"],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    changed_files += [f.strip() for f in result2.stdout.splitlines() if f.strip()]
+    changed_files = list(set(changed_files))
+
+    code_extensions = {".rs", ".ts", ".tsx", ".js", ".jsx", ".py"}
+    doc_only_patterns = {"docs/", "QUALITY_SCORE", ".yaml", ".yml", ".md"}
+
+    code_files = [
+        f for f in changed_files
+        if any(f.endswith(ext) for ext in code_extensions)
+        and not any(pat in f for pat in {"harness/", "docs/", "test", "spec"})
+    ]
+
+    # Count lines changed in code files
+    lines_changed = 0
+    if code_files:
+        stat_result = subprocess.run(
+            ["git", "diff", "--stat", base_ref, "HEAD", "--"] + code_files,
+            cwd=workspace, capture_output=True, text=True,
+        )
+        import re
+        m = re.search(r"(\d+) insertion", stat_result.stdout)
+        if m:
+            lines_changed = int(m.group(1))
+
+    print(f"\n  Diff Gate — base: {base_ref}")
+    print(f"  Changed files   : {len(changed_files)} total")
+    print(f"  Code files      : {len(code_files)}")
+    if code_files:
+        for f in code_files[:10]:
+            print(f"    + {f}")
+        if len(code_files) > 10:
+            print(f"    ... and {len(code_files)-10} more")
+    print(f"  Lines inserted  : {lines_changed} (minimum required: {min_lines})")
+
+    if not code_files:
+        print(f"\n  ❌ DIFF_GATE FAIL: No source code files changed.")
+        print(f"     Only docs/YAML changes found — slice must NOT be marked done.")
+        print(f"     Implement the code in impl_targets first.\n")
+        return 1
+
+    if lines_changed < min_lines:
+        print(f"\n  ❌ DIFF_GATE FAIL: Too few lines changed ({lines_changed} < {min_lines}).")
+        print(f"     This looks like a docs-only update. Implement actual code.\n")
+        return 1
+
+    print(f"\n  ✅ DIFF_GATE PASS: {len(code_files)} code files, {lines_changed} lines inserted.\n")
+    return 0
+
+
 def cmd_review(args: argparse.Namespace) -> int:
     """Automated static code review — replaces sub-agent review step.
 
@@ -468,6 +554,22 @@ def build_parser() -> argparse.ArgumentParser:
     rev_p.add_argument("--workspace", default=".", help="Workspace root (default: .)")
     rev_p.add_argument("--package", default="if2ai-backend", help="Cargo package name")
     rev_p.set_defaults(func=cmd_review)
+
+    # ── diff-gate ─────────────────────────────────────────────────────────────
+    dg_p = sub.add_parser(
+        "diff-gate",
+        help="Verify git diff contains actual source code changes (prevents docs-only slice completion)",
+    )
+    dg_p.add_argument("--workspace", default=".", help="Workspace root (default: .)")
+    dg_p.add_argument(
+        "--base", default=None,
+        help="Base git ref to diff against (default: HEAD~1)",
+    )
+    dg_p.add_argument(
+        "--min-lines", type=int, default=5,
+        help="Minimum inserted lines of code required (default: 5)",
+    )
+    dg_p.set_defaults(func=cmd_diff_gate)
 
     # ── check-slice ───────────────────────────────────────────────────────────
     chk_p = sub.add_parser("check-slice", help="Validate slice YAML structure")

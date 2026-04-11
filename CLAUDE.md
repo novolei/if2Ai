@@ -33,16 +33,26 @@
            直接说「Use the code-reviewer subagent to review slice <id>」
            或运行备用命令：python -m harness.runner review --slice <id> --workspace .
            sub-agent/命令输出 REVIEW_PASS 才能继续；REVIEW_FAIL 则回到步骤 5
-9. FIX    → 如果 review 有 FAIL 条目，修复，回到步骤 5
-10. COMMIT → git commit（见下方提交规范）
-11. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
-12. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
-13. REPORT → 更新 docs/generated/QUALITY_SCORE.md（追加变更记录一行）
-14. STATUS → 运行 python -m harness.runner status --workspace . 并将输出写入执行日志
-15. NEXT  → 回到步骤 1，处理下一个 slice
+9. FIX      → 如果 review 有 FAIL 条目，修复，回到步骤 5
+10. DIFF-GATE → 运行 python -m harness.runner diff-gate --workspace .
+             输出 DIFF_GATE PASS 才能继续；
+             DIFF_GATE FAIL 意味着没有写代码，必须回到步骤 4 实现代码。
+             ❌ 严禁：仅凭迁移来的旧代码已通过测试就标记 slice done
+11. COMMIT → git commit（见下方提交规范）
+12. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
+13. UPDATE → 更新 exec-plan YAML 的 dashboard 区域
+14. REPORT → 更新 docs/generated/QUALITY_SCORE.md（追加变更记录一行）
+15. STATUS → 运行 python -m harness.runner status --workspace . 并将输出写入执行日志
+16. NEXT   → 回到步骤 1，处理下一个 slice
 ```
 
 **停止条件**：所有 slice 都是 `status: done`，或遇到 `human_checkpoint`。
+
+> **⚠️ 代码实现原则（最高优先级）**：  
+> 每个 slice 的 `impl_targets` 列出了需要创建或修改的文件。  
+> **impl_targets 中的每个文件都必须被本 slice 的实现修改过**，否则不能进入步骤 10 DIFF-GATE。  
+> 如果 impl_targets 中的文件已经存在（迁移来的旧代码），你**必须逐行对照 design_ref 验证接口定义**，修复不一致之处，并补充缺失的接口。  
+> 「测试已通过」**不等于**「接口正确实现」——旧代码可能存在错误的接口，测试只测了已有函数。
 
 > **🔁 自动继续原则（重要）**：  
 > 完成一个 slice 的步骤 15 NEXT 后，**立即自动开始下一个 pending slice，不要暂停、不要询问用户是否继续**。  
@@ -95,6 +105,9 @@ cargo test --workspace
 - ❌ 不允许使用 `todo!()` 或 `unimplemented!()` 留给以后
 - ❌ 不允许在 lint/fmt/clippy 未全部通过的情况下调用 REVIEW
 - ❌ 不允许在文档落后于代码时扩大 slice 范围（先更新文档）
+- ❌ **不允许在没有修改 impl_targets 中任何文件的情况下标记 slice done**
+- ❌ **不允许认为「迁移来的旧代码已通过测试 = 接口已实现」**；必须对照 design_ref 验证并更新代码
+- ❌ 不允许在 DIFF_GATE FAIL 的情况下进行 git commit 或更新 slice 状态为 done
 
 ---
 
@@ -300,6 +313,9 @@ cargo test --workspace
 
 # 步骤 8 REVIEW — 自动静态审查（替代 sub-agent）
 python -m harness.runner review --slice <id> --workspace .
+
+# 步骤 10 DIFF-GATE — 验证有实际代码变更（严禁 docs-only 完成 slice）
+python -m harness.runner diff-gate --workspace .
 
 # 验证 exec-plan 格式
 python -m harness.runner check-slice \
