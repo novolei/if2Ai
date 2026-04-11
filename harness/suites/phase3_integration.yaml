@@ -1,0 +1,91 @@
+# Harness Suite: Phase 3 Integration
+# 引用自: phase-3-ecosystem.yaml slice 3.4 acceptance
+# 用途: Phase 3 全生态端到端集成验证
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ 注意：本文件是骨架（skeleton）。
+#    执行 slice 3.4 时，executor 必须：
+#      1. 在 runtime/integration_phase3.rs 中实现测试函数
+#      2. 更新此 YAML 的 test_cases，将 test_fn 指向真实的测试函数路径
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "phase3_integration"
+name: "Phase 3 Integration — Ecosystem Validation"
+description: "验证 Phase 3 所有组件：HTTP API Server + LSP Bridge + TrajectoryCollector + RewardCalculator，多入口点一致性"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+depends_on:
+  - suite: "harness/suites/phase2_integration.yaml"
+    label: "Phase 2 集成验证"
+  - suite: "harness/suites/self_improvement_baseline.yaml"
+    label: "自我进化基线"
+
+test_cases:
+
+  - id: "p3i-001"
+    name: "HTTP API Server — POST /v1/chat 返回合法响应"
+    description: "使用 axum TestClient 发送 POST /v1/chat，MockAppState 处理后返回 ChatResponse，验证格式"
+    type: "integration"
+    # executor 实现后填写真实路径：
+    test_fn: "runtime::integration_phase3::test_http_api_server_chat_endpoint"
+    config:
+      provider: "mock"
+      auth_enabled: false          # 测试时不校验 Bearer token
+    input:
+      messages:
+        - role: "user"
+          content: "你好"
+    expect:
+      - "status == 200"
+      - "response.choices is not empty"
+      - "response.session_id is not empty"
+      - "response body is valid JSON"
+
+  - id: "p3i-002"
+    name: "HTTP API Server — 无 Bearer Token 时返回 401"
+    description: "启用 auth_enabled=true，发送不带 Authorization 头的请求，验证 401 响应"
+    type: "integration"
+    test_fn: "runtime::integration_phase3::test_http_api_server_requires_auth"
+    config:
+      auth_enabled: true
+      expected_api_key: "test-key-xyz"
+    input:
+      messages:
+        - role: "user"
+          content: "应该被拒绝"
+      headers: {}    # 不带 Authorization
+    expect:
+      - "status == 401"
+
+  - id: "p3i-003"
+    name: "LSP Bridge — agent/runTurn 请求端到端处理"
+    description: "通过 pipe 向 LspBridge 发送 JSON-RPC agent/runTurn 请求，验证 stdout 返回合法 JSON-RPC 响应"
+    type: "integration"
+    test_fn: "runtime::integration_phase3::test_lsp_bridge_handle_run_turn"
+    input:
+      jsonrpc_request:
+        jsonrpc: "2.0"
+        id: 1
+        method: "agent/runTurn"
+        params:
+          session_id: "test-session"
+          message: "你好"
+    expect:
+      - "stdout line is valid JSON"
+      - "response.id == 1"
+      - "response.result is not null"
+      - "response.error is null"
+
+  - id: "p3i-004"
+    name: "TrajectoryCollector + RewardCalculator 端到端流程"
+    description: "完整流程：收集 2 条轨迹 → 计算奖励分数 → 写入 JSONL 并附上 reward 字段"
+    type: "integration"
+    test_fn: "runtime::integration_phase3::test_trajectory_collector_writes_jsonl"
+    config:
+      output_dir: "<tmpdir>"
+      trajectory_count: 2
+    expect:
+      - "JSONL file exists in output_dir"
+      - "each trajectory has reward field != null"
+      - "reward is between 0.0 and 1.0"
+      - "file line count == 2"

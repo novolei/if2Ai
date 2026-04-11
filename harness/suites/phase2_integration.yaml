@@ -1,0 +1,87 @@
+# Harness Suite: Phase 2 Integration
+# 引用自: phase-2-advanced-features.yaml slice 2.6 acceptance
+# 用途: Phase 2 所有高级特性的集成验证门控
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ 注意：本文件是骨架（skeleton）。
+#    执行 slice 2.6 时，executor 必须：
+#      1. 在 src-tauri/src/modules/runtime/integration_phase2.rs 中实现测试函数
+#      2. 更新此 YAML 的 test_cases，将 test_fn 指向真实的测试函数路径
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "phase2_integration"
+name: "Phase 2 Integration — Advanced Features Validation"
+description: "验证 Phase 2 所有组件协同工作：PromptBuilder + ContextCompression + AgentError + MemoryManager + MessagingGateway"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+# 额外依赖的前置 suite（Phase 1 必须先通过）
+depends_on:
+  - suite: "harness/suites/phase1_integration.yaml"
+    label: "Phase 1 集成验证"
+
+test_cases:
+
+  - id: "p2i-001"
+    name: "PromptBuilder — AgentDefinition + ToolFormatStyle 组合构建"
+    description: "使用 AgentDefinition + 3 个工具定义 + PromptConfig 构建系统提示词，验证格式和内容"
+    type: "unit"
+    # executor 实现后填写真实路径：
+    test_fn: "runtime::integration_phase2::test_prompt_builder_with_agent_definition"
+    config:
+      provider: "mock"
+    expect:
+      - "prompt contains agent role definition"
+      - "prompt contains tool descriptions in ToolFormatStyle::OpenAI format"
+      - "build() returns Ok(String)"
+      - "result.len() > 100"
+
+  - id: "p2i-002"
+    name: "ContextCompression — 超阈值触发压缩，token 数减少"
+    description: "构造 200 条消息超过 token 窗口阈值，调用 CompressionPipeline，验证压缩后 token 减少"
+    type: "unit"
+    test_fn: "runtime::integration_phase2::test_context_compression_pipeline_reduces_tokens"
+    config:
+      window_size: 4096
+      compression_threshold: 0.5
+    expect:
+      - "should_compress() == true (before)"
+      - "compression_stats.messages_after < compression_stats.messages_before"
+      - "compression_stats.tokens_after < compression_stats.tokens_before"
+      - "should_compress() == false (after)"
+
+  - id: "p2i-003"
+    name: "AgentError 重试逻辑 — 失败 2 次后第 3 次成功"
+    description: "模拟 LLMError::RateLimited 失败 2 次，第 3 次返回成功；验证 RetryPolicy 正确执行指数退避"
+    type: "unit"
+    test_fn: "runtime::integration_phase2::test_agent_error_retry_then_succeed"
+    config:
+      max_retries: 3
+      fail_count: 2
+    expect:
+      - "result.is_ok()"
+      - "attempt_count == 3"
+      - "total_delay_ms >= 1000"    # 指数退避确保至少 1 次延迟
+
+  - id: "p2i-004"
+    name: "MemoryManager — 多 provider 注册和 inject_context 合并"
+    description: "注册 2 个 MockMemoryProvider，各自返回不同的 inject_context() 文本，验证 inject_all_contexts() 合并"
+    type: "unit"
+    test_fn: "runtime::integration_phase2::test_memory_manager_injects_context"
+    expect:
+      - "inject_all_contexts() contains provider1 context"
+      - "inject_all_contexts() contains provider2 context"
+      - "result.len() > 0"
+
+  - id: "p2i-005"
+    name: "MessagingGateway — MockAdapter 收发消息完整流程"
+    description: "通过 MockAdapter 发送一条 IncomingMessage，MockMessageHandler 返回 OutgoingMessage，验证全流程"
+    type: "unit"
+    test_fn: "runtime::integration_phase2::test_mock_adapter_handles_incoming_message"
+    input:
+      platform: "mock"
+      chat_id: "test-chat-001"
+      user_text: "你好，测试消息"
+    expect:
+      - "handler.handle() returns Ok(OutgoingMessage)"
+      - "outgoing.text is not empty"
+      - "mock_adapter.sent_messages().len() == 1"

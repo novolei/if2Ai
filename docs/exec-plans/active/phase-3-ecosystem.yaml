@@ -11,7 +11,7 @@ meta:
   owner: "@architects"
   depends_on_phase: 2
   design_docs:
-    - docs/design-docs/entry-points-design.md    # Phase 3 部分：API Server + IDE Bridge
+    - docs/design-docs/entry-points-design.md    # Phase 3: API Server + IDE Bridge
     - docs/design-docs/agent-self-improvement.md
     - docs/design-docs/testing-strategy.md
   human_checkpoints:
@@ -28,42 +28,162 @@ slices:
     design_ref: "docs/design-docs/entry-points-design.md"
     backlog_ref: "BL-303"
     impl_targets:
-      - src-tauri/src/commands/api_server.rs
-      - src-tauri/src/modules/runtime/http_server.rs
+      - src-tauri/Cargo.toml                              # MODIFY: 添加 axum 依赖
+      - src-tauri/src/modules/runtime/http_server.rs      # 必须新建
+      - src-tauri/src/commands/api_server.rs              # 必须新建
+
+    current_state: |
+      ⚠️ 关键缺失：axum 不在 src-tauri/Cargo.toml 中（当前只有 serde/tokio/reqwest/uuid/tauri）。
+         必须先添加 axum 才能实现 HTTP 服务器。
+      runtime/http_server.rs 不存在。
+      commands/api_server.rs 不存在。
+      ❌ MISSING — 三个文件均须从零新建或修改：
+        1. src-tauri/Cargo.toml: 添加 axum = { version = "0.7", features = ["macros"] }
+           和 tower-http = { version = "0.5", features = ["auth"] }
+        2. http_server.rs: HttpApiServer struct，tokio 任务中运行 axum Router
+        3. api_server.rs: Tauri command 用于从前端启动/停止 HTTP 服务器
+      注意：不能使用 unwrap()，端口冲突用 SocketAddr::from_str 并返回 Result。
+
+    must_implement:
+      - |
+        // entry-points-design.md §API Server — 修改 Cargo.toml
+        // 在 [dependencies] 下新增：
+        axum = { version = "0.7", features = ["macros"] }
+        tower-http = { version = "0.5", features = ["auth", "cors"] }
+      - |
+        // entry-points-design.md §API Server — 新建 http_server.rs
+        pub struct HttpApiServer {
+            port: u16,
+            api_key: Option<String>,          // 从 IF2AI_API_KEY 环境变量读取
+            app_state: Arc<AppState>,
+        }
+        impl HttpApiServer {
+            pub fn new(port: u16, state: Arc<AppState>) -> Self
+            pub async fn start(&self) -> Result<(), ServerError>
+            pub fn router(&self) -> axum::Router  // 挂载 /v1/chat 和 /v1/sessions
+        }
+        // 路由处理器（函数签名必须存在）：
+        async fn post_chat(State(state): State<Arc<AppState>>, Json(req): Json<ChatRequest>) -> impl IntoResponse
+        async fn get_sessions(State(state): State<Arc<AppState>>) -> impl IntoResponse
+        // 类型定义：
+        pub struct ChatRequest { pub messages: Vec<ChatMessage>, pub model: Option<String>, pub session_id: Option<String> }
+        pub struct ChatResponse { pub choices: Vec<Choice>, pub session_id: String }
+        #[derive(Debug)] pub enum ServerError { BindFailed(String), AlreadyRunning, KeyMissing }
+      - |
+        // entry-points-design.md §API Server — 新建 api_server.rs (Tauri Command)
+        #[tauri::command]
+        pub async fn start_api_server(port: u16, state: tauri::State<'_, AppState>) -> Result<String, String>
+        #[tauri::command]
+        pub async fn stop_api_server(state: tauri::State<'_, AppState>) -> Result<(), String>
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/Cargo.toml"
+        grep: "axum"
+        label: "axum 依赖已添加到 Cargo.toml"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/http_server.rs"
+        grep: "pub struct HttpApiServer"
+        label: "HttpApiServer struct — entry-points-design.md §API Server"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/http_server.rs"
+        grep: "post_chat"
+        label: "POST /v1/chat 处理函数存在"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/http_server.rs"
+        grep: "IF2AI_API_KEY"
+        label: "API Key 从环境变量读取，不硬编码"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::http_server"
         expect: "all tests pass"
     review_checklist:
-      - "HTTP server 基于 axum，端口可配置（默认 11434，避免与 Ollama 冲突）"
-      - "POST /v1/chat — 接收消息，返回 Agent 响应（OpenAI 兼容格式）"
-      - "GET /v1/sessions — 列出会话"
-      - "接口定义与 entry-points-design.md#api-server 一致"
-      - "请求鉴权通过 Bearer token（从环境变量 IF2AI_API_KEY 读取）"
-      - "server 在独立 tokio task 中运行，不阻塞 Tauri 主线程"
+      - "axum 和 tower-http 是否已添加到 Cargo.toml"
+      - "HttpApiServer 是否在独立 tokio 任务中运行（不阻塞 Tauri 主线程）"
+      - "POST /v1/chat 格式是否与 entry-points-design.md §消息格式 兼容"
+      - "Bearer token 鉴权是否从 IF2AI_API_KEY 环境变量读取（不硬编码）"
+      - "端口冲突是否返回 ServerError::BindFailed（不 panic）"
+      - "ChatRequest/ChatResponse 结构是否实现 Serialize/Deserialize"
+      - "有至少一个集成测试：发 POST /v1/chat 请求，断言响应格式"
+      - "无 unwrap()（测试除外）"
 
   - id: "3.2"
-    title: "IDE/LSP Bridge — stdio JSON-RPC 接入（VSCode / Cursor）"
+    title: "IDE/LSP Bridge — stdio JSON-RPC 服务端（VSCode / Cursor 插件接入）"
     status: pending
     design_ref: "docs/design-docs/entry-points-design.md"
     backlog_ref: "BL-302"
     impl_targets:
-      - src-tauri/src/modules/runtime/lsp_bridge.rs
-      - src-tauri/src/commands/lsp.rs
+      - src-tauri/src/modules/runtime/lsp_bridge.rs  # 必须新建（NOT lsp.rs）
+      - src-tauri/Cargo.toml                         # MODIFY: 添加 [[bin]] lsp-bridge 条目
+
+    current_state: |
+      ⚠️ 重要区分：runtime/lsp.rs EXISTS，但它是 LSP 客户端（从 VSCode 读取 diagnostics
+         注入提示词），与本 slice 完全不同。
+      runtime/lsp_bridge.rs 不存在。
+      src-tauri/Cargo.toml 没有 [[bin]] name = "lsp-bridge" 的 Binary Target。
+      ❌ MISSING — 必须新建 lsp_bridge.rs（不修改 lsp.rs），且在 Cargo.toml 添加 bin target：
+        1. lsp_bridge.rs：stdio JSON-RPC 2.0 服务端，读 stdin 写 stdout（行缓冲）
+        2. 处理：initialize、textDocument/didOpen、agent/runTurn 三个 method
+        3. Cargo.toml 添加 [[bin]] name = "lsp-bridge" main 入口
+      注意：lsp.rs（LSP 客户端，Phase 1）和 lsp_bridge.rs（stdio 服务端，Phase 3）共存，
+            不要修改 lsp.rs。
+
+    must_implement:
+      - |
+        // entry-points-design.md §IDE Bridge — 新建 lsp_bridge.rs
+        pub struct LspBridge { agent_state: Arc<AppState> }
+        impl LspBridge {
+            pub fn new(state: Arc<AppState>) -> Self
+            pub async fn run_stdio(&self) -> Result<(), BridgeError>  // 读 stdin 行，写 stdout 行
+            async fn dispatch(&self, req: JsonRpcRequest) -> JsonRpcResponse
+        }
+        // JSON-RPC 类型定义（必须存在）：
+        pub struct JsonRpcRequest { pub id: Value, pub method: String, pub params: Value }
+        pub struct JsonRpcResponse { pub id: Value, pub result: Option<Value>, pub error: Option<JsonRpcError> }
+        pub struct JsonRpcError { pub code: i32, pub message: String }
+        #[derive(Debug)] pub enum BridgeError { IoError(String), SerializationError(String) }
+        // 处理函数（dispatch 内部分发）：
+        async fn handle_initialize(&self, params: Value) -> Value
+        async fn handle_did_open(&self, params: Value) -> Value
+        async fn handle_run_turn(&self, params: Value) -> Result<Value, JsonRpcError>
+      - |
+        // src-tauri/Cargo.toml — 新增 Binary Target
+        [[bin]]
+        name = "lsp-bridge"
+        path = "src/bin/lsp_bridge_main.rs"
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/lsp_bridge.rs"
+        grep: "pub struct LspBridge"
+        label: "LspBridge struct — entry-points-design.md §IDE Bridge"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/lsp_bridge.rs"
+        grep: "run_stdio"
+        label: "run_stdio() — stdio 传输层"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/lsp_bridge.rs"
+        grep: "JsonRpcRequest"
+        label: "JSON-RPC 请求类型"
+      - type: symbol
+        file: "src-tauri/Cargo.toml"
+        grep: "lsp-bridge"
+        label: "[[bin]] lsp-bridge 已添加"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::lsp_bridge"
         expect: "all tests pass"
     review_checklist:
-      - "LSP Bridge 通过 stdin/stdout 传输 JSON-RPC 2.0 消息"
-      - "支持 initialize / textDocument/didOpen / agent/runTurn 三个请求"
-      - "实现与 entry-points-design.md#lsp-bridge 协议规范一致"
-      - "错误响应格式符合 JSON-RPC 2.0 规范"
-      - "bridge 以单独二进制模式运行（cargo run --bin lsp-bridge）"
+      - "lsp_bridge.rs 是否新建（不修改 lsp.rs 客户端）"
+      - "run_stdio() 是否读 stdin 行缓冲、写 stdout、每行一个 JSON-RPC 消息"
+      - "dispatch() 是否正确分发 initialize/textDocument::didOpen/agent::runTurn"
+      - "JSON-RPC 错误响应格式是否符合规范（code + message）"
+      - "handle_run_turn 是否调用 ConversationRuntime 执行实际对话"
+      - "[[bin]] lsp-bridge 是否正确配置在 Cargo.toml"
+      - "有至少一个单元测试：模拟 stdin 输入 agent/runTurn 请求，断言 stdout 输出"
+      - "无 unwrap()（测试除外）"
 
   # ───────────── Stage 2: Agent 自我进化 ───────────────────────────────────
 
@@ -73,23 +193,93 @@ slices:
     design_ref: "docs/design-docs/agent-self-improvement.md"
     backlog_ref: "BL-301"
     impl_targets:
-      - src-tauri/src/modules/runtime/trajectory.rs
-      - src-tauri/src/modules/runtime/reward.rs
+      - src-tauri/src/modules/runtime/trajectory.rs   # 必须新建
+      - src-tauri/src/modules/runtime/reward.rs       # 必须新建
+
+    current_state: |
+      runtime/trajectory.rs 不存在。
+      runtime/reward.rs 不存在。
+      ❌ MISSING — 两个文件均从零新建：
+        1. trajectory.rs：TrajectoryCollector（JSONL 写入 ~/.if2ai/trajectories/），
+           Trajectory struct（prompt/completion/tokens/logprobs/reward/bootstrap_value），
+           Observer 钩子模式——不修改 ConversationRuntime 核心代码
+        2. reward.rs：RewardFunction trait（可扩展），RewardCalculator（组合多个函数），
+           至少 3 个内置实现：TaskCompletionReward/SentimentReward/LengthPenalty
+      设计约束：不修改 ConversationRuntime 的核心循环；通过 trait object 注入。
+
+    must_implement:
+      - |
+        // agent-self-improvement.md §轨迹收集 — 新建 trajectory.rs
+        pub struct TrajectoryCollector {
+            output_dir: PathBuf,  // ~/.if2ai/trajectories/
+        }
+        impl TrajectoryCollector {
+            pub fn new(output_dir: PathBuf) -> Self
+            pub async fn record(&self, trajectory: &Trajectory) -> Result<(), TrajectoryError>
+            pub fn observer_hook(&self) -> Arc<dyn TrajectoryObserver>  // 返回 observer，注入 Runtime
+        }
+        pub struct Trajectory {
+            pub id: String,
+            pub prompt: String,
+            pub completion: String,
+            pub tokens_used: u32,
+            pub reward: Option<f32>,
+            pub bootstrap_value: Option<f32>,
+            pub timestamp: String,
+        }
+        pub trait TrajectoryObserver: Send + Sync {
+            async fn on_turn_complete(&self, trajectory: Trajectory);
+        }
+        #[derive(Debug)] pub enum TrajectoryError { IoError(String), SerializationError(String) }
+      - |
+        // agent-self-improvement.md §奖励计算 — 新建 reward.rs
+        pub trait RewardFunction: Send + Sync {
+            fn name(&self) -> &str;
+            fn compute(&self, trajectory: &Trajectory) -> f32;  // returns 0.0 ~ 1.0
+        }
+        pub struct RewardCalculator { functions: Vec<Box<dyn RewardFunction>>, weights: Vec<f32> }
+        impl RewardCalculator {
+            pub fn new() -> Self
+            pub fn register(mut self, func: Box<dyn RewardFunction>, weight: f32) -> Self
+            pub fn calculate(&self, trajectory: &Trajectory) -> f32  // weighted sum
+        }
+        // 内置奖励函数（至少实现 2 个）：
+        pub struct TaskCompletionReward;   // impl RewardFunction
+        pub struct LengthPenaltyReward { pub max_tokens: u32 }  // impl RewardFunction
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/trajectory.rs"
+        grep: "pub struct TrajectoryCollector"
+        label: "TrajectoryCollector — agent-self-improvement.md §轨迹收集"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/trajectory.rs"
+        grep: "pub struct Trajectory"
+        label: "Trajectory struct 定义"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/reward.rs"
+        grep: "pub trait RewardFunction"
+        label: "RewardFunction trait — agent-self-improvement.md §奖励计算"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/reward.rs"
+        grep: "pub struct RewardCalculator"
+        label: "RewardCalculator — 聚合多个奖励函数"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::trajectory runtime::reward"
         expect: "all tests pass"
       - type: harness
         suite: "harness/suites/self_improvement_baseline.yaml"
     review_checklist:
-      - "TrajectoryCollector 记录每次 Agent 执行的完整轨迹（消息序列 + 工具调用 + 结果）"
-      - "RewardCalculator 计算任务完成度分数（0.0 ~ 1.0）"
-      - "轨迹数据序列化为 JSONL 格式，写入 ~/.if2ai/trajectories/"
-      - "奖励函数可扩展（trait 设计，允许自定义奖励函数）"
-      - "与 harness TestCase 的 expected_output 集成，用于自动评分"
-      - "不修改现有 ConversationRuntime 核心逻辑，通过 observer 模式注入"
+      - "TrajectoryCollector 是否不修改 ConversationRuntime（observer 钩子）"
+      - "Trajectory 序列化为 JSONL，每行一条，写入 ~/.if2ai/trajectories/"
+      - "RewardFunction 是 trait（可扩展），不是 enum（不可扩展）"
+      - "RewardCalculator 是否支持加权组合多个奖励函数"
+      - "序列化失败是否映射到 TrajectoryError（不崩溃）"
+      - "至少实现 TaskCompletionReward 和 LengthPenaltyReward 两个内置函数"
+      - "有单元测试：收集 3 条轨迹 → 确认 JSONL 文件正确生成（使用 tmp 目录）"
+      - "无 unwrap()（测试除外）"
 
   # ───────────── Stage 3: Phase 3 集成验证 ─────────────────────────────────
 
@@ -98,22 +288,56 @@ slices:
     status: pending
     design_ref: "docs/design-docs/testing-strategy.md"
     impl_targets:
-      - harness/suites/phase3_integration.yaml
+      - harness/suites/phase3_integration.yaml         # MODIFY/创建（已有占位文件则完善）
+      - src-tauri/src/modules/runtime/integration_phase3.rs  # 必须新建
+
+    current_state: |
+      harness/suites/phase3_integration.yaml 不存在。
+      src-tauri/src/modules/runtime/integration_phase3.rs 不存在。
+      ❌ MISSING — 必须新建测试文件和 harness suite：
+        1. integration_phase3.rs：4 个端到端集成测试函数，覆盖 HTTP API + LSP Bridge +
+           TrajectoryCollector，使用 Mock 对象，不依赖真实 API key
+        2. phase3_integration.yaml：test_fn 路径指向 integration_phase3.rs 中的真实函数
+
+    must_implement:
+      - |
+        // testing-strategy.md §集成测试 — 新建 integration_phase3.rs
+        #[tokio::test]
+        async fn test_http_api_server_chat_endpoint() { ... }  // POST /v1/chat，mock AppState
+        #[tokio::test]
+        async fn test_lsp_bridge_handle_run_turn() { ... }     // pipe stdin JSON-RPC，断言 stdout
+        #[tokio::test]
+        async fn test_trajectory_collector_writes_jsonl() { ... }  // 3 条轨迹，断言文件内容
+        #[tokio::test]
+        async fn test_reward_calculator_weighted_sum() { ... } // 两个奖励函数加权，断言分数范围
+      - |
+        // phase3_integration.yaml: 创建并填写 4 个 test_cases，
+        // test_fn 路径为 runtime::integration_phase3::test_*
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/integration_phase3.rs"
+        grep: "test_http_api_server_chat_endpoint"
+        label: "HTTP API integration test"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/integration_phase3.rs"
+        grep: "test_lsp_bridge_handle_run_turn"
+        label: "LSP Bridge integration test"
       - type: test
         cmd: "cargo test -p if2ai-backend"
-        expect: "coverage >= 75%"
+        expect: "all tests pass"
       - type: harness
         suite: "harness/suites/phase3_integration.yaml"
     review_checklist:
-      - "所有 Phase 3 slice 的 acceptance 条件全部通过"
-      - "从 Tauri UI 发起对话 → 可通过 API Server 同步看到会话（多入口一致性）"
-      - "轨迹收集不影响 Agent 响应延迟（< 50ms overhead）"
-      - "harness phase3_integration suite 全绿"
-      - "docs/generated/QUALITY_SCORE.md 已更新到 Phase 3 COMPLETE 状态"
-      - "准备好接受人工 review（见 meta.human_checkpoints after_slice: 3.4）"
+      - "integration_phase3.rs 是否有 4 个集成测试，全部用 Mock 对象"
+      - "test_http_api_server_chat_endpoint 是否启动一个测试用的 axum app（不绑定真实端口）"
+      - "test_lsp_bridge_handle_run_turn 是否通过 Cursor/pipe 模拟 stdin 消息"
+      - "test_trajectory_collector_writes_jsonl 是否使用 tempdir，测试后自动清理"
+      - "phase3_integration.yaml test_fn 路径是否与实际函数名完全一致"
+      - "docs/generated/QUALITY_SCORE.md 已追加 Phase 3 完成记录"
+      - "无 TODO / unwrap() 在非测试代码中"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard
@@ -121,6 +345,6 @@ slices:
 dashboard:
   last_updated: "2026-04-11"
   completed_slices: []
-  current_slice: "3.1"         # 当 Phase 3 激活时，从这里开始
+  current_slice: "3.1"
   blocked: []
-  notes: "DRAFT — 等待 Phase 2 全部完成并人工 review 后，由人类将 phase_status 改为 active"
+  notes: "DRAFT — 等待 Phase 2 全部完成并人工 review 后，由人类将 phase_status 改为 active。共 4 slices (3.1-3.4)"

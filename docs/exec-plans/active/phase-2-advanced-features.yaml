@@ -15,6 +15,7 @@ meta:
     - docs/design-docs/prompt-builder.md
     - docs/design-docs/context-compression.md
     - docs/design-docs/error-handling.md
+    - docs/design-docs/llm-routing.md          # 新增：fallback/routing 集成
     - docs/design-docs/memory-system.md
     - docs/design-docs/messaging-gateway.md
     - docs/design-docs/testing-strategy.md
@@ -32,20 +33,82 @@ slices:
     design_ref: "docs/design-docs/prompt-builder.md"
     backlog_ref: "BL-201"
     impl_targets:
-      - src-tauri/src/modules/runtime/prompt.rs
+      - src-tauri/src/modules/runtime/prompt.rs   # MODIFY: 在现有 SystemPromptBuilder 基础上扩展
+
+    current_state: |
+      文件 prompt.rs EXISTS。已有：
+        SystemPromptBuilder（builder 模式，build() 返回 Vec<String>，render() 返回 String），
+        PromptBuildError enum，ProjectContext，ContextFile，load_system_prompt()。
+      ❌ MISSING — 以下类型在文件中不存在，必须新增：
+        1. PromptBuilder struct（design doc §系统架构）——与 SystemPromptBuilder 不同，
+           含 AgentDefinition、tool_definitions、PromptConfig 字段
+        2. PromptConfig struct（含 include_examples、tool_format: ToolFormatStyle、language 字段）
+        3. ToolFormatStyle enum（OpenAI / Claude / Custom 三个变体）
+        4. AgentDefinition struct（name/role/capabilities/tone/language_preferences 字段）
+        5. LanguagePrefs struct
+        6. PromptBuilder::build() 方法（返回 String，整合 AgentDefinition + tools + context）
+      注意：SystemPromptBuilder 保留，但 PromptBuilder 是 design_ref 要求的新类型。
+
+    must_implement:
+      - |
+        // prompt-builder.md §系统架构 — PromptBuilder（新增，不替换 SystemPromptBuilder）
+        pub struct PromptBuilder {
+            agent_definition: AgentDefinition,
+            tool_definitions: Vec<ToolDefinition>,
+            config: PromptConfig,
+        }
+        impl PromptBuilder {
+            pub fn new(agent: AgentDefinition, config: PromptConfig) -> Self
+            pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self
+            pub fn build(&self) -> Result<String, PromptBuildError>
+        }
+      - |
+        // prompt-builder.md §ToolFormatStyle
+        pub enum ToolFormatStyle { OpenAI, Claude, Custom(String) }
+      - |
+        // prompt-builder.md §AgentDefinition
+        pub struct AgentDefinition {
+            pub name: String,
+            pub role: String,
+            pub capabilities: Vec<String>,
+            pub tone: String,
+            pub language_preferences: LanguagePrefs,
+        }
+        pub struct LanguagePrefs { pub primary_language: String }
+      - |
+        // prompt-builder.md §PromptConfig
+        pub struct PromptConfig {
+            pub tool_format: ToolFormatStyle,
+            pub language: String,
+            pub max_context_tokens: Option<u32>,
+            pub include_examples: bool,
+        }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/prompt.rs"
+        grep: "pub struct PromptBuilder"
+        label: "PromptBuilder struct — prompt-builder.md §系统架构"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/prompt.rs"
+        grep: "ToolFormatStyle"
+        label: "ToolFormatStyle enum — prompt-builder.md"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/prompt.rs"
+        grep: "pub struct AgentDefinition"
+        label: "AgentDefinition struct — prompt-builder.md"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::prompt"
         expect: "all tests pass"
     review_checklist:
-      - "PromptBuilder struct 字段与 prompt-builder.md#core-structs 一致"
-      - "build() 方法返回完整的 system prompt 字符串"
-      - "支持 OpenAI 格式和 Claude 格式工具定义（由 ToolFormatStyle enum 控制）"
-      - "AgentDefinition 可配置 name / role / capabilities / tone"
-      - "语言切换（zh/en）通过 config 字段控制，不硬编码"
-      - "无 unwrap()，错误通过 PromptBuilderError 类型传播"
+      - "PromptBuilder struct 是否新增（不是对 SystemPromptBuilder 重命名）"
+      - "AgentDefinition / PromptConfig / ToolFormatStyle 三个类型是否实现"
+      - "PromptBuilder::build() 是否按 prompt-builder.md §提示词构建流程 的槽位顺序构建"
+      - "ToolFormatStyle::OpenAI 和 Claude 是否输出格式不同的 tool 定义"
+      - "language 字段控制回复语言（zh/en），build() 中有对应逻辑"
+      - "无 unwrap()（测试除外）"
 
   - id: "2.2"
     title: "ContextCompression — 长对话自适应压缩"
@@ -53,44 +116,175 @@ slices:
     design_ref: "docs/design-docs/context-compression.md"
     backlog_ref: "BL-202"
     impl_targets:
-      - src-tauri/src/modules/runtime/compression.rs
+      - src-tauri/src/modules/runtime/compression.rs   # 必须新建此文件
+
+    current_state: |
+      compact.rs EXISTS，已有：
+        CompactionConfig、CompactionResult、should_compact()（自由函数）、compact_session()。
+      ❌ MISSING — compression.rs 不存在，必须新建包含 design_ref 要求的类型：
+        1. ContextWindowManager struct（design doc §核心组件 1）——有 should_compress()、
+           available_tokens()、utilization_ratio()、compression_needed_tokens() 方法
+        2. estimate_tokens(text: &str) -> u32 函数
+        3. CompressionPipeline struct（§核心组件 2）——有 async compress() 方法
+        4. MessagePruner struct、ProtectionRange struct、ContextSummarizer struct
+        5. CompressionStats struct（记录压缩前后 token 数、压缩比等）
+      注意：compact.rs 中的 should_compact() 是自由函数，而 design_ref 要求是
+            ContextWindowManager 的方法。harness suite context_compression.yaml 中
+            测试函数路径是 runtime::compression::tests::...，因此必须新建 compression.rs。
+
+    must_implement:
+      - |
+        // context-compression.md §核心组件 1 — 必须新建 compression.rs
+        pub struct ContextWindowManager {
+            pub window_size: u32,
+            pub compression_threshold: f32,    // default 0.5
+            pub reserved_for_response: u32,
+            pub protected_head_size: u32,
+            pub protected_tail_size: u32,
+        }
+        impl ContextWindowManager {
+            pub fn available_tokens(&self) -> u32
+            pub fn utilization_ratio(&self, current_tokens: u32) -> f32
+            pub fn should_compress(&self, current_tokens: u32) -> bool
+            pub fn compression_needed_tokens(&self, current_tokens: u32) -> u32
+        }
+        pub fn estimate_tokens(text: &str) -> u32
+      - |
+        // context-compression.md §核心组件 2
+        pub struct CompressionPipeline {
+            window_manager: ContextWindowManager,
+        }
+        impl CompressionPipeline {
+            pub fn new(window_manager: ContextWindowManager) -> Self
+            pub async fn compress(
+                &self,
+                messages: &mut Vec<ConversationMessage>,
+                api_client: &dyn ApiClient,
+            ) -> Result<CompressionStats, RuntimeError>
+        }
+      - |
+        // 压缩统计
+        pub struct CompressionStats {
+            pub messages_before: usize,
+            pub messages_after: usize,
+            pub tokens_before: u32,
+            pub tokens_after: u32,
+        }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/compression.rs"
+        grep: "pub struct ContextWindowManager"
+        label: "ContextWindowManager — context-compression.md §核心组件 1"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/compression.rs"
+        grep: "pub struct CompressionPipeline"
+        label: "CompressionPipeline — context-compression.md §核心组件 2"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/compression.rs"
+        grep: "pub fn estimate_tokens"
+        label: "estimate_tokens() — context-compression.md"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::compression"
         expect: "all tests pass"
       - type: harness
         suite: "harness/suites/context_compression.yaml"
     review_checklist:
-      - "ContextWindowManager.should_compress() 在 tokens > threshold 时返回 true"
-      - "压缩流程：Prune → Protect Head/Tail → Summarize Middle，顺序正确"
-      - "protected_head_size / protected_tail_size 可通过配置修改"
-      - "摘要通过独立的 LLM 调用生成（非 inline 处理）"
-      - "压缩后对话历史长度严格 < 压缩前"
-      - "压缩事件写入 session 的 compression_events 字段"
+      - "compressionrs 是否新建（不是修改 compact.rs）"
+      - "ContextWindowManager::should_compress() 在 utilization > threshold 时返回 true"
+      - "CompressionPipeline::compress() 是否按顺序 Prune → Protect Head/Tail → Summarize Middle"
+      - "压缩后历史长度是否严格 < 压缩前"
+      - "CompressionStats 是否记录 before/after messages 和 token 数"
+      - "protected_head/tail 大小可通过 ContextWindowManager 字段配置"
+      - "无 unwrap()（测试除外）"
 
   - id: "2.3"
-    title: "ErrorHandling — 统一错误分类、重试与 Provider Fallback"
+    title: "AgentError 统一错误分类、指数退避重试与 Provider Fallback"
     status: pending
     design_ref: "docs/design-docs/error-handling.md"
     backlog_ref: "BL-203"
     impl_targets:
-      - src-tauri/src/modules/runtime/error.rs
-      - src-tauri/src/modules/api/fallback.rs
+      - src-tauri/src/modules/runtime/error.rs    # 必须新建
+      - src-tauri/src/modules/api/fallback.rs     # 必须新建
+
+    current_state: |
+      error.rs 在 src-tauri/src/modules/runtime/ 下不存在（无此文件）。
+      fallback.rs 在 src-tauri/src/modules/api/ 下不存在。
+      已有 RuntimeError（在 conversation.rs 中，简单 struct），不符合 design_ref 的 enum 结构。
+      ❌ MISSING — 两个文件均从零新建：
+        1. error.rs：AgentError enum（含 LLMError/ToolError/ContextError/SystemError 四大类），
+           LLMErrorType enum，ToolErrorType enum，ContextErrorType enum，SystemErrorType enum
+        2. error.rs：RetryPolicy struct + with_exponential_backoff() + is_retriable() 方法
+        3. error.rs：ErrorHandler struct + handle()（按错误类型分发到不同策略）
+        4. fallback.rs：FallbackChain struct（有序备用 provider 列表），
+           FallbackChain::next_provider()，FallbackChain::try_with_fallback() 异步方法
+
+    must_implement:
+      - |
+        // error-handling.md §错误类型定义 — 新建 error.rs
+        #[derive(Debug, Clone)]
+        pub enum AgentError {
+            LLMError { provider: String, model: String, error_type: LLMErrorType, message: String, retriable: bool },
+            ToolError { tool_name: String, error_type: ToolErrorType, message: String, retriable: bool },
+            ContextError { error_type: ContextErrorType, message: String },
+            SystemError { error_type: SystemErrorType, message: String },
+        }
+        impl AgentError {
+            pub fn is_retriable(&self) -> bool
+            pub fn is_transferable(&self) -> bool   // 需要 provider fallback
+            pub fn is_fatal(&self) -> bool
+        }
+      - |
+        // error-handling.md §恢复策略
+        pub struct RetryPolicy { pub max_retries: u32, pub initial_delay_ms: u64, pub backoff_factor: f32 }
+        impl RetryPolicy {
+            pub fn default_exponential() -> Self  // 最多 3 次，初始 1s，factor 2.0
+            pub async fn execute<F, T, E>(&self, operation: F) -> Result<T, AgentError>
+            where F: Fn() -> impl Future<Output = Result<T, E>>
+        }
+      - |
+        // error-handling.md §故障转移 — 新建 fallback.rs
+        pub struct FallbackChain { providers: Vec<String> }
+        impl FallbackChain {
+            pub fn new(providers: Vec<String>) -> Self
+            pub fn next_provider(&self, current: &str) -> Option<&str>
+            pub async fn try_with_fallback<F, T>(
+                &self,
+                current_provider: &str,
+                operation: F,
+            ) -> Result<T, AgentError>
+            where F: Fn(&str) -> impl Future<Output = Result<T, AgentError>>
+        }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/error.rs"
+        grep: "pub enum AgentError"
+        label: "AgentError enum — error-handling.md §错误类型定义"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/error.rs"
+        grep: "is_retriable"
+        label: "is_retriable() — error-handling.md §分类判断"
+      - type: symbol
+        file: "src-tauri/src/modules/api/fallback.rs"
+        grep: "pub struct FallbackChain"
+        label: "FallbackChain — error-handling.md §故障转移"
       - type: test
         cmd: "cargo test -p if2ai-backend -- runtime::error api::fallback"
         expect: "all tests pass"
     review_checklist:
-      - "AgentError enum 涵盖 error-handling.md 中三类（Recoverable/Transferable/Fatal）"
-      - "可恢复错误使用指数退避重试，最多 3 次"
-      - "可转移错误触发 ProviderManager 的 next_provider() 切换"
-      - "致命错误立即停止循环并向上层传播"
+      - "AgentError 是否包含 LLMError/ToolError/ContextError/SystemError 四个变体"
+      - "is_retriable() 是否正确区分可恢复错误（RateLimit/Timeout）vs 致命错误"
+      - "is_transferable() 是否正确标记需要 provider 切换的错误（InvalidAPIKey/ProviderDown）"
+      - "RetryPolicy::execute() 是否实现指数退避（最多 3 次，初始延迟可配置）"
+      - "FallbackChain::try_with_fallback() 是否在当前 provider 失败后自动尝试下一个"
       - "所有错误类型实现 std::error::Error trait"
-      - "重试逻辑有对应的单元测试（模拟 3 次失败后成功）"
+      - "重试逻辑有单元测试：模拟 3 次失败后成功的场景"
+      - "无 unwrap()（测试除外）"
 
   # ───────────── Stage 2: 记忆系统 ──────────────────────────────────────────
 
@@ -100,22 +294,80 @@ slices:
     design_ref: "docs/design-docs/memory-system.md"
     backlog_ref: "BL-204"
     impl_targets:
-      - src-tauri/src/modules/memory/builtin.rs
-      - src-tauri/src/modules/memory/manager.rs
-      - src-tauri/src/modules/memory/mod.rs
+      - src-tauri/src/modules/memory/mod.rs     # 必须新建整个 memory 模块
+      - src-tauri/src/modules/memory/provider.rs # MemoryProvider trait
+      - src-tauri/src/modules/memory/builtin.rs  # BuiltInMemory 实现
+      - src-tauri/src/modules/memory/manager.rs  # MemoryManager
+
+    current_state: |
+      src-tauri/src/modules/ 下不存在 memory/ 目录（整个模块从零新建）。
+      ❌ MISSING — 全部从零新建：
+        1. provider.rs: MemoryProvider trait（store/recall/inject_context 方法）
+        2. builtin.rs: BuiltInMemory 读写 ~/.if2ai/MEMORY.md 和 USER.md
+        3. manager.rs: MemoryManager 持有 Vec<Box<dyn MemoryProvider>>，协调多个 provider
+        4. mod.rs: pub use 导出
+        5. src-tauri/src/modules/mod.rs 里也必须 pub mod memory; 对外导出
+      Honcho 集成暂时跳过，作为 feature flag: honcho 预留接口。
+
+    must_implement:
+      - |
+        // memory-system.md §外部记忆提供商 — provider.rs
+        pub trait MemoryProvider: Send + Sync {
+            async fn initialize(&mut self) -> Result<(), MemoryError>;
+            async fn store_memory(&self, memory: MemoryEntry) -> Result<String, MemoryError>;
+            async fn recall_memories(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>, MemoryError>;
+            fn inject_context(&self) -> String;  // 将记忆注入 system prompt 的文本
+            fn provider_name(&self) -> &str;
+        }
+        pub struct MemoryEntry { pub content: String, pub tags: Vec<String>, pub created_at: String }
+        #[derive(Debug)] pub enum MemoryError { Io(String), ParseError(String), NotAvailable(String) }
+      - |
+        // memory-system.md §内置记忆 — builtin.rs
+        pub struct BuiltInMemory { memory_file: PathBuf, user_file: PathBuf }
+        impl BuiltInMemory {
+            pub fn new(base_dir: PathBuf) -> Self
+            pub fn load(&mut self) -> Result<(), MemoryError>    // 读 MEMORY.md + USER.md
+        }
+        impl MemoryProvider for BuiltInMemory { ... }
+      - |
+        // memory-system.md §MemoryManager — manager.rs
+        pub struct MemoryManager { providers: Vec<Box<dyn MemoryProvider>> }
+        impl MemoryManager {
+            pub fn new() -> Self
+            pub fn register(&mut self, provider: Box<dyn MemoryProvider>)
+            pub async fn inject_all_contexts(&self) -> String  // 合并所有 provider 的 inject_context()
+            pub async fn store_to_all(&self, memory: MemoryEntry) -> Vec<Result<String, MemoryError>>
+        }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/memory/provider.rs"
+        grep: "pub trait MemoryProvider"
+        label: "MemoryProvider trait — memory-system.md"
+      - type: symbol
+        file: "src-tauri/src/modules/memory/builtin.rs"
+        grep: "pub struct BuiltInMemory"
+        label: "BuiltInMemory — memory-system.md §内置记忆"
+      - type: symbol
+        file: "src-tauri/src/modules/memory/manager.rs"
+        grep: "pub struct MemoryManager"
+        label: "MemoryManager — memory-system.md"
       - type: test
         cmd: "cargo test -p if2ai-backend -- memory"
         expect: "all tests pass"
     review_checklist:
-      - "MemoryProvider trait 定义 store() / retrieve() / inject_context() 三个方法"
-      - "BuiltInMemory 从 ~/.if2ai/MEMORY.md 和 USER.md 读取（文件不存在时创建空文件）"
-      - "inject_context() 将记忆作为 system prompt 的一部分注入消息历史"
-      - "MemoryManager 支持注册多个 provider（provider 列表）"
-      - "Honcho 集成作为可选 feature（feature flag: honcho），默认不启用"
-      - "记忆读写操作有对应错误处理（IO 错误不崩溃）"
+      - "memory/ 目录是否从零新建，包含 mod.rs/provider.rs/builtin.rs/manager.rs"
+      - "modules/mod.rs 是否有 pub mod memory;"
+      - "BuiltInMemory::load() 是否在文件不存在时创建空文件（不 panic）"
+      - "inject_context() 返回可嵌入 system prompt 的文本格式"
+      - "MemoryManager::register() 是否支持注册多个 provider"
+      - "记忆读写失败映射到 MemoryError，不崩溃"
+      - "Honcho 集成接口（HonchoProvider 骨架）通过 feature flag: honcho 预留"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 3: 消息网关 ──────────────────────────────────────────
 
   - id: "2.5"
     title: "MessagingGateway — Base Trait + Telegram 适配器"
@@ -123,24 +375,81 @@ slices:
     design_ref: "docs/design-docs/messaging-gateway.md"
     backlog_ref: "BL-205 (part 1/2)"
     impl_targets:
-      - src-tauri/src/modules/plugins/gateway/adapter.rs   # MessagingAdapter trait
-      - src-tauri/src/modules/plugins/gateway/handler.rs   # MessageHandler trait + Session 绑定
-      - src-tauri/src/modules/plugins/gateway/telegram.rs  # TelegramAdapter (polling)
-      - src-tauri/src/modules/plugins/gateway/mod.rs
+      - src-tauri/src/modules/plugins/gateway/adapter.rs   # 必须新建
+      - src-tauri/src/modules/plugins/gateway/handler.rs   # 必须新建
+      - src-tauri/src/modules/plugins/gateway/telegram.rs  # 必须新建
+      - src-tauri/src/modules/plugins/gateway/mod.rs       # MODIFY：re-export
+
+    current_state: |
+      plugins/gateway/ 目录 EXISTS，但内容是：hooks.rs、lib.rs、mod.rs（与消息网关无关）。
+      ❌ MISSING — 以下 3 个文件完全不存在，必须新建：
+        1. adapter.rs：MessagingAdapter trait（start/send_message/send_typing/platform_name）
+        2. handler.rs：IncomingMessage struct、OutgoingMessage struct、MessageHandler trait，
+           GatewaySession struct（per-chat 会话状态绑定）
+        3. telegram.rs：TelegramAdapter 实现 MessagingAdapter，long-polling，
+           TELEGRAM_BOT_TOKEN 环境变量，每个 chat_id 独立 Session
+        4. MockAdapter：实现完整 MessagingAdapter trait，用于单元测试（无需真实 token）
+      注意：teloxide crate 需要加入 Cargo.toml（feature: gateway-telegram）。
+
+    must_implement:
+      - |
+        // messaging-gateway.md §API 设计 — adapter.rs
+        pub trait MessagingAdapter: Send + Sync {
+            async fn start(&mut self) -> Result<(), GatewayError>;
+            async fn send_message(&self, chat_id: &str, msg: OutgoingMessage) -> Result<(), GatewayError>;
+            async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError>;
+            fn platform_name(&self) -> &str;
+        }
+        #[derive(Debug)] pub enum GatewayError { AuthFailed(String), SendFailed(String), Disconnected }
+      - |
+        // messaging-gateway.md §消息流处理 — handler.rs
+        pub struct IncomingMessage {
+            pub platform: String, pub chat_id: String, pub user_id: String,
+            pub text: String, pub timestamp: String,
+        }
+        pub struct OutgoingMessage { pub text: String, pub reply_to: Option<String> }
+        pub trait MessageHandler: Send + Sync {
+            async fn handle(&self, msg: IncomingMessage) -> Result<OutgoingMessage, GatewayError>;
+        }
+        pub struct GatewaySession { pub chat_id: String, pub agent_session_id: String, pub platform: String }
+      - |
+        // messaging-gateway.md §Telegram — telegram.rs
+        pub struct TelegramAdapter { bot_token: String, message_handler: Arc<dyn MessageHandler> }
+        impl TelegramAdapter {
+            pub fn from_env(handler: Arc<dyn MessageHandler>) -> Result<Self, GatewayError>
+        }
+        impl MessagingAdapter for TelegramAdapter { ... }
+      - |
+        // 测试用 — adapter.rs 或 telegram.rs
+        pub struct MockAdapter { sent_messages: Arc<Mutex<Vec<OutgoingMessage>>> }
+        impl MessagingAdapter for MockAdapter { ... }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/plugins/gateway/adapter.rs"
+        grep: "pub trait MessagingAdapter"
+        label: "MessagingAdapter trait — messaging-gateway.md"
+      - type: symbol
+        file: "src-tauri/src/modules/plugins/gateway/handler.rs"
+        grep: "pub struct IncomingMessage"
+        label: "IncomingMessage — messaging-gateway.md §消息流处理"
+      - type: symbol
+        file: "src-tauri/src/modules/plugins/gateway/telegram.rs"
+        grep: "pub struct TelegramAdapter"
+        label: "TelegramAdapter — messaging-gateway.md §Telegram"
       - type: test
         cmd: "cargo test -p if2ai-backend -- plugins::gateway"
         expect: "all tests pass"
     review_checklist:
-      - "MessagingAdapter trait 定义 start() / send_message() / send_typing() / platform_name() 四个方法"
-      - "MessageHandler trait 定义 handle() 方法，接收标准化 IncomingMessage，返回 OutgoingMessage"
-      - "TelegramAdapter 使用 TELEGRAM_BOT_TOKEN 环境变量，不硬编码"
-      - "每个 chat_id 对应独立 Session（通过 SessionManager 创建和查找）"
-      - "消息处理在独立 tokio task 中运行，不阻塞 polling 主循环"
-      - "Telegram feature 通过 feature flag: gateway-telegram 控制编译"
-      - "MockAdapter 实现完整 MessagingAdapter trait，用于单元测试"
+      - "MessagingAdapter trait 是否有 start/send_message/send_typing/platform_name 四个方法"
+      - "TelegramAdapter::from_env() 是否从 TELEGRAM_BOT_TOKEN 读取，不硬编码"
+      - "每个 chat_id 是否对应独立 GatewaySession（通过 SessionManager 创建）"
+      - "消息处理是否在独立 tokio::spawn 中，不阻塞 polling 主循环"
+      - "MockAdapter 是否实现完整 MessagingAdapter，支持记录发送的消息用于断言"
+      - "teloxide crate 是否通过 feature flag: gateway-telegram 控制编译"
+      - "无 unwrap()（测试除外）"
 
   - id: "2.5b"
     title: "MessagingGateway — Discord 适配器（WebSocket）"
@@ -148,45 +457,105 @@ slices:
     design_ref: "docs/design-docs/messaging-gateway.md"
     backlog_ref: "BL-205 (part 2/2)"
     impl_targets:
-      - src-tauri/src/modules/plugins/gateway/discord.rs   # DiscordAdapter (WebSocket)
+      - src-tauri/src/modules/plugins/gateway/discord.rs   # 必须新建
+
+    current_state: |
+      discord.rs 不存在。依赖 slice 2.5 预先完成（MessagingAdapter trait 和 handler.rs）。
+      ❌ MISSING — DiscordAdapter 完全不存在，必须新建：
+        1. DiscordAdapter 实现 MessagingAdapter trait（WebSocket，serenity crate）
+        2. DISCORD_BOT_TOKEN 环境变量，不硬编码
+        3. WebSocket 断连自动重连（指数退避，最多 5 次）
+        4. MockDiscordAdapter（用于测试，无需真实 token）
+      注意：serenity crate 需要加入 Cargo.toml（feature: gateway-discord）。
+
+    must_implement:
+      - |
+        // messaging-gateway.md §Discord — discord.rs（新建）
+        pub struct DiscordAdapter { bot_token: String, message_handler: Arc<dyn MessageHandler> }
+        impl DiscordAdapter {
+            pub fn from_env(handler: Arc<dyn MessageHandler>) -> Result<Self, GatewayError>
+            pub fn with_reconnect_policy(mut self, max_retries: u32, initial_delay_ms: u64) -> Self
+        }
+        impl MessagingAdapter for DiscordAdapter { ... }
+      - |
+        pub struct MockDiscordAdapter { pub received: Arc<Mutex<Vec<IncomingMessage>>> }
+        impl MessagingAdapter for MockDiscordAdapter { ... }
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/plugins/gateway/discord.rs"
+        grep: "pub struct DiscordAdapter"
+        label: "DiscordAdapter — messaging-gateway.md §Discord"
+      - type: symbol
+        file: "src-tauri/src/modules/plugins/gateway/discord.rs"
+        grep: "MessagingAdapter for DiscordAdapter"
+        label: "impl MessagingAdapter for DiscordAdapter"
       - type: test
         cmd: "cargo test -p if2ai-backend -- plugins::gateway::discord"
         expect: "all tests pass"
     review_checklist:
-      - "DiscordAdapter 实现 MessagingAdapter trait，接口与 TelegramAdapter 完全一致"
-      - "DiscordAdapter 使用 DISCORD_BOT_TOKEN 环境变量，不硬编码"
-      - "WebSocket 连接断开时自动重连（指数退避，最多 5 次）"
-      - "Discord feature 通过 feature flag: gateway-discord 控制编译"
-      - "可与 TelegramAdapter 同时运行（并行 tokio tasks）"
-      - "MockDiscordAdapter 用于单元测试，无需真实 bot token"
+      - "DiscordAdapter 接口与 TelegramAdapter 完全对称（同样实现 MessagingAdapter）"
+      - "DISCORD_BOT_TOKEN 从环境变量读取，不硬编码"
+      - "WebSocket 断连重连逻辑有对应单元测试（mock 断连 3 次后成功）"
+      - "serenity crate 通过 feature flag: gateway-discord 控制编译"
+      - "MockDiscordAdapter 用于单元测试，不需要真实 bot token"
 
-  # ───────────── Stage 3: Phase 2 集成验证 ─────────────────────────────────
+  # ───────────── Stage 4: Phase 2 集成验证 ─────────────────────────────────
 
   - id: "2.6"
     title: "Phase 2 集成测试 + 全 harness suites 完整通过"
     status: pending
     design_ref: "docs/design-docs/testing-strategy.md"
     impl_targets:
-      - harness/suites/phase2_integration.yaml
+      - harness/suites/phase2_integration.yaml    # MODIFY：补全 test_cases（现已占位）
+      - src-tauri/src/modules/runtime/integration_phase2.rs  # 必须新建
+
+    current_state: |
+      harness/suites/phase2_integration.yaml EXISTS（骨架，test_cases 未实现）。
+      src-tauri/src/modules/runtime/integration_phase2.rs 不存在。
+      ❌ MISSING：
+        1. integration_phase2.rs：端到端集成测试覆盖所有 phase 2 模块
+           （PromptBuilder + CompressionPipeline + AgentError + MemoryManager + MockAdapter）
+        2. phase2_integration.yaml：test_fn 路径指向真实存在的测试函数
+      注意：integration_phase2.rs 必须使用 MockProvider + MockAdapter，不依赖真实 API。
+
+    must_implement:
+      - |
+        // testing-strategy.md §集成测试 — integration_phase2.rs（新建）
+        #[tokio::test]
+        async fn test_prompt_builder_with_agent_definition() { ... }
+        #[tokio::test]
+        async fn test_context_compression_pipeline_reduces_tokens() { ... }
+        #[tokio::test]
+        async fn test_agent_error_retry_then_succeed() { ... }
+        #[tokio::test]
+        async fn test_memory_manager_injects_context() { ... }
+        #[tokio::test]
+        async fn test_mock_adapter_handles_incoming_message() { ... }
+      - |
+        // phase2_integration.yaml: 更新 test_fn 路径指向以上 5 个测试函数
+
     acceptance:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/integration_phase2.rs"
+        grep: "test_prompt_builder_with_agent_definition"
+        label: "PromptBuilder integration test"
       - type: test
         cmd: "cargo test -p if2ai-backend"
-        expect: "coverage >= 70%"
+        expect: "all tests pass"
       - type: harness
         suite: "harness/suites/phase2_integration.yaml"
     review_checklist:
-      - "所有 Phase 2 slice 的 acceptance 条件全部通过（含 2.5 Telegram 和 2.5b Discord）"
-      - "PromptBuilder + ContextCompression + ErrorHandling 协同工作（集成测试证明）"
-      - "MemorySystem 在对话中正确注入上下文"
-      - "Telegram 和 Discord 两个 adapter 能同时注册到 GatewayManager，互不干扰"
-      - "harness phase2_integration suite 全绿"
-      - "docs/generated/QUALITY_SCORE.md 已更新到 Phase 2 状态"
-      - "准备好接受人工 review（见 meta.human_checkpoints after_slice: 2.6）"
+      - "integration_phase2.rs 是否有覆盖 5 个 Phase 2 核心模块的集成测试"
+      - "所有测试使用 Mock 对象，不依赖真实 API key"
+      - "phase2_integration.yaml test_fn 路径是否与实际测试函数名完全一致"
+      - "harness runner 能找到并执行所有 test_cases"
+      - "docs/generated/QUALITY_SCORE.md 已追加 Phase 2 完成记录"
+      - "无 TODO / unwrap() 在非测试代码中"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard
@@ -194,6 +563,7 @@ slices:
 dashboard:
   last_updated: "2026-04-11"
   completed_slices: []
-  current_slice: "2.1"         # 当 Phase 2 激活时，从这里开始
+  current_slice: "2.1"
   blocked: []
-  notes: "DRAFT — 等待 Phase 1 全部完成并人工 review 后，由人类将 phase_status 改为 active。共 7 slices（含 2.5b Discord）"
+  notes: "DRAFT — 等待 Phase 1 全部完成并人工 review 后，由人类将 phase_status 改为 active。共 7 slices（2.1-2.6 含 2.5b）"
+

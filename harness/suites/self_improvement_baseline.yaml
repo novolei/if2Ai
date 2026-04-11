@@ -1,0 +1,58 @@
+# Harness Suite: Self-Improvement Baseline
+# 引用自: phase-3-ecosystem.yaml slice 3.3 acceptance
+# 用途: Agent 自我进化基线测试（轨迹收集 + 奖励计算）
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ 注意：本文件是骨架（skeleton）。
+#    执行 slice 3.3 时，executor 必须：
+#      1. 在 runtime/trajectory.rs 和 runtime/reward.rs 中实现代码
+#      2. 更新此 YAML 的 test_cases，将 test_fn 指向真实的测试函数路径
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "self_improvement_baseline"
+name: "Self-Improvement Baseline — Trajectory + Reward Validation"
+description: "验证轨迹收集和奖励计算系统的基线功能：JSONL 写入、奖励计算、观察者钩子不侵入核心"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+depends_on:
+  - suite: "harness/suites/phase2_integration.yaml"
+    label: "Phase 2 集成验证"
+
+test_cases:
+
+  - id: "sib-001"
+    name: "TrajectoryCollector — 写入 3 条轨迹，验证 JSONL 格式"
+    description: "创建 TrajectoryCollector 指向 tmpdir，写入 3 条不同的 Trajectory，验证 JSONL 文件内容"
+    type: "unit"
+    # executor 实现后填写真实路径：
+    test_fn: "runtime::trajectory::tests::test_trajectory_collector_writes_jsonl"
+    config:
+      output_dir: "<tmpdir>"
+      trajectory_count: 3
+    expect:
+      - "output_dir contains a .jsonl file"
+      - "line_count == 3"
+      - "each line is valid JSON"
+      - "each line contains 'id', 'prompt', 'completion', 'tokens_used' fields"
+
+  - id: "sib-002"
+    name: "RewardCalculator — 两个奖励函数加权计算"
+    description: "注册 TaskCompletionReward (weight=0.7) 和 LengthPenaltyReward (weight=0.3)，验证 calculate() 返回加权分数"
+    type: "unit"
+    test_fn: "runtime::reward::tests::test_reward_calculator_weighted_sum"
+    config:
+      task_completion_weight: 0.7
+      length_penalty_weight: 0.3
+    expect:
+      - "result is between 0.0 and 1.0"
+      - "heavier weight influences result more"
+
+  - id: "sib-003"
+    name: "TrajectoryObserver — 不修改 ConversationRuntime 核心"
+    description: "验证 TrajectoryCollector::observer_hook() 返回的 Arc<dyn TrajectoryObserver> 可以被注入，且调用 on_turn_complete() 后收集到轨迹"
+    type: "unit"
+    test_fn: "runtime::trajectory::tests::test_observer_hook_collects_trajectory"
+    expect:
+      - "observer.on_turn_complete() completes without error"
+      - "trajectory is written to file"
+      - "ConversationRuntime source code does NOT contain direct TrajectoryCollector import"
