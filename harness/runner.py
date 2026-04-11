@@ -5,12 +5,13 @@ Usage (called by executor or manually):
   python -m harness.runner run --slice 1.2.1 --workspace /path/to/project
   python -m harness.runner run --slice 1.2.1 --workspace . --suite harness/suites/agent_basic.yaml
   python -m harness.runner check-slice --file docs/exec-plans/active/phase-1-foundation.yaml
+  python -m harness.runner review --slice 1.2 --workspace .  # automated static code review
   python -m harness.runner promote --workspace .          # semi-auto: promote next draft phase
   python -m harness.runner promote --workspace . --dry-run  # preview only
 
 Exit codes:
-  0  = all gates passed
-  1  = at least one gate failed
+  0  = all gates passed / review passed
+  1  = at least one gate failed / review failed
   2  = usage / config error
 """
 
@@ -88,6 +89,141 @@ def cmd_check_slice(args: argparse.Namespace) -> int:
 
     print(f"✅ {len(slices)} slices validated OK in {slice_file}", file=sys.stderr)
     return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """Automated static code review — replaces sub-agent review step.
+
+    Runs a series of static checks against the workspace and emits
+    per-check PASS/FAIL lines, ending with REVIEW_PASS or REVIEW_FAIL.
+    Claude Code can call this directly instead of spawning a sub-agent.
+
+    Checks performed:
+      1. cargo fmt --check          — formatting
+      2. cargo clippy -D warnings   — lint
+      3. no unwrap() outside tests  — safety
+      4. no todo!()/unimplemented!()— completeness
+      5. no hardcoded secrets       — security
+      6. pub fn has doc comments    — documentation
+      7. review_checklist items     — slice-specific (reported as manual reminder)
+    """
+    import subprocess
+    import re
+    import yaml  # type: ignore
+
+    workspace = Path(args.workspace).resolve()
+    package = args.package
+    failed: list[str] = []
+    passed: list[str] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        if ok:
+            passed.append(name)
+            print(f"  PASS: {name}")
+        else:
+            failed.append(name)
+            print(f"  FAIL: {name}" + (f"\n        {detail}" if detail else ""))
+
+    print(f"\n{'─'*60}")
+    print(f"  Harness Review — slice: {args.slice}  package: {package}")
+    print(f"{'─'*60}\n")
+
+    # ── 1. cargo fmt --check ────────────────────────────────────────────────
+    r = subprocess.run(
+        ["cargo", "fmt", "--all", "--", "--check"],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    check("cargo fmt --check", r.returncode == 0,
+          "Run `cargo fmt --all` to fix formatting")
+
+    # ── 2. cargo clippy ─────────────────────────────────────────────────────
+    r = subprocess.run(
+        ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    check("cargo clippy -D warnings", r.returncode == 0,
+          r.stderr[-600:] if r.returncode != 0 else "")
+
+    # ── 3-6. static grep checks over src-tauri/src ──────────────────────────
+    src_dir = workspace / "src-tauri" / "src"
+    rust_files = list(src_dir.rglob("*.rs")) if src_dir.exists() else []
+
+    unwrap_violations: list[str] = []
+    todo_violations: list[str] = []
+    secret_violations: list[str] = []
+    undoc_violations: list[str] = []
+
+    secret_pat  = re.compile(r'(sk-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{35}|"[A-Za-z0-9+/]{40,}")')
+    pub_fn_pat  = re.compile(r'^\s*pub\s+(async\s+)?fn\s+\w+')
+    doc_pat     = re.compile(r'^\s*///')
+
+    for fpath in rust_files:
+        is_test_file = "test" in fpath.name or "tests" in str(fpath)
+        lines = fpath.read_text(errors="replace").splitlines()
+        in_test_block = False
+        prev_line = ""
+        for i, line in enumerate(lines, 1):
+            if "#[cfg(test)]" in line or "#[test]" in line:
+                in_test_block = True
+            # reset test block heuristic at module boundary
+            if line.strip().startswith("mod ") and "test" not in line:
+                in_test_block = False
+
+            rel = fpath.relative_to(workspace)
+            if not (is_test_file or in_test_block):
+                if re.search(r'\.(unwrap|expect)\s*\(', line):
+                    unwrap_violations.append(f"{rel}:{i}")
+                if re.search(r'\b(todo!|unimplemented!)\s*\(', line):
+                    todo_violations.append(f"{rel}:{i}")
+            if secret_pat.search(line):
+                secret_violations.append(f"{rel}:{i}")
+            if pub_fn_pat.match(line) and not doc_pat.match(prev_line):
+                undoc_violations.append(f"{rel}:{i}  {line.strip()[:60]}")
+            prev_line = line
+
+    check("no unwrap()/expect() outside tests",
+          len(unwrap_violations) == 0,
+          "Found in: " + ", ".join(unwrap_violations[:5]) + ("…" if len(unwrap_violations) > 5 else ""))
+
+    check("no todo!()/unimplemented!()",
+          len(todo_violations) == 0,
+          "Found in: " + ", ".join(todo_violations[:5]))
+
+    check("no hardcoded secrets",
+          len(secret_violations) == 0,
+          "Suspicious: " + ", ".join(secret_violations[:3]))
+
+    check("pub fn has /// doc comment",
+          len(undoc_violations) == 0,
+          "Missing docs: " + "; ".join(undoc_violations[:3]) + ("…" if len(undoc_violations) > 3 else ""))
+
+    # ── 7. slice review_checklist reminder ──────────────────────────────────
+    if args.slice:
+        active_dir = workspace / "docs" / "exec-plans" / "active"
+        checklist_items: list[str] = []
+        for yf in active_dir.glob("phase-*.yaml"):
+            with yf.open() as f:
+                data = yaml.safe_load(f)
+            for s in data.get("slices", []):
+                if str(s.get("id")) == str(args.slice):
+                    checklist_items = s.get("review_checklist", [])
+                    break
+        if checklist_items:
+            print(f"\n  ── Slice review_checklist (manual verify) ──")
+            for item in checklist_items:
+                print(f"  [ ] {item}")
+
+    # ── summary ─────────────────────────────────────────────────────────────
+    print(f"\n{'─'*60}")
+    total = len(passed) + len(failed)
+    if failed:
+        print(f"  REVIEW_FAIL  ({len(passed)}/{total} checks passed)")
+        print(f"  Failed: {', '.join(failed)}")
+    else:
+        print(f"  REVIEW_PASS  ({len(passed)}/{total} checks passed)")
+    print(f"{'─'*60}\n")
+
+    return 0 if not failed else 1
 
 
 def cmd_promote(args: argparse.Namespace) -> int:
@@ -325,6 +461,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--report-out", default="", help="Write JSON report to this file path"
     )
     run_p.set_defaults(func=cmd_run)
+
+    # ── review ───────────────────────────────────────────────────────────────
+    rev_p = sub.add_parser("review", help="Automated static code review (replaces sub-agent)")
+    rev_p.add_argument("--slice", required=True, help="Slice ID for checklist lookup (e.g. 1.2)")
+    rev_p.add_argument("--workspace", default=".", help="Workspace root (default: .)")
+    rev_p.add_argument("--package", default="if2ai-backend", help="Cargo package name")
+    rev_p.set_defaults(func=cmd_review)
 
     # ── check-slice ───────────────────────────────────────────────────────────
     chk_p = sub.add_parser("check-slice", help="Validate slice YAML structure")

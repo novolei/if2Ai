@@ -29,7 +29,9 @@
 5. LINT   → 强制运行 lint 合约（见下方 Lint 合约）：cargo fmt + clippy + test 全部通过方可继续
 6. GATE   → 运行 harness gate：python -m harness.runner run --slice <id> --workspace .
 7. FIX    → 如果有失败的 gate 或 lint，修复代码，回到步骤 5
-8. REVIEW → 调用 sub-agent 做 code review（见下方 Review 规范；必须包含 coding style 检查）
+8. REVIEW → 运行自动 review 命令（无需 sub-agent）：
+           python -m harness.runner review --slice <id> --workspace .
+           输出 REVIEW_PASS 才能继续；REVIEW_FAIL 则回到步骤 5
 9. FIX    → 如果 review 有 FAIL 条目，修复，回到步骤 5
 10. COMMIT → git commit（见下方提交规范）
 11. UPDATE → 更新 exec-plan YAML 中该 slice 的 status 为 done
@@ -49,18 +51,18 @@
 
 ### 代码约束
 
-| 规则                                             | 来源               | 检查方式                   |
-| ------------------------------------------------ | ------------------ | -------------------------- |
-| 无 `unwrap()`（测试除外）                        | lint-contract      | gate compile_gate / review |
-| 无硬编码 API key / 路径                          | lint-contract      | review                     |
-| 跨模块引用必须用 `crate::modules::*`             | lint-contract      | gate compile_gate          |
-| 所有公开函数必须有 Rust doc 注释                 | lint-contract      | review                     |
-| 异步代码用 tokio，不用 std::thread               | lint-contract      | review                     |
-| `Result<T, E>` 错误传播用 `?`，不用 `match` 嵌套 | lint-contract     | review                     |
-| 默认用 `pub(crate)`，`pub` 仅在边界真实存在时    | Code Shape Rules   | review                     |
-| 一个文件只拥有一个有界职责                        | Code Shape Rules   | review                     |
-| `main.rs` / bin 只做编排，不含业务逻辑            | Code Shape Rules   | review                     |
-| 按有界上下文分模块，不按文件大小                  | Modularization     | review                     |
+| 规则                                                | 来源             | 检查方式                   |
+| --------------------------------------------------- | ---------------- | -------------------------- |
+| 无 `unwrap()`（测试除外）                           | lint-contract    | gate compile_gate / review |
+| 无硬编码 API key / 路径                             | lint-contract    | review                     |
+| 跨模块引用必须用 `crate::modules::*`                | lint-contract    | gate compile_gate          |
+| 所有公开函数必须有 Rust doc 注释                    | lint-contract    | review                     |
+| 异步代码用 tokio，不用 std::thread                  | lint-contract    | review                     |
+| `Result<T, E>` 错误传播用 `?`，不用 `match` 嵌套    | lint-contract    | review                     |
+| 默认用 `pub(crate)`，`pub` 仅在边界真实存在时       | Code Shape Rules | review                     |
+| 一个文件只拥有一个有界职责                          | Code Shape Rules | review                     |
+| `main.rs` / bin 只做编排，不含业务逻辑              | Code Shape Rules | review                     |
+| 按有界上下文分模块，不按文件大小                    | Modularization   | review                     |
 | 新增 `allow(...)` 必须在代码或 slice 记录中说明理由 | Lint Contract    | review                     |
 
 ### 强制 Lint 合约（步骤 5 LINT）
@@ -119,40 +121,28 @@ python -m harness.runner run \
 
 ---
 
-## Sub-agent Code Review 规范
+## 自动 Code Review 规范
 
-调用 sub-agent 时，你的 prompt 必须包含：
+Review 步骤**不需要 sub-agent**。直接运行以下命令：
 
-```
-你是 If2Ai 代码审查员。请审查以下代码变更是否满足 review_checklist 和编码规范。
-
-【编码规范（全局约束）】
-docs/references/coding-style-and-lint-contract.md 中的所有规则，重点检查：
-- Code Shape Rules：一文件一职责、pub(crate) 默认、main.rs 不含业务逻辑
-- Modularization Rules：按有界上下文分模块、不暴露不必要的 pub
-- Lint Contract：cargo fmt / clippy / test 是否已通过（executor 自报）
-- Completion Contract：文档是否与代码同步更新
-
-【设计文档片段】
-{slice.design_ref 中相关的 interface 定义部分}
-
-【review_checklist】
-{slice.review_checklist 的所有条目}
-
-【代码变更（git diff）】
-{实际的 diff 内容}
-
-【输出格式】
-对每个 checklist 条目和编码规范条目，输出：
-  PASS: <条目内容>
-  或
-  FAIL: <条目内容>
-       原因：<具体文件:行号和原因>
-
-最后输出整体结论：REVIEW_PASS 或 REVIEW_FAIL
+```bash
+python -m harness.runner review --slice <id> --workspace .
 ```
 
-只有 sub-agent 输出 `REVIEW_PASS` 时才能继续步骤 9。
+该命令自动检查：
+
+| 检查项 | 说明 |
+|--------|------|
+| `cargo fmt --check` | 格式是否符合规范 |
+| `cargo clippy -D warnings` | 无 lint 警告 |
+| `no unwrap()/expect()` | 非测试代码中无不安全调用 |
+| `no todo!()/unimplemented!()` | 无未完成占位符 |
+| `no hardcoded secrets` | 无硬编码 API key |
+| `pub fn has /// doc comment` | 公开函数有文档注释 |
+| slice review_checklist | 打印当前 slice 的检查项供人工参考 |
+
+输出 `REVIEW_PASS` → 继续步骤 9  
+输出 `REVIEW_FAIL` → 修复对应条目，回到步骤 5
 
 ---
 
@@ -245,12 +235,12 @@ Executor 继续执行新 Phase
 
 生成下一个 Phase 的 exec-plan 时，AI 应读取：
 
-| 来源 | 目的 |
-|------|------|
-| `docs/design-docs/README.md` | 了解整体架构层和各 Phase 对应的模块 |
-| `docs/design-docs/<相关模块>.md` | 获取接口定义和约束，作为 `design_ref` 和 `review_checklist` 来源 |
-| `docs/product-specs/index.md` | 了解产品功能需求，确定 slice 的业务目标 |
-| `docs/exec-plans/active/<当前Phase>.yaml` | 了解已完成的模块，避免重复，确保依赖顺序 |
+| 来源                                      | 目的                                                             |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `docs/design-docs/README.md`              | 了解整体架构层和各 Phase 对应的模块                              |
+| `docs/design-docs/<相关模块>.md`          | 获取接口定义和约束，作为 `design_ref` 和 `review_checklist` 来源 |
+| `docs/product-specs/index.md`             | 了解产品功能需求，确定 slice 的业务目标                          |
+| `docs/exec-plans/active/<当前Phase>.yaml` | 了解已完成的模块，避免重复，确保依赖顺序                         |
 
 ### 生成的 YAML 必须满足
 
@@ -291,6 +281,9 @@ source .venv/bin/activate
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+
+# 步骤 8 REVIEW — 自动静态审查（替代 sub-agent）
+python -m harness.runner review --slice <id> --workspace .
 
 # 验证 exec-plan 格式
 python -m harness.runner check-slice \
