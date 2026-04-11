@@ -8,6 +8,8 @@ use tauri::State;
 use tokio::runtime::Handle;
 
 use crate::commands::AppState;
+use crate::modules::api::providers::claw_provider::ClawApiClient;
+use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
@@ -35,75 +37,118 @@ fn app_session_to_runtime(app_session: &AppSession) -> RuntimeSession {
     }
 }
 
-/// Mock API client that provides simple responses for testing.
+/// Real API client that calls the Claw API (Claude).
 ///
-/// This implements the `ApiClient` trait directly without needing the async ProviderManager.
-/// In Phase 2, this will be replaced with a real ProviderManager integration.
-struct MockApiClient;
+/// This implements the `ApiClient` trait and makes real LLM API calls.
+struct RealApiClient {
+    provider: ClawApiClient,
+    model: String,
+}
 
-impl MockApiClient {
-    fn new() -> Self {
-        Self
+impl RealApiClient {
+    fn new(provider: ClawApiClient, model: String) -> Self {
+        Self { provider, model }
     }
 }
 
-impl ApiClient for MockApiClient {
+impl ApiClient for RealApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        // Extract the user's last message to generate a contextual response
-        let user_message = request
+        // Convert ApiRequest to MessageRequest
+        let messages: Vec<InputMessage> = request
             .messages
             .iter()
-            .rev()
-            .find(|m| {
-                m.role == crate::modules::runtime::session::MessageRole::User
-            })
-            .and_then(|m| {
-                m.blocks.iter().find_map(|block| {
-                    if let ContentBlock::Text { text } = block {
-                        Some(text.clone())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or_default();
+            .map(|msg| {
+                let content: Vec<InputContentBlock> = msg
+                    .blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(InputContentBlock::Text {
+                            text: text.clone(),
+                        }),
+                        ContentBlock::ToolUse { id, name, input } => {
+                            // Parse the input JSON string into a Value
+                            let input_value: serde_json::Value = serde_json::from_str(input)
+                                .unwrap_or(serde_json::Value::Null);
+                            Some(InputContentBlock::ToolUse {
+                                id: id.clone(),
+                                name: name.clone(),
+                                input: input_value,
+                            })
+                        }
+                        ContentBlock::ToolResult { .. } => {
+                            // Skip tool results in the input conversion
+                            // They should be converted to user tool results in the request
+                            None
+                        }
+                    })
+                    .collect();
 
-        // Generate a contextual response based on the input
-        let response_text = if user_message.to_lowercase().contains("hello")
-            || user_message.to_lowercase().contains("hi") {
-            "Hello! I'm If2Ai, your AI assistant. How can I help you today?".to_string()
-        } else if user_message.to_lowercase().contains("help") {
-            "I'm here to help! I can assist you with various tasks including:\n\
-             - Writing and editing code\n\
-             - Reading and analyzing files\n\
-             - Running commands\n\
-             - Answering questions\n\n\
-             What would you like me to help with?".to_string()
-        } else if user_message.to_lowercase().contains("bye")
-            || user_message.to_lowercase().contains("goodbye") {
-            "Goodbye! Feel free to come back if you need any help. Have a great day!".to_string()
-        } else if !user_message.is_empty() {
-            format!(
-                "I received your message: '{}'. This is a demonstration of the If2Ai \
-                 agent system. In Phase 2, I will be connected to real LLM providers \
-                 (Claude, GPT, etc.) to provide actual intelligent responses. \
-                 Stay tuned for the full implementation!",
-                user_message
-            )
+                let role = match msg.role {
+                    crate::modules::runtime::session::MessageRole::System => "system".to_string(),
+                    crate::modules::runtime::session::MessageRole::User => "user".to_string(),
+                    crate::modules::runtime::session::MessageRole::Assistant => "assistant".to_string(),
+                    crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
+                };
+
+                InputMessage { role, content }
+            })
+            .collect();
+
+        let system_prompt = if request.system_prompt.is_empty() {
+            None
         } else {
-            "I'm ready to help! What would you like me to do?".to_string()
+            Some(request.system_prompt.join("\n"))
         };
 
-        Ok(vec![
-            AssistantEvent::TextDelta(response_text),
-            AssistantEvent::Usage(crate::modules::runtime::usage::TokenUsage {
-                input_tokens: (user_message.len() / 4) as u32,
-                output_tokens: 50,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            }),
-            AssistantEvent::MessageStop,
-        ])
+        let api_request = MessageRequest {
+            model: self.model.clone(),
+            max_tokens: 4096,
+            messages,
+            system: system_prompt,
+            tools: None,
+            tool_choice: None,
+            stream: false,
+        };
+
+        // Use block_on to call async Provider from sync trait method
+        let response = Handle::current()
+            .block_on(self.provider.send_message(&api_request))
+            .map_err(|e| RuntimeError::ApiError(e.to_string()))?;
+
+        // Convert MessageResponse to Vec<AssistantEvent>
+        let mut events = Vec::new();
+
+        for block in &response.content {
+            match block {
+                crate::modules::api::OutputContentBlock::Text { text } => {
+                    events.push(AssistantEvent::TextDelta(text.clone()));
+                }
+                crate::modules::api::OutputContentBlock::ToolUse { id, name, input } => {
+                    events.push(AssistantEvent::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: serde_json::to_string(input).unwrap_or_default(),
+                    });
+                }
+                crate::modules::api::OutputContentBlock::Thinking { .. } => {
+                    // Skip thinking blocks for now
+                }
+                crate::modules::api::OutputContentBlock::RedactedThinking { .. } => {
+                    // Skip redacted thinking blocks
+                }
+            }
+        }
+
+        events.push(AssistantEvent::Usage(crate::modules::runtime::usage::TokenUsage {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
+            cache_read_input_tokens: response.usage.cache_read_input_tokens,
+        }));
+
+        events.push(AssistantEvent::MessageStop);
+
+        Ok(events)
     }
 }
 
@@ -157,8 +202,16 @@ pub async fn run_agent_turn(
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
 
-    // Create API client
-    let api_client = MockApiClient::new();
+    // Create real API client (Claude)
+    let api_client = match ClawApiClient::from_env() {
+        Ok(client) => RealApiClient::new(client, "claude-sonnet-4-6".to_string()),
+        Err(e) => {
+            return Err(format!(
+                "Failed to initialize AI client: {}. Please check your ANTHROPIC_API_KEY environment variable.",
+                e
+            ));
+        }
+    };
 
     // Create tool executor bridge
     let tool_executor = ToolRegistryExecutor::new(state.tool_registry.clone());
