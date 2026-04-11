@@ -1851,7 +1851,7 @@ impl ApiClient for ProviderRuntimeClient {
                 .client
                 .stream_message(&message_request)
                 .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                .map_err(|error| RuntimeError::api_error(error.to_string()))?;
             let mut events = Vec::new();
             let mut pending_tools: BTreeMap<u32, (String, String, String)> = BTreeMap::new();
             let mut saw_stop = false;
@@ -1933,7 +1933,7 @@ impl ApiClient for ProviderRuntimeClient {
                     ..message_request.clone()
                 })
                 .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                .map_err(|error| RuntimeError::api_error(error.to_string()))?;
             Ok(response_to_events(response))
         })
     }

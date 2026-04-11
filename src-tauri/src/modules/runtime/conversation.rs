@@ -61,22 +61,52 @@ impl Display for ToolError {
 impl std::error::Error for ToolError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeError {
-    message: String,
+pub enum RuntimeError {
+    ApiError(String),
+    ToolError(String),
+    PermissionDenied(String),
+    SessionError(String),
+    ConfigError(String),
+    MaxIterationsExceeded,
 }
 
 impl RuntimeError {
     #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
+    pub fn api_error(message: impl Into<String>) -> Self {
+        Self::ApiError(message.into())
+    }
+
+    #[must_use]
+    pub fn tool_error(message: impl Into<String>) -> Self {
+        Self::ToolError(message.into())
+    }
+
+    #[must_use]
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self::PermissionDenied(message.into())
+    }
+
+    #[must_use]
+    pub fn session_error(message: impl Into<String>) -> Self {
+        Self::SessionError(message.into())
+    }
+
+    #[must_use]
+    pub fn config_error(message: impl Into<String>) -> Self {
+        Self::ConfigError(message.into())
     }
 }
 
 impl Display for RuntimeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        match self {
+            Self::ApiError(msg) => write!(f, "API error: {msg}"),
+            Self::ToolError(msg) => write!(f, "Tool error: {msg}"),
+            Self::PermissionDenied(msg) => write!(f, "Permission denied: {msg}"),
+            Self::SessionError(msg) => write!(f, "Session error: {msg}"),
+            Self::ConfigError(msg) => write!(f, "Config error: {msg}"),
+            Self::MaxIterationsExceeded => write!(f, "Max iterations exceeded"),
+        }
     }
 }
 
@@ -97,6 +127,7 @@ pub struct ConversationRuntime<C, T> {
     permission_policy: PermissionPolicy,
     system_prompt: Vec<String>,
     max_iterations: usize,
+    max_token_budget: Option<usize>,
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
 }
@@ -141,6 +172,7 @@ where
             permission_policy,
             system_prompt,
             max_iterations: usize::MAX,
+            max_token_budget: None,
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(&feature_config),
         }
@@ -150,6 +182,30 @@ where
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
         self.max_iterations = max_iterations;
         self
+    }
+
+    #[must_use]
+    pub fn with_max_token_budget(mut self, max_token_budget: usize) -> Self {
+        self.max_token_budget = Some(max_token_budget);
+        self
+    }
+
+    /// Runs a single conversation turn with the given user message.
+    pub async fn run_conversation(
+        &mut self,
+        user_message: String,
+    ) -> Result<TurnSummary, RuntimeError> {
+        self.run_turn(user_message, None)
+    }
+
+    /// Builds the system prompt string from the configured system prompt lines.
+    fn build_system_prompt(&self) -> Result<String, RuntimeError> {
+        if self.system_prompt.is_empty() {
+            return Err(RuntimeError::ConfigError(
+                "system prompt is empty".to_string(),
+            ));
+        }
+        Ok(self.system_prompt.join("\n"))
     }
 
     pub fn run_turn(
@@ -168,9 +224,17 @@ where
         loop {
             iterations += 1;
             if iterations > self.max_iterations {
-                return Err(RuntimeError::new(
-                    "conversation loop exceeded the maximum number of iterations",
-                ));
+                return Err(RuntimeError::MaxIterationsExceeded);
+            }
+
+            if let Some(budget) = self.max_token_budget {
+                let estimated_tokens = estimate_session_tokens(&self.session);
+                if estimated_tokens > budget {
+                    return Err(RuntimeError::SessionError(format!(
+                        "token budget exceeded: estimated {} tokens exceeds budget of {}",
+                        estimated_tokens, budget
+                    )));
+                }
             }
 
             let request = ApiRequest {
@@ -315,12 +379,14 @@ fn build_assistant_message(
     flush_text_block(&mut text, &mut blocks);
 
     if !finished {
-        return Err(RuntimeError::new(
-            "assistant stream ended without a message stop event",
+        return Err(RuntimeError::ApiError(
+            "assistant stream ended without a message stop event".to_string(),
         ));
     }
     if blocks.is_empty() {
-        return Err(RuntimeError::new("assistant stream produced no content"));
+        return Err(RuntimeError::ApiError(
+            "assistant stream produced no content".to_string(),
+        ));
     }
 
     Ok((
@@ -458,7 +524,9 @@ mod tests {
                         AssistantEvent::MessageStop,
                     ])
                 }
-                _ => Err(RuntimeError::new("unexpected extra API call")),
+                _ => Err(RuntimeError::ApiError(
+                    "unexpected extra API call".to_string(),
+                )),
             }
         }
     }
@@ -666,7 +734,9 @@ mod tests {
                             AssistantEvent::MessageStop,
                         ])
                     }
-                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                    _ => Err(RuntimeError::ApiError(
+                        "unexpected extra API call".to_string(),
+                    )),
                 }
             }
         }
