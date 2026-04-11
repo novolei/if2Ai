@@ -60,3 +60,4 @@
 | 2026-04-11 | Slice 1.9 完成：Phase 1 集成测试，124 测试通过 |
 | 2026-04-11 | **HUMAN_CHECKPOINT_REACHED**: Phase 1 全部 9 个 slice 完成 |
 | 2026-04-12 | Slice 1.3 重新实现：RuntimeError enum、run_conversation()、build_system_prompt()、token budget check |
+| 2026-04-12 | Slice 1.4 实现：ProviderManager、MockProvider、MockStream |
