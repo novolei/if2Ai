@@ -4,6 +4,7 @@ mod commands;
 mod modules;
 
 use std::path::PathBuf;
+use std::process::Command;
 
 use commands::AppState;
 use commands::{
@@ -11,10 +12,25 @@ use commands::{
     list_project_sessions, list_projects, list_sessions, rename_project, run_agent_turn,
 };
 
-#[allow(unused_imports)]
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Manager,
+};
+
+/// Clean up all related processes when the app exits.
+fn cleanup_processes() {
+    let _ = Command::new("pkill")
+        .args(["-f", "if2ai-backend"])
+        .spawn();
+}
 
 fn main() {
+    // Set up cleanup hooks
+    std::panic::set_hook(Box::new(|_| {
+        cleanup_processes();
+    }));
+
     // Initialize directories
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
     let if2ai_dir = PathBuf::from(&home).join(".if2ai");
@@ -52,6 +68,45 @@ fn main() {
             rename_project,
             delete_project,
         ])
+        .setup(|app| {
+            // Create system tray menu
+            let show_item = MenuItem::with_id(app, "show", "Show If2Ai", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            // Build system tray
+            let _tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("If2Ai - AI Agent Desktop")
+                .on_menu_event(|app: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            cleanup_processes();
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+
+            // Hide window on close button instead of exiting
+            let window = app.get_webview_window("main").unwrap();
+            let window_clone = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window_clone.hide();
+                }
+            });
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
