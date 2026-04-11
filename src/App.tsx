@@ -17,6 +17,8 @@ import {
 } from '@/lib/tauri'
 import { ProjectRail } from '@/components/ProjectRail'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
+import { SessionStatus as SessionStatusComponent } from '@/components/SessionStatus'
+import type { SessionStatus } from '@/components/SessionStatus'
 import {
   Bot,
   SendHorizonal,
@@ -48,6 +50,9 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Session status for agent execution
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle')
 
   // Conversation state
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
@@ -213,10 +218,12 @@ function App() {
     setConversations((prev) => ({ ...prev, [activeSessionId]: updatedConv }))
     setInput('')
     setIsLoading(true)
+    setSessionStatus('running')
 
     try {
       // Call Tauri backend
       const response = await runAgentTurn(activeSessionId, userMsg.content)
+      setSessionStatus('idle')
 
       const assistantMsg: Message = {
         id: crypto.randomUUID(),
@@ -233,6 +240,7 @@ function App() {
         },
       }))
     } catch (err) {
+      setSessionStatus('error')
       // Error display (friendly error message)
       const errorMessage = err instanceof Error ? err.message : 'Agent 执行失败，请稍后重试。'
       const assistantMsg: Message = {
@@ -296,11 +304,14 @@ function App() {
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="flex items-center gap-3 px-6 h-14 border-b border-border shrink-0">
-          <Bot className="h-5 w-5 text-primary" />
-          <h1 className="font-medium text-sm">
-            {activeConv?.title || '对话'}
-          </h1>
+        <header className="flex items-center justify-between px-6 h-14 border-b border-border shrink-0">
+          <div className="flex items-center gap-3">
+            <Bot className="h-5 w-5 text-primary" />
+            <h1 className="font-medium text-sm">
+              {activeConv?.title || '对话'}
+            </h1>
+          </div>
+          <SessionStatusComponent status={sessionStatus} />
         </header>
 
         {/* Messages or WelcomeScreen */}
