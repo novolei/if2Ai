@@ -26,7 +26,7 @@
 | 1.2   | 修复所有编译错误（52 个）    | ✅ done    |
 | 1.3   | ConversationRuntime 核心实现 | ✅ done    |
 | 1.4   | ProviderManager 实现         | ✅ done    |
-| 1.5   | ToolRegistry + 3 个基础工具  | 🔴 pending |
+| 1.5   | ToolRegistry + 3 个基础工具  | ✅ done    |
 | 1.6   | SessionManager 实现          | 🔴 pending |
 | 1.7   | Tauri Commands 网关          | 🔴 pending |
 | 1.8   | 前端接线（React invoke）     | 🔴 pending |
@@ -53,3 +53,4 @@
 | 2026-04-11 | Slice 1.2 完成：52 个编译错误全部修复，124 测试通过 |
 | 2026-04-11 | Slice 1.3 完成：ConversationRuntime 核心实现，6 测试通过 |
 | 2026-04-11 | Slice 1.4 完成：ProviderManager 实现，28 测试通过 |
+| 2026-04-11 | Slice 1.5 完成：ToolRegistry 与基础工具，3 测试通过 |
