@@ -44,6 +44,11 @@
 
 **停止条件**：所有 slice 都是 `status: done`，或遇到 `human_checkpoint`。
 
+> **🔁 自动继续原则（重要）**：  
+> 完成一个 slice 的步骤 15 NEXT 后，**立即自动开始下一个 pending slice，不要暂停、不要询问用户是否继续**。  
+> 唯一允许停下来等待人工的场合是：遇到 `human_checkpoint`，或 gate 失败超过 3 次进入 blocked 状态。  
+> 对于设计文档中的歧义或依赖缺失（如 ProviderManager 未实现），选择保守方案（用 trait + mock）自行决策并在 commit message 中说明，不要停下来询问。
+
 ---
 
 ## 必须遵守的约束

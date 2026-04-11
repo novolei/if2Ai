@@ -1,0 +1,17 @@
+{
+  "permissionMode": "acceptEdits",
+  "permissions": {
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)"
+    ]
+  }
+}
