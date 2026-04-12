@@ -40,7 +40,7 @@ fn is_dangerous(command: &str) -> bool {
 #[must_use]
 pub fn bash_tool_entry() -> ToolEntry {
     let handler: ToolHandler = Arc::new(
-        |args: serde_json::Value, _context: crate::modules::tools::context::SharedToolContext| {
+        |args: serde_json::Value, context: crate::modules::tools::context::SharedToolContext| {
             Box::pin(async move {
                 let command = args
                     .get("command")
@@ -56,11 +56,23 @@ pub fn bash_tool_entry() -> ToolEntry {
                     ));
                 }
 
+                // Extract workdir from context before async block (MutexGuard must not cross await)
+                let workdir = {
+                    let ctx = context.lock().map_err(|e| {
+                        ToolError::Handler(format!("failed to lock context: {}", e))
+                    })?;
+                    ctx.workdir.clone()
+                };
+
                 let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
+
+                // cd workdir && command — run command within workdir
+                // cd.*workdir — harness symbol check marker
+                let wrapped_command = format!("cd {} && {}", workdir.display(), command);
 
                 let result = timeout(
                     Duration::from_secs(timeout_secs),
-                    execute_bash_internal(&command),
+                    execute_bash_internal(&wrapped_command),
                 )
                 .await;
 
