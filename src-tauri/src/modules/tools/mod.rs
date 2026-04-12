@@ -89,4 +89,7 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::todo_write_tool_entry()) {
         eprintln!("Failed to register TodoWrite tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::skill_tool_entry()) {
+        eprintln!("Failed to register Skill tool: {}", e);
+    }
 }

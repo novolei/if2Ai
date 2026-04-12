@@ -286,7 +286,7 @@ slices:
 
   - id: "5c.3"
     title: "F3 权限 + F4 Prompter 实现 — 从参数读取 permission_mode"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F3, F4"
     impl_targets:
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1", "5c.2"]
-  current_slice: "5c.3"
+  completed_slices: ["5c.1", "5c.2", "5c.3"]
+  current_slice: "5c.4"
   blocked: []
-  notes: "5c.1 + 5c.2 done. Next: 5c.3 — permission_mode parameterization + TauriPermissionPrompter"
+  notes: "5c.1-5c.3 done. Next: 5c.4 — F6 Skill ToolHandler"
