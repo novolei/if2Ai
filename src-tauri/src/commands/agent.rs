@@ -27,6 +27,13 @@ struct StreamTokenPayload {
     text: Option<String>,
     thinking: Option<String>,
     event_type: String,
+    // tool_call_update fields
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+    tool_status: Option<String>, // "queued" | "running" | "completed" | "error"
+    tool_args: Option<serde_json::Value>,
+    tool_result: Option<String>,
+    tool_duration_ms: Option<u64>,
 }
 
 /// Response from a run_agent_turn command.
@@ -677,6 +684,12 @@ pub async fn start_agent_stream(
                     text: None,
                     thinking: None,
                     event_type: "stream_error".to_string(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_status: None,
+                    tool_args: None,
+                    tool_result: None,
+                    tool_duration_ms: None,
                 };
                 let _ = window.emit("agent-token", payload);
                 return;
@@ -698,6 +711,12 @@ pub async fn start_agent_stream(
                                 text: Some(text),
                                 thinking: None,
                                 event_type: "text_delta".to_string(),
+                                tool_call_id: None,
+                                tool_name: None,
+                                tool_status: None,
+                                tool_args: None,
+                                tool_result: None,
+                                tool_duration_ms: None,
                             };
                             let _ = window.emit("agent-token", payload);
                         }
@@ -708,6 +727,12 @@ pub async fn start_agent_stream(
                                 text: None,
                                 thinking: Some(thinking),
                                 event_type: "thinking_delta".to_string(),
+                                tool_call_id: None,
+                                tool_name: None,
+                                tool_status: None,
+                                tool_args: None,
+                                tool_result: None,
+                                tool_duration_ms: None,
                             };
                             let _ = window.emit("agent-token", payload);
                         }
@@ -721,6 +746,12 @@ pub async fn start_agent_stream(
                             text: None,
                             thinking: None,
                             event_type: "stream_complete".to_string(),
+                            tool_call_id: None,
+                            tool_name: None,
+                            tool_status: None,
+                            tool_args: None,
+                            tool_result: None,
+                            tool_duration_ms: None,
                         };
                         let _ = window.emit("agent-token", payload);
                         break;
@@ -735,6 +766,12 @@ pub async fn start_agent_stream(
                                 text: None,
                                 thinking: None,
                                 event_type: "thinking_start".to_string(),
+                                tool_call_id: None,
+                                tool_name: None,
+                                tool_status: None,
+                                tool_args: None,
+                                tool_result: None,
+                                tool_duration_ms: None,
                             };
                             let _ = window.emit("agent-token", payload);
                         }
@@ -752,6 +789,12 @@ pub async fn start_agent_stream(
                         text: None,
                         thinking: None,
                         event_type: "stream_error".to_string(),
+                        tool_call_id: None,
+                        tool_name: None,
+                        tool_status: None,
+                        tool_args: None,
+                        tool_result: None,
+                        tool_duration_ms: None,
                     };
                     let _ = window.emit("agent-token", payload);
                     break;

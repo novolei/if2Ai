@@ -13,7 +13,20 @@ export interface StreamTokenPayload {
   stream_id: string;
   text?: string;
   thinking?: string;
-  event_type: 'text_delta' | 'thinking_delta' | 'thinking_start' | 'stream_complete' | 'stream_error';
+  event_type:
+    | 'text_delta'
+    | 'thinking_delta'
+    | 'thinking_start'
+    | 'tool_call_update'
+    | 'stream_complete'
+    | 'stream_error';
+  // tool_call_update 专用字段
+  tool_call_id?: string;
+  tool_name?: string;
+  tool_status?: 'queued' | 'running' | 'completed' | 'error';
+  tool_args?: Record<string, unknown>;
+  tool_result?: string;
+  tool_duration_ms?: number;
 }
 
 /**

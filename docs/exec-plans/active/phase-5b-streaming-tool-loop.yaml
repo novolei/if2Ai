@@ -1,0 +1,492 @@
+# Phase 5B: Streaming Tool Loop Rewrite (P0 F2)
+# ─────────────────────────────────────────────────────────────────────────────
+# 重写 start_agent_stream，实现完整工具循环（权限检查 → 工具执行 → tool_result 回传 → 继续 LLM）
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "5b"
+  phase_status: active           # draft | active | completed
+  title: "流式工具循环重写 — 完整 InputJsonDelta 累积 + 工具执行 + tool_call_update SSE"
+  owner: "@architects"
+  depends_on_phase: "5a"
+  design_docs:
+    - docs/bs_gap/08-critical-fix-priority.md
+  human_checkpoints:
+    - after_slice: "5b.3"       # 工具循环核心完成后人工 review
+
+slices:
+
+  # ───────────── Stage 1: StreamTokenPayload 扩展 ─────────────────────────────
+
+  - id: "5b.1"
+    title: "F8 前后端 — 扩展 StreamTokenPayload 支持 tool_call_update 事件"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F8"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs          # MODIFY: StreamTokenPayload 结构体新增 tool 字段
+      - src/lib/tauri.ts                         # MODIFY: StreamTokenPayload TypeScript 类型扩展
+
+    baseline_ref: "src-tauri/src/commands/agent.rs (StreamTokenPayload:24-30); src/lib/tauri.ts (StreamTokenPayload:12-17)"
+
+    current_state: |
+      agent.rs 第 24-30 行 StreamTokenPayload 只有 stream_id, text, thinking, event_type 四个字段。
+      event_type 只支持 text_delta, thinking_delta, thinking_start, stream_complete, stream_error。
+      lib/tauri.ts 第 12-17 行 TypeScript 类型对应，缺少 tool_call_update。
+      ❌ MISSING — 必须扩展两端类型：
+        1. agent.rs: StreamTokenPayload 新增 tool_call_id, tool_name, tool_status, tool_args, tool_result, tool_duration_ms
+        2. lib/tauri.ts: event_type 新增 'tool_call_update'，新增对应可选字段
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F8 — 后端 StreamTokenPayload (agent.rs:24-30)
+        #[derive(serde::Serialize, Clone)]
+        struct StreamTokenPayload {
+            stream_id: String,
+            text: Option<String>,
+            thinking: Option<String>,
+            event_type: String,
+            // tool_call_update 字段
+            tool_call_id: Option<String>,
+            tool_name: Option<String>,
+            tool_status: Option<String>,      // "queued" | "running" | "completed" | "error"
+            tool_args: Option<serde_json::Value>,
+            tool_result: Option<String>,
+            tool_duration_ms: Option<u64>,
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F8 — 前端 StreamTokenPayload (lib/tauri.ts:12-17)
+        export interface StreamTokenPayload {
+          stream_id: string;
+          text?: string;
+          thinking?: string;
+          event_type:
+            | 'text_delta'
+            | 'thinking_delta'
+            | 'thinking_start'
+            | 'tool_call_update'
+            | 'stream_complete'
+            | 'stream_error';
+          // tool_call_update 专用字段
+          tool_call_id?: string;
+          tool_name?: string;
+          tool_status?: 'queued' | 'running' | 'completed' | 'error';
+          tool_args?: Record<string, unknown>;
+          tool_result?: string;
+          tool_duration_ms?: number;
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_call_id: Option"
+        label: "StreamTokenPayload 有 tool_call_id 字段 — 08 §F8"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_result: Option"
+        label: "StreamTokenPayload 有 tool_result 字段"
+      - type: symbol
+        file: "src/lib/tauri.ts"
+        grep: "tool_call_update"
+        label: "TypeScript event_type 有 tool_call_update"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "StreamTokenPayload 是否新增全部 6 个 tool_call_update 字段"
+      - "TypeScript 类型是否与后端结构体字段一一对应"
+      - "event_type 是否新增 'tool_call_update' 类型"
+      - "现有 text_delta/thinking_delta 事件 emit 是否仍然正确（新字段为 None）"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 2: InputJsonDelta 累积 ─────────────────────────────
+
+  - id: "5b.2"
+    title: "F2 后端 — InputJsonDelta 累积 + tool_use 提取"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F2"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: start_agent_stream 后台任务逻辑
+
+    baseline_ref: "rust/crates/runtime/src/conversation.rs (run_turn 完整循环:214-333, pending_tool_uses 提取); src-tauri/src/commands/agent.rs (start_agent_stream:508-769, InputJsonDelta:686, ContentBlockStart:699-712)"
+
+    current_state: |
+      agent.rs 第 686 行 InputJsonDelta 被空处理：{...} => {}
+      第 699-712 行 ContentBlockStart 只处理 Thinking，不处理 ToolUse。
+      第 733-756 行流式结束后只保存 user_msg + assistant_msg（文本），没有 tool_result。
+      没有工具循环——没有权限检查、没有工具执行、没有 tool_result 回传。
+      ❌ MISSING — 必须在 start_agent_stream 后台任务中实现：
+        1. 累积 ContentBlockDelta::InputJsonDelta 到 tool_arguments 缓存（HashMap: tool_call_id → JSON string）
+        2. ContentBlockStop 时提取完整 tool_use (id, name, input_json)
+        3. ContentBlockStart 中处理 OutputContentBlock::ToolUse，emit tool_call_update { status: "queued" }
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F2 — 后台任务修改 (agent.rs:661-731)
+        // 新增累积变量：
+        let mut tool_arguments: HashMap<String, String> = HashMap::new();
+        let mut current_tool_id: Option<String> = None;
+        let mut current_tool_name: Option<String> = None;
+
+        // ContentBlockDelta 处理：
+        crate::modules::api::ContentBlockDelta::InputJsonDelta { delta } => {
+            if let Some(ref id) = current_tool_id {
+                tool_arguments.entry(id.clone()).or_default().push_str(&delta);
+            }
+        }
+
+        // ContentBlockStart 处理：
+        ApiStreamEvent::ContentBlockStart(start_event) => {
+            match start_event.content_block {
+                crate::modules::api::OutputContentBlock::Thinking { .. } => {
+                    // 原有 thinking_start 逻辑...
+                }
+                crate::modules::api::OutputContentBlock::ToolUse { id, name, .. } => {
+                    current_tool_id = Some(id.clone());
+                    current_tool_name = Some(name.clone());
+                    // emit queued event
+                    let payload = StreamTokenPayload {
+                        stream_id: stream_id_for_task.clone(),
+                        text: None, thinking: None,
+                        event_type: "tool_call_update".to_string(),
+                        tool_call_id: Some(id),
+                        tool_name: Some(name),
+                        tool_status: Some("queued".to_string()),
+                        tool_args: None, tool_result: None, tool_duration_ms: None,
+                    };
+                    let _ = window.emit("agent-token", payload);
+                }
+                _ => {}
+            }
+        }
+
+      - |
+        // ContentBlockStop 或 MessageStop 时提取完整 tool_use：
+        // 当 current_tool_id 有值且 tool_arguments 中有对应 entry 时：
+        if let Some(tool_id) = current_tool_id.take() {
+            if let Some(input_json) = tool_arguments.remove(&tool_id) {
+                let tool_name = current_tool_name.take().unwrap_or_default();
+                // 执行权限检查 → 工具执行 → 返回结果 (留给 5b.3)
+                // emit running event
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_arguments: HashMap"
+        label: "后台任务有 tool_arguments 累积缓存 — 08 §F2"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "InputJsonDelta"
+        label: "InputJsonDelta 不再被空处理"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_call_update"
+        label: "emit tool_call_update 事件"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "InputJsonDelta 是否被累积到 HashMap 而不是被忽略"
+      - "ContentBlockStart 中是否处理了 OutputContentBlock::ToolUse"
+      - "是否 emit tool_call_update { status: 'queued' } 事件"
+      - "tool_arguments 是否在 ContentBlockStop 时正确提取"
+      - "current_tool_id/name 是否正确跟踪当前工具调用"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 3: 工具执行 + 多轮循环 ─────────────────────────────
+
+  - id: "5b.3"
+    title: "F2 后端 — 工具执行 + tool_result 回传 + 多轮循环"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F2, F15"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: 完整工具循环
+
+    baseline_ref: "rust/crates/runtime/src/conversation.rs (完整 loop: authorize+execute+tool_result 循环); rust/crates/runtime/src/permissions.rs (PermissionPolicy); src-tauri/src/modules/tools/registry.rs (ToolRegistryExecutor)"
+
+    current_state: |
+      5b.2 完成后已有 tool_arguments 累积和 tool_use 提取。
+      但提取后不执行工具、不回传 tool_result、不继续发送下一轮 LLM 请求。
+      ❌ MISSING — 必须实现完整工具循环：
+        1. 对每个提取的 tool_use 执行权限检查 → dispatch → 获取结果
+        2. emit tool_call_update { status: "completed"/"error", tool_result, tool_duration_ms }
+        3. 将 tool_result 追加到 session messages
+        4. 继续发送下一轮 LLM 请求（循环直到无 tool_use 或 max_iterations）
+        5. 接入 Hook 系统（PreToolUse / PostToolUse）
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F2 — 完整工具执行循环 + 多轮 loop (agent.rs)
+        // 外层循环：while 有 tool_use 且未达 max_iterations
+        let max_iterations = 10;
+        let mut tool_loop_iter = 0;
+
+        loop {
+            if tool_loop_iter >= max_iterations {
+                tracing::warn!("[start_agent_stream] Tool loop exceeded max_iterations={}", max_iterations);
+                break;
+            }
+            tool_loop_iter += 1;
+
+            // 1. 发送 LLM 请求（首次使用原始消息，后续追加 tool_result）
+            let api_request = ApiRequest {
+                system_prompt: system_prompt.clone(),
+                messages: session_messages.clone(),
+                tools: if tool_defs.is_empty() { None } else { Some(tool_defs.clone()) },
+                stream: true,
+            };
+            let stream = client.stream(api_request).await?;
+
+            // 2. 处理流式事件（累积 InputJsonDelta，提取 tool_use）
+            // ... 5b.2 中的流式事件处理 ...
+            // 在 ContentBlockStop / MessageStop 时：收集本轮所有 pending_tool_uses
+
+            // 3. 如果没有 tool_use，退出循环
+            if pending_tool_uses.is_empty() {
+                break;  // LLM 回复完成，无更多工具调用
+            }
+
+            // 4. 对每个 tool_use 执行：权限检查 → 工具执行 → emit 事件 → 追加 result
+            let tool_executor = ToolRegistryExecutor::new(tool_registry.clone());
+            let permission_policy = PermissionPolicy::new(PermissionMode::DangerFullAccess); // 临时，F3 修复
+
+            for tool_use in pending_tool_uses.drain(..) {
+                let tool_id = tool_use.id.clone();
+                let tool_name = tool_use.name.clone();
+                let input_json = tool_use.input_json.clone();
+
+                // emit running
+                let _ = window.emit("agent-token", StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None, thinking: None,
+                    event_type: "tool_call_update".to_string(),
+                    tool_call_id: Some(tool_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    tool_status: Some("running".to_string()),
+                    tool_args: None, tool_result: None, tool_duration_ms: None,
+                });
+
+                // Hook: PreToolUse（F15 合并到 F2）
+                // hooks.run_pre_tool_use(&tool_name, &input_json)?;
+
+                let start_time = std::time::Instant::now();
+                let result = tool_executor.execute(&tool_name, &input_json);
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+
+                let (result_text, is_error) = match result {
+                    Ok(output) => (output, false),
+                    Err(e) => (e.to_string(), true),
+                };
+
+                // Hook: PostToolUse
+                // hooks.run_post_tool_use(&tool_name, &result_text, is_error)?;
+
+                // emit completed/error
+                let _ = window.emit("agent-token", StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None, thinking: None,
+                    event_type: "tool_call_update".to_string(),
+                    tool_call_id: Some(tool_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
+                    tool_args: None,
+                    tool_result: Some(result_text.clone()),
+                    tool_duration_ms: Some(duration_ms),
+                });
+
+                // 追加 tool_result 到 session_messages
+                session_messages.push(ConversationMessage::tool_result(
+                    tool_id, tool_name, result_text, is_error
+                ));
+            }
+
+            // 5. 循环继续 → 再次发送 LLM 请求（含 tool_result）
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_loop_iter\\|max_iterations"
+        label: "工具执行外层循环存在 — 08 §F2"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_executor\\.execute"
+        label: "工具执行调用存在 — 08 §F2"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "pending_tool_uses\\.is_empty"
+        label: "无 tool_use 时退出循环"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_result: Some"
+        label: "tool_result 回传 SSE 事件"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "PreToolUse\\|PostToolUse\\|pre_tool_use\\|post_tool_use"
+        label: "Hook 系统接入（F15 合并到 F2）"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "是否有 while loop 结构（loop { if tool_loop_iter >= max_iterations { break } }）"
+      - "max_iterations 是否默认 10"
+      - "每次循环是否发送新的 LLM 请求（含累积的 tool_result messages）"
+      - "无 tool_use 时是否 break 退出循环"
+      - "工具执行是否使用 ToolRegistryExecutor::execute()"
+      - "是否 emit running → completed/error 两个状态事件"
+      - "tool_result 是否追加到 session messages"
+      - "Hook 系统是否接入（PreToolUse / PostToolUse）"
+      - "session 保存是否包含 tool_result messages"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 4: 前端 tool 角色消息 ─────────────────────────────
+
+  - id: "5b.4"
+    title: "UI-5 前端 — Message.role 扩展 \"tool\" + ChatUI 基础工具展示"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "UI-5"
+    impl_targets:
+      - src/components/ui/chat-ui.tsx      # MODIFY: Message 接口扩展 + tool 角色渲染
+      - src/App.tsx                         # MODIFY: 处理 tool_call_update 事件
+
+    baseline_ref: "src/components/ui/chat-ui.tsx (Message:27-35); src/App.tsx (流式事件处理)"
+
+    current_state: |
+      chat-ui.tsx 第 27-35 行 Message 接口只有 role: "user" | "assistant"，
+      缺少 "tool" 角色。
+      App.tsx 的流式事件监听只处理 text_delta / thinking_delta，不处理 tool_call_update。
+      ❌ MISSING — 必须修改 2 个文件：
+        1. chat-ui.tsx: Message 接口新增 role: "tool", toolCallId, toolName, isError
+        2. App.tsx: listenToStream 回调中处理 tool_call_update，创建 tool 角色消息
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §UI-5 — 前端 Message 接口 (chat-ui.tsx:27-35)
+        interface Message {
+          id: string
+          role: "user" | "assistant" | "tool"
+          content: string
+          timestamp: Date
+          thinking?: string
+          thinkingTime?: number
+          isStreaming?: boolean
+          toolCallId?: string      // 关联到对应的 tool_use
+          toolName?: string        // 工具名
+          isError?: boolean        // 标记工具执行错误
+        }
+
+        // ChatUI 中渲染 tool 角色消息：
+        if (message.role === 'tool') {
+          return (
+            <div className={cn("my-1 rounded-md border text-xs font-mono px-3 py-2",
+              message.isError ? "border-red-300 bg-red-50" : "border-green-300 bg-green-50"
+            )}>
+              <div className="flex items-center gap-2">
+                <span className={message.isError ? "text-red-500" : "text-green-500"}>
+                  {message.isError ? "✗" : "✓"}
+                </span>
+                <span className="font-medium">{message.toolName}</span>
+              </div>
+              <pre className="mt-1 overflow-x-auto text-muted-foreground">
+                {message.content}
+              </pre>
+            </div>
+          );
+        }
+
+      - |
+        // 08-critical-fix-priority.md §UI-5 — App.tsx 处理 tool_call_update
+        if (payload.event_type === 'tool_call_update') {
+          if (payload.tool_status === 'completed' || payload.tool_status === 'error') {
+            const toolMsg: Message = {
+              id: `tool-${payload.tool_call_id}-${Date.now()}`,
+              role: 'tool',
+              content: payload.tool_result || '',
+              timestamp: new Date(),
+              toolCallId: payload.tool_call_id,
+              toolName: payload.tool_name,
+              isError: payload.tool_status === 'error',
+            };
+            addToolMessage(activeSessionId, toolMsg);
+          }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: '"tool"'
+        label: "Message.role 支持 'tool' — 08 §UI-5"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "toolCallId"
+        label: "Message 接口有 toolCallId 字段"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "tool_call_update"
+        label: "App.tsx 处理 tool_call_update 事件"
+    review_checklist:
+      - "Message 接口是否新增 role: 'tool' + toolCallId + toolName + isError"
+      - "ChatUI 是否正确渲染 tool 角色消息（区分成功/错误样式）"
+      - "App.tsx 是否在 listenToStream 回调中处理 tool_call_update"
+      - "tool 角色消息是否正确关联到 tool_call_id"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 5: 集成测试 ─────────────────────────────
+
+  - id: "5b.5"
+    title: "5B 集成测试 — 验证流式模式下完整工具循环"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F2, F8, UI-5"
+    impl_targets:
+      - harness/suites/phase5b_integration.yaml    # CREATE: 行为测试
+
+    baseline_ref: "rust/crates/runtime/src/conversation.rs (测试用例:565-614)"
+
+    current_state: |
+      所有 5B slices 完成后需要集成测试验证：
+      1. 流式模式能累积 InputJsonDelta → 执行工具 → 返回结果 → 继续 LLM
+      2. tool_call_update 事件正确推送
+      3. 前端正确渲染工具结果
+      ❌ MISSING — 需要创建 harness suite
+
+    must_implement:
+      - |
+        // harness/suites/phase5b_integration.yaml — 行为测试
+        # 验证 StreamTokenPayload 有 tool_call_update 字段
+        # 验证 start_agent_stream 后台任务能处理 InputJsonDelta
+        # 验证工具执行结果回传
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "all tests pass"
+    review_checklist:
+      - "harness suite 是否覆盖流式工具循环"
+      - "编译 + lint + 测试是否全部通过"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: []
+  current_slice: "5b.1"
+  blocked: []
+  notes: "DRAFT — 依赖 Phase 5A 完成。5B 是最高风险 Phase：重写流式工具循环。human_checkpoint after 5b.3"
