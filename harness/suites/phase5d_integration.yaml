@@ -1,0 +1,74 @@
+# Phase 5D Integration Tests
+# Verifies frontend UX completion: state unification, tool display, TodoPanel, SlashCommand, model selector
+
+runner: symbol_check
+
+test_cases:
+  # N10 — ChatUI unification
+  - file: "src/App.tsx"
+    grep: "ChatWorkspace"
+    label: "App.tsx passes all chat props to ChatWorkspace"
+  - file: "src/modules/chat/components/ChatWorkspace.tsx"
+    grep: "function ChatWorkspace"
+    label: "ChatWorkspace is a pure presentation component"
+  - file: "src/modules/chat/components/ChatWorkspace.tsx"
+    grep: "activeMessages"
+    label: "ChatWorkspace receives messages as props"
+
+  # F7 — Tool call display
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "ToolCallItem"
+    label: "ToolCallItem component exists"
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "ToolCallSequence"
+    label: "ToolCallSequence component exists"
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "ToolCallStatus"
+    label: "ToolCallStatus type exists"
+
+  # UI-8 — TodoPanel
+  - file: "src/components/ui/TodoPanel.tsx"
+    grep: "TodoPanel"
+    label: "TodoPanel component exists"
+  - file: "src/App.tsx"
+    grep: "TodoWrite"
+    label: "App.tsx parses TodoWrite SSE events"
+  - file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
+    grep: "todo_write_tool_entry"
+    label: "TodoWrite backend exists (5c.2)"
+
+  # F9 — Compaction
+  - file: "src-tauri/src/commands/agent.rs"
+    grep: "should_compact"
+    label: "run_agent_turn calls should_compact"
+  - file: "src-tauri/src/commands/agent.rs"
+    grep: "compact_session"
+    label: "run_agent_turn calls compact_session"
+
+  # F10 — Model selector
+  - file: "src/App.tsx"
+    grep: "selectedModel"
+    label: "App.tsx has global selectedModel state"
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "selectedModel"
+    label: "ChatUI receives selectedModel as props"
+  - file: "src/modules/chat/components/ChatWorkspace.tsx"
+    grep: "formatModelName"
+    label: "ChatWorkspace uses dynamic model name"
+
+  # F11 — SlashCommand
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "slashOverlay"
+    label: "slashOverlay state exists"
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "SlashCommandSuggestions"
+    label: "SlashCommandSuggestions component exists"
+  - file: "src/components/ui/chat-ui.tsx"
+    grep: "suggestSlashCommands"
+    label: "Calls suggestSlashCommands Tauri command"
+  - file: "src/lib/tauri.ts"
+    grep: "suggestSlashCommands"
+    label: "tauri.ts has suggestSlashCommands wrapper"
+  - file: "src/lib/tauri.ts"
+    grep: "executeSlashCommand"
+    label: "tauri.ts has executeSlashCommand wrapper"

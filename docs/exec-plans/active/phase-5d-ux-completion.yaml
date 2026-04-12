@@ -496,7 +496,7 @@ slices:
 
   - id: "5d.7"
     title: "F11 前端 — SlashCommand 交互层（/ 检测 + Tab 补全 + 下拉建议）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F11"
     impl_targets:
