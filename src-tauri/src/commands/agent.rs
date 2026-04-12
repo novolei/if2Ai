@@ -710,6 +710,8 @@ pub async fn start_agent_stream(
         let mut session_messages = messages_for_stream.clone();
         let mut accumulated_text = String::new();
         let mut accumulated_thinking = String::new();
+        let mut token_count: u32 = 0;
+        const SAVE_INTERVAL: u32 = 50;
         // Session-format tool result messages (for persistence)
         let mut tool_result_session_messages: Vec<
             crate::modules::runtime::session::ConversationMessage,
@@ -800,6 +802,29 @@ pub async fn start_agent_stream(
                         ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
                             crate::modules::api::ContentBlockDelta::TextDelta { text } => {
                                 accumulated_text.push_str(&text);
+                                token_count += 1;
+                                if token_count.is_multiple_of(SAVE_INTERVAL) {
+                                    let mut interim_session = app_session_clone.clone();
+                                    interim_session.messages.push(
+                                        crate::modules::runtime::session::ConversationMessage {
+                                            role: crate::modules::runtime::session::MessageRole::Assistant,
+                                            blocks: vec![ContentBlock::Text {
+                                                text: accumulated_text.clone(),
+                                            }],
+                                            usage: None,
+                                            thinking: if accumulated_thinking.is_empty() {
+                                                None
+                                            } else {
+                                                Some(accumulated_thinking.clone())
+                                            },
+                                        },
+                                    );
+                                    let _ = session_manager.save_session(&interim_session).await;
+                                    tracing::debug!(
+                                        "[start_agent_stream] Periodic session save at token {}",
+                                        token_count
+                                    );
+                                }
                                 let payload = StreamTokenPayload {
                                     stream_id: stream_id_for_task.clone(),
                                     text: Some(text),

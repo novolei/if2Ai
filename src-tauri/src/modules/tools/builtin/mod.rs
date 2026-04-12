@@ -2,6 +2,7 @@
 //!
 //! Provides basic tool implementations for the ToolRegistry.
 
+pub mod agent;
 pub mod bash;
 pub mod content_search;
 pub mod cron_add;
@@ -27,6 +28,8 @@ pub mod tool_search;
 pub mod web_fetch;
 pub mod web_search;
 
+#[allow(unused_imports)]
+pub use agent::agent_tool_entry;
 #[allow(unused_imports)]
 pub use bash::bash_tool_entry;
 #[allow(unused_imports)]

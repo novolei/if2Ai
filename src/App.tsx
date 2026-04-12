@@ -158,14 +158,45 @@ function App() {
 
     try {
       const fullSession = await getSession(sessionId)
-      const convertedMessages = fullSession.messages.map((msg) => ({
-        id: crypto.randomUUID(),
-        role: msg.role as 'user' | 'assistant',
-        content: msg.blocks.find((block) => block.type === 'text')?.text || '',
-        timestamp: new Date(fullSession.updated_at),
-        thinking: msg.thinking,
-        disableAnimation: true,
-      }))
+      const convertedMessages: Message[] = fullSession.messages.flatMap((msg) => {
+        const baseTimestamp = new Date(fullSession.updated_at)
+        return msg.blocks.flatMap((block): Message[] => {
+          if (block.type === "tool_result" && block.tool_use_id) {
+            return [{
+              id: `tool-${block.tool_use_id}-${Date.now()}`,
+              role: "tool",
+              content: block.output || "",
+              timestamp: baseTimestamp,
+              toolCallId: block.tool_use_id,
+              toolName: block.tool_name || "unknown",
+              isError: false,
+            }]
+          }
+          if (block.type === "tool_use" && block.tool_use_block) {
+            return [{
+              id: `tool-use-${block.tool_use_block.id}`,
+              role: "assistant",
+              content: "",
+              timestamp: baseTimestamp,
+              toolCallId: block.tool_use_block.id,
+              toolName: block.tool_use_block.name,
+              toolArgs: block.tool_use_block.input as Record<string, unknown> | undefined,
+              disableAnimation: true,
+            }]
+          }
+          if (block.type === "text" && block.text) {
+            return [{
+              id: `${msg.role}-${crypto.randomUUID()}`,
+              role: msg.role as "user" | "assistant",
+              content: block.text,
+              timestamp: baseTimestamp,
+              thinking: msg.thinking,
+              disableAnimation: true,
+            }]
+          }
+          return []
+        })
+      })
 
       setConversations((prev) => ({
         ...prev,

@@ -102,4 +102,7 @@ pub fn register_builtin_tools(
     ))) {
         eprintln!("Failed to register tool_search tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::agent::agent_tool_entry()) {
+        eprintln!("Failed to register agent tool: {}", e);
+    }
 }
