@@ -4,6 +4,11 @@
 
 pub mod bash;
 pub mod content_search;
+pub mod cron_add;
+pub mod cron_list;
+pub mod cron_remove;
+pub mod cron_run;
+pub mod cron_runs;
 pub mod file_edit;
 pub mod file_read;
 pub mod file_write;
@@ -22,6 +27,16 @@ pub mod web_search;
 pub use bash::bash_tool_entry;
 #[allow(unused_imports)]
 pub use content_search::entry as content_search_entry;
+#[allow(unused_imports)]
+pub use cron_add::entry as cron_add_entry;
+#[allow(unused_imports)]
+pub use cron_list::entry as cron_list_entry;
+#[allow(unused_imports)]
+pub use cron_remove::entry as cron_remove_entry;
+#[allow(unused_imports)]
+pub use cron_run::entry as cron_run_entry;
+#[allow(unused_imports)]
+pub use cron_runs::entry as cron_runs_entry;
 #[allow(unused_imports)]
 pub use file_edit::entry as file_edit_entry;
 #[allow(unused_imports)]

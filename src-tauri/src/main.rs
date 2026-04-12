@@ -82,7 +82,8 @@ fn main() {
         std::sync::Mutex::new(default_tool_context),
     ));
     let memory_provider = modules::memory::default_memory_provider();
-    modules::tools::register_builtin_tools(&tool_registry, memory_provider);
+    let scheduler_provider = modules::scheduler::default_scheduler();
+    modules::tools::register_builtin_tools(&tool_registry, memory_provider, scheduler_provider);
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
     // Create app state

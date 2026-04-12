@@ -14,12 +14,17 @@ pub use registry::{ToolEntry, ToolError, ToolRegistry};
 pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 
 use crate::modules::memory::SharedMemoryProvider;
+use crate::modules::scheduler::SharedScheduler;
 
 /// Register all builtin tools to the given registry.
 ///
 /// This function is called during application startup to register
 /// the default builtin tools: bash, read_file, json_parse.
-pub fn register_builtin_tools(registry: &ToolRegistry, memory: SharedMemoryProvider) {
+pub fn register_builtin_tools(
+    registry: &ToolRegistry,
+    memory: SharedMemoryProvider,
+    scheduler: SharedScheduler,
+) {
     if let Err(e) = registry.register(builtin::bash::bash_tool_entry()) {
         eprintln!("Failed to register bash tool: {}", e);
     }
@@ -64,5 +69,20 @@ pub fn register_builtin_tools(registry: &ToolRegistry, memory: SharedMemoryProvi
     }
     if let Err(e) = registry.register(builtin::memory_export_entry(memory.clone())) {
         eprintln!("Failed to register memory_export tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::cron_add_entry(scheduler.clone())) {
+        eprintln!("Failed to register cron_add tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::cron_list_entry(scheduler.clone())) {
+        eprintln!("Failed to register cron_list tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::cron_remove_entry(scheduler.clone())) {
+        eprintln!("Failed to register cron_remove tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::cron_run_entry(scheduler.clone())) {
+        eprintln!("Failed to register cron_run tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::cron_runs_entry(scheduler.clone())) {
+        eprintln!("Failed to register cron_runs tool: {}", e);
     }
 }

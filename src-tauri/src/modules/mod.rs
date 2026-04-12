@@ -9,6 +9,7 @@
 //! - session: Session management with JSON persistence
 //! - projects: Multi-project support
 //! - memory: Memory storage and retrieval
+//! - scheduler: Cron job scheduling
 
 pub mod api;
 pub mod commands;
@@ -16,6 +17,7 @@ pub mod memory;
 pub mod plugins;
 pub mod projects;
 pub mod runtime;
+pub mod scheduler;
 pub mod session;
 pub mod tools;
 
@@ -31,6 +33,8 @@ pub use plugins::*;
 pub use projects::*;
 #[allow(unused_imports)]
 pub use runtime::*;
+#[allow(unused_imports)]
+pub use scheduler::*;
 #[allow(unused_imports)]
 pub use session::*;
 #[allow(unused_imports)]
