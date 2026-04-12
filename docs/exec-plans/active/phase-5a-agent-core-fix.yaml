@@ -227,7 +227,7 @@ slices:
 
   - id: "5a.4"
     title: "5A 集成测试 — 验证两条路径都能正确传工具定义和系统提示"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F1, N5, N12"
     impl_targets:
@@ -271,7 +271,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5a.1", "5a.2"]
-  current_slice: "5a.3"
+  completed_slices: ["5a.1", "5a.2", "5a.3", "5a.4"]
+  current_slice: "—"
   blocked: []
-  notes: "Slices 5a.1 + 5a.2 done — ToolExecutor trait extended, call_api uses request.tools. ⚠️ HUMAN CHECKPOINT: Please review ToolExecutor + call_api fixes before continuing."
+  notes: "Phase 5A 全部完成 (4/4 slices) — F1 ToolExecutor trait 扩展, N12 call_api 一致性, N5 SystemPromptBuilder, 集成测试通过"
