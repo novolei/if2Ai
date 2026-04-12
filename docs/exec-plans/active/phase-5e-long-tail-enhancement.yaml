@@ -5,7 +5,7 @@
 
 meta:
   phase: "5e"
-  phase_status: draft           # draft | active | completed
+  phase_status: active           # draft | active | completed
   title: "长期增强 — ToolSearch + 流式中断 + 代码清理 + 整体回归"
   owner: "@architects"
   depends_on_phase: "5d"
@@ -20,7 +20,7 @@ slices:
 
   - id: "5e.1"
     title: "F12 — ToolSearch 工具注册"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F12"
     impl_targets:
@@ -111,7 +111,7 @@ slices:
 
   - id: "5e.2"
     title: "UI-7 前后端 — 流式中断（Stop 按钮）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "UI-7"
     impl_targets:
@@ -222,7 +222,7 @@ slices:
 
   - id: "5e.3"
     title: "N6 + N8 + N9 + UI-4 — 代码清理"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N6, N8, N9, UI-4"
     impl_targets:
@@ -313,7 +313,7 @@ slices:
 
   - id: "5e.5"
     title: "F13 + F16 + UI-6 — Agent 工具 + 定期保存 + Session 恢复 tool_call"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F13, F16, UI-6"
     impl_targets:
@@ -467,7 +467,7 @@ slices:
 
   - id: "5e.6"
     title: "N3 — GlobalToolRegistry 剩余工具迁移 + 重叠工具替换"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N3"
     impl_targets:
@@ -732,8 +732,8 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-12"
-  completed_slices: []
-  current_slice: "5e.1"
+  last_updated: "2026-04-13"
+  completed_slices: ["5e.1", "5e.2", "5e.3", "5e.5", "5e.6"]
+  current_slice: "5e.7"
   blocked: []
-  notes: "DRAFT — 依赖 Phase 5D 完成。5E 是长期增强 + 缺失项补回 + GlobalToolRegistry 全量迁移阶段 3 (5e.6)。新增 5e.5 (F13+Agent, F16, UI-6) + 5e.6 (N3 剩余工具迁移)。human_checkpoint after 5e.2"
+  notes: "5e.1-5e.6 completed. 8 new tools created and registered. Moving to 5e.7 (final integration tests + Phase 5 regression)."

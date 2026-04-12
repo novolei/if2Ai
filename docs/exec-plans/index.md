@@ -12,8 +12,8 @@
 | [已完成]   | Phase 5A | Agent 核心修复        | `docs/exec-plans/active/phase-5a-agent-core-fix.yaml`          | F1, N5, N12 |
 | [已完成]   | Phase 5B | 流式工具循环重写      | `docs/exec-plans/active/phase-5b-streaming-tool-loop.yaml`     | F2, F8, F15, UI-5 |
 | [已完成]   | Phase 5C | 安全与系统连接        | `docs/exec-plans/active/phase-5c-safety-and-system.yaml`       | N1, N3(阶段1+2), F3-F6, F14, F17, N4, UI-1 |
-| **[当前]** | Phase 5D | UX 完善               | `docs/exec-plans/active/phase-5d-ux-completion.yaml`           | N10, N7, F7, F9-F11, UI-8(前端), N11 |
-| [草稿]     | Phase 5E | 长期增强 + 全局迁移   | `docs/exec-plans/active/phase-5e-long-tail-enhancement.yaml`   | F12, F13, F16, UI-4, UI-6, UI-7, N6, N8-N9, N3(阶段3:18工具), F25 |
+| [已完成]   | Phase 5D | UX 完善               | `docs/exec-plans/active/phase-5d-ux-completion.yaml`           | N10, N7, F7, F9-F11, UI-8(前端), N11 |
+| **[当前]** | Phase 5E | 长期增强 + 全局迁移   | `docs/exec-plans/active/phase-5e-long-tail-enhancement.yaml`   | F12, F13, F16, UI-4, UI-6, UI-7, N6, N8-N9, N3(阶段3:18工具), F25 |
 
 > **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F17, F25, UI-1~UI-8, N1, N3-N12）。  
 > Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  
