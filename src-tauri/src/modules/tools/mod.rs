@@ -4,6 +4,7 @@
 
 pub mod builtin;
 pub mod context;
+pub mod integration_phase4;
 pub mod registry;
 pub mod toolset;
 #[allow(unused_imports)]
