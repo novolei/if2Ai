@@ -86,4 +86,7 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::cron_runs_entry(scheduler.clone())) {
         eprintln!("Failed to register cron_runs tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::todo_write_tool_entry()) {
+        eprintln!("Failed to register TodoWrite tool: {}", e);
+    }
 }

@@ -20,7 +20,7 @@ slices:
 
   - id: "5c.1"
     title: "N1 — 接入 SystemPromptBuilder 替换 run_agent_turn 硬编码 prompt"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N1"
     impl_targets:
@@ -253,8 +253,8 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/tools/lib.rs"
-        grep: "#!\\[deprecated"
-        label: "lib.rs 标记为 #[deprecated] — 08 §N3"
+        grep: "deprecated"
+        label: "lib.rs marked as #[deprecated] — 08 §N3"
       - type: symbol
         file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
         grep: "pub fn todo_write_tool_entry"
@@ -265,7 +265,7 @@ slices:
         label: "使用 IF2AI_TODO_STORE 而非 CLAW_TODO_STORE — 08 §N3"
       - type: symbol
         file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
-        grep: ".if2ai-todos.json"
+        grep: "if2ai-todos"
         label: "默认文件名 .if2ai-todos.json 而非 .claw-todos.json — 08 §N3"
       - type: symbol
         file: "src-tauri/src/modules/tools/mod.rs"
@@ -882,8 +882,8 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-12"
-  completed_slices: []
-  current_slice: "5c.1"
+  last_updated: "2026-04-13"
+  completed_slices: ["5c.1"]
+  current_slice: "5c.2"
   blocked: []
-  notes: "DRAFT — 依赖 Phase 5B 完成。5C 修复安全性与系统连接。新增 5c.7 (F14 SkillSearch) + 5c.5 扩展 (F17)。human_checkpoint after 5c.4"
+  notes: "5c.1 done. Next: 5c.2 — 废弃 GlobalToolRegistry + TodoWrite 迁移"

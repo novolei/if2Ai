@@ -1,3 +1,18 @@
+//! Migration Status (方案 A 全量迁移):
+//!   ✅ Migrated: TodoWrite (→ builtin/todo_write.rs)
+//!   ⏳ Pending: Skill, ToolSearch, Agent, grep_search, Sleep, SendUserMessage,
+//!               Config, NotebookEdit, StructuredOutput, PowerShell
+//!   🔄 Overlap (to be replaced): bash, read_file, write_file, edit_file,
+//!                                glob_search, web_fetch, web_search
+
+#![deprecated(
+    since = "0.2.0",
+    note = "This GlobalToolRegistry is a baseline copy. All tools are being migrated to ToolRegistry \
+            (modules/tools/registry.rs) using the ToolHandler pattern. \
+            See docs/bs_gap/08-critical-fix-priority.md §N3 for migration plan."
+)]
+#![allow(deprecated)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
