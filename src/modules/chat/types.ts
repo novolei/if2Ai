@@ -58,4 +58,5 @@ export interface ChatWorkspaceProps {
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void
   onStartWindowDrag: (event: React.MouseEvent<HTMLElement>) => void
   runningSessionIds: string[]
+  status?: 'idle' | 'running'
 }

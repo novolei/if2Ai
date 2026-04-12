@@ -616,6 +616,7 @@ function App() {
               onResizeStart={startResize}
               onStartWindowDrag={startWindowDrag}
               runningSessionIds={runningSessionIds}
+              status={isLoading ? 'running' : 'idle'}
             />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />

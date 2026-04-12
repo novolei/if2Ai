@@ -55,38 +55,39 @@ pub struct RunAgentTurnResponse {
 
 /// Load LLM settings from ~/.claude/settings.json
 fn load_llm_settings() -> Result<(String, String, String), String> {
-    let settings_path =
-        PathBuf::from(std::env::var("HOME").map_err(|_| "无法获取 HOME 目录".to_string())?)
-            .join(".claude/settings.json");
+    let settings_path = PathBuf::from(
+        std::env::var("HOME").map_err(|_| "Failed to get HOME directory".to_string())?,
+    )
+    .join(".claude/settings.json");
 
     let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("无法读取配置文件 ~/.claude/settings.json: {}", e))?;
+        .map_err(|e| format!("Failed to read config file ~/.claude/settings.json: {}", e))?;
 
     let json: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("配置文件格式错误: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Config file format error: {}", e))?;
 
-    let env = json.get("env").ok_or("配置文件缺少 env 字段")?;
+    let env = json.get("env").ok_or("Config file missing 'env' field")?;
 
     let base_url = env
         .get("ANTHROPIC_BASE_URL")
         .and_then(|v| v.as_str())
-        .ok_or("配置文件缺少 ANTHROPIC_BASE_URL")?
+        .ok_or("Config file missing ANTHROPIC_BASE_URL")?
         .to_string();
 
     let auth_token = env
         .get("ANTHROPIC_AUTH_TOKEN")
         .and_then(|v| v.as_str())
-        .ok_or("配置文件缺少 ANTHROPIC_AUTH_TOKEN")?
+        .ok_or("Config file missing ANTHROPIC_AUTH_TOKEN")?
         .to_string();
 
     let model = env
         .get("ANTHROPIC_MODEL")
         .and_then(|v| v.as_str())
-        .ok_or("配置文件缺少 ANTHROPIC_MODEL")?
+        .ok_or("Config file missing ANTHROPIC_MODEL")?
         .to_string();
 
     if auth_token.is_empty() {
-        return Err("ANTHROPIC_AUTH_TOKEN 为空，请检查配置文件".to_string());
+        return Err("ANTHROPIC_AUTH_TOKEN is empty. Please check your config.".to_string());
     }
 
     Ok((base_url, auth_token, model))
@@ -390,7 +391,7 @@ pub async fn run_agent_turn(
         Err(e) => {
             tracing::error!("[run_agent_turn] Failed to create API client: {}", e);
             return Err(format!(
-                "无法连接 AI 服务: {}. 请检查 ~/.claude/settings.json 配置是否正确。",
+                "Failed to connect to AI service: {}. Please check ~/.claude/settings.json configuration.",
                 e
             ));
         }
@@ -505,40 +506,46 @@ pub async fn run_agent_turn(
             // Return friendly error message
             let error_message = match e {
                 RuntimeError::MaxIterationsExceeded => {
-                    "对话达到最大迭代次数限制，请尝试简化您的问题。".to_string()
+                    "Maximum conversation iterations reached. Please try simplifying your question."
+                        .to_string()
                 }
                 RuntimeError::ApiError(msg) => {
                     // Check for common network errors and provide friendly messages
                     if msg.contains("connection refused") {
-                        "无法连接到 AI 服务服务器，请检查网络连接。".to_string()
+                        "Failed to connect to AI service server. Please check your network connection.".to_string()
                     } else if msg.contains("timeout") || msg.contains("timed out") {
-                        "AI 服务响应超时，请稍后重试。".to_string()
+                        "AI service response timed out. Please try again later.".to_string()
                     } else if msg.contains("dns") || msg.contains("Name or service not known") {
-                        "无法解析 AI 服务地址，请检查网络配置。".to_string()
+                        "Failed to resolve AI service address. Please check network configuration."
+                            .to_string()
                     } else if msg.contains("401")
                         || msg.contains("403")
                         || msg.contains("invalid signature")
                     {
-                        "AI 服务认证失败，请检查 API 配置是否正确。".to_string()
+                        "AI service authentication failed. Please check API configuration."
+                            .to_string()
                     } else if msg.contains("429") {
-                        "AI 服务请求过于频繁，请稍后重试。".to_string()
+                        "Too many AI service requests. Please try again later.".to_string()
                     } else if msg.contains("500") || msg.contains("502") || msg.contains("503") {
-                        "AI 服务暂时不可用，请稍后重试。".to_string()
+                        "AI service temporarily unavailable. Please try again later.".to_string()
                     } else {
-                        format!("AI 服务调用失败: {}. 请稍后重试。", msg)
+                        format!("AI service call failed: {}. Please try again later.", msg)
                     }
                 }
                 RuntimeError::ToolError(msg) => {
-                    format!("工具执行失败: {}. 请稍后重试。", msg)
+                    format!("Tool execution failed: {}. Please try again later.", msg)
                 }
                 RuntimeError::PermissionDenied(msg) => {
-                    format!("权限被拒绝: {}. 请检查设置。", msg)
+                    format!("Permission denied: {}. Please check your settings.", msg)
                 }
                 RuntimeError::SessionError(msg) => {
-                    format!("会话错误: {}. 请刷新页面后重试。", msg)
+                    format!(
+                        "Session error: {}. Please refresh the page and try again.",
+                        msg
+                    )
                 }
                 RuntimeError::ConfigError(msg) => {
-                    format!("配置错误: {}. 请检查设置。", msg)
+                    format!("Configuration error: {}. Please check your settings.", msg)
                 }
             };
             Err(error_message)

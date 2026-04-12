@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { Settings, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { WorkbenchBackdrop } from '@/components/WorkbenchBackdrop'
 import { SETTINGS_SECTIONS } from '../data'
 import type { SettingsSectionId } from '../types'
 import { SettingsSidebar } from './SettingsSidebar'
@@ -23,8 +22,6 @@ export function SettingsShell({
 
   return (
     <div className="relative isolate flex h-screen overflow-hidden bg-transparent text-foreground">
-      <WorkbenchBackdrop className="opacity-85" />
-
       <div className="relative z-10 flex h-full min-h-0 w-full flex-col">
         <header className="window-drag flex h-14 shrink-0 items-center justify-between border-b border-black/5 bg-[#f2f3f4]/56 px-4 select-none backdrop-blur-[2px] lg:px-5">
           <div className="flex items-center gap-3">

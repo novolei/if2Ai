@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { TodoPanel } from '@/components/ui/TodoPanel'
+import { SessionStatus } from '@/components/SessionStatus'
 import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
@@ -66,6 +67,7 @@ export function ChatWorkspace({
   onResizeStart,
   onStartWindowDrag,
   runningSessionIds,
+  status,
 }: ChatWorkspaceProps) {
   const openNewChat = useMemo(() => {
     return () => {
@@ -234,13 +236,18 @@ export function ChatWorkspace({
                   <Plus className="h-4 w-4" />
                 </Button>
                 <div className="ml-1 flex items-center gap-2 text-[15px] font-medium">
-                  <span className="text-emerald-600">+4,523</span>
-                  <span className="text-red-600">-3,223</span>
+                  <span className="text-muted-foreground">—</span>
+                  <span className="text-muted-foreground">—</span>
                 </div>
               </div>
             </header>
 
             <div className="min-h-0 flex-1 overflow-hidden">
+              {activeSessionId && (
+                <SessionStatus
+                  status={status ?? (isLoading ? 'running' : 'idle')}
+                />
+              )}
               <TodoPanel todos={todos} />
               {activeSessionId ? (
                 <ChatUI
