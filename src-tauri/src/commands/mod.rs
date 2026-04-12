@@ -39,6 +39,7 @@ impl AppState {
 pub mod agent;
 pub mod project;
 pub mod session;
+pub mod tools;
 pub mod window;
 
 #[allow(unused_imports)]
@@ -53,5 +54,7 @@ pub use session::{
     create_session, delete_session, get_session, list_project_sessions, list_sessions,
     set_session_pinned,
 };
+#[allow(unused_imports)]
+pub use tools::{execute_tool, get_tool_definitions, list_tools, ToolCallResult, ToolDefinition};
 #[allow(unused_imports)]
 pub use window::{close_settings_window, open_settings_window};

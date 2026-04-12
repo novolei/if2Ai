@@ -9,9 +9,9 @@ use std::process::Command;
 use commands::AppState;
 use commands::{
     close_settings_window, create_permanent_worktree, create_project, create_session,
-    delete_project, delete_session, get_project, get_session, list_project_sessions, list_projects,
-    list_sessions, open_project_in_finder, open_settings_window, rename_project, run_agent_turn,
-    set_session_pinned, start_agent_stream,
+    delete_project, delete_session, execute_tool, get_project, get_session, get_tool_definitions,
+    list_project_sessions, list_projects, list_sessions, list_tools, open_project_in_finder,
+    open_settings_window, rename_project, run_agent_turn, set_session_pinned, start_agent_stream,
 };
 
 use tauri::{
@@ -107,6 +107,9 @@ fn main() {
             create_permanent_worktree,
             open_settings_window,
             close_settings_window,
+            execute_tool,
+            list_tools,
+            get_tool_definitions,
         ])
         .setup(|app| {
             // Create system tray menu

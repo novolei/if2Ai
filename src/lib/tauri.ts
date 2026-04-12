@@ -338,3 +338,64 @@ export interface TokenUsage {
   cache_creation_input_tokens?: number
   cache_read_input_tokens?: number
 }
+
+/**
+ * 工具定义 (OpenAI 格式)
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: object;
+}
+
+/**
+ * 工具调用结果
+ */
+export interface ToolCallResult {
+  success: boolean;
+  output?: string;
+  error?: string;
+}
+
+/**
+ * 直接执行工具（前端调用）
+ *
+ * @param name - 工具名称
+ * @param args - 工具参数（JSON对象）
+ * @returns 工具执行结果
+ */
+export async function executeTool(
+  name: string,
+  args: Record<string, unknown>
+): Promise<ToolCallResult> {
+  try {
+    const result = await invoke<string>('execute_tool', {
+      name,
+      args: JSON.stringify(args),
+    });
+    return { success: true, output: result };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * 列出所有可用工具
+ *
+ * @returns 工具定义列表
+ */
+export async function listTools(): Promise<ToolDefinition[]> {
+  return invoke<ToolDefinition[]>('list_tools');
+}
+
+/**
+ * 获取工具定义（OpenAI function calling 格式）
+ *
+ * @param allowed - 可选的允许工具名称列表
+ * @returns 工具定义列表
+ */
+export async function getToolDefinitions(
+  allowed?: string[]
+): Promise<object[]> {
+  return invoke<object[]>('get_tool_definitions', { allowed });
+}
