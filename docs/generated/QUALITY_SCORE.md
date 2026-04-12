@@ -3,8 +3,8 @@
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
 **更新时间**: 2026-04-13
-**当前 Phase**: Phase 5D (已激活)
-**整体状态**: ✅ Phase 5C 完成 (7/7 slices)，Phase 5D 已激活
+**当前 Phase**: Phase 5E 全部完成
+**整体状态**: ✅ Phase 5 系列完成 (5A-5E 全部 done)，215 tests pass, 4493 行死代码删除
 
 ---
 
@@ -19,6 +19,8 @@
 | Phase 5A — Agent 核心修复 | ✅ 完成 (4/4) | 2026-04-13 | ✅ 0 errors | ✅ 188 tests | ✅   |
 | Phase 5B — 流式工具循环重写 | ✅ 完成 (5/5) | 2026-04-13 | ✅ 0 errors | ✅ 188 tests | ✅   |
 | Phase 5C — 安全与系统连接 | ✅ 完成 (7/7) | 2026-04-13 | ✅ 0 errors | ✅ 198 tests | ✅   |
+| Phase 5D — UX 完善 | ✅ 完成 (8/8) | 2026-04-13 | ✅ 0 errors | ✅ 202 tests | ✅   |
+| Phase 5E — 长期增强 | ✅ 完成 (6/6) | 2026-04-13 | ✅ 0 errors | ✅ 215 tests | ✅   |
 
 ---
 
@@ -87,7 +89,7 @@
 
 - **编译错误**: 0（Phase 1 目标: 0）✅
 - **编译警告**: 0（clippy -D warnings 通过）
-- **测试覆盖率**: 188 tests pass
+- **测试覆盖率**: 215 tests pass
 - **unwrap() 用量**: 少量（main.rs binary entry point + tools/lib.rs pre-existing）
 - **Phase 1 进度**: 12/12 slices done (1.1-1.12 all complete)
 - **测试结果**: 157+157+1 = 315 tests pass
@@ -120,3 +122,8 @@
 | 2026-04-12 | **Phase 4 全部完成**：12/12 slices, 188 tests pass, 工具激活/workdir边界/PermissionMode/ToolSet/文件/Web/Memory/Cron工具全部实现 |
 | 2026-04-13 | **Phase 5A 全部完成**：4/4 slices, F1/N12/N5 修复，两条 Agent 路径工具定义和系统提示一致 |
 | 2026-04-13 | Slice 5b.3 完成：完整工具执行循环，max_iterations=10，权限检查+SSE事件+tool_result持久化，188 tests pass |
+| 2026-04-13 | **Phase 5B 全部完成**：5/5 slices, F2/F8/UI-5 流式工具循环, 188 tests pass |
+| 2026-04-13 | **Phase 5C 全部完成**：7/7 slices, N1/N3(阶段1+2)/F3-F6/F14/F17/N4/UI-1/Skill/SkillSearch, 198 tests pass |
+| 2026-04-13 | **Phase 5D 全部完成**：8/8 slices, 前端 UX 完善, 202 tests pass |
+| 2026-04-13 | **Phase 5E 全部完成**：6/6 slices, 8 新工具 + 7 重叠工具替换 + lib.rs 删除(4493 行死代码), 215 tests pass |
+| 2026-04-13 | **Phase 5 系列全部完成** (5A-5E), 30 slices total, 215 tests pass, 0 clippy warnings |
