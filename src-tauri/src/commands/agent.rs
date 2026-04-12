@@ -2,6 +2,7 @@
 //!
 //! Provides the main agent execution commands for Tauri.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -700,6 +701,12 @@ pub async fn start_agent_stream(
         let mut accumulated_text = String::new();
         let mut accumulated_thinking = String::new();
 
+        // Tool call tracking: accumulate InputJsonDelta chunks
+        let mut tool_arguments: HashMap<String, String> = HashMap::new();
+        let mut current_tool_id: Option<String> = None;
+        let mut current_tool_name: Option<String> = None;
+        let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
+
         loop {
             match stream.next_event().await {
                 Ok(Some(event)) => match event {
@@ -737,10 +744,26 @@ pub async fn start_agent_stream(
                             let _ = window.emit("agent-token", payload);
                         }
                         crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
-                        crate::modules::api::ContentBlockDelta::InputJsonDelta { .. } => {}
+                        crate::modules::api::ContentBlockDelta::InputJsonDelta { partial_json } => {
+                            if let Some(ref id) = current_tool_id {
+                                tool_arguments
+                                    .entry(id.clone())
+                                    .or_default()
+                                    .push_str(&partial_json);
+                            }
+                        }
                     },
                     ApiStreamEvent::MessageStop(_) => {
                         tracing::info!("[start_agent_stream] Background task stream complete");
+
+                        // Extract any pending tool from current context
+                        if let Some(tool_id) = current_tool_id.take() {
+                            if let Some(input_json) = tool_arguments.remove(&tool_id) {
+                                let tool_name = current_tool_name.take().unwrap_or_default();
+                                pending_tool_uses.push((tool_id, tool_name, input_json));
+                            }
+                        }
+
                         let payload = StreamTokenPayload {
                             stream_id: stream_id_for_task.clone(),
                             text: None,
@@ -757,29 +780,57 @@ pub async fn start_agent_stream(
                         break;
                     }
                     ApiStreamEvent::ContentBlockStart(start_event) => {
-                        if matches!(
-                            start_event.content_block,
-                            crate::modules::api::OutputContentBlock::Thinking { .. }
-                        ) {
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                text: None,
-                                thinking: None,
-                                event_type: "thinking_start".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                            };
-                            let _ = window.emit("agent-token", payload);
+                        match start_event.content_block {
+                            crate::modules::api::OutputContentBlock::Thinking { .. } => {
+                                let payload = StreamTokenPayload {
+                                    stream_id: stream_id_for_task.clone(),
+                                    text: None,
+                                    thinking: None,
+                                    event_type: "thinking_start".to_string(),
+                                    tool_call_id: None,
+                                    tool_name: None,
+                                    tool_status: None,
+                                    tool_args: None,
+                                    tool_result: None,
+                                    tool_duration_ms: None,
+                                };
+                                let _ = window.emit("agent-token", payload);
+                            }
+                            crate::modules::api::OutputContentBlock::ToolUse {
+                                id, name, ..
+                            } => {
+                                current_tool_id = Some(id.clone());
+                                current_tool_name = Some(name.clone());
+                                let payload = StreamTokenPayload {
+                                    stream_id: stream_id_for_task.clone(),
+                                    text: None,
+                                    thinking: None,
+                                    event_type: "tool_call_update".to_string(),
+                                    tool_call_id: Some(id),
+                                    tool_name: Some(name),
+                                    tool_status: Some("queued".to_string()),
+                                    tool_args: None,
+                                    tool_result: None,
+                                    tool_duration_ms: None,
+                                };
+                                let _ = window.emit("agent-token", payload);
+                            }
+                            _ => {}
                         }
                     }
                     _ => {}
                 },
                 Ok(None) => {
                     tracing::info!("[start_agent_stream] Background task stream ended naturally");
+
+                    // Extract any pending tool from current context
+                    if let Some(tool_id) = current_tool_id.take() {
+                        if let Some(input_json) = tool_arguments.remove(&tool_id) {
+                            let tool_name = current_tool_name.take().unwrap_or_default();
+                            pending_tool_uses.push((tool_id, tool_name, input_json));
+                        }
+                    }
+
                     break;
                 }
                 Err(e) => {
