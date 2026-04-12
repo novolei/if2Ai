@@ -81,7 +81,8 @@ fn main() {
     let tool_registry = modules::tools::ToolRegistry::new(std::sync::Arc::new(
         std::sync::Mutex::new(default_tool_context),
     ));
-    modules::tools::register_builtin_tools(&tool_registry);
+    let memory_provider = modules::memory::default_memory_provider();
+    modules::tools::register_builtin_tools(&tool_registry, memory_provider);
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
     // Create app state

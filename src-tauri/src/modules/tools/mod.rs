@@ -13,11 +13,13 @@ pub use registry::{ToolEntry, ToolError, ToolRegistry};
 #[allow(unused_imports)]
 pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 
+use crate::modules::memory::SharedMemoryProvider;
+
 /// Register all builtin tools to the given registry.
 ///
 /// This function is called during application startup to register
 /// the default builtin tools: bash, read_file, json_parse.
-pub fn register_builtin_tools(registry: &ToolRegistry) {
+pub fn register_builtin_tools(registry: &ToolRegistry, memory: SharedMemoryProvider) {
     if let Err(e) = registry.register(builtin::bash::bash_tool_entry()) {
         eprintln!("Failed to register bash tool: {}", e);
     }
@@ -47,5 +49,20 @@ pub fn register_builtin_tools(registry: &ToolRegistry) {
     }
     if let Err(e) = registry.register(builtin::http_request_entry()) {
         eprintln!("Failed to register http_request tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_store_entry(memory.clone())) {
+        eprintln!("Failed to register memory_store tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_recall_entry(memory.clone())) {
+        eprintln!("Failed to register memory_recall tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_forget_entry(memory.clone())) {
+        eprintln!("Failed to register memory_forget tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_purge_entry(memory.clone())) {
+        eprintln!("Failed to register memory_purge tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_export_entry(memory.clone())) {
+        eprintln!("Failed to register memory_export tool: {}", e);
     }
 }

@@ -10,6 +10,11 @@ pub mod file_write;
 pub mod glob_search;
 pub mod http_request;
 pub mod json_parse;
+pub mod memory_export;
+pub mod memory_forget;
+pub mod memory_purge;
+pub mod memory_recall;
+pub mod memory_store;
 pub mod web_fetch;
 pub mod web_search;
 
@@ -29,6 +34,16 @@ pub use glob_search::entry as glob_search_entry;
 pub use http_request::entry as http_request_entry;
 #[allow(unused_imports)]
 pub use json_parse::json_parse_tool_entry;
+#[allow(unused_imports)]
+pub use memory_export::entry as memory_export_entry;
+#[allow(unused_imports)]
+pub use memory_forget::entry as memory_forget_entry;
+#[allow(unused_imports)]
+pub use memory_purge::entry as memory_purge_entry;
+#[allow(unused_imports)]
+pub use memory_recall::entry as memory_recall_entry;
+#[allow(unused_imports)]
+pub use memory_store::entry as memory_store_entry;
 #[allow(unused_imports)]
 pub use web_fetch::entry as web_fetch_entry;
 #[allow(unused_imports)]

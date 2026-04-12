@@ -8,9 +8,11 @@
 //! - plugins: Plugin system
 //! - session: Session management with JSON persistence
 //! - projects: Multi-project support
+//! - memory: Memory storage and retrieval
 
 pub mod api;
 pub mod commands;
+pub mod memory;
 pub mod plugins;
 pub mod projects;
 pub mod runtime;
@@ -21,6 +23,8 @@ pub mod tools;
 pub use api::*;
 #[allow(unused_imports)]
 pub use commands::*;
+#[allow(unused_imports)]
+pub use memory::*;
 #[allow(unused_imports)]
 pub use plugins::*;
 #[allow(unused_imports)]
