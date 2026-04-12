@@ -422,7 +422,7 @@ slices:
 
   - id: "5d.6"
     title: "F10 前端 — 模型选择器统一"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F10"
     impl_targets:
@@ -595,11 +595,11 @@ slices:
         label: "slashOverlay 状态存在 — 08 §F11"
       - type: symbol
         file: "src/components/ui/chat-ui.tsx"
-        grep: "suggest_slash_commands_endpoint"
-        label: "调用 suggest_slash_commands_endpoint"
+        grep: "suggestSlashCommands"
+        label: "调用 suggest_slash_commands — 08 §F11"
       - type: symbol
         file: "src/components/ui/chat-ui.tsx"
-        grep: "SlashCommandSuggestions\\|slashOverlay.*visible"
+        grep: "SlashCommandSuggestions"
         label: "下拉建议层渲染存在"
     review_checklist:
       - "输入 / 是否触发建议（50ms debounce）"

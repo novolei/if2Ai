@@ -431,3 +431,25 @@ export interface ToolSet {
 export async function listToolsets(): Promise<ToolSet[]> {
   return invoke<ToolSet[]>('list_toolsets');
 }
+
+/**
+ * Suggest slash commands based on user input prefix.
+ *
+ * @param input - The slash command prefix typed by user
+ * @param limit - Maximum number of suggestions
+ * @returns List of full command strings
+ */
+export async function suggestSlashCommands(input: string, limit = 8): Promise<string[]> {
+  return invoke<string[]>('suggest_slash_commands', { input, limit });
+}
+
+/**
+ * Execute a slash command for the given session.
+ *
+ * @param input - The full slash command string
+ * @param sessionId - Current session ID
+ * @returns Result message from command execution
+ */
+export async function executeSlashCommand(input: string, sessionId: string): Promise<string> {
+  return invoke<string>('execute_slash_command', { input, sessionId });
+}

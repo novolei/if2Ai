@@ -67,16 +67,32 @@ export function ChatUI({
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+  const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [isAtBottom, setIsAtBottom] = React.useState(true)
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
   const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null)
+  const [slashOverlay, setSlashOverlay] = React.useState<{
+    visible: boolean
+    selectedIndex: number
+    suggestions: string[]
+    rawInput: string
+  } | null>(null)
 
   // Use prop-provided model if provided, otherwise fall back to local state
   const modelValue = onModelChangeProp !== undefined ? selectedModelProp : selectedModel
   const handleModelChange: React.Dispatch<React.SetStateAction<string>> = onModelChangeProp ?? setSelectedModel
+
+  // Cleanup timer on unmount
+  React.useEffect(() => {
+    return () => {
+      if (slashTimerRef.current) {
+        clearTimeout(slashTimerRef.current)
+      }
+    }
+  }, [])
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -97,7 +113,39 @@ export function ChatUI({
     textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`
   }, [input])
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle slash command overlay navigation
+    if (slashOverlay?.visible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashOverlay((prev) =>
+          prev ? { ...prev, selectedIndex: (prev.selectedIndex + 1) % prev.suggestions.length } : null
+        )
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashOverlay((prev) =>
+          prev
+            ? { ...prev, selectedIndex: (prev.selectedIndex - 1 + prev.suggestions.length) % prev.suggestions.length }
+            : null
+        )
+        return
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        const selected = slashOverlay.suggestions[slashOverlay.selectedIndex]
+        onInputChange(selected)
+        setSlashOverlay(null)
+        return
+      }
+      if (e.key === 'Escape') {
+        setSlashOverlay(null)
+        return
+      }
+    }
+
+    // Enter to submit
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (input.trim() && !isLoading) onSubmit()
@@ -167,7 +215,19 @@ export function ChatUI({
         setIsComposerFocused={setIsComposerFocused}
         textareaRef={textareaRef}
         handleKeyDown={handleKeyDown}
+        setSlashOverlay={setSlashOverlay}
+        slashTimerRef={slashTimerRef}
       />
+      {slashOverlay?.visible && (
+        <SlashCommandSuggestions
+          suggestions={slashOverlay.suggestions}
+          selectedIndex={slashOverlay.selectedIndex}
+          onSelect={(selected) => {
+            onInputChange(selected)
+            setSlashOverlay(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -242,6 +302,8 @@ const ComposerDock = React.memo(function ComposerDock({
   setIsComposerFocused,
   textareaRef,
   handleKeyDown,
+  setSlashOverlay,
+  slashTimerRef,
 }: {
   input: string
   onInputChange: (value: string) => void
@@ -256,7 +318,48 @@ const ComposerDock = React.memo(function ComposerDock({
   setIsComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  setSlashOverlay: React.Dispatch<
+    React.SetStateAction<{
+      visible: boolean
+      selectedIndex: number
+      suggestions: string[]
+      rawInput: string
+    } | null>
+  >
+  slashTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>
 }) {
+  const handleInputWithSlashDetect = (value: string) => {
+    if (slashTimerRef.current) {
+      clearTimeout(slashTimerRef.current)
+      slashTimerRef.current = null
+    }
+
+    onInputChange(value)
+
+    if (value.startsWith('/')) {
+      const cmdPart = value.split(/\s+/)[0]
+      slashTimerRef.current = setTimeout(async () => {
+        try {
+          const { suggestSlashCommands } = await import('@/lib/tauri')
+          const suggestions = await suggestSlashCommands(cmdPart, 8)
+          if (suggestions.length > 0) {
+            setSlashOverlay({
+              visible: true,
+              selectedIndex: 0,
+              suggestions,
+              rawInput: cmdPart,
+            })
+          } else {
+            setSlashOverlay(null)
+          }
+        } catch {
+          setSlashOverlay(null)
+        }
+      }, 50)
+    } else {
+      setSlashOverlay(null)
+    }
+  }
   return (
     <div className="shrink-0 px-10 pb-2.5 pt-0">
       <div className="mx-auto flex w-full max-w-[900px] flex-col">
@@ -272,7 +375,7 @@ const ComposerDock = React.memo(function ComposerDock({
             <Textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => onInputChange(e.target.value)}
+              onChange={(e) => handleInputWithSlashDetect(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isLoading}
               rows={1}
@@ -508,6 +611,40 @@ function ToolCallSequence({ calls }: { calls: ToolCallData[] }) {
       {calls.map((call) => (
         <ToolCallItem key={call.id} toolCall={call} />
       ))}
+    </div>
+  )
+}
+
+function SlashCommandSuggestions({
+  suggestions,
+  selectedIndex,
+  onSelect,
+}: {
+  suggestions: string[]
+  selectedIndex: number
+  onSelect: (value: string) => void
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-[178px] z-30 flex justify-center px-10">
+      <div className="pointer-events-auto w-full max-w-[740px] rounded-xl border border-black/8 bg-white/95 shadow-[0_8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+        {suggestions.map((cmd, i) => (
+          <button
+            key={cmd}
+            type="button"
+            className={cn(
+              'flex w-full items-center rounded-lg px-4 py-2.5 text-left text-[13px] font-mono transition-colors',
+              i === selectedIndex ? 'bg-black/[0.06] text-black/90' : 'text-black/60 hover:bg-black/[0.03]'
+            )}
+            onClick={() => onSelect(cmd)}
+          >
+            <span className="text-blue-500">/</span>
+            <span className="flex-1 truncate">{cmd.slice(1)}</span>
+            {i === selectedIndex && (
+              <span className="ml-2 text-[10px] text-muted-foreground">Tab to complete</span>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
