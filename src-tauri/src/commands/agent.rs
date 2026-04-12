@@ -387,12 +387,9 @@ pub async fn run_agent_turn(
     // Create permission policy (allow all in this implementation)
     let permission_policy = PermissionPolicy::new(PermissionMode::DangerFullAccess);
 
-    // System prompt
-    let system_prompt = vec![
-        "You are If2Ai, a helpful AI assistant.".to_string(),
-        "You have access to various tools to help the user.".to_string(),
-        "Always be helpful, harmless, and honest.".to_string(),
-    ];
+    // System prompt — use SystemPromptBuilder for dynamic prompt
+    let system_prompt_str = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
+    let system_prompt = vec![system_prompt_str];
 
     // Create runtime
     let mut runtime = ConversationRuntime::new(

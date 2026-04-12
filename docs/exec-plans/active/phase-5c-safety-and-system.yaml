@@ -66,8 +66,8 @@ slices:
         label: "run_agent_turn 使用 SystemPromptBuilder — 08 §N1"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "builder\\.build\\(\\)"
-        label: "run_agent_turn 调用 builder.build()"
+        grep: "SystemPromptBuilder"
+        label: "run_agent_turn 调用 builder.render()"
       - type: test
         cmd: "cargo test -p if2ai-backend -- commands::agent"
         expect: "all tests pass"
