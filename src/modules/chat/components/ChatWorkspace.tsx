@@ -11,12 +11,25 @@ import {
   SquareTerminal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { cn } from '@/lib/utils'
 import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { TodoPanel } from '@/components/ui/TodoPanel'
 import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
+
+const modelItems = [
+  { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
+  { value: 'gpt-5.4', label: 'GPT-5.4' },
+  { value: 'gpt-4.1', label: 'GPT-4.1' },
+]
 
 function formatModelName(model: string): string {
   return model.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -164,15 +177,35 @@ export function ChatWorkspace({
                 >
                   <Play className="h-4 w-4" />
                 </Button>
-                <Button
-                  variant="outline"
-                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
-                  data-window-no-drag="true"
-                >
-                  <Code2 className="mr-2 h-4 w-4 text-blue-500" />
-                  {formatModelName(selectedModel)}
-                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
+                      data-window-no-drag="true"
+                    >
+                      <Code2 className="mr-2 h-4 w-4 text-blue-500" />
+                      {formatModelName(selectedModel)}
+                      <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent sideOffset={6} align="end" className="w-[148px]">
+                    {modelItems.map((item) => (
+                      <DropdownMenuItem
+                        key={item.value}
+                        className={cn(
+                          'h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium',
+                          selectedModel === item.value
+                            ? 'bg-black/[0.045] text-black/90'
+                            : 'text-black/82'
+                        )}
+                        onSelect={() => onModelChange(item.value)}
+                      >
+                        {item.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   variant="outline"
                   className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"

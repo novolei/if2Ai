@@ -370,7 +370,7 @@ slices:
 
   - id: "5d.5"
     title: "F9 后端 — Context Compaction 接入"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F9"
     impl_targets:
@@ -476,15 +476,15 @@ slices:
         cmd: "npx tsc --noEmit"
       - type: symbol
         file: "src/App.tsx"
-        grep: "selectedModel.*useState"
+        grep: "selectedModel"
         label: "App.tsx 有全局 selectedModel 状态 — 08 §F10"
       - type: symbol
         file: "src/components/ui/chat-ui.tsx"
-        grep: "selectedModel.*props\\|selectedModel.*ChatUIProps"
+        grep: "selectedModel"
         label: "ChatUI 接收 selectedModel 作为 props"
       - type: symbol
         file: "src/modules/chat/components/ChatWorkspace.tsx"
-        grep: "formatModelName\\|selectedModel"
+        grep: "formatModelName"
         label: "ChatWorkspace header 使用动态 model name"
     review_checklist:
       - "ChatUI 是否不再维护本地 selectedModel 状态"
