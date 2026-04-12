@@ -203,7 +203,7 @@ slices:
 
   - id: "5b.3"
     title: "F2 后端 — 工具执行 + tool_result 回传 + 多轮循环"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F2, F15"
     impl_targets:
@@ -486,7 +486,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5b.1", "5b.2"]
-  current_slice: "5b.3"
+  completed_slices: ["5b.1", "5b.2", "5b.3"]
+  current_slice: "5b.4"
   blocked: []
-  notes: "Slices 5b.1 + 5b.2 done. Next: 5b.3 tool execution + multi-turn loop (HUMAN CHECKPOINT)"
+  notes: "Slices 5b.1-5b.3 done. Human checkpoint after 5b.3 — 工具循环核心完成后等待人工 review"
