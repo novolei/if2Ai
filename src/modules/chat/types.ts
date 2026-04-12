@@ -14,6 +14,7 @@ export interface Message {
   toolName?: string
   toolArgs?: Record<string, unknown>
   toolDurationMs?: number
+  isError?: boolean
 }
 
 export interface Conversation {

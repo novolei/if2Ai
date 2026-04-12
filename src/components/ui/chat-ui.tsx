@@ -36,6 +36,7 @@ interface Message {
   toolName?: string
   toolArgs?: Record<string, unknown>
   toolDurationMs?: number
+  isError?: boolean
 }
 
 interface ChatUIProps {
@@ -401,7 +402,7 @@ function ToolCallMessage({
 }: {
   message: Message
 }) {
-  const isError = message.toolName?.startsWith('error') ?? false
+  const isError = message.isError ?? false
   const duration = message.toolDurationMs
     ? formatDuration(message.toolDurationMs)
     : null

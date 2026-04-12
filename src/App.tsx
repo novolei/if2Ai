@@ -408,6 +408,7 @@ function App() {
               toolCallId: payload.tool_call_id,
               toolName: payload.tool_name,
               toolDurationMs: payload.tool_duration_ms,
+              isError: payload.tool_status === 'error',
             }
             setConversations((prev) => {
               const currentConv = prev[activeSessionId]
