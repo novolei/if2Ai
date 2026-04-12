@@ -443,6 +443,78 @@ function ToolCallMessage({
   )
 }
 
+type ToolCallStatus = 'queued' | 'running' | 'completed' | 'error'
+
+interface ToolCallData {
+  id: string
+  name: string
+  status: ToolCallStatus
+  summary: string
+  args?: Record<string, unknown>
+  result?: string
+  duration?: string
+}
+
+function ToolCallItem({ toolCall }: { toolCall: ToolCallData }) {
+  const [expanded, setExpanded] = React.useState(false)
+  const statusIcon = { queued: '○', running: '◐', completed: '✓', error: '✗' }[toolCall.status]
+  const statusColor = {
+    queued: 'text-muted-foreground',
+    running: 'text-yellow-500 animate-pulse',
+    completed: 'text-green-500',
+    error: 'text-red-500',
+  }[toolCall.status]
+
+  return (
+    <div className="my-1 rounded-md border bg-muted/30">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm"
+      >
+        <span className={cn('font-mono', statusColor)}>{statusIcon}</span>
+        <span className="font-medium">{toolCall.name}</span>
+        <span className="text-muted-foreground truncate">{toolCall.summary}</span>
+        {toolCall.duration && (
+          <span className="ml-auto text-xs text-muted-foreground">{toolCall.duration}</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="border-t px-3 py-2 text-xs font-mono">
+          <details>
+            <summary className="cursor-pointer text-muted-foreground">Arguments</summary>
+            <pre className="mt-1 overflow-x-auto rounded bg-muted p-2">
+              {JSON.stringify(toolCall.args, null, 2)}
+            </pre>
+          </details>
+          <details>
+            <summary className="mt-2 cursor-pointer text-muted-foreground">Result</summary>
+            <pre className={cn(
+              'mt-1 overflow-x-auto rounded bg-muted p-2',
+              toolCall.status === 'error' && 'border border-red-300 bg-red-50'
+            )}>
+              {toolCall.result}
+            </pre>
+          </details>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolCallSequence({ calls }: { calls: ToolCallData[] }) {
+  return (
+    <div className="space-y-1">
+      {calls.map((call) => (
+        <ToolCallItem key={call.id} toolCall={call} />
+      ))}
+    </div>
+  )
+}
+
+export { ToolCallItem, ToolCallSequence }
+export type { ToolCallData, ToolCallStatus }
+
 function ChatMessage({
   message,
   onCopyMessage,

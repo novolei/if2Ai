@@ -108,7 +108,7 @@ slices:
 
   - id: "5d.2"
     title: "N7 前端 — 隐藏 GlobalNavbar 无功能图标"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N7"
     impl_targets:
