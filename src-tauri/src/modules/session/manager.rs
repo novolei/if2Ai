@@ -266,7 +266,11 @@ impl SessionManager {
         }
 
         // Sort pinned first, then by creation date, newest first
-        sessions.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| b.created_at.cmp(&a.created_at)));
+        sessions.sort_by(|a, b| {
+            b.pinned
+                .cmp(&a.pinned)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
 
         Ok(sessions)
     }
@@ -421,7 +425,11 @@ impl SessionManager {
         }
 
         // Sort pinned first, then by creation date, newest first
-        sessions.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| b.created_at.cmp(&a.created_at)));
+        sessions.sort_by(|a, b| {
+            b.pinned
+                .cmp(&a.pinned)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
 
         Ok(sessions)
     }
@@ -481,6 +489,7 @@ mod tests {
             blocks: vec![ContentBlock::Text {
                 text: text.to_string(),
             }],
+            thinking: None,
             usage: None,
         }
     }

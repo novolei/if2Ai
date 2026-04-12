@@ -12,7 +12,7 @@ use tokio::time::timeout;
 use crate::commands::AppState;
 use crate::modules::api::providers::claw_provider::AuthSource;
 use crate::modules::api::providers::claw_provider::ClawApiClient;
-use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest};
+use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolDefinition};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
@@ -107,13 +107,19 @@ fn app_session_to_runtime(app_session: &AppSession) -> RuntimeSession {
 struct RealApiClient {
     provider: ClawApiClient,
     model: String,
+    tool_registry: Arc<crate::modules::tools::ToolRegistry>,
 }
 
 impl RealApiClient {
-    fn new(provider: ClawApiClient, model: String) -> Self {
+    fn new(
+        provider: ClawApiClient,
+        model: String,
+        tool_registry: Arc<crate::modules::tools::ToolRegistry>,
+    ) -> Self {
         Self {
             provider,
             model,
+            tool_registry,
         }
     }
 }
@@ -223,12 +229,32 @@ impl RealApiClient {
             Some(request.system_prompt.join("\n"))
         };
 
+        // Get tool definitions from registry and convert to ToolDefinition format
+        // Registry returns OpenAI format: {type: "function", function: {name, description, parameters}}
+        let definitions = self.tool_registry.get_definitions(None);
+        let tools: Vec<ToolDefinition> = definitions
+            .into_iter()
+            .filter_map(|def| {
+                let obj = def.as_object()?;
+                let func = obj.get("function")?.as_object()?;
+                Some(ToolDefinition {
+                    name: func.get("name")?.as_str()?.to_string(),
+                    description: func
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(String::from),
+                    input_schema: func.get("parameters")?.clone(),
+                })
+            })
+            .collect();
+        let tools = if tools.is_empty() { None } else { Some(tools) };
+
         let api_request = MessageRequest {
             model: self.model.clone(),
             max_tokens: 4096,
             messages,
             system: system_prompt,
-            tools: None,
+            tools,
             tool_choice: None,
             stream: false,
         };
@@ -247,9 +273,7 @@ struct ToolRegistryExecutor {
 
 impl ToolRegistryExecutor {
     fn new(tool_registry: Arc<crate::modules::tools::ToolRegistry>) -> Self {
-        Self {
-            tool_registry,
-        }
+        Self { tool_registry }
     }
 }
 
@@ -286,8 +310,15 @@ pub async fn run_agent_turn(
     session_id: String,
     user_message: String,
 ) -> Result<RunAgentTurnResponse, String> {
-    eprintln!("[DEBUG] run_agent_turn called with session_id: {}, message: {}", session_id, user_message);
-    tracing::info!("[run_agent_turn] Starting - session_id: {}, message: {}", session_id, user_message);
+    eprintln!(
+        "[DEBUG] run_agent_turn called with session_id: {}, message: {}",
+        session_id, user_message
+    );
+    tracing::info!(
+        "[run_agent_turn] Starting - session_id: {}, message: {}",
+        session_id,
+        user_message
+    );
 
     // Restore the session
     let app_session = state
@@ -296,7 +327,10 @@ pub async fn run_agent_turn(
         .await
         .map_err(|e| e.to_string())?;
 
-    tracing::info!("[run_agent_turn] Session restored, {} messages", app_session.messages.len());
+    tracing::info!(
+        "[run_agent_turn] Session restored, {} messages",
+        app_session.messages.len()
+    );
 
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
@@ -315,7 +349,7 @@ pub async fn run_agent_turn(
             ));
         }
     };
-    let api_client = RealApiClient::new(claw_client, model);
+    let api_client = RealApiClient::new(claw_client, model, state.tool_registry.clone());
 
     // Create tool executor bridge
     let tool_executor = ToolRegistryExecutor::new(state.tool_registry.clone());
@@ -339,12 +373,18 @@ pub async fn run_agent_turn(
         system_prompt,
     );
 
-    tracing::info!("[run_agent_turn] Runtime created, calling run_turn with message: {}", user_message);
+    tracing::info!(
+        "[run_agent_turn] Runtime created, calling run_turn with message: {}",
+        user_message
+    );
 
     // Run the conversation turn
     let result = runtime.run_turn(user_message.clone(), None);
 
-    tracing::info!("[run_agent_turn] run_turn completed, result: {:?}", result.is_ok());
+    tracing::info!(
+        "[run_agent_turn] run_turn completed, result: {:?}",
+        result.is_ok()
+    );
 
     match result {
         Ok(summary) => {
@@ -475,8 +515,15 @@ pub async fn start_agent_stream(
     use tauri::Manager;
 
     let stream_id = uuid::Uuid::new_v4().to_string();
-    eprintln!("[DEBUG] start_agent_stream called - stream_id: {}, session_id: {}, message: {}", stream_id, session_id, user_message);
-    tracing::info!("[start_agent_stream] Starting - stream_id: {}, session_id: {}", stream_id, session_id);
+    eprintln!(
+        "[DEBUG] start_agent_stream called - stream_id: {}, session_id: {}, message: {}",
+        stream_id, session_id, user_message
+    );
+    tracing::info!(
+        "[start_agent_stream] Starting - stream_id: {}, session_id: {}",
+        stream_id,
+        session_id
+    );
 
     // Get the main window for emitting events
     let window = app_handle
@@ -490,7 +537,10 @@ pub async fn start_agent_stream(
         .await
         .map_err(|e| e.to_string())?;
 
-    tracing::info!("[start_agent_stream] Session restored, {} messages", app_session.messages.len());
+    tracing::info!(
+        "[start_agent_stream] Session restored, {} messages",
+        app_session.messages.len()
+    );
 
     // Create API client
     let (claw_client, model) = create_claw_client_from_settings().map_err(|e| {
@@ -503,7 +553,7 @@ pub async fn start_agent_stream(
     let messages: Vec<InputMessage> = runtime_session
         .messages
         .iter()
-        .filter_map(|msg| {
+        .map(|msg| {
             let content: Vec<InputContentBlock> = msg
                 .blocks
                 .iter()
@@ -531,7 +581,7 @@ pub async fn start_agent_stream(
                 crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
             };
 
-            Some(InputMessage { role, content })
+            InputMessage { role, content }
         })
         .collect();
 
@@ -539,12 +589,34 @@ pub async fn start_agent_stream(
     let mut all_messages = messages;
     all_messages.push(InputMessage::user_text(&user_message));
 
+    // Get tool definitions from registry and convert to ToolDefinition format
+    let definitions = state.tool_registry.get_definitions(None);
+    let tool_defs: Vec<crate::modules::api::ToolDefinition> = definitions
+        .into_iter()
+        .filter_map(|def| {
+            let obj = def.as_object()?;
+            let func = obj.get("function")?.as_object()?;
+            Some(crate::modules::api::ToolDefinition {
+                name: func.get("name")?.as_str()?.to_string(),
+                description: func
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(String::from),
+                input_schema: func.get("parameters")?.clone(),
+            })
+        })
+        .collect();
+
     let api_request = MessageRequest {
         model,
         max_tokens: 4096,
         messages: all_messages,
         system: None,
-        tools: None,
+        tools: if tool_defs.is_empty() {
+            None
+        } else {
+            Some(tool_defs)
+        }, // tools: Some — pass to LLM
         tool_choice: None,
         stream: true,
     };
@@ -558,13 +630,19 @@ pub async fn start_agent_stream(
     let stream_id_for_task = stream_id.clone();
     let stream_id_return = stream_id.clone();
     tokio::spawn(async move {
-        tracing::info!("[start_agent_stream] Spawned background task for stream_id: {}", stream_id_for_task);
+        tracing::info!(
+            "[start_agent_stream] Spawned background task for stream_id: {}",
+            stream_id_for_task
+        );
 
         // Start streaming
         let mut stream = match claw_client.stream_message(&api_request).await {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!("[start_agent_stream] Background task failed to start stream: {}", e);
+                tracing::error!(
+                    "[start_agent_stream] Background task failed to start stream: {}",
+                    e
+                );
                 let payload = StreamTokenPayload {
                     stream_id: stream_id_for_task.clone(),
                     text: None,
@@ -582,59 +660,58 @@ pub async fn start_agent_stream(
 
         loop {
             match stream.next_event().await {
-                Ok(Some(event)) => {
-                    match event {
-                        ApiStreamEvent::ContentBlockDelta(delta_event) => {
-                            match delta_event.delta {
-                                crate::modules::api::ContentBlockDelta::TextDelta { text } => {
-                                    accumulated_text.push_str(&text);
-                                    let payload = StreamTokenPayload {
-                                        stream_id: stream_id_for_task.clone(),
-                                        text: Some(text),
-                                        thinking: None,
-                                        event_type: "text_delta".to_string(),
-                                    };
-                                    let _ = window.emit("agent-token", payload);
-                                }
-                                crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
-                                    accumulated_thinking.push_str(&thinking);
-                                    let payload = StreamTokenPayload {
-                                        stream_id: stream_id_for_task.clone(),
-                                        text: None,
-                                        thinking: Some(thinking),
-                                        event_type: "thinking_delta".to_string(),
-                                    };
-                                    let _ = window.emit("agent-token", payload);
-                                }
-                                crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
-                                crate::modules::api::ContentBlockDelta::InputJsonDelta { .. } => {}
-                            }
+                Ok(Some(event)) => match event {
+                    ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
+                        crate::modules::api::ContentBlockDelta::TextDelta { text } => {
+                            accumulated_text.push_str(&text);
+                            let payload = StreamTokenPayload {
+                                stream_id: stream_id_for_task.clone(),
+                                text: Some(text),
+                                thinking: None,
+                                event_type: "text_delta".to_string(),
+                            };
+                            let _ = window.emit("agent-token", payload);
                         }
-                        ApiStreamEvent::MessageStop(_) => {
-                            tracing::info!("[start_agent_stream] Background task stream complete");
+                        crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
+                            accumulated_thinking.push_str(&thinking);
+                            let payload = StreamTokenPayload {
+                                stream_id: stream_id_for_task.clone(),
+                                text: None,
+                                thinking: Some(thinking),
+                                event_type: "thinking_delta".to_string(),
+                            };
+                            let _ = window.emit("agent-token", payload);
+                        }
+                        crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
+                        crate::modules::api::ContentBlockDelta::InputJsonDelta { .. } => {}
+                    },
+                    ApiStreamEvent::MessageStop(_) => {
+                        tracing::info!("[start_agent_stream] Background task stream complete");
+                        let payload = StreamTokenPayload {
+                            stream_id: stream_id_for_task.clone(),
+                            text: None,
+                            thinking: None,
+                            event_type: "stream_complete".to_string(),
+                        };
+                        let _ = window.emit("agent-token", payload);
+                        break;
+                    }
+                    ApiStreamEvent::ContentBlockStart(start_event) => {
+                        if matches!(
+                            start_event.content_block,
+                            crate::modules::api::OutputContentBlock::Thinking { .. }
+                        ) {
                             let payload = StreamTokenPayload {
                                 stream_id: stream_id_for_task.clone(),
                                 text: None,
                                 thinking: None,
-                                event_type: "stream_complete".to_string(),
+                                event_type: "thinking_start".to_string(),
                             };
                             let _ = window.emit("agent-token", payload);
-                            break;
                         }
-                        ApiStreamEvent::ContentBlockStart(start_event) => {
-                            if matches!(start_event.content_block, crate::modules::api::OutputContentBlock::Thinking { .. }) {
-                                let payload = StreamTokenPayload {
-                                    stream_id: stream_id_for_task.clone(),
-                                    text: None,
-                                    thinking: None,
-                                    event_type: "thinking_start".to_string(),
-                                };
-                                let _ = window.emit("agent-token", payload);
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    _ => {}
+                },
                 Ok(None) => {
                     tracing::info!("[start_agent_stream] Background task stream ended naturally");
                     break;
@@ -684,6 +761,9 @@ pub async fn start_agent_stream(
     });
 
     // Return immediately with stream_id
-    tracing::info!("[start_agent_stream] Returning stream_id: {}", stream_id_return);
+    tracing::info!(
+        "[start_agent_stream] Returning stream_id: {}",
+        stream_id_return
+    );
     Ok(stream_id_return)
 }

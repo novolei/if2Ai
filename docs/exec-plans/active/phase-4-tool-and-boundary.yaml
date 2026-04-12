@@ -1,0 +1,1094 @@
+# Phase 4: Tool Activation & Workdir Boundary
+# ─────────────────────────────────────────────────────────────────────────────
+# 前置条件：Phase 3 全部 slice 状态为 done，且人工 review 通过。
+# phase_status: draft → 由人类改为 active 方可让 executor 执行
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: 4
+  phase_status: active          # draft | active | completed
+  title: "工具激活与工作目录边界 (Tool Activation & Workdir Boundary + ZeroClaw Tools)"
+  owner: "@architects"
+  depends_on_phase: 3
+  design_docs:
+    - docs/design-docs/tool-activation.md    # Phase 4: 前端工具调用 + ZeroClaw 工具复刻
+    - docs/design-docs/project-workdir-boundary.md  # Phase 4: 边界隔离
+    - docs/design-docs/tool-system.md        # 工具基础设施参考
+    - docs/design-docs/project-system.md      # Project 系统参考
+  human_checkpoints:
+    - after_slice: "4.3"       # 工具注册 + LLM 集成 + 边界控制完成后 review
+    - after_slice: "4.6"       # 前端工具调用 + PermissionMode 完成后 review
+    - after_slice: "4.7"       # ToolSet 分类系统完成后 review
+    - after_slice: "4.10"      # 文件操作 + Web 类工具完成后 review
+    - after_slice: "4.12"      # 全部 Phase 4 完成后 review
+
+slices:
+
+  # ───────────── Stage 1: 工具注册与 LLM 集成 ───────────────────────────────
+
+  - id: "4.1"
+    title: "注册内置工具 + 让 LLM 接收工具定义"
+    status: done
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-401"
+    impl_targets:
+      - src-tauri/src/main.rs                          # MODIFY: 注册内置工具
+      - src-tauri/src/modules/tools/mod.rs             # MODIFY: 添加 register_builtin_tools()
+      - src-tauri/src/commands/agent.rs                 # MODIFY: MessageRequest 传递 tools
+
+    current_state: |
+      ⚠️ 当前问题：
+        1. main.rs: ToolRegistry::new() 创建空注册表，无任何工具注册
+        2. agent.rs: MessageRequest { tools: None } — 不传工具给 LLM
+        3. modules/tools/builtin/{bash,file_read,json_parse}.rs 已实现 entry() 函数
+      ❌ MISSING — 必须修改 3 个文件：
+        1. main.rs: 调用 register_builtin_tools(&tool_registry)
+        2. tools/mod.rs: 实现 register_builtin_tools() 函数，调用各工具的 entry()
+        3. agent.rs: MessageRequest.tools = Some(tool_registry.get_definitions(...))
+      注意：不要新建文件，只修改已有文件。
+
+    must_implement:
+      - |
+        // tool-activation.md §main.rs — 添加工具注册
+        // 在 main.rs 中创建 tool_registry 后、创建 AppState 前添加：
+        modules::tools::register_builtin_tools(&tool_registry);
+      - |
+        // tool-activation.md §tools/mod.rs — 新增 register_builtin_tools
+        pub fn register_builtin_tools(registry: &ToolRegistry) {
+            if let Err(e) = registry.register(bash::entry()) {
+                eprintln!("Failed to register bash tool: {}", e);
+            }
+            if let Err(e) = registry.register(file_read::entry()) {
+                eprintln!("Failed to register read_file tool: {}", e);
+            }
+            if let Err(e) = registry.register(json_parse::entry()) {
+                eprintln!("Failed to register json_parse tool: {}", e);
+            }
+        }
+      - |
+        // tool-activation.md §agent.rs — 传递工具定义给 LLM
+        // 找到 MessageRequest 构建处，修改 tools 字段：
+        let allowed_tools: Option<Vec<String>> = None;  // 或从 project config 读取
+        let tools = state.tool_registry.get_definitions(allowed_tools);
+        let request = MessageRequest {
+            tools: Some(tools),  // ✅ 改为传递工具定义
+            ..
+        };
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "register_builtin_tools"
+        label: "register_builtin_tools 函数存在 — tool-activation.md"
+      - type: symbol
+        file: "src-tauri/src/main.rs"
+        grep: "register_builtin_tools"
+        label: "main.rs 调用 register_builtin_tools"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tools: Some"
+        label: "MessageRequest 传递 tools 给 LLM"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools"
+        expect: "all tests pass"
+    review_checklist:
+      - "register_builtin_tools 是否在 tools/mod.rs 中正确导出"
+      - "每个内置工具（bash, read_file, json_parse）是否都有 entry() 函数"
+      - "main.rs 是否在 AppState 创建前调用 register_builtin_tools"
+      - "agent.rs 中 MessageRequest.tools 是否为 Some(...) 而非 None"
+      - "get_definitions 调用是否传入了 allowed 参数（即使是 None）"
+      - "cargo clippy 是否有新警告"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 2: ToolContext 传播机制 ───────────────────────────────
+
+  - id: "4.2"
+    title: "ToolContext Arc<Mutex> 机制 — 让工具函数访问 workdir"
+    status: pending
+    design_ref: "docs/design-docs/project-workdir-boundary.md"
+    backlog_ref: "BL-402"
+    impl_targets:
+      - src-tauri/src/modules/tools/context.rs        # 必须新建
+      - src-tauri/src/modules/tools/registry.rs       # MODIFY: ToolRegistry 持有 context
+      - src-tauri/src/modules/tools/mod.rs            # MODIFY: 导出 context 模块
+      - src-tauri/src/modules/runtime/config.rs       # MODIFY: RuntimeConfig 新增 workdir
+
+    current_state: |
+      ⚠️ 当前问题：工具函数无法访问当前的 workdir context
+        - file_read 和 bash 需要知道当前 project 的 workdir
+        - 目前没有机制传递这个信息给工具 handler
+      ❌ MISSING — 必须新建 context.rs 并修改 3 个文件：
+        1. tools/context.rs：ToolContext struct + thread_local 或 Arc<Mutex> 方案
+        2. tools/registry.rs：Registry 持有 context，dispatch 时传入
+        3. runtime/config.rs：RuntimeConfig 新增 workdir: Option<PathBuf>
+      注意：采用 Arc<Mutex<ToolContext>> 方案，不使用 thread_local
+
+    must_implement:
+      - |
+        // project-workdir-boundary.md §方案 B — 新建 context.rs
+        use std::sync::{Arc, Mutex};
+        use std::path::PathBuf;
+
+        #[derive(Debug, Clone)]
+        pub struct ToolContext {
+            pub workdir: PathBuf,
+            pub permission_mode: PermissionMode,
+        }
+
+        pub type SharedToolContext = Arc<Mutex<ToolContext>>;
+
+        impl ToolContext {
+            pub fn new(workdir: PathBuf, permission_mode: PermissionMode) -> Self {
+                Self { workdir, permission_mode }
+            }
+        }
+      - |
+        // project-workdir-boundary.md §Registry 持有 context — 修改 registry.rs
+        pub struct ToolRegistry {
+            tools: Arc<DashMap<String, ToolEntry>>,
+            context: SharedToolContext,  // ✅ 新增
+        }
+
+        impl ToolRegistry {
+            pub fn new(context: SharedToolContext) -> Self {
+                Self {
+                    tools: Arc::new(DashMap::new()),
+                    context,
+                }
+            }
+
+            pub fn dispatch(&self, name: &str, args: &Value) -> Result<String, ToolError> {
+                let entry = self.get(name).ok_or_else(||
+                    ToolError::NotFound(name.to_string()))?;
+                // 从 context 读取 workdir（用于工具执行）
+                let ctx = self.context.lock().map_err(|e|
+                    ToolError::Handler(format!("Context lock error: {}", e)))?;
+                // 调用 handler 时传入 context
+                (entry.handler)(args, &ctx)
+            }
+        }
+
+        // ToolHandler 类型签名变更：
+        pub type ToolHandler = Arc<
+            dyn Fn(&Value, &ToolContext) ->
+                Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>
+                + Send + Sync
+        >;
+      - |
+        // project-workdir-boundary.md §RuntimeConfig — 修改 config.rs
+        #[derive(Debug, Clone)]
+        pub struct RuntimeConfig {
+            pub workdir: Option<PathBuf>,       // ✅ 新增
+            pub permission_mode: PermissionMode,
+            pub max_turns: usize,
+            pub max_tokens: u32,
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/context.rs"
+        grep: "pub struct ToolContext"
+        label: "ToolContext struct — project-workdir-boundary.md §方案 B"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "SharedToolContext"
+        label: "Registry 持有 ToolContext"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/config.rs"
+        grep: "workdir: Option<PathBuf>"
+        label: "RuntimeConfig.workdir 字段存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools"
+        expect: "all tests pass"
+    review_checklist:
+      - "context.rs 是否使用 Arc<Mutex<ToolContext>> 方案（不是 thread_local）"
+      - "ToolHandler 类型签名是否包含 &ToolContext 参数"
+      - "Registry.dispatch 是否在调用 handler 前获取 context lock"
+      - "所有内置工具的 handler 签名是否更新（接受 ToolContext）"
+      - "cargo clippy 是否有新警告"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 3: 边界控制实现 ────────────────────────────────────
+
+  - id: "4.3"
+    title: "file_read 工具 — workdir allowlist 实现"
+    status: pending
+    design_ref: "docs/design-docs/project-workdir-boundary.md"
+    backlog_ref: "BL-403"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/file_read.rs  # MODIFY: 实现 allowlist
+
+    current_state: |
+      ⚠️ 当前问题：file_read 只有 denylist（/etc/passwd 等），可被绕过
+        正确的做法：只允许访问 workdir 内的文件（allowlist）
+      ❌ MISSING — file_read.rs 必须修改：
+        1. dispatch 函数接收 ToolContext 参数
+        2. 路径必须在 workdir 内（allowlist 检查）
+        3. 保留原有的敏感路径 denylist 作为额外保护
+
+    must_implement:
+      - |
+        // project-workdir-boundary.md §file_read — 修改 handler 签名和实现
+        pub async fn execute_read_file(args: &Value, ctx: &ToolContext)
+            -> Result<String, ToolError>
+        {
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::Handler("Missing 'path' argument".into()))?;
+
+            // Allowlist 检查：路径必须在 workdir 内
+            let requested_path = PathBuf::from(path);
+            let canonical_path = requested_path.canonicalize()
+                .map_err(|e| ToolError::Handler(format!("Invalid path: {}", e)))?;
+
+            let canonical_workdir = ctx.workdir.canonicalize()
+                .map_err(|e| ToolError::Handler(format!("Invalid workdir: {}", e)))?;
+
+            if !canonical_path.starts_with(&canonical_workdir) {
+                return Err(ToolError::Handler(format!(
+                    "Path '{}' is outside allowed workdir '{}'",
+                    path, ctx.workdir.display()
+                )));
+            }
+
+            // 额外敏感路径检查（保留原有 denylist）
+            let sensitive = ["/etc/passwd", "/etc/shadow", "/.ssh/", "/.aws/"];
+            let path_str = path.to_string();
+            for pat in sensitive {
+                if path_str.contains(pat) {
+                    return Err(ToolError::Handler(
+                        format!("Access to '{}' is forbidden", pat)
+                    ));
+                }
+            }
+
+            // 执行读取
+            let offset = args.get("offset").and_then(|v| v.as_u64());
+            let limit = args.get("limit").and_then(|v| v.as_u64());
+            execute_read_file_internal(&canonical_path, offset, limit).await
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/file_read.rs"
+        grep: "starts_with.*workdir"
+        label: "file_read 有 workdir allowlist 检查"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/file_read.rs"
+        grep: "ToolContext"
+        label: "handler 签名包含 ToolContext 参数"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "是否检查路径是否在 workdir 内（canonicalize 后比较）"
+      - "是否保留原有的敏感路径 denylist"
+      - "handler 签名是否为 async fn(Value, &ToolContext)"
+      - "错误消息是否包含实际路径和允许的 workdir"
+      - "无 unwrap()（测试除外）"
+
+  - id: "4.4"
+    title: "bash 工具 — workdir 限制实现"
+    status: pending
+    design_ref: "docs/design-docs/project-workdir-boundary.md"
+    backlog_ref: "BL-404"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/bash.rs    # MODIFY: 实现 workdir 限制
+
+    current_state: |
+      ⚠️ 当前问题：bash 直接在 host 环境执行任意命令，无 workdir 限制
+      ❌ MISSING — bash.rs 必须修改：
+        1. dispatch 函数接收 ToolContext 参数
+        2. 命令前强制添加 cd $workdir &&
+        3. 保留原有的危险命令 denylist
+
+    must_implement:
+      - |
+        // project-workdir-boundary.md §bash — 修改 handler 签名和实现
+        pub async fn execute_bash(args: &Value, ctx: &ToolContext)
+            -> Result<String, ToolError>
+        {
+            let command = args.get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::Handler("Missing 'command' argument".into()))?;
+
+            let timeout = args.get("timeout")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30);
+
+            // 危险命令检查（保留原有 denylist）
+            let dangerous = ["rm -rf /", "rm -rf /*", "sudo su", "mkfs", ":(){:|:&};"];
+            for pat in dangerous {
+                if command.contains(pat) {
+                    return Err(ToolError::Handler(
+                        format!("Command '{}' is forbidden", pat)
+                    ));
+                }
+            }
+
+            // Workdir 限制：强制在 workdir 内执行
+            let wrapped = format!("cd {} && {}", ctx.workdir.display(), command);
+            execute_bash_internal(&wrapped, timeout).await
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/bash.rs"
+        grep: "cd.*workdir"
+        label: "bash 有 cd workdir && command 包装"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/bash.rs"
+        grep: "ToolContext"
+        label: "handler 签名包含 ToolContext 参数"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "是否用 cd $workdir && command 包装原始命令"
+      - "是否保留原有的危险命令 denylist"
+      - "handler 签名是否为 async fn(Value, &ToolContext)"
+      - "超时参数是否正确传递"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 4: 前端工具调用接口 ──────────────────────────────────
+
+  - id: "4.5"
+    title: "execute_tool Tauri 命令 — 前端直接调用工具"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-405"
+    impl_targets:
+      - src-tauri/src/commands/tools.rs           # 必须新建
+      - src-tauri/src/commands/mod.rs            # MODIFY: 注册新命令模块
+      - src/lib/tauri.ts                         # MODIFY: 前端新增工具调用接口
+
+    current_state: |
+      ⚠️ 当前问题：前端无法直接触发工具调用，只能通过 Agent 间接使用
+      ❌ MISSING — 必须新建 commands/tools.rs：
+        1. execute_tool(name, args) → 直接执行工具
+        2. list_tools() → 列出所有可用工具
+        3. get_tool_definitions() → 获取 OpenAI 格式的工具定义
+      注意：json_parse.rs 的 entry() 也要更新签名（接受 ToolContext）
+
+    must_implement:
+      - |
+        // tool-activation.md §commands/tools.rs — 新建文件
+        use crate::modules::tools::{ToolRegistry, ToolError};
+        use tauri::State;
+        use std::sync::Arc;
+
+        #[tauri::command]
+        pub async fn execute_tool(
+            state: State<'_, AppState>,
+            name: String,
+            args: String,  // JSON string
+        ) -> Result<String, String> {
+            let args: serde_json::Value = serde_json::from_str(&args)
+                .map_err(|e| format!("Invalid JSON args: {}", e))?;
+
+            // 从当前 runtime context 获取 workdir（简化：使用 home dir）
+            let workdir = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."));
+            let context = ToolContext::new(workdir, PermissionMode::WorkspaceWrite);
+
+            state.tool_registry.dispatch(&name, &args, &context)
+                .await
+                .map_err(|e| e.to_string())
+        }
+
+        #[tauri::command]
+        pub fn list_tools(
+            state: State<'_, AppState>,
+        ) -> Result<Vec<ToolDefinition>, String> {
+            state.tool_registry.get_definitions(None)
+                .map_err(|e| e.to_string())
+        }
+
+        #[tauri::command]
+        pub fn get_tool_definitions(
+            state: State<'_, AppState>,
+            allowed: Option<Vec<String>>,
+        ) -> Result<Vec<serde_json::Value>, String> {
+            state.tool_registry.get_definitions(allowed)
+                .map_err(|e| e.to_string())
+        }
+      - |
+        // tool-activation.md §commands/mod.rs — 注册新模块
+        pub mod tools;  // ✅ 新增
+
+        // 在 lib.rs 或 main.rs 中注册命令：
+        // .invoke_handler(tauri::generate_handler![
+        //     commands::tools::execute_tool,
+        //     commands::tools::list_tools,
+        //     commands::tools::get_tool_definitions,
+        // ])
+      - |
+        // tool-activation.md §lib/tauri.ts — 前端接口
+        export interface ToolDefinition {
+          name: string;
+          description: string;
+          input_schema: object;
+        }
+
+        export interface ToolCallResult {
+          success: boolean;
+          output?: string;
+          error?: string;
+        }
+
+        export async function executeTool(
+          name: string,
+          args: Record<string, unknown>
+        ): Promise<ToolCallResult> {
+          try {
+            const result = await invoke<string>('execute_tool', {
+              name,
+              args: JSON.stringify(args)
+            });
+            return { success: true, output: result };
+          } catch (e) {
+            return { success: false, error: String(e) };
+          }
+        }
+
+        export async function listTools(): Promise<ToolDefinition[]> {
+          return invoke<ToolDefinition[]>('list_tools');
+        }
+
+        export async function getToolDefinitions(
+          allowed?: string[]
+        ): Promise<object[]> {
+          return invoke<object[]>('get_tool_definitions', { allowed });
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/tools.rs"
+        grep: "pub async fn execute_tool"
+        label: "execute_tool Tauri 命令存在"
+      - type: symbol
+        file: "src-tauri/src/commands/tools.rs"
+        grep: "pub fn list_tools"
+        label: "list_tools Tauri 命令存在"
+      - type: symbol
+        file: "src/lib/tauri.ts"
+        grep: "export async function executeTool"
+        label: "前端 executeTool 接口存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools"
+        expect: "all tests pass"
+    review_checklist:
+      - "tools.rs 是否在 commands/mod.rs 中正确导出"
+      - "execute_tool 是否接受 JSON string 作为 args 参数"
+      - "list_tools 返回值是否为 Vec<ToolDefinition>"
+      - "前端 tauri.ts 是否导出正确的 TypeScript 接口"
+      - "cargo clippy 是否有警告"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 5: Per-Project PermissionMode ───────────────────────
+
+  - id: "4.6"
+    title: "Per-Project PermissionMode 持久化与生效"
+    status: pending
+    design_ref: "docs/design-docs/project-workdir-boundary.md"
+    backlog_ref: "BL-406"
+    impl_targets:
+      - src-tauri/src/modules/projects/mod.rs           # MODIFY: 新增 permission_mode 字段
+      - src-tauri/src/modules/runtime/permissions.rs    # MODIFY: PermissionMode 默认值
+
+    current_state: |
+      ⚠️ 当前问题：
+        1. Project struct 没有 permission_mode 字段
+        2. permissions.rs 定义了 PermissionMode 但从未被使用
+        3. agent.rs 始终用 DangerFullAccess
+      ❌ MISSING — 必须修改 2 个文件：
+        1. projects/mod.rs：Project 新增 permission_mode 字段
+        2. agent.rs：运行时从 project 读取 permission_mode
+
+    must_implement:
+      - |
+        // project-workdir-boundary.md §Per-Project PermissionMode — 修改 mod.rs
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        pub struct Project {
+            pub id: String,
+            pub name: String,
+            pub workdir: PathBuf,
+            pub permission_mode: PermissionMode,  // ✅ 新增
+            pub created_at: String,
+            pub updated_at: String,
+        }
+
+        impl Default for Project {
+            fn default() -> Self {
+                Self {
+                    // ...
+                    permission_mode: PermissionMode::WorkspaceWrite,  // 合理默认值
+                }
+            }
+        }
+      - |
+        // project-workdir-boundary.md §agent.rs — 传递 permission_mode
+        // 在 run_agent_turn 中：
+        let project = state.project_manager.get_project(&session.project_id).await;
+        let permission_mode = project
+            .as_ref()
+            .map(|p| p.permission_mode)
+            .unwrap_or(PermissionMode::DangerFullAccess);
+
+        let runtime_config = RuntimeConfig {
+            workdir: Some(workdir),
+            permission_mode,  // ✅ 从 project 读取
+            ..
+        };
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/projects/mod.rs"
+        grep: "permission_mode: PermissionMode"
+        label: "Project.permission_mode 字段存在"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/config.rs"
+        grep: "permission_mode: PermissionMode"
+        label: "RuntimeConfig.permission_mode 字段存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- projects"
+        expect: "all tests pass"
+    review_checklist:
+      - "Project.permission_mode 是否有默认值 WorkspaceWrite"
+      - "旧 project.json（无 permission_mode）反序列化时是否正确处理"
+      - "PermissionMode enum 是否导入了正确的模块"
+      - "cargo clippy 是否有警告"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 6: ToolSet 分类系统 ─────────────────────────────────
+
+  - id: "4.7"
+    title: "ToolSet 分类系统 — ToolSetRegistry + 预定义工具集常量"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-411"
+    impl_targets:
+      - src-tauri/src/modules/tools/toolset.rs      # 必须新建
+      - src-tauri/src/modules/tools/mod.rs           # MODIFY: 导出 toolset 模块
+      - src-tauri/src/modules/tools/registry.rs     # MODIFY: 新增按 toolset 过滤的方法
+      - src-tauri/src/commands/tools.rs             # MODIFY: 新增 list_toolsets 命令
+      - src/lib/tauri.ts                           # MODIFY: 新增 ToolSet 类型和接口
+
+    current_state: |
+      ⚠️ 当前问题：ToolEntry 只有 toolset 字段，但没有统一管理机制
+        - 无 ToolSet 结构定义
+        - 无预定义工具集常量（TOOLSETS）
+        - 无按 toolset 批量查询/过滤的 API
+      ❌ MISSING — 必须新建 toolset.rs 并修改 4 个文件：
+        1. tools/toolset.rs：ToolSet 结构 + ToolSetRegistry + TOOLSETS 常量
+        2. tools/mod.rs：导出 toolset 模块
+        3. tools/registry.rs：新增 get_definitions_by_toolsets() 方法
+        4. commands/tools.rs：新增 list_toolsets 命令
+        5. lib/tauri.ts：新增 ToolSet 类型
+
+    must_implement:
+      - |
+        // tool-activation.md §4.2 — 新建 toolset.rs
+        pub struct ToolSet {
+            pub name: String,
+            pub description: String,
+            pub tools: Vec<String>,
+            pub enabled: bool,
+        }
+
+        pub const TOOLSETS: &[(&str, &str, &[&str])] = &[
+            ("files", "File operations", &["read_file", "file_write", "file_edit", "glob_search", "content_search"]),
+            ("terminal", "Terminal execution", &["bash"]),
+            ("utility", "Utility tools", &["json_parse", "calculator"]),
+            ("web", "Web fetching and searching", &["web_fetch", "web_search", "http_request"]),
+            ("memory", "Long-term memory", &["memory_store", "memory_recall", "memory_forget", "memory_purge", "memory_export"]),
+            ("scheduler", "Cron/scheduled tasks", &["cron_add", "cron_list", "cron_remove", "cron_run", "cron_runs"]),
+            ("minimal", "Minimal set", &["read_file", "bash"]),
+            ("development", "Full development stack", &["files", "terminal"]),
+        ];
+
+        pub struct ToolSetRegistry {
+            toolsets: HashMap<String, ToolSet>,
+            tool_to_toolset: HashMap<String, String>,
+        }
+
+        impl ToolSetRegistry {
+            pub fn new() -> Self
+            pub fn tools_from_toolsets(&self, toolsets: &[String]) -> Vec<String>
+            pub fn tools_in_toolset(&self, toolset_name: &str) -> Vec<String>
+        }
+      - |
+        // tool-activation.md §4.4 — registry.rs 新增方法
+        pub fn get_definitions_by_toolsets(
+            &self,
+            toolsets: &[String],
+            toolset_registry: &ToolSetRegistry,
+        ) -> Vec<Value>
+      - |
+        // tool-activation.md §4.6 — commands/tools.rs 新增命令
+        #[tauri::command]
+        pub fn list_toolsets(state: State<'_, AppState>) -> Result<Vec<ToolSet>, String>
+      - |
+        // tool-activation.md §4.5 — lib/tauri.ts 新增接口
+        export interface ToolSet {
+          name: string;
+          description: string;
+          tools: string[];
+          enabled: boolean;
+        }
+        export async function listToolsets(): Promise<ToolSet[]>
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/toolset.rs"
+        grep: "pub const TOOLSETS"
+        label: "TOOLSETS 常量存在 — tool-activation.md §4.2"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/toolset.rs"
+        grep: "pub struct ToolSetRegistry"
+        label: "ToolSetRegistry 结构存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "get_definitions_by_toolsets"
+        label: "registry.rs 有按 toolset 过滤的方法"
+      - type: symbol
+        file: "src-tauri/src/commands/tools.rs"
+        grep: "pub fn list_toolsets"
+        label: "list_toolsets Tauri 命令存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools"
+        expect: "all tests pass"
+    review_checklist:
+      - "TOOLSETS 是否包含所有 6 个工具集分类"
+      - "ToolSetRegistry 是否能正确映射 tool → toolset"
+      - "get_definitions_by_toolsets 是否正确过滤"
+      - "前端 ToolSet 类型是否包含 name, description, tools, enabled"
+      - "cargo clippy 是否有警告"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 7: 新工具类 — 文件操作 ────────────────────────────────
+
+  - id: "4.8"
+    title: "文件操作类工具 — file_write, file_edit, glob_search, content_search"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-407"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/file_write.rs  # 必须新建
+      - src-tauri/src/modules/tools/builtin/file_edit.rs   # 必须新建
+      - src-tauri/src/modules/tools/builtin/glob_search.rs # 必须新建
+      - src-tauri/src/modules/tools/builtin/content_search.rs # 必须新建
+      - src-tauri/src/modules/tools/mod.rs              # MODIFY: 注册新工具
+      - src-tauri/Cargo.toml                            # MODIFY: 添加新依赖
+
+    current_state: |
+      ⚠️ 当前问题：zeroclaw 有 4 个文件操作工具，我们的 if2Ai 尚未实现
+        来源：/Users/ryanliu/Documents/IfAI/zeroclaw-master/src/tools/{file_write,file_edit,glob_search,content_search}.rs
+      ❌ MISSING — 必须新建 4 个工具文件并注册：
+        1. file_write.rs：写入文件，支持 append 模式
+        2. file_edit.rs：应用 unified diff patch
+        3. glob_search.rs：glob 模式搜索文件
+        4. content_search.rs：文件内容全文搜索（支持 regex）
+      需要添加 Cargo 依赖：glob, walkdir, regex
+
+    must_implement:
+      - |
+        // tool-activation.md §9.2 — file_write.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "file_write".into(),
+                toolset: "files".into(),
+                description: "Write content to a file".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "content": { "type": "string" },
+                        "append": { "type": "boolean" }
+                    },
+                    "required": ["path", "content"]
+                }),
+                max_result_size: Some(1024 * 1024),
+                timeout_secs: Some(30),
+                disabled: false,
+                handler: Arc::new(execute_file_write),
+            }
+        }
+      - |
+        // tool-activation.md §9.2 — glob_search.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "glob_search".into(),
+                toolset: "files".into(),
+                description: "Search for files matching a glob pattern".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string" },
+                        "path": { "type": "string" },
+                        "max_results": { "type": "number" }
+                    },
+                    "required": ["pattern"]
+                }),
+                max_result_size: Some(1024 * 1024),
+                timeout_secs: Some(30),
+                disabled: false,
+                handler: Arc::new(execute_glob_search),
+            }
+        }
+      - |
+        // 在 tools/mod.rs register_builtin_tools() 中添加：
+        registry.register(file_write::entry()).ok();
+        registry.register(file_edit::entry()).ok();
+        registry.register(glob_search::entry()).ok();
+        registry.register(content_search::entry()).ok();
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/file_write.rs"
+        grep: "pub fn entry"
+        label: "file_write 工具存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/glob_search.rs"
+        grep: "pub fn entry"
+        label: "glob_search 工具存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "4 个新工具是否都有 entry() 函数"
+      - "是否在 workdir 内执行（安全检查）"
+      - "Cargo.toml 是否添加了 glob, walkdir, regex 依赖"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 7: 新工具类 — Web ──────────────────────────────────
+
+  - id: "4.9"
+    title: "Web 类工具 — web_fetch, web_search, http_request"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-408"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/web_fetch.rs    # 必须新建
+      - src-tauri/src/modules/tools/builtin/web_search.rs   # 必须新建
+      - src-tauri/src/modules/tools/builtin/http_request.rs # 必须新建
+      - src-tauri/src/modules/tools/mod.rs              # MODIFY: 注册新工具
+      - src-tauri/Cargo.toml                            # MODIFY: 添加新依赖
+
+    current_state: |
+      ⚠️ 当前问题：zeroclaw 有 web_fetch, web_search, http_request 工具
+        来源：/Users/ryanliu/Documents/IfAI/zeroclaw-master/src/tools/{web_fetch,web_search_tool,http_request}.rs
+      ❌ MISSING — 必须新建 3 个 Web 工具
+      需要添加 Cargo 依赖：reqwest, scraper, url
+
+    must_implement:
+      - |
+        // tool-activation.md §9.3 — web_fetch.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "web_fetch".into(),
+                toolset: "web".into(),
+                description: "Fetch web page content".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string" },
+                        "selector": { "type": "string" },
+                        "max_length": { "type": "number" }
+                    },
+                    "required": ["url"]
+                }),
+                max_result_size: Some(50 * 1024),
+                timeout_secs: Some(30),
+                disabled: false,
+                handler: Arc::new(execute_web_fetch),
+            }
+        }
+      - |
+        // tool-activation.md §9.3 — web_search.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "web_search".into(),
+                toolset: "web".into(),
+                description: "Search the web for information".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string" },
+                        "max_results": { "type": "number" }
+                    },
+                    "required": ["query"]
+                }),
+                max_result_size: Some(10 * 1024),
+                timeout_secs: Some(30),
+                disabled: false,
+                handler: Arc::new(execute_web_search),
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/web_fetch.rs"
+        grep: "pub fn entry"
+        label: "web_fetch 工具存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/web_search.rs"
+        grep: "pub fn entry"
+        label: "web_search 工具存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "3 个新工具是否都有 entry() 函数"
+      - "web_fetch 是否支持 CSS selector 提取"
+      - "web_search 是否支持多个 provider（DuckDuckGo/Brave/SearXNG）"
+      - "Cargo.toml 是否添加了 reqwest, scraper, url 依赖"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 8: 新工具类 — Memory ────────────────────────────────
+
+  - id: "4.10"
+    title: "Memory 类工具 — memory_store, memory_recall, memory_forget, memory_purge, memory_export"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-409"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/memory_store.rs   # 必须新建
+      - src-tauri/src/modules/tools/builtin/memory_recall.rs  # 必须新建
+      - src-tauri/src/modules/tools/builtin/memory_forget.rs  # 必须新建
+      - src-tauri/src/modules/tools/builtin/memory_purge.rs   # 必须新建
+      - src-tauri/src/modules/tools/builtin/memory_export.rs  # 必须新建
+      - src-tauri/src/modules/memory/                        # 必须新建（MemoryProvider trait）
+      - src-tauri/src/modules/tools/mod.rs                   # MODIFY: 注册新工具
+
+    current_state: |
+      ⚠️ 当前问题：zeroclaw 有完整的 memory 工具集
+        来源：/Users/ryanliu/Documents/IfAI/zeroclaw-master/src/tools/{memory_store,memory_recall,memory_forget,memory_purge,memory_export}.rs
+      ❌ MISSING — 必须新建 5 个 memory 工具 + memory 模块（MemoryProvider trait）
+      memory 模块需要定义 Memory trait 和 MemoryCategory enum
+
+    must_implement:
+      - |
+        // modules/memory/mod.rs — MemoryProvider trait
+        pub enum MemoryCategory {
+            Core,
+            Daily,
+            Conversation,
+            Custom(String),
+        }
+
+        pub trait MemoryProvider: Send + Sync {
+            async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> Result<(), MemoryError>;
+            async fn recall(&self, query: &str, category: Option<&str>, limit: usize) -> Result<Vec<MemoryEntry>, MemoryError>;
+            async fn delete(&self, key: &str) -> Result<(), MemoryError>;
+            async fn purge_category(&self, category: &str) -> Result<(), MemoryError>;
+            async fn export(&self, category: Option<&str>) -> Result<Vec<MemoryEntry>, MemoryError>;
+        }
+      - |
+        // tools/builtin/memory_store.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "memory_store".into(),
+                toolset: "memory".into(),
+                description: "Store a fact in long-term memory".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "key": { "type": "string" },
+                        "content": { "type": "string" },
+                        "category": { "type": "string" }
+                    },
+                    "required": ["key", "content"]
+                }),
+                max_result_size: Some(1024 * 1024),
+                timeout_secs: Some(10),
+                disabled: false,
+                handler: Arc::new(execute_memory_store),
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/memory/mod.rs"
+        grep: "pub trait MemoryProvider"
+        label: "MemoryProvider trait 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/memory_store.rs"
+        grep: "pub fn entry"
+        label: "memory_store 工具存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "MemoryProvider trait 是否定义了 5 个方法"
+      - "5 个 memory 工具是否都有 entry() 函数"
+      - "memory_export 是否支持 JSON 和 Markdown 格式"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 9: 新工具类 — Cron/调度 ────────────────────────────
+
+  - id: "4.11"
+    title: "Cron/调度类工具 — cron_add, cron_list, cron_remove, cron_run, cron_runs"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    backlog_ref: "BL-410"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/cron_add.rs    # 必须新建
+      - src-tauri/src/modules/tools/builtin/cron_list.rs   # 必须新建
+      - src-tauri/src/modules/tools/builtin/cron_remove.rs  # 必须新建
+      - src-tauri/src/modules/tools/builtin/cron_run.rs    # 必须新建
+      - src-tauri/src/modules/tools/builtin/cron_runs.rs    # 必须新建
+      - src-tauri/src/modules/scheduler/                   # 必须新建（Scheduler trait）
+      - src-tauri/src/modules/tools/mod.rs                  # MODIFY: 注册新工具
+
+    current_state: |
+      ⚠️ 当前问题：zeroclaw 有完整的 cron/调度工具集
+        来源：/Users/ryanliu/Documents/IfAI/zeroclaw-master/src/tools/{cron_add,cron_list,cron_remove,cron_run,cron_runs}.rs
+      ❌ MISSING — 必须新建 5 个 cron 工具 + scheduler 模块（Scheduler trait）
+
+    must_implement:
+      - |
+        // modules/scheduler/mod.rs — Scheduler trait
+        pub struct CronJob {
+            pub id: String,
+            pub schedule: String,
+            pub command: String,
+            pub description: String,
+            pub status: JobStatus,
+        }
+
+        pub enum JobStatus {
+            Active,
+            Paused,
+            Disabled,
+        }
+
+        pub trait Scheduler: Send + Sync {
+            async fn add(&self, id: &str, schedule: &str, command: &str, description: &str) -> Result<(), SchedulerError>;
+            async fn remove(&self, id: &str) -> Result<(), SchedulerError>;
+            async fn list(&self) -> Result<Vec<CronJob>, SchedulerError>;
+            async fn run_now(&self, id: &str) -> Result<String, SchedulerError>;
+            async fn get_runs(&self, id: &str, limit: usize) -> Result<Vec<CronRun>, SchedulerError>;
+        }
+      - |
+        // tools/builtin/cron_add.rs
+        pub fn entry() -> ToolEntry {
+            ToolEntry {
+                name: "cron_add".into(),
+                toolset: "scheduler".into(),
+                description: "Create a scheduled cron job".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "schedule": { "type": "string" },
+                        "command": { "type": "string" },
+                        "description": { "type": "string" }
+                    },
+                    "required": ["id", "schedule", "command"]
+                }),
+                max_result_size: Some(1024),
+                timeout_secs: Some(10),
+                disabled: false,
+                handler: Arc::new(execute_cron_add),
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/scheduler/mod.rs"
+        grep: "pub trait Scheduler"
+        label: "Scheduler trait 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/cron_add.rs"
+        grep: "pub fn entry"
+        label: "cron_add 工具存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- tools::builtin"
+        expect: "all tests pass"
+    review_checklist:
+      - "Scheduler trait 是否定义了 5 个方法"
+      - "5 个 cron 工具是否都有 entry() 函数"
+      - "cron expression 解析是否使用 cron crate"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 10: 集成测试 ─────────────────────────────────────────
+
+  - id: "4.12"
+    title: "Phase 4 完整集成测试 + 新工具验证"
+    status: pending
+    design_ref: "docs/design-docs/tool-activation.md"
+    impl_targets:
+      - src-tauri/src/modules/tools/integration_phase4.rs  # 必须新建/更新
+      - harness/suites/phase4_integration.yaml              # 必须更新
+
+    current_state: |
+      ⚠️ 当前问题：slice 4.7 只有基础测试，需要覆盖所有新工具
+      ❌ MISSING — 扩展 integration_phase4.rs 添加新工具测试
+
+    must_implement:
+      - |
+        // integration_phase4.rs 新增测试：
+        #[tokio::test]
+        async fn test_file_write_and_read_roundtrip() { ... }
+
+        #[tokio::test]
+        async fn test_glob_search_finds_files() { ... }
+
+        #[tokio::test]
+        async fn test_content_search_with_regex() { ... }
+
+        #[tokio::test]
+        async fn test_memory_store_and_recall() { ... }
+
+        #[tokio::test]
+        async fn test_cron_add_and_list() { ... }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "all tests pass"
+      - type: harness
+        suite: "harness/suites/phase4_integration.yaml"
+    review_checklist:
+      - "是否覆盖所有 4 类新工具的测试"
+      - "是否使用 tempdir 做文件工具测试"
+      - "harness suite 是否更新"
+      - "docs/generated/QUALITY_SCORE.md 已追加 Phase 4 完成记录"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: ["4.1"]
+  current_slice: "4.2"
+  blocked: []
+  notes: "slice 4.1 done — register_builtin_tools + tools传递给LLM。test_gate有harness预存bug(--test-output)，手动cargo test通过。"
+

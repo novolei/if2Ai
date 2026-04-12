@@ -9,17 +9,16 @@ use std::process::Command;
 use commands::AppState;
 use commands::{
     close_settings_window, create_permanent_worktree, create_project, create_session,
-    delete_project, delete_session, get_project, get_session, list_project_sessions,
-    list_projects, list_sessions, open_project_in_finder, open_settings_window, rename_project,
-    run_agent_turn, set_session_pinned, start_agent_stream,
+    delete_project, delete_session, get_project, get_session, list_project_sessions, list_projects,
+    list_sessions, open_project_in_finder, open_settings_window, rename_project, run_agent_turn,
+    set_session_pinned, start_agent_stream,
 };
 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     window::Color,
-    TitleBarStyle,
-    Manager,
+    Manager, TitleBarStyle,
 };
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -48,11 +47,7 @@ fn main() {
     std::mem::forget(_guard);
 
     tracing_subscriber::registry()
-        .with(
-            fmt::layer()
-                .with_writer(non_blocking)
-                .with_ansi(false)
-        )
+        .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
         .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
@@ -81,6 +76,7 @@ fn main() {
 
     let session_manager = modules::session::SessionManager::new(sessions_dir, projects_dir.clone());
     let tool_registry = modules::tools::ToolRegistry::new();
+    modules::tools::register_builtin_tools(&tool_registry);
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
     // Create app state

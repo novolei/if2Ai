@@ -547,6 +547,7 @@ mod tests {
                     blocks: vec![ContentBlock::Text {
                         text: "recent".to_string(),
                     }],
+                    thinking: None,
                     usage: None,
                 },
             ],
@@ -657,6 +658,7 @@ mod tests {
                     blocks: vec![ContentBlock::Text {
                         text: get_compact_continuation_message(summary, true, true),
                     }],
+                    thinking: None,
                     usage: None,
                 },
                 ConversationMessage::user_text("tiny"),
