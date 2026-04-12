@@ -2,13 +2,23 @@
 
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum PermissionMode {
     ReadOnly,
     WorkspaceWrite,
     DangerFullAccess,
     Prompt,
     Allow,
+}
+
+// Manual Default impl to use WorkspaceWrite as default (not ReadOnly which would be picked by derive)
+#[allow(clippy::derivable_impls)]
+impl Default for PermissionMode {
+    fn default() -> Self {
+        Self::WorkspaceWrite
+    }
 }
 
 impl PermissionMode {

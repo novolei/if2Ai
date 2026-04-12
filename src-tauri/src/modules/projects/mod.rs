@@ -4,6 +4,7 @@
 
 mod manager;
 
+use crate::modules::runtime::permissions::PermissionMode;
 pub use manager::ProjectManager;
 
 /// Project metadata — represents a workspace/project.
@@ -15,10 +16,26 @@ pub struct Project {
     pub name: String,
     /// Absolute path to the project working directory.
     pub workdir: std::path::PathBuf,
+    /// Permission mode for this project.
+    #[serde(default)]
+    pub permission_mode: PermissionMode,
     /// Creation timestamp (RFC3339).
     pub created_at: String,
     /// Last accessed timestamp (RFC3339).
     pub updated_at: String,
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            workdir: std::path::PathBuf::new(),
+            permission_mode: PermissionMode::WorkspaceWrite,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
 }
 
 /// Project metadata for listing (without full workdir PathBuf).

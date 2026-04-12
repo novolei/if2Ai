@@ -89,6 +89,7 @@ impl ProjectManager {
             id: Uuid::new_v4().to_string(),
             name,
             workdir,
+            permission_mode: crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
             created_at: now_str.clone(),
             updated_at: now_str,
         };

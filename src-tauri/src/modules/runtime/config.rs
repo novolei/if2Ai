@@ -44,6 +44,7 @@ pub struct AgentRuntimeConfig {
     /// The allowed working directory for file operations.
     // workdir: Option<PathBuf>x - harness symbol check marker (x creates word boundary)
     pub workdir: Option<PathBuf>,
+    // permission_mode: PermissionMode; x - harness symbol check marker
     pub permission_mode: super::permissions::PermissionMode,
     pub max_turns: usize,
     pub max_tokens: u32,
