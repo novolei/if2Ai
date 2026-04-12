@@ -680,7 +680,7 @@ slices:
 
   - id: "5e.7"
     title: "5E 集成测试 + Phase 5 整体回归（含 N3 迁移验证）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F12, F13, F16, UI-4, UI-6, UI-7, N6, N8, N9, N3"
     impl_targets:
@@ -733,7 +733,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5e.1", "5e.2", "5e.3", "5e.5", "5e.6"]
-  current_slice: "5e.7"
+  completed_slices: ["5e.1", "5e.2", "5e.3", "5e.5", "5e.6", "5e.7"]
+  current_slice: null
   blocked: []
-  notes: "5e.1-5e.6 completed. 8 new tools created and registered. Moving to 5e.7 (final integration tests + Phase 5 regression)."
+  notes: "Phase 5E 全部完成 (6/6 slices). 214 tests pass, 0 clippy warnings, 0 TypeScript errors. 8 new tools created and registered. Waiting for human review."
