@@ -74,9 +74,13 @@ pub struct ToolEntry {
 }
 
 /// Async tool handler function type
+/// The handler receives the tool arguments and the shared tool context.
 #[allow(dead_code)]
 pub type ToolHandler = Arc<
-    dyn Fn(Value) -> Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>
+    dyn Fn(
+            Value,
+            SharedToolContext,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>
         + Send
         + Sync,
 >;
@@ -219,8 +223,13 @@ impl ToolRegistry {
         let handler = entry.handler.clone();
         let max_size = entry.max_result_size;
         let timeout_duration = entry.timeout_secs.unwrap_or(300);
+        let context = self.context.clone();
 
-        let result = timeout(Duration::from_secs(timeout_duration as u64), handler(args)).await;
+        let result = timeout(
+            Duration::from_secs(timeout_duration as u64),
+            handler(args, context),
+        )
+        .await;
 
         match result {
             Ok(Ok(result)) => {
@@ -285,7 +294,7 @@ mod tests {
     use serde_json::json;
 
     fn make_test_handler(output: &'static str) -> ToolHandler {
-        Arc::new(move |_input| {
+        Arc::new(move |_input: Value, _context: SharedToolContext| {
             let output = output.to_string();
             Box::pin(async move { Ok(output) })
         })
@@ -375,7 +384,7 @@ mod tests {
             max_result_size: None,
             timeout_secs: Some(1),
             disabled: false,
-            handler: Arc::new(|_input| {
+            handler: Arc::new(|_input: Value, _context: SharedToolContext| {
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     Ok("done".to_string())

@@ -39,37 +39,39 @@ fn is_dangerous(command: &str) -> bool {
 #[allow(dead_code)]
 #[must_use]
 pub fn bash_tool_entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(|args| {
-        Box::pin(async move {
-            let command = args
-                .get("command")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ToolError::Handler("missing required parameter: command".to_string())
-                })?
-                .to_string();
+    let handler: ToolHandler = Arc::new(
+        |args: serde_json::Value, _context: crate::modules::tools::context::SharedToolContext| {
+            Box::pin(async move {
+                let command = args
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ToolError::Handler("missing required parameter: command".to_string())
+                    })?
+                    .to_string();
 
-            if is_dangerous(&command) {
-                return Err(ToolError::Handler(
-                    "command blocked: dangerous pattern detected".to_string(),
-                ));
-            }
+                if is_dangerous(&command) {
+                    return Err(ToolError::Handler(
+                        "command blocked: dangerous pattern detected".to_string(),
+                    ));
+                }
 
-            let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
+                let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
 
-            let result = timeout(
-                Duration::from_secs(timeout_secs),
-                execute_bash_internal(&command),
-            )
-            .await;
+                let result = timeout(
+                    Duration::from_secs(timeout_secs),
+                    execute_bash_internal(&command),
+                )
+                .await;
 
-            match result {
-                Ok(Ok(output)) => Ok(output),
-                Ok(Err(e)) => Err(e),
-                Err(_) => Err(ToolError::Handler("command timed out".to_string())),
-            }
-        })
-    });
+                match result {
+                    Ok(Ok(output)) => Ok(output),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err(ToolError::Handler("command timed out".to_string())),
+                }
+            })
+        },
+    );
 
     ToolEntry {
         name: "bash".to_string(),
@@ -141,14 +143,23 @@ async fn execute_bash_internal(command: &str) -> Result<String, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tools::context::{SharedToolContext, ToolContext};
     use serde_json::json;
+
+    fn test_context() -> SharedToolContext {
+        std::sync::Arc::new(std::sync::Mutex::new(ToolContext::default_for_workdir(
+            std::path::PathBuf::from("."),
+        )))
+    }
 
     #[allow(dead_code)]
     fn make_test_handler(output: &'static str) -> ToolHandler {
-        Arc::new(move |_input| {
-            let output = output.to_string();
-            Box::pin(async move { Ok(output) })
-        })
+        Arc::new(
+            move |_input: serde_json::Value, _context: SharedToolContext| {
+                let output = output.to_string();
+                Box::pin(async move { Ok(output) })
+            },
+        )
     }
 
     #[tokio::test]
@@ -164,8 +175,9 @@ mod tests {
     async fn dangerous_commands_are_blocked() {
         let entry = bash_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"command": "rm -rf /"})).await;
+        let result = handler(json!({"command": "rm -rf /"}), ctx).await;
         assert!(result.is_err());
     }
 
@@ -173,8 +185,9 @@ mod tests {
     async fn fork_bomb_is_blocked() {
         let entry = bash_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"command": ":(){:|:&};:"})).await;
+        let result = handler(json!({"command": ":(){:|:&};:"}), ctx).await;
         assert!(result.is_err());
     }
 }

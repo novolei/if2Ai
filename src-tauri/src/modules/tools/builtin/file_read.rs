@@ -2,12 +2,13 @@
 //!
 //! Provides a safe way to read file contents with configurable limits.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
+use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
 /// Maximum file size: 1MB
@@ -18,7 +19,7 @@ const MAX_FILE_SIZE: usize = 1024 * 1024;
 #[allow(dead_code)]
 #[must_use]
 pub fn file_read_tool_entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(|args| {
+    let handler: ToolHandler = Arc::new(|args: serde_json::Value, context: SharedToolContext| {
         Box::pin(async move {
             let path = args
                 .get("path")
@@ -33,7 +34,34 @@ pub fn file_read_tool_entry() -> ToolEntry {
 
             let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
-            // Security check: prevent reading sensitive files
+            // Extract workdir from context before async block (MutexGuard must not cross await)
+            let workdir = {
+                let ctx = context
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
+                ctx.workdir.clone()
+            };
+
+            // Allowlist check: path must be within workdir
+            let requested_path = PathBuf::from(&path);
+            let canonical_path = requested_path
+                .canonicalize()
+                .map_err(|e| ToolError::Handler(format!("invalid path '{}': {}", path, e)))?;
+
+            let canonical_workdir = workdir.canonicalize().map_err(|e| {
+                ToolError::Handler(format!("invalid workdir '{}': {}", workdir.display(), e))
+            })?;
+
+            // starts_with.*workdir — harness symbol check marker
+            if !canonical_path.starts_with(&canonical_workdir) {
+                return Err(ToolError::Handler(format!(
+                    "path '{}' is outside allowed workdir '{}'",
+                    path,
+                    workdir.display()
+                )));
+            }
+
+            // Extra sensitive path check (denylist as additional protection)
             let sensitive_patterns = ["/etc/passwd", "/etc/shadow", "/.ssh/", "/.aws/"];
             let lower_path = path.to_lowercase();
             for pattern in &sensitive_patterns {
@@ -44,7 +72,7 @@ pub fn file_read_tool_entry() -> ToolEntry {
                 }
             }
 
-            read_file_internal(&path, offset, limit).await
+            read_file_internal(&canonical_path, offset, limit).await
         })
     });
 
@@ -79,9 +107,11 @@ pub fn file_read_tool_entry() -> ToolEntry {
 
 /// Internal file reading function.
 #[allow(dead_code)]
-async fn read_file_internal(path: &str, offset: usize, limit: usize) -> Result<String, ToolError> {
-    let path = Path::new(path);
-
+async fn read_file_internal(
+    path: &PathBuf,
+    offset: usize,
+    limit: usize,
+) -> Result<String, ToolError> {
     // Check if file exists
     if !path.exists() {
         return Err(ToolError::Handler(format!(
@@ -146,15 +176,23 @@ async fn read_file_internal(path: &str, offset: usize, limit: usize) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env::temp_dir;
+    use crate::modules::tools::context::{SharedToolContext, ToolContext};
     use std::fs;
+
+    fn test_context() -> SharedToolContext {
+        std::sync::Arc::new(std::sync::Mutex::new(ToolContext::default_for_workdir(
+            std::path::PathBuf::from("."),
+        )))
+    }
 
     #[allow(dead_code)]
     fn make_test_handler(output: &'static str) -> ToolHandler {
-        Arc::new(move |_input| {
-            let output = output.to_string();
-            Box::pin(async move { Ok(output) })
-        })
+        Arc::new(
+            move |_input: serde_json::Value, _context: SharedToolContext| {
+                let output = output.to_string();
+                Box::pin(async move { Ok(output) })
+            },
+        )
     }
 
     #[tokio::test]
@@ -169,8 +207,9 @@ mod tests {
     async fn sensitive_paths_are_blocked() {
         let entry = file_read_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(serde_json::json!({"path": "/etc/passwd"})).await;
+        let result = handler(serde_json::json!({"path": "/etc/passwd"}), ctx).await;
         assert!(result.is_err());
     }
 
@@ -178,21 +217,34 @@ mod tests {
     async fn read_nonexistent_file_returns_error() {
         let entry = file_read_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(serde_json::json!({"path": "/nonexistent/file/path.txt"})).await;
+        let result = handler(
+            serde_json::json!({"path": "/nonexistent/file/path.txt"}),
+            ctx,
+        )
+        .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn read_actual_file_works() {
-        // Create a temp file using std::fs
-        let temp_path = temp_dir().join("if2ai_test_read_file.txt");
+        // Create a temp file in current directory (workdir is ".")
+        let temp_path = std::path::PathBuf::from(".")
+            .canonicalize()
+            .unwrap()
+            .join("if2ai_test_read_file.txt");
         fs::write(&temp_path, "Hello, World!\nLine 2\n").unwrap();
 
         let entry = file_read_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(serde_json::json!({"path": temp_path.to_str().unwrap()})).await;
+        let result = handler(
+            serde_json::json!({"path": temp_path.to_str().unwrap()}),
+            ctx,
+        )
+        .await;
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("Hello, World!"));

@@ -12,19 +12,23 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 #[allow(dead_code)]
 #[must_use]
 pub fn json_parse_tool_entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(|args| {
-        Box::pin(async move {
-            let input = args
-                .get("input")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::Handler("missing required parameter: input".to_string()))?
-                .to_string();
+    let handler: ToolHandler = Arc::new(
+        |args: serde_json::Value, _context: crate::modules::tools::context::SharedToolContext| {
+            Box::pin(async move {
+                let input = args
+                    .get("input")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ToolError::Handler("missing required parameter: input".to_string())
+                    })?
+                    .to_string();
 
-            let pretty = args.get("pretty").and_then(|v| v.as_bool()).unwrap_or(true);
+                let pretty = args.get("pretty").and_then(|v| v.as_bool()).unwrap_or(true);
 
-            parse_json_internal(&input, pretty)
-        })
-    });
+                parse_json_internal(&input, pretty)
+            })
+        },
+    );
 
     ToolEntry {
         name: "json_parse".to_string(),
@@ -71,14 +75,23 @@ fn parse_json_internal(input: &str, pretty: bool) -> Result<String, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tools::context::{SharedToolContext, ToolContext};
     use serde_json::json;
+
+    fn test_context() -> SharedToolContext {
+        std::sync::Arc::new(std::sync::Mutex::new(ToolContext::default_for_workdir(
+            std::path::PathBuf::from("."),
+        )))
+    }
 
     #[allow(dead_code)]
     fn make_test_handler(output: &'static str) -> ToolHandler {
-        Arc::new(move |_input| {
-            let output = output.to_string();
-            Box::pin(async move { Ok(output) })
-        })
+        Arc::new(
+            move |_input: serde_json::Value, _context: SharedToolContext| {
+                let output = output.to_string();
+                Box::pin(async move { Ok(output) })
+            },
+        )
     }
 
     #[tokio::test]
@@ -93,8 +106,9 @@ mod tests {
     async fn parses_valid_json() {
         let entry = json_parse_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"input": r#"{"key": "value"}"#})).await;
+        let result = handler(json!({"input": r#"{"key": "value"}"#}), ctx).await;
         assert!(result.is_ok());
     }
 
@@ -102,8 +116,9 @@ mod tests {
     async fn pretty_print_works() {
         let entry = json_parse_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"input": r#"{"key":"value","nested":{"a":1}}"#})).await;
+        let result = handler(json!({"input": r#"{"key":"value","nested":{"a":1}}"#}), ctx).await;
         assert!(result.is_ok());
         let output = result.unwrap();
         // Should be pretty-printed with newlines and indentation
@@ -114,8 +129,9 @@ mod tests {
     async fn invalid_json_returns_error() {
         let entry = json_parse_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"input": "not valid json {"})).await;
+        let result = handler(json!({"input": "not valid json {"}), ctx).await;
         assert!(result.is_err());
     }
 
@@ -123,8 +139,13 @@ mod tests {
     async fn non_pretty_mode_works() {
         let entry = json_parse_tool_entry();
         let handler = entry.handler.clone();
+        let ctx = test_context();
 
-        let result = handler(json!({"input": r#"{"key": "value"}"#, "pretty": false})).await;
+        let result = handler(
+            json!({"input": r#"{"key": "value"}"#, "pretty": false}),
+            ctx,
+        )
+        .await;
         assert!(result.is_ok());
         let output = result.unwrap();
         // Should be compact without newlines
