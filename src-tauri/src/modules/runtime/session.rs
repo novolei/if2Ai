@@ -253,7 +253,10 @@ impl ConversationMessage {
             .map(ContentBlock::from_json)
             .collect::<Result<Vec<_>, _>>()?;
         let usage = object.get("usage").map(usage_from_json).transpose()?;
-        let thinking = object.get("thinking").and_then(|v| v.as_str()).map(String::from);
+        let thinking = object
+            .get("thinking")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         Ok(Self {
             role,
             blocks,

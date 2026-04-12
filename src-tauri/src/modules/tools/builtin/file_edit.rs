@@ -11,17 +11,15 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 #[allow(dead_code)]
 #[must_use]
 pub fn entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        |_args: serde_json::Value, _context: SharedToolContext| {
-            Box::pin(async move {
-                // Stub implementation - file edit using diff patches is complex
-                // This would require parsing unified diff format and applying patches
-                Err(ToolError::Handler(
-                    "file_edit tool is not yet implemented".to_string(),
-                ))
-            })
-        },
-    );
+    let handler: ToolHandler = Arc::new(|_args: serde_json::Value, _context: SharedToolContext| {
+        Box::pin(async move {
+            // Stub implementation - file edit using diff patches is complex
+            // This would require parsing unified diff format and applying patches
+            Err(ToolError::Handler(
+                "file_edit tool is not yet implemented".to_string(),
+            ))
+        })
+    });
 
     ToolEntry {
         name: "file_edit".to_string(),

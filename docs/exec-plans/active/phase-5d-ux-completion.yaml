@@ -1,0 +1,660 @@
+# Phase 5D: UX Completion (P2)
+# ─────────────────────────────────────────────────────────────────────────────
+# 前端 UX 全面完善 — 状态统一、工具展示、TodoPanel、SlashCommand 交互、模型选择器
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "5d"
+  phase_status: draft           # draft | active | completed
+  title: "UX 完善 — 状态统一 + 工具展示 + TodoPanel + SlashCommand + 模型选择器"
+  owner: "@architects"
+  depends_on_phase: "5c"
+  design_docs:
+    - docs/bs_gap/08-critical-fix-priority.md
+  human_checkpoints:
+    - after_slice: "5d.4"       # TodoPanel 完成后人工 review
+
+slices:
+
+  # ───────────── Stage 1: 统一 ChatUI 入口 ─────────────────────────────
+
+  - id: "5d.1"
+    title: "N10 前端 — 统一 ChatUI 入口，App.tsx 为唯一状态管理"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N10"
+    impl_targets:
+      - src/App.tsx                                    # MODIFY: 提升为唯一状态管理
+      - src/modules/chat/components/ChatWorkspace.tsx  # MODIFY: 改为纯展示组件
+      - src/components/ui/chat-ui.tsx                  # MODIFY: 确保 props 接口统一
+
+    baseline_ref: "src/App.tsx (当前状态管理); src/modules/chat/components/ChatWorkspace.tsx (双入口)"
+
+    current_state: |
+      App.tsx 直接引用 ChatUI 并管理消息状态（conversations, input, isLoading）。
+      ChatWorkspace.tsx 也引用 ChatUI 并传入自己的 props。
+      两套独立的 ChatUI 实例，各自维护独立的消息/状态。
+      ❌ MISSING — 统一到单一入口：
+        1. App.tsx 作为唯一真相源，管理所有 chat 状态
+        2. ChatWorkspace 变为纯展示组件（只传 props，不管理状态）
+        3. ChatUI props 接口统一
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N10 — App.tsx 为唯一状态管理
+        // App.tsx 提升为唯一管理 chat 状态：
+        const [messages, setMessages] = useState<Message[]>([]);
+        const [isLoading, setIsLoading] = useState(false);
+
+        // 传递给 ChatWorkspace
+        <ChatWorkspace
+          messages={activeMessages}
+          onSendMessage={handleSendMessage}
+          isLoading={isLoading}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          input={input}
+          onInputChange={setInput}
+        />
+
+      - |
+        // 08-critical-fix-priority.md §N10 — ChatWorkspace 纯展示组件
+        // ChatWorkspace.tsx — 移除所有本地 chat 状态管理：
+        function ChatWorkspace({
+          messages, onSendMessage, isLoading, input, onInputChange,
+          selectedModel, onModelChange, sessionTitle, projectLabel, branchLabel,
+        }: Props) {
+          return (
+            <div className="flex flex-col h-full">
+              <Header ... />
+              <ChatUI
+                messages={messages}
+                onSubmit={onSendMessage}
+                isLoading={isLoading}
+                input={input}
+                onInputChange={onInputChange}
+                selectedModel={selectedModel}
+                onModelChange={onModelChange}
+                sessionTitle={sessionTitle}
+                projectLabel={projectLabel}
+                branchLabel={branchLabel}
+              />
+            </div>
+          );
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "ChatWorkspace"
+        label: "App.tsx 传递所有 props 给 ChatWorkspace — 08 §N10"
+      - type: symbol
+        file: "src/modules/chat/components/ChatWorkspace.tsx"
+        grep: "function ChatWorkspace"
+        label: "ChatWorkspace 为函数组件（纯展示）"
+      - type: symbol
+        file: "src/modules/chat/components/ChatWorkspace.tsx"
+        grep: "useState.*messages\\|useState.*isLoading"
+        label: "ChatWorkspace 不应有 useState for messages/isLoading (grep 应为空)"
+    review_checklist:
+      - "ChatWorkspace 是否不包含 useState 管理 messages/isLoading/input"
+      - "App.tsx 是否传递所有必要 props 给 ChatWorkspace"
+      - "ChatUI props 接口是否统一（ChatWorkspace 和 App.tsx 直接使用时一致）"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 2: 隐藏无功能图标 ─────────────────────────────
+
+  - id: "5d.2"
+    title: "N7 前端 — 隐藏 GlobalNavbar 无功能图标"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N7"
+    impl_targets:
+      - src/modules/app-shell/components/GlobalNavbar.tsx    # MODIFY: 隐藏 Skills/Automation 图标
+
+    baseline_ref: "src/modules/app-shell/components/GlobalNavbar.tsx"
+
+    current_state: |
+      GlobalNavbar.tsx 的 icon rail 有 Chat/Skills/Automation 三个区段，
+      Skills 和 Automation 的图标点击后无任何响应。
+      ❌ MISSING — 暂时注释掉或添加 disabled 样式，添加 TODO 注释
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N7 — 隐藏无功能图标 (GlobalNavbar.tsx)
+        {/* TODO(F6): 连接 Skill 系统后启用 Skills 图标 */}
+        {/* <SkillsSection /> */}
+
+        {/* TODO: 连接自动化系统后启用 Automation 图标 */}
+        {/* <AutomationSection /> */}
+
+        // 或使用 CSS opacity/pointer-events 视觉禁用
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/app-shell/components/GlobalNavbar.tsx"
+        grep: "TODO.*Skill\\|TODO.*Automation\\|disabled"
+        label: "GlobalNavbar 有 TODO 注释说明后续启用条件 — 08 §N7"
+    review_checklist:
+      - "Skills 和 Automation 图标是否被隐藏或禁用"
+      - "是否有 TODO 注释说明启用条件"
+      - "Chat 图标是否保持正常工作"
+
+  # ───────────── Stage 3: 工具调用展示 ─────────────────────────────
+
+  - id: "5d.3"
+    title: "F7 前端 — 渐进式工具调用展示（完整版）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F7"
+    impl_targets:
+      - src/components/ui/chat-ui.tsx    # MODIFY: 新增 ToolCallItem, ToolCallSequence 组件
+
+    baseline_ref: "src/components/ui/chat-ui.tsx (Message 渲染)"
+
+    current_state: |
+      ChatUI 无任何工具调用展示组件。
+      5b.4 已添加 tool 角色消息的基础渲染。
+      ❌ MISSING — 新增完整的渐进式工具展示：
+        1. ToolCallItem 组件：紧凑状态行（✓/◐/○）+ 展开参数/结果
+        2. ToolCallSequence 组件：多个工具调用的序列展示
+        3. ChatMessage 中集成工具调用序列
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F7 — ToolCallItem 组件 (chat-ui.tsx)
+        type ToolCallStatus = "queued" | "running" | "completed" | "error";
+
+        interface ToolCallData {
+          id: string;
+          name: string;
+          status: ToolCallStatus;
+          summary: string;
+          args?: Record<string, unknown>;
+          result?: string;
+          duration?: string;
+        }
+
+        function ToolCallItem({ toolCall }: { toolCall: ToolCallData }) {
+          const [expanded, setExpanded] = useState(false);
+          const statusIcon = { queued: "○", running: "◐", completed: "✓", error: "✗" }[toolCall.status];
+          const statusColor = {
+            queued: "text-muted-foreground",
+            running: "text-yellow-500 animate-pulse",
+            completed: "text-green-500",
+            error: "text-red-500",
+          }[toolCall.status];
+
+          return (
+            <div className="my-1 rounded-md border bg-muted/30">
+              <button onClick={() => setExpanded(!expanded)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-sm">
+                <span className={cn("font-mono", statusColor)}>{statusIcon}</span>
+                <span className="font-medium">{toolCall.name}</span>
+                <span className="text-muted-foreground truncate">{toolCall.summary}</span>
+                {toolCall.duration && (
+                  <span className="ml-auto text-xs text-muted-foreground">{toolCall.duration}</span>
+                )}
+              </button>
+              {expanded && (
+                <div className="border-t px-3 py-2 text-xs font-mono">
+                  <details>
+                    <summary className="cursor-pointer text-muted-foreground">Arguments</summary>
+                    <pre className="mt-1 overflow-x-auto rounded bg-muted p-2">
+                      {JSON.stringify(toolCall.args, null, 2)}
+                    </pre>
+                  </details>
+                  <details>
+                    <summary className="mt-2 cursor-pointer text-muted-foreground">Result</summary>
+                    <pre className={cn("mt-1 overflow-x-auto rounded bg-muted p-2",
+                      toolCall.status === "error" && "border border-red-300 bg-red-50")}>
+                      {toolCall.result}
+                    </pre>
+                  </details>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        function ToolCallSequence({ calls }: { calls: ToolCallData[] }) {
+          return (
+            <div className="space-y-1">
+              {calls.map((call) => (
+                <ToolCallItem key={call.id} toolCall={call} />
+              ))}
+            </div>
+          );
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "function ToolCallItem"
+        label: "ToolCallItem 组件存在 — 08 §F7"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "function ToolCallSequence"
+        label: "ToolCallSequence 组件存在"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "ToolCallStatus"
+        label: "ToolCallStatus 类型存在"
+    review_checklist:
+      - "ToolCallItem 是否有四种状态图标和颜色"
+      - "是否有展开/折叠参数和结果功能"
+      - "ToolCallSequence 是否渲染多个工具调用"
+      - "running 状态是否有 animate-pulse 动画"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 4: TodoPanel 前端（TodoWrite 后端已在 5c.2 完成） ─────────────────────
+
+  - id: "5d.4"
+    title: "UI-8 + N11 前端 — TodoPanel 组件 + SSE 解析（后端 5c.2 已完成）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "UI-8, N11"
+    impl_targets:
+      - src/components/ui/TodoPanel.tsx                      # CREATE: TodoPanel 组件
+      - src/components/ui/chat-ui.tsx                        # MODIFY: 集成 TodoPanel
+      - src/App.tsx                                          # MODIFY: 全局 todos 状态 + SSE 解析
+
+    baseline_ref: "src-tauri/src/modules/tools/builtin/todo_write.rs (5c.2 已创建); rust/crates/tools/src/lib.rs (GlobalToolRegistry TodoWrite 原始实现)"
+
+    current_state: |
+      【TodoWrite 后端已在 5c.2 完成】
+      5c.2 (N3 阶段 1) 已创建 builtin/todo_write.rs，注册到 ToolRegistry，
+      使用 IF2AI_TODO_STORE 环境变量和 .if2ai-todos.json 路径。
+      ❌ 当前缺失（纯前端）：
+        1. 新建 TodoPanel.tsx 组件
+        2. chat-ui.tsx 集成 TodoPanel
+        3. App.tsx 解析 TodoWrite SSE 事件 + 全局 todos 状态
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §UI-8 — TodoWrite 后端已在 5c.2 完成
+        // 参考: src-tauri/src/modules/tools/builtin/todo_write.rs
+        // 本 slice 只需关注前端部分。
+
+      - |
+        // 08-critical-fix-priority.md §UI-8 — TodoPanel 前端 (新建 TodoPanel.tsx)
+        interface TodoItem {
+          content: string;
+          activeForm: string;
+          status: "pending" | "in_progress" | "completed";
+        }
+
+        function TodoPanel({ todos }: { todos: TodoItem[] }) {
+          if (todos.length === 0) return null;
+          const completedCount = todos.filter(t => t.status === "completed").length;
+          const allDone = todos.every(t => t.status === "completed");
+
+          return (
+            <div className="border-b bg-muted/20 px-4 py-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  Tasks ({completedCount}/{todos.length} completed)
+                </span>
+                {allDone && <span>All tasks completed ✓</span>}
+              </div>
+              {!allDone && (
+                <div className="mt-1 space-y-0.5">
+                  {todos.map((todo, i) => (
+                    <TodoItemRow key={i} todo={todo} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        function TodoItemRow({ todo }: { todo: TodoItem }) {
+          const icon = { pending: "○", in_progress: "◐", completed: "✓" }[todo.status];
+          const color = { pending: "text-muted-foreground", in_progress: "text-blue-500 animate-pulse", completed: "text-green-500" }[todo.status];
+          return (
+            <div className={cn("flex items-center gap-2 text-sm", color)}>
+              <span className="w-4 text-center font-mono">{icon}</span>
+              <span className="flex-1 truncate">{todo.activeForm}</span>
+            </div>
+          );
+        }
+
+      - |
+        // 08-critical-fix-priority.md §UI-8 — App.tsx SSE 事件解析
+        const [todos, setTodos] = useState<TodoItem[]>([]);
+
+        if (payload.event_type === 'tool_call_update' && payload.tool_name === 'TodoWrite') {
+          try {
+            const result = JSON.parse(payload.tool_result || '{}');
+            if (result.newTodos) {
+              setTodos(result.newTodos);
+            }
+          } catch (e) { /* ignore parse error */ }
+        }
+
+        if (payload.event_type === 'stream_complete') {
+          setTodos([]);
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/TodoPanel.tsx"
+        grep: "function TodoPanel"
+        label: "TodoPanel 组件存在 — 08 §UI-8"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "TodoWrite"
+        label: "App.tsx 解析 TodoWrite SSE 事件"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
+        grep: "pub fn todo_write_tool_entry"
+        label: "TodoWrite 后端已在 5c.2 完成 — 08 §N3"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "TodoPanel 是否显示进度和状态图标"
+      - "App.tsx 是否在 stream_complete 时清空 todos"
+      - "in_progress 状态是否有 animate-pulse 动画"
+      - "TypeScript 编译是否无错误"
+      - "TodoWrite 后端是否已在 5c.2 完成（builtin/todo_write.rs 存在）"
+
+  # ───────────── Stage 5: Context Compaction ─────────────────────────────
+
+  - id: "5d.5"
+    title: "F9 后端 — Context Compaction 接入"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F9"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: run_agent_turn 返回前调用 compact
+
+    baseline_ref: "src-tauri/src/modules/runtime/compact.rs (should_compact, compact_session, CompactionConfig, 测试:506-709); src-tauri/src/modules/runtime/conversation.rs (compact:336-338)"
+
+    current_state: |
+      compact_session() 和 should_compact() 存在于 modules/runtime/compact.rs。
+      run_agent_turn 返回前没有调用 should_compact() 或 compact_session()。
+      start_agent_stream 后台任务结束时也没有调用。
+      ❌ MISSING — 在两条路径的返回前调用 compact
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F9 — run_agent_turn 返回前 compact (agent.rs)
+        use crate::modules::runtime::compact::{should_compact, compact_session, CompactionConfig};
+
+        // 在保存 session 前（约第 435 行前）：
+        let compaction_config = CompactionConfig {
+            preserve_recent_messages: 4,
+            max_estimated_tokens: 8000,
+        };
+        if should_compact(&updated_runtime_session, compaction_config) {
+            let _ = compact_session(&updated_runtime_session, compaction_config);
+            // 更新 session 中的消息
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "should_compact"
+        label: "run_agent_turn 调用 should_compact — 08 §F9"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "compact_session"
+        label: "run_agent_turn 调用 compact_session"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "run_agent_turn 是否在保存 session 前检查 should_compact"
+      - "CompactionConfig 参数是否合理"
+      - "start_agent_stream 后台任务结束时是否也调用 compact"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 6: 模型选择器统一 ─────────────────────────────
+
+  - id: "5d.6"
+    title: "F10 前端 — 模型选择器统一"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F10"
+    impl_targets:
+      - src/App.tsx                         # MODIFY: 提升 selectedModel 为全局状态
+      - src/components/ui/chat-ui.tsx       # MODIFY: 接收 props 而非本地状态
+      - src/modules/chat/components/ChatWorkspace.tsx  # MODIFY: header model 指向全局状态
+
+    baseline_ref: "src/components/ui/chat-ui.tsx (selectedModel:61); src/modules/chat/components/ChatWorkspace.tsx (modelLabel:48)"
+
+    current_state: |
+      ChatUI 第 61 行有本地 selectedModel 状态，默认 gpt-5.4-mini。
+      ChatWorkspace header 硬编码 const modelLabel = 'GPT-5.4-Mini'。
+      两个 UI 入口互不感知。
+      ❌ MISSING — 提升 selectedModel 为 App 级全局状态
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F10 — App.tsx 提升 selectedModel
+        const [selectedModel, setSelectedModel] = useState("gpt-5.4-mini");
+
+        // 传递给 ChatWorkspace
+        <ChatWorkspace
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          ...
+        />
+
+      - |
+        // 08-critical-fix-priority.md §F10 — ChatUI 接收 props
+        // 移除本地 selectedModel 状态，接收 props：
+        interface ChatUIProps {
+          // ... existing props
+          selectedModel?: string;
+          onModelChange?: (model: string) => void;
+        }
+
+        // ChatUI 中使用 props.selectedModel 而非本地状态
+        const modelValue = selectedModel ?? 'gpt-5.4-mini';
+        const handleModelChange = onModelChange ?? (() => {});
+
+      - |
+        // 08-critical-fix-priority.md §F10 — ChatWorkspace header model
+        // 替换硬编码 modelLabel：
+        const formatModelName = (model: string) => {
+          return model.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        };
+        const modelLabel = formatModelName(selectedModel);
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "selectedModel.*useState"
+        label: "App.tsx 有全局 selectedModel 状态 — 08 §F10"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "selectedModel.*props\\|selectedModel.*ChatUIProps"
+        label: "ChatUI 接收 selectedModel 作为 props"
+      - type: symbol
+        file: "src/modules/chat/components/ChatWorkspace.tsx"
+        grep: "formatModelName\\|selectedModel"
+        label: "ChatWorkspace header 使用动态 model name"
+    review_checklist:
+      - "ChatUI 是否不再维护本地 selectedModel 状态"
+      - "ChatWorkspace header 是否显示动态 model name"
+      - "ComposerDock 和 header 的 model 是否指向同一状态"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 7: SlashCommand 前端交互层 ─────────────────────
+
+  - id: "5d.7"
+    title: "F11 前端 — SlashCommand 交互层（/ 检测 + Tab 补全 + 下拉建议）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F11"
+    impl_targets:
+      - src/components/ui/chat-ui.tsx    # MODIFY: 新增 slashOverlay 状态 + SlashCommandSuggestions 组件
+      - src/lib/tauri.ts                 # MODIFY: 新增 SlashCommand Tauri command 类型
+
+    baseline_ref: "rust/crates/commands/src/lib.rs (suggest_slash_commands:576-613); src-tauri/src/modules/commands/lib.rs (副本)"
+
+    current_state: |
+      ChatUI 的 textarea handleKeyDown 不检查 / 前缀，所有输入直接发给 LLM。
+      ❌ MISSING — 新增三层交互：
+        1. 实时检测 / 前缀（50ms debounce）
+        2. Tab/Enter 补全，上下箭头导航，Escape 关闭
+        3. 下拉建议层
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F11 — SlashCommand 交互层 (chat-ui.tsx)
+        // 使用 useRef 存储 timer，避免 race condition
+        const slashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+        const [slashOverlay, setSlashOverlay] = useState<{
+          visible: boolean;
+          selectedIndex: number;
+          suggestions: string[];
+          rawInput: string;
+        } | null>(null);
+
+        // handleInput — 实时检测 / 前缀
+        const handleInput = (value: string) => {
+          // 清除上一个 timer（ref 方式，不依赖 onInput return cleanup）
+          if (slashTimerRef.current) {
+            clearTimeout(slashTimerRef.current);
+            slashTimerRef.current = null;
+          }
+
+          if (value.startsWith('/')) {
+            const cmdPart = value.split(/\s+/)[0];
+            slashTimerRef.current = setTimeout(async () => {
+              try {
+                const suggestions = await invoke<string[]>('suggest_slash_commands_endpoint', {
+                  input: cmdPart, limit: 8
+                });
+                setSlashOverlay({
+                  visible: suggestions.length > 0,
+                  selectedIndex: 0,
+                  suggestions,
+                  rawInput: cmdPart,
+                });
+              } catch (e) { setSlashOverlay(null); }
+            }, 50);
+          } else {
+            setSlashOverlay(null);
+          }
+        };
+
+        // handleKeyDown — 覆盖原有 Enter 处理
+        if (slashOverlay?.visible) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSlashOverlay(prev => prev ? { ...prev, selectedIndex: (prev.selectedIndex + 1) % prev.suggestions.length } : null);
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSlashOverlay(prev => prev ? { ...prev, selectedIndex: (prev.selectedIndex - 1 + prev.suggestions.length) % prev.suggestions.length } : null);
+          }
+          if (e.key === 'Tab' || e.key === 'Enter') {
+            e.preventDefault();
+            const selected = slashOverlay.suggestions[slashOverlay.selectedIndex];
+            setInput(selected);
+            setSlashOverlay(null);
+            return;
+          }
+          if (e.key === 'Escape') {
+            setSlashOverlay(null);
+            return;
+          }
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (input.startsWith('/')) {
+            // 执行 slash command（不发到 LLM）
+            invoke('execute_slash_command', { input, sessionId: activeSessionId })
+              .then(result => addSystemMessage(result));
+            return;
+          }
+          if (input.trim() && !isLoading) onSubmit();
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "slashOverlay"
+        label: "slashOverlay 状态存在 — 08 §F11"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "suggest_slash_commands_endpoint"
+        label: "调用 suggest_slash_commands_endpoint"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "SlashCommandSuggestions\\|slashOverlay.*visible"
+        label: "下拉建议层渲染存在"
+    review_checklist:
+      - "输入 / 是否触发建议（50ms debounce）"
+      - "Tab/Enter 是否补全选中项"
+      - "上下箭头是否导航建议列表"
+      - "Escape 是否关闭建议层"
+      - "Enter 执行 slash command 是否不发到 LLM"
+      - "非 / 前缀输入是否正常工作"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 8: 集成测试 ─────────────────────────────
+
+  - id: "5d.8"
+    title: "5D 集成测试 — 验证全部前端 UX 功能"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F7, F10, F11, N10, UI-8"
+    impl_targets:
+      - harness/suites/phase5d_integration.yaml    # CREATE: 行为测试
+
+    baseline_ref: "docs/bs_gap/08-critical-fix-priority.md (F7, F10, F11, N10, UI-8); src-tauri/src/modules/tools/builtin/todo_write.rs (5c.2 已创建)"
+
+    current_state: |
+      所有 5D slices 完成后需要集成测试验证前端 UX 功能。
+      ❌ MISSING — 创建 harness suite 和集成测试
+
+    must_implement:
+      - |
+        // harness/suites/phase5d_integration.yaml
+        # 验证 ChatUI 状态统一
+        # 验证 TodoPanel 渲染
+        # 验证 SlashCommand 交互层
+        # 验证模型选择器统一
+        # 验证工具调用展示
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "all tests pass"
+    review_checklist:
+      - "TypeScript 编译是否无错误"
+      - "Rust 编译 + lint + 测试是否全部通过"
+      - "harness suite 是否覆盖前端 UX 场景"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: []
+  current_slice: "5d.1"
+  blocked: []
+  notes: "DRAFT — 依赖 Phase 5C 完成。5D 是前端 UX 全面完善 Phase。human_checkpoint after 5d.4"

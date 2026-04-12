@@ -4,11 +4,9 @@ import {
   Archive,
   ChevronDown,
   Circle,
-  Clock3,
   Folder,
   FolderOpen,
   FolderPlus,
-  LayoutGrid,
   MoreHorizontal,
   PencilLine,
   Pin,
@@ -73,20 +71,19 @@ export function ProjectRail({
   const listRef = useRef<HTMLDivElement>(null)
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
 
-  const recentSessions = useMemo<RecentSession[]>(() => {
+  const pinnedSessions = useMemo<RecentSession[]>(() => {
     const items = projects.flatMap((project) =>
-      (projectSessions[project.id] ?? []).map((session) => ({
-        projectId: project.id,
-        sessionId: session.id,
-        title: session.title,
-        createdAt: session.created_at,
-      }))
+      (projectSessions[project.id] ?? [])
+        .filter((session) => session.pinned)
+        .map((session) => ({
+          projectId: project.id,
+          sessionId: session.id,
+          title: session.title,
+          createdAt: session.created_at,
+        }))
     )
 
-    return items
-      .slice()
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-      .slice(0, 4)
+    return items.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
   }, [projectSessions, projects])
 
   useEffect(() => {
@@ -135,8 +132,8 @@ export function ProjectRail({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden select-none">
-      <div className="shrink-0 px-3.5 py-3">
-        <div className="flex flex-col gap-1">
+      <div className="shrink-0 px-3 py-2.5">
+        <div className="flex flex-col gap-1.5">
           <RailNavItem
             icon={PencilLine}
             label="新线程"
@@ -146,22 +143,21 @@ export function ProjectRail({
             }}
           />
           <RailNavItem icon={Search} label="Search" />
-          <RailNavItem icon={LayoutGrid} label="技能和应用" />
-          <RailNavItem icon={Clock3} label="自动化" />
         </div>
-        <div className="mt-2.5 flex flex-col gap-1">
-          {recentSessions.map((item) => (
+        <div className="mt-2 flex flex-col gap-1">
+          {pinnedSessions.map((item) => (
             <RecentItem
               key={item.sessionId}
               title={item.title}
               age={formatRelativeAge(item.createdAt)}
               onClick={() => onSelectSession(item.projectId, item.sessionId)}
+              pinned
             />
           ))}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-black/5 px-3.5 py-2.5">
+      <div className="shrink-0 border-t border-black/5 px-3 py-[9px]">
         <div className="flex items-center justify-between">
           <div className="text-[12px] font-medium tracking-tight text-black/35">线程</div>
           <div className="flex items-center gap-1 text-black/35">
@@ -190,8 +186,8 @@ export function ProjectRail({
         </div>
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-4">
-        <div className="flex flex-col gap-3">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+        <div className="flex flex-col gap-2.5">
           {projects.length === 0 ? (
             <div className="pl-2 text-[13px] text-black/30">暂无项目</div>
           ) : (
@@ -246,10 +242,12 @@ function RailNavItem({
 function RecentItem({
   title,
   age,
+  pinned = false,
   onClick,
 }: {
   title: string
   age: string
+  pinned?: boolean
   onClick: () => void
 }) {
   return (
@@ -258,7 +256,7 @@ function RecentItem({
       onClick={onClick}
       className="flex h-9 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[13px] font-medium tracking-tight text-black/78 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
     >
-      <Pin className="size-3.5 shrink-0 rotate-45 text-black/35" />
+      <Pin className={cn('size-3.5 shrink-0 rotate-45 text-black/35', pinned && 'text-black/40')} />
       <span className="min-w-0 flex-1 truncate">{title}</span>
       <span className="shrink-0 text-[12px] font-medium text-black/35">{age}</span>
     </button>
@@ -311,13 +309,13 @@ function ProjectGroup({
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="group/project relative rounded-[18px] px-1 py-1 transition-colors hover:bg-black/[0.035] select-none">
+    <div className="flex flex-col gap-1.5">
+      <div className="group/project relative rounded-[16px] px-0.5 py-0.5 transition-colors hover:bg-black/[0.03] select-none">
         <button
           type="button"
           onClick={toggleProject}
           className={cn(
-            'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[16px] px-2.5 py-2 pr-16 text-left text-[13px] font-medium tracking-tight transition-colors',
+            'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[14px] px-2.5 py-[7px] pr-12 text-left text-[13px] font-medium tracking-tight transition-colors',
             isActiveProject ? 'bg-black/[0.04] text-black/90' : 'text-black/72 hover:text-black/90'
           )}
         >
@@ -335,12 +333,12 @@ function ProjectGroup({
           <span className="min-w-0 flex-1 truncate">{project.name}</span>
         </button>
 
-        <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+        <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="pointer-events-auto size-7 rounded-full p-0 text-black/25 opacity-90 transition-all hover:bg-black/[0.03] hover:text-black/70 cursor-pointer"
+            className="pointer-events-auto size-[26px] rounded-full p-0 text-black/25 opacity-90 transition-colors hover:text-black/70 cursor-pointer"
             onClick={(event) => {
               event.stopPropagation()
               const nextName = window.prompt('重命名项目', project.name)?.trim()
@@ -359,11 +357,11 @@ function ProjectGroup({
         </div>
       </div>
 
-      <div className={cn('flex flex-col gap-1', !isExpanded && 'hidden')}>
+      <div className={cn('flex flex-col gap-0.5', !isExpanded && 'hidden')}>
         {sessions.length === 0 ? (
-          <div className="pl-8 text-[13px] text-black/25">无线程</div>
+          <div className="pl-7 text-[13px] text-black/25">无线程</div>
         ) : (
-        <div className="flex flex-col gap-1 pl-7">
+          <div className="flex flex-col gap-0.5 pl-7">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -412,7 +410,7 @@ function SessionRow({
   onDeleteSession: (projectId: string, sessionId: string) => void
 }) {
   return (
-      <div
+    <div
       role="button"
       tabIndex={0}
       onClick={() => onSelectSession(projectId, sessionId)}
@@ -423,7 +421,7 @@ function SessionRow({
         }
       }}
       className={cn(
-        'group/session grid h-9 cursor-pointer grid-cols-[18px_minmax(0,1fr)_4.25rem] items-center gap-2 rounded-[16px] px-2 py-1.5 text-[13px] font-medium tracking-tight transition-colors',
+        'group/session grid h-[34px] cursor-pointer grid-cols-[18px_minmax(0,1fr)_4.25rem] items-center gap-2 rounded-[14px] px-2 text-[13px] font-medium tracking-tight transition-colors',
         isActive ? 'bg-black/[0.05] text-black/90' : 'text-black/78 hover:bg-black/[0.03] hover:text-black/90'
       )}
     >
@@ -469,7 +467,7 @@ function SessionRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-0 top-1/2 size-7 -translate-y-1/2 rounded-full p-0 text-black/25 opacity-0 transition-all hover:bg-black/[0.03] hover:text-black/70 group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
+              className="absolute right-0 top-1/2 size-7 -translate-y-1/2 rounded-full p-0 text-black/25 opacity-0 transition-colors hover:text-black/70 group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
@@ -483,7 +481,7 @@ function SessionRow({
           >
             <DropdownMenuItem
               className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
-              onSelect={(event) => {
+              onSelect={() => {
                 void onTogglePinSession(projectId, sessionId, isPinned)
               }}
             >
@@ -493,7 +491,7 @@ function SessionRow({
             <DropdownMenuSeparator className="my-1 bg-black/6" />
             <DropdownMenuItem
               className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-red-600 transition-colors hover:bg-red-50 focus:bg-red-50 focus:text-red-700"
-              onSelect={(event) => {
+              onSelect={() => {
                 onDeleteSession(projectId, sessionId)
               }}
             >
@@ -527,7 +525,7 @@ function ProjectMenu({
           type="button"
           variant="ghost"
           size="icon"
-          className="pointer-events-auto size-7 rounded-full p-0 text-black/25 opacity-90 transition-all hover:bg-black/[0.03] hover:text-black/70 cursor-pointer"
+          className="pointer-events-auto size-7 rounded-full p-0 text-black/25 opacity-90 transition-colors hover:text-black/70 cursor-pointer"
           onPointerDown={(event) => event.stopPropagation()}
         >
           <MoreHorizontal className="size-4" />
@@ -540,7 +538,7 @@ function ProjectMenu({
       >
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
-          onSelect={(event) => {
+          onSelect={() => {
             void Promise.resolve(onOpenInFinder(project.id)).catch((error) => {
               console.error('Failed to open project in Finder:', error)
             })
@@ -551,7 +549,7 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
-          onSelect={(event) => {
+          onSelect={() => {
             void Promise.resolve(onCreatePermanentWorktree(project.id)).catch((error) => {
               console.error('Failed to create permanent worktree:', error)
             })
@@ -562,7 +560,7 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
-          onSelect={(event) => {
+          onSelect={() => {
             const nextName = window.prompt('重命名项目', project.name)?.trim()
             if (nextName) onRenameProject(project.id, nextName)
           }}
@@ -572,7 +570,7 @@ function ProjectMenu({
         </DropdownMenuItem>
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
-          onSelect={(event) => {
+          onSelect={() => {
           }}
         >
           <Archive className="size-4 shrink-0 text-black/55" />
@@ -581,7 +579,7 @@ function ProjectMenu({
         <DropdownMenuSeparator className="my-1.5 bg-black/6" />
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-red-600 transition-colors hover:bg-red-50 focus:bg-red-50 focus:text-red-700"
-          onSelect={(event) => {
+          onSelect={() => {
             onDeleteProject(project.id)
           }}
         >

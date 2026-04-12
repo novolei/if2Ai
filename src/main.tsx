@@ -4,6 +4,7 @@ import './styles/globals.css'
 import App from './App'
 import { SettingsApp } from './components/settings/SettingsApp'
 import { closeSettingsWindow } from '@/lib/tauri'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 const urlParams = new URLSearchParams(window.location.search)
 const windowType = urlParams.get('window')
@@ -16,5 +17,7 @@ const Root = () => {
 }
 
 createRoot(document.getElementById('app')!).render(
-  <Root />,
+  <TooltipProvider>
+    <Root />
+  </TooltipProvider>,
 )

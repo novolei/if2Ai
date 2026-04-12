@@ -638,6 +638,214 @@ pub trait MessagingAdapter: Send + Sync {
 
 ---
 
+## Phase 4 — 工具激活与工作目录边界 (Tool & Workdir Boundary)
+
+> 对应 exec-plan: `docs/exec-plans/active/phase-4-tool-and-boundary.yaml`
+
+### BL-401 注册内置工具 + LLM 集成
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P0                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`           |
+| **impl_targets** | `src-tauri/src/main.rs`, `src-tauri/src/modules/tools/mod.rs`, `src-tauri/src/commands/agent.rs` |
+
+**任务描述**：激活工具注册表，让内置工具（bash, read_file, json_parse）注册到 ToolRegistry，并让 `MessageRequest` 传递工具定义给 LLM。
+
+**验收标准**：
+- `cargo check -p if2ai-backend` 无错误
+- `register_builtin_tools()` 在 `tools/mod.rs` 中存在
+- `main.rs` 调用 `register_builtin_tools()`
+- `agent.rs` 中 `MessageRequest.tools` 为 `Some(...)`
+
+---
+
+### BL-402 ToolContext Arc<Mutex> 机制
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P0                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/project-workdir-boundary.md`   |
+| **impl_targets** | `src-tauri/src/modules/tools/context.rs`, `src-tauri/src/modules/tools/registry.rs`, `src-tauri/src/modules/runtime/config.rs` |
+
+**任务描述**：实现 `ToolContext` 结构（workdir + permission_mode），通过 `Arc<Mutex>` 传递给工具 handler，让工具函数能访问当前 project 的 workdir。
+
+**验收标准**：
+- `ToolContext` 结构在 `context.rs` 中存在
+- `Registry.dispatch` 获取并传递 `ToolContext`
+- `RuntimeConfig` 新增 `workdir: Option<PathBuf>` 字段
+
+---
+
+### BL-403 file_read workdir allowlist
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P0                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/project-workdir-boundary.md`   |
+| **impl_targets** | `src-tauri/src/modules/tools/builtin/file_read.rs` |
+
+**任务描述**：实现 workdir allowlist，只允许读取 project workdir 内的文件。保留原有的敏感路径 denylist 作为额外保护。
+
+**验收标准**：
+- 读取 workdir 外的文件返回错误
+- 读取 `/etc/passwd` 等敏感路径返回错误
+- handler 签名包含 `ToolContext` 参数
+
+---
+
+### BL-404 bash workdir 限制
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P0                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/project-workdir-boundary.md`   |
+| **impl_targets** | `src-tauri/src/modules/tools/builtin/bash.rs`   |
+
+**任务描述**：实现 bash 命令的 workdir 限制，通过 `cd $workdir && $command` 包装原始命令。
+
+**验收标准**：
+- bash 命令在 workdir 内执行
+- 危险命令（`rm -rf /` 等）仍被拦截
+- handler 签名包含 `ToolContext` 参数
+
+---
+
+### BL-405 execute_tool Tauri 命令
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/commands/tools.rs`, `src-tauri/src/commands/mod.rs`, `src/lib/tauri.ts` |
+
+**任务描述**：新增 `execute_tool`, `list_tools`, `get_tool_definitions` 三个 Tauri 命令，让前端可以直接调用工具。
+
+**验收标准**：
+- `commands/tools.rs` 中三个命令存在
+- 前端 `lib/tauri.ts` 导出 `executeTool`, `listTools`, `getToolDefinitions`
+- TypeScript 类型定义正确
+
+---
+
+### BL-406 Per-Project PermissionMode
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/project-workdir-boundary.md`   |
+| **impl_targets** | `src-tauri/src/modules/projects/mod.rs`, `src-tauri/src/modules/runtime/permissions.rs` |
+
+**任务描述**：在 `Project` 结构中新增 `permission_mode` 字段，持久化到 `project.json`，并让 `agent.rs` 运行时读取此配置。
+
+**验收标准**：
+- `Project.permission_mode` 字段存在
+- 默认值为 `WorkspaceWrite`
+- 旧 `project.json` 反序列化正确处理缺失字段
+
+---
+
+### BL-407 文件操作类工具（ZeroClaw 复刻）
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P0                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/modules/tools/builtin/file_write.rs`, `src-tauri/src/modules/tools/builtin/file_edit.rs`, `src-tauri/src/modules/tools/builtin/glob_search.rs`, `src-tauri/src/modules/tools/builtin/content_search.rs` |
+
+**任务描述**：从 ZeroClaw 复刻 4 个文件操作工具：`file_write`（写入文件）、`file_edit`（diff patch）、`glob_search`（glob 模式搜索）、`content_search`（内容搜索，支持 regex）。
+
+**验收标准**：
+- 4 个工具都有 `entry()` 函数
+- `glob_search` 使用 glob crate
+- `content_search` 支持 regex 搜索
+- 在 workdir 内执行（安全检查）
+
+---
+
+### BL-408 Web 类工具（ZeroClaw 复刻）
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/modules/tools/builtin/web_fetch.rs`, `src-tauri/src/modules/tools/builtin/web_search.rs`, `src-tauri/src/modules/tools/builtin/http_request.rs` |
+
+**任务描述**：从 ZeroClaw 复刻 3 个 Web 工具：`web_fetch`（网页抓取，支持 CSS selector）、`web_search`（网络搜索）、`http_request`（HTTP 请求）。
+
+**验收标准**：
+- 3 个工具都有 `entry()` 函数
+- `web_fetch` 支持 CSS selector 内容提取
+- `web_search` 支持 DuckDuckGo/Brave/SearXNG provider
+- 使用 reqwest, scraper, url crate
+
+---
+
+### BL-409 Memory 类工具（ZeroClaw 复刻）
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/modules/memory/`, `src-tauri/src/modules/tools/builtin/memory_store.rs`, `src-tauri/src/modules/tools/builtin/memory_recall.rs`, `src-tauri/src/modules/tools/builtin/memory_forget.rs`, `src-tauri/src/modules/tools/builtin/memory_purge.rs`, `src-tauri/src/modules/tools/builtin/memory_export.rs` |
+
+**任务描述**：从 ZeroClaw 复刻 5 个 Memory 工具 + `MemoryProvider` trait：存储/召回/删除/清除/导出记忆。
+
+**验收标准**：
+- `MemoryProvider` trait 定义 5 个方法
+- 5 个工具都有 `entry()` 函数
+- 支持 Core/Daily/Conversation/Custom 分类
+- `memory_export` 支持 JSON 和 Markdown 格式
+
+---
+
+### BL-410 Cron/调度类工具（ZeroClaw 复刻）
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/modules/scheduler/`, `src-tauri/src/modules/tools/builtin/cron_add.rs`, `src-tauri/src/modules/tools/builtin/cron_list.rs`, `src-tauri/src/modules/tools/builtin/cron_remove.rs`, `src-tauri/src/modules/tools/builtin/cron_run.rs`, `src-tauri/src/modules/tools/builtin/cron_runs.rs` |
+
+**任务描述**：从 ZeroClaw 复刻 5 个 Cron 工具 + `Scheduler` trait：创建/列出/删除/立即运行/查看执行记录。
+
+**验收标准**：
+- `Scheduler` trait 定义 5 个方法
+- 5 个工具都有 `entry()` 函数
+- cron expression 解析使用 cron crate
+- 支持 cron expression 验证
+
+---
+
+### BL-411 ToolSet 分类系统
+
+| 字段             | 值                                              |
+| ---------------- | ----------------------------------------------- |
+| **优先级**       | P1                                              |
+| **状态**         | 🔴 pending                                      |
+| **design_ref**   | `docs/design-docs/tool-activation.md`            |
+| **impl_targets** | `src-tauri/src/modules/tools/toolset.rs`, `src-tauri/src/modules/tools/mod.rs`, `src-tauri/src/modules/tools/registry.rs`, `src-tauri/src/commands/tools.rs`, `src/lib/tauri.ts` |
+
+**任务描述**：实现 ToolSet 分类系统，包括 `ToolSet` 结构、`ToolSetRegistry` 管理器、`TOOLSETS` 预定义常量、按 toolset 批量过滤工具定义的 API。
+
+**验收标准**：
+- `TOOLSETS` 常量包含 8 个预定义工具集（files, terminal, utility, web, memory, scheduler, minimal, development）
+- `ToolSetRegistry` 能正确映射 tool → toolset
+- `get_definitions_by_toolsets()` 方法存在且正确过滤
+- 前端 `ToolSet` 类型包含 name, description, tools, enabled 字段
+
+---
+
 ## 设计文档 ↔ Backlog 映射表
 
 | 设计文档                             | 对应 Backlog 条目                                          | Phase |
@@ -649,7 +857,9 @@ pub trait MessagingAdapter: Send + Sync {
 | agent-orchestrator.md                | BL-102 (循环逻辑)                                          | P1    |
 | provider-resolution.md               | BL-103 (ProviderManager)                                   | P1    |
 | llm-routing.md                       | BL-103 (故障转移)                                          | P1    |
-| tool-system.md                       | BL-104 (ToolRegistry)                                      | P1    |
+| tool-system.md                       | BL-104 (ToolRegistry), BL-401 (工具激活)                      | P1/P4 |
+| tool-activation.md                   | BL-401, BL-405, BL-407, BL-408, BL-409, BL-410, BL-411     | P4    |
+| project-workdir-boundary.md         | BL-402, BL-403, BL-404, BL-406                              | P4    |
 | session-persistence.md               | BL-105 (SessionManager)                                    | P1    |
 | data-schema.md                       | BL-105 (SQLite Schema)                                     | P1    |
 | prompt-builder.md                    | BL-201 (PromptBuilder)                                     | P2    |
@@ -672,6 +882,7 @@ pub trait MessagingAdapter: Send + Sync {
 grep -A3 "status: pending" docs/exec-plans/active/phase-1-foundation.yaml | head -20
 
 # 找到对应的 Backlog 条目
+# Phase 1:
 # slice 1.2 → BL-101
 # slice 1.3 → BL-102
 # slice 1.4 → BL-103
@@ -680,15 +891,30 @@ grep -A3 "status: pending" docs/exec-plans/active/phase-1-foundation.yaml | head
 # slice 1.7 → BL-106
 # slice 1.8 → BL-107
 # slice 1.9 → BL-108
+#
+# Phase 4:
+# slice 4.1 → BL-401
+# slice 4.2 → BL-402
+# slice 4.3 → BL-403
+# slice 4.4 → BL-404
+# slice 4.5 → BL-405
+# slice 4.6 → BL-406
+# slice 4.8 → BL-407 (文件操作类工具)
+# slice 4.9 → BL-408 (Web 类工具)
+# slice 4.10 → BL-409 (Memory 类工具)
+# slice 4.11 → BL-410 (Cron/调度类工具)
+# slice 4.7  → BL-411 (ToolSet 分类系统)
 ```
 
-| 功能              | 状态           | 优先级 | 所有者 |
-| ----------------- | -------------- | ------ | ------ |
-| Chat Interface    | ✅ Draft       | P0     | TBD    |
-| Agent Dashboard   | ✅ Draft       | P0     | TBD    |
-| Settings Panel    | 🔄 In Progress | P1     | TBD    |
-| Memory Management | ⏳ Planned     | P2     | TBD    |
-| Batch Execution   | ⏳ Planned     | P2     | TBD    |
+| 功能                   | 状态           | 优先级 | 所有者 |
+| ---------------------- | -------------- | ------ | ------ |
+| Chat Interface         | ✅ Draft       | P0     | TBD    |
+| Agent Dashboard        | ✅ Draft       | P0     | TBD    |
+| Settings Panel         | 🔄 In Progress | P1     | TBD    |
+| Memory Management      | ⏳ Planned     | P2     | TBD    |
+| Batch Execution        | ⏳ Planned     | P2     | TBD    |
+| Tool Activation (P4)   | 🔴 Pending     | P0     | TBD    |
+| Workdir Boundary (P4)  | 🔴 Pending     | P0     | TBD    |
 
 ## 🚀 添加新规范
 
@@ -699,4 +925,4 @@ grep -A3 "status: pending" docs/exec-plans/active/phase-1-foundation.yaml | head
 
 ---
 
-**版本**: 0.1.0 | **最后更新**: 2026-04-11
+**版本**: 0.1.0 | **最后更新**: 2026-04-12

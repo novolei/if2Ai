@@ -87,10 +87,7 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<()
 /// Open a project workdir in the system file manager.
 #[tauri::command]
 #[allow(dead_code)]
-pub async fn open_project_in_finder(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn open_project_in_finder(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let project = state
         .project_manager
         .get_project(&id)

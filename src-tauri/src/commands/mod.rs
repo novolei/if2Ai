@@ -55,6 +55,8 @@ pub use session::{
     set_session_pinned,
 };
 #[allow(unused_imports)]
-pub use tools::{execute_tool, get_tool_definitions, list_tools, ToolCallResult, ToolDefinition};
+pub use tools::{
+    execute_tool, get_tool_definitions, list_tools, list_toolsets, ToolCallResult, ToolDefinition,
+};
 #[allow(unused_imports)]
 pub use window::{close_settings_window, open_settings_window};

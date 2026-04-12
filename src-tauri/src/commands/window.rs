@@ -2,7 +2,7 @@
 //!
 //! Provides commands for managing application windows.
 
-use tauri::{AppHandle, Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Open the settings window.
 /// If the settings window already exists, focus it instead of creating a new one.

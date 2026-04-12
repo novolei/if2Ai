@@ -7,6 +7,33 @@
 
 ---
 
+## ⚠️ Gap Analysis & Activation Status (2026-04-12)
+
+### 现状
+
+`project-system.md` 定义了 Project/Session 管理和存储结构，**但存在以下关键 Gap**：
+
+| Gap | 当前状态 | 需要改动的文件 |
+|-----|----------|----------------|
+| **Agent 不知道 workdir** | `run_agent_turn` 只接收 `session_id`，不传 `project_id/workdir` | `src-tauri/src/commands/agent.rs` |
+| **Filesystem 无 allowlist** | `file_read` 用 denylist，可绕过 | `modules/tools/builtin/file_read.rs` |
+| **Bash 无 workdir 限制** | 直接在 host 环境执行 | `modules/tools/builtin/bash.rs` |
+| **PermissionMode 未生效** | 定义了但始终用 `DangerFullAccess` | `modules/runtime/permissions.rs` |
+| **Sandbox 未激活** | 定义了 `sandbox.rs` 但从未使用 | 后续迭代 |
+
+### 激活需要的改动
+
+1. **`commands/agent.rs`** — 传递 `project_id` 并查询 `workdir` 注入 context
+2. **`modules/tools/builtin/file_read.rs`** — 实现 workdir allowlist
+3. **`modules/tools/builtin/bash.rs`** — 实现 workdir 限制
+4. **`modules/projects/mod.rs`** — 新增 `PermissionMode` 持久化
+
+### 设计文档
+
+完整的边界隔离设计见 [project-workdir-boundary.md](./project-workdir-boundary.md)。
+
+---
+
 ## 1. 系统概览
 
 ### 1.1 为什么需要 Project？

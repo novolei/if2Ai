@@ -106,7 +106,7 @@ slices:
 
   - id: "4.2"
     title: "ToolContext Arc<Mutex> 机制 — 让工具函数访问 workdir"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/project-workdir-boundary.md"
     backlog_ref: "BL-402"
     impl_targets:
@@ -216,7 +216,7 @@ slices:
 
   - id: "4.3"
     title: "file_read 工具 — workdir allowlist 实现"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/project-workdir-boundary.md"
     backlog_ref: "BL-403"
     impl_targets:
@@ -295,7 +295,7 @@ slices:
 
   - id: "4.4"
     title: "bash 工具 — workdir 限制实现"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/project-workdir-boundary.md"
     backlog_ref: "BL-404"
     impl_targets:
@@ -362,7 +362,7 @@ slices:
 
   - id: "4.5"
     title: "execute_tool Tauri 命令 — 前端直接调用工具"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-405"
     impl_targets:
@@ -500,7 +500,7 @@ slices:
 
   - id: "4.6"
     title: "Per-Project PermissionMode 持久化与生效"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/project-workdir-boundary.md"
     backlog_ref: "BL-406"
     impl_targets:
@@ -577,7 +577,7 @@ slices:
 
   - id: "4.7"
     title: "ToolSet 分类系统 — ToolSetRegistry + 预定义工具集常量"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-411"
     impl_targets:
@@ -685,7 +685,7 @@ slices:
 
   - id: "4.8"
     title: "文件操作类工具 — file_write, file_edit, glob_search, content_search"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-407"
     impl_targets:
@@ -782,7 +782,7 @@ slices:
 
   - id: "4.9"
     title: "Web 类工具 — web_fetch, web_search, http_request"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-408"
     impl_targets:
@@ -868,7 +868,7 @@ slices:
 
   - id: "4.10"
     title: "Memory 类工具 — memory_store, memory_recall, memory_forget, memory_purge, memory_export"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-409"
     impl_targets:
@@ -950,7 +950,7 @@ slices:
 
   - id: "4.11"
     title: "Cron/调度类工具 — cron_add, cron_list, cron_remove, cron_run, cron_runs"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     backlog_ref: "BL-410"
     impl_targets:
@@ -1039,7 +1039,7 @@ slices:
 
   - id: "4.12"
     title: "Phase 4 完整集成测试 + 新工具验证"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/tool-activation.md"
     impl_targets:
       - src-tauri/src/modules/tools/integration_phase4.rs  # 必须新建/更新
@@ -1087,8 +1087,8 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-12"
-  completed_slices: ["4.1"]
-  current_slice: "4.2"
+  completed_slices: ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11", "4.12"]
+  current_slice: ""
   blocked: []
-  notes: "slice 4.1 done — register_builtin_tools + tools传递给LLM。test_gate有harness预存bug(--test-output)，手动cargo test通过。"
+  notes: "Phase 4 全部完成 (12/12 slices) — 工具注册、workdir边界、PermissionMode、ToolSet分类、文件/Web/Memory/Cron工具、集成测试。test_gate有harness预存bug(--test-output)，手动cargo test通过。"
 

@@ -34,8 +34,12 @@ const statusConfig = {
   },
 } as const
 
+type SessionStatusConfig = (typeof statusConfig)[SessionStatus] & {
+  animate?: boolean
+}
+
 export function SessionStatus({ status, label, className }: SessionStatusProps) {
-  const config = statusConfig[status]
+  const config = statusConfig[status] as SessionStatusConfig
   const Icon = config.icon
 
   return (

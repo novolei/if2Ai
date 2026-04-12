@@ -2,6 +2,34 @@
 
 > Tool System 是 Agent 与外部世界交互的关键机制。这个文档基于 hermes-agent 的 40+ 工具实现和 registry pattern，提供完整的工具管理、执行和扩展设计。
 
+---
+
+## ⚠️ Gap Analysis & Activation Status (2026-04-12)
+
+### 现状
+
+`tool-system.md` 定义了完整的工具基础设施，**但存在以下关键 Gap**：
+
+| Gap | 当前状态 | 需要激活的文件 |
+|-----|----------|----------------|
+| **工具未注册** | `main.rs` 中 `ToolRegistry::new()` 创建空注册表 | `src-tauri/src/main.rs` |
+| **LLM 不接收工具** | `MessageRequest { tools: None }` | `src-tauri/src/commands/agent.rs` |
+| **无前端调用接口** | 没有 `execute_tool` Tauri 命令 | `src-tauri/src/commands/tools.rs` (新建) |
+| **MCP Client 未激活** | 定义了 `mcp_client.rs`，未连接到 registry | 后续迭代 |
+
+### 激活需要的改动
+
+1. **`main.rs`** — 添加 `register_builtin_tools(&tool_registry)`
+2. **`agent.rs`** — 修改 `MessageRequest` 传递 `tools: Some(...)`
+3. **`commands/tools.rs`** — 新建，暴露 `execute_tool`, `list_tools`, `get_tool_definitions`
+4. **`lib/tauri.ts`** — 前端新增工具调用接口
+
+### 设计文档
+
+完整的前端工具调用设计见 [tool-activation.md](./tool-activation.md)。
+
+---
+
 ## 系统设计
 
 ```

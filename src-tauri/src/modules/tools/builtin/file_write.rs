@@ -19,86 +19,85 @@ const MAX_FILE_SIZE: usize = 1024 * 1024;
 #[allow(dead_code)]
 #[must_use]
 pub fn entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        |args: serde_json::Value, context: SharedToolContext| {
-            Box::pin(async move {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::Handler("missing required parameter: path".to_string())
-                    })?
-                    .to_string();
+    let handler: ToolHandler = Arc::new(|args: serde_json::Value, context: SharedToolContext| {
+        Box::pin(async move {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::Handler("missing required parameter: path".to_string()))?
+                .to_string();
 
-                let content = args
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::Handler("missing required parameter: content".to_string())
-                    })?
-                    .to_string();
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ToolError::Handler("missing required parameter: content".to_string())
+                })?
+                .to_string();
 
-                let append = args.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
+            let append = args
+                .get("append")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-                // Extract workdir from context before async block
-                let workdir = {
-                    let ctx = context
-                        .lock()
-                        .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
-                    ctx.workdir.clone()
-                };
+            // Extract workdir from context before async block
+            let workdir = {
+                let ctx = context
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
+                ctx.workdir.clone()
+            };
 
-                // Allowlist check: path must be within workdir
-                let requested_path = PathBuf::from(&path);
-                let canonical_path = requested_path.canonicalize().map_err(|e| {
-                    ToolError::Handler(format!("invalid path '{}': {}", path, e))
-                })?;
+            // Allowlist check: path must be within workdir
+            let requested_path = PathBuf::from(&path);
+            let canonical_path = requested_path
+                .canonicalize()
+                .map_err(|e| ToolError::Handler(format!("invalid path '{}': {}", path, e)))?;
 
-                let canonical_workdir = workdir.canonicalize().map_err(|e| {
-                    ToolError::Handler(format!("invalid workdir '{}': {}", workdir.display(), e))
-                })?;
+            let canonical_workdir = workdir.canonicalize().map_err(|e| {
+                ToolError::Handler(format!("invalid workdir '{}': {}", workdir.display(), e))
+            })?;
 
-                if !canonical_path.starts_with(&canonical_workdir) {
-                    return Err(ToolError::Handler(format!(
-                        "path '{}' is outside allowed workdir '{}'",
-                        path,
-                        workdir.display()
-                    )));
-                }
+            if !canonical_path.starts_with(&canonical_workdir) {
+                return Err(ToolError::Handler(format!(
+                    "path '{}' is outside allowed workdir '{}'",
+                    path,
+                    workdir.display()
+                )));
+            }
 
-                // Check content size
-                if content.len() > MAX_FILE_SIZE {
-                    return Err(ToolError::Handler(format!(
-                        "content size {} exceeds maximum {}",
-                        content.len(),
-                        MAX_FILE_SIZE
-                    )));
-                }
+            // Check content size
+            if content.len() > MAX_FILE_SIZE {
+                return Err(ToolError::Handler(format!(
+                    "content size {} exceeds maximum {}",
+                    content.len(),
+                    MAX_FILE_SIZE
+                )));
+            }
 
-                // Write file
-                if append {
-                    let mut file = fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&canonical_path)
-                        .await
-                        .map_err(|e| ToolError::Handler(format!("failed to open file: {}", e)))?;
-                    file.write_all(content.as_bytes())
-                        .await
-                        .map_err(|e| ToolError::Handler(format!("failed to write file: {}", e)))?;
-                } else {
-                    let mut file = fs::File::create(&canonical_path)
-                        .await
-                        .map_err(|e| ToolError::Handler(format!("failed to create file: {}", e)))?;
-                    file.write_all(content.as_bytes())
-                        .await
-                        .map_err(|e| ToolError::Handler(format!("failed to write file: {}", e)))?;
-                }
+            // Write file
+            if append {
+                let mut file = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&canonical_path)
+                    .await
+                    .map_err(|e| ToolError::Handler(format!("failed to open file: {}", e)))?;
+                file.write_all(content.as_bytes())
+                    .await
+                    .map_err(|e| ToolError::Handler(format!("failed to write file: {}", e)))?;
+            } else {
+                let mut file = fs::File::create(&canonical_path)
+                    .await
+                    .map_err(|e| ToolError::Handler(format!("failed to create file: {}", e)))?;
+                file.write_all(content.as_bytes())
+                    .await
+                    .map_err(|e| ToolError::Handler(format!("failed to write file: {}", e)))?;
+            }
 
-                Ok(format!("Successfully wrote to file: {}", path))
-            })
-        },
-    );
+            Ok(format!("Successfully wrote to file: {}", path))
+        })
+    });
 
     ToolEntry {
         name: "file_write".to_string(),

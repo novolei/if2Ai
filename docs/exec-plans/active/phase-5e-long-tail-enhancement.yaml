@@ -1,0 +1,739 @@
+# Phase 5E: Long-tail Enhancement (P3)
+# ─────────────────────────────────────────────────────────────────────────────
+# 低优先级但重要的增强项 — ToolSearch、流式中断、代码清理
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "5e"
+  phase_status: draft           # draft | active | completed
+  title: "长期增强 — ToolSearch + 流式中断 + 代码清理 + 整体回归"
+  owner: "@architects"
+  depends_on_phase: "5d"
+  design_docs:
+    - docs/bs_gap/08-critical-fix-priority.md
+  human_checkpoints:
+    - after_slice: "5e.2"       # 流式中断完成后人工 review
+
+slices:
+
+  # ───────────── Stage 1: ToolSearch 工具注册 ─────────────────────────────
+
+  - id: "5e.1"
+    title: "F12 — ToolSearch 工具注册"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F12"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/tool_search.rs    # CREATE: ToolSearch ToolHandler
+      - src-tauri/src/modules/tools/mod.rs                    # MODIFY: 注册 ToolSearch
+
+    baseline_ref: "rust/crates/tools/src/lib.rs (ToolSearch spec:424-437, ToolSearchInput:757-910, run_tool_search:910-1124)"
+
+    current_state: |
+      register_builtin_tools() 中没有 ToolSearch 工具。
+      Baseline 的 ToolSearch 工具允许 Agent 搜索可用的工具名称和描述。
+      ❌ MISSING — 新建 tool_search.rs 实现 ToolSearch ToolHandler
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F12 — ToolSearch ToolHandler (新建 tool_search.rs)
+        use super::super::registry::{ToolEntry, ToolError};
+        use super::super::context::SharedToolContext;
+        use crate::modules::tools::ToolRegistry;
+
+        pub fn tool_search_tool_entry(registry: Arc<ToolRegistry>) -> ToolEntry {
+            ToolEntry {
+                name: "tool_search".to_string(),
+                toolset: "utility".to_string(),
+                description: "Search for available tools by name or description.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query for tool name or description" }
+                    },
+                    "required": ["query"]
+                }),
+                max_result_size: Some(5 * 1024),
+                timeout_secs: Some(5),
+                disabled: false,
+                handler: std::sync::Arc::new(move |args, _ctx| {
+                    let registry_clone = registry.clone();
+                    Box::pin(async move {
+                        let query = args.get("query")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        let definitions = registry_clone.get_definitions(None);
+                        let results: Vec<_> = definitions.into_iter()
+                            .filter_map(|def| {
+                                let obj = def.as_object()?;
+                                let func = obj.get("function")?.as_object()?;
+                                let name = func.get("name")?.as_str()?.to_lowercase();
+                                let desc = func.get("description").and_then(|d| d.as_str()).unwrap_or("").to_lowercase();
+                                if query.is_empty() || name.contains(&query) || desc.contains(&query) {
+                                    Some(def)
+                                } else { None }
+                            })
+                            .collect();
+                        serde_json::to_string_pretty(&results)
+                            .map_err(|e| ToolError::Handler(e.to_string()))
+                    })
+                }),
+            }
+        }
+
+      - |
+        // mod.rs — register_builtin_tools() 中添加：
+        if let Err(e) = registry.register(builtin::tool_search::tool_search_tool_entry(registry.clone())) {
+            eprintln!("Failed to register tool_search tool: {}", e);
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/tool_search.rs"
+        grep: "pub fn tool_search_tool_entry"
+        label: "tool_search_tool_entry 函数存在 — 08 §F12"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "tool_search_tool_entry"
+        label: "register_builtin_tools 注册 ToolSearch"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "tool_search_tool_entry 是否接受 Arc<ToolRegistry> 参数"
+      - "搜索是否支持名称和描述模糊匹配"
+      - "空查询是否返回所有工具"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 2: 流式中断 ─────────────────────────────
+
+  - id: "5e.2"
+    title: "UI-7 前后端 — 流式中断（Stop 按钮）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "UI-7"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs              # MODIFY: 支持取消信号
+      - src/App.tsx                                   # MODIFY: 维护 abortController + Stop 按钮
+      - src/lib/tauri.ts                              # MODIFY: 新增 stopAgentStream Tauri command
+      - src/components/ui/chat-ui.tsx                 # MODIFY: Stop 按钮展示
+
+    baseline_ref: "src-tauri/src/commands/agent.rs (start_agent_stream tokio::spawn:632)"
+
+    current_state: |
+      start_agent_stream 在 tokio::spawn 后台任务中运行，无取消机制。
+      App.tsx 无 abortController 管理。
+      ChatUI 无 Stop 按钮。
+      ❌ MISSING — 实现流式中断：
+        1. 后端：支持取消信号（tokio::select! 监听 oneshot channel）
+        2. 前端：App.tsx 维护 stream abort handle
+        3. ChatUI：isLoading 时显示 Stop 按钮
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §UI-7 — 后端取消信号 (agent.rs)
+        // start_agent_stream 中：
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        // 存储 cancel_tx 到 state（以 stream_id 为 key）
+        // 后台任务中使用 tokio::select!：
+        tokio::select! {
+            _ = cancel_rx => {
+                tracing::info!("[start_agent_stream] Stream cancelled");
+                // emit stream_complete
+            }
+            result = process_stream(&mut stream, &window, &stream_id_for_task) => {
+                // normal completion
+            }
+        }
+
+        // 新增 Tauri command：
+        #[tauri::command]
+        pub fn stop_agent_stream(state: State<'_, AppState>, stream_id: String) -> Result<(), String> {
+            // 查找并发送取消信号
+        }
+
+      - |
+        // 08-critical-fix-priority.md §UI-7 — 前端 abort (App.tsx)
+        const [streamAbortHandle, setStreamAbortHandle] = useState<string | null>(null);
+
+        const stopAgentStream = async () => {
+          if (streamAbortHandle) {
+            await invoke('stop_agent_stream', { streamId: streamAbortHandle });
+            setStreamAbortHandle(null);
+            setIsLoading(false);
+          }
+        };
+
+        // startAgentStream 后保存 stream_id
+        const sid = await startAgentStream(activeSessionId, input);
+        setStreamAbortHandle(sid);
+
+      - |
+        // 08-critical-fix-priority.md §UI-7 — Stop 按钮 (chat-ui.tsx)
+        interface ChatUIProps {
+          // ... existing props
+          onStop?: () => void;
+        }
+
+        // 在 Composer 中：
+        {isLoading ? (
+          <Button onClick={onStop} variant="destructive">
+            <Square className="w-4 h-4" />
+            Stop
+          </Button>
+        ) : (
+          <Button onClick={onSubmit}>
+            <Send className="w-4 h-4" />
+          </Button>
+        )}
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "stop_agent_stream"
+        label: "stop_agent_stream Tauri command 存在 — 08 §UI-7"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "oneshot::channel\\|tokio::select"
+        label: "后端支持取消信号"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "stopAgentStream\\|streamAbortHandle"
+        label: "App.tsx 维护 abort handle"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "Stop"
+        label: "ChatUI 有 Stop 按钮"
+    review_checklist:
+      - "stop_agent_stream 是否正确发送取消信号"
+      - "后台任务是否使用 tokio::select! 监听取消"
+      - "App.tsx 是否在 stream_complete 时清空 abort handle"
+      - "Stop 按钮是否在 isLoading 时显示"
+      - "Stop 按钮点击后是否设置 isLoading = false"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 3: 代码清理 ─────────────────────────────
+
+  - id: "5e.3"
+    title: "N6 + N8 + N9 + UI-4 — 代码清理"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N6, N8, N9, UI-4"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs              # MODIFY: 错误消息改为英文
+      - src/components/WorkbenchBackdrop.tsx          # DELETE: 纯装饰组件
+      - src/components/SessionStatus.tsx              # MODIFY: 扩展 props（可选）
+      - src/App.tsx                                   # MODIFY: 接入 SessionStatus
+      - src/lib/tauri.ts                              # MODIFY: 错误消息映射（可选）
+      - src/modules/chat/components/ChatWorkspace.tsx # MODIFY: 移除硬编码 diff 统计
+
+    baseline_ref: "rust/crates/commands/src/lib.rs (英文错误消息惯例)"
+
+    current_state: |
+      N6: agent.rs 第 346-348 行有中文错误消息 "无法连接 AI 服务"
+      N8: WorkbenchBackdrop.tsx 是纯装饰 div，无任何状态/事件/props
+      N9: SessionStatus.tsx 已定义但从未被 import
+      UI-4: ChatWorkspace.tsx header 硬编码 "+4,523 / -3,223" diff 统计数字
+      ❌ MISSING — 四项清理：
+        1. agent.rs 错误消息改为英文
+        2. 删除 WorkbenchBackdrop.tsx 及所有引用
+        3. App.tsx 中 import 并使用 SessionStatus
+        4. ChatWorkspace header 移除硬编码 diff 统计，替换为 "—"
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §UI-4 — 移除硬编码 diff 统计 (ChatWorkspace.tsx)
+        // ChatWorkspace.tsx header — 替换硬编码数字：
+        // const diffAdded = '+4,523';  // ❌ 删除
+        // const diffRemoved = '-3,223';  // ❌ 删除
+        const diffAdded = '—';   // ✅ 占位文本，待 F24 /diff 命令实现后替换
+        const diffRemoved = '—'; // ✅ 占位文本
+
+      - |
+        // 08-critical-fix-priority.md §N6 — 错误消息英文 (agent.rs)
+        // 修改第 346-348 行：
+        return Err(format!(
+            "Failed to connect to AI service: {}. Please check ~/.claude/settings.json configuration.",
+            e
+        ));
+
+      - |
+        // 08-critical-fix-priority.md §N8 — 删除 WorkbenchBackdrop
+        // 删除 src/components/WorkbenchBackdrop.tsx
+        // 搜索并移除所有 import WorkbenchBackdrop 的地方
+
+      - |
+        // 08-critical-fix-priority.md §N9 — 接入 SessionStatus
+        // App.tsx:
+        import { SessionStatus } from './components/SessionStatus';
+
+        // 在 ChatUI 上方展示：
+        <SessionStatus
+          status={isLoading ? 'running' : 'idle'}
+          tokenCount={activeConv?.tokenCount}
+          turnCount={activeConv?.turnCount}
+        />
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "Failed to connect to AI service"
+        label: "错误消息已改为英文 — 08 §N6"
+      - type: symbol
+        file: "src/components/WorkbenchBackdrop.tsx"
+        grep: "."
+        label: "WorkbenchBackdrop.tsx 应被删除 (grep 应无结果) — 08 §N8"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "SessionStatus"
+        label: "App.tsx 使用 SessionStatus — 08 §N9"
+      - type: symbol
+        file: "src/modules/chat/components/ChatWorkspace.tsx"
+        grep: "\\+4,523\\|\\-3,223"
+        label: "硬编码 diff 统计应被移除 (grep 应为空) — 08 §UI-4"
+    review_checklist:
+      - "agent.rs 中所有中文错误消息是否改为英文"
+      - "WorkbenchBackdrop.tsx 是否已删除"
+      - "WorkbenchBackdrop 的 import 是否全部移除"
+      - "SessionStatus 是否在 App.tsx 中正确导入和使用"
+      - "ChatWorkspace header 硬编码 diff 统计是否移除"
+      - "TypeScript 编译是否无错误"
+
+  # ───────────── Stage 5: 缺失项补回 ─────────────────────────────
+
+  - id: "5e.5"
+    title: "F13 + F16 + UI-6 — Agent 工具 + 定期保存 + Session 恢复 tool_call"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F13, F16, UI-6"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/agent.rs    # CREATE: Agent ToolHandler
+      - src-tauri/src/modules/tools/mod.rs              # MODIFY: 注册 Agent 工具
+      - src-tauri/src/commands/agent.rs                 # MODIFY: 定期保存 session
+      - src/App.tsx                                     # MODIFY: Session 恢复时解析 ToolResult
+
+    baseline_ref: "rust/crates/tools/src/lib.rs (Agent tool:407-423, execute_tool Agent branch:560); rust/crates/runtime/src/conversation.rs (定期保存逻辑); 08-critical-fix-priority.md §N3 (Agent 为 GlobalToolRegistry 迁移工具)"
+
+    current_state: |
+      F13: register_builtin_tools() 中没有 Agent 工具（嵌套 Agent 调用）
+      F16: start_agent_stream 后台任务只在结束时保存 session，窗口关闭时可能丢失
+      UI-6: 会话恢复时只渲染 user/assistant 消息，ToolResult 消息被忽略
+      ❌ MISSING — 三项修复：
+        1. 新建 agent.rs 实现 Agent ToolHandler（限制递归深度）
+        2. start_agent_stream 后台任务定期保存 session（每 N 个 token）
+        3. App.tsx 加载会话时解析 ToolResult 为 role:"tool" 消息
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F13 — Agent ToolHandler (新建 builtin/agent.rs)
+        use super::super::registry::{ToolEntry, ToolError};
+
+        pub fn agent_tool_entry() -> ToolEntry {
+            ToolEntry {
+                name: "agent".to_string(),
+                toolset: "utility".to_string(),
+                description: "Delegate a task to a nested AI agent.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "task": { "type": "string", "description": "Task description for the nested agent" },
+                        "context": { "type": "string", "description": "Optional context or background information" }
+                    },
+                    "required": ["task"]
+                }),
+                max_result_size: Some(10 * 1024),
+                timeout_secs: Some(60),
+                disabled: false,
+                handler: std::sync::Arc::new(|args, _ctx| {
+                    Box::pin(async move {
+                        // 限制递归深度：通过环境变量或全局配置
+                        let current_depth = std::env::var("IF2AI_AGENT_DEPTH")
+                            .ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                        if current_depth >= 3 {
+                            return Err(ToolError::Handler("Agent recursion depth limit exceeded".into()));
+                        }
+
+                        let _guard = std::env::var_os("IF2AI_AGENT_DEPTH")
+                            .map(|_| Ok(()))
+                            .unwrap_or_else(|| std::env::set_var("IF2AI_AGENT_DEPTH", "1"));
+                        std::env::set_var("IF2AI_AGENT_DEPTH", format!("{}", current_depth + 1));
+
+                        let task = args.get("task")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| ToolError::Handler("Missing 'task' argument".into()))?;
+                        let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+
+                        // 调用 start_agent_stream 或 run_agent_turn（同步阻塞）
+                        // 返回结果
+                        Ok(format!("[Agent result for: {}]", task))
+                    })
+                }),
+            }
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F16 — 定期保存 session (agent.rs)
+        // start_agent_stream 后台任务中：
+        let mut token_count = 0;
+        const SAVE_INTERVAL: u32 = 50;  // 每 50 个 token 保存一次
+
+        // 在处理每个 token 后：
+        token_count += 1;
+        if token_count % SAVE_INTERVAL == 0 {
+            let _ = session_manager.save_session(&session_id);
+            tracing::debug!("[start_agent_stream] Periodic session save at token {}", token_count);
+        }
+
+        // 同时注册窗口关闭事件：
+        // 在 Tauri setup 中：
+        app_handle.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                // 等待后台任务完成或取消
+            }
+        });
+
+      - |
+        // 08-critical-fix-priority.md §UI-6 — Session 恢复 ToolResult (App.tsx)
+        // loadSession 时遍历 session messages：
+        function parseSessionMessages(sessionMessages: any[]): Message[] {
+          return sessionMessages.flatMap((msg) => {
+            const blocks = msg.content || [];
+            return blocks.flatMap((block: any) => {
+              if (block.type === 'ToolResult') {
+                return {
+                  id: `tool-${block.tool_call_id || block.id}-${Date.now()}`,
+                  role: 'tool' as const,
+                  content: block.output || block.content || '',
+                  timestamp: new Date(msg.timestamp || Date.now()),
+                  toolCallId: block.tool_call_id || block.id,
+                  toolName: block.tool_name || 'unknown',
+                  isError: block.is_error || false,
+                };
+              }
+              if (block.type === 'Text') {
+                return {
+                  id: `${msg.role}-${block.id || Date.now()}`,
+                  role: msg.role as 'user' | 'assistant',
+                  content: block.text,
+                  timestamp: new Date(msg.timestamp || Date.now()),
+                };
+              }
+              return [];
+            });
+          });
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/agent.rs"
+        grep: "pub fn agent_tool_entry"
+        label: "agent_tool_entry 函数存在 — 08 §F13"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "agent_tool_entry"
+        label: "register_builtin_tools 注册 Agent 工具"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "SAVE_INTERVAL\\|token_count.*SAVE_INTERVAL"
+        label: "start_agent_stream 有定期保存逻辑 — 08 §F16"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "ToolResult\\|role.*tool"
+        label: "App.tsx 解析 ToolResult 消息 — 08 §UI-6"
+    review_checklist:
+      - "Agent 工具是否限制递归深度（默认 3 层）"
+      - "Agent 工具是否返回 ToolEntry 结构"
+      - "定期保存间隔是否合理（不过度 I/O）"
+      - "窗口关闭时是否等待后台任务"
+      - "Session 恢复是否正确解析 ToolResult 为 role:'tool' 消息"
+      - "TypeScript 编译是否无错误"
+      - "无 unwrap()（测试除外）"
+
+# ───────────── Stage 6: 缺失项补回 — GlobalToolRegistry 剩余工具迁移 ─────────────────────
+
+  - id: "5e.6"
+    title: "N3 — GlobalToolRegistry 剩余工具迁移 + 重叠工具替换"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N3"
+    impl_targets:
+      # 阶段 3A: 10 个 GlobalToolRegistry 独有工具 → 新建 ToolHandler
+      - src-tauri/src/modules/tools/builtin/grep_search.rs    # CREATE: GrepSearch ToolHandler
+      - src-tauri/src/modules/tools/builtin/sleep.rs          # CREATE: Sleep ToolHandler
+      - src-tauri/src/modules/tools/builtin/send_user_message.rs  # CREATE: SendUserMessage ToolHandler
+      - src-tauri/src/modules/tools/builtin/config.rs         # CREATE: Config ToolHandler
+      - src-tauri/src/modules/tools/builtin/notebook_edit.rs  # CREATE: NotebookEdit ToolHandler
+      - src-tauri/src/modules/tools/builtin/structured_output.rs  # CREATE: StructuredOutput ToolHandler
+      - src-tauri/src/modules/tools/builtin/repl.rs           # CREATE: REPL ToolHandler
+      - src-tauri/src/modules/tools/builtin/powershell.rs     # CREATE: PowerShell ToolHandler
+      # 阶段 3B: 8 个重叠工具 → 替换为 GlobalToolRegistry 实现
+      - src-tauri/src/modules/tools/builtin/bash.rs           # MODIFY: 替换为 GlobalToolRegistry bash 实现
+      - src-tauri/src/modules/tools/builtin/file_read.rs      # MODIFY: 替换为 GlobalToolRegistry read_file 实现
+      - src-tauri/src/modules/tools/builtin/file_write.rs     # MODIFY: 替换为 GlobalToolRegistry write_file 实现 (tool name 统一)
+      - src-tauri/src/modules/tools/builtin/file_edit.rs      # MODIFY: 替换为 GlobalToolRegistry edit_file 实现
+      - src-tauri/src/modules/tools/builtin/glob_search.rs    # MODIFY: 替换为 GlobalToolRegistry glob_search 实现
+      - src-tauri/src/modules/tools/builtin/web_fetch.rs      # MODIFY: 替换为 GlobalToolRegistry WebFetch 实现
+      - src-tauri/src/modules/tools/builtin/web_search.rs     # MODIFY: 替换为 GlobalToolRegistry WebSearch 实现
+      - src-tauri/src/modules/tools/mod.rs                    # MODIFY: 更新 register_builtin_tools() 注册所有新工具
+
+    baseline_ref: "rust/crates/tools/src/lib.rs (mvp_tool_specs:225-546, execute_tool:548-575, GlobalToolRegistry:60-197)"
+
+    current_state: |
+      【方案 A 全量迁移 — 阶段 3】
+      阶段 1 (5c.2): 废弃 GlobalToolRegistry + TodoWrite 路径验证 ✅
+      阶段 2 (5c.4 + 5c.6): Skill + ToolSearch + SkillSearch 迁移 ✅
+      阶段 3 (5e.5 + 5e.6 当前): Agent + 剩余 10 个独有工具 + 8 个重叠工具替换
+
+      【工具清单 — 18 个剩余工具】
+      阶段 3A — 10 个 GlobalToolRegistry 独有工具（新建 ToolHandler）:
+        1. grep_search   — regex 文件内容搜索（rust/crates/tools/src/lib.rs:303-327）
+        2. Sleep         — 异步等待，不占用 shell 进程（lib.rs:455-466）
+        3. SendUserMessage — 向用户发送消息（含附件和状态）（lib.rs:468-488）
+        4. Config        — 获取/设置配置项（theme/verbose/model/language）（lib.rs:489-504）
+        5. NotebookEdit  — 编辑 Jupyter notebook 单元格（lib.rs:438-454）
+        6. StructuredOutput — 返回结构化输出（lib.rs:505-513）
+        7. REPL          — 在 REPL-like 子进程中执行代码（Python/JS/Shell）（lib.rs:514-528）
+        8. PowerShell    — 执行 PowerShell 命令（lib.rs:529-544）
+
+      阶段 3B — 8 个重叠工具替换（以 GlobalToolRegistry 实现为准）:
+        9. bash          — 替换 Phase 4 builtin/bash.rs（lib.rs:227-242）
+        10. read_file    — 替换 Phase 4 builtin/file_read.rs（lib.rs:244-258）
+        11. write_file   — 替换 Phase 4 builtin/file_write.rs（lib.rs:259-272），tool name 从 file_write 改为 write_file
+        12. edit_file    — 替换 Phase 4 builtin/file_edit.rs（lib.rs:273-288）
+        13. glob_search  — 替换 Phase 4 builtin/glob_search.rs（lib.rs:289-302）
+        14. WebFetch     — 替换 Phase 4 builtin/web_fetch.rs（lib.rs:329-343），tool name 从 web_fetch 改为 WebFetch
+        15. WebSearch    — 替换 Phase 4 builtin/web_search.rs（lib.rs:344-364），tool name 从 web_search 改为 WebSearch
+        16. ToolSearch   — 替换 Phase 4 builtin/tool_search.rs（lib.rs:424-437）
+
+      ❌ MISSING — 阶段 3：
+        1. 10 个 GlobalToolRegistry 独有工具新建为 ToolHandler
+        2. 8 个重叠工具替换为 GlobalToolRegistry 实现
+        3. 更新 register_builtin_tools() 注册所有工具
+        4. 确认 GlobalToolRegistry (lib.rs) 可安全删除
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N3 — 迁移清单 (每个工具的 ToolHandler 结构)
+        // 每个工具的迁移步骤：
+        // 1. 从 lib.rs 提取 ToolSpec (name, description, input_schema, required_permission)
+        // 2. 从 lib.rs 提取 execute_tool match 分支中的 input struct 和 run 函数
+        // 3. 构造 ToolEntry { name, toolset, description, input_schema, max_result_size, timeout_secs, disabled: false, handler }
+        // 4. handler 中调用 run 函数，将 Result<String, String> 转为 Result<String, ToolError>
+        // 5. 设置 toolset（根据 required_permission: DangerFullAccess→"admin", WorkspaceWrite→"write", ReadOnly→"read"）
+        // 6. 设置 timeout_secs 和 max_result_size（参考 Phase 4 现有工具的同类值）
+        // 7. 在 mod.rs register_builtin_tools() 中注册
+
+        // 迁移清单 — 阶段 3A (10 个独有工具):
+        //   1. grep_search   → builtin/grep_search.rs (toolset: "read", timeout: 10s, max_result: 50KB)
+        //   2. Sleep         → builtin/sleep.rs (toolset: "utility", timeout: 300s, max_result: 1KB)
+        //   3. SendUserMessage → builtin/send_user_message.rs (toolset: "utility", timeout: 10s, max_result: 1KB)
+        //   4. Config        → builtin/config.rs (toolset: "utility", timeout: 5s, max_result: 5KB)
+        //   5. NotebookEdit  → builtin/notebook_edit.rs (toolset: "write", timeout: 30s, max_result: 50KB)
+        //   6. StructuredOutput → builtin/structured_output.rs (toolset: "utility", timeout: 10s, max_result: 100KB)
+        //   7. REPL          → builtin/repl.rs (toolset: "admin", timeout: 60s, max_result: 50KB)
+        //   8. PowerShell    → builtin/powershell.rs (toolset: "admin", timeout: 30s, max_result: 50KB)
+
+        // 迁移清单 — 阶段 3B (8 个重叠替换):
+        //   9. bash          → 替换 builtin/bash.rs (toolset: "admin", timeout: 120s, max_result: 100KB)
+        //   10. read_file    → 替换 builtin/file_read.rs (toolset: "read", timeout: 30s, max_result: 100KB)
+        //   11. write_file   → 替换 builtin/file_write.rs, 改名为 write_file (toolset: "write", timeout: 30s)
+        //   12. edit_file    → 替换 builtin/file_edit.rs (toolset: "write", timeout: 30s, max_result: 10KB)
+        //   13. glob_search  → 替换 builtin/glob_search.rs (toolset: "read", timeout: 10s, max_result: 50KB)
+        //   14. WebFetch     → 替换 builtin/web_fetch.rs, 改名为 WebFetch (toolset: "read", timeout: 60s, max_result: 100KB)
+        //   15. WebSearch    → 替换 builtin/web_search.rs, 改名为 WebSearch (toolset: "read", timeout: 30s, max_result: 50KB)
+        //   16. ToolSearch   → 替换 builtin/tool_search.rs (toolset: "utility", timeout: 5s, max_result: 50KB)
+
+      - |
+        // 示例：grep_search ToolHandler 完整实现 (阶段 3A 工具 1)
+        // 08-critical-fix-priority.md §N3 — GrepSearch (新建 builtin/grep_search.rs)
+        use super::super::registry::{ToolEntry, ToolError};
+
+        #[derive(serde::Deserialize)]
+        struct GrepSearchInput {
+            pattern: String,
+            #[serde(default)]
+            path: Option<String>,
+            #[serde(default)]
+            glob: Option<String>,
+            #[serde(default, rename = "output_mode")]
+            output_mode: Option<String>,
+            #[serde(default)]
+            context: Option<usize>,
+            #[serde(default)]
+            head_limit: Option<usize>,
+        }
+
+        pub fn grep_search_tool_entry() -> ToolEntry {
+            ToolEntry {
+                name: "grep_search".to_string(),
+                toolset: "read".to_string(),
+                description: "Search file contents with a regex pattern.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Regex pattern to search for" },
+                        "path": { "type": "string", "description": "Directory to search in" },
+                        "glob": { "type": "string", "description": "Glob pattern to filter files" },
+                        "output_mode": { "type": "string", "enum": ["content", "files_with_matches", "count"] },
+                        "context": { "type": "integer", "minimum": 0, "description": "Context lines around match" },
+                        "head_limit": { "type": "integer", "minimum": 1, "description": "Max results to return" }
+                    },
+                    "required": ["pattern"]
+                }),
+                max_result_size: Some(50 * 1024),
+                timeout_secs: Some(10),
+                disabled: false,
+                handler: std::sync::Arc::new(|args, ctx| {
+                    Box::pin(async move {
+                        let input: GrepSearchInput = serde_json::from_value(args.clone())
+                            .map_err(|e| ToolError::Handler(format!("Invalid input: {}", e)))?;
+                        // 调用 ripgrep 或现有 Grep 工具
+                        let _ = &ctx.workdir;
+                        Ok("[grep_search result — implementation from GlobalToolRegistry]".to_string())
+                    })
+                }),
+            }
+        }
+
+      - |
+        // mod.rs — register_builtin_tools() 更新后的完整注册列表
+        // 阶段 3 完成后，register_builtin_tools 应包含:
+        //   Phase 4 保留 (13 个): bash, read_file, file_write, glob_search, file_edit,
+        //                         content_search, web_fetch, web_search, http_request,
+        //                         memory_store, memory_recall, memory_forget, memory_purge,
+        //                         memory_export, cron_add, cron_list, cron_remove, cron_run, cron_runs
+        //   阶段 1 新增 (1 个): TodoWrite ✅ (5c.2)
+        //   阶段 2 新增 (3 个): Skill, ToolSearch, SkillSearch ✅ (5c.4, 5c.6, 5c.7)
+        //   阶段 3A 新增 (8 个): GrepSearch, Sleep, SendUserMessage, Config, NotebookEdit,
+        //                        StructuredOutput, REPL, PowerShell (5e.6)
+        //   阶段 3B 替换 (8 个): bash, read_file, write_file, edit_file, glob_search,
+        //                        WebFetch, WebSearch, ToolSearch (5e.6)
+        //   阶段 5E 新增 (1 个): Agent (5e.5)
+        //
+        // 总计: ~43 个工具（去重后 ~34 个唯一工具名）
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/grep_search.rs"
+        grep: "pub fn grep_search_tool_entry"
+        label: "grep_search ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/sleep.rs"
+        grep: "pub fn sleep_tool_entry"
+        label: "Sleep ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/send_user_message.rs"
+        grep: "pub fn send_user_message_tool_entry"
+        label: "SendUserMessage ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/config.rs"
+        grep: "pub fn config_tool_entry"
+        label: "Config ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/notebook_edit.rs"
+        grep: "pub fn notebook_edit_tool_entry"
+        label: "NotebookEdit ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/structured_output.rs"
+        grep: "pub fn structured_output_tool_entry"
+        label: "StructuredOutput ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/repl.rs"
+        grep: "pub fn repl_tool_entry"
+        label: "REPL ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/powershell.rs"
+        grep: "pub fn powershell_tool_entry"
+        label: "PowerShell ToolHandler 存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/lib.rs"
+        grep: "deprecated"
+        label: "GlobalToolRegistry lib.rs 仍标记 deprecated — 08 §N3"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "所有 10 个独有工具是否新建为 ToolHandler"
+      - "所有 8 个重叠工具是否替换为 GlobalToolRegistry 实现"
+      - "Tool name 是否与 GlobalToolRegistry mvp_tool_specs 一致"
+      - "toolset 是否根据 required_permission 设置"
+      - "register_builtin_tools 是否注册了所有工具"
+      - "GlobalToolRegistry lib.rs 是否仍标记 deprecated"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 7: 最终集成测试 + Phase 5 整体回归 ─────────────────────────────
+
+  - id: "5e.7"
+    title: "5E 集成测试 + Phase 5 整体回归（含 N3 迁移验证）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F12, F13, F16, UI-4, UI-6, UI-7, N6, N8, N9, N3"
+    impl_targets:
+      - harness/suites/phase5e_integration.yaml    # CREATE: 行为测试
+
+    baseline_ref: "docs/bs_gap/08-critical-fix-priority.md (F12-F13, F16, F25, UI-4, UI-6-7, N6, N8-N9, N3); rust/crates/tools/src/lib.rs (GlobalToolRegistry:60-546)"
+
+    current_state: |
+      所有 Phase 5 (5A-5E) slices 完成后需要整体回归测试。
+      包括：ToolSearch、流式中断、代码清理、Agent 工具、定期保存、Session 恢复、
+      GlobalToolRegistry 全量迁移完成验证。
+      ❌ MISSING — 创建最终集成测试 + 全量测试
+
+    must_implement:
+      - |
+        // harness/suites/phase5e_integration.yaml
+        # 验证 ToolSearch 工具 (5e.1)
+        # 验证流式中断 (5e.2)
+        # 验证错误消息英文 (5e.3)
+        # 验证 WorkbenchBackdrop 已删除 (5e.3)
+        # 验证 SessionStatus 已接入 (5e.3)
+        # 验证硬编码 diff 统计已移除 (5e.3)
+        # 验证 Agent 工具递归深度限制 (5e.5)
+        # 验证定期保存 session 逻辑 (5e.5)
+        # 验证 Session 恢复 ToolResult 渲染 (5e.5)
+        # 验证 GlobalToolRegistry 全量迁移完成 (5e.6):
+        #   - lib.rs 标记 deprecated
+        #   - 所有 18 个工具已迁移到 ToolRegistry
+        #   - ToolRegistry 注册 ~43 个工具（去重后 ~34 个）
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: test
+        cmd: "cargo test --workspace"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+    review_checklist:
+      - "harness suite 是否覆盖 5E 功能"
+      - "全量测试是否通过"
+      - "编译 + lint 是否无警告"
+      - "docs/generated/QUALITY_SCORE.md 已追加 Phase 5 完成记录"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: []
+  current_slice: "5e.1"
+  blocked: []
+  notes: "DRAFT — 依赖 Phase 5D 完成。5E 是长期增强 + 缺失项补回 + GlobalToolRegistry 全量迁移阶段 3 (5e.6)。新增 5e.5 (F13+Agent, F16, UI-6) + 5e.6 (N3 剩余工具迁移)。human_checkpoint after 5e.2"

@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "identifier": "dev.if2ai.desktop",
     "build": {
-        "beforeBuildCommand": "npm run build",
+        "beforeBuildCommand": "npm run build:web",
         "beforeDevCommand": "npm run dev",
         "devUrl": "http://localhost:9527",
         "frontendDist": "../dist"

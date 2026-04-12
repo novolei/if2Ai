@@ -1,0 +1,100 @@
+# Harness Suite: Phase 4 Integration Tests
+# 引用自: phase-4-tool-and-boundary.yaml slice 4.7
+# 用途: 验证工具激活、workdir 边界控制、PermissionMode 持久化
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "phase4_integration"
+name: "Phase 4 Integration Tests — Tool Activation & Workdir Boundary"
+description: "验证 Phase 4 的工具注册、workdir allowlist、bash 限制、前端工具调用和 PermissionMode"
+target_pass_rate: 1.0          # 100%，全部必须通过
+runner: "cargo_test"           # 使用 cargo test 模式
+
+test_cases:
+
+  - id: "p4-001"
+    name: "工具注册 — 内置工具全部注册"
+    description: "验证 bash, read_file, json_parse 三个内置工具都正确注册到 ToolRegistry"
+    type: "unit"
+    test_fn: "modules::tools::integration_phase4::test_registers_all_builtin_tools"
+    expect:
+      - "registry.get('bash') is Some"
+      - "registry.get('read_file') is Some"
+      - "registry.get('json_parse') is Some"
+
+  - id: "p4-002"
+    name: "file_read workdir allowlist — 拒绝 workdir 外路径"
+    description: "验证读取 workdir 外的文件路径被拒绝"
+    type: "integration"
+    test_fn: "modules::tools::integration_phase4::test_file_read_rejects_path_outside_workdir"
+    input:
+      workdir: "/tmp/test_phase4"
+      path: "/etc/passwd"
+    expect:
+      - "result.is_err()"
+      - "error contains 'outside allowed workdir'"
+
+  - id: "p4-003"
+    name: "file_read workdir allowlist — 允许 workdir 内路径"
+    description: "验证读取 workdir 内的文件成功"
+    type: "integration"
+    test_fn: "modules::tools::integration_phase4::test_file_read_allows_path_inside_workdir"
+    input:
+      workdir: "/tmp/test_phase4"
+      path: "/tmp/test_phase4/test_file.txt"
+    expect:
+      - "result.is_ok()"
+
+  - id: "p4-004"
+    name: "bash workdir 限制 — 命令在 workdir 内执行"
+    description: "验证 bash 命令通过 cd workdir && cmd 执行"
+    type: "integration"
+    test_fn: "modules::tools::integration_phase4::test_bash_command_executed_in_workdir"
+    input:
+      workdir: "/tmp/test_phase4"
+      command: "pwd"
+    expect:
+      - "result.is_ok()"
+      - "result contains '/tmp/test_phase4'"
+
+  - id: "p4-005"
+    name: "PermissionMode 持久化 — project.json 序列化和反序列化"
+    description: "验证 project 的 permission_mode 字段正确保存和加载"
+    type: "unit"
+    test_fn: "modules::projects::integration_phase4::test_project_permission_mode_persists"
+    expect:
+      - "serialized contains 'permission_mode'"
+      - "deserialized.permission_mode == WorkspaceWrite"
+
+  - id: "p4-006"
+    name: "execute_tool Tauri 命令 — 直接调用 bash"
+    description: "验证前端可以通过 execute_tool 直接调用 bash 工具"
+    type: "integration"
+    test_fn: "modules::commands::tools::integration_phase4::test_execute_tool_command_direct"
+    input:
+      tool_name: "bash"
+      args:
+        command: "echo hello_phase4"
+    expect:
+      - "result.is_ok()"
+      - "result contains 'hello_phase4'"
+
+  - id: "p4-007"
+    name: "ToolContext — Arc<Mutex> 传递 workdir"
+    description: "验证 ToolContext 正确传递给工具 handler"
+    type: "unit"
+    test_fn: "modules::tools::integration_phase4::test_tool_context_workdir_propagation"
+    expect:
+      - "handler receives correct workdir"
+      - "context.permission_mode is WorkspaceWrite"
+
+  - id: "p4-008"
+    name: "危险命令拦截 — bash rm -rf /"
+    description: "验证危险命令仍被拦截（即使在 workdir 内）"
+    type: "integration"
+    test_fn: "modules::tools::integration_phase4::test_bash_blocks_dangerous_commands"
+    input:
+      workdir: "/tmp/test_phase4"
+      command: "rm -rf /"
+    expect:
+      - "result.is_err()"
+      - "error contains 'forbidden'"

@@ -19,76 +19,71 @@ const MAX_RESULTS: usize = 1000;
 #[allow(dead_code)]
 #[must_use]
 pub fn entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        |args: serde_json::Value, context: SharedToolContext| {
-            Box::pin(async move {
-                let pattern = args
-                    .get("pattern")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::Handler("missing required parameter: pattern".to_string())
-                    })?
-                    .to_string();
+    let handler: ToolHandler = Arc::new(|args: serde_json::Value, context: SharedToolContext| {
+        Box::pin(async move {
+            let pattern = args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ToolError::Handler("missing required parameter: pattern".to_string())
+                })?
+                .to_string();
 
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(PathBuf::from);
+            let path = args.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
 
-                let max_results = args
-                    .get("max_results")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize)
-                    .unwrap_or(MAX_RESULTS);
+            let max_results = args
+                .get("max_results")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(MAX_RESULTS);
 
-                // Extract workdir from context before async block
-                let workdir = {
-                    let ctx = context
-                        .lock()
-                        .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
-                    ctx.workdir.clone()
-                };
+            // Extract workdir from context before async block
+            let workdir = {
+                let ctx = context
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
+                ctx.workdir.clone()
+            };
 
-                // Use path as base or workdir
-                let base_path = path.unwrap_or_else(|| workdir.clone());
+            // Use path as base or workdir
+            let base_path = path.unwrap_or_else(|| workdir.clone());
 
-                // Build glob pattern
-                let full_pattern = if pattern.starts_with('/') {
-                    format!("{}{}", base_path.display(), pattern)
-                } else {
-                    format!("{}/{}", base_path.display(), pattern)
-                };
+            // Build glob pattern
+            let full_pattern = if pattern.starts_with('/') {
+                format!("{}{}", base_path.display(), pattern)
+            } else {
+                format!("{}/{}", base_path.display(), pattern)
+            };
 
-                // Execute glob search
-                let results: Mutex<Vec<String>> = Mutex::new(Vec::new());
-                let count = Mutex::new(0);
+            // Execute glob search
+            let results: Mutex<Vec<String>> = Mutex::new(Vec::new());
+            let count = Mutex::new(0);
 
-                for entry in glob(&full_pattern).map_err(|e| {
-                    ToolError::Handler(format!("invalid glob pattern '{}': {}", pattern, e))
-                })? {
-                    match entry {
-                        Ok(path) => {
-                            let mut cnt = count.lock().await;
-                            if *cnt >= max_results {
-                                break;
-                            }
-                            *cnt += 1;
-                            let mut res = results.lock().await;
-                            res.push(path.display().to_string());
+            for entry in glob(&full_pattern).map_err(|e| {
+                ToolError::Handler(format!("invalid glob pattern '{}': {}", pattern, e))
+            })? {
+                match entry {
+                    Ok(path) => {
+                        let mut cnt = count.lock().await;
+                        if *cnt >= max_results {
+                            break;
                         }
-                        Err(e) => {
-                            // Skip entries that can't be accessed
-                            tracing::warn!("glob entry error: {}", e);
-                        }
+                        *cnt += 1;
+                        let mut res = results.lock().await;
+                        res.push(path.display().to_string());
+                    }
+                    Err(e) => {
+                        // Skip entries that can't be accessed
+                        tracing::warn!("glob entry error: {}", e);
                     }
                 }
+            }
 
-                let res = results.lock().await;
-                let output = res.join("\n");
-                Ok(output)
-            })
-        },
-    );
+            let res = results.lock().await;
+            let output = res.join("\n");
+            Ok(output)
+        })
+    });
 
     ToolEntry {
         name: "glob_search".to_string(),

@@ -20,102 +20,94 @@ const MAX_RESULTS: usize = 100;
 #[allow(dead_code)]
 #[must_use]
 pub fn entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        |args: serde_json::Value, context: SharedToolContext| {
-            Box::pin(async move {
-                let pattern = args
-                    .get("pattern")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::Handler("missing required parameter: pattern".to_string())
-                    })?
-                    .to_string();
+    let handler: ToolHandler = Arc::new(|args: serde_json::Value, context: SharedToolContext| {
+        Box::pin(async move {
+            let pattern = args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ToolError::Handler("missing required parameter: pattern".to_string())
+                })?
+                .to_string();
 
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(PathBuf::from);
+            let path = args.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
 
-                let max_results = args
-                    .get("max_results")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize)
-                    .unwrap_or(MAX_RESULTS);
+            let max_results = args
+                .get("max_results")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(MAX_RESULTS);
 
-                let case_sensitive = args
-                    .get("case_sensitive")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+            let case_sensitive = args
+                .get("case_sensitive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
 
-                // Extract workdir from context before async block
-                let workdir = {
-                    let ctx = context
-                        .lock()
-                        .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
-                    ctx.workdir.clone()
-                };
+            // Extract workdir from context before async block
+            let workdir = {
+                let ctx = context
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("failed to lock context: {}", e)))?;
+                ctx.workdir.clone()
+            };
 
-                let base_path = path.unwrap_or_else(|| workdir.clone());
+            let base_path = path.unwrap_or_else(|| workdir.clone());
 
-                // Compile regex
-                let regex_pattern = if case_sensitive {
-                    format!("(?m){}", pattern)
-                } else {
-                    format!("(?mi){}", pattern)
-                };
-                let re = Regex::new(&regex_pattern)
-                    .map_err(|e| ToolError::Handler(format!("invalid regex pattern '{}': {}", pattern, e)))?;
+            // Compile regex
+            let regex_pattern = if case_sensitive {
+                format!("(?m){}", pattern)
+            } else {
+                format!("(?mi){}", pattern)
+            };
+            let re = Regex::new(&regex_pattern).map_err(|e| {
+                ToolError::Handler(format!("invalid regex pattern '{}': {}", pattern, e))
+            })?;
 
-                let results: Mutex<Vec<String>> = Mutex::new(Vec::new());
-                let count: Mutex<usize> = Mutex::new(0);
+            let results: Mutex<Vec<String>> = Mutex::new(Vec::new());
+            let count: Mutex<usize> = Mutex::new(0);
 
-                for entry in WalkDir::new(&base_path)
-                    .follow_links(false)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().is_file())
-                {
-                    let file_path = entry.path();
-                    let canonical_base = base_path.canonicalize().map_err(|e| {
-                        ToolError::Handler(format!("invalid base path: {}", e))
-                    })?;
+            for entry in WalkDir::new(&base_path)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+            {
+                let file_path = entry.path();
+                let canonical_base = base_path
+                    .canonicalize()
+                    .map_err(|e| ToolError::Handler(format!("invalid base path: {}", e)))?;
 
-                    // Only search files within workdir
-                    if let Ok(canonical_file) = file_path.canonicalize() {
-                        if !canonical_file.starts_with(&canonical_base) {
-                            continue;
-                        }
-                    } else {
+                // Only search files within workdir
+                if let Ok(canonical_file) = file_path.canonicalize() {
+                    if !canonical_file.starts_with(&canonical_base) {
                         continue;
                     }
+                } else {
+                    continue;
+                }
 
-                    // Read and search file
-                    if let Ok(content) = tokio::fs::read_to_string(file_path).await {
-                        for line in content.lines() {
-                            if re.is_match(line) {
-                                let mut cnt = count.lock().await;
-                                if *cnt >= max_results {
-                                    break;
-                                }
-                                *cnt += 1;
-
-                                let mut res = results.lock().await;
-                                res.push(format!(
-                                    "{}:{}",
-                                    file_path.display(),
-                                    line
-                                ));
+                // Read and search file
+                if let Ok(content) = tokio::fs::read_to_string(file_path).await {
+                    for line in content.lines() {
+                        if re.is_match(line) {
+                            let mut cnt = count.lock().await;
+                            if *cnt >= max_results {
+                                break;
                             }
+                            *cnt += 1;
+
+                            let mut res = results.lock().await;
+                            res.push(format!("{}:{}", file_path.display(), line));
                         }
                     }
                 }
+            }
 
-                let res = results.lock().await;
-                let output = res.join("\n");
-                Ok(output)
-            })
-        },
-    );
+            let res = results.lock().await;
+            let output = res.join("\n");
+            Ok(output)
+        })
+    });
 
     ToolEntry {
         name: "content_search".to_string(),
