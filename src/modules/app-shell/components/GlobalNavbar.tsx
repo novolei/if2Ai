@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { ArrowUpCircle, Clock3, MessageSquare, Settings, Sparkles } from 'lucide-react'
+import { ArrowUpCircle, MessageSquare, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { AppSection } from '../types'
 import { NavTooltipButton } from './NavTooltipButton'
@@ -35,18 +35,20 @@ export function GlobalNavbar({
             active={activeSection === 'chat'}
             onClick={() => onSelectSection('chat')}
           />
-          <NavTooltipButton
+          {/* TODO(F6): 连接 Skill 系统后启用 Skills 图标 */}
+          {/* <NavTooltipButton
             icon={Sparkles}
             label="技能和应用"
             active={activeSection === 'skills'}
             onClick={() => onSelectSection('skills')}
-          />
-          <NavTooltipButton
+          /> */}
+          {/* TODO: 连接自动化系统后启用 Automation 图标 */}
+          {/* <NavTooltipButton
             icon={Clock3}
             label="自动化"
             active={activeSection === 'automation'}
             onClick={() => onSelectSection('automation')}
-          />
+          /> */}
         </div>
       </div>
 

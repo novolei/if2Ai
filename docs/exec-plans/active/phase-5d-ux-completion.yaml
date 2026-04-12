@@ -20,7 +20,7 @@ slices:
 
   - id: "5d.1"
     title: "N10 前端 — 统一 ChatUI 入口，App.tsx 为唯一状态管理"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N10"
     impl_targets:
@@ -137,7 +137,7 @@ slices:
         cmd: "npx tsc --noEmit"
       - type: symbol
         file: "src/modules/app-shell/components/GlobalNavbar.tsx"
-        grep: "TODO.*Skill\\|TODO.*Automation\\|disabled"
+        grep: "TODO"
         label: "GlobalNavbar 有 TODO 注释说明后续启用条件 — 08 §N7"
     review_checklist:
       - "Skills 和 Automation 图标是否被隐藏或禁用"
@@ -653,8 +653,8 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-12"
-  completed_slices: []
-  current_slice: "5d.1"
+  last_updated: "2026-04-13"
+  completed_slices: ["5d.1"]
+  current_slice: "5d.2"
   blocked: []
-  notes: "DRAFT — 依赖 Phase 5C 完成。5D 是前端 UX 全面完善 Phase。human_checkpoint after 5d.4"
+  notes: "5d.1 done — ChatUI unified, App.tsx sole state manager. Next: N7 hide non-functional icons."
