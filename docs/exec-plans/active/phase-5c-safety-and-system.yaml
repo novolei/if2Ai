@@ -563,7 +563,7 @@ slices:
 
   - id: "5c.5"
     title: "F5 + F17 — SlashCommand Tauri commands + /skills /agents 端点"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F5, N4, F17"
     impl_targets:
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4"]
-  current_slice: "5c.5"
+  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4", "5c.5"]
+  current_slice: "5c.6"
   blocked: []
-  notes: "5c.1-5c.4 done. Next: 5c.5 — F5/F17 SlashCommand Tauri commands"
+  notes: "5c.1-5c.5 done. Next: 5c.6 — integration tests"

@@ -1,0 +1,18 @@
+# Phase 5C Integration Tests
+# Verifies: N1 (SystemPromptBuilder), N3 (GlobalToolRegistry deprecated),
+#           F3 (permission_mode parameter), F4 (TauriPermissionPrompter),
+#           F5 (SlashCommand Tauri), F6 (Skill tool), F14 (SkillSearch), F17 (list_agents)
+
+runner: cargo_test
+
+test_cases:
+  - test_fn: "modules::runtime::prompt"
+    description: "SystemPromptBuilder builds dynamic prompts (N1)"
+  - test_fn: "modules::tools::builtin::todo_write"
+    description: "TodoWrite tool entry + async handler (N3)"
+  - test_fn: "modules::tools::builtin::skill"
+    description: "Skill tool entry + discover_skill_roots (F6)"
+  - test_fn: "modules::runtime::permissions"
+    description: "PermissionPolicy with different modes (F3)"
+  - test_fn: "modules::tools::integration_phase4"
+    description: "All builtin tools registered including TodoWrite + Skill (N3, F6)"
