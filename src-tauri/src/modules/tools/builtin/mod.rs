@@ -8,7 +8,10 @@ pub mod file_edit;
 pub mod file_read;
 pub mod file_write;
 pub mod glob_search;
+pub mod http_request;
 pub mod json_parse;
+pub mod web_fetch;
+pub mod web_search;
 
 #[allow(unused_imports)]
 pub use bash::bash_tool_entry;
@@ -23,4 +26,10 @@ pub use file_write::entry as file_write_entry;
 #[allow(unused_imports)]
 pub use glob_search::entry as glob_search_entry;
 #[allow(unused_imports)]
+pub use http_request::entry as http_request_entry;
+#[allow(unused_imports)]
 pub use json_parse::json_parse_tool_entry;
+#[allow(unused_imports)]
+pub use web_fetch::entry as web_fetch_entry;
+#[allow(unused_imports)]
+pub use web_search::entry as web_search_entry;

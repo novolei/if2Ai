@@ -39,4 +39,13 @@ pub fn register_builtin_tools(registry: &ToolRegistry) {
     if let Err(e) = registry.register(builtin::content_search_entry()) {
         eprintln!("Failed to register content_search tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::web_fetch_entry()) {
+        eprintln!("Failed to register web_fetch tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::web_search_entry()) {
+        eprintln!("Failed to register web_search tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::http_request_entry()) {
+        eprintln!("Failed to register http_request tool: {}", e);
+    }
 }
