@@ -257,7 +257,7 @@ slices:
 
   - id: "5d.4"
     title: "UI-8 + N11 前端 — TodoPanel 组件 + SSE 解析（后端 5c.2 已完成）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "UI-8, N11"
     impl_targets:
@@ -654,7 +654,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5d.1"]
-  current_slice: "5d.2"
+  completed_slices: ["5d.1", "5d.2", "5d.3", "5d.4"]
+  current_slice: "5d.5"
   blocked: []
-  notes: "5d.1 done — ChatUI unified, App.tsx sole state manager. Next: N7 hide non-functional icons."
+  notes: "Human checkpoint reached after 5d.4. Stage 1-4 complete. Next: F9 context compaction, F10 model selector, F11 slash command, integration tests."

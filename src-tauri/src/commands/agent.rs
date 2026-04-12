@@ -22,6 +22,7 @@ use crate::modules::runtime::permissions::{
     PermissionRequest,
 };
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
+use crate::modules::runtime::compact::{should_compact, compact_session, CompactionConfig};
 use crate::modules::session::Session as AppSession;
 
 /// Event payload for streaming token updates
@@ -471,9 +472,18 @@ pub async fn run_agent_turn(
             // Get the updated session from the runtime
             let updated_runtime_session = runtime.into_session();
 
+            // Context compaction — compact if session exceeds token threshold
+            let compaction_config = CompactionConfig::default();
+            let final_runtime_session = if should_compact(&updated_runtime_session, compaction_config) {
+                let compact_result = compact_session(&updated_runtime_session, compaction_config);
+                compact_result.compacted_session
+            } else {
+                updated_runtime_session
+            };
+
             // Update the application session with the new messages
             let mut updated_app_session = app_session;
-            updated_app_session.messages = updated_runtime_session.messages;
+            updated_app_session.messages = final_runtime_session.messages;
 
             // Save the updated session
             state
@@ -950,11 +960,8 @@ pub async fn start_agent_stream(
                 );
 
                 // Permission check
-                let permission_outcome = permission_policy.authorize(
-                    &tool_name,
-                    &input_json,
-                    Some(&mut prompter),
-                );
+                let permission_outcome =
+                    permission_policy.authorize(&tool_name, &input_json, Some(&mut prompter));
 
                 let start_time = std::time::Instant::now();
                 let (result_text, is_error) = match permission_outcome {
@@ -1040,6 +1047,25 @@ pub async fn start_agent_stream(
         updated_app_session
             .messages
             .extend(tool_result_session_messages);
+
+        // Context compaction — compact if session exceeds token threshold
+        let compaction_config = CompactionConfig::default();
+        if should_compact(
+            &RuntimeSession {
+                version: 1,
+                messages: updated_app_session.messages.clone(),
+            },
+            compaction_config,
+        ) {
+            let compact_result = compact_session(
+                &RuntimeSession {
+                    version: 1,
+                    messages: updated_app_session.messages.clone(),
+                },
+                compaction_config,
+            );
+            updated_app_session.messages = compact_result.compacted_session.messages;
+        }
 
         if let Err(e) = session_manager.save_session(&updated_app_session).await {
             tracing::error!("[start_agent_stream] Failed to save session: {}", e);
