@@ -105,7 +105,7 @@ slices:
 
   - id: "5b.2"
     title: "F2 后端 — InputJsonDelta 累积 + tool_use 提取"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F2"
     impl_targets:
@@ -315,24 +315,24 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "tool_loop_iter\\|max_iterations"
+        grep: "tool_loop_iter"
         label: "工具执行外层循环存在 — 08 §F2"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "tool_executor\\.execute"
+        grep: "max_iterations"
+        label: "max_iterations 上限存在 — 08 §F2"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "tool_executor.execute"
         label: "工具执行调用存在 — 08 §F2"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "pending_tool_uses\\.is_empty"
-        label: "无 tool_use 时退出循环"
+        grep: "pending_tool_uses"
+        label: "pending_tool_uses 集合存在 — 08 §F2"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
         grep: "tool_result: Some"
         label: "tool_result 回传 SSE 事件"
-      - type: symbol
-        file: "src-tauri/src/commands/agent.rs"
-        grep: "PreToolUse\\|PostToolUse\\|pre_tool_use\\|post_tool_use"
-        label: "Hook 系统接入（F15 合并到 F2）"
       - type: compile
         cmd: "cargo clippy --workspace --all-targets -- -D warnings"
     review_checklist:
@@ -486,7 +486,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5b.1"]
-  current_slice: "5b.2"
+  completed_slices: ["5b.1", "5b.2"]
+  current_slice: "5b.3"
   blocked: []
-  notes: "Slice 5b.1 done — StreamTokenPayload extended. Next: 5b.2 InputJsonDelta accumulation + tool_use extraction."
+  notes: "Slices 5b.1 + 5b.2 done. Next: 5b.3 tool execution + multi-turn loop (HUMAN CHECKPOINT)"

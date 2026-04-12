@@ -640,28 +640,15 @@ pub async fn start_agent_stream(
     // Build system prompt using SystemPromptBuilder
     let system_prompt = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
 
-    let api_request = MessageRequest {
-        model,
-        max_tokens: 4096,
-        messages: all_messages,
-        system: if system_prompt.is_empty() {
-            None
-        } else {
-            Some(system_prompt)
-        },
-        tools: if tool_defs.is_empty() {
-            None
-        } else {
-            Some(tool_defs)
-        }, // tools: Some — pass to LLM
-        tool_choice: None,
-        stream: true,
-    };
-
     // Clone everything needed for the background task
     let session_manager = state.session_manager.clone();
     let app_session_clone = app_session.clone();
     let user_message_clone = user_message.clone();
+    let tool_registry_clone = state.tool_registry.clone();
+    let model_for_stream = model.clone();
+    let messages_for_stream = all_messages.clone();
+    let tool_defs_for_stream = tool_defs.clone();
+    let system_prompt_for_stream = system_prompt.clone();
 
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
@@ -672,169 +659,52 @@ pub async fn start_agent_stream(
             stream_id_for_task
         );
 
-        // Start streaming
-        let mut stream = match claw_client.stream_message(&api_request).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(
-                    "[start_agent_stream] Background task failed to start stream: {}",
-                    e
-                );
-                let payload = StreamTokenPayload {
-                    stream_id: stream_id_for_task.clone(),
-                    text: None,
-                    thinking: None,
-                    event_type: "stream_error".to_string(),
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_status: None,
-                    tool_args: None,
-                    tool_result: None,
-                    tool_duration_ms: None,
-                };
-                let _ = window.emit("agent-token", payload);
-                return;
-            }
-        };
-
-        // Process stream events
+        let max_iterations: usize = 10;
+        let mut tool_loop_iter: usize = 0;
+        let mut session_messages = messages_for_stream.clone();
         let mut accumulated_text = String::new();
         let mut accumulated_thinking = String::new();
-
-        // Tool call tracking: accumulate InputJsonDelta chunks
-        let mut tool_arguments: HashMap<String, String> = HashMap::new();
-        let mut current_tool_id: Option<String> = None;
-        let mut current_tool_name: Option<String> = None;
-        let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
+        // Session-format tool result messages (for persistence)
+        let mut tool_result_session_messages: Vec<
+            crate::modules::runtime::session::ConversationMessage,
+        > = Vec::new();
 
         loop {
-            match stream.next_event().await {
-                Ok(Some(event)) => match event {
-                    ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
-                        crate::modules::api::ContentBlockDelta::TextDelta { text } => {
-                            accumulated_text.push_str(&text);
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                text: Some(text),
-                                thinking: None,
-                                event_type: "text_delta".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                            };
-                            let _ = window.emit("agent-token", payload);
-                        }
-                        crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
-                            accumulated_thinking.push_str(&thinking);
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                text: None,
-                                thinking: Some(thinking),
-                                event_type: "thinking_delta".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                            };
-                            let _ = window.emit("agent-token", payload);
-                        }
-                        crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
-                        crate::modules::api::ContentBlockDelta::InputJsonDelta { partial_json } => {
-                            if let Some(ref id) = current_tool_id {
-                                tool_arguments
-                                    .entry(id.clone())
-                                    .or_default()
-                                    .push_str(&partial_json);
-                            }
-                        }
-                    },
-                    ApiStreamEvent::MessageStop(_) => {
-                        tracing::info!("[start_agent_stream] Background task stream complete");
+            if tool_loop_iter >= max_iterations {
+                tracing::warn!(
+                    "[start_agent_stream] Tool loop exceeded max_iterations={}",
+                    max_iterations
+                );
+                break;
+            }
+            tool_loop_iter += 1;
 
-                        // Extract any pending tool from current context
-                        if let Some(tool_id) = current_tool_id.take() {
-                            if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                                let tool_name = current_tool_name.take().unwrap_or_default();
-                                pending_tool_uses.push((tool_id, tool_name, input_json));
-                            }
-                        }
-
-                        let payload = StreamTokenPayload {
-                            stream_id: stream_id_for_task.clone(),
-                            text: None,
-                            thinking: None,
-                            event_type: "stream_complete".to_string(),
-                            tool_call_id: None,
-                            tool_name: None,
-                            tool_status: None,
-                            tool_args: None,
-                            tool_result: None,
-                            tool_duration_ms: None,
-                        };
-                        let _ = window.emit("agent-token", payload);
-                        break;
-                    }
-                    ApiStreamEvent::ContentBlockStart(start_event) => {
-                        match start_event.content_block {
-                            crate::modules::api::OutputContentBlock::Thinking { .. } => {
-                                let payload = StreamTokenPayload {
-                                    stream_id: stream_id_for_task.clone(),
-                                    text: None,
-                                    thinking: None,
-                                    event_type: "thinking_start".to_string(),
-                                    tool_call_id: None,
-                                    tool_name: None,
-                                    tool_status: None,
-                                    tool_args: None,
-                                    tool_result: None,
-                                    tool_duration_ms: None,
-                                };
-                                let _ = window.emit("agent-token", payload);
-                            }
-                            crate::modules::api::OutputContentBlock::ToolUse {
-                                id, name, ..
-                            } => {
-                                current_tool_id = Some(id.clone());
-                                current_tool_name = Some(name.clone());
-                                let payload = StreamTokenPayload {
-                                    stream_id: stream_id_for_task.clone(),
-                                    text: None,
-                                    thinking: None,
-                                    event_type: "tool_call_update".to_string(),
-                                    tool_call_id: Some(id),
-                                    tool_name: Some(name),
-                                    tool_status: Some("queued".to_string()),
-                                    tool_args: None,
-                                    tool_result: None,
-                                    tool_duration_ms: None,
-                                };
-                                let _ = window.emit("agent-token", payload);
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+            // Build API request for this iteration
+            let iter_api_request = MessageRequest {
+                model: model_for_stream.clone(),
+                max_tokens: 4096,
+                messages: session_messages.clone(),
+                system: if system_prompt_for_stream.is_empty() {
+                    None
+                } else {
+                    Some(system_prompt_for_stream.clone())
                 },
-                Ok(None) => {
-                    tracing::info!("[start_agent_stream] Background task stream ended naturally");
+                tools: if tool_defs_for_stream.is_empty() {
+                    None
+                } else {
+                    Some(tool_defs_for_stream.clone())
+                },
+                tool_choice: None,
+                stream: true,
+            };
 
-                    // Extract any pending tool from current context
-                    if let Some(tool_id) = current_tool_id.take() {
-                        if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                            let tool_name = current_tool_name.take().unwrap_or_default();
-                            pending_tool_uses.push((tool_id, tool_name, input_json));
-                        }
-                    }
-
-                    break;
-                }
+            let mut stream = match claw_client.stream_message(&iter_api_request).await {
+                Ok(s) => s,
                 Err(e) => {
-                    tracing::error!("[start_agent_stream] Background task stream error: {}", e);
+                    tracing::error!(
+                        "[start_agent_stream] Background task failed to start stream: {}",
+                        e
+                    );
                     let payload = StreamTokenPayload {
                         stream_id: stream_id_for_task.clone(),
                         text: None,
@@ -848,12 +718,255 @@ pub async fn start_agent_stream(
                         tool_duration_ms: None,
                     };
                     let _ = window.emit("agent-token", payload);
-                    break;
+                    return;
+                }
+            };
+
+            // Tool call tracking for this iteration
+            let mut tool_arguments: HashMap<String, String> = HashMap::new();
+            let mut current_tool_id: Option<String> = None;
+            let mut current_tool_name: Option<String> = None;
+            let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
+
+            loop {
+                match stream.next_event().await {
+                    Ok(Some(event)) => match event {
+                        ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
+                            crate::modules::api::ContentBlockDelta::TextDelta { text } => {
+                                accumulated_text.push_str(&text);
+                                let payload = StreamTokenPayload {
+                                    stream_id: stream_id_for_task.clone(),
+                                    text: Some(text),
+                                    thinking: None,
+                                    event_type: "text_delta".to_string(),
+                                    tool_call_id: None,
+                                    tool_name: None,
+                                    tool_status: None,
+                                    tool_args: None,
+                                    tool_result: None,
+                                    tool_duration_ms: None,
+                                };
+                                let _ = window.emit("agent-token", payload);
+                            }
+                            crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
+                                accumulated_thinking.push_str(&thinking);
+                                let payload = StreamTokenPayload {
+                                    stream_id: stream_id_for_task.clone(),
+                                    text: None,
+                                    thinking: Some(thinking),
+                                    event_type: "thinking_delta".to_string(),
+                                    tool_call_id: None,
+                                    tool_name: None,
+                                    tool_status: None,
+                                    tool_args: None,
+                                    tool_result: None,
+                                    tool_duration_ms: None,
+                                };
+                                let _ = window.emit("agent-token", payload);
+                            }
+                            crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
+                            crate::modules::api::ContentBlockDelta::InputJsonDelta {
+                                partial_json,
+                            } => {
+                                if let Some(ref id) = current_tool_id {
+                                    tool_arguments
+                                        .entry(id.clone())
+                                        .or_default()
+                                        .push_str(&partial_json);
+                                }
+                            }
+                        },
+                        ApiStreamEvent::MessageStop(_) => {
+                            // Extract any pending tool from current context
+                            if let Some(tool_id) = current_tool_id.take() {
+                                if let Some(input_json) = tool_arguments.remove(&tool_id) {
+                                    let tool_name = current_tool_name.take().unwrap_or_default();
+                                    pending_tool_uses.push((tool_id, tool_name, input_json));
+                                }
+                            }
+
+                            let payload = StreamTokenPayload {
+                                stream_id: stream_id_for_task.clone(),
+                                text: None,
+                                thinking: None,
+                                event_type: "stream_complete".to_string(),
+                                tool_call_id: None,
+                                tool_name: None,
+                                tool_status: None,
+                                tool_args: None,
+                                tool_result: None,
+                                tool_duration_ms: None,
+                            };
+                            let _ = window.emit("agent-token", payload);
+                            break;
+                        }
+                        ApiStreamEvent::ContentBlockStart(start_event) => {
+                            match start_event.content_block {
+                                crate::modules::api::OutputContentBlock::Thinking { .. } => {
+                                    let payload = StreamTokenPayload {
+                                        stream_id: stream_id_for_task.clone(),
+                                        text: None,
+                                        thinking: None,
+                                        event_type: "thinking_start".to_string(),
+                                        tool_call_id: None,
+                                        tool_name: None,
+                                        tool_status: None,
+                                        tool_args: None,
+                                        tool_result: None,
+                                        tool_duration_ms: None,
+                                    };
+                                    let _ = window.emit("agent-token", payload);
+                                }
+                                crate::modules::api::OutputContentBlock::ToolUse {
+                                    id,
+                                    name,
+                                    ..
+                                } => {
+                                    current_tool_id = Some(id.clone());
+                                    current_tool_name = Some(name.clone());
+                                    let payload = StreamTokenPayload {
+                                        stream_id: stream_id_for_task.clone(),
+                                        text: None,
+                                        thinking: None,
+                                        event_type: "tool_call_update".to_string(),
+                                        tool_call_id: Some(id.clone()),
+                                        tool_name: Some(name.clone()),
+                                        tool_status: Some("queued".to_string()),
+                                        tool_args: None,
+                                        tool_result: None,
+                                        tool_duration_ms: None,
+                                    };
+                                    let _ = window.emit("agent-token", payload);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    },
+                    Ok(None) => {
+                        // Extract any pending tool from current context
+                        if let Some(tool_id) = current_tool_id.take() {
+                            if let Some(input_json) = tool_arguments.remove(&tool_id) {
+                                let tool_name = current_tool_name.take().unwrap_or_default();
+                                pending_tool_uses.push((tool_id, tool_name, input_json));
+                            }
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!("[start_agent_stream] Background task stream error: {}", e);
+                        let payload = StreamTokenPayload {
+                            stream_id: stream_id_for_task.clone(),
+                            text: None,
+                            thinking: None,
+                            event_type: "stream_error".to_string(),
+                            tool_call_id: None,
+                            tool_name: None,
+                            tool_status: None,
+                            tool_args: None,
+                            tool_result: None,
+                            tool_duration_ms: None,
+                        };
+                        let _ = window.emit("agent-token", payload);
+                        break;
+                    }
                 }
             }
+
+            // If no tool calls, exit the outer loop
+            if pending_tool_uses.is_empty() {
+                break;
+            }
+
+            // Execute each tool and append results to session_messages
+            let mut tool_executor =
+                crate::commands::agent::ToolRegistryExecutor::new(tool_registry_clone.clone());
+            let permission_policy = crate::modules::runtime::permissions::PermissionPolicy::new(
+                crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            );
+
+            for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
+                // Emit running event
+                let _ = window.emit(
+                    "agent-token",
+                    StreamTokenPayload {
+                        stream_id: stream_id_for_task.clone(),
+                        text: None,
+                        thinking: None,
+                        event_type: "tool_call_update".to_string(),
+                        tool_call_id: Some(tool_id.clone()),
+                        tool_name: Some(tool_name.clone()),
+                        tool_status: Some("running".to_string()),
+                        tool_args: None,
+                        tool_result: None,
+                        tool_duration_ms: None,
+                    },
+                );
+
+                // Permission check
+                let permission_outcome = permission_policy.authorize(
+                    &tool_name,
+                    &input_json,
+                    None::<&mut dyn crate::modules::runtime::permissions::PermissionPrompter>,
+                );
+
+                let start_time = std::time::Instant::now();
+                let (result_text, is_error) = match permission_outcome {
+                    crate::modules::runtime::permissions::PermissionOutcome::Allow => {
+                        match tool_executor.execute(&tool_name, &input_json) {
+                            Ok(output) => (output, false),
+                            Err(e) => (e.to_string(), true),
+                        }
+                    }
+                    crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } => {
+                        (reason, true)
+                    }
+                };
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+
+                // Emit completed/error event
+                let _ = window.emit(
+                    "agent-token",
+                    StreamTokenPayload {
+                        stream_id: stream_id_for_task.clone(),
+                        text: None,
+                        thinking: None,
+                        event_type: "tool_call_update".to_string(),
+                        tool_call_id: Some(tool_id.clone()),
+                        tool_name: Some(tool_name.clone()),
+                        tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
+                        tool_args: None,
+                        tool_result: Some(result_text.clone()),
+                        tool_duration_ms: Some(duration_ms),
+                    },
+                );
+
+                // Append tool_result to session_messages (API format)
+                session_messages.push(crate::modules::api::InputMessage {
+                    role: "tool".to_string(),
+                    content: vec![crate::modules::api::InputContentBlock::ToolResult {
+                        tool_use_id: tool_id.clone(),
+                        content: vec![crate::modules::api::ToolResultContentBlock::Text {
+                            text: result_text.clone(),
+                        }],
+                        is_error,
+                    }],
+                });
+
+                // Also collect session-format message for persistence
+                tool_result_session_messages.push(
+                    crate::modules::runtime::session::ConversationMessage::tool_result(
+                        tool_id,
+                        tool_name,
+                        result_text,
+                        is_error,
+                    ),
+                );
+            }
+            // Continue outer loop → send next LLM request with tool results
         }
 
-        // Update session with new messages
+        // Save session with all accumulated messages
         let mut updated_app_session = app_session_clone;
         let user_msg = crate::modules::runtime::session::ConversationMessage {
             role: crate::modules::runtime::session::MessageRole::User,
@@ -877,6 +990,10 @@ pub async fn start_agent_stream(
         };
         updated_app_session.messages.push(user_msg);
         updated_app_session.messages.push(assistant_msg);
+        // Append tool_result messages from the tool loop
+        updated_app_session
+            .messages
+            .extend(tool_result_session_messages);
 
         if let Err(e) = session_manager.save_session(&updated_app_session).await {
             tracing::error!("[start_agent_stream] Failed to save session: {}", e);
