@@ -1,5 +1,6 @@
 import * as React from "react"
 import {
+  ArrowDown,
   ChevronDown,
   Check,
   Copy,
@@ -25,11 +26,16 @@ import { Textarea } from "@/components/ui/textarea"
 
 interface Message {
   id: string
-  role: "user" | "assistant"
+  role: "user" | "assistant" | "tool"
   content: string
+  timestamp: Date
   thinking?: string
   thinkingTime?: number
   isStreaming?: boolean
+  toolCallId?: string
+  toolName?: string
+  toolArgs?: Record<string, unknown>
+  toolDurationMs?: number
 }
 
 interface ChatUIProps {
@@ -54,13 +60,24 @@ export function ChatUI({
   branchLabel = 'feature/consolidate-codebase',
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
+  const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
   const [selectedModel, setSelectedModel] = React.useState('gpt-5.4-mini')
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
+  const [isAtBottom, setIsAtBottom] = React.useState(true)
+  const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
+  const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, isLoading])
+
+  React.useEffect(() => {
+    const container = transcriptScrollRef.current
+    if (!container) return
+    const maxScrollTop = container.scrollHeight - container.clientHeight
+    setIsAtBottom(maxScrollTop - container.scrollTop < 40)
   }, [messages, isLoading])
 
   React.useLayoutEffect(() => {
@@ -78,15 +95,55 @@ export function ChatUI({
     }
   }
 
+  const handleCopyMessage = React.useCallback(async (message: Message) => {
+    const text = message.content.trim()
+    if (!text) return
+
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedMessageId(message.id)
+      window.setTimeout(() => setCopiedMessageId((current) => (current === message.id ? null : current)), 1200)
+    } catch (err) {
+      console.error('Failed to copy message:', err)
+    }
+  }, [])
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#fbfbfc]">
+    <div className="relative flex h-full min-h-0 flex-col bg-transparent">
       <ChatTranscript
         messages={messages}
-        isLoading={isLoading}
         sessionTitle={sessionTitle}
         projectLabel={projectLabel}
         bottomRef={bottomRef}
+        scrollRef={transcriptScrollRef}
+        onScroll={() => {
+          const container = transcriptScrollRef.current
+          if (!container) return
+          const maxScrollTop = container.scrollHeight - container.clientHeight
+          setIsAtBottom(maxScrollTop - container.scrollTop < 40)
+        }}
+        onCopyMessage={handleCopyMessage}
+        copiedMessageId={copiedMessageId}
+        hoveredMessageId={hoveredMessageId}
+        onMessageHoverChange={setHoveredMessageId}
       />
+      {!isAtBottom && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[186px] z-20 flex justify-center px-6">
+          <button
+            type="button"
+            onClick={() => {
+              transcriptScrollRef.current?.scrollTo({
+                top: transcriptScrollRef.current.scrollHeight,
+                behavior: 'smooth',
+              })
+            }}
+            className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
+            aria-label="滚动到底部"
+          >
+            <ArrowDown className="h-[18px] w-[18px]" />
+          </button>
+        </div>
+      )}
       <ComposerDock
         input={input}
         onInputChange={onInputChange}
@@ -108,26 +165,43 @@ export function ChatUI({
 
 const ChatTranscript = React.memo(function ChatTranscript({
   messages,
-  isLoading,
   sessionTitle,
   projectLabel,
   bottomRef,
+  scrollRef,
+  onScroll,
+  onCopyMessage,
+  copiedMessageId,
+  hoveredMessageId,
+  onMessageHoverChange,
 }: {
   messages: Message[]
-  isLoading?: boolean
   sessionTitle: string
   projectLabel: string
-  bottomRef: React.RefObject<HTMLDivElement>
+  bottomRef: React.RefObject<HTMLDivElement | null>
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  onScroll: () => void
+  onCopyMessage: (message: Message) => void
+  copiedMessageId: string | null
+  hoveredMessageId: string | null
+  onMessageHoverChange: (messageId: string | null) => void
 }) {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-6 px-6 py-6">
+    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-6 px-10 py-6">
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
         ) : (
           <div className="space-y-5">
-            {messages.map((msg, index) => (
-              <ChatMessage key={msg.id} message={msg} index={index} total={messages.length} />
+            {messages.map((msg) => (
+              <ChatMessage
+                key={msg.id}
+                message={msg}
+                onCopyMessage={onCopyMessage}
+                copiedMessageId={copiedMessageId}
+                hoveredMessageId={hoveredMessageId}
+                onMessageHoverChange={onMessageHoverChange}
+              />
             ))}
           </div>
         )}
@@ -138,9 +212,11 @@ const ChatTranscript = React.memo(function ChatTranscript({
   )
 }, (prev, next) =>
   prev.messages === next.messages &&
-  prev.isLoading === next.isLoading &&
   prev.sessionTitle === next.sessionTitle &&
-  prev.projectLabel === next.projectLabel
+  prev.projectLabel === next.projectLabel &&
+  prev.copiedMessageId === next.copiedMessageId &&
+  prev.hoveredMessageId === next.hoveredMessageId &&
+  prev.onCopyMessage === next.onCopyMessage
 )
 
 const ComposerDock = React.memo(function ComposerDock({
@@ -173,17 +249,17 @@ const ComposerDock = React.memo(function ComposerDock({
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
 }) {
   return (
-    <div className="shrink-0 px-6 pb-4 pt-0">
+    <div className="shrink-0 px-10 pb-2.5 pt-0">
       <div className="mx-auto flex w-full max-w-[900px] flex-col">
         <div
           className={cn(
-            'rounded-[20px] border border-black/5 bg-white px-4 py-3 transition-[box-shadow,border-color,transform] duration-200',
+            'rounded-[20px] border border-black/5 bg-white/42 px-4 py-2 backdrop-blur-xl transition-[box-shadow,border-color,transform,background-color,opacity] duration-300 ease-out',
             isComposerFocused
-              ? 'border-slate-400/20 shadow-[0_0_0_1px_rgba(71,85,105,0.05),0_0_0_3px_rgba(71,85,105,0.035),0_10px_24px_rgba(15,23,42,0.03)]'
-              : 'shadow-[0_8px_20px_rgba(15,23,42,0.025)]'
+              ? 'translate-y-[-2px] scale-[1.005] border-slate-300/35 bg-white/56 shadow-[0_0_0_1px_rgba(148,163,184,0.14),0_0_0_6px_rgba(148,163,184,0.055),0_10px_24px_rgba(15,23,42,0.03),0_0_24px_rgba(255,255,255,0.42)]'
+              : 'translate-y-0 scale-100 shadow-[0_4px_10px_rgba(15,23,42,0.012)]'
           )}
         >
-          <div className="flex min-h-[128px] flex-col">
+          <div className="flex min-h-[92px] flex-col">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -193,12 +269,12 @@ const ComposerDock = React.memo(function ComposerDock({
               rows={1}
               onFocus={() => setIsComposerFocused(true)}
               onBlur={() => setIsComposerFocused(false)}
-              className="min-h-[102px] resize-none border-0 bg-transparent px-0 py-1 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0"
+              className="min-h-[70px] resize-none border-0 bg-transparent px-0 py-0.5 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0"
             />
 
-            <div className="mt-3 flex flex-col gap-2">
+            <div className="mt-1.5 flex flex-col gap-1.5">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                <div className="flex min-w-0 items-center gap-2 overflow-visible">
                   <Button
                     type="button"
                     variant="ghost"
@@ -269,7 +345,7 @@ const ComposerDock = React.memo(function ComposerDock({
               </div>
 
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                <div className="flex min-w-0 items-center gap-2 overflow-visible">
                   <CompactMenu
                     label="本地"
                     className="min-w-[66px]"
@@ -320,22 +396,94 @@ const ComposerDock = React.memo(function ComposerDock({
   )
 })
 
-function ChatMessage({ message, index, total }: { message: Message; index: number; total: number }) {
-  const isUser = message.role === 'user'
-  const hasThinking = Boolean(message.thinking?.trim())
-  const hasContent = Boolean(message.content?.trim())
+function ToolCallMessage({
+  message,
+}: {
+  message: Message
+}) {
+  const isError = message.toolName?.startsWith('error') ?? false
+  const duration = message.toolDurationMs
+    ? formatDuration(message.toolDurationMs)
+    : null
+  const toolName = message.toolName ?? 'unknown_tool'
 
   return (
-    <div className={cn('flex flex-col gap-4', isUser ? 'items-end' : 'items-start')}>
+    <div className="flex items-stretch gap-2">
+      <div className={cn(
+        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium',
+        isError
+          ? 'bg-red-500/10 text-red-500'
+          : 'bg-emerald-500/10 text-emerald-500'
+      )}>
+        {isError ? '✗' : '✓'}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[11px] font-mono text-black/50">
+          <span className="font-medium text-black/65">{toolName}</span>
+          {duration && (
+            <span className="text-black/30">{duration}</span>
+          )}
+        </div>
+        {message.content && (
+          <pre className="mt-1 max-h-32 overflow-x-auto rounded-md border border-black/5 bg-white/40 px-3 py-1.5 text-[11px] font-mono leading-5 text-black/60">
+            {truncateText(message.content, 600)}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ChatMessage({
+  message,
+  onCopyMessage,
+  copiedMessageId,
+  hoveredMessageId,
+  onMessageHoverChange,
+}: {
+  message: Message
+  onCopyMessage: (message: Message) => void
+  copiedMessageId: string | null
+  hoveredMessageId: string | null
+  onMessageHoverChange: (messageId: string | null) => void
+}) {
+  const isUser = message.role === 'user'
+  const isTool = message.role === 'tool'
+  const hasThinking = Boolean(message.thinking?.trim())
+  const hasContent = Boolean(message.content?.trim())
+  const shortTime = formatShortTime(message.timestamp)
+  const isCopied = copiedMessageId === message.id
+  const isHovered = hoveredMessageId === message.id
+  const showCopyButton = isHovered || isCopied
+
+  if (isTool) {
+    return <ToolCallMessage message={message} />
+  }
+
+  return (
+    <div
+      className={cn('flex flex-col gap-4', isUser ? 'items-end' : 'items-start')}
+      onPointerEnter={() => onMessageHoverChange(message.id)}
+      onPointerLeave={() => onMessageHoverChange(null)}
+    >
       {isUser ? (
-        <div className="max-w-[min(240px,75%)] rounded-3xl bg-[#eef0f2] px-4 py-3 text-[13px] leading-6 text-black/80 shadow-sm">
-          <pre className="whitespace-pre-wrap font-sans">{message.content}</pre>
+        <div className="flex max-w-[min(240px,75%)] flex-col items-end gap-1">
+          <div className="rounded-[16px] bg-[#eef0f2] px-4 py-3 text-[13px] leading-6 text-black/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <pre className="whitespace-pre-wrap font-sans">{message.content}</pre>
+          </div>
+          <div className="flex items-center gap-1.5 pr-1">
+            <MessageCopyButton
+              side="left"
+              copied={isCopied}
+              visible={showCopyButton}
+              onClick={() => onCopyMessage(message)}
+            />
+            <div className="text-[11px] leading-none text-black/32">{shortTime}</div>
+          </div>
         </div>
       ) : (
         <div className="w-full space-y-4">
-          <ChangeSummaryCard index={index} total={total} />
-
-          <div className="border-t border-black/5 pt-4 text-[14px] leading-6 text-black/85">
+          <div className="pt-0 text-[14px] leading-6 text-black/85">
             {hasThinking && (
               <ThinkingBlock thinking={message.thinking ?? ''} thinkingTime={message.thinkingTime} />
             )}
@@ -347,7 +495,18 @@ function ChatMessage({ message, index, total }: { message: Message; index: numbe
             ) : null}
 
             {hasContent ? (
-              <MarkdownContent content={message.content} isStreaming={message.isStreaming} />
+              <>
+                <MarkdownContent content={message.content} />
+                <div className="mt-2 flex items-center gap-1.5 pl-1">
+                  <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
+                  <MessageCopyButton
+                    side="right"
+                    copied={isCopied}
+                    visible={showCopyButton}
+                    onClick={() => onCopyMessage(message)}
+                  />
+                </div>
+              </>
             ) : !message.isStreaming ? (
               <div className="text-black/35">暂无正文内容</div>
             ) : null}
@@ -358,43 +517,21 @@ function ChatMessage({ message, index, total }: { message: Message; index: numbe
   )
 }
 
-function ChangeSummaryCard({ index, total }: { index: number; total: number }) {
-  const positive = index === 0 ? 82 : 102
-  const negative = index === 0 ? 21 : 5
-
-  return (
-    <div className="rounded-[22px] border border-black/5 bg-[#f5f6f7] px-4 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.035)]">
-      <div className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-[13px] font-medium text-black/80">1 个文件已更改</div>
-          <div className="text-[13px] text-black/55">
-            src/components/ui/chat-ui.tsx <span className="text-emerald-600">+{positive}</span>{' '}
-            <span className="text-red-500">-{negative}</span>
-          </div>
-        </div>
-        <div className="rounded-full bg-white px-3 py-2 text-[12px] font-medium text-black/55 shadow-sm">
-          {index + 1}/{total}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function MarkdownContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
       components={{
-        p: ({ children }) => <p className="whitespace-pre-wrap text-[14px] leading-6">{children}</p>,
+        p: ({ children }) => <p className="whitespace-pre-wrap text-[14px] leading-7">{children}</p>,
         h1: ({ children }) => <h1 className="mb-3 text-[20px] font-semibold tracking-tight">{children}</h1>,
         h2: ({ children }) => <h2 className="mb-2.5 text-[18px] font-semibold tracking-tight">{children}</h2>,
         h3: ({ children }) => <h3 className="mb-2 text-[16px] font-semibold tracking-tight">{children}</h3>,
-        ul: ({ children }) => <ul className="mb-3 ml-5 list-disc space-y-1 text-[14px] leading-6">{children}</ul>,
-        ol: ({ children }) => <ol className="mb-3 ml-5 list-decimal space-y-1 text-[14px] leading-6">{children}</ol>,
+        ul: ({ children }) => <ul className="mb-4 ml-5 list-disc space-y-1.5 text-[14px] leading-7">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-4 ml-5 list-decimal space-y-1.5 text-[14px] leading-7">{children}</ol>,
         li: ({ children }) => <li className="leading-7">{children}</li>,
         blockquote: ({ children }) => (
-          <blockquote className="mb-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 italic text-[14px] leading-6 text-muted-foreground">
+          <blockquote className="mb-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 italic text-[14px] leading-7 text-muted-foreground">
             <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-primary/70">
               <span className="h-1.5 w-1.5 rounded-full bg-primary/50" />
               引用
@@ -412,9 +549,9 @@ function MarkdownContent({ content, isStreaming }: { content: string; isStreamin
           <th className="border-b border-border/70 px-4 py-3 text-left font-semibold">{children}</th>
         ),
         td: ({ children }) => (
-          <td className="border-b border-border/50 px-4 py-3 align-top leading-6">{children}</td>
+          <td className="border-b border-border/50 px-4 py-3 align-top leading-7">{children}</td>
         ),
-        hr: () => <hr className="my-5 border-border/70" />,
+        hr: () => null,
         a: ({ children, href }) => (
           <a
             href={href}
@@ -455,6 +592,7 @@ function MarkdownContent({ content, isStreaming }: { content: string; isStreamin
 function CodeBlock({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = React.useState(false)
   const [animateCopy, setAnimateCopy] = React.useState(false)
+  const language = extractCodeLanguage(children)
 
   const copyCode = async () => {
     const text = extractCodeText(children)
@@ -464,43 +602,83 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
       await navigator.clipboard.writeText(text)
       setCopied(true)
       setAnimateCopy(true)
-      window.setTimeout(() => setCopied(false), 1500)
-      window.setTimeout(() => setAnimateCopy(false), 420)
+      window.setTimeout(() => setCopied(false), 900)
+      window.setTimeout(() => setAnimateCopy(false), 260)
     } catch (err) {
       console.error('Failed to copy code:', err)
     }
   }
 
   const content = (
-    <div className="my-4 overflow-hidden rounded-[24px] border border-black/5 bg-[#f6f8fa] shadow-[0_8px_22px_rgba(15,23,42,0.035)]">
-      <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-black/42">
-          <span className="size-2.5 rounded-full bg-[#ff5f56]" />
-          <span className="size-2.5 rounded-full bg-[#ffbd2e]" />
-          <span className="size-2.5 rounded-full bg-[#27c93f]" />
-          <span className="ml-2 text-[12px]">Code</span>
+    <div className="my-4 overflow-hidden rounded-[22px] border border-black/8 bg-white text-[12px] shadow-[0_1px_0_rgba(15,23,42,0.02)] ring-0">
+      <div className="flex h-8 items-center justify-between bg-[#f3f4f6] px-4">
+        <div className="font-mono text-[10px] font-light tracking-tight text-black/38">
+          {language ?? 'Code'}
         </div>
         <Button
           type="button"
           variant="ghost"
           size="icon"
           className={cn(
-            'h-8 w-8 rounded-full text-black/42 transition-all hover:bg-black/[0.03] hover:text-black/70',
-            animateCopy && 'scale-105 bg-black/[0.03]'
+            'h-6 w-6 rounded-full text-black/38 transition-all duration-150 hover:bg-black/[0.02] hover:text-black/62',
+            animateCopy && 'scale-110 bg-emerald-500/10 text-emerald-600 shadow-[0_0_0_1px_rgba(16,185,129,0.12)]'
           )}
           onClick={copyCode}
           aria-label={copied ? '已复制' : '复制代码'}
         >
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </Button>
       </div>
-      <pre className="overflow-x-auto px-4 py-4 text-[13px] leading-6">
-        {children}
-      </pre>
+      <div className="px-5 pb-4 pt-3">
+        <pre className="m-0 overflow-x-auto whitespace-pre-wrap bg-transparent !bg-transparent pt-0 font-mono text-[11px] font-light leading-7 text-foreground [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
+          {children}
+        </pre>
+      </div>
     </div>
   )
 
   return content
+}
+
+function MessageCopyButton({
+  side,
+  copied,
+  visible,
+  onClick,
+}: {
+  side: 'left' | 'right'
+  copied: boolean
+  visible: boolean
+  onClick: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      aria-label={copied ? '已复制' : '复制消息'}
+      className={cn(
+        'h-4 w-4 shrink-0 rounded-full border-0 bg-transparent p-0 text-black/14 shadow-none transition-[opacity,color,background-color,box-shadow] duration-150 hover:bg-black/[0.016] hover:text-black/45',
+        visible ? 'opacity-100' : 'opacity-0',
+        copied && 'opacity-100 bg-emerald-500/8 text-emerald-600 shadow-[0_0_0_1px_rgba(16,185,129,0.1)]',
+        side === 'left' ? 'order-first' : 'order-last'
+      )}
+    >
+      {copied ? <Check className="size-2.5" /> : <Copy className="size-2.5" />}
+    </Button>
+  )
+}
+
+function extractCodeLanguage(node: React.ReactNode): string | null {
+  if (!React.isValidElement(node)) return null
+
+  const child = (node.props as { children?: React.ReactNode }).children
+  if (!React.isValidElement(child)) return null
+
+  const className = (child.props as { className?: string }).className
+  const match = className?.match(/language-([a-z0-9_-]+)/i)
+  return match?.[1] ?? null
 }
 
 function extractCodeText(node: React.ReactNode): string {
@@ -511,6 +689,16 @@ function extractCodeText(node: React.ReactNode): string {
     return extractCodeText((node.props as { children?: React.ReactNode }).children)
   }
   return ''
+}
+
+function formatShortTime(date: Date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function EmptyState({ sessionTitle, projectLabel }: { sessionTitle: string; projectLabel: string }) {
@@ -613,7 +801,7 @@ function CompactMenu({
           type="button"
           variant="ghost"
           className={cn(
-            'h-7 justify-between rounded-md border-0 bg-transparent px-1.5 text-[12px] font-medium text-black/72 shadow-none hover:bg-black/[0.03] hover:text-black/88',
+            'h-7 justify-between rounded-md border-0 bg-transparent px-1.5 text-[12px] font-medium text-black/72 shadow-none outline-none ring-0 ring-offset-0 hover:bg-black/[0.03] hover:text-black/88 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-black/[0.03] data-[state=open]:text-black/88',
             className
           )}
         >
@@ -653,4 +841,9 @@ function MenuItemButton({
 function formatDuration(value: number) {
   if (value < 1000) return `${value}ms`
   return `${(value / 1000).toFixed(1)}s`
+}
+
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  return text.slice(0, maxLen) + '…'
 }

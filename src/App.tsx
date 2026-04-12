@@ -1,18 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  ChevronDown,
-  Code2,
-  MessageSquare,
-  Plus,
-  Settings,
-  SlidersHorizontal,
-  Sparkles,
-  SquareTerminal,
-  Play,
-  MoreHorizontal,
-} from 'lucide-react'
-import {
   startAgentStream,
   listenToStream,
   listProjects,
@@ -32,41 +20,28 @@ import {
   type SessionMeta,
   type StreamTokenPayload,
 } from '@/lib/tauri'
-import { Button } from '@/components/ui/button'
-import { ProjectRail } from '@/components/ProjectRail'
-import { ChatUI } from '@/components/ui/chat-ui'
+import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
+import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
+import type { AppSection } from '@/modules/app-shell/types'
+import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
+import type { Conversation, Message } from '@/modules/chat/types'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
-import { ErrorBoundary } from '@/components/ui/error-boundary'
 
 const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  thinking?: string
-  thinkingTime?: number
-  disableAnimation?: boolean
-  isStreaming?: boolean
-}
-
-interface Conversation {
-  id: string
-  projectId: string
-  title: string
-  messages: Message[]
-  updatedAt: Date
-}
-
 function App() {
   const appWindow = getCurrentWindow()
+  const [activeSection, setActiveSection] = useState<AppSection>(() => {
+    if (typeof window === 'undefined') return 'chat'
+    const stored = localStorage.getItem('lastActiveSection')
+    return stored === 'skills' || stored === 'automation' ? stored : 'chat'
+  })
   const [projects, setProjects] = useState<ProjectMeta[]>([])
   const [projectSessions, setProjectSessions] = useState<Record<string, SessionMeta[]>>({})
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [leftPaneWidth, setLeftPaneWidth] = useState(376)
+  const [leftPaneWidth, setLeftPaneWidth] = useState(304)
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
@@ -79,7 +54,6 @@ function App() {
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null
   const activeTitle = activeConv?.title ?? '重构桌面端 UI 为 shadcn 体系'
-  const modelLabel = 'GPT-5.4-Mini'
   const branchLabel = 'feature/consolidate-codebase'
   const minLeftPaneWidth = 280
   const maxLeftPaneWidth = 520
@@ -113,6 +87,10 @@ function App() {
     }
   }, [activeProjectId, activeSessionId])
 
+  useEffect(() => {
+    localStorage.setItem('lastActiveSection', activeSection)
+  }, [activeSection])
+
   const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
       setLoading(true)
@@ -134,6 +112,7 @@ function App() {
   }
 
   const handleSelectProject = async (projectId: string) => {
+    setActiveSection('chat')
     setActiveProjectId(projectId)
     const project = projects.find((p) => p.id === projectId)
     if (project) {
@@ -153,6 +132,7 @@ function App() {
     sessionId: string,
     projectOverride?: ProjectMeta
   ) => {
+    setActiveSection('chat')
     setActiveProjectId(projectId)
     setActiveSessionId(sessionId)
 
@@ -209,6 +189,7 @@ function App() {
 
   const handleNewChat = async (projectId: string) => {
     try {
+      setActiveSection('chat')
       const session = await createSession(projectId, '新对话')
       const sessions = await listProjectSessions(projectId)
       setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
@@ -416,6 +397,30 @@ function App() {
               },
             }
           })
+        } else if (payload.event_type === 'tool_call_update') {
+          // Handle tool completion/error events
+          if (payload.tool_status === 'completed' || payload.tool_status === 'error') {
+            const toolMsg: Message = {
+              id: `tool-${payload.tool_call_id}-${Date.now()}`,
+              role: 'tool',
+              content: payload.tool_result || '',
+              timestamp: new Date(),
+              toolCallId: payload.tool_call_id,
+              toolName: payload.tool_name,
+              toolDurationMs: payload.tool_duration_ms,
+            }
+            setConversations((prev) => {
+              const currentConv = prev[activeSessionId]
+              if (!currentConv) return prev
+              return {
+                ...prev,
+                [activeSessionId]: {
+                  ...currentConv,
+                  messages: [...currentConv.messages, toolMsg],
+                },
+              }
+            })
+          }
         } else if (payload.event_type === 'stream_complete') {
           if (assistantMsgId) {
             setConversations((prev) => {
@@ -528,214 +533,58 @@ function App() {
   }
 
   return (
-    <div
-      className="isolate grid h-screen min-h-0 overflow-hidden bg-[#f6f7f8] text-foreground"
-      style={{ gridTemplateColumns: `${leftPaneWidth}px minmax(0, 1fr)` }}
-    >
-      <ErrorBoundary
-        fallback={
-          <aside
-            className="relative z-20 flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-tr-[28px] rounded-br-[28px] border-r border-black/5 bg-[#eef0f1]"
-            style={{ width: leftPaneWidth }}
-          >
-            <SidebarTop onCreateProject={() => setIsCreateProjectOpen(true)} />
-            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
-              左侧栏加载异常
-            </div>
-            <div className="border-t border-black/5 px-3.5 py-2.5">
-              <Button
-                variant="ghost"
-                className="h-8 w-full justify-start gap-3 rounded-2xl px-3 text-left text-sm font-medium bg-transparent hover:bg-transparent"
-                onClick={() => openSettingsWindow()}
-              >
-                <Settings className="h-4 w-4" />
-                设置
-              </Button>
-            </div>
-          </aside>
-        }
-      >
-        <aside className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-tr-[28px] rounded-br-[28px] border-r border-black/5 bg-[#eef0f1]">
-          <SidebarTop onCreateProject={() => setIsCreateProjectOpen(true)} onStartWindowDrag={startWindowDrag} />
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
-            <ErrorBoundary
-              fallback={
-                <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
-                  左侧栏加载异常
-                </div>
-              }
-            >
-              <ProjectRail
-                projects={projects}
-                projectSessions={projectSessions}
-                activeProjectId={activeProjectId}
-                activeSessionId={activeSessionId}
-                onSelectProject={handleSelectProject}
-                onSelectSession={handleSelectSession}
-                onNewChat={handleNewChat}
-                onDeleteProject={handleDeleteProject}
-                onRenameProject={handleRenameProject}
-                onDeleteSession={handleDeleteSession}
-                onTogglePinSession={handleTogglePinSession}
-                onOpenInFinder={openProjectInFinder}
-                onCreatePermanentWorktree={createPermanentWorktree}
-                runningSessionIds={runningSessionIds}
-                loading={loading}
-              />
-            </ErrorBoundary>
-          </div>
+    <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '88px minmax(0, 1fr)' }}>
+      <GlobalNavbar
+        activeSection={activeSection}
+        onSelectSection={setActiveSection}
+        onOpenSettings={() => openSettingsWindow()}
+        onStartWindowDrag={startWindowDrag}
+        appIconSrc={appIconSrc}
+      />
 
-          <div className="border-t border-black/5 px-3.5 py-2.5">
-            <Button
-              variant="ghost"
-              className="h-8 w-full justify-start gap-3 rounded-2xl px-3 text-left text-sm font-medium bg-transparent hover:bg-transparent"
-              onClick={() => openSettingsWindow()}
-            >
-              <Settings className="h-4 w-4" />
-              设置
-            </Button>
-          </div>
+      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#f6f7f8]">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
+          <div className="absolute inset-0 bg-[#f6f7f8]" />
+          <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(246,247,248,0)_0%,rgba(246,247,248,0.12)_46%,rgba(246,247,248,0.76)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.76)_18%,rgba(255,255,255,0)_52%),radial-gradient(circle_at_50%_100%,rgba(242,244,246,0.94)_0%,rgba(242,244,246,0.62)_34%,rgba(242,244,246,0.18)_68%,rgba(242,244,246,0)_100%)]" />
+          <div className="absolute inset-0 opacity-[0.61] [background-image:radial-gradient(rgba(169,179,189,0.46)_1px,transparent_1px)] [background-size:16px_16px] [mask-image:linear-gradient(to_bottom,transparent_0%,transparent_16%,black_50%,black_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.5),transparent_28%),radial-gradient(circle_at_86%_90%,rgba(242,244,246,0.34),transparent_30%)]" />
+        </div>
 
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onPointerDown={startResize}
-            className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
-            style={{ touchAction: 'none' }}
-          />
-        </aside>
-      </ErrorBoundary>
-
-      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#fbfbfc]">
-        <ErrorBoundary
-          fallback={
-            <div className="flex h-full min-h-0 items-center justify-center px-6">
-              <div className="max-w-md rounded-3xl border border-black/5 bg-white px-6 py-5 text-center shadow-sm">
-                <div className="text-[14px] font-semibold tracking-tight">主内容加载异常</div>
-                <div className="mt-2 text-[12px] leading-5 text-black/45">
-                  主工作区发生了运行时错误，但左侧栏仍然保持可用。
-                </div>
-              </div>
-            </div>
-          }
-        >
-          <div className="flex min-h-0 flex-1 flex-col">
-            <header
-              className="window-drag flex h-14 shrink-0 items-center justify-between border-b border-black/5 px-4 lg:px-5 select-none"
-              onMouseDown={startWindowDrag}
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-black/5 text-black/70 lg:flex">
-                  <MessageSquare className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h1 className="truncate text-[14px] font-semibold tracking-tight">{activeTitle}</h1>
-                    <span className="text-[12px] text-muted-foreground">if2Ai</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="window-no-drag h-7 w-7 rounded-full text-muted-foreground"
-                      data-window-no-drag="true"
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
-                  data-window-no-drag="true"
-                >
-                  <Play className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
-                  data-window-no-drag="true"
-                >
-                  <Code2 className="mr-2 h-4 w-4 text-blue-500" />
-                  {modelLabel}
-                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
-                  data-window-no-drag="true"
-                >
-                  <SlidersHorizontal className="mr-2 h-4 w-4" />
-                  提交
-                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
-                  data-window-no-drag="true"
-                >
-                  <SquareTerminal className="h-4 w-4" />
-                </Button>
-                <div className="h-6 w-px bg-black/10" />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
-                  data-window-no-drag="true"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-                <div className="ml-1 flex items-center gap-2 text-[15px] font-medium">
-                  <span className="text-emerald-600">+4,523</span>
-                  <span className="text-red-600">-3,223</span>
-                </div>
-              </div>
-            </header>
-
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {activeSessionId && activeConv ? (
-                <ChatUI
-                  sessionTitle={activeTitle}
-                  projectLabel={currentProject?.name ?? 'if2Ai'}
-                  branchLabel={branchLabel}
-                  messages={activeMessages}
-                  input={input}
-                  onInputChange={setInput}
-                  onSubmit={sendMessage}
-                  isLoading={isLoading}
-                />
-              ) : (
-                <div className="flex min-h-0 h-full flex-col">
-                  <div className="mx-auto flex w-full max-w-[920px] flex-1 items-center justify-center px-6 py-8">
-                    <div className="max-w-xl rounded-[28px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)]">
-                      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/5">
-                        <Sparkles className="h-7 w-7 text-black/60" />
-                      </div>
-                      <div className="space-y-3">
-                        <h2 className="text-[22px] font-semibold tracking-tight">选择一个项目，开始新的线程</h2>
-                        <p className="text-[13px] leading-6 text-muted-foreground">
-                          左侧已经整理好项目与会话，右侧会像 Codex 一样展示变更摘要、思考过程和最终正文。
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <ChatUI
-                    sessionTitle={activeTitle}
-                    projectLabel={currentProject?.name ?? 'if2Ai'}
-                    branchLabel={branchLabel}
-                    messages={[]}
-                    input={input}
-                    onInputChange={setInput}
-                    onSubmit={sendMessage}
-                    isLoading={isLoading}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </ErrorBoundary>
+        <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {activeSection === 'chat' ? (
+            <ChatWorkspace
+              projects={projects}
+              projectSessions={projectSessions}
+              activeProjectId={activeProjectId}
+              activeSessionId={activeSessionId}
+              currentProject={currentProject}
+              branchLabel={branchLabel}
+              activeTitle={activeTitle}
+              activeMessages={activeMessages}
+              input={input}
+              isLoading={isLoading}
+              loading={loading}
+              onSelectProject={handleSelectProject}
+              onSelectSession={handleSelectSession}
+              onNewChat={handleNewChat}
+              onDeleteProject={handleDeleteProject}
+              onRenameProject={handleRenameProject}
+              onDeleteSession={handleDeleteSession}
+              onTogglePinSession={handleTogglePinSession}
+              onOpenInFinder={openProjectInFinder}
+              onCreatePermanentWorktree={createPermanentWorktree}
+              onInputChange={setInput}
+              onSubmit={sendMessage}
+              leftPaneWidth={leftPaneWidth}
+              onResizeStart={startResize}
+              onStartWindowDrag={startWindowDrag}
+              runningSessionIds={runningSessionIds}
+            />
+          ) : (
+            <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
+          )}
+        </div>
       </main>
 
       <CreateProjectDialog
@@ -743,38 +592,6 @@ function App() {
         onClose={() => setIsCreateProjectOpen(false)}
         onSubmit={handleCreateProject}
       />
-    </div>
-  )
-}
-
-function SidebarTop({
-  onCreateProject,
-  onStartWindowDrag,
-}: {
-  onCreateProject: () => void
-  onStartWindowDrag: (event: ReactMouseEvent<HTMLElement>) => void
-}) {
-  return (
-    <div
-      className="window-drag flex h-[72px] items-center justify-between border-b border-black/5 px-4 select-none"
-      onMouseDown={onStartWindowDrag}
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <img
-          src={appIconSrc}
-          alt="If2Ai"
-          className="size-10 shrink-0 rounded-2xl border border-black/5 bg-black object-cover shadow-sm"
-        />
-        <div className="truncate text-[15px] font-semibold tracking-tight text-black/88">If2Ai</div>
-      </div>
-
-      <Button
-        onClick={onCreateProject}
-        className="window-no-drag h-9 rounded-full bg-blue-500 px-4 text-[13px] font-semibold text-white shadow-none hover:bg-blue-500/90"
-        data-window-no-drag="true"
-      >
-        更新
-      </Button>
     </div>
   )
 }
