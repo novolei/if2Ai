@@ -1,0 +1,889 @@
+# Phase 5C: Safety & System Connection (P1)
+# ─────────────────────────────────────────────────────────────────────────────
+# 权限系统、SystemPromptBuilder 接入、工具系统统一、Skill 注册、SlashCommand 暴露
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "5c"
+  phase_status: active           # draft | active | completed
+  title: "安全与系统连接 — 权限模式 + SystemPrompt + 工具统一 + Skill + SlashCommand"
+  owner: "@architects"
+  depends_on_phase: "5b"
+  design_docs:
+    - docs/bs_gap/08-critical-fix-priority.md
+  human_checkpoints:
+    - after_slice: "5c.4"       # Skill 系统完成后人工 review
+
+slices:
+
+  # ───────────── Stage 1: SystemPrompt for run_agent_turn ──────────────────────
+
+  - id: "5c.1"
+    title: "N1 — 接入 SystemPromptBuilder 替换 run_agent_turn 硬编码 prompt"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N1"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: run_agent_turn 使用 SystemPromptBuilder
+
+    baseline_ref: "src-tauri/src/modules/runtime/prompt.rs (SystemPromptBuilder); src-tauri/src/commands/agent.rs (硬编码 prompt:361-365)"
+
+    current_state: |
+      agent.rs 第 361-365 行 run_agent_turn 使用硬编码三行英文：
+        "You are If2Ai, a helpful AI assistant."
+        "You have access to various tools to help the user."
+        "Always be helpful, harmless, and honest."
+      SystemPromptBuilder 存在于 modules/runtime/prompt.rs，包含：
+        - discover_instruction_files()
+        - git status / git diff 集成
+        - 工作目录信息
+      ❌ MISSING — run_agent_turn 必须使用 SystemPromptBuilder 替代硬编码
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N1 — run_agent_turn 替换硬编码 prompt (agent.rs:361-365)
+        use crate::modules::runtime::prompt::SystemPromptBuilder;
+
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let builder = SystemPromptBuilder::new(&cwd);
+        let system_prompt_str = builder.build()
+            .unwrap_or_else(|_| "You are If2Ai, a helpful AI assistant.".to_string());
+        let system_prompt = vec![system_prompt_str];
+
+        // 替换原硬编码三行：
+        // let system_prompt = vec![
+        //     "You are If2Ai, a helpful AI assistant.".to_string(),
+        //     "You have access to various tools to help the user.".to_string(),
+        //     "Always be helpful, harmless, and honest.".to_string(),
+        // ];
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "SystemPromptBuilder::new"
+        label: "run_agent_turn 使用 SystemPromptBuilder — 08 §N1"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "builder\\.build\\(\\)"
+        label: "run_agent_turn 调用 builder.build()"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands::agent"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "run_agent_turn 是否使用 SystemPromptBuilder::new(&cwd).build()"
+      - "硬编码三行英文是否已完全移除"
+      - "build() 失败的 fallback 是否合理"
+      - "cwd 获取方式是否正确"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 2: 全量迁移 GlobalToolRegistry → ToolRegistry ──────────
+
+  - id: "5c.2"
+    title: "N3 — 全量迁移方案：废弃 GlobalToolRegistry + 迁移 TodoWrite（阶段 1 验证）"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N3"
+    impl_targets:
+      - src-tauri/src/modules/tools/lib.rs           # MODIFY: 标记 #[deprecated]
+      - src-tauri/src/modules/tools/mod.rs           # MODIFY: 确保 lib.rs 内容不被使用
+      - src-tauri/src/modules/tools/builtin/todo_write.rs  # CREATE: TodoWrite ToolHandler（阶段 1 路径验证）
+
+    baseline_ref: "rust/crates/tools/src/lib.rs (TodoWrite spec + execute_todo_write); src-tauri/src/modules/tools/lib.rs (GlobalToolRegistry 副本); src-tauri/src/modules/tools/registry.rs (ToolRegistry 核心)"
+
+    current_state: |
+      【方案 A 决策】2026-04-12 确定采用全量迁移方案：
+        - 目标：将 GlobalToolRegistry 的 18 个工具全部迁移到 ToolRegistry
+        - 7 个重叠工具：以 GlobalToolRegistry 实现为基准替换 Phase 4 版本
+        - 11 个 GlobalToolRegistry 独有工具：新建 ToolHandler 适配
+        - Phase 4 的 13 个工具完全保留
+
+      【迁移三阶段】
+        阶段 1（5c.2 当前）：废弃 + TodoWrite 路径验证
+        阶段 2（5c.4 + 5c.7）：Skill + ToolSearch 核心工具迁移
+        阶段 3（5e.5 + 5e.6）：剩余 8 个工具 + 7 个重叠工具替换
+
+      modules/tools/lib.rs 包含 GlobalToolRegistry 副本（18 个工具定义）。
+      modules/tools/mod.rs 的 register_builtin_tools() 注册了 19 个工具到 ToolRegistry。
+      两套系统互不通信，lib.rs 中的工具对主系统不可见。
+      ❌ MISSING — 阶段 1（当前 slice）：
+        1. lib.rs 标记 deprecated
+        2. 迁移 TodoWrite 作为路径验证（sync → async ToolHandler 适配）
+        3. 确认 ToolRegistry 注册/执行链路通畅
+        4. 输出迁移 checklist（供后续阶段复用）
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N3 — 标记废弃 (lib.rs)
+        // 在 lib.rs 顶部添加：
+        #![deprecated(
+            since = "0.2.0",
+            note = "This GlobalToolRegistry is a baseline copy. All tools are being migrated to ToolRegistry (modules/tools/registry.rs) \
+                    using the ToolHandler pattern. See docs/bs_gap/08-critical-fix-priority.md §N3 for migration plan."
+        )]
+
+        // 在注释中说明迁移状态：
+        // Migration Status (方案 A 全量迁移):
+        //   ✅ Migrated: TodoWrite (→ builtin/todo_write.rs)
+        //   ⏳ Pending: Skill, ToolSearch, Agent, grep_search, Sleep, SendUserMessage,
+        //               Config, NotebookEdit, StructuredOutput, PowerShell
+        //   🔄 Overlap (to be replaced): bash, read_file, write_file, edit_file,
+        //                                glob_search, web_fetch, web_search
+
+      - |
+        // 08-critical-fix-priority.md §N3 — 迁移 TodoWrite（新建 builtin/todo_write.rs）
+        // 路径验证：确认从 GlobalToolRegistry sync match → ToolRegistry async ToolHandler 的适配链路畅通
+        use super::super::registry::{ToolEntry, ToolError};
+
+        /// TodoWrite 工具的数据结构（从 lib.rs 提取）
+        #[derive(serde::Deserialize)]
+        struct TodoItem {
+            content: String,
+            #[serde(rename = "activeForm", default)]
+            active_form: String,
+            status: String,  // "pending" | "in_progress" | "completed"
+        }
+
+        #[derive(serde::Deserialize)]
+        struct TodoWriteInput {
+            todos: Vec<TodoItem>,
+        }
+
+        /// TodoWrite 工具的执行结果（从 lib.rs 提取）
+        #[derive(serde::Serialize)]
+        struct TodoWriteResult {
+            old_todos: Option<Vec<TodoItem>>,
+            new_todos: Vec<TodoItem>,
+            verification_nudge_needed: Option<String>,
+        }
+
+        /// Todo 存储路径（从 CLAW_TODO_STORE 改为 IF2AI_TODO_STORE）
+        fn todo_store_path() -> std::path::PathBuf {
+            let env_var = std::env::var("IF2AI_TODO_STORE").unwrap_or_default();
+            if env_var.is_empty() {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(".if2ai-todos.json")
+            } else {
+                std::path::PathBuf::from(env_var)
+            }
+        }
+
+        /// TodoWrite ToolHandler 入口（ToolEntry 构造）
+        pub fn todo_write_tool_entry() -> ToolEntry {
+            ToolEntry {
+                name: "TodoWrite".to_string(),
+                toolset: "utility".to_string(),
+                description: "Update the structured task list for the current session. \
+                              Use this to track multi-step tasks with status (pending/in_progress/completed)."
+                    .to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": { "type": "string", "description": "Task description" },
+                                    "activeForm": { "type": "string", "description": "Present-tense action description" },
+                                    "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] }
+                                },
+                                "required": ["content", "status"]
+                            }
+                        }
+                    },
+                    "required": ["todos"]
+                }),
+                max_result_size: Some(10240),
+                timeout_secs: Some(30),
+                disabled: false,
+                handler: std::sync::Arc::new(|args, _ctx| {
+                    Box::pin(async move {
+                        let input: TodoWriteInput = serde_json::from_value(args.clone())
+                            .map_err(|e| ToolError::Handler(format!("Invalid TodoWrite input: {}", e)))?;
+                        let result = execute_todo_write_internal(&input.todos)
+                            .map_err(ToolError::Handler)?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|e| ToolError::Handler(e.to_string()))
+                    })
+                }),
+            }
+        }
+
+        /// 核心执行逻辑（从 lib.rs execute_todo_write 提取并适配）
+        fn execute_todo_write_internal(todos: &Vec<TodoItem>) -> Result<TodoWriteResult, String> {
+            let store_path = todo_store_path();
+            // 读取旧 todos
+            let old_todos = if store_path.exists() {
+                let content = std::fs::read_to_string(&store_path)
+                    .map_err(|e| format!("Failed to read todo store: {}", e))?;
+                serde_json::from_str(&content).ok()
+            } else {
+                None
+            };
+
+            // 写回新 todos
+            let json = serde_json::to_string_pretty(todos)
+                .map_err(|e| format!("Failed to serialize todos: {}", e))?;
+            std::fs::write(&store_path, json)
+                .map_err(|e| format!("Failed to write todo store: {}", e))?;
+
+            Ok(TodoWriteResult {
+                old_todos,
+                new_todos: todos.clone(),
+                verification_nudge_needed: None,
+            })
+        }
+
+      - |
+        // mod.rs — 注册 TodoWrite（在 register_builtin_tools 中）
+        if let Err(e) = registry.register(builtin::todo_write::todo_write_tool_entry()) {
+            eprintln!("Failed to register TodoWrite tool: {}", e);
+        }
+
+        // mod.rs — 确保不导入 lib.rs 的内容
+        // 当前 mod.rs 未导入 lib.rs 内容（确认中），如果有则移除
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/lib.rs"
+        grep: "#!\\[deprecated"
+        label: "lib.rs 标记为 #[deprecated] — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
+        grep: "pub fn todo_write_tool_entry"
+        label: "TodoWrite ToolHandler 入口存在 — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
+        grep: "IF2AI_TODO_STORE"
+        label: "使用 IF2AI_TODO_STORE 而非 CLAW_TODO_STORE — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/todo_write.rs"
+        grep: ".if2ai-todos.json"
+        label: "默认文件名 .if2ai-todos.json 而非 .claw-todos.json — 08 §N3"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "todo_write_tool_entry"
+        label: "register_builtin_tools 注册 TodoWrite — 08 §N3"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "lib.rs 是否有 #[deprecated] 属性 + 迁移状态注释"
+      - "mod.rs 是否未导入 lib.rs 的内容"
+      - "TodoWrite 是否使用 ToolEntry + async handler 模式"
+      - "todo_store_path 是否使用 IF2AI_TODO_STORE 和 .if2ai-todos.json"
+      - "输入验证是否正确（serde from_value 错误处理）"
+      - "迁移 checklist 是否在 lib.rs 注释中输出"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 3: 权限模式参数化 ─────────────────────────────
+
+  - id: "5c.3"
+    title: "F3 权限 + F4 Prompter 实现 — 从参数读取 permission_mode"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F3, F4"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: run_agent_turn / start_agent_stream 接收 permission_mode
+
+    baseline_ref: "rust/crates/runtime/src/permissions.rs (PermissionPolicy, PermissionMode); rust/crates/runtime/src/conversation.rs (CliPermissionPrompter); src-tauri/src/modules/runtime/permissions.rs"
+
+    current_state: |
+      agent.rs 第 358 行 run_agent_turn 硬编码 PermissionMode::DangerFullAccess。
+      start_agent_stream 完全没有创建 PermissionPolicy（工具执行时无权限检查）。
+      PermissionPolicy 和 PermissionMode 定义在 modules/runtime/permissions.rs。
+      ❌ MISSING — 修改两条路径：
+        1. run_agent_turn 接收 permission_mode 参数（从 Tauri command 传入）
+        2. start_agent_stream 接收 permission_mode 参数
+        3. 预留 TauriPermissionPrompter 接口（暂不实现 UI，用 #[allow(dead_code)] 标记）
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F3 — run_agent_turn 参数化 (agent.rs)
+        #[tauri::command]
+        pub async fn run_agent_turn(
+            state: State<'_, AppState>,
+            session_id: String,
+            user_message: String,
+            permission_mode: Option<String>,  // 新增参数
+        ) -> Result<RunAgentTurnResponse, String> {
+            // ...
+            let mode = match permission_mode.as_deref() {
+                Some("readOnly") => PermissionMode::ReadOnly,
+                Some("workspaceWrite") => PermissionMode::WorkspaceWrite,
+                Some("prompt") => PermissionMode::Prompt,
+                Some("dangerFullAccess") | None => PermissionMode::DangerFullAccess,
+                _ => PermissionMode::DangerFullAccess,
+            };
+            let permission_policy = PermissionPolicy::new(mode);
+            // ...
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F3 — start_agent_stream 参数化
+        #[tauri::command]
+        pub async fn start_agent_stream(
+            state: State<'_, AppState>,
+            app_handle: AppHandle,
+            session_id: String,
+            user_message: String,
+            permission_mode: Option<String>,  // 新增参数
+        ) -> Result<String, String> {
+            // 后台任务中使用相同的 mode 解析逻辑
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F4 — TauriPermissionPrompter 完整实现
+        // 在 agent.rs 或新建 commands/permission_prompter.rs：
+
+        use std::sync::mpsc::{channel, Sender, Receiver};
+        use crate::modules::runtime::permissions::{PermissionPrompter, PermissionPromptDecision, PermissionRequest};
+
+        /// TauriPermissionPrompter 通过 window.emit() 向前端发送权限确认事件，
+        /// 然后通过 std::sync::mpsc::Receiver 阻塞等待前端返回用户决定。
+        /// 注意：run_turn() 是同步方法，使用 mpsc::Receiver 阻塞等待是合理的。
+        pub struct TauriPermissionPrompter {
+            window: tauri::WebviewWindow,
+            sender: Sender<PermissionPromptDecision>,
+            receiver: Receiver<PermissionPromptDecision>,
+        }
+
+        impl TauriPermissionPrompter {
+            pub fn new(window: tauri::WebviewWindow) -> Self {
+                let (sender, receiver) = channel();
+                Self { window, sender, receiver }
+            }
+
+            /// 将 sender clone 给外部，外部在收到前端响应后调用 sender.send()
+            pub fn sender(&self) -> Sender<PermissionPromptDecision> {
+                self.sender.clone()
+            }
+        }
+
+        impl PermissionPrompter for TauriPermissionPrompter {
+            fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+                // 1. emit 确认事件给前端
+                let _ = self.window.emit("permission-request", serde_json::json!({
+                    "tool_name": request.tool_name,
+                    "permission_mode": request.required_mode,
+                    "message": request.message,
+                }));
+
+                // 2. 阻塞等待前端返回（mpsc::Receiver 阻塞当前线程）
+                // 注意：run_turn() 本身是同步方法，所以这里阻塞是合理的
+                // 如果 run_turn 在 tokio::spawn 中运行，需要用 tokio::task::block_in_place
+                match self.receiver.recv_timeout(std::time::Duration::from_secs(60)) {
+                    Ok(decision) => decision,
+                    Err(_) => PermissionPromptDecision::Deny,  // 超时默认拒绝
+                }
+            }
+        }
+
+        // 前端侧（App.tsx）：
+        // listen('permission-request', (event) => {
+        //   const confirmed = window.confirm(`Allow ${event.payload.tool_name}?`);
+        //   invoke('respond_permission', {
+        //     sessionId: activeSessionId,
+        //     decision: confirmed ? 'allow' : 'deny'
+        //   });
+        // });
+
+      - |
+        // Tauri command: respond_permission — 前端返回用户决定
+        #[tauri::command]
+        pub fn respond_permission(
+            state: State<'_, AppState>,
+            session_id: String,
+            decision: String,
+        ) -> Result<(), String> {
+            let decision_enum = match decision.as_str() {
+                "allow" => PermissionPromptDecision::Allow,
+                _ => PermissionPromptDecision::Deny,
+            };
+            // 查找对应 session 的 TauriPermissionPrompter sender 并发送
+            // 需要通过 AppState 存储 sender 映射
+            state.permission_senders.lock().unwrap()
+                .get(&session_id)
+                .map(|s| s.send(decision_enum))
+                .ok_or_else(|| "No pending permission request".to_string())?
+                .map_err(|_| "Failed to send decision".to_string())
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "permission_mode: Option<String>"
+        label: "run_agent_turn 接收 permission_mode 参数 — 08 §F3"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "TauriPermissionPrompter"
+        label: "TauriPermissionPrompter 框架存在 — 08 §F4"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands::agent"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "run_agent_turn 是否接收 permission_mode: Option<String> 参数"
+      - "start_agent_stream 是否接收 permission_mode: Option<String> 参数"
+      - "权限模式字符串到 PermissionMode 的解析是否正确"
+      - "默认值是否仍为 DangerFullAccess（向后兼容）"
+      - "TauriPermissionPrompter 是否有 #[allow(dead_code)] 标注"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 4: Skill 工具注册 ─────────────────────────────
+
+  - id: "5c.4"
+    title: "F6 后端 — Skill 工具注册 + discover_skill_roots()"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F6"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/skill.rs    # CREATE: Skill ToolHandler
+      - src-tauri/src/modules/tools/mod.rs              # MODIFY: 注册 Skill 工具
+
+    baseline_ref: "rust/crates/tools/src/lib.rs (Skill spec:393-406, run_skill:714-755, discover_skill_roots:757-789); 08-critical-fix-priority.md §N3 (Skill 为 GlobalToolRegistry 迁移工具，阶段 2)"
+
+    current_state: |
+      【方案 A 全量迁移 — 阶段 2】
+      Skill 是 GlobalToolRegistry 的 19 个工具之一。按照 N3 迁移计划：
+        - 阶段 1 (5c.2): TodoWrite 路径验证 ✅
+        - 阶段 2 (5c.4 当前): Skill 工具迁移
+        - 阶段 3 (5e.6): 剩余 8 个独有工具 + 8 个重叠工具替换
+      register_builtin_tools() 中没有 Skill 工具。
+      Baseline 的 discover_skill_roots() 使用 env::var("CODEX_HOME")，
+      If2Ai 应改为 IF2AI_HOME 或 ~/.if2ai/skills/。
+      ❌ MISSING — 新建 skill.rs 实现 Skill ToolHandler，包含：
+        1. discover_skill_roots(workdir) — 搜索多个路径
+        2. resolve_skill_path(skill_name, workdir) — 找到 SKILL.md 文件
+        3. run_skill(input, ctx) — 读取并返回 Skill 内容
+        4. skill_tool_entry() — ToolEntry 构造
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F6 — Skill ToolHandler (新建 skill.rs)
+        use super::super::registry::{ToolEntry, ToolError};
+        use super::super::context::SharedToolContext;
+
+        pub fn skill_tool_entry() -> ToolEntry {
+            ToolEntry {
+                name: "skill".to_string(),
+                toolset: "utility".to_string(),
+                description: "Load and execute a custom skill by name.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "skill": { "type": "string", "description": "Skill name (directory name)" }
+                    },
+                    "required": ["skill"]
+                }),
+                max_result_size: Some(50 * 1024),
+                timeout_secs: Some(10),
+                disabled: false,
+                handler: std::sync::Arc::new(|args, ctx| {
+                    Box::pin(async move {
+                        let skill = args.get("skill")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| ToolError::Handler("Missing 'skill' argument".into()))?;
+                        let skill_path = resolve_skill_path(skill, &ctx.workdir)
+                            .map_err(ToolError::Handler)?;
+                        let content = tokio::fs::read_to_string(&skill_path).await
+                            .map_err(|e| ToolError::Handler(format!("Failed to read skill file: {}", e)))?;
+                        Ok(content)
+                    })
+                }),
+            }
+        }
+
+        fn resolve_skill_path(skill: &str, workdir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+            let roots = discover_skill_roots(workdir);
+            for root in roots {
+                let candidate = root.join(skill).join("SKILL.md");
+                if candidate.is_file() { return Ok(candidate); }
+                let legacy = root.join(format!("{skill}.md"));
+                if legacy.is_file() { return Ok(legacy); }
+            }
+            Err(format!("Skill '{}' not found in any search path", skill))
+        }
+
+        fn discover_skill_roots(workdir: &std::path::Path) -> Vec<std::path::PathBuf> {
+            let mut roots = Vec::new();
+            // 项目级
+            for dir in &[".if2ai/skills", ".claw/skills", ".codex/skills",
+                         ".if2ai/commands", ".claw/commands", ".codex/commands"] {
+                let p = workdir.join(dir);
+                if p.is_dir() { roots.push(p); }
+            }
+            // 用户级
+            if let Ok(home) = std::env::var("IF2AI_HOME") {
+                let p = std::path::PathBuf::from(&home).join("skills");
+                if p.is_dir() { roots.push(p); }
+            }
+            if let Ok(home) = std::env::var("HOME") {
+                let p = std::path::PathBuf::from(&home).join(".if2ai/skills");
+                if p.is_dir() { roots.push(p); }
+            }
+            roots
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/skill.rs"
+        grep: "pub fn skill_tool_entry"
+        label: "skill_tool_entry 函数存在 — 08 §F6"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/skill.rs"
+        grep: "fn discover_skill_roots"
+        label: "discover_skill_roots 函数存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "skill_tool_entry"
+        label: "register_builtin_tools 注册 skill 工具"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "skill_tool_entry 是否返回 ToolEntry 结构"
+      - "discover_skill_roots 是否使用 IF2AI_HOME 而非 CODEX_HOME"
+      - "是否搜索项目级和用户级 skill 路径"
+      - "是否支持 SKILL.md 和 legacy .md 格式"
+      - "错误消息是否清晰（Skill not found）"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 5: SlashCommand Tauri 暴露 ─────────────────────────────
+
+  - id: "5c.5"
+    title: "F5 + F17 — SlashCommand Tauri commands + /skills /agents 端点"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F5, N4, F17"
+    impl_targets:
+      - src-tauri/src/commands/slash.rs        # CREATE: SlashCommand Tauri commands
+      - src-tauri/src/commands/mod.rs          # MODIFY: 导入 slash 模块
+      - src-tauri/src/modules/commands/mod.rs  # MODIFY: 确保 lib.rs 被正确导入
+      - src-tauri/src/main.rs                  # MODIFY: 注册 slash commands 到 Tauri builder
+
+    baseline_ref: "rust/crates/commands/src/lib.rs (handle_skills_slash_command:813-823, handle_agents_slash_command:801-811, suggest_slash_commands:576-613, discover_skill_roots:1304-1379, parse_skill_frontmatter:1550-1578)"
+
+    current_state: |
+      modules/commands/lib.rs 包含完整的 SlashCommand 系统（28 命令），
+      但 commands/mod.rs 未导入它，也无 Tauri command 暴露。
+      Baseline 的 handle_skills_slash_command() 和 handle_agents_slash_command()
+      需要 cwd: &Path 参数，可以从 session 的工作目录获取。
+      ❌ MISSING — 新建 commands/slash.rs 暴露 6 个 Tauri commands：
+        1. parse_slash_command(input: String) → SlashCommandParseResult
+        2. list_slash_commands() → Vec<SlashCommandSpecDto>
+        3. suggest_slash_commands_endpoint(input: String, limit: usize) → Vec<String>
+        4. execute_slash_command(input: String, session_id: String, cwd: String) → SlashCommandResult
+        5. list_skills(cwd: String) → Vec<SkillInfo>  [F17]
+        6. list_agents(cwd: String) → Vec<AgentInfo>   [F17]
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F5 — SlashCommand Tauri commands (新建 slash.rs)
+        use crate::modules::commands::lib::{SlashCommand, slash_command_specs, suggest_slash_commands, handle_slash_command};
+
+        #[derive(serde::Serialize)]
+        pub struct SlashCommandParseResult {
+            pub name: String,
+            pub matched: bool,
+        }
+
+        #[derive(serde::Serialize)]
+        pub struct SlashCommandSpecDto {
+            pub name: String,
+            pub description: String,
+            pub category: String,
+        }
+
+        #[tauri::command]
+        pub fn parse_slash_command(input: String) -> SlashCommandParseResult {
+            let matched = SlashCommand::parse(&input).is_some();
+            let name = input.split_whitespace().next().unwrap_or("").to_string();
+            SlashCommandParseResult { name, matched }
+        }
+
+        #[tauri::command]
+        pub fn list_slash_commands() -> Vec<SlashCommandSpecDto> {
+            slash_command_specs().iter().map(|s| SlashCommandSpecDto {
+                name: s.name.to_string(),
+                description: s.description.to_string(),
+                category: format!("{:?}", s.category),
+            }).collect()
+        }
+
+        #[tauri::command]
+        pub fn suggest_slash_commands_endpoint(input: String, limit: usize) -> Vec<String> {
+            suggest_slash_commands(&input, limit)
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F17 — /skills /agents Tauri commands (slash.rs 追加)
+        use crate::modules::commands::lib::{discover_skill_roots, parse_skill_frontmatter};
+
+        #[derive(serde::Serialize)]
+        pub struct SkillInfo {
+            pub name: String,
+            pub description: String,
+            pub path: String,
+        }
+
+        #[derive(serde::Serialize)]
+        pub struct AgentInfo {
+            pub name: String,
+            pub description: String,
+            pub path: String,
+        }
+
+        #[tauri::command]
+        pub fn list_skills(cwd: String) -> Vec<SkillInfo> {
+            let workdir = std::path::Path::new(&cwd);
+            let roots = discover_skill_roots(workdir);
+            let mut skills = Vec::new();
+            for root in roots {
+                if let Ok(entries) = std::fs::read_dir(&root) {
+                    for entry in entries.flatten() {
+                        let skill_md = entry.path().join("SKILL.md");
+                        if skill_md.is_file() {
+                            if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                                let meta = parse_skill_frontmatter(&content);
+                                skills.push(SkillInfo {
+                                    name: meta.name.unwrap_or_else(|| entry.file_name().to_string_lossy().into_owned()),
+                                    description: meta.description.unwrap_or_default(),
+                                    path: entry.path().to_string_lossy().into_owned(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            skills
+        }
+
+        #[tauri::command]
+        pub fn list_agents(cwd: String) -> Vec<AgentInfo> {
+            // 类似 list_skills，搜索 .if2ai/agents/ 等目录
+            let agents_dir = std::path::Path::new(&cwd).join(".if2ai/agents");
+            let mut agents = Vec::new();
+            if agents_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            agents.push(AgentInfo {
+                                name: entry.file_name().to_string_lossy().into_owned(),
+                                description: String::new(),
+                                path: entry.path().to_string_lossy().into_owned(),
+                            });
+                        }
+                    }
+                }
+            }
+            agents
+        }
+
+      - |
+        // commands/mod.rs — 新增导入
+        pub mod slash;
+        pub use slash::{parse_slash_command, list_slash_commands, suggest_slash_commands_endpoint, execute_slash_command};
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/slash.rs"
+        grep: "pub fn parse_slash_command"
+        label: "parse_slash_command Tauri command 存在 — 08 §F5"
+      - type: symbol
+        file: "src-tauri/src/commands/slash.rs"
+        grep: "pub fn suggest_slash_commands_endpoint"
+        label: "suggest_slash_commands_endpoint 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/slash.rs"
+        grep: "pub fn list_slash_commands"
+        label: "list_slash_commands 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/mod.rs"
+        grep: "pub mod slash"
+        label: "commands/mod.rs 导入 slash 模块"
+      - type: symbol
+        file: "src-tauri/src/commands/slash.rs"
+        grep: "pub fn list_skills"
+        label: "list_skills Tauri command 存在 — 08 §F17"
+      - type: symbol
+        file: "src-tauri/src/commands/slash.rs"
+        grep: "pub fn list_agents"
+        label: "list_agents Tauri command 存在 — 08 §F17"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "slash.rs 是否有 6 个 #[tauri::command] 函数（4 + F17 的 2 个）"
+      - "list_skills 是否使用 discover_skill_roots() 搜索多路径"
+      - "list_agents 是否搜索 .if2ai/agents/ 目录"
+      - "SkillInfo / AgentInfo 是否可序列化"
+      - "SlashCommandSpecDto 是否可序列化（&'static str → String 转换）"
+      - "suggest_slash_commands 是否调用 lib.rs 的原始函数"
+      - "commands/mod.rs 是否正确导出 slash 模块"
+      - "main.rs 是否注册了新的 Tauri commands"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 6: 集成测试 ─────────────────────────────
+
+  - id: "5c.6"
+    title: "5C 集成测试 — 验证权限、Skill、SlashCommand 后端"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F3, F5, F6, F17, N1"
+    impl_targets:
+      - harness/suites/phase5c_integration.yaml    # CREATE: 行为测试
+
+    baseline_ref: "docs/bs_gap/08-critical-fix-priority.md (F3-F6, F14, F17, N1, N3, N4); rust/crates/tools/src/lib.rs (mvp_tool_specs:225-546, GlobalToolRegistry:60-197)"
+
+    current_state: |
+      所有 5C slices 完成后需要集成测试验证：
+      1. SystemPromptBuilder 在两条路径中正确接入
+      2. permission_mode 参数正确传递
+      3. Skill 工具发现和执行
+      4. SlashCommand Tauri commands 返回正确数据
+      ❌ MISSING — 需要创建 harness suite
+
+    must_implement:
+      - |
+        // harness/suites/phase5c_integration.yaml
+        # 验证 SystemPromptBuilder 集成
+        # 验证 permission_mode 参数
+        # 验证 Skill 工具注册
+        # 验证 SlashCommand Tauri commands
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "all tests pass"
+    review_checklist:
+      - "harness suite 是否覆盖所有 5C 功能"
+      - "编译 + lint + 测试是否全部通过"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 7: SkillSearch 工具 ─────────────────────────────
+
+  - id: "5c.7"
+    title: "F14 — SkillSearch 工具注册"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F14"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/skill_search.rs    # CREATE: SkillSearch ToolHandler
+      - src-tauri/src/modules/tools/mod.rs                     # MODIFY: 注册 SkillSearch
+
+    baseline_ref: "rust/crates/commands/src/lib.rs (discover_skill_roots:1304-1379, parse_skill_frontmatter:1550-1578); 08-critical-fix-priority.md §N3 (SkillSearch 作为 Skill 的配套工具，随阶段 2 迁移)"
+
+    current_state: |
+      【方案 A 全量迁移 — 阶段 2】
+      SkillSearch 是 Skill 工具的配套搜索工具。按照 N3 迁移计划：
+        - 阶段 1 (5c.2): TodoWrite 路径验证 ✅
+        - 阶段 2 (5c.4 + 5c.7 当前): Skill + SkillSearch 迁移
+        - 阶段 3 (5e.6): 剩余 8 个独有工具 + 8 个重叠工具替换
+      08 §F14 要求注册 SkillSearch 工具，允许 Agent 搜索可用 Skill。
+      5c.4 (F6) 已实现 skill 工具，但 SkillSearch 独立工具未创建。
+      ❌ MISSING — 新建 skill_search.rs 实现 SkillSearch ToolHandler
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F14 — SkillSearch ToolHandler (新建 skill_search.rs)
+        use super::super::registry::{ToolEntry, ToolError};
+        use super::skill::discover_skill_roots;
+        use super::skill::parse_skill_frontmatter;
+
+        pub fn skill_search_tool_entry() -> ToolEntry {
+            ToolEntry {
+                name: "skill_search".to_string(),
+                toolset: "utility".to_string(),
+                description: "Search for available skills by name or description.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query for skill name or description" }
+                    },
+                    "required": ["query"]
+                }),
+                max_result_size: Some(5 * 1024),
+                timeout_secs: Some(5),
+                disabled: false,
+                handler: std::sync::Arc::new(|args, ctx| {
+                    Box::pin(async move {
+                        let query = args.get("query")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        let workdir = &ctx.workdir;
+                        let roots = discover_skill_roots(workdir);
+                        let mut results = Vec::new();
+                        for root in roots {
+                            if let Ok(entries) = std::fs::read_dir(&root) {
+                                for entry in entries.flatten() {
+                                    let skill_md = entry.path().join("SKILL.md");
+                                    if skill_md.is_file() {
+                                        if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                                            let meta = parse_skill_frontmatter(&content);
+                                            let name = meta.name.unwrap_or_else(|| entry.file_name().to_string_lossy().into_owned());
+                                            let desc = meta.description.unwrap_or_default();
+                                            if query.is_empty() || name.to_lowercase().contains(&query) || desc.to_lowercase().contains(&query) {
+                                                results.push(serde_json::json!({
+                                                    "name": name,
+                                                    "description": desc,
+                                                    "path": entry.path().to_string_lossy().to_string()
+                                                }));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        serde_json::to_string_pretty(&results)
+                            .map_err(|e| ToolError::Handler(e.to_string()))
+                    })
+                }),
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/skill_search.rs"
+        grep: "pub fn skill_search_tool_entry"
+        label: "skill_search_tool_entry 函数存在 — 08 §F14"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/mod.rs"
+        grep: "skill_search_tool_entry"
+        label: "register_builtin_tools 注册 SkillSearch"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "skill_search_tool_entry 是否接受 SharedToolContext"
+      - "搜索是否支持名称和描述模糊匹配"
+      - "空查询是否返回所有 Skill"
+      - "是否复用 5c.4 的 discover_skill_roots() 和 parse_skill_frontmatter()"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: []
+  current_slice: "5c.1"
+  blocked: []
+  notes: "DRAFT — 依赖 Phase 5B 完成。5C 修复安全性与系统连接。新增 5c.7 (F14 SkillSearch) + 5c.5 扩展 (F17)。human_checkpoint after 5c.4"

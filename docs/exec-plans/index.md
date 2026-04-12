@@ -7,13 +7,20 @@
 
 ## 📋 全部计划总览
 
-| 状态       | Phase   | 标题         | 文件                                                    | Backlog    |
-| ---------- | ------- | ------------ | ------------------------------------------------------- | ---------- |
-| **[当前]** | Phase 1 | 核心框架搭建 | `docs/exec-plans/active/phase-1-foundation.yaml`        | BL-101~108 |
-| [草稿]     | Phase 2 | 高级特性     | `docs/exec-plans/active/phase-2-advanced-features.yaml` | BL-201~205 |
-| [草稿]     | Phase 3 | 扩展生态     | `docs/exec-plans/active/phase-3-ecosystem.yaml`         | BL-301~303 |
+| 状态       | Phase   | 标题                  | 文件                                                           | Backlog     |
+| ---------- | ------- | --------------------- | -------------------------------------------------------------- | ----------- |
+| [已完成]   | Phase 5A | Agent 核心修复        | `docs/exec-plans/active/phase-5a-agent-core-fix.yaml`          | F1, N5, N12 |
+| [已完成]   | Phase 5B | 流式工具循环重写      | `docs/exec-plans/active/phase-5b-streaming-tool-loop.yaml`     | F2, F8, F15, UI-5 |
+| **[当前]** | Phase 5C | 安全与系统连接        | `docs/exec-plans/active/phase-5c-safety-and-system.yaml`       | N1, N3(阶段1+2), F3-F6, F14, F17, N4, UI-1 |
+| [草稿]     | Phase 5D | UX 完善               | `docs/exec-plans/active/phase-5d-ux-completion.yaml`           | N10, N7, F7, F9-F11, UI-8(前端), N11 |
+| [草稿]     | Phase 5E | 长期增强 + 全局迁移   | `docs/exec-plans/active/phase-5e-long-tail-enhancement.yaml`   | F12, F13, F16, UI-4, UI-6, UI-7, N6, N8-N9, N3(阶段3:18工具), F25 |
 
-> **草稿说明**：Phase 2 和 Phase 3 已预生成供规划参考，在 Phase 1 的 `human_checkpoint` 通过前不应执行。  
+> **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F17, F25, UI-1~UI-8, N1, N3-N12）。  
+> Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  
+> 激活方式：将对应 YAML 文件中的 `phase_status: draft` 改为 `active`，并将本表中状态改为 `[当前]`。
+
+> **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F25、UI-1~UI-8、N1-N12）。  
+> Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  
 > 激活方式：将对应 YAML 文件中的 `phase_status: draft` 改为 `active`，并将本表中状态改为 `[当前]`。
 
 ## ✅ 已完成计划 (Completed Plans)
@@ -140,4 +147,4 @@
 
 ---
 
-**版本**: 0.1.0 | **最后更新**: 2026-04-11
+**版本**: 0.1.0 | **最后更新**: 2026-04-12

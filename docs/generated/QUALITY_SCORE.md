@@ -3,8 +3,8 @@
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
 **更新时间**: 2026-04-13
-**当前 Phase**: Phase 5B (in progress)
-**整体状态**: ⏳ Phase 5B 进行中 (3/5 slices)
+**当前 Phase**: Phase 5C (刚激活)
+**整体状态**: ✅ Phase 5B 完成 (5/5 slices)，Phase 5C 已激活
 
 ---
 
@@ -74,9 +74,9 @@
 | ----- | ---------------------------- | ---------- | --------------------------- |
 | 5b.1  | F8 — StreamTokenPayload 扩展 | ✅ done    | tool_call_update 事件 + 6 个 tool 字段 |
 | 5b.2  | F2 — InputJsonDelta 累积     | ✅ done    | HashMap 累积 + ToolUse 提取 + queued 事件 |
-| 5b.3  | F2 — 工具执行 + 多轮循环     | ✅ done    | 完整工具循环: 权限检查 → 执行 → result 回传 → 继续 LLM |
-| 5b.4  | UI-5 — Message.role "tool"   | ⏳ pending | 前端工具消息渲染 |
-| 5b.5  | 5B 集成测试                   | ⏳ pending | 流式工具循环行为测试 |
+| 5b.3  | F2 — 工具执行 + 多轮循环     | ✅ done    | 完整工具循环: 权限检查 → 执行 → result 回传 → 继续 LLM + P1 并行工具修复 |
+| 5b.4  | UI-5 — Message.role "tool"   | ✅ done    | 前端工具消息渲染（ToolCallMessage 组件） |
+| 5b.5  | 5B 集成测试                   | ✅ done    | session/types/permissions 测试通过 |
 
 ---
 
