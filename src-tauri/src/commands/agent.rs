@@ -229,25 +229,28 @@ impl RealApiClient {
             Some(request.system_prompt.join("\n"))
         };
 
-        // Get tool definitions from registry and convert to ToolDefinition format
-        // Registry returns OpenAI format: {type: "function", function: {name, description, parameters}}
-        let definitions = self.tool_registry.get_definitions(None);
-        let tools: Vec<ToolDefinition> = definitions
-            .into_iter()
-            .filter_map(|def| {
-                let obj = def.as_object()?;
-                let func = obj.get("function")?.as_object()?;
-                Some(ToolDefinition {
-                    name: func.get("name")?.as_str()?.to_string(),
-                    description: func
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .map(String::from),
-                    input_schema: func.get("parameters")?.clone(),
-                })
-            })
-            .collect();
-        let tools = if tools.is_empty() { None } else { Some(tools) };
+        // Prefer tool definitions from request.tools; fall back to registry
+        let tool_defs: Option<Vec<ToolDefinition>> = request.tools.clone().or_else(|| {
+            let definitions = self.tool_registry.get_definitions(None);
+            Some(
+                definitions
+                    .into_iter()
+                    .filter_map(|def| {
+                        let obj = def.as_object()?;
+                        let func = obj.get("function")?.as_object()?;
+                        Some(ToolDefinition {
+                            name: func.get("name")?.as_str()?.to_string(),
+                            description: func
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .map(String::from),
+                            input_schema: func.get("parameters")?.clone(),
+                        })
+                    })
+                    .collect(),
+            )
+        });
+        let tools = tool_defs.filter(|t| !t.is_empty());
 
         let api_request = MessageRequest {
             model: self.model.clone(),

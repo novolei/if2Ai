@@ -20,7 +20,7 @@ slices:
 
   - id: "5a.1"
     title: "F1 — ToolExecutor trait 扩展 get_definitions() + conversation.rs 使用"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F1, N12"
     impl_targets:
@@ -148,7 +148,7 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "request\\.tools\\.clone\\(\\)\\.or_else\\|request\\.tools\\.clone\\(\\)\\.unwrap_or_else"
+        grep: "request.tools.clone().or_else"
         label: "call_api() 优先使用 request.tools — 08 §N12"
       - type: test
         cmd: "cargo test -p if2ai-backend -- commands::agent"
@@ -270,8 +270,8 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-12"
-  completed_slices: []
-  current_slice: "5a.1"
+  last_updated: "2026-04-13"
+  completed_slices: ["5a.1"]
+  current_slice: "5a.2"
   blocked: []
-  notes: "DRAFT → ACTIVE — Phase 4 已完成。5A 修复 Agent 核心工具定义传递和系统提示。human_checkpoint after 5a.2"
+  notes: "Slice 5a.1 done — ToolExecutor trait extended, run_turn sends tools. Next: 5a.2 call_api fix"
