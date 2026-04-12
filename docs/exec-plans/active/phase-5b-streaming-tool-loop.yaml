@@ -351,7 +351,7 @@ slices:
 
   - id: "5b.4"
     title: "UI-5 前端 — Message.role 扩展 \"tool\" + ChatUI 基础工具展示"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "UI-5"
     impl_targets:
@@ -446,7 +446,7 @@ slices:
 
   - id: "5b.5"
     title: "5B 集成测试 — 验证流式模式下完整工具循环"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F2, F8, UI-5"
     impl_targets:
@@ -486,7 +486,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5b.1", "5b.2", "5b.3"]
-  current_slice: "5b.4"
+  completed_slices: ["5b.1", "5b.2", "5b.3", "5b.4", "5b.5"]
+  current_slice: "—"
   blocked: []
-  notes: "Slices 5b.1-5b.3 done. Human checkpoint after 5b.3 — 工具循环核心完成后等待人工 review"
+  notes: "Phase 5B 全部完成 (5/5 slices) — F2 流式工具循环, F8 tool_call_update SSE, UI-5 前端工具展示, 集成测试通过"

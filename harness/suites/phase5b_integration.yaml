@@ -1,0 +1,12 @@
+# Phase 5B Integration Tests
+# Verifies: F2 (streaming tool loop), F8 (tool_call_update SSE), UI-5 (frontend tool display)
+
+runner: cargo_test
+
+test_cases:
+  - test_fn: "modules::runtime::session"
+    description: "Session persistence with tool_result messages"
+  - test_fn: "modules::api::types"
+    description: "API types serialize/deserialize correctly (InputContentBlock::ToolResult)"
+  - test_fn: "modules::runtime::permissions"
+    description: "PermissionPolicy authorizes/denies tool calls"
