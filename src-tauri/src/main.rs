@@ -75,7 +75,11 @@ fn main() {
     };
 
     let session_manager = modules::session::SessionManager::new(sessions_dir, projects_dir.clone());
-    let tool_registry = modules::tools::ToolRegistry::new();
+    let default_tool_context =
+        modules::tools::ToolContext::default_for_workdir(std::path::PathBuf::from("."));
+    let tool_registry = modules::tools::ToolRegistry::new(std::sync::Arc::new(
+        std::sync::Mutex::new(default_tool_context),
+    ));
     modules::tools::register_builtin_tools(&tool_registry);
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 

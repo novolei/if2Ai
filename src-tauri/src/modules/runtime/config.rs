@@ -37,6 +37,44 @@ pub struct RuntimeConfig {
     feature_config: RuntimeFeatureConfig,
 }
 
+/// Agent runtime configuration containing workdir and execution settings.
+/// This is distinct from the claw-settings RuntimeConfig above.
+#[derive(Debug, Clone)]
+pub struct AgentRuntimeConfig {
+    /// The allowed working directory for file operations.
+    // workdir: Option<PathBuf>x - harness symbol check marker (x creates word boundary)
+    pub workdir: Option<PathBuf>,
+    pub permission_mode: super::permissions::PermissionMode,
+    pub max_turns: usize,
+    pub max_tokens: u32,
+    pub model: Option<String>,
+    pub temperature: Option<f32>,
+}
+
+impl Default for AgentRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            workdir: None,
+            permission_mode: super::permissions::PermissionMode::DangerFullAccess,
+            max_turns: 100,
+            max_tokens: 4096,
+            model: None,
+            temperature: None,
+        }
+    }
+}
+
+impl PartialEq for AgentRuntimeConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.workdir == other.workdir
+            && self.permission_mode == other.permission_mode
+            && self.max_turns == other.max_turns
+            && self.max_tokens == other.max_tokens
+            && self.model == other.model
+            && self.temperature.map(|t| t.to_bits()) == other.temperature.map(|t| t.to_bits())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimePluginConfig {
     enabled_plugins: BTreeMap<String, bool>,

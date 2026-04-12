@@ -11,6 +11,8 @@ use dashmap::DashMap;
 use serde_json::{json, Value};
 use tokio::time::timeout;
 
+use super::context::SharedToolContext;
+
 /// Errors that can occur during tool dispatch.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -99,17 +101,25 @@ impl fmt::Debug for ToolEntry {
 pub struct ToolRegistry {
     tools: Arc<DashMap<String, ToolEntry>>,
     names_to_toolsets: Arc<DashMap<String, String>>,
+    context: SharedToolContext,
 }
 
 #[allow(dead_code)]
 impl ToolRegistry {
-    /// Creates a new empty ToolRegistry.
+    /// Creates a new empty ToolRegistry with the given tool context.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(context: SharedToolContext) -> Self {
         Self {
             tools: Arc::new(DashMap::new()),
             names_to_toolsets: Arc::new(DashMap::new()),
+            context,
         }
+    }
+
+    /// Returns a reference to the shared tool context.
+    #[must_use]
+    pub fn context(&self) -> &SharedToolContext {
+        &self.context
     }
 
     /// Registers a tool entry.
@@ -260,7 +270,12 @@ impl ToolRegistry {
 
 impl Default for ToolRegistry {
     fn default() -> Self {
-        Self::new()
+        use std::sync::Mutex;
+        let default_context = std::sync::Arc::new(Mutex::new(super::context::ToolContext {
+            workdir: std::path::PathBuf::from("."),
+            permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+        }));
+        Self::new(default_context)
     }
 }
 
@@ -276,9 +291,15 @@ mod tests {
         })
     }
 
+    fn make_test_registry() -> ToolRegistry {
+        let ctx =
+            super::super::context::ToolContext::default_for_workdir(std::path::PathBuf::from("."));
+        ToolRegistry::new(std::sync::Arc::new(std::sync::Mutex::new(ctx)))
+    }
+
     #[tokio::test]
     async fn registers_and_retrieves_tool() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let entry = ToolEntry {
             name: "test".to_string(),
             toolset: "testing".to_string(),
@@ -300,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_calls_handler() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let entry = ToolEntry {
             name: "hello".to_string(),
             toolset: "test".to_string(),
@@ -319,14 +340,14 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_not_found_returns_error() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let result = registry.dispatch("nonexistent", json!({})).await;
         assert!(matches!(result, Err(ToolError::NotFound(_))));
     }
 
     #[tokio::test]
     async fn dispatch_disabled_tool_returns_error() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let entry = ToolEntry {
             name: "disabled".to_string(),
             toolset: "test".to_string(),
@@ -345,7 +366,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_enforces_timeout() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let entry = ToolEntry {
             name: "slow".to_string(),
             toolset: "test".to_string(),
@@ -370,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_enforces_max_result_size() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
         let entry = ToolEntry {
             name: "large".to_string(),
             toolset: "test".to_string(),
@@ -389,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_definitions_filters_disabled() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
 
         // Add a disabled tool
         registry
@@ -426,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_definitions_respects_allowed_list() {
-        let registry = ToolRegistry::new();
+        let registry = make_test_registry();
 
         registry
             .register(ToolEntry {

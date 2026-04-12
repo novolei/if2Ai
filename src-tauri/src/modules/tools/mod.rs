@@ -3,7 +3,10 @@
 //! Provides tool system framework and execution
 
 pub mod builtin;
+pub mod context;
 pub mod registry;
+#[allow(unused_imports)]
+pub use context::{SharedToolContext, ToolContext};
 #[allow(unused_imports)]
 pub use registry::{ToolEntry, ToolError, ToolRegistry};
 
