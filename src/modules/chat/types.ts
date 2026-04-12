@@ -50,6 +50,7 @@ export interface ChatWorkspaceProps {
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
   onInputChange: (value: string) => void
   onSubmit: () => void
+  onStop?: () => void
   selectedModel: string
   onModelChange: Dispatch<SetStateAction<string>>
   todos: TodoItem[]

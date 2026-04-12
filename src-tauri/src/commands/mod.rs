@@ -25,6 +25,9 @@ pub struct AppState {
     /// Permission prompt senders keyed by session_id.
     /// Used by respond_permission to send user decisions back to waiting prompters.
     pub permission_senders: Arc<Mutex<HashMap<String, Sender<PermissionPromptDecision>>>>,
+    /// Stream cancel senders keyed by stream_id.
+    /// Used by stop_agent_stream to cancel an in-flight streaming response.
+    pub stream_cancel_senders: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
 }
 
 #[allow(dead_code)]
@@ -41,6 +44,7 @@ impl AppState {
             tool_registry: Arc::new(tool_registry),
             project_manager: Arc::new(project_manager),
             permission_senders: Arc::new(Mutex::new(HashMap::new())),
+            stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -53,7 +57,9 @@ pub mod tools;
 pub mod window;
 
 #[allow(unused_imports)]
-pub use agent::{respond_permission, run_agent_turn, start_agent_stream, RunAgentTurnResponse};
+pub use agent::{
+    respond_permission, run_agent_turn, start_agent_stream, stop_agent_stream, RunAgentTurnResponse,
+};
 #[allow(unused_imports)]
 pub use project::{
     create_permanent_worktree, create_project, delete_project, get_project, list_projects,

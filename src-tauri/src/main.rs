@@ -13,7 +13,7 @@ use commands::{
     get_tool_definitions, list_agents, list_project_sessions, list_projects, list_sessions,
     list_skills, list_slash_commands, list_tools, list_toolsets, open_project_in_finder,
     open_settings_window, parse_slash_command, rename_project, respond_permission, run_agent_turn,
-    set_session_pinned, start_agent_stream, suggest_slash_commands,
+    set_session_pinned, start_agent_stream, stop_agent_stream, suggest_slash_commands,
 };
 
 use tauri::{
@@ -96,6 +96,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             run_agent_turn,
             start_agent_stream,
+            stop_agent_stream,
             respond_permission,
             list_sessions,
             delete_session,

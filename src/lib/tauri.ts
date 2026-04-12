@@ -6,6 +6,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
+// Re-export invoke for App.tsx stopAgentStream
+export { invoke };
+
 /**
  * 流式 Token 事件载荷
  */

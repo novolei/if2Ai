@@ -15,6 +15,7 @@ import {
   getSession,
   openProjectInFinder,
   openSettingsWindow,
+  invoke,
   type Project,
   type ProjectMeta,
   type SessionMeta,
@@ -50,6 +51,7 @@ function App() {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
   const [todos, setTodos] = useState<TodoItem[]>([])
+  const [streamAbortHandle, setStreamAbortHandle] = useState<string | null>(null)
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -304,6 +306,18 @@ function App() {
     }
   }
 
+  const stopAgentStream = async () => {
+    if (streamAbortHandle) {
+      try {
+        await invoke<string>('stop_agent_stream', { streamId: streamAbortHandle })
+      } catch (err) {
+        console.error('Failed to stop stream:', err)
+      }
+      setStreamAbortHandle(null)
+      setIsLoading(false)
+    }
+  }
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading || !activeSessionId) return
 
@@ -360,6 +374,7 @@ function App() {
     try {
       createAssistantMessage()
       const streamId = await startAgentStream(activeSessionId, userMsg.content)
+      setStreamAbortHandle(streamId)
 
       const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
         if (payload.event_type === 'text_delta' && payload.text) {
@@ -438,6 +453,7 @@ function App() {
           }
         } else if (payload.event_type === 'stream_complete') {
           setTodos([])
+          setStreamAbortHandle(null)
           if (assistantMsgId) {
             setConversations((prev) => {
               const currentConv = prev[activeSessionId]
@@ -484,7 +500,7 @@ function App() {
         },
       }))
     } finally {
-      setIsLoading(false)
+      // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
     }
   }
 
@@ -592,6 +608,7 @@ function App() {
               onCreatePermanentWorktree={createPermanentWorktree}
               onInputChange={setInput}
               onSubmit={sendMessage}
+              onStop={stopAgentStream}
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
               todos={todos}

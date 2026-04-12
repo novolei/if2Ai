@@ -44,6 +44,7 @@ interface ChatUIProps {
   input: string
   onInputChange: (value: string) => void
   onSubmit: () => void
+  onStop?: () => void
   isLoading?: boolean
   sessionTitle?: string
   projectLabel?: string
@@ -57,6 +58,7 @@ export function ChatUI({
   input,
   onInputChange,
   onSubmit,
+  onStop,
   isLoading,
   sessionTitle = '重构桌面端 UI 为 shadcn 体系',
   projectLabel = 'if2Ai',
@@ -205,6 +207,7 @@ export function ChatUI({
         input={input}
         onInputChange={onInputChange}
         onSubmit={onSubmit}
+        onStop={onStop}
         isLoading={isLoading}
         selectedModel={modelValue}
         setSelectedModel={handleModelChange}
@@ -292,6 +295,7 @@ const ComposerDock = React.memo(function ComposerDock({
   input,
   onInputChange,
   onSubmit,
+  onStop,
   isLoading,
   selectedModel,
   setSelectedModel,
@@ -308,6 +312,7 @@ const ComposerDock = React.memo(function ComposerDock({
   input: string
   onInputChange: (value: string) => void
   onSubmit: () => void
+  onStop?: () => void
   isLoading?: boolean
   selectedModel: string
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>
@@ -444,11 +449,15 @@ const ComposerDock = React.memo(function ComposerDock({
 
                   <Button
                     onClick={() => {
-                      if (!isLoading) onSubmit()
+                      if (isLoading && onStop) {
+                        onStop()
+                      } else if (!isLoading) {
+                        onSubmit()
+                      }
                     }}
                     disabled={!isLoading && !input.trim()}
                     size="icon"
-                    className={cn('h-9 w-9 rounded-full shadow-none transition-colors', 'bg-black text-white hover:bg-black/90 disabled:bg-black/40')}
+                    className={cn('h-9 w-9 rounded-full shadow-none transition-colors', isLoading ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-black text-white hover:bg-black/90 disabled:bg-black/40')}
                     title={isLoading ? '停止生成' : '发送消息'}
                   >
                     {isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}

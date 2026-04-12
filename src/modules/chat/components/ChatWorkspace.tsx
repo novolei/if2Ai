@@ -58,6 +58,7 @@ export function ChatWorkspace({
   onCreatePermanentWorktree,
   onInputChange,
   onSubmit,
+  onStop,
   selectedModel,
   onModelChange,
   todos,
@@ -250,6 +251,7 @@ export function ChatWorkspace({
                   input={input}
                   onInputChange={onInputChange}
                   onSubmit={onSubmit}
+                  onStop={onStop}
                   isLoading={isLoading}
                   selectedModel={selectedModel}
                   onModelChange={onModelChange}
@@ -277,6 +279,7 @@ export function ChatWorkspace({
                     input={input}
                     onInputChange={onInputChange}
                     onSubmit={onSubmit}
+                    onStop={onStop}
                     isLoading={isLoading}
                     selectedModel={selectedModel}
                     onModelChange={onModelChange}

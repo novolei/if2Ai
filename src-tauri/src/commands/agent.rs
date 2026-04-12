@@ -14,6 +14,7 @@ use crate::commands::AppState;
 use crate::modules::api::providers::claw_provider::AuthSource;
 use crate::modules::api::providers::claw_provider::ClawApiClient;
 use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolDefinition};
+use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
@@ -22,7 +23,6 @@ use crate::modules::runtime::permissions::{
     PermissionRequest,
 };
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
-use crate::modules::runtime::compact::{should_compact, compact_session, CompactionConfig};
 use crate::modules::session::Session as AppSession;
 
 /// Event payload for streaming token updates
@@ -474,12 +474,14 @@ pub async fn run_agent_turn(
 
             // Context compaction — compact if session exceeds token threshold
             let compaction_config = CompactionConfig::default();
-            let final_runtime_session = if should_compact(&updated_runtime_session, compaction_config) {
-                let compact_result = compact_session(&updated_runtime_session, compaction_config);
-                compact_result.compacted_session
-            } else {
-                updated_runtime_session
-            };
+            let final_runtime_session =
+                if should_compact(&updated_runtime_session, compaction_config) {
+                    let compact_result =
+                        compact_session(&updated_runtime_session, compaction_config);
+                    compact_result.compacted_session
+                } else {
+                    updated_runtime_session
+                };
 
             // Update the application session with the new messages
             let mut updated_app_session = app_session;
@@ -679,6 +681,17 @@ pub async fn start_agent_stream(
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
     let stream_id_return = stream_id.clone();
+
+    // Create a oneshot channel for cancellation
+    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut senders = state.stream_cancel_senders.lock().map_err(|e| {
+            tracing::error!("[start_agent_stream] Failed to lock cancel senders: {}", e);
+            e.to_string()
+        })?;
+        senders.insert(stream_id.clone(), cancel_tx);
+    }
+
     tokio::spawn(async move {
         tracing::info!(
             "[start_agent_stream] Spawned background task for stream_id: {}",
@@ -696,6 +709,25 @@ pub async fn start_agent_stream(
         > = Vec::new();
 
         loop {
+            // Check for cancellation at the start of each iteration
+            if cancel_rx.try_recv().is_ok() {
+                tracing::info!("[start_agent_stream] Stream cancelled at loop iteration");
+                let payload = StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None,
+                    thinking: None,
+                    event_type: "stream_complete".to_string(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_status: None,
+                    tool_args: None,
+                    tool_result: None,
+                    tool_duration_ms: None,
+                };
+                let _ = window.emit("agent-token", payload);
+                break;
+            }
+
             if tool_loop_iter >= max_iterations {
                 tracing::warn!(
                     "[start_agent_stream] Tool loop exceeded max_iterations={}",
@@ -1078,6 +1110,32 @@ pub async fn start_agent_stream(
         stream_id_return
     );
     Ok(stream_id_return)
+}
+
+/// Stop an in-flight streaming agent response.
+///
+/// Sends a cancellation signal to the background task associated with
+/// the given stream_id, causing it to terminate early and emit a
+/// `stream_complete` event.
+#[tauri::command]
+pub fn stop_agent_stream(state: State<'_, AppState>, stream_id: String) -> Result<(), String> {
+    let mut senders = state
+        .stream_cancel_senders
+        .lock()
+        .map_err(|e| format!("Failed to lock cancel senders: {e}"))?;
+
+    let sender = senders
+        .remove(&stream_id)
+        .ok_or_else(|| format!("No active stream found for stream_id: {stream_id}"))?;
+
+    // Sending the cancel signal (if the receiver is already dropped, the task completed)
+    let _ = sender.send(());
+    tracing::info!(
+        "[stop_agent_stream] Cancel signal sent for stream_id: {}",
+        stream_id
+    );
+
+    Ok(())
 }
 
 /// TauriPermissionPrompter — bridges the sync PermissionPrompter trait
