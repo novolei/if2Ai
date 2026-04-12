@@ -1,5 +1,6 @@
 import type { Project, ProjectMeta, SessionMeta } from '@/lib/tauri'
 import type { Dispatch, SetStateAction } from 'react'
+import type { TodoItem } from '@/components/ui/TodoPanel'
 
 export interface Message {
   id: string
@@ -51,6 +52,7 @@ export interface ChatWorkspaceProps {
   onSubmit: () => void
   selectedModel: string
   onModelChange: Dispatch<SetStateAction<string>>
+  todos: TodoItem[]
   leftPaneWidth: number
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void
   onStartWindowDrag: (event: React.MouseEvent<HTMLElement>) => void

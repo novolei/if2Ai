@@ -26,6 +26,7 @@ import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message } from '@/modules/chat/types'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
+import type { TodoItem } from '@/components/ui/TodoPanel'
 
 const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
 
@@ -48,6 +49,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
+  const [todos, setTodos] = useState<TodoItem[]>([])
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -423,7 +425,19 @@ function App() {
               }
             })
           }
+          // Parse TodoWrite SSE events
+          if (payload.tool_name === 'TodoWrite' && payload.tool_result) {
+            try {
+              const result = JSON.parse(payload.tool_result)
+              if (result.newTodos) {
+                setTodos(result.newTodos)
+              }
+            } catch {
+              // ignore parse error
+            }
+          }
         } else if (payload.event_type === 'stream_complete') {
+          setTodos([])
           if (assistantMsgId) {
             setConversations((prev) => {
               const currentConv = prev[activeSessionId]
@@ -580,6 +594,7 @@ function App() {
               onSubmit={sendMessage}
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
+              todos={todos}
               leftPaneWidth={leftPaneWidth}
               onResizeStart={startResize}
               onStartWindowDrag={startWindowDrag}

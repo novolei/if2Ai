@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
+import { TodoPanel } from '@/components/ui/TodoPanel'
 import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
@@ -46,6 +47,7 @@ export function ChatWorkspace({
   onSubmit,
   selectedModel,
   onModelChange,
+  todos,
   leftPaneWidth,
   onResizeStart,
   onStartWindowDrag,
@@ -205,6 +207,7 @@ export function ChatWorkspace({
             </header>
 
             <div className="min-h-0 flex-1 overflow-hidden">
+              <TodoPanel todos={todos} />
               {activeSessionId ? (
                 <ChatUI
                   sessionTitle={activeTitle}

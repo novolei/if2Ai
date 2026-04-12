@@ -148,7 +148,7 @@ slices:
 
   - id: "5d.3"
     title: "F7 前端 — 渐进式工具调用展示（完整版）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F7"
     impl_targets:
