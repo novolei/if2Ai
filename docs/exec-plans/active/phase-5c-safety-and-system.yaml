@@ -443,7 +443,7 @@ slices:
 
   - id: "5c.4"
     title: "F6 后端 — Skill 工具注册 + discover_skill_roots()"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F6"
     impl_targets:
@@ -704,8 +704,8 @@ slices:
         label: "parse_slash_command Tauri command 存在 — 08 §F5"
       - type: symbol
         file: "src-tauri/src/commands/slash.rs"
-        grep: "pub fn suggest_slash_commands_endpoint"
-        label: "suggest_slash_commands_endpoint 存在"
+        grep: "pub fn suggest_slash_commands"
+        label: "suggest_slash_commands exists"
       - type: symbol
         file: "src-tauri/src/commands/slash.rs"
         grep: "pub fn list_slash_commands"
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1", "5c.2", "5c.3"]
-  current_slice: "5c.4"
+  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4"]
+  current_slice: "5c.5"
   blocked: []
-  notes: "5c.1-5c.3 done. Next: 5c.4 — F6 Skill ToolHandler"
+  notes: "5c.1-5c.4 done. Next: 5c.5 — F5/F17 SlashCommand Tauri commands"
