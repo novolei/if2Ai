@@ -7,6 +7,11 @@ use std::sync::Arc;
 use crate::modules::projects::ProjectManager;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
+use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+use std::sync::Mutex;
+
+use crate::modules::runtime::permissions::PermissionPromptDecision;
 
 /// Application state shared across all Tauri commands.
 #[allow(dead_code)]
@@ -17,6 +22,9 @@ pub struct AppState {
     pub tool_registry: Arc<ToolRegistry>,
     /// Project manager for multi-project support.
     pub project_manager: Arc<ProjectManager>,
+    /// Permission prompt senders keyed by session_id.
+    /// Used by respond_permission to send user decisions back to waiting prompters.
+    pub permission_senders: Arc<Mutex<HashMap<String, Sender<PermissionPromptDecision>>>>,
 }
 
 #[allow(dead_code)]
@@ -32,6 +40,7 @@ impl AppState {
             session_manager: Arc::new(session_manager),
             tool_registry: Arc::new(tool_registry),
             project_manager: Arc::new(project_manager),
+            permission_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -43,7 +52,7 @@ pub mod tools;
 pub mod window;
 
 #[allow(unused_imports)]
-pub use agent::{run_agent_turn, start_agent_stream, RunAgentTurnResponse};
+pub use agent::{run_agent_turn, start_agent_stream, respond_permission, RunAgentTurnResponse};
 #[allow(unused_imports)]
 pub use project::{
     create_permanent_worktree, create_project, delete_project, get_project, list_projects,

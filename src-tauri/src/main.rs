@@ -12,7 +12,7 @@ use commands::{
     delete_project, delete_session, execute_tool, get_project, get_session, get_tool_definitions,
     list_project_sessions, list_projects, list_sessions, list_tools, list_toolsets,
     open_project_in_finder, open_settings_window, rename_project, run_agent_turn,
-    set_session_pinned, start_agent_stream,
+    set_session_pinned, start_agent_stream, respond_permission,
 };
 
 use tauri::{
@@ -95,6 +95,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             run_agent_turn,
             start_agent_stream,
+            respond_permission,
             list_sessions,
             delete_session,
             set_session_pinned,

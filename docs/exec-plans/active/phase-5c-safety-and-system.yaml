@@ -84,7 +84,7 @@ slices:
 
   - id: "5c.2"
     title: "N3 — 全量迁移方案：废弃 GlobalToolRegistry + 迁移 TodoWrite（阶段 1 验证）"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N3"
     impl_targets:
@@ -420,8 +420,8 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "permission_mode: Option<String>"
-        label: "run_agent_turn 接收 permission_mode 参数 — 08 §F3"
+        grep: "permission_mode"
+        label: "run_agent_turn receives permission_mode parameter — 08 §F3"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
         grep: "TauriPermissionPrompter"
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1"]
-  current_slice: "5c.2"
+  completed_slices: ["5c.1", "5c.2"]
+  current_slice: "5c.3"
   blocked: []
-  notes: "5c.1 done. Next: 5c.2 — 废弃 GlobalToolRegistry + TodoWrite 迁移"
+  notes: "5c.1 + 5c.2 done. Next: 5c.3 — permission_mode parameterization + TauriPermissionPrompter"

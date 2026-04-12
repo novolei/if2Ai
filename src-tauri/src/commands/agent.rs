@@ -17,7 +17,10 @@ use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolD
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
-use crate::modules::runtime::permissions::{PermissionMode, PermissionPolicy};
+use crate::modules::runtime::permissions::{
+    PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
+    PermissionRequest,
+};
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::session::Session as AppSession;
 
@@ -329,6 +332,17 @@ impl ToolExecutor for ToolRegistryExecutor {
     }
 }
 
+/// Parse a permission_mode string into PermissionMode enum.
+fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
+    match mode {
+        Some("readOnly") => PermissionMode::ReadOnly,
+        Some("workspaceWrite") => PermissionMode::WorkspaceWrite,
+        Some("prompt") => PermissionMode::Prompt,
+        Some("dangerFullAccess") | None => PermissionMode::DangerFullAccess,
+        _ => PermissionMode::DangerFullAccess,
+    }
+}
+
 /// Run a single agent turn with the given user message.
 ///
 /// This is the main entry point for the frontend to interact with the agent.
@@ -339,6 +353,7 @@ pub async fn run_agent_turn(
     state: State<'_, AppState>,
     session_id: String,
     user_message: String,
+    permission_mode: Option<String>,
 ) -> Result<RunAgentTurnResponse, String> {
     eprintln!(
         "[DEBUG] run_agent_turn called with session_id: {}, message: {}",
@@ -384,8 +399,9 @@ pub async fn run_agent_turn(
     // Create tool executor bridge
     let tool_executor = ToolRegistryExecutor::new(state.tool_registry.clone());
 
-    // Create permission policy (allow all in this implementation)
-    let permission_policy = PermissionPolicy::new(PermissionMode::DangerFullAccess);
+    // Create permission policy from parameter (defaults to DangerFullAccess)
+    let mode = parse_permission_mode(permission_mode.as_deref());
+    let permission_policy = PermissionPolicy::new(mode);
 
     // System prompt — use SystemPromptBuilder for dynamic prompt
     let system_prompt_str = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
@@ -537,6 +553,7 @@ pub async fn start_agent_stream(
     app_handle: AppHandle,
     session_id: String,
     user_message: String,
+    permission_mode: Option<String>,
 ) -> Result<String, String> {
     use crate::modules::api::StreamEvent as ApiStreamEvent;
     use tauri::Manager;
@@ -646,6 +663,8 @@ pub async fn start_agent_stream(
     let messages_for_stream = all_messages.clone();
     let tool_defs_for_stream = tool_defs.clone();
     let system_prompt_for_stream = system_prompt.clone();
+    let permission_mode_for_stream = permission_mode.clone();
+    let permission_senders = state.permission_senders.clone();
 
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
@@ -896,9 +915,21 @@ pub async fn start_agent_stream(
             // Execute each tool and append results to session_messages
             let mut tool_executor =
                 crate::commands::agent::ToolRegistryExecutor::new(tool_registry_clone.clone());
-            let permission_policy = crate::modules::runtime::permissions::PermissionPolicy::new(
-                crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
-            );
+
+            // Permission policy from stream parameter
+            let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
+            let permission_policy = PermissionPolicy::new(mode);
+
+            // Set up TauriPermissionPrompter for interactive permission requests
+            let (perm_tx, perm_rx): (
+                std::sync::mpsc::Sender<PermissionPromptDecision>,
+                std::sync::mpsc::Receiver<PermissionPromptDecision>,
+            ) = std::sync::mpsc::channel();
+            {
+                let mut senders = permission_senders.lock().unwrap();
+                senders.insert(session_id.clone(), perm_tx);
+            }
+            let mut prompter = TauriPermissionPrompter::new(window.clone(), perm_rx);
 
             for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
                 // Emit running event
@@ -922,7 +953,7 @@ pub async fn start_agent_stream(
                 let permission_outcome = permission_policy.authorize(
                     &tool_name,
                     &input_json,
-                    None::<&mut dyn crate::modules::runtime::permissions::PermissionPrompter>,
+                    Some(&mut prompter),
                 );
 
                 let start_time = std::time::Instant::now();
@@ -1021,4 +1052,89 @@ pub async fn start_agent_stream(
         stream_id_return
     );
     Ok(stream_id_return)
+}
+
+/// TauriPermissionPrompter — bridges the sync PermissionPrompter trait
+/// with async Tauri IPC. Emits a `permission-request` event to the
+/// frontend and blocks on an mpsc channel until the user responds.
+///
+/// Usage: register `respond_permission` on the frontend side and have it
+/// invoke with `{ sessionId, decision: "allow" | "deny" }`.
+pub struct TauriPermissionPrompter {
+    window: tauri::WebviewWindow,
+    receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
+}
+
+#[allow(dead_code)]
+impl TauriPermissionPrompter {
+    /// Create a new TauriPermissionPrompter.
+    pub fn new(
+        window: tauri::WebviewWindow,
+        receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
+    ) -> Self {
+        Self { window, receiver }
+    }
+}
+
+impl PermissionPrompter for TauriPermissionPrompter {
+    fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+        // 1. emit confirmation event to the frontend
+        let _ = self.window.emit(
+            "permission-request",
+            serde_json::json!({
+                "tool_name": request.tool_name,
+                "permission_mode": request.required_mode.as_str(),
+                "current_mode": request.current_mode.as_str(),
+                "message": format!(
+                    "Tool '{}' requires {} permission (current: {})",
+                    request.tool_name,
+                    request.required_mode.as_str(),
+                    request.current_mode.as_str()
+                ),
+            }),
+        );
+
+        // 2. block waiting for frontend response (mpsc blocks — acceptable in sync context)
+        match self
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(60))
+        {
+            Ok(decision) => decision,
+            Err(_) => PermissionPromptDecision::Deny {
+                reason: "Permission request timed out".to_string(),
+            },
+        }
+    }
+}
+
+/// Respond to a permission request from the frontend.
+/// The decision is sent to the waiting TauriPermissionPrompter via mpsc channel.
+#[tauri::command]
+#[allow(dead_code)]
+pub fn respond_permission(
+    state: State<'_, AppState>,
+    session_id: String,
+    decision: String,
+) -> Result<(), String> {
+    let decision_enum = match decision.as_str() {
+        "allow" => PermissionPromptDecision::Allow,
+        _ => PermissionPromptDecision::Deny {
+            reason: "User denied permission".to_string(),
+        },
+    };
+
+    let senders = state
+        .permission_senders
+        .lock()
+        .map_err(|e| format!("Failed to lock permission senders: {e}"))?;
+
+    let sender = senders
+        .get(&session_id)
+        .ok_or_else(|| "No pending permission request for this session".to_string())?;
+
+    sender
+        .send(decision_enum)
+        .map_err(|_| "Failed to send permission decision".to_string())?;
+
+    Ok(())
 }
