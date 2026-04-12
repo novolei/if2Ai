@@ -57,6 +57,7 @@ export interface SessionMeta {
   id: string;
   title: string;
   created_at: string;
+  pinned: boolean;
 }
 
 /**
@@ -152,6 +153,16 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /**
+ * 设置会话置顶状态
+ *
+ * @param id - 会话 ID
+ * @param pinned - 是否置顶
+ */
+export async function setSessionPinned(id: string, pinned: boolean): Promise<void> {
+  return await invoke<void>('set_session_pinned', { id, pinned });
+}
+
+/**
  * 创建新项目
  *
  * @param name - 项目名称
@@ -205,6 +216,25 @@ export async function renameProject(
  */
 export async function deleteProject(id: string): Promise<void> {
   return await invoke<void>('delete_project', { id });
+}
+
+/**
+ * 在系统文件管理器中打开指定项目
+ *
+ * @param id - 项目 ID
+ */
+export async function openProjectInFinder(id: string): Promise<void> {
+  return await invoke<void>('open_project_in_finder', { id });
+}
+
+/**
+ * 为项目创建永久工作树
+ *
+ * @param id - 项目 ID
+ * @returns 创建后的工作树路径
+ */
+export async function createPermanentWorktree(id: string): Promise<string> {
+  return await invoke<string>('create_permanent_worktree', { id });
 }
 
 /**

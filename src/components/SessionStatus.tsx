@@ -1,57 +1,47 @@
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils'
+import { Loader2, CircleCheckBig, CircleAlert, CircleDotDashed } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 
-export type SessionStatus = 'idle' | 'running' | 'working' | 'error';
+export type SessionStatus = 'idle' | 'running' | 'working' | 'error'
 
 export interface SessionStatusProps {
-  /** Current session status */
-  status: SessionStatus;
-  /** Optional label to display */
-  label?: string;
-  /** Optional className for styling */
-  className?: string;
+  status: SessionStatus
+  label?: string
+  className?: string
 }
 
 const statusConfig = {
   idle: {
-    icon: '○',
-    color: 'text-muted-foreground',
-    label: 'Idle',
+    label: '待机',
+    icon: CircleDotDashed,
+    className: 'text-muted-foreground bg-muted/50',
   },
   running: {
-    icon: '◐',
-    color: 'text-blue-500',
-    label: 'Running',
+    label: '执行中',
+    icon: Loader2,
+    className: 'text-blue-600 bg-blue-500/10',
     animate: true,
   },
   working: {
-    icon: '●',
-    color: 'text-green-500',
-    label: 'Working',
+    label: '思考中',
+    icon: CircleCheckBig,
+    className: 'text-emerald-600 bg-emerald-500/10',
   },
   error: {
-    icon: '✕',
-    color: 'text-red-500',
-    label: 'Error',
+    label: '异常',
+    icon: CircleAlert,
+    className: 'text-destructive bg-destructive/10',
   },
-};
+} as const
 
 export function SessionStatus({ status, label, className }: SessionStatusProps) {
-  const config = statusConfig[status];
+  const config = statusConfig[status]
+  const Icon = config.icon
 
   return (
-    <div className={cn('flex items-center gap-1.5 text-xs', className)}>
-      <span
-        className={cn(
-          'font-mono text-sm leading-none',
-          config.color,
-          'animate' in config && config.animate && 'animate-spin'
-        )}
-      >
-        {config.icon}
-      </span>
-      <span className={cn('text-muted-foreground', config.color)}>
-        {label || config.label}
-      </span>
-    </div>
-  );
+    <Badge variant="outline" className={cn('gap-1.5 rounded-full px-3 py-1 text-xs font-medium', config.className, className)}>
+      <Icon className={cn('h-3.5 w-3.5', config.animate && 'animate-spin')} />
+      <span>{label || config.label}</span>
+    </Badge>
+  )
 }

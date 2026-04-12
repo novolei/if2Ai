@@ -1,5 +1,5 @@
-import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import '@fontsource-variable/geist'
 import './styles/globals.css'
 import App from './App'
 import { SettingsApp } from './components/settings/SettingsApp'
@@ -16,7 +16,5 @@ const Root = () => {
 }
 
 createRoot(document.getElementById('app')!).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
+  <Root />,
 )

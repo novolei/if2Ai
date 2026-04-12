@@ -66,6 +66,9 @@ pub struct SessionMeta {
     pub title: String,
     /// Creation timestamp (RFC3339).
     pub created_at: String,
+    /// Whether the session is pinned.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[allow(dead_code)]
@@ -77,6 +80,7 @@ impl SessionMeta {
             id: session.id.clone(),
             title: session.title.clone(),
             created_at: session.created_at.clone(),
+            pinned: session.pinned,
         }
     }
 }
@@ -99,6 +103,9 @@ pub struct Session {
     pub updated_at: String,
     /// Total token count.
     pub token_count: u64,
+    /// Whether the session is pinned.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[allow(dead_code)]
@@ -120,6 +127,7 @@ impl Session {
             created_at: now_str.clone(),
             updated_at: now_str,
             token_count: 0,
+            pinned: false,
         }
     }
 }
@@ -257,8 +265,8 @@ impl SessionManager {
             }
         }
 
-        // Sort by creation date, newest first
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // Sort pinned first, then by creation date, newest first
+        sessions.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| b.created_at.cmp(&a.created_at)));
 
         Ok(sessions)
     }
@@ -374,6 +382,19 @@ impl SessionManager {
         self.save_session(&session).await
     }
 
+    /// Set the pinned state of a session.
+    pub async fn set_session_pinned(
+        &self,
+        session_id: &str,
+        pinned: bool,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        session.pinned = pinned;
+        session.updated_at = format_time(SystemTime::now());
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
     /// List all sessions (legacy path only, for backward compatibility).
     pub async fn list_sessions(&self) -> Result<Vec<SessionMeta>, SessionError> {
         self.init().await?;
@@ -399,8 +420,8 @@ impl SessionManager {
             }
         }
 
-        // Sort by creation date, newest first
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // Sort pinned first, then by creation date, newest first
+        sessions.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| b.created_at.cmp(&a.created_at)));
 
         Ok(sessions)
     }

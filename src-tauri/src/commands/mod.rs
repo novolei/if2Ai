@@ -44,8 +44,14 @@ pub mod window;
 #[allow(unused_imports)]
 pub use agent::{run_agent_turn, start_agent_stream, RunAgentTurnResponse};
 #[allow(unused_imports)]
-pub use project::{create_project, delete_project, get_project, list_projects, rename_project};
+pub use project::{
+    create_permanent_worktree, create_project, delete_project, get_project, list_projects,
+    open_project_in_finder, rename_project,
+};
 #[allow(unused_imports)]
-pub use session::{create_session, delete_session, get_session, list_project_sessions, list_sessions};
+pub use session::{
+    create_session, delete_session, get_session, list_project_sessions, list_sessions,
+    set_session_pinned,
+};
 #[allow(unused_imports)]
 pub use window::{close_settings_window, open_settings_window};

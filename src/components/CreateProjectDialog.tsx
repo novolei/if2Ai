@@ -1,8 +1,17 @@
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { FolderOpen, X } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { FolderOpen, FolderPlus } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 interface CreateProjectDialogProps {
   isOpen: boolean
@@ -19,35 +28,45 @@ export function CreateProjectDialog({
   const [workdir, setWorkdir] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  if (!isOpen) return null
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    setName('')
+    setWorkdir('')
+    setIsSubmitting(false)
+  }, [isOpen])
 
   const handleSelectDirectory = async () => {
-    console.log('[DEBUG] handleSelectDirectory called')
     try {
-      console.log('[DEBUG] Opening dialog...')
       const selected = await open({
         directory: true,
         multiple: false,
         title: '选择项目目录',
       })
-      console.log('[DEBUG] Dialog result:', selected)
+
       if (selected && typeof selected === 'string') {
         setWorkdir(selected)
+        if (!name.trim()) {
+          const folderName = selected.split(/[\\/]/).filter(Boolean).pop()
+          if (folderName) {
+            setName(folderName)
+          }
+        }
       }
     } catch (err) {
-      console.error('[DEBUG] Failed to select directory:', err)
+      console.error('Failed to select directory:', err)
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!name.trim() || !workdir.trim()) return
 
     setIsSubmitting(true)
     try {
       await onSubmit(name.trim(), workdir.trim())
-      setName('')
-      setWorkdir('')
       onClose()
     } catch (err) {
       console.error('Failed to create project:', err)
@@ -57,45 +76,32 @@ export function CreateProjectDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
+    <Dialog open={isOpen} onOpenChange={(openState) => !openState && onClose()}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FolderPlus className="h-5 w-5 text-primary" />
+            新建项目
+          </DialogTitle>
+          <DialogDescription>
+            选择一个本地目录，为它创建一个新的智能体工作区和首个会话。
+          </DialogDescription>
+        </DialogHeader>
 
-      {/* Dialog */}
-      <div className="relative bg-background rounded-lg shadow-xl border border-border w-full max-w-md mx-4 p-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">新建项目</h2>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-accent rounded-md transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="project-name" className="block text-sm font-medium mb-1.5">
-              项目名称
-            </label>
+        <form onSubmit={handleSubmit} className="grid gap-5">
+          <div className="grid gap-2">
+            <Label htmlFor="project-name">项目名称</Label>
             <Input
               id="project-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="例如：我的项目"
+              placeholder="例如：产品重构"
               autoFocus
             />
           </div>
 
-          <div>
-            <label htmlFor="project-workdir" className="block text-sm font-medium mb-1.5">
-              工作目录
-            </label>
+          <div className="grid gap-2">
+            <Label htmlFor="project-workdir">工作目录</Label>
             <div className="flex gap-2">
               <Input
                 id="project-workdir"
@@ -104,28 +110,26 @@ export function CreateProjectDialog({
                 placeholder="选择或输入目录路径"
                 className="flex-1"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleSelectDirectory}
-                title="选择目录"
-              >
+              <Button type="button" variant="outline" size="icon" onClick={handleSelectDirectory}>
                 <FolderOpen className="h-4 w-4" />
               </Button>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+            建议为每个项目使用独立目录，方便后续的会话、配置和文件操作保持清晰。
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               取消
             </Button>
             <Button type="submit" disabled={!name.trim() || !workdir.trim() || isSubmitting}>
               {isSubmitting ? '创建中...' : '创建'}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

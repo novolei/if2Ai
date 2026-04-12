@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { cn } from '@/lib/utils'
 
 export type OrbStatus = 'idle' | 'thinking' | 'running' | 'completed' | 'error'
 
@@ -16,6 +17,22 @@ const sizeMap = {
   hero: 160,
 }
 
+const statusGlowColors = {
+  idle: 'rgba(123, 157, 145, 0.42)',
+  thinking: 'rgba(170, 186, 219, 0.42)',
+  running: 'rgba(112, 185, 205, 0.42)',
+  completed: 'rgba(111, 194, 156, 0.42)',
+  error: 'rgba(219, 110, 127, 0.42)',
+}
+
+const statusLabels = {
+  idle: '待机',
+  thinking: '思考中',
+  running: '执行中',
+  completed: '完成',
+  error: '异常',
+}
+
 export function AgentOrb({
   status = 'idle',
   size = 'md',
@@ -26,20 +43,12 @@ export function AgentOrb({
 
   useEffect(() => {
     switch (status) {
-      case 'idle':
-        setAnimationState('breathe')
-        break
       case 'thinking':
+      case 'completed':
         setAnimationState('pulse')
         break
       case 'running':
         setAnimationState('drift')
-        break
-      case 'completed':
-        setAnimationState('pulse')
-        break
-      case 'error':
-        setAnimationState('breathe')
         break
       default:
         setAnimationState('breathe')
@@ -47,66 +56,48 @@ export function AgentOrb({
   }, [status])
 
   const dimension = sizeMap[size]
-
-  const getStatusColor = () => {
-    switch (status) {
-      case 'idle':
-        return 'var(--color-primary)'
-      case 'thinking':
-        return 'var(--color-accent-mint)'
-      case 'running':
-        return 'var(--color-accent-cyan)'
-      case 'completed':
-        return 'var(--color-state-success)'
-      case 'error':
-        return 'var(--color-state-error)'
-      default:
-        return 'var(--color-primary)'
-    }
-  }
+  const glowColor = statusGlowColors[status]
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div
         className="relative rounded-full"
-        style={{
-          width: dimension,
-          height: dimension,
-        }}
+        style={{ width: dimension, height: dimension }}
       >
-        {/* 外层：半透明玻璃球体 */}
         <div
-          className="absolute inset-0 rounded-full"
+          className={cn(
+            'absolute inset-0 rounded-full border border-white/60 bg-white/30 shadow-[0_0_60px_rgba(255,255,255,0.18)] backdrop-blur-xl',
+            animationState === 'breathe' && 'animate-[pulse_6s_ease-in-out_infinite]'
+          )}
           style={{
-            background: `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.22) 35%, transparent 60%)`,
-            backgroundColor: 'rgba(255, 255, 255, 0.3)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid rgba(255, 255, 255, 0.5)',
-            animation: animationState === 'breathe' ? 'breathe 8s ease-in-out infinite' : undefined,
+            background:
+              'radial-gradient(circle at 35% 30%, rgba(255,255,255,0.92), rgba(255,255,255,0.24) 35%, transparent 60%)',
           }}
         />
 
-        {/* 中层：淡蓝/淡紫/薄荷绿流动层 */}
         <div
-          className="absolute inset-2 rounded-full"
+          className={cn(
+            'absolute inset-2 rounded-full',
+            animationState === 'drift' && 'animate-[pulse_4.5s_ease-in-out_infinite]'
+          )}
           style={{
-            background: `radial-gradient(circle at 30% 30%, ${getStatusColor()}, transparent 70%)`,
-            opacity: 0.7,
-            animation: animationState === 'drift' ? 'drift 12s ease-in-out infinite' : undefined,
+            background: `radial-gradient(circle at 30% 30%, ${glowColor}, transparent 70%)`,
+            opacity: 0.9,
             filter: 'blur(4px)',
           }}
         />
 
-        {/* 内层：中心柔白高光 */}
         <div
-          className="absolute inset-4 rounded-full"
+          className={cn(
+            'absolute inset-4 rounded-full',
+            animationState === 'pulse' && 'animate-[pulse_3.2s_ease-in-out_infinite]'
+          )}
           style={{
-            background: 'radial-gradient(circle at 40% 40%, rgba(255,255,255,0.95), rgba(255,255,255,0.3) 50%, transparent 70%)',
-            animation: animationState === 'pulse' ? 'pulse-soft 3s ease-in-out infinite' : undefined,
+            background:
+              'radial-gradient(circle at 40% 40%, rgba(255,255,255,0.96), rgba(255,255,255,0.28) 50%, transparent 70%)',
           }}
         />
 
-        {/* 底层：极弱彩虹折射感 */}
         <div
           className="absolute inset-0 rounded-full"
           style={{
@@ -118,105 +109,64 @@ export function AgentOrb({
           }}
         />
 
-        {/* 边缘光晕 */}
         <div
           className="absolute inset-0 rounded-full"
           style={{
-            boxShadow: `0 0 ${dimension * 0.3}px ${getStatusColor()}40`,
-            opacity: status === 'error' ? 0.6 : 0.3,
+            boxShadow: `0 0 ${dimension * 0.3}px ${glowColor}`,
+            opacity: status === 'error' ? 0.72 : 0.45,
           }}
         />
       </div>
 
-      {/* 状态标签 */}
       {showLabel && (
-        <span
-          className="text-xs font-medium"
-          style={{
-            color: 'var(--color-text-secondary)',
-            fontFamily: 'var(--font-sans)',
-          }}
-        >
-          {label || getStatusLabel(status)}
+        <span className="text-xs font-medium text-muted-foreground">
+          {label || statusLabels[status]}
         </span>
       )}
     </div>
   )
 }
 
-function getStatusLabel(status: OrbStatus): string {
-  switch (status) {
-    case 'idle':
-      return '待机'
-    case 'thinking':
-      return '思考中'
-    case 'running':
-      return '执行中'
-    case 'completed':
-      return '完成'
-    case 'error':
-      return '异常'
-    default:
-      return '待机'
-  }
-}
-
-// Hero 尺寸的 Orb，用于 Splash 页面
 export function HeroOrb() {
   return (
     <div className="relative">
-      {/* 背景光斑 */}
       <div
-        className="absolute rounded-full animate-drift"
+        className="absolute rounded-full blur-3xl animate-[pulse_8s_ease-in-out_infinite]"
         style={{
           width: 320,
           height: 320,
           top: -80,
           left: -80,
-          background: 'radial-gradient(circle, rgba(220,207,244,0.4) 0%, transparent 70%)',
-          filter: 'blur(40px)',
-          animationDelay: '0s',
+          background: 'radial-gradient(circle, rgba(166,191,180,0.38) 0%, transparent 70%)',
         }}
       />
       <div
-        className="absolute rounded-full animate-drift"
+        className="absolute rounded-full blur-3xl animate-[pulse_10s_ease-in-out_infinite]"
         style={{
           width: 280,
           height: 280,
           top: -60,
           left: -40,
-          background: 'radial-gradient(circle, rgba(143,175,214,0.35) 0%, transparent 70%)',
-          filter: 'blur(35px)',
+          background: 'radial-gradient(circle, rgba(139,162,207,0.28) 0%, transparent 70%)',
           animationDelay: '-4s',
         }}
       />
       <div
-        className="absolute rounded-full animate-drift"
+        className="absolute rounded-full blur-3xl animate-[pulse_12s_ease-in-out_infinite]"
         style={{
           width: 240,
           height: 240,
           top: -40,
           left: 0,
-          background: 'radial-gradient(circle, rgba(217,236,229,0.45) 0%, transparent 70%)',
-          filter: 'blur(30px)',
+          background: 'radial-gradient(circle, rgba(210,224,219,0.34) 0%, transparent 70%)',
           animationDelay: '-8s',
         }}
       />
 
-      {/* 主 Orb */}
       <AgentOrb status="idle" size="hero" />
 
-      {/* 底部标签 */}
       <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap">
-        <span
-          className="text-sm font-medium"
-          style={{
-            color: 'var(--color-text-tertiary)',
-            fontFamily: 'var(--font-sans)',
-          }}
-        >
-          准备就绪
-        </span>
+        <span className="text-sm font-medium text-muted-foreground">准备就绪</span>
       </div>
     </div>
   )

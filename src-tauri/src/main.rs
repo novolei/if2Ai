@@ -8,14 +8,17 @@ use std::process::Command;
 
 use commands::AppState;
 use commands::{
-    close_settings_window, create_project, create_session, delete_project, delete_session,
-    get_project, get_session, list_project_sessions, list_projects, list_sessions,
-    open_settings_window, rename_project, run_agent_turn, start_agent_stream,
+    close_settings_window, create_permanent_worktree, create_project, create_session,
+    delete_project, delete_session, get_project, get_session, list_project_sessions,
+    list_projects, list_sessions, open_project_in_finder, open_settings_window, rename_project,
+    run_agent_turn, set_session_pinned, start_agent_stream,
 };
 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
+    window::Color,
+    TitleBarStyle,
     Manager,
 };
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -91,6 +94,7 @@ fn main() {
             start_agent_stream,
             list_sessions,
             delete_session,
+            set_session_pinned,
             create_session,
             list_project_sessions,
             create_project,
@@ -99,6 +103,8 @@ fn main() {
             get_session,
             rename_project,
             delete_project,
+            open_project_in_finder,
+            create_permanent_worktree,
             open_settings_window,
             close_settings_window,
         ])
@@ -132,6 +138,8 @@ fn main() {
 
             // Hide window on close button instead of exiting
             let window = app.get_webview_window("main").unwrap();
+            let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+            let _ = window.set_background_color(Some(Color(0xf6, 0xf7, 0xf8, 0xff)));
             let window_clone = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -69,6 +69,21 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
         .map_err(|e| e.to_string())
 }
 
+/// Set the pinned state of a session.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn set_session_pinned(
+    state: State<'_, AppState>,
+    id: String,
+    pinned: bool,
+) -> Result<Session, String> {
+    state
+        .session_manager
+        .set_session_pinned(&id, pinned)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Get a session with its messages (for restoring chat history).
 #[tauri::command]
 #[allow(dead_code)]

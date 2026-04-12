@@ -19,7 +19,10 @@
                 "fullscreen": false,
                 "resizable": true,
                 "minimizable": true,
-                "closable": true
+                "closable": true,
+                "hiddenTitle": true,
+                "titleBarStyle": "Overlay",
+                "backgroundColor": "#f6f7f8"
             }
         ],
         "trayIcon": {

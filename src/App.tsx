@@ -1,38 +1,44 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { cn } from '@/lib/utils'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import {
+  ChevronDown,
+  Code2,
+  MessageSquare,
+  Plus,
+  Settings,
+  SlidersHorizontal,
+  Sparkles,
+  SquareTerminal,
+  Play,
+  MoreHorizontal,
+} from 'lucide-react'
 import {
   startAgentStream,
   listenToStream,
   listProjects,
   listProjectSessions,
+  createPermanentWorktree,
   createProject,
   deleteProject,
   renameProject,
   deleteSession,
+  setSessionPinned,
   createSession,
   getSession,
+  openProjectInFinder,
   openSettingsWindow,
   type Project,
   type ProjectMeta,
   type SessionMeta,
   type StreamTokenPayload,
 } from '@/lib/tauri'
-import { open } from '@tauri-apps/plugin-dialog'
+import { Button } from '@/components/ui/button'
 import { ProjectRail } from '@/components/ProjectRail'
-import { WelcomeScreen } from '@/components/WelcomeScreen'
-import { SessionStatus as SessionStatusComponent, type SessionStatus } from '@/components/SessionStatus'
-import {
-  Bot,
-  Settings,
-  Sparkles,
-  ChevronDown,
-  ChevronRight,
-  ArrowDown,
-} from 'lucide-react'
-import { TypingIndicator } from '@/components/ui/typing-indicator'
-import { StreamingMarkdown } from '@/components/ui/streaming-markdown'
-import { InputArea } from '@/components/ui/input-area'
-import chatStyles from '@/styles/chat-bubble.module.css'
+import { ChatUI } from '@/components/ui/chat-ui'
+import { CreateProjectDialog } from '@/components/CreateProjectDialog'
+import { ErrorBoundary } from '@/components/ui/error-boundary'
+
+const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
 
 interface Message {
   id: string
@@ -40,9 +46,9 @@ interface Message {
   content: string
   timestamp: Date
   thinking?: string
-  thinkingTime?: number  // 思考耗时（毫秒）
-  disableAnimation?: boolean  // 禁用打字机效果（用于历史消息）
-  isStreaming?: boolean  // 是否正在流式输出
+  thinkingTime?: number
+  disableAnimation?: boolean
+  isStreaming?: boolean
 }
 
 interface Conversation {
@@ -53,123 +59,53 @@ interface Conversation {
   updatedAt: Date
 }
 
-// 折叠的思考内容组件
-function ThinkingBlock({ content, thinkingTime }: { content: string; thinkingTime?: number }) {
-  const [isExpanded, setIsExpanded] = useState(false)
-
-  const formatTime = (ms: number) => {
-    if (ms < 1000) return `${ms}ms`
-    return `${(ms / 1000).toFixed(1)}s`
-  }
-
-  return (
-    <div className={chatStyles.thinkingBlock}>
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className={chatStyles.thinkingBlockSummary}
-      >
-        {isExpanded ? (
-          <ChevronDown className="h-3 w-3" />
-        ) : (
-          <ChevronRight className="h-3 w-3" />
-        )}
-        <span>思考过程</span>
-        {thinkingTime !== undefined && (
-          <span style={{ color: 'var(--color-text-tertiary)', opacity: 0.6 }}>({formatTime(thinkingTime)})</span>
-        )}
-      </button>
-      {isExpanded && (
-        <div className={chatStyles.thinkingBlockBody}>
-          {content}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// 打字机效果组件
-function TypewriterText({ text, disableAnimation = false }: { text: string; disableAnimation?: boolean }) {
-  const [displayedText, setDisplayedText] = useState('')
-  const [isAnimating, setIsAnimating] = useState(!disableAnimation)
-  const textRef = useRef(text)
-
-  useEffect(() => {
-    if (disableAnimation) {
-      setDisplayedText(text)
-      setIsAnimating(false)
-      return
-    }
-
-    if (text === displayedText) {
-      setIsAnimating(false)
-      return
-    }
-
-    textRef.current = text
-    setDisplayedText('')
-    setIsAnimating(true)
-
-    let index = 0
-    const interval = setInterval(() => {
-      if (index < text.length) {
-        setDisplayedText(text.slice(0, index + 1))
-        index++
-      } else {
-        clearInterval(interval)
-        setIsAnimating(false)
-      }
-    }, 20) // 每20ms显示一个字符
-
-    return () => clearInterval(interval)
-  }, [text, disableAnimation])
-
-  return (
-    <span>
-      {displayedText}
-      {isAnimating && <span className="animate-pulse">▍</span>}
-    </span>
-  )
-}
-
 function App() {
-  // Project state
+  const appWindow = getCurrentWindow()
   const [projects, setProjects] = useState<ProjectMeta[]>([])
   const [projectSessions, setProjectSessions] = useState<Record<string, SessionMeta[]>>({})
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [leftPaneWidth, setLeftPaneWidth] = useState(376)
   const [loading, setLoading] = useState(false)
-
-  // Session status for agent execution
-  const [sessionStatus, setSessionStatus] = useState<SessionStatus>('idle')
-
-  // Conversation state
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [showScrollBtn, setShowScrollBtn] = useState(false)
-  const [fontMode, setFontMode] = useState<'serif' | 'sans'>(() => {
-    return (localStorage.getItem('fontMode') as 'serif' | 'sans') || 'serif'
-  })
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const isAtBottom = useRef(true)
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
+  const resizeRef = useRef<{
+    startX: number
+    startWidth: number
+  } | null>(null)
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null
+  const activeTitle = activeConv?.title ?? '重构桌面端 UI 为 shadcn 体系'
+  const modelLabel = 'GPT-5.4-Mini'
+  const branchLabel = 'feature/consolidate-codebase'
+  const minLeftPaneWidth = 280
+  const maxLeftPaneWidth = 520
+  const activeMessages = useMemo(
+    () =>
+      activeConv?.messages.map((msg) => ({
+        ...msg,
+        content: msg.content || ' ',
+      })) ?? [],
+    [activeConv?.messages]
+  )
+  const runningSessionIds = Object.values(conversations)
+    .filter((conv) => conv.messages.some((msg) => msg.isStreaming))
+    .map((conv) => conv.id)
 
-  // Load projects on mount
   useEffect(() => {
-    loadProjects().then(() => {
-      // Restore last active session after projects are loaded
+    loadProjects().then((projectList) => {
       const lastProjectId = localStorage.getItem('lastActiveProjectId')
       const lastSessionId = localStorage.getItem('lastActiveSessionId')
       if (lastProjectId && lastSessionId) {
-        handleSelectSession(lastProjectId, lastSessionId)
+        const project = projectList.find((item) => item.id === lastProjectId)
+        handleSelectSession(lastProjectId, lastSessionId, project)
       }
     })
   }, [])
 
-  // Save active session to localStorage when it changes
   useEffect(() => {
     if (activeProjectId && activeSessionId) {
       localStorage.setItem('lastActiveProjectId', activeProjectId)
@@ -177,71 +113,21 @@ function App() {
     }
   }, [activeProjectId, activeSessionId])
 
-  // Handle scroll to detect if user is near bottom
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (el) {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-      isAtBottom.current = distanceFromBottom < 100
-      setShowScrollBtn(!isAtBottom.current)
-    }
-  }, [])
-
-  // Scroll to bottom function with safety margin
-  const scrollToBottom = useCallback((smooth = true) => {
-    const el = scrollRef.current
-    if (el) {
-      const targetTop = el.scrollHeight - el.clientHeight + 20 // 20px 安全留白
-      el.scrollTo({ top: targetTop, behavior: smooth ? 'smooth' : 'instant' })
-      isAtBottom.current = true
-    }
-  }, [])
-
-  // ResizeObserver：内容高度变化 + 在底部或AI回复中 → 自动滚
-  useEffect(() => {
-    const content = contentRef.current
-    if (!content) return
-
-    const ro = new ResizeObserver(() => {
-      if (isAtBottom.current || isLoading) {
-        scrollToBottom(true)
-      }
-    })
-    ro.observe(content)
-    return () => ro.disconnect()
-  }, [isLoading, scrollToBottom])
-
-  // 首次进入聊天页面或有新消息时 → 滚动到底部
-  const prevMsgLen = useRef(0)
-  useEffect(() => {
-    const msgLen = activeConv?.messages.length ?? 0
-    if (msgLen > prevMsgLen.current) {
-      // 有新消息加入
-      if (isLoading || isAtBottom.current) {
-        scrollToBottom(true)
-      }
-    } else if (msgLen > 0 && prevMsgLen.current === 0) {
-      // 首次进入聊天页面
-      scrollToBottom(false) // 立即滚动，不使用 smooth
-    }
-    prevMsgLen.current = msgLen
-  }, [activeConv?.messages, isLoading, scrollToBottom])
-
-  const loadProjects = async () => {
+  const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
       setLoading(true)
       const projectList = await listProjects()
       setProjects(projectList)
 
-      // Load sessions for each project
       const sessionsMap: Record<string, SessionMeta[]> = {}
       for (const project of projectList) {
-        const sessions = await listProjectSessions(project.id)
-        sessionsMap[project.id] = sessions
+        sessionsMap[project.id] = await listProjectSessions(project.id)
       }
       setProjectSessions(sessionsMap)
+      return projectList
     } catch (err) {
       console.error('Failed to load projects:', err)
+      return []
     } finally {
       setLoading(false)
     }
@@ -256,72 +142,90 @@ function App() {
         name: project.name,
         workdir: project.workdir,
         created_at: project.created_at,
-        updated_at: '', // Not available in ProjectMeta
+        updated_at: '',
       })
     }
-    // Clear active session when switching projects
     setActiveSessionId(null)
   }
 
-  const handleSelectSession = async (projectId: string, sessionId: string) => {
+  const handleSelectSession = async (
+    projectId: string,
+    sessionId: string,
+    projectOverride?: ProjectMeta
+  ) => {
     setActiveProjectId(projectId)
     setActiveSessionId(sessionId)
 
-    // Initialize conversation for this session if not exists
-    if (!conversations[sessionId]) {
-      // Find the session title from projectSessions
-      const sessionMeta = projectSessions[projectId]?.find(s => s.id === sessionId)
+    const project = projectOverride ?? projects.find((item) => item.id === projectId)
+    if (project) {
+      setCurrentProject({
+        id: project.id,
+        name: project.name,
+        workdir: project.workdir,
+        created_at: project.created_at,
+        updated_at: '',
+      })
+    }
 
-      // Load full session with messages from backend
-      try {
-        const fullSession = await getSession(sessionId)
-        const convertedMessages = fullSession.messages.map((msg) => ({
-          id: crypto.randomUUID(),
-          role: msg.role as 'user' | 'assistant',
-          content: msg.blocks.find(b => b.type === 'text')?.text || '',
-          timestamp: new Date(fullSession.updated_at),
-          thinking: msg.thinking,
-          disableAnimation: true,  // 历史消息不需要打字机效果
-        }))
-        setConversations(prev => ({
-          ...prev,
-          [sessionId]: {
-            id: sessionId,
-            projectId,
-            title: fullSession.title || sessionMeta?.title || '新对话',
-            messages: convertedMessages,
-            updatedAt: new Date(fullSession.updated_at),
-          },
-        }))
-      } catch (err) {
-        console.error('Failed to load session:', err)
-        // Fallback to empty conversation
-        setConversations(prev => ({
-          ...prev,
-          [sessionId]: {
-            id: sessionId,
-            projectId,
-            title: sessionMeta?.title || '新对话',
-            messages: [],
-            updatedAt: new Date(),
-          },
-        }))
-      }
+    if (conversations[sessionId]) return
+
+    const sessionMeta = projectSessions[projectId]?.find((session) => session.id === sessionId)
+
+    try {
+      const fullSession = await getSession(sessionId)
+      const convertedMessages = fullSession.messages.map((msg) => ({
+        id: crypto.randomUUID(),
+        role: msg.role as 'user' | 'assistant',
+        content: msg.blocks.find((block) => block.type === 'text')?.text || '',
+        timestamp: new Date(fullSession.updated_at),
+        thinking: msg.thinking,
+        disableAnimation: true,
+      }))
+
+      setConversations((prev) => ({
+        ...prev,
+        [sessionId]: {
+          id: sessionId,
+          projectId,
+          title: fullSession.title || sessionMeta?.title || '新对话',
+          messages: convertedMessages,
+          updatedAt: new Date(fullSession.updated_at),
+        },
+      }))
+    } catch (err) {
+      console.error('Failed to load session:', err)
+      setConversations((prev) => ({
+        ...prev,
+        [sessionId]: {
+          id: sessionId,
+          projectId,
+          title: sessionMeta?.title || '新对话',
+          messages: [],
+          updatedAt: new Date(),
+        },
+      }))
     }
   }
 
   const handleNewChat = async (projectId: string) => {
     try {
       const session = await createSession(projectId, '新对话')
-      // Refresh sessions for this project
       const sessions = await listProjectSessions(projectId)
       setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
 
-      // Set active session
+      const project = projects.find((item) => item.id === projectId)
+      if (project) {
+        setCurrentProject({
+          id: project.id,
+          name: project.name,
+          workdir: project.workdir,
+          created_at: project.created_at,
+          updated_at: '',
+        })
+      }
+
       setActiveProjectId(projectId)
       setActiveSessionId(session.id)
-
-      // Create empty conversation for the new session
       setConversations((prev) => ({
         ...prev,
         [session.id]: {
@@ -355,9 +259,8 @@ function App() {
     try {
       await renameProject(projectId, newName)
       await loadProjects()
-      // Update currentProject if it's the one being renamed
       if (currentProject?.id === projectId) {
-        setCurrentProject(prev => prev ? { ...prev, name: newName } : null)
+        setCurrentProject((prev) => (prev ? { ...prev, name: newName } : null))
       }
     } catch (err) {
       console.error('Failed to rename project:', err)
@@ -367,17 +270,13 @@ function App() {
   const handleDeleteSession = async (projectId: string, sessionId: string) => {
     try {
       await deleteSession(sessionId)
-      // Refresh sessions for this project
       const sessions = await listProjectSessions(projectId)
       setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
-
-      // Remove conversation
       setConversations((prev) => {
         const next = { ...prev }
         delete next[sessionId]
         return next
       })
-
       if (activeSessionId === sessionId) {
         setActiveSessionId(null)
       }
@@ -386,34 +285,26 @@ function App() {
     }
   }
 
-  const handleCreateProject = async () => {
+  const handleTogglePinSession = async (projectId: string, sessionId: string, pinned: boolean) => {
     try {
-      // Open directory picker
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: '选择项目目录',
-      })
+      await setSessionPinned(sessionId, !pinned)
+      const sessions = await listProjectSessions(projectId)
+      setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
+    } catch (err) {
+      console.error('Failed to toggle session pin:', err)
+    }
+  }
 
-      if (!selected || typeof selected !== 'string') return
-
-      // Extract folder name as project name
-      const folderName = selected.split('/').pop() || '新项目'
-
-      // Create project
-      const newProject = await createProject(folderName, selected)
+  const handleCreateProject = async (name: string, workdir: string) => {
+    try {
+      const newProject = await createProject(name, workdir)
       await loadProjects()
-
-      // Create a new session for this project
       const session = await createSession(newProject.id, '新对话')
 
-      // Set active project and session
       setCurrentProject(newProject)
       setActiveProjectId(newProject.id)
       setActiveSessionId(session.id)
-
-      // Create empty conversation for the new session
-      setConversations(prev => ({
+      setConversations((prev) => ({
         ...prev,
         [session.id]: {
           id: session.id,
@@ -423,6 +314,7 @@ function App() {
           updatedAt: new Date(),
         },
       }))
+      setIsCreateProjectOpen(false)
     } catch (err) {
       console.error('Failed to create project:', err)
     }
@@ -447,22 +339,18 @@ function App() {
       messages: [...conv.messages, userMsg],
       updatedAt: new Date(),
     }
+
     setConversations((prev) => ({ ...prev, [activeSessionId]: updatedConv }))
     setInput('')
     setIsLoading(true)
-    setSessionStatus('running')
 
-    // 记录请求开始时间
     const startTime = Date.now()
-
-    // 流式内容累加器
     let accumulatedText = ''
     let accumulatedThinking = ''
     let assistantMsgId: string | null = null
 
-    // 创建 assistant 消息（首次收到 token 时调用）
     const createAssistantMessage = () => {
-      if (assistantMsgId) return // 已创建
+      if (assistantMsgId) return
       assistantMsgId = crypto.randomUUID()
       const assistantMsg: Message = {
         id: assistantMsgId,
@@ -471,6 +359,7 @@ function App() {
         timestamp: new Date(),
         isStreaming: true,
       }
+
       setConversations((prev) => {
         const currentConv = prev[activeSessionId]
         if (!currentConv) return prev
@@ -485,23 +374,16 @@ function App() {
     }
 
     try {
-      // 调用流式 API
-      console.log('[DEBUG] Calling startAgentStream with sessionId:', activeSessionId, 'message:', userMsg.content)
+      createAssistantMessage()
       const streamId = await startAgentStream(activeSessionId, userMsg.content)
-      console.log('[DEBUG] startAgentStream returned streamId:', streamId)
 
-      // 监听流式事件
       const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
-        console.log('[DEBUG] Stream event:', payload.event_type, payload.text || payload.thinking || '')
-
         if (payload.event_type === 'text_delta' && payload.text) {
-          // 首次收到 token 时创建消息并关闭 loading
           if (!assistantMsgId) {
             createAssistantMessage()
-            setIsLoading(false)
           }
+
           accumulatedText += payload.text
-          // 更新消息内容
           setConversations((prev) => {
             const currentConv = prev[activeSessionId]
             if (!currentConv) return prev
@@ -516,11 +398,10 @@ function App() {
             }
           })
         } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
-          // 首次收到 thinking 时创建消息并关闭 loading
           if (!assistantMsgId) {
             createAssistantMessage()
-            setIsLoading(false)
           }
+
           accumulatedThinking += payload.thinking
           setConversations((prev) => {
             const currentConv = prev[activeSessionId]
@@ -536,20 +417,17 @@ function App() {
             }
           })
         } else if (payload.event_type === 'stream_complete') {
-          // 流式结束
-          setSessionStatus('idle')
           if (assistantMsgId) {
             setConversations((prev) => {
               const currentConv = prev[activeSessionId]
               if (!currentConv) return prev
-              const thinkingTime = Date.now() - startTime
               return {
                 ...prev,
                 [activeSessionId]: {
                   ...currentConv,
                   messages: currentConv.messages.map((msg) =>
                     msg.id === assistantMsgId
-                      ? { ...msg, isStreaming: false, thinkingTime }
+                      ? { ...msg, isStreaming: false, thinkingTime: Date.now() - startTime }
                       : msg
                   ),
                 },
@@ -564,25 +442,15 @@ function App() {
         }
       })
     } catch (err) {
-      console.error('[DEBUG] startAgentStream error:', err)
-      setSessionStatus('error')
+      console.error('startAgentStream error:', err)
 
-      // 提取错误消息
-      let errorMessage = 'Agent 执行失败，请稍后重试。'
-      if (err && typeof err === 'object') {
-        const errorObj = err as { error?: string; message?: string }
-        if (errorObj.error) {
-          errorMessage = errorObj.error
-        } else if (errorObj.message) {
-          errorMessage = errorObj.message
-        } else if ('toString' in err) {
-          errorMessage = String(err)
-        }
-      } else if (err instanceof Error) {
-        errorMessage = err.message
-      }
+      const errorMessage =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message?: string }).message || 'Agent 执行失败，请稍后重试。')
+          : err instanceof Error
+            ? err.message
+            : 'Agent 执行失败，请稍后重试。'
 
-      // 替换错误消息
       setConversations((prev) => ({
         ...prev,
         [activeSessionId]: {
@@ -599,183 +467,314 @@ function App() {
     }
   }
 
-  const handleStartNewChat = (projectId: string) => {
-    handleNewChat(projectId)
+  const beginResize = (startX: number, separatorEl: HTMLDivElement, pointerId?: number) => {
+    resizeRef.current = {
+      startX,
+      startWidth: leftPaneWidth,
+    }
+
+    const handleMove = (moveEvent: MouseEvent | globalThis.PointerEvent) => {
+      if (!resizeRef.current) return
+
+      const delta = moveEvent.clientX - resizeRef.current.startX
+      const nextWidth = Math.min(
+        maxLeftPaneWidth,
+        Math.max(minLeftPaneWidth, resizeRef.current.startWidth + delta)
+      )
+      setLeftPaneWidth(nextWidth)
+    }
+
+    const handleUp = () => {
+      resizeRef.current = null
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      if (typeof pointerId === 'number') {
+        try {
+          separatorEl.releasePointerCapture(pointerId)
+        } catch {
+          // ignore release errors when pointer capture is already lost
+        }
+      }
+    }
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+  }
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const separatorEl = event.currentTarget
+    try {
+      separatorEl.setPointerCapture(event.pointerId)
+    } catch {
+      // ignore capture failures and fall back to window listeners
+    }
+    beginResize(event.clientX, separatorEl, event.pointerId)
+  }
+
+  const startWindowDrag = async (event: ReactMouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest('[data-window-no-drag="true"]')) return
+    try {
+      await appWindow.startDragging()
+    } catch {
+      // Ignore drag failures on platforms that do not support the request in this context.
+    }
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--color-bg-app)', color: 'var(--color-text-primary)' }}>
-      {/* Left Sidebar - ProjectRail */}
-      <aside className="w-64 flex flex-col shrink-0" style={{ backgroundColor: 'var(--color-bg-secondary)', borderRight: '1px solid var(--color-border-soft)' }}>
-        {/* Logo */}
-        <div className="flex items-center gap-2.5 px-4 h-14 border-b" style={{ borderColor: 'var(--color-border-soft)' }}>
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent-mint) 100%)' }}>
-            <Sparkles className="h-4 w-4" style={{ color: 'var(--color-text-inverse)' }} />
-          </div>
-          <span className="font-semibold text-sm tracking-tight" style={{ color: 'var(--color-text-primary)' }}>If2Ai</span>
-        </div>
-
-        {/* Project navigation */}
-        <ProjectRail
-          projects={projects}
-          projectSessions={projectSessions}
-          activeProjectId={activeProjectId}
-          activeSessionId={activeSessionId}
-          onSelectProject={handleSelectProject}
-          onSelectSession={handleSelectSession}
-          onNewChat={handleNewChat}
-          onDeleteProject={handleDeleteProject}
-          onRenameProject={handleRenameProject}
-          onDeleteSession={handleDeleteSession}
-          loading={loading}
-        />
-
-        {/* Settings */}
-        <div className="px-3 pb-4 pt-2 border-t" style={{ borderColor: 'var(--color-border-soft)' }}>
-          <button
-            onClick={() => openSettingsWindow()}
-            className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
-            style={{ color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-primary-soft)'
-              e.currentTarget.style.color = 'var(--color-text-primary)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent'
-              e.currentTarget.style.color = 'var(--color-text-secondary)'
-            }}
+    <div
+      className="isolate grid h-screen min-h-0 overflow-hidden bg-[#f6f7f8] text-foreground"
+      style={{ gridTemplateColumns: `${leftPaneWidth}px minmax(0, 1fr)` }}
+    >
+      <ErrorBoundary
+        fallback={
+          <aside
+            className="relative z-20 flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-tr-[28px] rounded-br-[28px] border-r border-black/5 bg-[#eef0f1]"
+            style={{ width: leftPaneWidth }}
           >
-            <Settings className="h-4 w-4" />
-            设置
-          </button>
-        </div>
-      </aside>
-
-      {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 relative">
-        {/* Header */}
-        <header className="flex items-center justify-between px-6 h-14 shrink-0 border-b" style={{ borderColor: 'var(--color-border-soft)' }}>
-          <div className="flex items-center gap-3">
-            <Bot className="h-5 w-5" style={{ color: 'var(--color-primary)' }} />
-            <h1 className="font-medium text-sm" style={{ color: 'var(--color-text-primary)' }}>
-              {activeConv?.title || '对话'}
-            </h1>
-          </div>
-          <SessionStatusComponent status={sessionStatus} />
-        </header>
-
-        {/* Messages or WelcomeScreen */}
-        {activeSessionId && activeConv ? (
-          <>
-            {/* Messages */}
-            <div
-              ref={scrollRef}
-              onScroll={handleScroll}
-              className="flex-1 overflow-y-auto px-4 pt-4 pb-36"
+            <SidebarTop onCreateProject={() => setIsCreateProjectOpen(true)} />
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
+              左侧栏加载异常
+            </div>
+            <div className="border-t border-black/5 px-3.5 py-2.5">
+              <Button
+                variant="ghost"
+                className="h-8 w-full justify-start gap-3 rounded-2xl px-3 text-left text-sm font-medium bg-transparent hover:bg-transparent"
+                onClick={() => openSettingsWindow()}
+              >
+                <Settings className="h-4 w-4" />
+                设置
+              </Button>
+            </div>
+          </aside>
+        }
+      >
+        <aside className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-tr-[28px] rounded-br-[28px] border-r border-black/5 bg-[#eef0f1]">
+          <SidebarTop onCreateProject={() => setIsCreateProjectOpen(true)} onStartWindowDrag={startWindowDrag} />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
+            <ErrorBoundary
+              fallback={
+                <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
+                  左侧栏加载异常
+                </div>
+              }
             >
-              <div ref={contentRef} className="max-w-3xl mx-auto space-y-6">
-                {activeConv.messages.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl" style={{ backgroundColor: 'var(--color-primary-soft)' }}>
-                      <Sparkles className="h-8 w-8" style={{ color: 'var(--color-primary)' }} />
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>有什么我可以帮助你的？</h2>
-                      <p className="text-sm mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
-                        输入你的问题，If2Ai 将为你提供智能回答
-                      </p>
-                    </div>
-                  </div>
-                )}
+              <ProjectRail
+                projects={projects}
+                projectSessions={projectSessions}
+                activeProjectId={activeProjectId}
+                activeSessionId={activeSessionId}
+                onSelectProject={handleSelectProject}
+                onSelectSession={handleSelectSession}
+                onNewChat={handleNewChat}
+                onDeleteProject={handleDeleteProject}
+                onRenameProject={handleRenameProject}
+                onDeleteSession={handleDeleteSession}
+                onTogglePinSession={handleTogglePinSession}
+                onOpenInFinder={openProjectInFinder}
+                onCreatePermanentWorktree={createPermanentWorktree}
+                runningSessionIds={runningSessionIds}
+                loading={loading}
+              />
+            </ErrorBoundary>
+          </div>
 
-                {activeConv.messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={cn(
-                      chatStyles.messageGroup,
-                      msg.role === 'user' ? chatStyles.messageGroupUser : chatStyles.messageGroupAssistant
-                    )}
-                  >
-                    {msg.role === 'assistant' && (
-                      <div className={chatStyles.avatarRow}>
-                        <div className={cn(chatStyles.avatar, 'rounded-full')} style={{ background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent-mint) 100%)' }}>
-                          <Bot className="h-4 w-4" style={{ color: 'var(--color-text-inverse)' }} />
-                        </div>
-                      </div>
-                    )}
-                    {msg.role === 'user' && (
-                      <div className={chatStyles.avatarRow + ' ' + chatStyles.avatarRowUser}>
-                        <div className={cn(chatStyles.avatar, chatStyles.userAvatar)}>
-                          U
-                        </div>
-                      </div>
-                    )}
-                    <div className={cn(chatStyles.message, msg.role === 'user' ? chatStyles.messageUser : chatStyles.messageAssistant)}>
-                      {msg.role === 'assistant' && msg.thinking && (
-                        <ThinkingBlock content={msg.thinking} thinkingTime={msg.thinkingTime} />
-                      )}
-                      <StreamingMarkdown
-                        content={msg.content}
-                        isStreaming={msg.isStreaming}
-                        className={cn(fontMode === 'sans' && 'font-sans')}
-                      />
-                    </div>
-                  </div>
-                ))}
+          <div className="border-t border-black/5 px-3.5 py-2.5">
+            <Button
+              variant="ghost"
+              className="h-8 w-full justify-start gap-3 rounded-2xl px-3 text-left text-sm font-medium bg-transparent hover:bg-transparent"
+              onClick={() => openSettingsWindow()}
+            >
+              <Settings className="h-4 w-4" />
+              设置
+            </Button>
+          </div>
 
-                {isLoading && (
-                  <div className={chatStyles.messageGroup + ' ' + chatStyles.messageGroupAssistant}>
-                    <div className={chatStyles.avatarRow}>
-                      <div className={chatStyles.avatar} style={{ background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent-mint) 100%)' }}>
-                        <Bot className="h-4 w-4" style={{ color: 'var(--color-text-inverse)' }} />
-                      </div>
-                    </div>
-                    <div className={chatStyles.typingIndicator}>
-                      <span className={chatStyles.typingDot} />
-                      <span className={chatStyles.typingDot} />
-                      <span className={chatStyles.typingDot} />
-                    </div>
-                  </div>
-                )}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={startResize}
+            className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
+            style={{ touchAction: 'none' }}
+          />
+        </aside>
+      </ErrorBoundary>
+
+      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#fbfbfc]">
+        <ErrorBoundary
+          fallback={
+            <div className="flex h-full min-h-0 items-center justify-center px-6">
+              <div className="max-w-md rounded-3xl border border-black/5 bg-white px-6 py-5 text-center shadow-sm">
+                <div className="text-[14px] font-semibold tracking-tight">主内容加载异常</div>
+                <div className="mt-2 text-[12px] leading-5 text-black/45">
+                  主工作区发生了运行时错误，但左侧栏仍然保持可用。
+                </div>
               </div>
             </div>
+          }
+        >
+          <div className="flex min-h-0 flex-1 flex-col">
+            <header
+              className="window-drag flex h-14 shrink-0 items-center justify-between border-b border-black/5 px-4 lg:px-5 select-none"
+              onMouseDown={startWindowDrag}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-black/5 text-black/70 lg:flex">
+                  <MessageSquare className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h1 className="truncate text-[14px] font-semibold tracking-tight">{activeTitle}</h1>
+                    <span className="text-[12px] text-muted-foreground">if2Ai</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="window-no-drag h-7 w-7 rounded-full text-muted-foreground"
+                      data-window-no-drag="true"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  data-window-no-drag="true"
+                >
+                  <Play className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
+                  data-window-no-drag="true"
+                >
+                  <Code2 className="mr-2 h-4 w-4 text-blue-500" />
+                  {modelLabel}
+                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
+                  data-window-no-drag="true"
+                >
+                  <SlidersHorizontal className="mr-2 h-4 w-4" />
+                  提交
+                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  data-window-no-drag="true"
+                >
+                  <SquareTerminal className="h-4 w-4" />
+                </Button>
+                <div className="h-6 w-px bg-black/10" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  data-window-no-drag="true"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+                <div className="ml-1 flex items-center gap-2 text-[15px] font-medium">
+                  <span className="text-emerald-600">+4,523</span>
+                  <span className="text-red-600">-3,223</span>
+                </div>
+              </div>
+            </header>
 
-            {/* Floating scroll to bottom button */}
-            {showScrollBtn && activeConv.messages.length > 0 && (
-              <button
-                onClick={() => scrollToBottom(true)}
-                className="fixed w-10 h-10 rounded-full flex items-center justify-center transition-colors z-50"
-                style={{ right: '24px', bottom: '96px', background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent-mint) 100%)', color: 'var(--color-text-inverse)', boxShadow: 'var(--shadow-mint-glow)' }}
-                onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.05)'}
-                onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
-              >
-                <ArrowDown className="h-5 w-5" />
-              </button>
-            )}
-
-            {/* Input bar */}
-            <InputArea
-              value={input}
-              onChange={setInput}
-              onSubmit={sendMessage}
-              disabled={isLoading}
-              isStreaming={isLoading}
-              placeholder="输入消息…"
-            />
-          </>
-        ) : (
-          /* WelcomeScreen when no session is active */
-          <WelcomeScreen
-            currentProject={currentProject}
-            projects={projects}
-            onSelectProject={handleSelectProject}
-            onCreateProject={handleCreateProject}
-            onStartNewChat={handleStartNewChat}
-            loading={loading}
-          />
-        )}
-
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {activeSessionId && activeConv ? (
+                <ChatUI
+                  sessionTitle={activeTitle}
+                  projectLabel={currentProject?.name ?? 'if2Ai'}
+                  branchLabel={branchLabel}
+                  messages={activeMessages}
+                  input={input}
+                  onInputChange={setInput}
+                  onSubmit={sendMessage}
+                  isLoading={isLoading}
+                />
+              ) : (
+                <div className="flex min-h-0 h-full flex-col">
+                  <div className="mx-auto flex w-full max-w-[920px] flex-1 items-center justify-center px-6 py-8">
+                    <div className="max-w-xl rounded-[28px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)]">
+                      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/5">
+                        <Sparkles className="h-7 w-7 text-black/60" />
+                      </div>
+                      <div className="space-y-3">
+                        <h2 className="text-[22px] font-semibold tracking-tight">选择一个项目，开始新的线程</h2>
+                        <p className="text-[13px] leading-6 text-muted-foreground">
+                          左侧已经整理好项目与会话，右侧会像 Codex 一样展示变更摘要、思考过程和最终正文。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <ChatUI
+                    sessionTitle={activeTitle}
+                    projectLabel={currentProject?.name ?? 'if2Ai'}
+                    branchLabel={branchLabel}
+                    messages={[]}
+                    input={input}
+                    onInputChange={setInput}
+                    onSubmit={sendMessage}
+                    isLoading={isLoading}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </ErrorBoundary>
       </main>
+
+      <CreateProjectDialog
+        isOpen={isCreateProjectOpen}
+        onClose={() => setIsCreateProjectOpen(false)}
+        onSubmit={handleCreateProject}
+      />
+    </div>
+  )
+}
+
+function SidebarTop({
+  onCreateProject,
+  onStartWindowDrag,
+}: {
+  onCreateProject: () => void
+  onStartWindowDrag: (event: ReactMouseEvent<HTMLElement>) => void
+}) {
+  return (
+    <div
+      className="window-drag flex h-[72px] items-center justify-between border-b border-black/5 px-4 select-none"
+      onMouseDown={onStartWindowDrag}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <img
+          src={appIconSrc}
+          alt="If2Ai"
+          className="size-10 shrink-0 rounded-2xl border border-black/5 bg-black object-cover shadow-sm"
+        />
+        <div className="truncate text-[15px] font-semibold tracking-tight text-black/88">If2Ai</div>
+      </div>
+
+      <Button
+        onClick={onCreateProject}
+        className="window-no-drag h-9 rounded-full bg-blue-500 px-4 text-[13px] font-semibold text-white shadow-none hover:bg-blue-500/90"
+        data-window-no-drag="true"
+      >
+        更新
+      </Button>
     </div>
   )
 }

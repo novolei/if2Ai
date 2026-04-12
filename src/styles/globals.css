@@ -1,400 +1,96 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
-
-@custom-variant dark (&:is(.dark *));
-
-/* ========================================
-   if2AI Breathing Glass 主题
-   ======================================== */
 
 :root {
-/* 基础背景色 */
-    --color-bg-app: #F4F5F7;
-    --color-bg-secondary: #EDEFF3;
-    --color-surface-base: #E7EAEE;
-    --color-surface-soft: #F7F8FA;
-    --color-border-soft: #D8DDE5;
-    --color-border-strong: #C7CED9;
+  --background: #f4f6f8;
+  --foreground: #17202b;
+  --card: #fbfcfd;
+  --card-foreground: #17202b;
+  --popover: #fbfcfd;
+  --popover-foreground: #17202b;
+  --primary: #86b9ab;
+  --primary-foreground: #f8fbfc;
+  --secondary: #e8edf2;
+  --secondary-foreground: #17202b;
+  --muted: #e9eef3;
+  --muted-foreground: #738192;
+  --accent: #d7e8e2;
+  --accent-foreground: #17202b;
+  --destructive: #d98d9c;
+  --destructive-foreground: #f8fbfc;
+  --border: #d6dde5;
+  --input: #e4ebf2;
+  --ring: #86b9ab;
+  --radius: 0.9rem;
 
-    /* Pearl Mint 主色系 */
-    --color-primary-50: #F2FAF8;
-    --color-primary-100: #E6F3EF;
-    --color-primary-200: #CFE7E2;
-    --color-primary-300: #B8DCD3;
-    --color-primary-400: #98C8BC;
-    --color-primary-500: #77B3A3;
-    --color-primary-600: #5E9C8D;
-    --color-primary-700: #4B8578;
-    --color-primary-800: #3B6A60;
-    --color-primary-900: #2C524A;
-
-    /* 语义主色 */
-    --color-primary: var(--color-primary-400);
-    --color-primary-hover: var(--color-primary-500);
-    --color-primary-active: var(--color-primary-600);
-    --color-primary-strong: var(--color-primary-700);
-    --color-primary-soft: var(--color-primary-100);
-    --color-primary-selected: var(--color-primary-200);
-    --color-primary-border: var(--color-primary-300);
-    --color-primary-focus: var(--color-primary-400);
-
-    /* AI 存在感色 */
-    --color-accent-mint: #CFE7E2;
-    --color-accent-cyan: #BCEEE7;
-    --color-accent-peach: #F3E6D8;
-    --color-accent-warm: #EED9C7;
-    --color-accent-soft-sand: #F7EFE7;
-    --color-accent-creamy: #FDF0E8;
-
-    /* 文本色 */
-    --color-text-primary: #1E2630;
-    --color-text-secondary: #556070;
-    --color-text-tertiary: #7C8797;
-    --color-text-inverse: #F8FAFC;
-
-    /* 状态色 */
-    --color-state-success: #8FC7B5;
-    --color-state-warning: #E8C89A;
-    --color-state-error: #D89BA5;
-    --color-state-info: var(--color-primary);
-
-    /* 动效 */
-    --animate-breathe: breathe 8s ease-in-out infinite;
-    --animate-drift: drift 12s ease-in-out infinite;
-    --animate-pulse-soft: pulse-soft 3s ease-in-out infinite;
-
-    /* 阴影 */
-    --shadow-soft-glow: 0 0 40px rgba(152, 200, 188, 0.20);
-    --shadow-mint-glow: 0 0 50px rgba(207, 231, 226, 0.24);
-    --shadow-warm-glow: 0 0 50px rgba(243, 230, 216, 0.22);
-    --shadow-glass-card: 0 8px 30px rgba(94, 124, 112, 0.10);
-
-  /* 字体 */
-  --font-serif: 'Songti SC', 'Georgia', serif;
-  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --font-sans: 'Geist Variable', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-serif: 'Songti SC', 'Noto Serif SC', Georgia, serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
 }
-
-/* ========================================
-   关键帧动画
-   ======================================== */
-
-@keyframes breathe {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.92;
-    filter: blur(18px);
-  }
-  50% {
-    transform: scale(1.04);
-    opacity: 1;
-    filter: blur(24px);
-  }
-}
-
-@keyframes drift {
-  0%, 100% {
-    transform: translate(0px, 0px);
-  }
-  25% {
-    transform: translate(8px, -6px);
-  }
-  50% {
-    transform: translate(14px, -10px);
-  }
-  75% {
-    transform: translate(6px, -4px);
-  }
-}
-
-@keyframes pulse-soft {
-  0%, 100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-@keyframes dotBounce {
-  0%, 80%, 100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  40% {
-    transform: translateY(-6px);
-    opacity: 1;
-  }
-}
-
-/* ========================================
-   基础样式重置
-   ======================================== */
 
 @layer base {
-  :root {
-    /* Tailwind 变量映射 */
-    --background: var(--color-bg-app);
-    --foreground: var(--color-text-primary);
-    --card: var(--color-surface-soft);
-    --card-foreground: var(--color-text-primary);
-    --popover: var(--color-surface-soft);
-    --popover-foreground: var(--color-text-primary);
-    --primary: var(--color-primary);
-    --primary-foreground: var(--color-text-inverse);
-    --secondary: var(--color-bg-secondary);
-    --secondary-foreground: var(--color-text-primary);
-    --muted: var(--color-surface-base);
-    --muted-foreground: var(--color-text-secondary);
-    --accent: var(--color-accent-mint);
-    --accent-foreground: var(--color-text-primary);
-    --destructive: var(--color-state-error);
-    --destructive-foreground: var(--color-text-inverse);
-    --border: var(--color-border-soft);
-    --input: var(--color-surface-base);
-    --ring: var(--color-primary);
-    --radius: 0.5rem;
+  html {
+    height: 100%;
+    color-scheme: light;
+    background: #f6f7f8;
   }
 
   * {
-    border-color: var(--color-border-soft);
-    @apply border-border outline-ring/50;
-  }
-
-  html, body {
-    height: 100%;
-    overflow: hidden;
+    box-sizing: border-box;
+    border-color: var(--border);
   }
 
   body {
-    background-color: var(--color-bg-app);
-    color: var(--color-text-primary);
-    font-family: var(--font-serif);
+    height: 100%;
+    overflow: hidden;
+    background: #f6f7f8;
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    @apply bg-background text-foreground;
   }
 
-  /* Streaming cursor */
-  .streaming-cursor {
-    display: inline-block;
-    width: 2px;
-    height: 1em;
-    background: var(--color-primary);
-    margin-left: 2px;
-    vertical-align: text-bottom;
-    animation: cursorBlink 1s ease-in-out infinite;
+  #app {
+    height: 100%;
   }
 
-  @keyframes cursorBlink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
+  body.font-serif-mode {
+    font-family: var(--font-serif);
   }
 
-  /* 滚动条样式 */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(143, 175, 214, 0.3) transparent;
+  .window-drag {
+    -webkit-app-region: drag;
+    user-select: none;
   }
 
-  *::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  .window-no-drag {
+    -webkit-app-region: no-drag;
+    user-select: auto;
   }
 
-  *::-webkit-scrollbar-track {
-    background: transparent;
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+    color: var(--foreground);
   }
 
-  *::-webkit-scrollbar-thumb {
-    background: rgba(143, 175, 214, 0.3);
-    border-radius: 3px;
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
-  *::-webkit-scrollbar-thumb:hover {
-    background: rgba(143, 175, 214, 0.5);
+  @keyframes shimmer {
+    0% {
+      background-position: 0% 50%;
+    }
+    100% {
+      background-position: 200% 50%;
+    }
   }
-  html {
-    @apply font-sans;
-}
-}
-
-/* ========================================
-   字体模式切换
-   ======================================== */
-
-/* 衬线字体模式（默认）- body 默认已设置 */
-
-/* 非衬线字体模式 */
-body.font-sans {
-  font-family: var(--font-sans);
-}
-
-/* ========================================
-   动画类
-   ======================================== */
-
-.animate-breathe {
-  animation: breathe 8s ease-in-out infinite;
-}
-
-.animate-drift {
-  animation: drift 12s ease-in-out infinite;
-}
-
-.animate-pulse-soft {
-  animation: pulse-soft 3s ease-in-out infinite;
-}
-
-.animate-float {
-  animation: float 6s ease-in-out infinite;
-}
-
-.animate-dot-bounce {
-  animation: dotBounce 1.4s ease-in-out infinite;
-}
-
-/* ========================================
-   主背景渐变（可选，用于 splash 页面）
-   ======================================== */
-
-.bg-breathing-glass {
-  background:
-    radial-gradient(circle at 30% 30%, rgba(220, 207, 244, 0.45), transparent 42%),
-    radial-gradient(circle at 75% 35%, rgba(143, 175, 214, 0.35), transparent 40%),
-    radial-gradient(circle at 55% 78%, rgba(217, 236, 229, 0.38), transparent 36%),
-    linear-gradient(180deg, #F4F5F7 0%, #EDEFF3 100%);
-}
-
-/* ========================================
-   玻璃卡片效果（可选）
-   ======================================== */
-
-.glass-card {
-  background: rgba(255, 255, 255, 0.58);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  box-shadow:
-    0 8px 30px rgba(80, 105, 145, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45);
-}
-
-@theme inline {
---font-heading: var(--font-sans);
---font-sans: 'Geist Variable', sans-serif;
---color-sidebar-ring: var(--sidebar-ring);
---color-sidebar-border: var(--sidebar-border);
---color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
---color-sidebar-accent: var(--sidebar-accent);
---color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
---color-sidebar-primary: var(--sidebar-primary);
---color-sidebar-foreground: var(--sidebar-foreground);
---color-sidebar: var(--sidebar);
---color-chart-5: var(--chart-5);
---color-chart-4: var(--chart-4);
---color-chart-3: var(--chart-3);
---color-chart-2: var(--chart-2);
---color-chart-1: var(--chart-1);
---color-ring: var(--ring);
---color-input: var(--input);
---color-border: var(--border);
---color-destructive: var(--destructive);
---color-accent-foreground: var(--accent-foreground);
---color-accent: var(--accent);
---color-muted-foreground: var(--muted-foreground);
---color-muted: var(--muted);
---color-secondary-foreground: var(--secondary-foreground);
---color-secondary: var(--secondary);
---color-primary-foreground: var(--primary-foreground);
---color-primary: var(--primary);
---color-popover-foreground: var(--popover-foreground);
---color-popover: var(--popover);
---color-card-foreground: var(--card-foreground);
---color-card: var(--card);
---color-foreground: var(--foreground);
---color-background: var(--background);
---radius-sm: calc(var(--radius) * 0.6);
---radius-md: calc(var(--radius) * 0.8);
---radius-lg: var(--radius);
---radius-xl: calc(var(--radius) * 1.4);
---radius-2xl: calc(var(--radius) * 1.8);
---radius-3xl: calc(var(--radius) * 2.2);
---radius-4xl: calc(var(--radius) * 2.6);
-}
-
-.dark {
---background: oklch(0.145 0 0);
---foreground: oklch(0.985 0 0);
---card: oklch(0.205 0 0);
---card-foreground: oklch(0.985 0 0);
---popover: oklch(0.205 0 0);
---popover-foreground: oklch(0.985 0 0);
---primary: oklch(0.922 0 0);
---primary-foreground: oklch(0.205 0 0);
---secondary: oklch(0.269 0 0);
---secondary-foreground: oklch(0.985 0 0);
---muted: oklch(0.269 0 0);
---muted-foreground: oklch(0.708 0 0);
---accent: oklch(0.269 0 0);
---accent-foreground: oklch(0.985 0 0);
---destructive: oklch(0.704 0.191 22.216);
---border: oklch(1 0 0 / 10%);
---input: oklch(1 0 0 / 15%);
---ring: oklch(0.556 0 0);
---chart-1: oklch(0.87 0 0);
---chart-2: oklch(0.556 0 0);
---chart-3: oklch(0.439 0 0);
---chart-4: oklch(0.371 0 0);
---chart-5: oklch(0.269 0 0);
---sidebar: oklch(0.205 0 0);
---sidebar-foreground: oklch(0.985 0 0);
---sidebar-primary: oklch(0.488 0.243 264.376);
---sidebar-primary-foreground: oklch(0.985 0 0);
---sidebar-accent: oklch(0.269 0 0);
---sidebar-accent-foreground: oklch(0.985 0 0);
---sidebar-border: oklch(1 0 0 / 10%);
---sidebar-ring: oklch(0.556 0 0);
 }
