@@ -203,6 +203,22 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Gets tool definitions filtered by toolsets.
+    ///
+    /// # Arguments
+    ///
+    /// * `toolsets` - List of toolset names to filter by
+    /// * `toolset_registry` - Registry containing toolset definitions
+    #[must_use]
+    pub fn get_definitions_by_toolsets(
+        &self,
+        toolsets: &[String],
+        toolset_registry: &crate::modules::tools::toolset::ToolSetRegistry,
+    ) -> Vec<Value> {
+        let allowed_tools = toolset_registry.tools_from_toolsets(toolsets);
+        self.get_definitions(Some(&allowed_tools))
+    }
+
     /// Dispatches a tool call with timeout protection.
     ///
     /// # Errors

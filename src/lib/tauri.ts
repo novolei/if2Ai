@@ -399,3 +399,22 @@ export async function getToolDefinitions(
 ): Promise<object[]> {
   return invoke<object[]>('get_tool_definitions', { allowed });
 }
+
+/**
+ * 工具集定义
+ */
+export interface ToolSet {
+  name: string;
+  description: string;
+  tools: string[];
+  enabled: boolean;
+}
+
+/**
+ * 列出所有工具集
+ *
+ * @returns 工具集列表
+ */
+export async function listToolsets(): Promise<ToolSet[]> {
+  return invoke<ToolSet[]>('list_toolsets');
+}

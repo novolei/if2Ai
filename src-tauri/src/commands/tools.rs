@@ -3,6 +3,7 @@
 //! Provides Tauri commands for the frontend to directly invoke tools.
 
 use crate::commands::AppState;
+use crate::modules::tools::{ToolSet, ToolSetRegistry};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -93,6 +94,12 @@ pub fn get_tool_definitions(
 ) -> Result<Vec<serde_json::Value>, String> {
     let allowed_ref: Option<&[String]> = allowed.as_deref();
     Ok(state.tool_registry.get_definitions(allowed_ref))
+}
+
+/// List all available toolsets.
+#[tauri::command]
+pub fn list_toolsets(_state: State<'_, AppState>) -> Result<Vec<ToolSet>, String> {
+    Ok(ToolSetRegistry::new().all_toolsets())
 }
 
 #[cfg(test)]

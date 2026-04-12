@@ -5,10 +5,13 @@
 pub mod builtin;
 pub mod context;
 pub mod registry;
+pub mod toolset;
 #[allow(unused_imports)]
 pub use context::{SharedToolContext, ToolContext};
 #[allow(unused_imports)]
 pub use registry::{ToolEntry, ToolError, ToolRegistry};
+#[allow(unused_imports)]
+pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 
 /// Register all builtin tools to the given registry.
 ///
