@@ -722,10 +722,11 @@ pub async fn start_agent_stream(
                 }
             };
 
-            // Tool call tracking for this iteration
+            // Tool call tracking for this iteration — uses block index to support
+            // parallel tool calls (each tool_call has its own index in the stream).
             let mut tool_arguments: HashMap<String, String> = HashMap::new();
-            let mut current_tool_id: Option<String> = None;
-            let mut current_tool_name: Option<String> = None;
+            let mut index_to_tool_id: HashMap<u32, String> = HashMap::new();
+            let mut index_to_tool_name: HashMap<u32, String> = HashMap::new();
             let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
 
             loop {
@@ -768,19 +769,35 @@ pub async fn start_agent_stream(
                             crate::modules::api::ContentBlockDelta::InputJsonDelta {
                                 partial_json,
                             } => {
-                                if let Some(ref id) = current_tool_id {
+                                // Route delta to the correct tool_call via block index.
+                                if let Some(tool_id) =
+                                    index_to_tool_id.get(&delta_event.index).cloned()
+                                {
                                     tool_arguments
-                                        .entry(id.clone())
+                                        .entry(tool_id)
                                         .or_default()
                                         .push_str(&partial_json);
                                 }
                             }
                         },
-                        ApiStreamEvent::MessageStop(_) => {
-                            // Extract any pending tool from current context
-                            if let Some(tool_id) = current_tool_id.take() {
+                        ApiStreamEvent::ContentBlockStop(stop_event) => {
+                            // Extract completed tool_call as its block ends
+                            if let Some(tool_id) = index_to_tool_id.remove(&stop_event.index) {
+                                let tool_name = index_to_tool_name
+                                    .remove(&stop_event.index)
+                                    .unwrap_or_default();
                                 if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                                    let tool_name = current_tool_name.take().unwrap_or_default();
+                                    pending_tool_uses.push((tool_id, tool_name, input_json));
+                                }
+                            }
+                        }
+                        ApiStreamEvent::MessageStop(_) => {
+                            // Extract any remaining tools (fallback — should already
+                            // have been caught by ContentBlockStop above)
+                            for (index, tool_id) in index_to_tool_id.drain() {
+                                let tool_name =
+                                    index_to_tool_name.remove(&index).unwrap_or_default();
+                                if let Some(input_json) = tool_arguments.remove(&tool_id) {
                                     pending_tool_uses.push((tool_id, tool_name, input_json));
                                 }
                             }
@@ -822,8 +839,9 @@ pub async fn start_agent_stream(
                                     name,
                                     ..
                                 } => {
-                                    current_tool_id = Some(id.clone());
-                                    current_tool_name = Some(name.clone());
+                                    // Track by block index to support parallel tool calls
+                                    index_to_tool_id.insert(start_event.index, id.clone());
+                                    index_to_tool_name.insert(start_event.index, name.clone());
                                     let payload = StreamTokenPayload {
                                         stream_id: stream_id_for_task.clone(),
                                         text: None,
@@ -844,10 +862,10 @@ pub async fn start_agent_stream(
                         _ => {}
                     },
                     Ok(None) => {
-                        // Extract any pending tool from current context
-                        if let Some(tool_id) = current_tool_id.take() {
+                        // Extract any remaining tools (same as MessageStop fallback)
+                        for (index, tool_id) in index_to_tool_id.drain() {
+                            let tool_name = index_to_tool_name.remove(&index).unwrap_or_default();
                             if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                                let tool_name = current_tool_name.take().unwrap_or_default();
                                 pending_tool_uses.push((tool_id, tool_name, input_json));
                             }
                         }
