@@ -21,6 +21,7 @@ pub mod memory_purge;
 pub mod memory_recall;
 pub mod memory_store;
 pub mod skill;
+pub mod skill_search;
 pub mod todo_write;
 pub mod web_fetch;
 pub mod web_search;
@@ -63,6 +64,8 @@ pub use memory_recall::entry as memory_recall_entry;
 pub use memory_store::entry as memory_store_entry;
 #[allow(unused_imports)]
 pub use skill::skill_tool_entry;
+#[allow(unused_imports)]
+pub use skill_search::skill_search_tool_entry;
 #[allow(unused_imports)]
 pub use todo_write::todo_write_tool_entry;
 #[allow(unused_imports)]

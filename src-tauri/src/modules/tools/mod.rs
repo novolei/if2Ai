@@ -92,4 +92,7 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::skill_tool_entry()) {
         eprintln!("Failed to register Skill tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::skill_search_tool_entry()) {
+        eprintln!("Failed to register SkillSearch tool: {}", e);
+    }
 }

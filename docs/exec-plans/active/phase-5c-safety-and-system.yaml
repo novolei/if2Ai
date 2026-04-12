@@ -739,7 +739,7 @@ slices:
 
   - id: "5c.6"
     title: "5C 集成测试 — 验证权限、Skill、SlashCommand 后端"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F3, F5, F6, F17, N1"
     impl_targets:
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4", "5c.5"]
-  current_slice: "5c.6"
+  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4", "5c.5", "5c.6"]
+  current_slice: "5c.7"
   blocked: []
-  notes: "5c.1-5c.5 done. Next: 5c.6 — integration tests"
+  notes: "5c.1-5c.6 done. Next: 5c.7 — F14 SkillSearch ToolHandler"
