@@ -20,7 +20,7 @@ slices:
 
   - id: "5b.1"
     title: "F8 前后端 — 扩展 StreamTokenPayload 支持 tool_call_update 事件"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F8"
     impl_targets:
@@ -485,8 +485,8 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-12"
-  completed_slices: []
-  current_slice: "5b.1"
+  last_updated: "2026-04-13"
+  completed_slices: ["5b.1"]
+  current_slice: "5b.2"
   blocked: []
-  notes: "DRAFT — 依赖 Phase 5A 完成。5B 是最高风险 Phase：重写流式工具循环。human_checkpoint after 5b.3"
+  notes: "Slice 5b.1 done — StreamTokenPayload extended. Next: 5b.2 InputJsonDelta accumulation + tool_use extraction."
