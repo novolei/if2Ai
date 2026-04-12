@@ -27,4 +27,16 @@ pub fn register_builtin_tools(registry: &ToolRegistry) {
     if let Err(e) = registry.register(builtin::json_parse::json_parse_tool_entry()) {
         eprintln!("Failed to register json_parse tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::file_write_entry()) {
+        eprintln!("Failed to register file_write tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::glob_search_entry()) {
+        eprintln!("Failed to register glob_search tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::file_edit_entry()) {
+        eprintln!("Failed to register file_edit tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::content_search_entry()) {
+        eprintln!("Failed to register content_search tool: {}", e);
+    }
 }
