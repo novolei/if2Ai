@@ -48,6 +48,8 @@ interface ChatUIProps {
   sessionTitle?: string
   projectLabel?: string
   branchLabel?: string
+  selectedModel?: string
+  onModelChange?: React.Dispatch<React.SetStateAction<string>>
 }
 
 export function ChatUI({
@@ -59,16 +61,22 @@ export function ChatUI({
   sessionTitle = '重构桌面端 UI 为 shadcn 体系',
   projectLabel = 'if2Ai',
   branchLabel = 'feature/consolidate-codebase',
+  selectedModel: selectedModelProp = 'gpt-5.4-mini',
+  onModelChange: onModelChangeProp,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
-  const [selectedModel, setSelectedModel] = React.useState('gpt-5.4-mini')
+  const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [isAtBottom, setIsAtBottom] = React.useState(true)
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
   const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null)
+
+  // Use prop-provided model if provided, otherwise fall back to local state
+  const modelValue = onModelChangeProp !== undefined ? selectedModelProp : selectedModel
+  const handleModelChange: React.Dispatch<React.SetStateAction<string>> = onModelChangeProp ?? setSelectedModel
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -150,8 +158,8 @@ export function ChatUI({
         onInputChange={onInputChange}
         onSubmit={onSubmit}
         isLoading={isLoading}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
+        selectedModel={modelValue}
+        setSelectedModel={handleModelChange}
         selectedStrength={selectedStrength}
         setSelectedStrength={setSelectedStrength}
         branchLabel={branchLabel}

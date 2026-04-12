@@ -17,6 +17,10 @@ import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
 
+function formatModelName(model: string): string {
+  return model.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 export function ChatWorkspace({
   projects,
   projectSessions,
@@ -40,12 +44,13 @@ export function ChatWorkspace({
   onCreatePermanentWorktree,
   onInputChange,
   onSubmit,
+  selectedModel,
+  onModelChange,
   leftPaneWidth,
   onResizeStart,
   onStartWindowDrag,
   runningSessionIds,
 }: ChatWorkspaceProps) {
-  const modelLabel = 'GPT-5.4-Mini'
   const openNewChat = useMemo(() => {
     return () => {
       const targetProjectId = activeProjectId ?? projects[0]?.id
@@ -163,7 +168,7 @@ export function ChatWorkspace({
                   data-window-no-drag="true"
                 >
                   <Code2 className="mr-2 h-4 w-4 text-blue-500" />
-                  {modelLabel}
+                  {formatModelName(selectedModel)}
                   <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
                 </Button>
                 <Button
@@ -210,6 +215,8 @@ export function ChatWorkspace({
                   onInputChange={onInputChange}
                   onSubmit={onSubmit}
                   isLoading={isLoading}
+                  selectedModel={selectedModel}
+                  onModelChange={onModelChange}
                 />
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
@@ -235,6 +242,8 @@ export function ChatWorkspace({
                     onInputChange={onInputChange}
                     onSubmit={onSubmit}
                     isLoading={isLoading}
+                    selectedModel={selectedModel}
+                    onModelChange={onModelChange}
                   />
                 </div>
               )}

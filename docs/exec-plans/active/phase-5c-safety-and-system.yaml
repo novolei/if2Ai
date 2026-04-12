@@ -5,7 +5,7 @@
 
 meta:
   phase: "5c"
-  phase_status: active           # draft | active | completed
+  phase_status: completed           # draft | active | completed
   title: "安全与系统连接 — 权限模式 + SystemPrompt + 工具统一 + Skill + SlashCommand"
   owner: "@architects"
   depends_on_phase: "5b"
@@ -780,7 +780,7 @@ slices:
 
   - id: "5c.7"
     title: "F14 — SkillSearch 工具注册"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F14"
     impl_targets:
@@ -883,7 +883,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4", "5c.5", "5c.6"]
-  current_slice: "5c.7"
+  completed_slices: ["5c.1", "5c.2", "5c.3", "5c.4", "5c.5", "5c.6", "5c.7"]
+  current_slice: null
   blocked: []
-  notes: "5c.1-5c.6 done. Next: 5c.7 — F14 SkillSearch ToolHandler"
+  notes: "Phase 5C ALL COMPLETE — 7/7 slices done. Human checkpoint reached."

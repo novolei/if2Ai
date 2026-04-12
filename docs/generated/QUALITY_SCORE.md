@@ -3,8 +3,8 @@
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
 **更新时间**: 2026-04-13
-**当前 Phase**: Phase 5C (刚激活)
-**整体状态**: ✅ Phase 5B 完成 (5/5 slices)，Phase 5C 已激活
+**当前 Phase**: Phase 5D (已激活)
+**整体状态**: ✅ Phase 5C 完成 (7/7 slices)，Phase 5D 已激活
 
 ---
 
@@ -16,6 +16,9 @@
 | Phase 2 — 高级特性 | ⏳ 等待 Phase 1   | —        | —            | —    | —       |
 | Phase 3 — 扩展生态 | ⏳ 等待 Phase 2   | —        | —            | —    | —       |
 | Phase 4 — 工具激活与边界 | ✅ 完成 (12/12) | 2026-04-12 | ✅ 0 errors | ✅ 188 tests | ⚠️    |
+| Phase 5A — Agent 核心修复 | ✅ 完成 (4/4) | 2026-04-13 | ✅ 0 errors | ✅ 188 tests | ✅   |
+| Phase 5B — 流式工具循环重写 | ✅ 完成 (5/5) | 2026-04-13 | ✅ 0 errors | ✅ 188 tests | ✅   |
+| Phase 5C — 安全与系统连接 | ✅ 完成 (7/7) | 2026-04-13 | ✅ 0 errors | ✅ 198 tests | ✅   |
 
 ---
 

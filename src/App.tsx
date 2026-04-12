@@ -47,6 +47,7 @@ function App() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
+  const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -577,6 +578,8 @@ function App() {
               onCreatePermanentWorktree={createPermanentWorktree}
               onInputChange={setInput}
               onSubmit={sendMessage}
+              selectedModel={selectedModel}
+              onModelChange={setSelectedModel}
               leftPaneWidth={leftPaneWidth}
               onResizeStart={startResize}
               onStartWindowDrag={startWindowDrag}

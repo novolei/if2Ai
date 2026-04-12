@@ -1,4 +1,5 @@
 import type { Project, ProjectMeta, SessionMeta } from '@/lib/tauri'
+import type { Dispatch, SetStateAction } from 'react'
 
 export interface Message {
   id: string
@@ -48,6 +49,8 @@ export interface ChatWorkspaceProps {
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
   onInputChange: (value: string) => void
   onSubmit: () => void
+  selectedModel: string
+  onModelChange: Dispatch<SetStateAction<string>>
   leftPaneWidth: number
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void
   onStartWindowDrag: (event: React.MouseEvent<HTMLElement>) => void

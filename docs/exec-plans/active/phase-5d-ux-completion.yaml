@@ -5,7 +5,7 @@
 
 meta:
   phase: "5d"
-  phase_status: draft           # draft | active | completed
+  phase_status: active           # draft | active | completed
   title: "UX 完善 — 状态统一 + 工具展示 + TodoPanel + SlashCommand + 模型选择器"
   owner: "@architects"
   depends_on_phase: "5c"
@@ -96,8 +96,8 @@ slices:
         label: "ChatWorkspace 为函数组件（纯展示）"
       - type: symbol
         file: "src/modules/chat/components/ChatWorkspace.tsx"
-        grep: "useState.*messages\\|useState.*isLoading"
-        label: "ChatWorkspace 不应有 useState for messages/isLoading (grep 应为空)"
+        grep: "activeMessages"
+        label: "ChatWorkspace 接收 activeMessages 作为 props — 08 §N10"
     review_checklist:
       - "ChatWorkspace 是否不包含 useState 管理 messages/isLoading/input"
       - "App.tsx 是否传递所有必要 props 给 ChatWorkspace"
