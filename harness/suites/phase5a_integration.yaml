@@ -1,0 +1,8 @@
+# Phase 5A Integration Tests
+# Verifies: F1 (ToolExecutor.get_definitions), N12 (call_api uses request.tools), N5 (SystemPromptBuilder)
+
+runner: cargo_test
+
+test_cases:
+  - test_fn: "modules::runtime::conversation"
+    description: "All conversation tests pass with new ToolExecutor trait"

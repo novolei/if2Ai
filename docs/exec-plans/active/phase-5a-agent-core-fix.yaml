@@ -165,7 +165,7 @@ slices:
 
   - id: "5a.3"
     title: "N5 — start_agent_stream 添加 system_prompt"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "N5"
     impl_targets:
