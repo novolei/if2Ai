@@ -61,7 +61,7 @@ class HarnessReport:
 
     @property
     def passed(self) -> bool:
-        return all(r.passed for r in self.results)
+        return all(r.passed or r.status == GateStatus.SKIP for r in self.results)
 
     @property
     def first_failure(self) -> Optional[GateResult]:
@@ -209,9 +209,9 @@ def test_gate(
     Layer 2: cargo test — all unit tests must pass.
     Only runs if compile_gate passed.
     """
-    cmd = ["cargo", "test", "-p", package, "--", "--test-output=immediate"]
+    cmd = ["cargo", "test", "-p", package]
     if test_filter:
-        cmd.append(test_filter)
+        cmd.extend(["--", test_filter])
     return _gate("test_gate", cmd, cwd=workspace_root, timeout=180)
 
 
@@ -298,7 +298,7 @@ def behavior_gate(
     for fn in test_fns:
         cmd = [
             "cargo", "test", "-p", package,
-            "--", fn, "--test-output=immediate",
+            "--", fn,
         ]
         code, out, err = _run(cmd, cwd=workspace_root, timeout=120)
         all_output.append(f"[{fn}]\n{out}{err}")

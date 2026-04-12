@@ -11,11 +11,14 @@ use super::hooks::{HookRunResult, HookRunner};
 use super::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
 use super::session::{ContentBlock, ConversationMessage, Session};
 use super::usage::{TokenUsage, UsageTracker};
+use crate::modules::api::ToolDefinition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
     pub system_prompt: Vec<String>,
     pub messages: Vec<ConversationMessage>,
+    /// Tool definitions to pass to the LLM. If None, no tools are sent.
+    pub tools: Option<Vec<crate::modules::api::ToolDefinition>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +39,12 @@ pub trait ApiClient {
 }
 
 pub trait ToolExecutor {
+    /// Executes a tool by name with the given input string.
     fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
+
+    /// Returns the tool definitions available for this executor.
+    /// Used to populate the `tools` field in API requests.
+    fn get_definitions(&self) -> Vec<ToolDefinition>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,6 +249,7 @@ where
             let request = ApiRequest {
                 system_prompt: self.system_prompt.clone(),
                 messages: self.session.messages.clone(),
+                tools: Some(self.tool_executor.get_definitions()),
             };
             let events = self.api_client.stream(request)?;
             let (assistant_message, usage) = build_assistant_message(events)?;
@@ -477,6 +486,10 @@ impl ToolExecutor for StaticToolExecutor {
         self.handlers
             .get_mut(tool_name)
             .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(input)
+    }
+
+    fn get_definitions(&self) -> Vec<ToolDefinition> {
+        Vec::new()
     }
 }
 

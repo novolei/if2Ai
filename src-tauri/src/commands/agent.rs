@@ -297,6 +297,25 @@ impl ToolExecutor for ToolRegistryExecutor {
 
         Ok(result)
     }
+
+    fn get_definitions(&self) -> Vec<crate::modules::api::ToolDefinition> {
+        let definitions = self.tool_registry.get_definitions(None);
+        definitions
+            .into_iter()
+            .filter_map(|def| {
+                let obj = def.as_object()?;
+                let func = obj.get("function")?.as_object()?;
+                Some(crate::modules::api::ToolDefinition {
+                    name: func.get("name")?.as_str()?.to_string(),
+                    description: func
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(String::from),
+                    input_schema: func.get("parameters")?.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 /// Run a single agent turn with the given user message.

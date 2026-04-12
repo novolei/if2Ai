@@ -1,0 +1,277 @@
+# Phase 5A: Agent Core Fix (P0)
+# ─────────────────────────────────────────────────────────────────────────────
+# 修复两条 Agent 路径的工具定义传递和系统提示问题
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "5a"
+  phase_status: active          # draft | active | completed
+  title: "Agent Core Fix — ToolExecutor trait 扩展 + SystemPrompt + call_api 一致性"
+  owner: "@architects"
+  depends_on_phase: "4"
+  design_docs:
+    - docs/bs_gap/08-critical-fix-priority.md
+  human_checkpoints:
+    - after_slice: "5a.2"       # ToolExecutor + call_api 修复完成后人工 review
+
+slices:
+
+  # ───────────── Stage 1: ToolExecutor trait 扩展 ──────────────────────────────
+
+  - id: "5a.1"
+    title: "F1 — ToolExecutor trait 扩展 get_definitions() + conversation.rs 使用"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F1, N12"
+    impl_targets:
+      - src-tauri/src/modules/runtime/conversation.rs    # MODIFY: 扩展 ToolExecutor trait + 修改 run_turn tools 字段
+      - src-tauri/src/commands/agent.rs                   # MODIFY: ToolRegistryExecutor 实现 get_definitions()
+
+    baseline_ref: "rust/crates/runtime/src/conversation.rs (ToolExecutor trait, run_turn:214-333); src-tauri/src/commands/agent.rs (ToolRegistryExecutor:267-300, RealApiClient.call_api:184-264)"
+
+    current_state: |
+      conversation.rs 第 40-42 行定义了 ToolExecutor trait，仅有 execute() 方法。
+      run_turn() 第 243-247 行构建 ApiRequest 时 tools: None（硬编码）。
+      agent.rs 第 267-300 行定义了 ToolRegistryExecutor 结构体，实现了 ToolExecutor::execute()，
+      但没有 get_definitions() 方法。
+      RealApiClient::call_api() 第 234 行内部从 registry 获取工具定义，但不使用 request.tools。
+      ❌ MISSING — 必须修改 2 个文件：
+        1. ToolExecutor trait 新增 get_definitions() -> Vec<ToolDefinition>
+        2. ToolRegistryExecutor 实现 get_definitions()
+        3. conversation.rs:246 修改为 tools: Some(self.tool_executor.get_definitions())
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §F1 — 扩展 ToolExecutor trait (conversation.rs:40-42)
+        use crate::modules::api::ToolDefinition;
+
+        pub trait ToolExecutor {
+            fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
+            fn get_definitions(&self) -> Vec<ToolDefinition>;  // 新增
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F1 — ToolRegistryExecutor 实现 (agent.rs)
+        impl ToolExecutor for ToolRegistryExecutor {
+            fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> { ... }
+            fn get_definitions(&self) -> Vec<ToolDefinition> {
+                let definitions = self.tool_registry.get_definitions(None);
+                definitions.into_iter().filter_map(|def| {
+                    let obj = def.as_object()?;
+                    let func = obj.get("function")?.as_object()?;
+                    Some(ToolDefinition {
+                        name: func.get("name")?.as_str()?.to_string(),
+                        description: func.get("description").and_then(|d| d.as_str()).map(String::from),
+                        input_schema: func.get("parameters")?.clone(),
+                    })
+                }).collect()
+            }
+        }
+
+      - |
+        // 08-critical-fix-priority.md §F1 — 修改 run_turn (conversation.rs:243-247)
+        let request = ApiRequest {
+            system_prompt: self.system_prompt.clone(),
+            messages: self.session.messages.clone(),
+            tools: Some(self.tool_executor.get_definitions()),  // ✅ 改为从 executor 获取
+        };
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "fn get_definitions"
+        label: "ToolExecutor trait 有 get_definitions — 08 §F1"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "fn get_definitions"
+        label: "ToolRegistryExecutor 实现 get_definitions"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "tool_executor.get_definitions"
+        label: "run_turn 使用 get_definitions() 而非 None"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- modules::runtime::conversation"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "ToolExecutor trait 新增 get_definitions() 方法签名是否返回 Vec<ToolDefinition>"
+      - "ToolRegistryExecutor::get_definitions() 转换逻辑是否与 agent.rs 中现有转换一致"
+      - "run_turn() 中 ApiRequest.tools 是否改为 Some(self.tool_executor.get_definitions())"
+      - "StaticToolExecutor 是否需要实现 get_definitions()（返回空 Vec）"
+      - "conversation.rs tests 中 ApiClient mock 是否仍正确工作（tools: Some 而非 None）"
+      - "无 unwrap()（测试除外），无硬编码路径"
+
+  # ───────────── Stage 2: call_api 一致性 ──────────────────────────────
+
+  - id: "5a.2"
+    title: "N12 — call_api() 优先使用 request.tools，fallback 到 registry"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N12"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: call_api() 工具定义获取逻辑
+
+    baseline_ref: "src-tauri/src/commands/agent.rs (RealApiClient.call_api:184-264, tool_defs 获取:232-250)"
+
+    current_state: |
+      agent.rs 第 184-264 行 RealApiClient::call_api() 内部总是从 self.tool_registry.get_definitions(None)
+      获取工具定义（第 234 行），完全忽略 request.tools 参数。
+      这导致 ApiRequest.tools 字段形同虚设。
+      ❌ MISSING — 修改 call_api() 第 232-250 行，改为：
+        request.tools.clone().unwrap_or_else(|| {
+          self.tool_registry.get_definitions(None)
+        })
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N12 — call_api() 修改 (agent.rs)
+        // 替换第 232-250 行的工具定义获取逻辑：
+        let tool_defs: Option<Vec<ToolDefinition>> = request.tools.clone().or_else(|| {
+            let definitions = self.tool_registry.get_definitions(None);
+            Some(definitions.into_iter().filter_map(|def| {
+                let obj = def.as_object()?;
+                let func = obj.get("function")?.as_object()?;
+                Some(ToolDefinition {
+                    name: func.get("name")?.as_str()?.to_string(),
+                    description: func.get("description").and_then(|d| d.as_str()).map(String::from),
+                    input_schema: func.get("parameters")?.clone(),
+                })
+            }).collect())
+        });
+        let tools = tool_defs.filter(|t| !t.is_empty());
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "request\\.tools\\.clone\\(\\)\\.or_else\\|request\\.tools\\.clone\\(\\)\\.unwrap_or_else"
+        label: "call_api() 优先使用 request.tools — 08 §N12"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands::agent"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "call_api() 是否优先使用 request.tools"
+      - "fallback 路径是否正确转换 registry 定义到 ToolDefinition 格式"
+      - "空列表是否被转为 None（tools.is_empty() 检查）"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 3: SystemPrompt for streaming ──────────────────────
+
+  - id: "5a.3"
+    title: "N5 — start_agent_stream 添加 system_prompt"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "N5"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs    # MODIFY: start_agent_stream 使用 SystemPromptBuilder
+
+    baseline_ref: "src-tauri/src/modules/runtime/prompt.rs (SystemPromptBuilder, discover_instruction_files); rust/crates/runtime/src/conversation.rs (system prompt 构建)"
+
+    current_state: |
+      agent.rs 第 610-614 行 start_agent_stream 中 system: None（硬编码），
+      导致流式模式下 LLM 没有任何系统提示。
+      run_agent_turn 第 361-365 行使用硬编码三行英文。
+      SystemPromptBuilder 存在于 modules/runtime/prompt.rs，包含 discover_instruction_files()、
+      git 状态/diff 集成。
+      ❌ MISSING — start_agent_stream 必须使用 SystemPromptBuilder 替代 system: None
+
+    must_implement:
+      - |
+        // 08-critical-fix-priority.md §N5 — start_agent_stream 修改 (agent.rs)
+        // 在构建 api_request 前（约第 610 行前）：
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let builder = SystemPromptBuilder::new(&cwd);
+        let system_prompt_lines = builder.build()
+            .unwrap_or_else(|_| "You are If2Ai, a helpful AI assistant.".to_string());
+
+        let api_request = MessageRequest {
+            model,
+            max_tokens: 4096,
+            messages: all_messages,
+            system: Some(system_prompt_lines),  // ✅ 不再为 None
+            tools: if tool_defs.is_empty() { None } else { Some(tool_defs) },
+            tool_choice: None,
+            stream: true,
+        };
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "SystemPromptBuilder"
+        label: "start_agent_stream 使用 SystemPromptBuilder — 08 §N5"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "system: Some\\("
+        label: "start_agent_stream 传非空 system_prompt"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- commands::agent"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "start_agent_stream 是否使用 SystemPromptBuilder::new(&cwd).build()"
+      - "build() 失败的 fallback 是否合理（不 panic）"
+      - "cwd 获取方式是否正确（current_dir 或从 session 获取）"
+      - "system 字段是否为 Some(...) 而非 None"
+      - "无 unwrap()（测试除外）"
+
+  # ───────────── Stage 4: Integration Test ──────────────────────────────
+
+  - id: "5a.4"
+    title: "5A 集成测试 — 验证两条路径都能正确传工具定义和系统提示"
+    status: pending
+    design_ref: "docs/bs_gap/08-critical-fix-priority.md"
+    backlog_ref: "F1, N5, N12"
+    impl_targets:
+      - src-tauri/src/modules/runtime/conversation.rs    # MODIFY: 更新测试适配新 trait
+      - harness/suites/phase5a_integration.yaml           # CREATE: 行为测试
+
+    baseline_ref: "rust/crates/runtime/src/conversation.rs (测试用例:565-614)"
+
+    current_state: |
+      conversation.rs 的测试使用 StaticToolExecutor 实现了 ToolExecutor trait。
+      由于 trait 新增了 get_definitions() 方法，StaticToolExecutor 也必须实现。
+      ❌ MISSING — StaticToolExecutor 需要实现 get_definitions()（返回空 Vec 即可），
+      测试才能编译通过。
+
+    must_implement:
+      - |
+        // conversation.rs — StaticToolExecutor 扩展
+        impl ToolExecutor for StaticToolExecutor {
+            fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> { ... }
+            fn get_definitions(&self) -> Vec<ToolDefinition> {
+                Vec::new()  // StaticToolExecutor 没有工具定义
+            }
+        }
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend -- modules::runtime::conversation"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "所有 conversation.rs 测试是否编译通过"
+      - "StaticToolExecutor::get_definitions() 是否返回空 Vec"
+      - "harness suite 是否存在"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-12"
+  completed_slices: []
+  current_slice: "5a.1"
+  blocked: []
+  notes: "DRAFT → ACTIVE — Phase 4 已完成。5A 修复 Agent 核心工具定义传递和系统提示。human_checkpoint after 5a.2"
