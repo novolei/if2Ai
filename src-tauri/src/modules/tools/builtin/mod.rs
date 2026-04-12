@@ -23,6 +23,7 @@ pub mod memory_store;
 pub mod skill;
 pub mod skill_search;
 pub mod todo_write;
+pub mod tool_search;
 pub mod web_fetch;
 pub mod web_search;
 

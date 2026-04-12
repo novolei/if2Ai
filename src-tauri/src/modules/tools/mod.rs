@@ -2,6 +2,8 @@
 //! Migrated from /rust/crates/tools
 //! Provides tool system framework and execution
 
+use std::sync::Arc;
+
 pub mod builtin;
 pub mod context;
 pub mod integration_phase4;
@@ -94,5 +96,10 @@ pub fn register_builtin_tools(
     }
     if let Err(e) = registry.register(builtin::skill_search_tool_entry()) {
         eprintln!("Failed to register SkillSearch tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::tool_search::tool_search_tool_entry(Arc::new(
+        registry.clone(),
+    ))) {
+        eprintln!("Failed to register tool_search tool: {}", e);
     }
 }
