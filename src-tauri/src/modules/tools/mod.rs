@@ -105,4 +105,28 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::agent::agent_tool_entry()) {
         eprintln!("Failed to register agent tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::grep_search_tool_entry()) {
+        eprintln!("Failed to register grep_search tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::sleep_tool_entry()) {
+        eprintln!("Failed to register Sleep tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::config_tool_entry()) {
+        eprintln!("Failed to register Config tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::send_user_message_tool_entry()) {
+        eprintln!("Failed to register SendUserMessage tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::notebook_edit_tool_entry()) {
+        eprintln!("Failed to register NotebookEdit tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::structured_output_tool_entry()) {
+        eprintln!("Failed to register StructuredOutput tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::repl_tool_entry()) {
+        eprintln!("Failed to register REPL tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::powershell_tool_entry()) {
+        eprintln!("Failed to register PowerShell tool: {}", e);
+    }
 }

@@ -141,8 +141,10 @@ mod tests {
         let roots = discover_skill_roots(PathBuf::from("/tmp/nonexistent-dir-5c4").as_path());
         // None of the project-level dirs should exist under this path
         for root in &roots {
-            assert!(!root.starts_with("/tmp/nonexistent-dir-5c4/"),
-                "project-level root should not exist: {root:?}");
+            assert!(
+                !root.starts_with("/tmp/nonexistent-dir-5c4/"),
+                "project-level root should not exist: {root:?}"
+            );
         }
     }
 
