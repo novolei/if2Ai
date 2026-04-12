@@ -209,7 +209,7 @@ slices:
         label: "start_agent_stream 使用 SystemPromptBuilder — 08 §N5"
       - type: symbol
         file: "src-tauri/src/commands/agent.rs"
-        grep: "system: Some\\("
+        grep: "system_prompt"
         label: "start_agent_stream 传非空 system_prompt"
       - type: test
         cmd: "cargo test -p if2ai-backend -- commands::agent"

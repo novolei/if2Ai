@@ -183,7 +183,7 @@ def cmd_diff_gate(args: argparse.Namespace) -> int:
         and not any(f.endswith(suf) for suf in exclude_suffixes)
     ]
 
-    # Count lines changed in code files
+    # Count lines changed in code files (committed + unstaged)
     lines_changed = 0
     if code_files:
         stat_result = subprocess.run(
@@ -193,7 +193,15 @@ def cmd_diff_gate(args: argparse.Namespace) -> int:
         import re
         m = re.search(r"(\d+) insertion", stat_result.stdout)
         if m:
-            lines_changed = int(m.group(1))
+            lines_changed += int(m.group(1))
+        # Also count unstaged insertions
+        stat_result2 = subprocess.run(
+            ["git", "diff", "--stat", "--"] + code_files,
+            cwd=workspace, capture_output=True, text=True,
+        )
+        m = re.search(r"(\d+) insertion", stat_result2.stdout)
+        if m:
+            lines_changed += int(m.group(1))
 
     print(f"\n  Diff Gate — base: {base_ref}")
     print(f"  Changed files   : {len(changed_files)} total")

@@ -629,11 +629,18 @@ pub async fn start_agent_stream(
         })
         .collect();
 
+    // Build system prompt using SystemPromptBuilder
+    let system_prompt = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
+
     let api_request = MessageRequest {
         model,
         max_tokens: 4096,
         messages: all_messages,
-        system: None,
+        system: if system_prompt.is_empty() {
+            None
+        } else {
+            Some(system_prompt)
+        },
         tools: if tool_defs.is_empty() {
             None
         } else {
