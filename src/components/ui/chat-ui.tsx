@@ -98,6 +98,7 @@ export function ChatUI({
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
   const todoPanelRef = React.useRef<HTMLDivElement>(null)
   const isAtBottomRef = React.useRef(true)
+  const forceAutoScrollRef = React.useRef(false)
   const lastBottomOccupancyRef = React.useRef(0)
   const scrollRafRef = React.useRef<number | null>(null)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -144,8 +145,17 @@ export function ChatUI({
   }, [])
 
   React.useEffect(() => {
-    if (!isAtBottomRef.current) return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const shouldAutoScroll = isAtBottomRef.current || forceAutoScrollRef.current
+    if (!shouldAutoScroll) return
+    bottomRef.current?.scrollIntoView({
+      behavior: forceAutoScrollRef.current ? 'auto' : 'smooth',
+      block: 'end',
+    })
+    if (forceAutoScrollRef.current) {
+      forceAutoScrollRef.current = false
+      isAtBottomRef.current = true
+      setIsAtBottom(true)
+    }
   }, [messages, isLoading])
 
   React.useEffect(() => {
@@ -220,6 +230,7 @@ export function ChatUI({
   const submitDraft = React.useCallback(() => {
     const next = draftInput.trim()
     if (!next || isLoading) return
+    forceAutoScrollRef.current = true
     onSubmit(next)
     setDraftInput('')
     onInputChange?.('')
@@ -315,6 +326,7 @@ export function ChatUI({
           <button
             type="button"
             onClick={() => {
+              forceAutoScrollRef.current = true
               transcriptScrollRef.current?.scrollTo({
                 top: transcriptScrollRef.current.scrollHeight,
                 behavior: 'smooth',

@@ -632,6 +632,9 @@ function App() {
     let accumulatedText = ''
     let accumulatedThinking = ''
     let assistantMsgId: string | null = null
+    let hasPendingTextDelta = false
+    let hasPendingThinkingDelta = false
+    let streamRafId: number | null = null
     const seenToolCallIds = new Set<string>()
 
     const createAssistantMessage = () => {
@@ -690,6 +693,48 @@ function App() {
       return assistantMsgId
     }
 
+    const flushAssistantDeltas = () => {
+      if (!assistantMsgId) return
+      if (!hasPendingTextDelta && !hasPendingThinkingDelta) return
+      const currentAssistantId = assistantMsgId
+      const nextText = accumulatedText
+      const nextThinking = accumulatedThinking
+
+      hasPendingTextDelta = false
+      hasPendingThinkingDelta = false
+
+      setConversations((prev) => {
+        const currentConv = prev[sessionId]
+        if (!currentConv) return prev
+        return {
+          ...prev,
+          [sessionId]: {
+            ...currentConv,
+            messages: currentConv.messages.map((msg) =>
+              msg.id === currentAssistantId
+                ? { ...msg, content: nextText, thinking: nextThinking || msg.thinking }
+                : msg
+            ),
+          },
+        }
+      })
+    }
+
+    const cancelScheduledAssistantFlush = () => {
+      if (streamRafId !== null) {
+        window.cancelAnimationFrame(streamRafId)
+        streamRafId = null
+      }
+    }
+
+    const scheduleAssistantFlush = () => {
+      if (streamRafId !== null) return
+      streamRafId = window.requestAnimationFrame(() => {
+        streamRafId = null
+        flushAssistantDeltas()
+      })
+    }
+
     try {
       createAssistantMessage()
       const streamId = await startAgentStream(sessionId, userMsg.content, permissionMode)
@@ -697,40 +742,18 @@ function App() {
 
       const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
         if (payload.event_type === 'text_delta' && payload.text) {
-          const currentAssistantId = ensureAssistantMessage()
-
+          ensureAssistantMessage()
           accumulatedText += payload.text
-          setConversations((prev) => {
-            const currentConv = prev[sessionId]
-            if (!currentConv) return prev
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: currentConv.messages.map((msg) =>
-                  msg.id === currentAssistantId ? { ...msg, content: accumulatedText } : msg
-                ),
-              },
-            }
-          })
+          hasPendingTextDelta = true
+          scheduleAssistantFlush()
         } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
-          const currentAssistantId = ensureAssistantMessage()
-
+          ensureAssistantMessage()
           accumulatedThinking += payload.thinking
-          setConversations((prev) => {
-            const currentConv = prev[sessionId]
-            if (!currentConv) return prev
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: currentConv.messages.map((msg) =>
-                  msg.id === currentAssistantId ? { ...msg, thinking: accumulatedThinking } : msg
-                ),
-              },
-            }
-          })
+          hasPendingThinkingDelta = true
+          scheduleAssistantFlush()
         } else if (payload.event_type === 'tool_call_update') {
+          cancelScheduledAssistantFlush()
+          flushAssistantDeltas()
           const toolCallId = payload.tool_call_id
           if (toolCallId) {
             const nextStatus = payload.tool_status ?? 'running'
@@ -799,8 +822,11 @@ function App() {
             }
           }
         } else if (payload.event_type === 'final_text_override' && payload.text) {
+          cancelScheduledAssistantFlush()
           const currentAssistantId = ensureAssistantMessage()
           accumulatedText = payload.text
+          hasPendingTextDelta = false
+          hasPendingThinkingDelta = false
           setConversations((prev) => {
             const currentConv = prev[activeSessionId]
             if (!currentConv) return prev
@@ -815,6 +841,8 @@ function App() {
             }
           })
         } else if (payload.event_type === 'stream_complete') {
+          cancelScheduledAssistantFlush()
+          flushAssistantDeltas()
           setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
           setStreamAbortHandles((prev) => {
             const { [sessionId]: _removed, ...rest } = prev
@@ -856,6 +884,8 @@ function App() {
           }
           unlisten()
         } else if (payload.event_type === 'stream_error') {
+          cancelScheduledAssistantFlush()
+          flushAssistantDeltas()
           unlisten()
           setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
           setStreamAbortHandles((prev) => {
