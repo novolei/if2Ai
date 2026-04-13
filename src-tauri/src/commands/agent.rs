@@ -338,7 +338,7 @@ impl RealApiClient {
                     .collect();
 
                 let role = match msg.role {
-                    crate::modules::runtime::session::MessageRole::System => "system".to_string(),
+                    crate::modules::runtime::session::MessageRole::System => "user".to_string(),
                     crate::modules::runtime::session::MessageRole::User => "user".to_string(),
                     crate::modules::runtime::session::MessageRole::Assistant => {
                         "assistant".to_string()
@@ -957,7 +957,7 @@ pub async fn start_agent_stream(
                 .collect();
 
             let role = match msg.role {
-                crate::modules::runtime::session::MessageRole::System => "system".to_string(),
+                crate::modules::runtime::session::MessageRole::System => "user".to_string(),
                 crate::modules::runtime::session::MessageRole::User => "user".to_string(),
                 crate::modules::runtime::session::MessageRole::Assistant => "assistant".to_string(),
                 crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
@@ -2573,7 +2573,10 @@ fn sanitize_messages_for_provider(
             .collect();
 
         let sanitized_message = InputMessage {
-            role: message.role.clone(),
+            role: match message.role.as_str() {
+                "assistant" => "assistant".to_string(),
+                _ => "user".to_string(),
+            },
             content: next_content,
         };
         if !tool_use_ids.is_empty() && sanitized_message.role == "assistant" {
