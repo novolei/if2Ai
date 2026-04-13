@@ -144,6 +144,7 @@ export function ChatUI({
   }, [])
 
   React.useEffect(() => {
+    if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, isLoading])
 
@@ -1044,7 +1045,7 @@ function MarkdownContent({ content }: { content: string }) {
 
           return (
             <code
-            className="rounded-md border border-border/60 bg-muted/70 px-1.5 py-0.5 font-mono text-[12px] text-foreground"
+              className="rounded-[4px] bg-[#ececef] px-1.5 py-0.5 font-mono text-[12px] font-normal text-black/62"
               {...props}
             >
               {children}
