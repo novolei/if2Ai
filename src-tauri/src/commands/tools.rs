@@ -3,6 +3,10 @@
 //! Provides Tauri commands for the frontend to directly invoke tools.
 
 use crate::commands::AppState;
+use crate::modules::control_plane::{
+    AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
+};
+use crate::modules::runtime::permissions::PermissionOutcome;
 use crate::modules::tools::{ToolSet, ToolSetRegistry};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -40,15 +44,116 @@ pub async fn execute_tool(
     state: State<'_, AppState>,
     name: String,
     args: String,
+    permission_mode: Option<String>,
+    session_id: Option<String>,
 ) -> Result<String, String> {
     let args: serde_json::Value =
         serde_json::from_str(&args).map_err(|e| format!("invalid JSON args: {}", e))?;
 
-    state
-        .tool_registry
-        .dispatch(&name, args)
-        .await
-        .map_err(|e| e.to_string())
+    // Apply the same permission policy used by agent streaming path,
+    // so direct execute_tool cannot bypass selected sandbox mode.
+    let mode = super::agent::parse_permission_mode(permission_mode.as_deref());
+    let permission_policy = super::agent::build_permission_policy(mode);
+    let args_for_auth = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+    if session_id.is_none()
+        && crate::modules::tools::registry::requires_explicit_context(name.as_str())
+    {
+        return Err(format!(
+            "execute_tool for '{}' requires session_id to bind project workdir",
+            name
+        ));
+    }
+
+    let resolver =
+        SessionContextResolver::new(state.session_manager.clone(), state.project_manager.clone());
+    let broker = ToolExecutionBroker::new(state.tool_registry.clone());
+
+    let execution_context = if let Some(session_id) = session_id {
+        resolver
+            .resolve(&session_id, mode, "execute_tool")
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        let workdir = state
+            .tool_registry
+            .context()
+            .lock()
+            .map(|ctx| ctx.workdir.clone())
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        SessionExecutionContext::stateless(workdir, mode)
+    };
+    let trace_id = AuditEmitter::new_trace_id();
+    match permission_policy.authorize(&name, &args_for_auth, None) {
+        PermissionOutcome::Allow => AuditEmitter::policy_decision_made(
+            &trace_id,
+            &execution_context.session_id,
+            &name,
+            &execution_context.workdir,
+            mode,
+            "allow",
+        ),
+        PermissionOutcome::Deny { reason } => {
+            AuditEmitter::policy_decision_made(
+                &trace_id,
+                &execution_context.session_id,
+                &name,
+                &execution_context.workdir,
+                mode,
+                &format!("deny:{reason}"),
+            );
+            return Err(format!("Permission denied: {reason}"));
+        }
+    }
+    let context_fingerprint = crate::modules::tools::context::context_fingerprint(
+        &execution_context.session_id,
+        &execution_context.workdir,
+    );
+    let control_plane =
+        crate::modules::runtime::config::ConfigLoader::default_for(&execution_context.workdir)
+            .load()
+            .map(|loaded| loaded.control_plane().clone())
+            .unwrap_or_default();
+    let control_plane_v2_enabled = std::env::var("IF2AI_CONTROL_PLANE_V2_ENABLED")
+        .map(|value| value != "0")
+        .unwrap_or_else(|_| control_plane.control_plane_v2_enabled());
+    let boundary_enforce_mode = std::env::var("IF2AI_BOUNDARY_ENFORCE_MODE")
+        .map(|value| {
+            if value.eq_ignore_ascii_case("shadow") {
+                "shadow"
+            } else {
+                "enforce"
+            }
+        })
+        .unwrap_or(control_plane.boundary_enforce_mode().as_str());
+    let sandbox_strict_mode = std::env::var("IF2AI_SANDBOX_STRICT_MODE")
+        .map(|value| value != "0")
+        .unwrap_or_else(|_| control_plane.sandbox_strict_mode());
+    tracing::info!(
+        "[execute_tool] context fingerprint='{}', session_id='{}', workdir='{}', tool='{}', control_plane_v2_enabled={}, boundary_enforce_mode={}, sandbox_strict_mode={}",
+        context_fingerprint,
+        execution_context.session_id,
+        execution_context.workdir.display(),
+        name,
+        control_plane_v2_enabled,
+        boundary_enforce_mode,
+        sandbox_strict_mode
+    );
+
+    if control_plane_v2_enabled {
+        broker
+            .execute_with_trace(&execution_context, &name, args, &trace_id)
+            .await
+            .map_err(|e| e.to_string())
+    } else {
+        tracing::warn!(
+            "[execute_tool] controlPlaneV2Enabled=false, fallback to direct dispatch_with_context"
+        );
+        state
+            .tool_registry
+            .dispatch_with_context(&name, args, broker.to_tool_context(&execution_context))
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// List all available tools.

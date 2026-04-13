@@ -4,11 +4,15 @@ import {
   ChevronDown,
   Check,
   Copy,
+  MoreHorizontal,
   Mic,
   Plus,
   Send,
   Sparkles,
   Square,
+  AlertTriangle,
+  RotateCcw,
+  TerminalSquare,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -16,6 +20,8 @@ import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import type { PermissionMode } from "@/lib/tauri"
+import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +43,10 @@ interface Message {
   toolArgs?: Record<string, unknown>
   toolDurationMs?: number
   isError?: boolean
+  toolStatus?: 'queued' | 'running' | 'completed' | 'error'
+  effectiveWorkdir?: string
+  policyDecision?: 'allow' | 'deny' | 'prompt'
+  evidenceId?: string
 }
 
 interface ChatUIProps {
@@ -48,9 +58,12 @@ interface ChatUIProps {
   isLoading?: boolean
   sessionTitle?: string
   projectLabel?: string
+  defaultWorkdir?: string
   branchLabel?: string
   selectedModel?: string
   onModelChange?: React.Dispatch<React.SetStateAction<string>>
+  permissionMode?: PermissionMode
+  onPermissionModeChange?: React.Dispatch<React.SetStateAction<PermissionMode>>
 }
 
 export function ChatUI({
@@ -62,15 +75,19 @@ export function ChatUI({
   isLoading,
   sessionTitle = '重构桌面端 UI 为 shadcn 体系',
   projectLabel = 'if2Ai',
+  defaultWorkdir,
   branchLabel = 'feature/consolidate-codebase',
   selectedModel: selectedModelProp = 'gpt-5.4-mini',
   onModelChange: onModelChangeProp,
+  permissionMode: permissionModeProp = 'dangerFullAccess',
+  onPermissionModeChange: onPermissionModeChangeProp,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
+  const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [isAtBottom, setIsAtBottom] = React.useState(true)
@@ -86,6 +103,9 @@ export function ChatUI({
   // Use prop-provided model if provided, otherwise fall back to local state
   const modelValue = onModelChangeProp !== undefined ? selectedModelProp : selectedModel
   const handleModelChange: React.Dispatch<React.SetStateAction<string>> = onModelChangeProp ?? setSelectedModel
+  const permissionModeValue = onPermissionModeChangeProp !== undefined ? permissionModeProp : selectedPermissionMode
+  const handlePermissionModeChange: React.Dispatch<React.SetStateAction<PermissionMode>> =
+    onPermissionModeChangeProp ?? setSelectedPermissionMode
 
   // Cleanup timer on unmount
   React.useEffect(() => {
@@ -173,6 +193,7 @@ export function ChatUI({
         messages={messages}
         sessionTitle={sessionTitle}
         projectLabel={projectLabel}
+        defaultWorkdir={defaultWorkdir}
         bottomRef={bottomRef}
         scrollRef={transcriptScrollRef}
         onScroll={() => {
@@ -211,6 +232,8 @@ export function ChatUI({
         isLoading={isLoading}
         selectedModel={modelValue}
         setSelectedModel={handleModelChange}
+        permissionMode={permissionModeValue}
+        setPermissionMode={handlePermissionModeChange}
         selectedStrength={selectedStrength}
         setSelectedStrength={setSelectedStrength}
         branchLabel={branchLabel}
@@ -239,6 +262,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   messages,
   sessionTitle,
   projectLabel,
+  defaultWorkdir,
   bottomRef,
   scrollRef,
   onScroll,
@@ -250,6 +274,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   messages: Message[]
   sessionTitle: string
   projectLabel: string
+  defaultWorkdir?: string
   bottomRef: React.RefObject<HTMLDivElement | null>
   scrollRef: React.RefObject<HTMLDivElement | null>
   onScroll: () => void
@@ -258,13 +283,34 @@ const ChatTranscript = React.memo(function ChatTranscript({
   hoveredMessageId: string | null
   onMessageHoverChange: (messageId: string | null) => void
 }) {
+  const primaryThinkingMessageIds = React.useMemo(() => {
+    const primaryIds = new Set<string>()
+    let seenThinkingThisTurn = false
+
+    for (const item of messages) {
+      if (item.role === 'user') {
+        seenThinkingThisTurn = false
+        continue
+      }
+
+      if (item.role === 'assistant' && item.thinking?.trim()) {
+        if (!seenThinkingThisTurn) {
+          primaryIds.add(item.id)
+          seenThinkingThisTurn = true
+        }
+      }
+    }
+
+    return primaryIds
+  }, [messages])
+
   return (
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-6 px-10 py-6">
+      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-10 py-6">
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-3">
             {messages.map((msg) => (
               <ChatMessage
                 key={msg.id}
@@ -273,6 +319,8 @@ const ChatTranscript = React.memo(function ChatTranscript({
                 copiedMessageId={copiedMessageId}
                 hoveredMessageId={hoveredMessageId}
                 onMessageHoverChange={onMessageHoverChange}
+                defaultWorkdir={defaultWorkdir}
+                isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
               />
             ))}
           </div>
@@ -299,6 +347,8 @@ const ComposerDock = React.memo(function ComposerDock({
   isLoading,
   selectedModel,
   setSelectedModel,
+  permissionMode,
+  setPermissionMode,
   selectedStrength,
   setSelectedStrength,
   branchLabel,
@@ -316,6 +366,8 @@ const ComposerDock = React.memo(function ComposerDock({
   isLoading?: boolean
   selectedModel: string
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>
+  permissionMode: PermissionMode
+  setPermissionMode: React.Dispatch<React.SetStateAction<PermissionMode>>
   selectedStrength: string
   setSelectedStrength: React.Dispatch<React.SetStateAction<string>>
   branchLabel: string
@@ -478,14 +530,20 @@ const ComposerDock = React.memo(function ComposerDock({
                   </CompactMenu>
 
                   <CompactMenu
-                    label="完全访问权限"
+                    label={permissionModeLabelFor(permissionMode)}
                     className="min-w-[96px]"
                     contentClassName="w-[120px]"
                     triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
                   >
-                    <MenuItemButton active>完全访问权限</MenuItemButton>
-                    <MenuItemButton>受限访问</MenuItemButton>
-                    <MenuItemButton>只读</MenuItemButton>
+                    {permissionModeItems.map((item) => (
+                      <MenuItemButton
+                        key={item.value}
+                        active={permissionMode === item.value}
+                        onClick={() => setPermissionMode(item.value)}
+                      >
+                        {item.label}
+                      </MenuItemButton>
+                    ))}
                   </CompactMenu>
 
                   <CompactMenu
@@ -519,108 +577,138 @@ const ComposerDock = React.memo(function ComposerDock({
 
 function ToolCallMessage({
   message,
+  defaultWorkdir,
 }: {
   message: Message
+  defaultWorkdir?: string
 }) {
-  const isError = message.isError ?? false
-  const duration = message.toolDurationMs
-    ? formatDuration(message.toolDurationMs)
-    : null
-  const toolName = message.toolName ?? 'unknown_tool'
-
-  return (
-    <div className="flex items-stretch gap-2">
-      <div className={cn(
-        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-medium',
-        isError
-          ? 'bg-red-500/10 text-red-500'
-          : 'bg-emerald-500/10 text-emerald-500'
-      )}>
-        {isError ? '✗' : '✓'}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11px] font-mono text-black/50">
-          <span className="font-medium text-black/65">{toolName}</span>
-          {duration && (
-            <span className="text-black/30">{duration}</span>
-          )}
-        </div>
-        {message.content && (
-          <pre className="mt-1 max-h-32 overflow-x-auto rounded-md border border-black/5 bg-white/40 px-3 py-1.5 text-[11px] font-mono leading-5 text-black/60">
-            {truncateText(message.content, 600)}
-          </pre>
-        )}
-      </div>
-    </div>
-  )
-}
-
-type ToolCallStatus = 'queued' | 'running' | 'completed' | 'error'
-
-interface ToolCallData {
-  id: string
-  name: string
-  status: ToolCallStatus
-  summary: string
-  args?: Record<string, unknown>
-  result?: string
-  duration?: string
-}
-
-function ToolCallItem({ toolCall }: { toolCall: ToolCallData }) {
   const [expanded, setExpanded] = React.useState(false)
-  const statusIcon = { queued: '○', running: '◐', completed: '✓', error: '✗' }[toolCall.status]
-  const statusColor = {
-    queued: 'text-muted-foreground',
-    running: 'text-yellow-500 animate-pulse',
-    completed: 'text-green-500',
-    error: 'text-red-500',
-  }[toolCall.status]
+  const [isHovered, setIsHovered] = React.useState(false)
+  const status = normalizeToolStatus(message)
+  const display = buildToolCallDisplay(message, defaultWorkdir)
+  const isRunning = status === 'running' || status === 'queued'
+  const title = status === 'error' ? `执行失败：${display.title}` : display.title
+  const hasDetails = display.details.length > 0
 
   return (
-    <div className="my-1 rounded-md border bg-muted/30">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm"
-      >
-        <span className={cn('font-mono', statusColor)}>{statusIcon}</span>
-        <span className="font-medium">{toolCall.name}</span>
-        <span className="text-muted-foreground truncate">{toolCall.summary}</span>
-        {toolCall.duration && (
-          <span className="ml-auto text-xs text-muted-foreground">{toolCall.duration}</span>
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <div
+        className={cn(
+          'group relative my-0.5 pl-4',
+          status === 'error' && 'text-rose-600'
         )}
-      </button>
-      {expanded && (
-        <div className="border-t px-3 py-2 text-xs font-mono">
-          <details>
-            <summary className="cursor-pointer text-muted-foreground">Arguments</summary>
-            <pre className="mt-1 overflow-x-auto rounded bg-muted p-2">
-              {JSON.stringify(toolCall.args, null, 2)}
-            </pre>
-          </details>
-          <details>
-            <summary className="mt-2 cursor-pointer text-muted-foreground">Result</summary>
-            <pre className={cn(
-              'mt-1 overflow-x-auto rounded bg-muted p-2',
-              toolCall.status === 'error' && 'border border-red-300 bg-red-50'
-            )}>
-              {toolCall.result}
-            </pre>
-          </details>
-        </div>
-      )}
-    </div>
-  )
-}
+        onPointerEnter={() => setIsHovered(true)}
+        onPointerLeave={() => setIsHovered(false)}
+      >
+        <div className={cn('absolute bottom-0 left-[5px] top-0 w-px bg-black/14', status === 'error' && 'bg-rose-200/80')} />
 
-function ToolCallSequence({ calls }: { calls: ToolCallData[] }) {
-  return (
-    <div className="space-y-1">
-      {calls.map((call) => (
-        <ToolCallItem key={call.id} toolCall={call} />
-      ))}
-    </div>
+        <div className="flex items-start gap-1.5">
+          <div className={cn('mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-black/30', status === 'error' && 'bg-rose-400')} />
+
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className={cn(
+              'group flex min-w-0 flex-1 items-center gap-1.5 rounded-none px-0 py-[2px] text-left transition-colors duration-150',
+              status === 'error' ? 'hover:text-rose-600/90' : 'hover:text-black/70'
+            )}
+            aria-label={expanded ? '折叠工具调用' : '展开工具调用'}
+          >
+            <div className="relative flex size-4 shrink-0 items-center justify-center text-black/38">
+              <TerminalSquare
+                className={cn(
+                  'absolute h-3.5 w-3.5 transition-all duration-150',
+                  expanded ? 'opacity-0 scale-90' : 'opacity-100 scale-100',
+                  isHovered && 'opacity-0 scale-90'
+                )}
+              />
+              <ChevronDown
+                className={cn(
+                  'absolute h-3.5 w-3.5 transition-all duration-150',
+                  expanded
+                    ? 'opacity-100 rotate-180 scale-100'
+                    : isHovered
+                      ? 'opacity-100 scale-100'
+                      : 'opacity-0 scale-90'
+                )}
+              />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className={cn('truncate text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-black/50')}>
+                {title}
+              </div>
+            </div>
+
+            {isRunning ? (
+              <div className="ml-1 shrink-0 opacity-70">
+                <LoadingIndicator />
+              </div>
+            ) : null}
+          </button>
+
+          <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-[18px] shrink-0 rounded-full border-0 bg-transparent text-black/14 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 hover:bg-transparent hover:text-black/38"
+              aria-label="工具调用菜单"
+              onClick={(event) => event.stopPropagation()}
+            >
+                <MoreHorizontal className="size-[12px]" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={6} className="w-[172px]">
+              <DropdownMenuItem
+                onSelect={() => {
+                  void copyTextToClipboard(display.copyText || display.title)
+                }}
+              >
+                复制摘要
+              </DropdownMenuItem>
+              {display.resultCopyText ? (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void copyTextToClipboard(display.resultCopyText as string)
+                  }}
+                >
+                  复制结果
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                onSelect={() => {
+                  setExpanded((value) => !value)
+                }}
+              >
+                {expanded ? '收起详情' : '展开详情'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <CollapsibleContent className="overflow-hidden">
+          <div className="ml-[10px] border-l-[1.5px] border-black/10 pl-3 pt-1">
+            {hasDetails ? (
+              <div className="flex flex-col gap-0.5">
+                {display.details.map((line) => (
+                  <div
+                    key={line}
+                    className="flex min-w-0 items-start gap-1.5 text-[11.5px] leading-5 text-black/36"
+                  >
+                    <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-black/18" />
+                    <span className="min-w-0 truncate font-mono">{line}</span>
+                  </div>
+                ))}
+              </div>
+            ) : status === 'error' ? (
+              <div className="text-[11.5px] leading-5 text-rose-500/72">执行失败</div>
+            ) : null}
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   )
 }
 
@@ -658,21 +746,22 @@ function SlashCommandSuggestions({
   )
 }
 
-export { ToolCallItem, ToolCallSequence }
-export type { ToolCallData, ToolCallStatus }
-
 function ChatMessage({
   message,
   onCopyMessage,
   copiedMessageId,
   hoveredMessageId,
   onMessageHoverChange,
+  defaultWorkdir,
+  isPrimaryThinkingMessage,
 }: {
   message: Message
   onCopyMessage: (message: Message) => void
   copiedMessageId: string | null
   hoveredMessageId: string | null
   onMessageHoverChange: (messageId: string | null) => void
+  defaultWorkdir?: string
+  isPrimaryThinkingMessage?: boolean
 }) {
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
@@ -684,12 +773,12 @@ function ChatMessage({
   const showCopyButton = isHovered || isCopied
 
   if (isTool) {
-    return <ToolCallMessage message={message} />
+    return <ToolCallMessage message={message} defaultWorkdir={defaultWorkdir} />
   }
 
   return (
     <div
-      className={cn('flex flex-col gap-4', isUser ? 'items-end' : 'items-start')}
+      className={cn('flex flex-col gap-2.5', isUser ? 'items-end' : 'items-start')}
       onPointerEnter={() => onMessageHoverChange(message.id)}
       onPointerLeave={() => onMessageHoverChange(null)}
     >
@@ -709,35 +798,50 @@ function ChatMessage({
           </div>
         </div>
       ) : (
-        <div className="w-full space-y-4">
-          <div className="pt-0 text-[14px] leading-6 text-black/85">
-            {hasThinking && (
-              <ThinkingBlock thinking={message.thinking ?? ''} thinkingTime={message.thinkingTime} />
-            )}
+        <div className="w-full space-y-2.5">
+          {message.isError && message.toolArgs?.rawError ? (
+            <ErrorCard error={String(message.toolArgs.rawError)} />
+          ) : (
+            <>
+              <div className="pt-0 text-[14px] leading-6 text-black/85">
+                {hasThinking && (
+                  isPrimaryThinkingMessage ? (
+                    <ThinkingBlock
+                      thinking={message.thinking ?? ''}
+                      thinkingTime={message.thinkingTime}
+                      defaultOpen
+                    />
+                  ) : (
+                    <ThinkingSummaryNode
+                      thinking={message.thinking ?? ''}
+                      thinkingTime={message.thinkingTime}
+                    />
+                  )
+                )}
 
-            {!hasThinking && message.isStreaming ? (
-              <div className="mb-3 flex items-start">
-                <LoadingIndicator />
+                {!hasThinking && message.isStreaming ? (
+                  <div className="mb-2.5 flex items-start">
+                    <LoadingIndicator />
+                  </div>
+                ) : null}
+
+                {hasContent ? (
+                  <>
+                    <MarkdownContent content={message.content} />
+                    <div className="mt-1.5 flex items-center gap-1.5 pl-1">
+                      <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
+                      <MessageCopyButton
+                        side="right"
+                        copied={isCopied}
+                        visible={showCopyButton}
+                        onClick={() => onCopyMessage(message)}
+                      />
+                    </div>
+                  </>
+                ) : null}
               </div>
-            ) : null}
-
-            {hasContent ? (
-              <>
-                <MarkdownContent content={message.content} />
-                <div className="mt-2 flex items-center gap-1.5 pl-1">
-                  <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
-                  <MessageCopyButton
-                    side="right"
-                    copied={isCopied}
-                    visible={showCopyButton}
-                    onClick={() => onCopyMessage(message)}
-                  />
-                </div>
-              </>
-            ) : !message.isStreaming ? (
-              <div className="text-black/35">暂无正文内容</div>
-            ) : null}
-          </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -928,6 +1032,298 @@ function formatShortTime(date: Date) {
   }).format(date)
 }
 
+function normalizeToolStatus(message: Message): 'queued' | 'running' | 'completed' | 'error' {
+  if (message.toolStatus) return message.toolStatus
+  if (message.isError) return 'error'
+  if (message.content.trim()) return 'completed'
+  return 'running'
+}
+
+type ToolDisplay = {
+  title: string
+  details: string[]
+  copyText: string
+  resultCopyText: string | null
+}
+
+function buildToolCallDisplay(message: Message, defaultWorkdir?: string): ToolDisplay {
+  const toolName = (message.toolName ?? 'unknown_tool').trim()
+  const args = message.toolArgs ?? {}
+  const normalizedToolName = toolName.toLowerCase()
+  const command = pickToolString(args, ['command', 'cmd', 'shell'])
+  const path = pickToolString(args, ['path', 'file', 'file_path', 'target', 'cwd', 'directory', 'base_path', 'workdir'])
+  const pattern = pickToolString(args, ['pattern', 'query', 'prompt', 'text'])
+  const location = pickToolString(args, ['location', 'city', 'place'])
+  const skillName = pickToolString(args, ['skill', 'name', 'title', 'path'])
+  const resultSummary = summarizeToolResult(message.content)
+  const titleText = pickToolHeadline(
+    normalizedToolName,
+    args,
+    command,
+    path,
+    pattern,
+    location,
+    skillName,
+    resultSummary,
+    message.content,
+    defaultWorkdir
+  )
+  const detailLines = buildToolDetailLines(
+    normalizedToolName,
+    args,
+    command,
+    path,
+    pattern,
+    location,
+    skillName,
+    resultSummary,
+    defaultWorkdir
+  )
+  if (message.policyDecision) {
+    detailLines.push(`策略：${message.policyDecision}`)
+  }
+  if (message.effectiveWorkdir) {
+    detailLines.push(`目录：${shortenMiddle(message.effectiveWorkdir, 56)}`)
+  }
+  if (message.evidenceId) {
+    detailLines.push(`证据：${shortenMiddle(message.evidenceId, 32)}`)
+  }
+
+  return {
+    title: titleText,
+    details: detailLines.slice(0, 6),
+    copyText: redactSensitiveText(titleText),
+    resultCopyText: resultSummary ? redactSensitiveText(resultSummary) : null,
+  }
+}
+
+function pickToolHeadline(
+  toolName: string,
+  args: Record<string, unknown>,
+  command: string | null,
+  path: string | null,
+  pattern: string | null,
+  location: string | null,
+  skillName: string | null,
+  resultSummary: string,
+  content: string,
+  defaultWorkdir?: string
+): string {
+  const declaredTitle = pickToolString(args, ['title'])
+  if (declaredTitle) return truncateText(declaredTitle, 64)
+
+  const declaredName = pickToolString(args, ['name'])
+  if (declaredName && declaredName.trim() !== toolName) {
+    return truncateText(declaredName, 64)
+  }
+
+  const contentPreview = content.trim()
+  const looksStructured = /^[\[{]/.test(contentPreview) || /"exit_code"|"stdout"|"stderr"|"status"/.test(contentPreview)
+  if (looksStructured && resultSummary) {
+    return truncateText(resultSummary, 64)
+  }
+
+  if (contentPreview && contentPreview.length <= 48 && !contentPreview.includes('\n')) {
+    if (!looksStructured) {
+      return truncateText(contentPreview, 64)
+    }
+  }
+
+  const targetPath = path || defaultWorkdir || ''
+
+  if (toolName.includes('glob_search')) {
+    return targetPath ? `搜索了 ${shortenMiddle(targetPath, 20)} 中的文件` : '搜索了当前目录中的文件'
+  }
+
+  if (toolName.includes('grep_search') || toolName.includes('content_search')) {
+    const target = targetPath ? shortenMiddle(targetPath, 20) : '当前目录'
+    return pattern ? `在 ${target} 中搜索 ${shortenMiddle(pattern, 20)}` : `在 ${target} 中搜索内容`
+  }
+
+  if (toolName.includes('read_file')) {
+    return path ? `读取了 ${shortenMiddle(path, 28)}` : '读取了文件'
+  }
+
+  if (toolName.includes('file_write')) {
+    return path ? `写入了 ${shortenMiddle(path, 28)}` : '写入了文件'
+  }
+
+  if (toolName.includes('web_search')) {
+    return pattern ? `搜索了 ${shortenMiddle(pattern, 28)}` : '搜索了网页信息'
+  }
+
+  if (toolName.includes('weather')) {
+    return location ? `查询了 ${shortenMiddle(location, 24)} 天气` : pattern ? `查询了 ${shortenMiddle(pattern, 24)} 天气` : '查询了天气'
+  }
+
+  if (toolName.includes('tool_search')) {
+    return pattern ? `搜索了工具 ${shortenMiddle(pattern, 24)}` : '搜索了可用工具'
+  }
+
+  if (toolName.includes('skill_search')) {
+    return pattern ? `搜索了技能 ${shortenMiddle(pattern, 24)}` : '搜索了可用技能'
+  }
+
+  if (toolName === 'skill' || toolName.includes('skill/') || toolName.includes('.skill')) {
+    return skillName ? `调用了技能 ${shortenMiddle(skillName, 24)}` : '调用了技能'
+  }
+
+  if (command) {
+    return `执行了命令 ${truncateText(redactSensitiveText(command), 46)}`
+  }
+
+  if (path) {
+    return `执行了 ${shortenMiddle(path, 28)}`
+  }
+
+  if (pattern) {
+    return `执行了 ${shortenMiddle(pattern, 28)}`
+  }
+
+  if (location) {
+    return `执行了 ${shortenMiddle(location, 28)}`
+  }
+
+  return `执行了 ${toolName || '工具'}`
+}
+
+function buildToolDetailLines(
+  toolName: string,
+  args: Record<string, unknown>,
+  command: string | null,
+  path: string | null,
+  pattern: string | null,
+  location: string | null,
+  skillName: string | null,
+  resultSummary: string,
+  defaultWorkdir?: string
+): string[] {
+  const detailLines: string[] = []
+  const targetPath = path || defaultWorkdir || ''
+
+  if (toolName.includes('glob_search')) {
+    if (targetPath) detailLines.push(`范围：${shortenMiddle(targetPath, 56)}`)
+    if (pattern) detailLines.push(`模式：${shortenMiddle(pattern, 56)}`)
+  } else if (toolName.includes('grep_search') || toolName.includes('content_search')) {
+    if (targetPath) detailLines.push(`路径：${shortenMiddle(targetPath, 56)}`)
+    if (pattern) detailLines.push(`模式：${shortenMiddle(pattern, 56)}`)
+  } else if (toolName.includes('read_file')) {
+    if (path) detailLines.push(`文件：${shortenMiddle(path, 56)}`)
+  } else if (toolName.includes('file_write')) {
+    if (path) detailLines.push(`写入：${shortenMiddle(path, 56)}`)
+  } else if (toolName.includes('web_search')) {
+    if (pattern) detailLines.push(`搜索：${shortenMiddle(pattern, 56)}`)
+  } else if (toolName.includes('weather')) {
+    if (location) detailLines.push(`地点：${shortenMiddle(location, 56)}`)
+    else if (pattern) detailLines.push(`地点：${shortenMiddle(pattern, 56)}`)
+  } else if (toolName.includes('tool_search') || toolName.includes('skill_search')) {
+    if (pattern) detailLines.push(`关键词：${shortenMiddle(pattern, 56)}`)
+  } else if (toolName === 'skill' || toolName.includes('skill/') || toolName.includes('.skill')) {
+    if (skillName) detailLines.push(`技能：${shortenMiddle(skillName, 56)}`)
+  } else if (command) {
+    detailLines.push(`命令：${truncateText(redactSensitiveText(command), 92)}`)
+  }
+
+  if (resultSummary) {
+    detailLines.push(`结果：${truncateText(resultSummary, 96)}`)
+  }
+
+  const declaredStatus = pickToolString(args, ['status'])
+  if (declaredStatus && !detailLines.some((line) => line.includes(declaredStatus))) {
+    detailLines.push(`状态：${shortenMiddle(declaredStatus, 32)}`)
+  }
+
+  return detailLines.slice(0, 3)
+}
+
+function pickToolString(args: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = args[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+
+  return null
+}
+
+function summarizeToolResult(content: string): string {
+  const trimmed = content.trim()
+  if (!trimmed) return ''
+
+  const parsed = tryParseJson(trimmed)
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const record = parsed as Record<string, unknown>
+    const exitCode = typeof record.exit_code === 'number' ? record.exit_code : null
+    const stdout = typeof record.stdout === 'string' ? record.stdout.trim() : ''
+    const stderr = typeof record.stderr === 'string' ? record.stderr.trim() : ''
+
+    if (stdout || stderr || exitCode !== null) {
+      const output = stdout || stderr
+      const outputSummary = output ? truncateText(firstNonEmptyLine(output), 72) : ''
+      const statusText = exitCode === 0 ? '执行完成' : '执行失败'
+      return outputSummary ? `${statusText}：${outputSummary}` : statusText
+    }
+
+    const count = record.count
+    if (typeof count === 'number') {
+      return `返回 ${count} 项结果`
+    }
+
+    for (const key of ['results', 'items', 'entries', 'files'] as const) {
+      const value = record[key]
+      if (Array.isArray(value)) {
+        return `返回 ${value.length} 项结果`
+      }
+    }
+  }
+
+  if (Array.isArray(parsed)) {
+    return `返回 ${parsed.length} 项结果`
+  }
+
+  const firstLine = firstNonEmptyLine(trimmed)
+  if (!firstLine) return ''
+  if (firstLine.length <= 120 && !firstLine.includes('\n')) {
+    return truncateText(firstLine, 120)
+  }
+
+  return truncateText(firstLine, 120)
+}
+
+function tryParseJson(text: string): unknown | null {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function firstNonEmptyLine(text: string): string {
+  return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? ''
+}
+
+function shortenMiddle(text: string, maxLength: number): string {
+  const value = text.trim()
+  if (value.length <= maxLength) return value
+
+  const visible = Math.max(8, Math.floor((maxLength - 1) / 2))
+  const start = value.slice(0, visible)
+  const end = value.slice(-visible)
+  return `${start}…${end}`
+}
+
+async function copyTextToClipboard(text: string) {
+  const value = text.trim()
+  if (!value) return
+
+  try {
+    await navigator.clipboard.writeText(value)
+  } catch (err) {
+    console.error('Failed to copy text:', err)
+  }
+}
+
 function EmptyState({ sessionTitle, projectLabel }: { sessionTitle: string; projectLabel: string }) {
   return (
     <div className="flex min-h-[55vh] flex-col items-center justify-center gap-6 rounded-[2rem] border border-dashed border-black/5 bg-white/60 px-8 py-16 text-center">
@@ -954,19 +1350,199 @@ function LoadingIndicator() {
   )
 }
 
-function ThinkingBlock({ thinking, thinkingTime }: { thinking: string; thinkingTime?: number }) {
-  const [open, setOpen] = React.useState(false)
+/**
+ * ErrorCard — renders assistant errors with actionable messaging.
+ * Supports both raw error strings and structured error hints.
+ */
+function ErrorCard({
+  error,
+  onRetry,
+}: {
+  error: string
+  onRetry?: () => void
+}) {
+  // Classify error for user-friendly messaging
+  const { title, suggestion, isConnection, kindLabel } = classifyError(error)
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-[13px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5">
+      <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-rose-400/90" />
+      <div className="flex items-start gap-2.5 pl-2 pr-1">
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/8">
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-500/92" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-[12.5px] font-medium leading-4.5 text-rose-800/90">{title}</div>
+            <span className="rounded-full border border-rose-300/70 bg-rose-100/70 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-700/90">
+              {kindLabel}
+            </span>
+          </div>
+          {suggestion && (
+            <div className="mt-0.5 text-[11.5px] leading-4.5 text-rose-700/68">{suggestion}</div>
+          )}
+          <div className="mt-1.25 break-words rounded-md bg-white/32 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-600/72">
+            {truncateText(error, 500)}
+          </div>
+          {isConnection && onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+            >
+              <RotateCcw className="h-3 w-3" />
+              重试
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Classify an error string into user-friendly messaging.
+ */
+function classifyError(error: string): {
+  title: string
+  suggestion: string
+  isConnection: boolean
+  kindLabel: string
+} {
+  const lower = error.toLowerCase()
+
+  if (lower.includes('network_timeout:')) {
+    return {
+      title: '模型流超时',
+      suggestion: '上游模型流在超时时间内未返回数据，建议重试或切换模型。',
+      isConnection: true,
+      kindLabel: '网络超时',
+    }
+  }
+
+  if (lower.includes('permission_error:')) {
+    return {
+      title: '权限受限',
+      suggestion: '当前权限模式不允许继续执行，请在权限弹窗中授权后重试。',
+      isConnection: false,
+      kindLabel: '权限错误',
+    }
+  }
+
+  if (lower.includes('request_validation_error:')) {
+    return {
+      title: '请求格式不兼容',
+      suggestion: '会话历史中的工具调用顺序与模型接口约束不一致，建议重试或新建会话。',
+      isConnection: false,
+      kindLabel: '请求校验失败',
+    }
+  }
+
+  if (lower.includes('network_transport_error:')) {
+    return {
+      title: '网络传输中断',
+      suggestion: '连接被中断或网络不稳定，请检查网络后重试。',
+      isConnection: true,
+      kindLabel: '网络中断',
+    }
+  }
+
+  if (lower.includes('model_stream_error:')) {
+    return {
+      title: '模型流异常',
+      suggestion: '模型流式输出异常终止，请稍后重试。',
+      isConnection: false,
+      kindLabel: '模型流断开',
+    }
+  }
+
+  if (lower.includes('connection refused') || lower.includes('network') || lower.includes('dns')) {
+    return {
+      title: '网络连接失败',
+      suggestion: '请检查网络连接和代理设置，确认 LLM 服务地址可访问。',
+      isConnection: true,
+      kindLabel: '网络错误',
+    }
+  }
+
+  if (lower.includes('400') || lower.includes('invalidparameter') || lower.includes('invalid')) {
+    return {
+      title: '请求参数有误',
+      suggestion: '工具定义或消息格式与服务端不兼容，请检查配置后重试。',
+      isConnection: false,
+      kindLabel: '请求错误',
+    }
+  }
+
+  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
+    return {
+      title: '认证失败',
+      suggestion: 'API Key 或认证令牌已过期，请在设置中更新。',
+      isConnection: false,
+      kindLabel: '认证错误',
+    }
+  }
+
+  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    return {
+      title: '请求频率受限',
+      suggestion: 'API 调用已达上限，请稍后再试。',
+      isConnection: false,
+      kindLabel: '限流',
+    }
+  }
+
+  if (lower.includes('500') || lower.includes('502') || lower.includes('503') || lower.includes('504')) {
+    return {
+      title: '服务端异常',
+      suggestion: 'LLM 服务端暂时不可用，请稍后重试。',
+      isConnection: true,
+      kindLabel: '服务异常',
+    }
+  }
+
+  if (lower.includes('missing credential') || lower.includes('missing_credentials')) {
+    return {
+      title: '缺少 API 配置',
+      suggestion: '请在 ~/.claude/settings.json 中配置 ANTHROPIC_AUTH_TOKEN 和 ANTHROPIC_BASE_URL。',
+      isConnection: false,
+      kindLabel: '配置缺失',
+    }
+  }
+
+  return {
+    title: 'Agent 执行异常',
+    suggestion: '请检查后端日志或网络配置，确认 LLM 服务可用。',
+    isConnection: false,
+    kindLabel: '未知错误',
+  }
+}
+
+function ThinkingBlock({
+  thinking,
+  thinkingTime,
+  defaultOpen = false,
+}: {
+  thinking: string
+  thinkingTime?: number
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = React.useState(defaultOpen)
+  React.useEffect(() => {
+    setOpen(defaultOpen)
+  }, [defaultOpen, thinking])
   const durationLabel = thinkingTime ? formatDuration(thinkingTime) : '—'
 
   return (
-    <div className="mb-4">
+    <div className="relative mb-3 pl-4">
+      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-black/14" />
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 px-0 text-[12px] font-light italic tracking-tight text-black/32 transition-colors hover:text-black/48"
+        className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] font-light italic tracking-tight text-black/30 transition-colors hover:text-black/46"
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-black/28" />
-        <span>思考完成</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-black/30" />
+        <span>已完成思考</span>
         <span className="text-black/26 not-italic"> {durationLabel}</span>
         <ChevronDown className={cn('ml-0.5 h-3 w-3 transition-transform', open && 'rotate-180')} />
       </button>
@@ -977,12 +1553,33 @@ function ThinkingBlock({ thinking, thinkingTime }: { thinking: string; thinkingT
           open ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0'
         )}
       >
-        <div className="mt-2 flex items-stretch gap-3 pl-1">
-          <div className="w-[3px] rounded-full bg-black/16" />
-          <div className="whitespace-pre-wrap px-1 text-[12px] font-light italic leading-6 text-black/48">
+        <div className="ml-[10px] border-l border-black/8 pl-3 pt-1">
+          <div className="whitespace-pre-wrap px-1 text-[11.5px] font-light italic leading-6 text-black/44">
             {thinking}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ThinkingSummaryNode({
+  thinking,
+  thinkingTime,
+}: {
+  thinking: string
+  thinkingTime?: number
+}) {
+  const durationLabel = thinkingTime ? formatDuration(thinkingTime) : ''
+  const summary = summarizeThinkingText(thinking)
+  const label = durationLabel ? `${summary} · ${durationLabel}` : summary
+
+  return (
+    <div className="relative mb-3 pl-4">
+      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-black/14" />
+      <div className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] italic tracking-tight text-black/28">
+        <span className="h-1.5 w-1.5 rounded-full bg-black/28" />
+        <span className="truncate">{label}</span>
       </div>
     </div>
   )
@@ -1000,12 +1597,28 @@ const strengthItems = [
   { value: 'high', label: '高' },
 ]
 
+const permissionModeItems: Array<{ value: PermissionMode; label: string }> = [
+  { value: 'dangerFullAccess', label: '完全访问权限' },
+  { value: 'workspaceWrite', label: '受限访问' },
+  { value: 'readOnly', label: '只读' },
+]
+
 function modelLabelFor(value: string) {
   return modelItems.find((item) => item.value === value)?.label ?? 'GPT-5.4-Mini'
 }
 
 function strengthLabelFor(value: string) {
   return strengthItems.find((item) => item.value === value)?.label ?? '中'
+}
+
+function permissionModeLabelFor(value: PermissionMode) {
+  return permissionModeItems.find((item) => item.value === value)?.label ?? '完全访问权限'
+}
+
+function summarizeThinkingText(thinking: string): string {
+  const firstLine = firstNonEmptyLine(thinking)
+  if (!firstLine) return '已完成思考'
+  return truncateText(firstLine.replace(/\s+/g, ' '), 44)
 }
 
 function CompactMenu({
@@ -1073,4 +1686,11 @@ function formatDuration(value: number) {
 function truncateText(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text
   return text.slice(0, maxLen) + '…'
+}
+
+function redactSensitiveText(text: string): string {
+  if (!text) return text
+  return text
+    .replace(/(token|password|secret|api[_-]?key)\s*[:=]\s*[^\s]+/gi, '$1=<redacted>')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer <redacted>')
 }

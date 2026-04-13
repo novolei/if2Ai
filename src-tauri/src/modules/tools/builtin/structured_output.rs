@@ -25,6 +25,12 @@ pub fn structured_output_tool_entry() -> ToolEntry {
         description: "Return structured output in the requested format.".to_string(),
         input_schema: serde_json::json!({
             "type": "object",
+            "properties": {
+                "output": {
+                    "type": "object",
+                    "description": "Arbitrary structured output in any JSON format."
+                }
+            },
             "additionalProperties": true
         }),
         max_result_size: Some(100 * 1024),

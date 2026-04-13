@@ -5,7 +5,7 @@
 
 meta:
   phase: "5d"
-  phase_status: active           # draft | active | completed
+  phase_status: completed           # draft | active | completed
   title: "UX 完善 — 状态统一 + 工具展示 + TodoPanel + SlashCommand + 模型选择器"
   owner: "@architects"
   depends_on_phase: "5c"
@@ -614,7 +614,7 @@ slices:
 
   - id: "5d.8"
     title: "5D 集成测试 — 验证全部前端 UX 功能"
-    status: pending
+    status: done
     design_ref: "docs/bs_gap/08-critical-fix-priority.md"
     backlog_ref: "F7, F10, F11, N10, UI-8"
     impl_targets:
@@ -654,7 +654,7 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-13"
-  completed_slices: ["5d.1", "5d.2", "5d.3", "5d.4"]
-  current_slice: "5d.5"
+  completed_slices: ["5d.1", "5d.2", "5d.3", "5d.4", "5d.5", "5d.6", "5d.7", "5d.8"]
+  current_slice: null
   blocked: []
-  notes: "Human checkpoint reached after 5d.4. Stage 1-4 complete. Next: F9 context compaction, F10 model selector, F11 slash command, integration tests."
+  notes: "Phase 5D 全部完成 — 8/8 slices. Human checkpoint after 5d.4 已到达并通过。所有前端 UX 功能完成：状态统一、隐藏无功能图标、工具调用展示、TodoPanel、Compaction、模型选择器、SlashCommand 交互。"

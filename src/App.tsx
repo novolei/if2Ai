@@ -3,6 +3,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   startAgentStream,
   listenToStream,
+  listenToPermissionRequests,
+  respondPermission,
   listProjects,
   listProjectSessions,
   createPermanentWorktree,
@@ -16,6 +18,8 @@ import {
   openProjectInFinder,
   openSettingsWindow,
   invoke,
+  type PermissionRequestPayload,
+  type PermissionMode,
   type Project,
   type ProjectMeta,
   type SessionMeta,
@@ -28,6 +32,15 @@ import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message } from '@/modules/chat/types'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
 
@@ -47,17 +60,27 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
+    if (typeof window === 'undefined') return 'dangerFullAccess'
+    const stored = localStorage.getItem('permissionMode')
+    if (stored === 'readOnly' || stored === 'workspaceWrite' || stored === 'dangerFullAccess') {
+      return stored
+    }
+    return 'dangerFullAccess'
+  })
   const [todos, setTodos] = useState<TodoItem[]>([])
-  const [streamAbortHandle, setStreamAbortHandle] = useState<string | null>(null)
+  const [streamAbortHandles, setStreamAbortHandles] = useState<Record<string, string>>({})
+  const [permissionPrompt, setPermissionPrompt] = useState<PermissionRequestPayload | null>(null)
   const resizeRef = useRef<{
     startX: number
     startWidth: number
   } | null>(null)
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null
+  const isActiveSessionLoading = activeSessionId ? Boolean(sessionLoading[activeSessionId]) : false
   const activeTitle = activeConv?.title ?? '重构桌面端 UI 为 shadcn 体系'
   const branchLabel = 'feature/consolidate-codebase'
   const minLeftPaneWidth = 280
@@ -70,9 +93,9 @@ function App() {
       })) ?? [],
     [activeConv?.messages]
   )
-  const runningSessionIds = Object.values(conversations)
-    .filter((conv) => conv.messages.some((msg) => msg.isStreaming))
-    .map((conv) => conv.id)
+  const runningSessionIds = Object.entries(sessionLoading)
+    .filter(([, running]) => running)
+    .map(([sessionId]) => sessionId)
 
   useEffect(() => {
     loadProjects().then((projectList) => {
@@ -95,6 +118,26 @@ function App() {
   useEffect(() => {
     localStorage.setItem('lastActiveSection', activeSection)
   }, [activeSection])
+
+  useEffect(() => {
+    localStorage.setItem('permissionMode', permissionMode)
+  }, [permissionMode])
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+
+    listenToPermissionRequests((payload) => {
+      setPermissionPrompt(payload)
+    }).then((dispose) => {
+      unlisten = dispose
+    }).catch((err) => {
+      console.error('Failed to listen permission requests:', err)
+    })
+
+    return () => {
+      if (unlisten) unlisten()
+    }
+  }, [])
 
   const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
@@ -158,45 +201,99 @@ function App() {
 
     try {
       const fullSession = await getSession(sessionId)
-      const convertedMessages: Message[] = fullSession.messages.flatMap((msg) => {
-        const baseTimestamp = new Date(fullSession.updated_at)
-        return msg.blocks.flatMap((block): Message[] => {
+      const baseTimestamp = new Date(fullSession.updated_at)
+      const convertedMessages: Message[] = []
+      const toolMessageIndexById = new Map<string, number>()
+
+      const upsertToolMessage = (toolCallId: string, nextMessage: Message) => {
+        const existingIndex = toolMessageIndexById.get(toolCallId)
+        if (existingIndex !== undefined) {
+          convertedMessages[existingIndex] = {
+            ...convertedMessages[existingIndex],
+            ...nextMessage,
+            id: convertedMessages[existingIndex].id,
+            toolCallId,
+          }
+          return
+        }
+
+        const index = convertedMessages.push(nextMessage) - 1
+        toolMessageIndexById.set(toolCallId, index)
+      }
+
+      for (const msg of fullSession.messages) {
+        let pushedAssistantText = false
+        for (const block of msg.blocks) {
+          if (block.type === "tool_use" && block.tool_use_block) {
+            const toolCallId = block.tool_use_block.id
+            upsertToolMessage(toolCallId, {
+              id: `tool-use-${toolCallId}`,
+              role: "tool",
+              content: "",
+              timestamp: baseTimestamp,
+              toolCallId,
+              toolName: block.tool_use_block.name,
+              toolArgs: block.tool_use_block.input as Record<string, unknown> | undefined,
+              toolStatus: "running",
+              policyDecision: "prompt",
+              evidenceId: toolCallId,
+              effectiveWorkdir: project?.workdir,
+              disableAnimation: true,
+            })
+            continue
+          }
+
           if (block.type === "tool_result" && block.tool_use_id) {
-            return [{
-              id: `tool-${block.tool_use_id}-${Date.now()}`,
+            const toolCallId = block.tool_use_id
+            const existingIndex = toolMessageIndexById.get(toolCallId)
+            const toolArgs =
+              existingIndex !== undefined ? convertedMessages[existingIndex]?.toolArgs : undefined
+            upsertToolMessage(toolCallId, {
+              id: `tool-${toolCallId}-${Date.now()}`,
               role: "tool",
               content: block.output || "",
               timestamp: baseTimestamp,
-              toolCallId: block.tool_use_id,
+              toolCallId,
               toolName: block.tool_name || "unknown",
+              toolArgs,
+              toolStatus: "completed",
+              policyDecision: "allow",
+              evidenceId: toolCallId,
+              effectiveWorkdir: project?.workdir,
               isError: false,
-            }]
-          }
-          if (block.type === "tool_use" && block.tool_use_block) {
-            return [{
-              id: `tool-use-${block.tool_use_block.id}`,
-              role: "assistant",
-              content: "",
-              timestamp: baseTimestamp,
-              toolCallId: block.tool_use_block.id,
-              toolName: block.tool_use_block.name,
-              toolArgs: block.tool_use_block.input as Record<string, unknown> | undefined,
               disableAnimation: true,
-            }]
+            })
+            continue
           }
+
           if (block.type === "text" && block.text) {
-            return [{
+            pushedAssistantText = true
+            convertedMessages.push({
               id: `${msg.role}-${crypto.randomUUID()}`,
               role: msg.role as "user" | "assistant",
               content: block.text,
               timestamp: baseTimestamp,
               thinking: msg.thinking,
               disableAnimation: true,
-            }]
+            })
           }
-          return []
-        })
-      })
+        }
+
+        if (
+          msg.role === "assistant" &&
+          msg.thinking &&
+          !pushedAssistantText
+        ) {
+          convertedMessages.push({
+            id: `${msg.role}-${crypto.randomUUID()}`,
+            role: "assistant",
+            content: "",
+            timestamp: baseTimestamp,
+            thinking: msg.thinking,
+            disableAnimation: true,
+          })
+        }
+      }
 
       setConversations((prev) => ({
         ...prev,
@@ -337,22 +434,47 @@ function App() {
     }
   }
 
-  const stopAgentStream = async () => {
+  const stopAgentStream = async (sessionIdOverride?: string) => {
+    const sessionId = sessionIdOverride ?? activeSessionId
+    if (!sessionId) return
+    const streamAbortHandle = streamAbortHandles[sessionId]
     if (streamAbortHandle) {
       try {
         await invoke<string>('stop_agent_stream', { streamId: streamAbortHandle })
       } catch (err) {
         console.error('Failed to stop stream:', err)
       }
-      setStreamAbortHandle(null)
-      setIsLoading(false)
+      setStreamAbortHandles((prev) => {
+        const { [sessionId]: _removed, ...rest } = prev
+        return rest
+      })
+      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+    }
+  }
+
+  const handlePermissionDecision = async (
+    decision: 'allow' | 'deny',
+    scope: 'once' | 'session' = 'once'
+  ) => {
+    if (!permissionPrompt) return
+    try {
+      await respondPermission(permissionPrompt.session_id, decision, {
+        toolName: permissionPrompt.tool_name,
+        scope,
+      })
+    } catch (err) {
+      console.error('Failed to respond permission:', err)
+    } finally {
+      setPermissionPrompt(null)
     }
   }
 
   const sendMessage = async () => {
-    if (!input.trim() || isLoading || !activeSessionId) return
+    if (!input.trim() || !activeSessionId) return
+    const sessionId = activeSessionId
+    if (sessionLoading[sessionId]) return
 
-    const conv = conversations[activeSessionId]
+    const conv = conversations[sessionId]
     if (!conv) return
 
     const userMsg: Message = {
@@ -369,14 +491,15 @@ function App() {
       updatedAt: new Date(),
     }
 
-    setConversations((prev) => ({ ...prev, [activeSessionId]: updatedConv }))
+    setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }))
     setInput('')
-    setIsLoading(true)
+    setSessionLoading((prev) => ({ ...prev, [sessionId]: true }))
 
     const startTime = Date.now()
     let accumulatedText = ''
     let accumulatedThinking = ''
     let assistantMsgId: string | null = null
+    const seenToolCallIds = new Set<string>()
 
     const createAssistantMessage = () => {
       if (assistantMsgId) return
@@ -390,11 +513,11 @@ function App() {
       }
 
       setConversations((prev) => {
-        const currentConv = prev[activeSessionId]
+        const currentConv = prev[sessionId]
         if (!currentConv) return prev
         return {
           ...prev,
-          [activeSessionId]: {
+          [sessionId]: {
             ...currentConv,
             messages: [...currentConv.messages, assistantMsg],
           },
@@ -402,71 +525,126 @@ function App() {
       })
     }
 
+    const finalizeCurrentAssistantSegment = () => {
+      if (!assistantMsgId) return
+
+      const finalizedAssistantId = assistantMsgId
+      setConversations((prev) => {
+        const currentConv = prev[activeSessionId]
+        if (!currentConv) return prev
+
+        return {
+          ...prev,
+          [activeSessionId]: {
+            ...currentConv,
+            messages: currentConv.messages.map((msg) =>
+              msg.id === finalizedAssistantId ? { ...msg, isStreaming: false } : msg
+            ),
+          },
+        }
+      })
+
+      assistantMsgId = null
+      accumulatedText = ''
+      accumulatedThinking = ''
+    }
+
+    const ensureAssistantMessage = () => {
+      if (!assistantMsgId) {
+        createAssistantMessage()
+      }
+
+      return assistantMsgId
+    }
+
     try {
       createAssistantMessage()
-      const streamId = await startAgentStream(activeSessionId, userMsg.content)
-      setStreamAbortHandle(streamId)
+      const streamId = await startAgentStream(sessionId, userMsg.content, permissionMode)
+      setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: streamId }))
 
       const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
         if (payload.event_type === 'text_delta' && payload.text) {
-          if (!assistantMsgId) {
-            createAssistantMessage()
-          }
+          const currentAssistantId = ensureAssistantMessage()
 
           accumulatedText += payload.text
           setConversations((prev) => {
-            const currentConv = prev[activeSessionId]
+            const currentConv = prev[sessionId]
             if (!currentConv) return prev
             return {
               ...prev,
-              [activeSessionId]: {
+              [sessionId]: {
                 ...currentConv,
                 messages: currentConv.messages.map((msg) =>
-                  msg.id === assistantMsgId ? { ...msg, content: accumulatedText } : msg
+                  msg.id === currentAssistantId ? { ...msg, content: accumulatedText } : msg
                 ),
               },
             }
           })
         } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
-          if (!assistantMsgId) {
-            createAssistantMessage()
-          }
+          const currentAssistantId = ensureAssistantMessage()
 
           accumulatedThinking += payload.thinking
           setConversations((prev) => {
-            const currentConv = prev[activeSessionId]
+            const currentConv = prev[sessionId]
             if (!currentConv) return prev
             return {
               ...prev,
-              [activeSessionId]: {
+              [sessionId]: {
                 ...currentConv,
                 messages: currentConv.messages.map((msg) =>
-                  msg.id === assistantMsgId ? { ...msg, thinking: accumulatedThinking } : msg
+                  msg.id === currentAssistantId ? { ...msg, thinking: accumulatedThinking } : msg
                 ),
               },
             }
           })
         } else if (payload.event_type === 'tool_call_update') {
-          // Handle tool completion/error events
-          if (payload.tool_status === 'completed' || payload.tool_status === 'error') {
-            const toolMsg: Message = {
-              id: `tool-${payload.tool_call_id}-${Date.now()}`,
-              role: 'tool',
-              content: payload.tool_result || '',
-              timestamp: new Date(),
-              toolCallId: payload.tool_call_id,
-              toolName: payload.tool_name,
-              toolDurationMs: payload.tool_duration_ms,
-              isError: payload.tool_status === 'error',
+          const toolCallId = payload.tool_call_id
+          if (toolCallId) {
+            const nextStatus = payload.tool_status ?? 'running'
+
+            if (!seenToolCallIds.has(toolCallId)) {
+              seenToolCallIds.add(toolCallId)
+              finalizeCurrentAssistantSegment()
             }
+
             setConversations((prev) => {
-              const currentConv = prev[activeSessionId]
+              const currentConv = prev[sessionId]
               if (!currentConv) return prev
+
+              const existingIndex = currentConv.messages.findIndex(
+                (msg) => msg.role === 'tool' && msg.toolCallId === toolCallId
+              )
+              const existingMessage = existingIndex >= 0 ? currentConv.messages[existingIndex] : undefined
+
+              const updatedToolMessage: Message = {
+                id: existingMessage?.id ?? `tool-${toolCallId}-${Date.now()}`,
+                role: 'tool',
+                content: nextStatus === 'queued' || nextStatus === 'running'
+                  ? existingMessage?.content ?? ''
+                  : (payload.tool_result || existingMessage?.content || ''),
+                timestamp: existingMessage?.timestamp ?? new Date(),
+                toolCallId,
+                toolName: payload.tool_name ?? existingMessage?.toolName ?? 'unknown',
+                toolArgs: payload.tool_args ?? existingMessage?.toolArgs,
+                toolDurationMs: payload.tool_duration_ms ?? existingMessage?.toolDurationMs,
+                isError: nextStatus === 'error' || existingMessage?.isError,
+                toolStatus: nextStatus,
+                effectiveWorkdir: payload.effective_workdir ?? existingMessage?.effectiveWorkdir,
+                policyDecision: payload.policy_decision ?? existingMessage?.policyDecision,
+                evidenceId: payload.evidence_id ?? existingMessage?.evidenceId,
+                disableAnimation: true,
+              }
+
+              const nextMessages =
+                existingIndex >= 0
+                  ? currentConv.messages.map((msg, index) => (index === existingIndex ? updatedToolMessage : msg))
+                  : [...currentConv.messages, updatedToolMessage]
+
               return {
                 ...prev,
-                [activeSessionId]: {
+                [sessionId]: {
                   ...currentConv,
-                  messages: [...currentConv.messages, toolMsg],
+                  messages: nextMessages,
                 },
               }
             })
@@ -482,22 +660,51 @@ function App() {
               // ignore parse error
             }
           }
+        } else if (payload.event_type === 'final_text_override' && payload.text) {
+          const currentAssistantId = ensureAssistantMessage()
+          accumulatedText = payload.text
+          setConversations((prev) => {
+            const currentConv = prev[activeSessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [activeSessionId]: {
+                ...currentConv,
+                messages: currentConv.messages.map((msg) =>
+                  msg.id === currentAssistantId ? { ...msg, content: accumulatedText } : msg
+                ),
+              },
+            }
+          })
         } else if (payload.event_type === 'stream_complete') {
+          setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
           setTodos([])
-          setStreamAbortHandle(null)
+          setStreamAbortHandles((prev) => {
+            const { [sessionId]: _removed, ...rest } = prev
+            return rest
+          })
           if (assistantMsgId) {
             setConversations((prev) => {
-              const currentConv = prev[activeSessionId]
+              const currentConv = prev[sessionId]
               if (!currentConv) return prev
               return {
                 ...prev,
-                [activeSessionId]: {
+                [sessionId]: {
                   ...currentConv,
-                  messages: currentConv.messages.map((msg) =>
-                    msg.id === assistantMsgId
-                      ? { ...msg, isStreaming: false, thinkingTime: Date.now() - startTime }
-                      : msg
-                  ),
+                  messages: currentConv.messages.map((msg) => {
+                    if (msg.id === assistantMsgId) {
+                      return { ...msg, isStreaming: false, thinkingTime: Date.now() - startTime }
+                    }
+                    if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
+                      return {
+                        ...msg,
+                        toolStatus: 'error',
+                        isError: true,
+                        content: msg.content || 'stream completed before tool reached terminal state',
+                      }
+                    }
+                    return msg
+                  }),
                 },
               }
             })
@@ -505,8 +712,37 @@ function App() {
           unlisten()
         } else if (payload.event_type === 'stream_error') {
           unlisten()
-          setIsLoading(false)
-          throw new Error('Stream error occurred')
+          setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+          setStreamAbortHandles((prev) => {
+            const { [sessionId]: _removed, ...rest } = prev
+            return rest
+          })
+          const errMsg = payload.tool_result || 'Agent 执行失败，请稍后重试。'
+          setConversations((prev) => {
+            const currentConv = prev[sessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: currentConv.messages.map((msg) => {
+                  if (msg.id === assistantMsgId) {
+                    return { ...msg, content: '', isStreaming: false, isError: true, toolArgs: { rawError: errMsg } }
+                  }
+                  if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
+                    return {
+                      ...msg,
+                      toolStatus: 'error',
+                      isError: true,
+                      content: msg.content || errMsg,
+                      toolArgs: msg.toolArgs ?? { rawError: errMsg },
+                    }
+                  }
+                  return msg
+                }),
+              },
+            }
+          })
         }
       })
     } catch (err) {
@@ -519,17 +755,43 @@ function App() {
             ? err.message
             : 'Agent 执行失败，请稍后重试。'
 
-      setConversations((prev) => ({
-        ...prev,
-        [activeSessionId]: {
-          ...updatedConv,
-          messages: updatedConv.messages.map((msg) =>
-            msg.id === assistantMsgId
-              ? { ...msg, content: `错误: ${errorMessage}`, isStreaming: false }
-              : msg
-          ),
-        },
-      }))
+      if (assistantMsgId) {
+        setConversations((prev) => {
+          const currentConv = prev[sessionId]
+          if (!currentConv) return prev
+          return {
+            ...prev,
+            [sessionId]: {
+              ...currentConv,
+              messages: currentConv.messages.map((msg) =>
+                msg.id === assistantMsgId
+                  ? { ...msg, content: '', isStreaming: false, isError: true, toolArgs: { rawError: errorMessage } }
+                  : msg
+              ),
+            },
+          }
+        })
+      } else {
+        // No assistant message yet — create one with the error
+        const errorMsgId = crypto.randomUUID()
+        const errorMsg: Message = {
+          id: errorMsgId,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+          isStreaming: false,
+          isError: true,
+          toolArgs: { rawError: errorMessage },
+        }
+        setConversations((prev) => ({
+          ...prev,
+          [sessionId]: {
+            ...updatedConv,
+            messages: [...updatedConv.messages, errorMsg],
+          },
+        }))
+      }
+      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
     } finally {
       // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
     }
@@ -626,7 +888,7 @@ function App() {
               activeTitle={activeTitle}
               activeMessages={activeMessages}
               input={input}
-              isLoading={isLoading}
+              isLoading={isActiveSessionLoading}
               loading={loading}
               onSelectProject={handleSelectProject}
               onSelectSession={handleSelectSession}
@@ -642,12 +904,14 @@ function App() {
               onStop={stopAgentStream}
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
+              permissionMode={permissionMode}
+              onPermissionModeChange={setPermissionMode}
               todos={todos}
               leftPaneWidth={leftPaneWidth}
               onResizeStart={startResize}
               onStartWindowDrag={startWindowDrag}
               runningSessionIds={runningSessionIds}
-              status={isLoading ? 'running' : 'idle'}
+              status={isActiveSessionLoading ? 'running' : 'idle'}
             />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
@@ -660,6 +924,63 @@ function App() {
         onClose={() => setIsCreateProjectOpen(false)}
         onSubmit={handleCreateProject}
       />
+
+      <Dialog open={Boolean(permissionPrompt)}>
+        <DialogContent
+          showCloseButton={false}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>权限请求</DialogTitle>
+            <DialogDescription>
+              {permissionPrompt?.message ?? '该操作需要更高权限。'}
+            </DialogDescription>
+          </DialogHeader>
+          {permissionPrompt && (
+            <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-[12px] text-black/60">
+              工具：{permissionPrompt.tool_name} · 当前模式：{permissionPrompt.current_mode}
+            </div>
+          )}
+          <DialogFooter className="sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handlePermissionDecision('deny', 'once')}
+              >
+                拒绝本次
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handlePermissionDecision('deny', 'session')}
+              >
+                本会话拒绝
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => handlePermissionDecision('allow', 'once')}
+              >
+                允许本次
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => handlePermissionDecision('allow', 'session')}
+              >
+                本会话允许
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

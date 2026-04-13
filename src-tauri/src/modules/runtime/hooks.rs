@@ -140,11 +140,23 @@ impl HookRunner {
                 },
             ) {
                 HookCommandOutcome::Allow { message } => {
+                    tracing::info!(
+                        "hook event={} tool={} command='{}' outcome=allow",
+                        event.as_str(),
+                        tool_name,
+                        command
+                    );
                     if let Some(message) = message {
                         messages.push(message);
                     }
                 }
                 HookCommandOutcome::Deny { message } => {
+                    tracing::warn!(
+                        "hook event={} tool={} command='{}' outcome=deny",
+                        event.as_str(),
+                        tool_name,
+                        command
+                    );
                     let message = message.unwrap_or_else(|| {
                         format!("{} hook denied tool `{tool_name}`", event.as_str())
                     });
@@ -154,7 +166,15 @@ impl HookRunner {
                         messages,
                     };
                 }
-                HookCommandOutcome::Warn { message } => messages.push(message),
+                HookCommandOutcome::Warn { message } => {
+                    tracing::warn!(
+                        "hook event={} tool={} command='{}' outcome=warn",
+                        event.as_str(),
+                        tool_name,
+                        command
+                    );
+                    messages.push(message);
+                }
             }
         }
 

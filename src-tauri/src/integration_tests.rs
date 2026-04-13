@@ -7,6 +7,8 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::control_plane::SessionExecutionContext;
+    use crate::modules::runtime::permissions::PermissionMode;
     use crate::modules::projects::{ProjectManager, ProjectMeta};
     use crate::modules::session::{SessionManager, SessionMeta};
     use std::env;
@@ -219,5 +221,26 @@ mod tests {
         // Actual quality checks (clippy/fmt) are run as separate gates
         // This test serves as a placeholder for the harness suite
         let _ = std::hint::black_box(true);
+    }
+
+    /// Control-plane context snapshot must remain session-scoped.
+    #[test]
+    fn test_control_plane_session_context_snapshot_is_isolated() {
+        let context_a = SessionExecutionContext::new(
+            "session-a".to_string(),
+            "project-a".to_string(),
+            std::path::PathBuf::from("/tmp/project-a"),
+            PermissionMode::WorkspaceWrite,
+        );
+        let context_b = SessionExecutionContext::new(
+            "session-b".to_string(),
+            "project-b".to_string(),
+            std::path::PathBuf::from("/tmp/project-b"),
+            PermissionMode::WorkspaceWrite,
+        );
+
+        assert_ne!(context_a.session_id, context_b.session_id);
+        assert_ne!(context_a.project_id, context_b.project_id);
+        assert_ne!(context_a.workdir, context_b.workdir);
     }
 }

@@ -13,6 +13,7 @@
 
 pub mod api;
 pub mod commands;
+pub mod control_plane;
 pub mod memory;
 pub mod plugins;
 pub mod projects;
@@ -25,6 +26,8 @@ pub mod tools;
 pub use api::*;
 #[allow(unused_imports)]
 pub use commands::*;
+#[allow(unused_imports)]
+pub use control_plane::*;
 #[allow(unused_imports)]
 pub use memory::*;
 #[allow(unused_imports)]

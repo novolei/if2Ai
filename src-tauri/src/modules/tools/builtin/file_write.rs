@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::modules::control_plane::BoundaryResolver;
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
@@ -48,23 +49,18 @@ pub fn entry() -> ToolEntry {
                 ctx.workdir.clone()
             };
 
-            // Allowlist check: path must be within workdir
+            // Resolve relative paths against workdir and enforce workspace boundary.
             let requested_path = PathBuf::from(&path);
-            let canonical_path = requested_path
-                .canonicalize()
-                .map_err(|e| ToolError::Handler(format!("invalid path '{}': {}", path, e)))?;
+            let resolved_path = if requested_path.is_absolute() {
+                requested_path
+            } else {
+                workdir.join(requested_path)
+            };
 
-            let canonical_workdir = workdir.canonicalize().map_err(|e| {
-                ToolError::Handler(format!("invalid workdir '{}': {}", workdir.display(), e))
-            })?;
-
-            if !canonical_path.starts_with(&canonical_workdir) {
-                return Err(ToolError::Handler(format!(
-                    "path '{}' is outside allowed workdir '{}'",
-                    path,
-                    workdir.display()
-                )));
-            }
+            let canonical_workdir = BoundaryResolver::canonicalize_workdir(&workdir)?;
+            let canonical_target =
+                BoundaryResolver::canonicalize_with_missing_leaf_support(&resolved_path)?;
+            BoundaryResolver::assert_within_workdir(&canonical_workdir, &canonical_target)?;
 
             // Check content size
             if content.len() > MAX_FILE_SIZE {
@@ -75,19 +71,29 @@ pub fn entry() -> ToolEntry {
                 )));
             }
 
+            if let Some(parent_dir) = resolved_path.parent() {
+                fs::create_dir_all(parent_dir).await.map_err(|e| {
+                    ToolError::Handler(format!(
+                        "failed to create parent directory '{}': {}",
+                        parent_dir.display(),
+                        e
+                    ))
+                })?;
+            }
+
             // Write file
             if append {
                 let mut file = fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(&canonical_path)
+                    .open(&resolved_path)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to open file: {}", e)))?;
                 file.write_all(content.as_bytes())
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to write file: {}", e)))?;
             } else {
-                let mut file = fs::File::create(&canonical_path)
+                let mut file = fs::File::create(&resolved_path)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to create file: {}", e)))?;
                 file.write_all(content.as_bytes())
@@ -131,6 +137,8 @@ pub fn entry() -> ToolEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env::temp_dir;
+    use uuid::Uuid;
 
     #[allow(dead_code)]
     fn test_context() -> SharedToolContext {
@@ -147,5 +155,67 @@ mod tests {
         assert_eq!(entry.name, "file_write");
         assert_eq!(entry.toolset, "files");
         assert!(!entry.disabled);
+    }
+
+    #[tokio::test]
+    async fn file_write_creates_missing_parent_dirs_within_workdir() {
+        let workdir = temp_dir().join(format!("if2ai_file_write_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workdir)
+            .await
+            .expect("create temp workdir");
+
+        let ctx = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::modules::tools::context::ToolContext::new(
+                workdir.clone(),
+                crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
+            ),
+        ));
+
+        let entry = entry();
+        let args = serde_json::json!({
+            "path": "ai/hello.md",
+            "content": "hello"
+        });
+
+        let result = (entry.handler)(args, ctx).await;
+        assert!(result.is_ok(), "expected write success, got: {:?}", result);
+
+        let written = tokio::fs::read_to_string(workdir.join("ai/hello.md"))
+            .await
+            .expect("read written file");
+        assert_eq!(written, "hello");
+
+        let _ = tokio::fs::remove_dir_all(&workdir).await;
+    }
+
+    #[tokio::test]
+    async fn file_write_rejects_parent_dir_escape() {
+        let workdir = temp_dir().join(format!("if2ai_file_write_escape_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workdir)
+            .await
+            .expect("create temp workdir");
+
+        let ctx = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::modules::tools::context::ToolContext::new(
+                workdir.clone(),
+                crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
+            ),
+        ));
+
+        let entry = entry();
+        let args = serde_json::json!({
+            "path": "../escape.txt",
+            "content": "blocked"
+        });
+
+        let result = (entry.handler)(args, ctx).await;
+        assert!(result.is_err(), "expected path escape to fail");
+        assert!(result
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("outside allowed workdir"));
+
+        let _ = tokio::fs::remove_dir_all(&workdir).await;
     }
 }

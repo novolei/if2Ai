@@ -66,13 +66,15 @@ pub fn bash_tool_entry() -> ToolEntry {
 
                 let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
 
-                // cd workdir && command — run command within workdir
-                // cd.*workdir — harness symbol check marker
-                let wrapped_command = format!("cd {} && {}", workdir.display(), command);
+                tracing::info!(
+                    "[bash_tool] workdir={}, command={}",
+                    workdir.display(),
+                    command
+                );
 
                 let result = timeout(
                     Duration::from_secs(timeout_secs),
-                    execute_bash_internal(&wrapped_command),
+                    execute_bash_internal(&command, &workdir),
                 )
                 .await;
 
@@ -114,10 +116,14 @@ pub fn bash_tool_entry() -> ToolEntry {
 
 /// Internal bash execution function.
 #[allow(dead_code)]
-async fn execute_bash_internal(command: &str) -> Result<String, ToolError> {
+async fn execute_bash_internal(
+    command: &str,
+    workdir: &std::path::Path,
+) -> Result<String, ToolError> {
     let mut child = Command::new("bash")
         .arg("-c")
         .arg(command)
+        .current_dir(workdir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -157,6 +163,8 @@ mod tests {
     use super::*;
     use crate::modules::tools::context::{SharedToolContext, ToolContext};
     use serde_json::json;
+    use std::env::temp_dir;
+    use uuid::Uuid;
 
     fn test_context() -> SharedToolContext {
         std::sync::Arc::new(std::sync::Mutex::new(ToolContext::default_for_workdir(
@@ -201,5 +209,23 @@ mod tests {
 
         let result = handler(json!({"command": ":(){:|:&};:"}), ctx).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn bash_runs_in_context_workdir() {
+        let workdir = temp_dir().join(format!("if2ai bash {}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workdir).await.unwrap();
+        let ctx = std::sync::Arc::new(std::sync::Mutex::new(ToolContext::new(
+            workdir.clone(),
+            crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
+        )));
+
+        let entry = bash_tool_entry();
+        let result = (entry.handler)(json!({"command":"pwd"}), ctx)
+            .await
+            .unwrap();
+        assert!(result.contains(&workdir.to_string_lossy().to_string()));
+
+        let _ = tokio::fs::remove_dir_all(workdir).await;
     }
 }

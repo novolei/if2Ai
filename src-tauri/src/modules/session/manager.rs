@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -43,17 +44,8 @@ impl std::error::Error for SessionError {}
 
 /// Format SystemTime as RFC3339 string.
 fn format_time(time: SystemTime) -> String {
-    let secs = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Format as ISO 8601 / RFC3339
-    // 2026-04-12T00:00:00Z
-    let secs_in_day = secs % 86400;
-    let hours = secs_in_day / 3600;
-    let mins = (secs_in_day % 3600) / 60;
-    let secs_in_min = secs_in_day % 60;
-    format!("2026-04-12T{:02}:{:02}:{:02}Z", hours, mins, secs_in_min)
+    let dt: DateTime<Utc> = time.into();
+    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// Session metadata for listing.
@@ -66,6 +58,8 @@ pub struct SessionMeta {
     pub title: String,
     /// Creation timestamp (RFC3339).
     pub created_at: String,
+    /// Last update timestamp (RFC3339).
+    pub updated_at: String,
     /// Whether the session is pinned.
     #[serde(default)]
     pub pinned: bool,
@@ -80,6 +74,7 @@ impl SessionMeta {
             id: session.id.clone(),
             title: session.title.clone(),
             created_at: session.created_at.clone(),
+            updated_at: session.updated_at.clone(),
             pinned: session.pinned,
         }
     }
@@ -259,17 +254,30 @@ impl SessionManager {
             if path.extension().is_some_and(|ext| ext == "json") {
                 let id = path.file_stem().unwrap().to_str().unwrap();
                 match self.restore_session_internal(id, project_id).await {
-                    Ok(session) => sessions.push(SessionMeta::from_session(&session)),
+                    Ok(session) => {
+                        let mut meta = SessionMeta::from_session(&session);
+                        // Backward compatibility for legacy bugged timestamps:
+                        // if a session has message history but updated_at never moved
+                        // from created_at, use file mtime as a better "last active" proxy.
+                        if session.messages.len() > 1 && meta.updated_at == meta.created_at {
+                            if let Ok(stat) = fs::metadata(&path).await {
+                                if let Ok(modified) = stat.modified() {
+                                    meta.updated_at = format_time(modified);
+                                }
+                            }
+                        }
+                        sessions.push(meta);
+                    }
                     Err(_) => continue, // Skip invalid files
                 }
             }
         }
 
-        // Sort pinned first, then by creation date, newest first
+        // Sort pinned first, then by last update date, newest first
         sessions.sort_by(|a, b| {
             b.pinned
                 .cmp(&a.pinned)
-                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
         });
 
         Ok(sessions)
@@ -352,8 +360,13 @@ impl SessionManager {
             })?;
         }
 
-        let path = self.session_path(&session.id, &session.project_id);
-        let contents = serde_json::to_string_pretty(session)
+        // Always refresh updated_at on persistence so session list shows
+        // the true "last active" time even when callers only mutate messages.
+        let mut session_for_save = session.clone();
+        session_for_save.updated_at = format_time(SystemTime::now());
+
+        let path = self.session_path(&session_for_save.id, &session_for_save.project_id);
+        let contents = serde_json::to_string_pretty(&session_for_save)
             .map_err(|e| SessionError::WriteError(format!("failed to serialize session: {e}")))?;
 
         let mut file = fs::File::create(&path).await.map_err(|e| {
@@ -418,17 +431,27 @@ impl SessionManager {
             if path.extension().is_some_and(|ext| ext == "json") {
                 let id = path.file_stem().unwrap().to_str().unwrap();
                 match self.restore_session_internal(id, "").await {
-                    Ok(session) => sessions.push(SessionMeta::from_session(&session)),
+                    Ok(session) => {
+                        let mut meta = SessionMeta::from_session(&session);
+                        if session.messages.len() > 1 && meta.updated_at == meta.created_at {
+                            if let Ok(stat) = fs::metadata(&path).await {
+                                if let Ok(modified) = stat.modified() {
+                                    meta.updated_at = format_time(modified);
+                                }
+                            }
+                        }
+                        sessions.push(meta);
+                    }
                     Err(_) => continue, // Skip invalid files
                 }
             }
         }
 
-        // Sort pinned first, then by creation date, newest first
+        // Sort pinned first, then by last update date, newest first
         sessions.sort_by(|a, b| {
             b.pinned
                 .cmp(&a.pinned)
-                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
         });
 
         Ok(sessions)

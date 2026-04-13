@@ -333,6 +333,14 @@ impl ClawApiClient {
         request: &MessageRequest,
     ) -> Result<reqwest::Response, ApiError> {
         let request_url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
+
+        // Debug: log the full request body so we can see exactly what's being sent
+        if let Ok(json_str) = serde_json::to_string_pretty(request) {
+            tracing::info!("[send_raw_request] POST {}\n{}", request_url, json_str);
+        } else {
+            tracing::warn!("[send_raw_request] Failed to serialize request for debug logging");
+        }
+
         let request_builder = self
             .http
             .post(&request_url)

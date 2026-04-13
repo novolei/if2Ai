@@ -24,6 +24,60 @@ pub enum ResolvedPermissionMode {
     DangerFullAccess,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoundaryEnforceMode {
+    Shadow,
+    #[default]
+    Enforce,
+}
+
+impl BoundaryEnforceMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Enforce => "enforce",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlPlaneGovernanceConfig {
+    control_plane_v2_enabled: bool,
+    boundary_enforce_mode: BoundaryEnforceMode,
+    sandbox_strict_mode: bool,
+}
+
+impl Default for ControlPlaneGovernanceConfig {
+    fn default() -> Self {
+        Self {
+            control_plane_v2_enabled: true,
+            boundary_enforce_mode: BoundaryEnforceMode::Enforce,
+            sandbox_strict_mode: true,
+        }
+    }
+}
+
+impl ResolvedPermissionMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+
+    #[must_use]
+    pub fn as_permission_mode(self) -> super::permissions::PermissionMode {
+        match self {
+            Self::ReadOnly => super::permissions::PermissionMode::ReadOnly,
+            Self::WorkspaceWrite => super::permissions::PermissionMode::WorkspaceWrite,
+            Self::DangerFullAccess => super::permissions::PermissionMode::DangerFullAccess,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigEntry {
     pub source: ConfigSource,
@@ -94,6 +148,7 @@ pub struct RuntimeFeatureConfig {
     model: Option<String>,
     permission_mode: Option<ResolvedPermissionMode>,
     sandbox: SandboxConfig,
+    control_plane: ControlPlaneGovernanceConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -290,6 +345,7 @@ impl ConfigLoader {
             model: parse_optional_model(&merged_value),
             permission_mode: parse_optional_permission_mode(&merged_value)?,
             sandbox: parse_optional_sandbox_config(&merged_value)?,
+            control_plane: parse_optional_control_plane_config(&merged_value)?,
         };
 
         Ok(RuntimeConfig {
@@ -369,6 +425,11 @@ impl RuntimeConfig {
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.feature_config.sandbox
     }
+
+    #[must_use]
+    pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
+        &self.feature_config.control_plane
+    }
 }
 
 impl RuntimeFeatureConfig {
@@ -417,6 +478,28 @@ impl RuntimeFeatureConfig {
     #[must_use]
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.sandbox
+    }
+
+    #[must_use]
+    pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
+        &self.control_plane
+    }
+}
+
+impl ControlPlaneGovernanceConfig {
+    #[must_use]
+    pub fn control_plane_v2_enabled(&self) -> bool {
+        self.control_plane_v2_enabled
+    }
+
+    #[must_use]
+    pub fn boundary_enforce_mode(&self) -> BoundaryEnforceMode {
+        self.boundary_enforce_mode
+    }
+
+    #[must_use]
+    pub fn sandbox_strict_mode(&self) -> bool {
+        self.sandbox_strict_mode
     }
 }
 
@@ -668,9 +751,15 @@ fn parse_permission_mode_label(
     context: &str,
 ) -> Result<ResolvedPermissionMode, ConfigError> {
     match mode {
-        "default" | "plan" | "read-only" => Ok(ResolvedPermissionMode::ReadOnly),
-        "acceptEdits" | "auto" | "workspace-write" => Ok(ResolvedPermissionMode::WorkspaceWrite),
-        "dontAsk" | "danger-full-access" => Ok(ResolvedPermissionMode::DangerFullAccess),
+        "default" | "plan" | "read-only" | "readOnly" | "read_only" => {
+            Ok(ResolvedPermissionMode::ReadOnly)
+        }
+        "acceptEdits" | "auto" | "workspace-write" | "workspaceWrite" | "workspace_write" => {
+            Ok(ResolvedPermissionMode::WorkspaceWrite)
+        }
+        "dontAsk" | "danger-full-access" | "dangerFullAccess" | "danger_full_access" => {
+            Ok(ResolvedPermissionMode::DangerFullAccess)
+        }
         other => Err(ConfigError::Parse(format!(
             "{context}: unsupported permission mode {other}"
         ))),
@@ -700,6 +789,53 @@ fn parse_optional_sandbox_config(root: &JsonValue) -> Result<SandboxConfig, Conf
         allowed_mounts: optional_string_array(sandbox, "allowedMounts", "merged settings.sandbox")?
             .unwrap_or_default(),
     })
+}
+
+fn parse_optional_control_plane_config(
+    root: &JsonValue,
+) -> Result<ControlPlaneGovernanceConfig, ConfigError> {
+    let Some(object) = root.as_object() else {
+        return Ok(ControlPlaneGovernanceConfig::default());
+    };
+    let Some(value) = object.get("controlPlane") else {
+        return Ok(ControlPlaneGovernanceConfig::default());
+    };
+    let control_plane = expect_object(value, "merged settings.controlPlane")?;
+    let control_plane_v2_enabled = optional_bool(
+        control_plane,
+        "controlPlaneV2Enabled",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(true);
+    let boundary_enforce_mode = optional_string(
+        control_plane,
+        "boundaryEnforceMode",
+        "merged settings.controlPlane",
+    )?
+    .map(parse_boundary_enforce_mode_label)
+    .transpose()?
+    .unwrap_or_default();
+    let sandbox_strict_mode = optional_bool(
+        control_plane,
+        "sandboxStrictMode",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(true);
+    Ok(ControlPlaneGovernanceConfig {
+        control_plane_v2_enabled,
+        boundary_enforce_mode,
+        sandbox_strict_mode,
+    })
+}
+
+fn parse_boundary_enforce_mode_label(value: &str) -> Result<BoundaryEnforceMode, ConfigError> {
+    match value {
+        "shadow" => Ok(BoundaryEnforceMode::Shadow),
+        "enforce" => Ok(BoundaryEnforceMode::Enforce),
+        other => Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.boundaryEnforceMode: unsupported mode {other}"
+        ))),
+    }
 }
 
 fn parse_filesystem_mode_label(value: &str) -> Result<FilesystemIsolationMode, ConfigError> {
@@ -980,20 +1116,16 @@ fn push_unique(target: &mut Vec<String>, value: String) {
 #[cfg(test)]
 mod tests {
     use crate::modules::runtime::config::{
-        ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ResolvedPermissionMode,
-        CLAW_SETTINGS_SCHEMA_NAME,
+        BoundaryEnforceMode, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
+        ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
     };
     use crate::modules::runtime::json::JsonValue;
     use crate::modules::runtime::sandbox::FilesystemIsolationMode;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use uuid::Uuid;
 
     fn temp_dir() -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time should be after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("runtime-config-{nanos}"))
+        std::env::temp_dir().join(format!("runtime-config-{}", Uuid::new_v4()))
     }
 
     #[test]
@@ -1329,6 +1461,64 @@ mod tests {
         assert!(error
             .to_string()
             .contains("mcpServers.broken: missing string field url"));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_desktop_permission_mode_aliases() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{"permissionMode":"workspaceWrite"}"#,
+        )
+        .expect("write local settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert_eq!(
+            loaded.permission_mode(),
+            Some(ResolvedPermissionMode::WorkspaceWrite)
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_control_plane_release_flags() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{
+              "controlPlane": {
+                "controlPlaneV2Enabled": false,
+                "boundaryEnforceMode": "shadow",
+                "sandboxStrictMode": false
+              }
+            }"#,
+        )
+        .expect("write control plane settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert!(!loaded.control_plane().control_plane_v2_enabled());
+        assert_eq!(
+            loaded.control_plane().boundary_enforce_mode(),
+            BoundaryEnforceMode::Shadow
+        );
+        assert!(!loaded.control_plane().sandbox_strict_mode());
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
 /// Tool execution context containing workdir and permission information.
 /// This context is passed to tool handlers when they are executed,
@@ -22,6 +23,16 @@ pub struct ToolContext {
 /// This type is used to share the tool context across async tasks
 /// while allowing mutable access for context updates.
 pub type SharedToolContext = Arc<Mutex<ToolContext>>;
+
+/// Build a deterministic context fingerprint for cross-session interference tracing.
+#[must_use]
+pub fn context_fingerprint(session_id: &str, workdir: &std::path::Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(session_id.as_bytes());
+    hasher.write(b"|");
+    hasher.write(workdir.to_string_lossy().as_bytes());
+    format!("{:016x}", hasher.finish())
+}
 
 #[allow(dead_code)]
 impl ToolContext {

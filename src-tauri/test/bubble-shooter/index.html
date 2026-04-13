@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>泡泡龙 - Bubble Shooter</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="game-container">
+        <header class="game-header">
+            <h1>🎮 泡泡龙</h1>
+            <div class="score-board">
+                <span>分数: <strong id="score">0</strong></span>
+                <span>关卡: <strong id="level">1</strong></span>
+            </div>
+        </header>
+        
+        <div class="game-area">
+            <canvas id="gameCanvas"></canvas>
+            <div class="next-bubble">
+                <span>下一个:</span>
+                <canvas id="nextBubbleCanvas" width="40" height="40"></canvas>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn" class="btn btn-start">开始游戏</button>
+            <button id="pauseBtn" class="btn btn-pause" disabled>暂停</button>
+            <button id="restartBtn" class="btn btn-restart">重新开始</button>
+        </div>
+        
+        <div class="game-over" id="gameOver">
+            <div class="game-over-content">
+                <h2>游戏结束!</h2>
+                <p>最终得分: <span id="finalScore">0</span></p>
+                <button id="playAgainBtn" class="btn btn-start">再玩一次</button>
+            </div>
+        </div>
+        
+        <div class="pause-overlay" id="pauseOverlay">
+            <h2>⏸️ 游戏暂停</h2>
+            <button id="resumeBtn" class="btn btn-start">继续游戏</button>
+        </div>
+    </div>
+    
+    <div class="instructions">
+        <h3>🎯 游戏说明</h3>
+        <ul>
+            <li>鼠标移动控制发射方向</li>
+            <li>点击鼠标发射泡泡</li>
+            <li>相同颜色的泡泡连在一起会消失</li>
+            <li>3个或以上相同颜色即可消除</li>
+            <li>掉落的泡泡也会得分</li>
+        </ul>
+    </div>
+    
+    <script src="js/bubble.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>

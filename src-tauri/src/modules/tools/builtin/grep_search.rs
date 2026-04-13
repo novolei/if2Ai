@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::modules::control_plane::BoundaryResolver;
 use crate::modules::tools::{
     context::SharedToolContext,
     registry::{ToolEntry, ToolError, ToolHandler},
@@ -30,15 +31,24 @@ pub fn grep_search_tool_entry() -> ToolEntry {
             let input: GrepSearchInput = serde_json::from_value(args.clone())
                 .map_err(|e| ToolError::Handler(format!("Invalid input: {e}")))?;
 
-            let search_path = match input.path {
-                Some(p) => p,
-                None => {
-                    let guard = ctx
-                        .lock()
-                        .map_err(|e| ToolError::Handler(format!("Context lock poisoned: {e}")))?;
-                    guard.workdir.to_string_lossy().to_string()
-                }
+            let workdir = {
+                let guard = ctx
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("Context lock poisoned: {e}")))?;
+                guard.workdir.clone()
             };
+
+            let requested_path = input
+                .path
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| workdir.clone());
+
+            let resolved_search_path =
+                BoundaryResolver::resolve_user_path(&workdir, &requested_path);
+            let canonical_workdir = BoundaryResolver::canonicalize_workdir(&workdir)?;
+            let canonical_search_path =
+                BoundaryResolver::canonicalize_existing(&resolved_search_path)?;
+            BoundaryResolver::assert_within_workdir(&canonical_workdir, &canonical_search_path)?;
 
             let mut cmd = std::process::Command::new("rg");
             cmd.arg("--no-heading")
@@ -54,7 +64,7 @@ pub fn grep_search_tool_entry() -> ToolEntry {
             if let Some(glob) = &input.glob {
                 cmd.arg("--glob").arg(glob);
             }
-            cmd.arg(&input.pattern).arg(&search_path);
+            cmd.arg(&input.pattern).arg(&canonical_search_path);
 
             let output = cmd
                 .output()
@@ -94,6 +104,10 @@ pub fn grep_search_tool_entry() -> ToolEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tools::context::ToolContext;
+    use std::env::temp_dir;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn grep_search_tool_entry_has_correct_structure() {
@@ -103,5 +117,26 @@ mod tests {
         assert!(!entry.disabled);
         assert_eq!(entry.max_result_size, Some(50 * 1024));
         assert_eq!(entry.timeout_secs, Some(10));
+    }
+
+    #[tokio::test]
+    async fn grep_search_rejects_outside_workdir() {
+        let workdir = temp_dir().join(format!("if2ai_grep_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workdir).await.unwrap();
+        let ctx = Arc::new(Mutex::new(ToolContext::new(
+            workdir.clone(),
+            crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
+        )));
+
+        let entry = grep_search_tool_entry();
+        let result =
+            (entry.handler)(serde_json::json!({ "pattern": "foo", "path": "/" }), ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("outside allowed workdir"));
+        let _ = tokio::fs::remove_dir_all(&workdir).await;
     }
 }

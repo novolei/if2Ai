@@ -69,6 +69,23 @@ pub struct SandboxStatus {
     pub fallback_reason: Option<String>,
 }
 
+impl SandboxStatus {
+    /// Human-readable summary for frontend and logs.
+    #[must_use]
+    pub fn decision_summary(&self) -> String {
+        if self.active {
+            return "sandbox active".to_string();
+        }
+        if !self.enabled {
+            return "sandbox disabled by configuration".to_string();
+        }
+        if let Some(reason) = &self.fallback_reason {
+            return format!("sandbox fallback: {reason}");
+        }
+        "sandbox inactive".to_string()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxDetectionInputs<'a> {
     pub env_pairs: Vec<(String, String)>,

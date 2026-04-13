@@ -182,6 +182,20 @@ impl ConversationMessage {
     }
 
     #[must_use]
+    pub fn tool_use(id: impl Into<String>, name: impl Into<String>, input: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            blocks: vec![ContentBlock::ToolUse {
+                id: id.into(),
+                name: name.into(),
+                input: input.into(),
+            }],
+            usage: None,
+            thinking: None,
+        }
+    }
+
+    #[must_use]
     pub fn tool_result(
         tool_use_id: impl Into<String>,
         tool_name: impl Into<String>,
@@ -407,19 +421,20 @@ mod tests {
         session
             .messages
             .push(ConversationMessage::user_text("hello"));
+        session.messages.push(ConversationMessage::assistant(vec![
+            ContentBlock::Text {
+                text: "thinking".to_string(),
+            },
+        ]));
+        session
+            .messages
+            .push(ConversationMessage::tool_use("tool-1", "bash", "echo hi"));
         session
             .messages
             .push(ConversationMessage::assistant_with_usage(
-                vec![
-                    ContentBlock::Text {
-                        text: "thinking".to_string(),
-                    },
-                    ContentBlock::ToolUse {
-                        id: "tool-1".to_string(),
-                        name: "bash".to_string(),
-                        input: "echo hi".to_string(),
-                    },
-                ],
+                vec![ContentBlock::Text {
+                    text: "thinking".to_string(),
+                }],
                 Some(TokenUsage {
                     input_tokens: 10,
                     output_tokens: 4,
@@ -430,6 +445,11 @@ mod tests {
         session.messages.push(ConversationMessage::tool_result(
             "tool-1", "bash", "hi", false,
         ));
+        session
+            .messages
+            .push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "done".to_string(),
+            }]));
 
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -441,7 +461,7 @@ mod tests {
         fs::remove_file(&path).expect("temp file should be removable");
 
         assert_eq!(restored, session);
-        assert_eq!(restored.messages[2].role, MessageRole::Tool);
+        assert_eq!(restored.messages[2].role, MessageRole::Assistant);
         assert_eq!(
             restored.messages[1].usage.expect("usage").total_tokens(),
             17

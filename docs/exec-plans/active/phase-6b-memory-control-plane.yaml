@@ -1,0 +1,657 @@
+# Phase 6B: Memory Control Plane (Post-CLI)
+# ─────────────────────────────────────────────────────────────────────────────
+# 记忆系统重构 — SQLite 持久化 + 向量搜索 + Token 预算 + 安全
+# 基于 docs/design-docs/postCLI/ADR/ 中定义的架构决策
+# 对应 MEM-CP1~CP6 backlog
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6b"
+  phase_status: draft
+  title: "记忆控制平面 — SQLite P0 + 向量搜索 + Token 预算 + 安全加固"
+  owner: "@architects"
+  depends_on_phase: "6a"
+  design_docs:
+    - docs/design-docs/postCLI/ADR/if2Ai-Memory-Autonomous-Learning-Architecture-Report.md
+    - docs/design-docs/postCLI/ADR/ADR-001-SQLite-P0-Persistence.md
+    - docs/design-docs/postCLI/ADR/ADR-002-Active-Retrieval-vs-Passive-Invocation.md
+    - docs/design-docs/postCLI/ADR/ADR-003-FastEmbed-LanceDB-Selection.md
+    - docs/design-docs/postCLI/ADR/ADR-004-Token-Budget-Allocation.md
+    - docs/design-docs/postCLI/ADR/ADR-005-Relationship-with-Upstream-Claw-CLI.md
+    - docs/design-docs/postCLI/ADR/ADR-006-Security-Design.md
+    - docs/design-docs/postCLI/ADR/ADR-007-HRR-Introduction-Timing-P2a.md
+    - docs/design-docs/postCLI/ADR/ADR-008-Self-Learning-Modules-Independence.md
+    - docs/design-docs/postCLI/ADR/ADR-009-Trajectory-Learning-Timing-P3.md
+    - docs/design-docs/postCLI/ADR/ADR-010-Skills-Hub-Not-Introduced.md
+  backlog_docs:
+    - docs/design-docs/postCLI/ADR/backlog/ADR-001-SQLite-P0-Persistence-BACKLOG.md
+    - docs/design-docs/postCLI/ADR/backlog/ADR-002-Active-Retrieval-vs-Passive-Invocation-BACKLOG.md
+    - docs/design-docs/postCLI/ADR/backlog/ADR-003-FastEmbed-LanceDB-Selection-BACKLOG.md
+    - docs/design-docs/postCLI/ADR/backlog/ADR-004-Token-Budget-Allocation-BACKLOG.md
+    - docs/design-docs/postCLI/ADR/backlog/ADR-006-Security-Design-BACKLOG.md
+  human_checkpoints:
+    - after_slice: "6b.1"    # SQLite P0 完成后人工 review
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.1: P0 SQLite Persistence (Critical Bug Fix)
+  # ADR-001 + ADR-006 (Security) — 最高优先级
+  # 修复: HashMap 进程内存丢失 bug
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.1"
+    title: "MEM-CP1+CP2 — SQLite P0 持久化 + 安全验证"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-001-SQLite-P0-Persistence.md"
+    backlog_ref: "TASK-001-01 ~ TASK-001-07; TASK-006-01 ~ TASK-006-07"
+    impl_targets:
+      - src-tauri/src/modules/memory/mod.rs                    # MODIFY: 替换 InMemoryMemoryProvider
+      - src-tauri/src/modules/memory/providers/sqlite_provider.rs  # CREATE: SqliteMemoryProvider
+      - src-tauri/src/modules/security/validation.rs            # CREATE: 输入验证
+      - src-tauri/src/modules/security/path.rs                  # CREATE: 路径验证
+      - src-tauri/src/modules/security/atomic_write.rs          # CREATE: 原子写入
+      - src-tauri/src/modules/security/access.rs                # CREATE: MemoryAccessContext
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (InMemoryMemoryProvider — BUG: 进程重启丢失数据)"
+
+    current_state: |
+      当前 InMemoryMemoryProvider 使用 HashMap 存储在进程内存中。
+      ❌ CRITICAL BUG: 进程重启后所有记忆数据丢失。
+      ❌ 无输入验证、无路径验证、无原子写入。
+
+    must_implement: |
+      # ADR-001 核心实现 (TASK-001-01 ~ TASK-001-07)
+      - SqliteMemoryProvider 结构体 (pool: SqlitePool)
+      - SQLite 表: memory_entries (key, content, category, created_at, updated_at, importance, access_count, trust_score)
+      - 索引: category, created_at
+      - store/recall/delete/purge_category/export 实现
+      - 数据库路径: ~/.if2ai/memory/memory.db
+
+      # ADR-006 安全实现 (TASK-006-01 ~ TASK-006-07)
+      - validate_memory_entry(key, content): Key 长度 1-256, Content ≤ 1MB
+      - contains_injection_pattern(): 检测 XSS/注入模式
+      - validate_safe_path(): 防止路径遍历
+      - atomic_write(): temp 文件 + sync_all() + rename
+      - MemoryAccessContext: 权限检查 (session/project 隔离)
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::providers::sqlite"
+        label: "SqliteMemoryProvider 单元测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend security::validation"
+        label: "安全验证测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend security::atomic_write"
+        label: "原子写入测试通过"
+      - type: symbol
+        file: "src-tauri/src/modules/memory/mod.rs"
+        grep: "SqliteMemoryProvider"
+        label: "default_memory_provider 返回 SqliteMemoryProvider"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "InMemoryMemoryProvider 是否标记 #[deprecated]"
+      - "SqliteMemoryProvider 是否实现 MemoryProvider trait"
+      - "进程重启后 recall 是否返回重启前存储的数据"
+      - "validate_memory_entry 是否拒绝恶意输入"
+      - "路径遍历攻击是否被阻止"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.2: Token Budget & Working Memory
+  # ADR-004 — 上下文预算分配
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.2"
+    title: "MEM-CP3 — Token 预算槽位 + Working Memory 滑动窗口"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-004-Token-Budget-Allocation.md"
+    backlog_ref: "TASK-004-01 ~ TASK-004-08"
+    impl_targets:
+      - src-tauri/src/modules/runtime/budget.rs            # CREATE: ContextBudget + ContextSlots
+      - src-tauri/src/modules/runtime/snapshot.rs           # CREATE: FrozenSnapshot
+      - src-tauri/src/modules/memory/working_memory.rs       # CREATE: WorkingMemory
+      - src-tauri/src/modules/runtime/compaction.rs          # CREATE: EpisodicCompaction + WeibullDecay
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryEntry — 无 Token 预算管理)"
+
+    current_state: |
+      无 Token 预算管理。
+      Working Memory 使用简单 Vec，无滑动窗口限制。
+      无 FrozenSnapshot 机制。
+
+    must_implement: |
+      # ContextBudget (TASK-004-01)
+      - total: 4000 tokens (默认)
+      - system_pct: 10%, episodic_pct: 20%, semantic_pct: 30%, working_pct: 40%
+      - validate(): 百分比和必须为 1.0
+
+      # ContextSlots (TASK-004-02)
+      - Slot { budget, used, entries }
+      - available(slot): 剩余可用 token
+      - allocate(): 分配时检查预算
+      - evict(): 驱逐最低优先级条目
+
+      # Token Counting (TASK-004-03)
+      - estimate_tokens(text): 使用 tiktoken-rs
+      - estimate_entry_tokens(entry): 计算记忆条目的 token 数
+
+      # WorkingMemory (TASK-004-04)
+      - max_turns: 8 (默认)
+      - max_tokens: 1600 (默认)
+      - push(): 超过限制时驱逐最旧条目
+
+      # FrozenSnapshot (TASK-004-05)
+      - capture(prompt): 捕获快照 + 计算哈希
+      - verify(current): 验证哈希是否匹配
+
+      # EpisodicCompaction + Weibull (TASK-004-06 ~ TASK-004-07)
+      - Weibull 衰减: lambda=7days, k=1.2
+      - 超过预算时触发压缩
+      - 生成 LLM 摘要
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend runtime::budget"
+        label: "ContextBudget 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::working_memory"
+        label: "WorkingMemory 滑动窗口测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend runtime::snapshot"
+        label: "FrozenSnapshot 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "ContextBudget 默认值是否为 4000 tokens, 10/20/30/40%"
+      - "WorkingMemory 是否正确执行滑动窗口 (8 turns / 1600 tokens)"
+      - "FrozenSnapshot 是否能检测 prompt 修改"
+      - "Weibull 衰减曲线是否符合规格"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.3: Active Retrieval (P1)
+  # ADR-002 — 被动调用 + 主动检索双模式
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.3"
+    title: "MEM-CP4 — 主动检索 + Intent 路由 + RRF Fusion"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-002-Active-Retrieval-vs-Passive-Invocation.md"
+    backlog_ref: "TASK-002-P0-01 ~ TASK-002-P1-06"
+    impl_targets:
+      - src-tauri/src/modules/memory/intent.rs              # CREATE: QueryIntent + 分类器
+      - src-tauri/src/modules/memory/retrieval.rs           # CREATE: RRF Fusion + ActiveRetrievalManager
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryProvider trait — 仅被动调用)"
+
+    current_state: |
+      当前只有被动调用模式 — LLM 显式调用 memory.recall()。
+      无 Intent 分类、无 RRF 融合、无主动检索。
+
+    must_implement: |
+      # QueryIntent (TASK-002-P1-01)
+      - Code: semantic=0.5, episodic=0.3, working=0.2
+      - Task: semantic=0.4, episodic=0.4, working=0.2
+      - Fact: semantic=0.6, episodic=0.2, working=0.2
+      - Person: semantic=0.3, episodic=0.5, working=0.2
+      - General: semantic=0.3, episodic=0.3, working=0.4
+
+      # Intent 分类器 (TASK-002-P1-02)
+      - 规则引擎，关键词匹配
+      - fix/bug/how do i → Code
+      - remember/did we → Task
+      - who/person → Person
+      - what is/fact → Fact
+      - 默认 → General
+
+      # RetrievalWeights (TASK-002-P1-03)
+      - From<QueryIntent> 转换
+      - 配置文件支持
+
+      # RRF Fusion (TASK-002-P1-04)
+      - k=60 (标准值)
+      - weighted_fusion(results, k): 融合多个检索结果
+
+      # ActiveRetrievalManager (TASK-002-P1-05 ~ TASK-002-P1-06)
+      - pre_llm_call(): 主动检索 + 注入 context
+      - 配置开关: active_retrieval_enabled
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::intent"
+        label: "QueryIntent 分类测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::retrieval"
+        label: "RRF Fusion 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "5 种 Intent 权重是否正确"
+      - "分类器是否覆盖所有测试样本"
+      - "RRF 融合是否正确去重和排序"
+      - "主动检索是否可配置启用/禁用"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.4: FastEmbed + LanceDB Vector Search (P1)
+  # ADR-003 — 离线向量搜索
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.4"
+    title: "MEM-CP5 — FastEmbed + LanceDB 向量搜索"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-003-FastEmbed-LanceDB-Selection.md"
+    backlog_ref: "TASK-003-01 ~ TASK-003-08"
+    impl_targets:
+      - src-tauri/src/modules/memory/embedding/fastembed.rs   # CREATE: FastEmbedProvider
+      - src-tauri/src/modules/memory/providers/lancedb.rs       # CREATE: LanceDBMemory
+      - src-tauri/src/modules/memory/providers/vector_provider.rs # CREATE: VectorMemoryProvider
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryProvider — 无向量搜索)"
+
+    current_state: |
+      无向量搜索能力。
+      仅有 SQLite 的 LIKE 模糊搜索。
+
+    must_implement: |
+      # FastEmbedProvider (TASK-003-02)
+      - 模型: multilingual-e5-small (384d)
+      - embed(text): 返回 384 维向量
+      - embed_batch(texts): 批量嵌入
+
+      # LanceDBMemory (TASK-003-03 ~ TASK-003-04)
+      - Schema: key, content, category, embedding(384d), created_at
+      - IVF-PQ 索引配置
+      - insert(entry, embedding): 插入向量
+      - search(query_embedding, limit): ANN 检索
+
+      # 混合检索 (TASK-003-05 ~ TASK-003-06)
+      - hybrid_search(query, category, limit): FTS5 + Vector RRF 融合
+      - fts_search(query, category, limit): FTS5 搜索
+
+      # VectorMemoryProvider (TASK-003-08)
+      - MemoryProvider trait wrapper
+      - store: 嵌入 + 写入 LanceDB + 写入 SQLite
+      - recall: 混合搜索
+      - 配置开关: vector_search_enabled
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::embedding"
+        label: "FastEmbed 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::providers::lancedb"
+        label: "LanceDB 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::providers::vector_provider"
+        label: "VectorMemoryProvider 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "FastEmbed 模型是否正确加载 (384d)"
+      - "LanceDB 表 schema 是否正确"
+      - "混合搜索是否正确融合 FTS5 + Vector"
+      - "RRF k 值是否为 60"
+      - "VectorMemoryProvider 是否实现 MemoryProvider trait"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.5: HRR Algebraic Reasoning (P2a)
+  # ADR-007 — HRR 作为 LanceDB 补充
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.5"
+    title: "MEM-CP6 — HRR 代数推理 (P2a)"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-007-HRR-Introduction-Timing-P2a.md"
+    backlog_ref: "TASK-007-01 ~ TASK-007-11"
+    impl_targets:
+      - src-tauri/src/modules/memory/hrr/mod.rs           # CREATE: HRRVector
+      - src-tauri/src/modules/memory/hrr/operations.rs     # CREATE: bind/unbind/bundle/similarity
+      - src-tauri/src/modules/memory/hrr/store.rs          # CREATE: HolographicStore
+      - src-tauri/src/modules/memory/hrr/integration.rs     # CREATE: HybridMemoryProvider
+
+    baseline_ref: "src-tauri/src/modules/memory/providers/vector_provider.rs (向量搜索 — 无代数推理)"
+
+    current_state: |
+      无 HRR 能力。
+      向量搜索仅支持 ANN 检索，无代数推理。
+
+    must_implement: |
+      # HRRVector (TASK-007-01)
+      - new(dimension): 创建 384d 零向量
+      - from_text(text, embedder): 从文本创建
+      - dimension(): 返回维度
+
+      # Operations (TASK-007-02 ~ TASK-007-05)
+      - bind(key, value): 循环卷积 (circular convolution)
+      - unbind(composite, key): 逆卷积
+      - bundle(vectors, weights): 加权叠加
+      - similarity(a, b): cosine similarity [-1, 1]
+
+      # HolographicStore (TASK-007-06 ~ TASK-007-10)
+      - store(key, value): 存储 HRRVector
+      - capacity: O(√dim) ≈ 700 for 384d
+      - probe(query): 相似检索
+      - reason(premises, conclusions): 关系推理
+      - contradict(a, b): 矛盾检测
+      - LRU 驱逐策略
+
+      # HybridMemoryProvider (TASK-007-11)
+      - LanceDB 作为主存储
+      - HRR 作为代数推理补充
+      - 配置开关: hrr_enabled
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::hrr"
+        label: "HRR 操作测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::hrr::operations"
+        label: "bind/unbind 正确配对测试"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "HRRVector 维度是否为 384"
+      - "bind(unbind(bind(a,b), a)) 是否 ≈ b (cosine > 0.95)"
+      - "bundle 是否正确归一化"
+      - "HolographicStore 容量是否为 O(√dim)"
+      - "contradict 是否正确检测矛盾 (similarity < -0.8)"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.6: Self-Learning Modules (P2b)
+  # ADR-008 — 学习模块独立于记忆
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.6"
+    title: "LEARN-1 — SelfModel + ReflectionEngine + TrustTracker"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-008-Self-Learning-Modules-Independence.md"
+    backlog_ref: "TASK-008-01 ~ TASK-008-08"
+    impl_targets:
+      - src-tauri/src/modules/learning/mod.rs              # CREATE: LearningModule 入口
+      - src-tauri/src/modules/learning/self_model.rs       # CREATE: SelfModel + Capability + Pattern
+      - src-tauri/src/modules/learning/reflection.rs        # CREATE: ReflectionEngine trait + 实现
+      - src-tauri/src/modules/learning/trust_tracker.rs    # CREATE: TrustTracker
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryProvider — 无自学习能力)"
+
+    current_state: |
+      无自学习能力。
+      记忆重要性固定，无 trust scoring，无自我模型。
+
+    must_implement: |
+      # LearningModule (TASK-008-01)
+      - 模块结构定义
+      - init_learning() 入口
+
+      # SelfModel (TASK-008-02)
+      - capabilities: Vec<Capability>
+      - limitations: Vec<Limitation>
+      - learned_patterns: Vec<LearnedPattern>
+      - performance: PerformanceMetrics
+      - updated_at: DateTime
+
+      # ReflectionEngine trait (TASK-008-03)
+      - analyze_session(session): 分析生成 Reflection
+      - update_self_model(reflections): 更新自我模型
+      - get_self_model(): 获取当前自我模型
+
+      # StandardReflectionEngine (TASK-008-04 ~ TASK-008-05)
+      - analyze_tool_sequences(): 工具序列模式
+      - analyze_outcomes(): 成功/失败模式
+      - analyze_topics(): 话题聚类
+
+      # TrustTracker (TASK-008-06)
+      - adjust(key, feedback): 调整信任分数
+        - Helpful: +0.05
+        - Unhelpful: -0.10
+        - clamp to [-1.0, 1.0]
+      - get(key): 获取信任分数
+
+      # Runtime 集成 (TASK-008-07 ~ TASK-008-08)
+      - 配置开关: learning_enabled
+      - Turn 结束时触发反思
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning"
+        label: "SelfModel 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning::reflection"
+        label: "ReflectionEngine 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning::trust_tracker"
+        label: "TrustTracker 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "SelfModel 结构是否完整"
+      - "ReflectionEngine 是否正确分析 session"
+      - "TrustTracker 是否正确调整分数"
+      - "学习模块是否与记忆模块分离"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.7: Trajectory Learning (P3)
+  # ADR-009 — 轨迹学习（导出用途）
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.7"
+    title: "LEARN-2 — TrajectoryManager + ShareGPT JSONL 导出"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-009-Trajectory-Learning-Timing-P3.md"
+    backlog_ref: "TASK-009-01 ~ TASK-009-06"
+    impl_targets:
+      - src-tauri/src/modules/learning/trajectory.rs          # CREATE: Trajectory + TrajectoryManager
+      - src-tauri/src/modules/commands/trajectory.rs           # CREATE: Tauri 导出命令
+
+    baseline_ref: "src-tauri/src/modules/session/manager.rs (Session — 无轨迹学习)"
+
+    current_state: |
+      无轨迹学习能力。
+      Session 数据仅用于当前会话，无持久化用于 RL。
+
+    must_implement: |
+      # Trajectory (TASK-009-01)
+      - id: String
+      - conversations: Vec<ConversationEntry>  # {from: "human"|"gpt", value: String}
+      - model_id: String
+      - system: String (可选, 隐私保护)
+      - temperature: f32
+      - turn_metadata: {session_id, timestamp, token_count, tools_used}
+      - from_session(session, system_prompt, model_id): 转换方法
+      - to_jsonl(): JSONL 序列化
+
+      # TrajectoryManager (TASK-009-02 ~ TASK-009-03)
+      - base_path: ~/.if2ai/trajectories/
+      - record(session): 追加到当日 JSONL 文件
+      - export_all(output): 合并所有轨迹
+      - max_file_size: 100MB 轮转
+      - 按日期轮转: trajectory_YYYY-MM-DD.jsonl
+
+      # TrajectoryPrivacy (TASK-009-04)
+      - include_system_prompt: bool (默认 false)
+      - min_session_length: usize (默认 3)
+      - anonymize_user_content: bool (默认 true)
+
+      # TrajectoryCompressor (TASK-009-05)
+      - compress(trajectories): 过滤低质量 + 截断超长
+
+      # Tauri Commands (TASK-009-06)
+      - export_trajectories(output_path): 导出到文件
+      - get_trajectory_count(): 获取轨迹数量
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning::trajectory"
+        label: "Trajectory 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning::trajectory_manager"
+        label: "TrajectoryManager 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "Trajectory 是否符合 ShareGPT 格式"
+      - "Session 是否能转换为 Trajectory"
+      - "文件轮转是否正确 (100MB)"
+      - "隐私控制是否生效"
+      - "导出命令是否正确暴露"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.8: Upstream Compatibility + Final Integration
+  # ADR-005 — 与 claw-cli 兼容性
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.8"
+    title: "UPSTREAM-1 — Schema 对齐 + claw-cli 导出 + 溯源文档"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-005-Relationship-with-Upstream-Claw-CLI.md"
+    backlog_ref: "TASK-005-01 ~ TASK-005-05"
+    impl_targets:
+      - src-tauri/src/modules/memory/compat.rs              # CREATE: claw-cli 兼容导出
+      - docs/design-docs/postCLI/UPSTREAM-RELATIONSHIP.md     # CREATE: 关系文档
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryEntry); src-tauri/src/modules/session/manager.rs (Session)"
+
+    current_state: |
+      MemoryEntry 和 Session schema 与 claw-cli 兼容。
+      但无导出工具、无溯源注释、无关系文档。
+
+    must_implement: |
+      # Schema 对齐验证 (TASK-005-01 ~ TASK-005-02)
+      - MemoryEntry: key, content, category, created_at, updated_at 与 claw-cli 兼容
+      - Session: id, title, messages, created_at, updated_at, token_count, pinned 与 claw-cli 兼容
+      - project_id 为 if2Ai 扩展字段
+
+      # 数据导出 (TASK-005-04)
+      - export_for_clawcli(path): 导出为 claw-cli 兼容 JSON 格式
+      - 仅包含基础字段 (不含 importance, access_count, trust_score)
+
+      # 代码溯源 (TASK-005-03)
+      - compact.rs 头部注释: 标注来自 iClaw/hermes-agent
+      - 变更说明: Rust 实现 vs Python 实现
+
+      # 关系文档 (TASK-005-05)
+      - docs/design-docs/postCLI/UPSTREAM-RELATIONSHIP.md
+      - Schema 兼容性表格
+      - 共同设计决策
+      - 分歧点及原因
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::compat"
+        label: "兼容导出测试通过"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/compact.rs"
+        grep: "adapted from.*iClaw.*hermes-agent"
+        label: "compact.rs 有溯源注释"
+      - type: symbol
+        file: "docs/design-docs/postCLI/UPSTREAM-RELATIONSHIP.md"
+        grep: "."
+        label: "关系文档存在"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "MemoryEntry 是否与 claw-cli 100% 兼容"
+      - "Session 是否与 claw-cli 兼容"
+      - "导出格式是否正确"
+      - "compact.rs 是否有完整溯源注释"
+      - "关系文档是否完整"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6b.9: Final Integration + Regression
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6b.9"
+    title: "6B 集成测试 + 整体回归"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/"
+    backlog_ref: "All ADRs"
+    impl_targets:
+      - harness/suites/phase6b_integration.yaml           # CREATE: 集成测试
+
+    baseline_ref: "src-tauri/src/modules/memory/mod.rs (MemoryProvider trait); src-tauri/src/modules/learning/mod.rs (LearningModule)"
+
+    current_state: |
+      所有 6B slices 完成后需要整体回归测试。
+      包括: SQLite P0、Token Budget、主动检索、向量搜索、HRR、自学习、轨迹学习。
+
+    must_implement: |
+      # harness/suites/phase6b_integration.yaml
+      # 验证 SQLite P0 持久化 (6b.1)
+      # 验证 Token 预算分配 (6b.2)
+      # 验证 Working Memory 滑动窗口 (6b.2)
+      # 验证 FrozenSnapshot (6b.2)
+      # 验证主动检索 + Intent 路由 (6b.3)
+      # 验证 FastEmbed + LanceDB 混合搜索 (6b.4)
+      # 验证 HRR 代数推理 (6b.5)
+      # 验证 SelfModel + Reflection (6b.6)
+      # 验证 TrustTracker (6b.6)
+      # 验证 TrajectoryManager (6b.7)
+      # 验证 claw-cli 兼容导出 (6b.8)
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: test
+        cmd: "cargo test --workspace"
+        expect: "all tests pass"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: test
+        cmd: "python -m harness.runner run --suite harness/suites/phase6b_integration.yaml --workspace ."
+        expect: "passed: true"
+    review_checklist:
+      - "harness suite 是否覆盖 6B 所有功能"
+      - "全量测试是否通过"
+      - "编译 + lint 是否无警告"
+      - "docs/generated/QUALITY_SCORE.md 已追加 Phase 6B 完成记录"
+      - "无 unwrap()（测试除外）"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-13"
+  completed_slices: []
+  current_slice: "6b.1"
+  blocked: []
+  notes: "Phase 6B 规划完成: 9 slices, 对应 ADR-001~009. P0: SQLite P0 + Security (6b.1). P0: Token Budget (6b.2). P1: Active Retrieval (6b.3). P1: Vector Search (6b.4). P2a: HRR (6b.5). P2b: Self-Learning (6b.6). P3: Trajectory (6b.7). P1: Upstream (6b.8). Final: Integration (6b.9)."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slice Priority Mapping
+# ─────────────────────────────────────────────────────────────────────────────
+# P0 (Critical): 6b.1 — SQLite P0 + Security
+# P0: 6b.2 — Token Budget + Working Memory
+# P1: 6b.3 — Active Retrieval
+# P1: 6b.4 — FastEmbed + LanceDB
+# P2a: 6b.5 — HRR
+# P2b: 6b.6 — Self-Learning
+# P3: 6b.7 — Trajectory
+# P1: 6b.8 — Upstream Compatibility
+# Final: 6b.9 — Integration

@@ -13,6 +13,39 @@ use tokio::time::timeout;
 
 use super::context::SharedToolContext;
 
+/// High-risk tools must be executed with an explicit per-session context.
+#[must_use]
+pub(crate) fn requires_explicit_context(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "read_file"
+            | "file_write"
+            | "write_file"
+            | "file_edit"
+            | "edit_file"
+            | "NotebookEdit"
+            | "glob_search"
+            | "grep_search"
+            | "content_search"
+            | "bash"
+            | "REPL"
+            | "PowerShell"
+            | "memory_store"
+            | "memory_forget"
+            | "memory_purge"
+            | "cron_add"
+            | "cron_remove"
+            | "cron_run"
+            | "agent"
+    )
+}
+
+fn allow_shared_context_high_risk_dispatch() -> bool {
+    std::env::var("IF2AI_ALLOW_SHARED_CONTEXT_DISPATCH")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 /// Errors that can occur during tool dispatch.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -228,6 +261,25 @@ impl ToolRegistry {
     /// Returns `ToolError::Timeout` if execution exceeds the configured timeout.
     /// Returns `ToolError::OutputTooLarge` if the result exceeds `max_result_size`.
     pub async fn dispatch(&self, name: &str, args: Value) -> Result<String, ToolError> {
+        if requires_explicit_context(name) && !allow_shared_context_high_risk_dispatch() {
+            return Err(ToolError::Handler(format!(
+                "high-risk tool '{name}' requires dispatch_with_context(session-scoped context)"
+            )));
+        }
+        self.dispatch_with_context(name, args, self.context.clone())
+            .await
+    }
+
+    /// Dispatches a tool call using a provided execution context.
+    ///
+    /// This is used to isolate workdir/permission context per session or per turn,
+    /// avoiding cross-session context leakage through the registry default context.
+    pub async fn dispatch_with_context(
+        &self,
+        name: &str,
+        args: Value,
+        context: SharedToolContext,
+    ) -> Result<String, ToolError> {
         let entry = self
             .get(name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
@@ -239,7 +291,6 @@ impl ToolRegistry {
         let handler = entry.handler.clone();
         let max_size = entry.max_result_size;
         let timeout_duration = entry.timeout_secs.unwrap_or(300);
-        let context = self.context.clone();
 
         let result = timeout(
             Duration::from_secs(timeout_duration as u64),
@@ -431,6 +482,27 @@ mod tests {
         registry.register(entry).unwrap();
         let result = registry.dispatch("large", json!({})).await;
         assert!(matches!(result, Err(ToolError::OutputTooLarge { .. })));
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_high_risk_tool_without_explicit_context() {
+        let registry = make_test_registry();
+        let entry = ToolEntry {
+            name: "bash".to_string(),
+            toolset: "test".to_string(),
+            description: "High risk".to_string(),
+            input_schema: json!({"type": "object"}),
+            max_result_size: None,
+            timeout_secs: None,
+            disabled: false,
+            handler: make_test_handler("ok"),
+        };
+
+        registry.register(entry).unwrap();
+        let result = registry.dispatch("bash", json!({})).await;
+        assert!(matches!(result, Err(ToolError::Handler(_))));
+        let msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(msg.contains("requires dispatch_with_context"));
     }
 
     #[tokio::test]

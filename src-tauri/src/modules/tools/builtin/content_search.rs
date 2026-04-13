@@ -9,6 +9,7 @@ use regex::Regex;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
+use crate::modules::control_plane::BoundaryResolver;
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
@@ -51,7 +52,11 @@ pub fn entry() -> ToolEntry {
                 ctx.workdir.clone()
             };
 
-            let base_path = path.unwrap_or_else(|| workdir.clone());
+            let requested_base = path.unwrap_or_else(|| workdir.clone());
+            let resolved_base = BoundaryResolver::resolve_user_path(&workdir, &requested_base);
+            let canonical_workdir = BoundaryResolver::canonicalize_workdir(&workdir)?;
+            let canonical_base = BoundaryResolver::canonicalize_existing(&resolved_base)?;
+            BoundaryResolver::assert_within_workdir(&canonical_workdir, &canonical_base)?;
 
             // Compile regex
             let regex_pattern = if case_sensitive {
@@ -66,20 +71,19 @@ pub fn entry() -> ToolEntry {
             let results: Mutex<Vec<String>> = Mutex::new(Vec::new());
             let count: Mutex<usize> = Mutex::new(0);
 
-            for entry in WalkDir::new(&base_path)
+            for entry in WalkDir::new(&canonical_base)
                 .follow_links(false)
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
                 let file_path = entry.path();
-                let canonical_base = base_path
-                    .canonicalize()
-                    .map_err(|e| ToolError::Handler(format!("invalid base path: {}", e)))?;
 
                 // Only search files within workdir
                 if let Ok(canonical_file) = file_path.canonicalize() {
-                    if !canonical_file.starts_with(&canonical_base) {
+                    if BoundaryResolver::assert_within_workdir(&canonical_workdir, &canonical_file)
+                        .is_err()
+                    {
                         continue;
                     }
                 } else {
@@ -145,6 +149,10 @@ pub fn entry() -> ToolEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tools::context::ToolContext;
+    use std::env::temp_dir;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn content_search_tool_entry_has_correct_structure() {
@@ -152,5 +160,26 @@ mod tests {
         assert_eq!(entry.name, "content_search");
         assert_eq!(entry.toolset, "files");
         assert!(!entry.disabled);
+    }
+
+    #[tokio::test]
+    async fn content_search_rejects_outside_workdir() {
+        let workdir = temp_dir().join(format!("if2ai_content_{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&workdir).await.unwrap();
+        let ctx = Arc::new(Mutex::new(ToolContext::new(
+            workdir.clone(),
+            crate::modules::runtime::permissions::PermissionMode::WorkspaceWrite,
+        )));
+
+        let entry = entry();
+        let result =
+            (entry.handler)(serde_json::json!({ "pattern": "foo", "path": "/" }), ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+            .contains("outside allowed workdir"));
+        let _ = tokio::fs::remove_dir_all(&workdir).await;
     }
 }

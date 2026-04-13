@@ -48,7 +48,7 @@ type RecentSession = {
   projectId: string
   sessionId: string
   title: string
-  createdAt: string
+  updatedAt: string
 }
 
 export function ProjectRail({
@@ -70,6 +70,12 @@ export function ProjectRail({
 }: ProjectRailProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const pinnedSessions = useMemo<RecentSession[]>(() => {
     const items = projects.flatMap((project) =>
@@ -79,11 +85,11 @@ export function ProjectRail({
           projectId: project.id,
           sessionId: session.id,
           title: session.title,
-          createdAt: session.created_at,
+          updatedAt: session.updated_at,
         }))
     )
 
-    return items.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    return items.slice().sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
   }, [projectSessions, projects])
 
   useEffect(() => {
@@ -149,7 +155,7 @@ export function ProjectRail({
             <RecentItem
               key={item.sessionId}
               title={item.title}
-              age={formatRelativeAge(item.createdAt)}
+              age={formatRelativeAge(item.updatedAt, nowMs)}
               onClick={() => onSelectSession(item.projectId, item.sessionId)}
               pinned
             />
@@ -209,6 +215,7 @@ export function ProjectRail({
                 onOpenInFinder={onOpenInFinder}
                 onCreatePermanentWorktree={onCreatePermanentWorktree}
                 runningSessionIds={runningSessionIds}
+                nowMs={nowMs}
               />
             ))
           )}
@@ -279,6 +286,7 @@ function ProjectGroup({
   onOpenInFinder,
   onCreatePermanentWorktree,
   runningSessionIds,
+  nowMs,
 }: {
   project: ProjectMeta
   sessions: SessionMeta[]
@@ -295,6 +303,7 @@ function ProjectGroup({
   onOpenInFinder: (projectId: string) => void | Promise<unknown>
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
   runningSessionIds: string[]
+  nowMs: number
 }) {
   const hasActiveSession = sessions.some((session) => session.id === activeSessionId)
   const isActiveProject = activeProjectId === project.id
@@ -368,7 +377,7 @@ function ProjectGroup({
                 projectId={project.id}
                 sessionId={session.id}
                 title={session.title}
-                age={formatRelativeAge(session.created_at)}
+                age={formatRelativeAge(session.updated_at, nowMs)}
                 isPinned={session.pinned}
                 isRunning={runningSessionIds.includes(session.id)}
                 isActive={activeSessionId === session.id}
@@ -591,11 +600,11 @@ function ProjectMenu({
   )
 }
 
-function formatRelativeAge(value: string) {
+function formatRelativeAge(value: string, nowMs: number) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '刚刚'
 
-  const diff = Date.now() - date.getTime()
+  const diff = Math.max(0, nowMs - date.getTime())
   const minute = 60 * 1000
   const hour = 60 * minute
   const day = 24 * hour
@@ -603,9 +612,9 @@ function formatRelativeAge(value: string) {
   const month = 30 * day
 
   if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.max(1, Math.round(diff / minute))} 分`
-  if (diff < day) return `${Math.max(1, Math.round(diff / hour))} 小时`
-  if (diff < month) return `${Math.max(1, Math.round(diff / day))} 天`
-  if (diff < 12 * month) return `${Math.max(1, Math.round(diff / week))} 周`
-  return `${Math.max(1, Math.round(diff / month))} 月`
+  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))} 分钟前`
+  if (diff < day) return `${Math.max(1, Math.floor(diff / hour))} 小时前`
+  if (diff < week) return `${Math.max(1, Math.floor(diff / day))} 天前`
+  if (diff < month) return `${Math.max(1, Math.floor(diff / week))} 周前`
+  return `${Math.max(1, Math.floor(diff / month))} 个月前`
 }

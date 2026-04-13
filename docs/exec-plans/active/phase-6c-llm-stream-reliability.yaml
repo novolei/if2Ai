@@ -1,0 +1,263 @@
+# Phase 6C: LLM Stream Reliability Control Plane
+# ─────────────────────────────────────────────────────────────────────────────
+# 目标：消除“第二真相”，建立可恢复、可观测、可治理的流式执行链路
+# 约束：严格串行执行（A -> C -> A+C前端 -> B -> D -> E），避免热点文件并发改写
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6c"
+  phase_status: draft
+  title: "流可靠性控制平面 — TaskOutcome、Correlation Key、ContextGovernor、Resume"
+  owner: "@architects"
+  depends_on_phase: "6a"
+  design_docs:
+    - docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md
+  human_checkpoints:
+    - after_slice: "6c.3"  # A+C 前后端收口后人工确认 UI/链路一致
+
+slices:
+
+  - id: "6c.1"
+    title: "Step 1 (P0): A 后端 — TaskOutcome 三真相聚合"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-A1"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/control_plane/audit.rs
+    baseline_ref: "当前 stream_error/stream_complete 终态与工具证据聚合逻辑分散"
+    current_state: |
+      已有 stream_diag_summary、tool_call_update、error 分类，但缺少统一 TaskOutcome 聚合层，
+      容易在 timeout 场景出现“执行真相”和“用户可见真相”短暂分叉。
+    must_implement:
+      - |
+        在后端引入 TaskOutcome 聚合（可为内部模块或独立文件）：
+        - execution_truth（工具证据）
+        - conversation_truth（流状态）
+        - user_visible_truth（completed|partial_success|failed）
+      - |
+        在 stream 终态事件中透传 task_outcome，确保 timeout + 有成功副作用时输出 partial_success。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "task_outcome"
+        label: "task_outcome 字段存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend commands::agent"
+        expect: "all tests pass"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src-tauri/src/commands/agent.rs']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>900]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "TaskOutcome 是否统一聚合 execution_truth/conversation_truth/user_visible_truth"
+      - "partial_success 判定是否依赖真实工具成功证据"
+      - "code_shape_gate: 是否避免继续膨胀热点文件（>900 行即失败）"
+
+  - id: "6c.2"
+    title: "Step 2 (P0): C 后端 — request_id + trace_id + stream_id 统一关联键"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-C1"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/control_plane/audit.rs
+    baseline_ref: "已有 stream_audit_link，但 request_id 未稳定入 stream_diag_summary"
+    current_state: |
+      现有链路已具备 trace_id 与 stream_id 的部分关联，缺少 request_id 统一串联，
+      并发排障时仍存在多义性。
+    must_implement:
+      - |
+        统一诊断串：
+        - diag_key = stream_id + trace_id + request_id
+      - |
+        request_id 入 stream_diag_summary，并在 audit 事件中可选透传 request_id。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "request_id"
+        label: "request_id 进入流诊断日志"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/audit.rs"
+        grep: "request_id"
+        label: "审计事件支持 request_id"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src-tauri/src/commands/agent.rs','src-tauri/src/modules/control_plane/audit.rs']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>900]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "diag_key 是否可稳定回查 stream/audit/tool 证据"
+      - "日志字段是否保持向后兼容"
+      - "code_shape_gate 是否通过"
+
+  - id: "6c.3"
+    title: "Step 3 (P1): A+C 前端收口 — partial_success 展示 + 诊断串复制"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-UX1"
+    impl_targets:
+      - src/App.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/lib/tauri.ts
+    baseline_ref: "前端存在错误卡与工具卡，但 task_outcome/diag_key 交互仍不完整"
+    current_state: |
+      后端字段扩展后需要一次性前端消费，避免同一协议反复改造造成状态抖动。
+    must_implement:
+      - |
+        前端接入 task_outcome（completed|partial_success|failed）并修正文案优先级。
+      - |
+        工具卡支持复制诊断串（stream_id + trace_id + request_id）。
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "partial_success"
+        label: "partial_success 展示逻辑存在"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "request_id\\|diag"
+        label: "诊断串展示/复制逻辑存在"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src/components/ui/chat-ui.tsx','src/App.tsx']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>1200]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "UI 是否把 partial_success 与 failed 明确区分"
+      - "诊断串是否一键复制并可用于排障"
+      - "code_shape_gate: 超长前端文件是否先拆分再扩展"
+
+  - id: "6c.4"
+    title: "Step 4 (P1): B 分层超时配置 — connect/read/overall + retry/backoff"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-B1"
+    impl_targets:
+      - src-tauri/src/modules/api/providers/claw_provider.rs
+      - src-tauri/src/modules/runtime/config.rs
+      - src-tauri/src/modules/runtime/mod.rs
+    baseline_ref: "provider 超时治理尚未分层配置化"
+    current_state: |
+      当前超时/重试策略缺少 connect/read/overall 的分层治理与统一配置入口。
+    must_implement:
+      - |
+        新增并接入配置字段：
+        - connect_timeout_ms
+        - stream_read_timeout_ms
+        - overall_timeout_ms
+        - max_retries
+        - initial_backoff_ms
+        - max_backoff_ms
+      - |
+        保持兼容默认值；仅治理传输层，不改任务终态语义。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/config.rs"
+        grep: "connect_timeout_ms\\|stream_read_timeout_ms\\|overall_timeout_ms\\|max_retries"
+        label: "分层超时/重试配置项存在"
+      - type: symbol
+        file: "src-tauri/src/modules/api/providers/claw_provider.rs"
+        grep: "backoff\\|retry"
+        label: "provider 使用配置化重试/回退"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src-tauri/src/modules/api/providers/claw_provider.rs','src-tauri/src/modules/runtime/config.rs']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>900]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "分层 timeout 是否可配置且有安全默认值"
+      - "重试是否仅在安全可重试窗口触发"
+      - "code_shape_gate 是否通过"
+
+  - id: "6c.5"
+    title: "Step 5 (P1): D ContextGovernor 三闸门统一 preflight"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-D1"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/runtime/compact.rs
+      - src-tauri/src/modules/runtime/mod.rs
+    baseline_ref: "已有 preflight/message-char 治理，但 token/artifact 闸门未形成统一准入器"
+    current_state: |
+      当前预算治理存在多处入口，未形成统一 ContextGovernor，易出现规则覆盖顺序不清。
+    must_implement:
+      - |
+        统一 ContextGovernor 三闸门：
+        - token_budget_gate
+        - message_char_budget_gate
+        - artifact_gate（大 tool_result 句柄化）
+      - |
+        三闸门全部通过才允许发请求；失败先压缩/句柄化再准入。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "ContextGovernor\\|token_budget_gate\\|message_char_budget_gate\\|artifact_gate"
+        label: "三闸门统一入口存在"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/compact.rs"
+        grep: "token"
+        label: "compact token-budget 逻辑被复用/迁入"
+      - type: test
+        cmd: "cargo test -p if2ai-backend runtime::compact"
+        expect: "all tests pass"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src-tauri/src/commands/agent.rs']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>900]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "三闸门是否统一且顺序稳定"
+      - "artifact 句柄化是否阻断大结果原文回灌"
+      - "code_shape_gate 是否通过"
+
+  - id: "6c.6"
+    title: "Step 6 (P2): E 恢复协议 — degraded + resume_cursor + 一键继续"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/llm-stream-reliability-control-plane-v1.md"
+    backlog_ref: "STREAM-REL-E1"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src/App.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/lib/tauri.ts
+    baseline_ref: "timeout 后默认整轮终止，尚无统一恢复游标协议"
+    current_state: |
+      已有局部 retry 与错误分类，但缺少以 degraded/resume_cursor 为核心的任务恢复协议。
+    must_implement:
+      - |
+        timeout/transport error 进入 degraded，并生成 resume_cursor（最近一致点）。
+      - |
+        前端提供“一键继续”并发起 resume turn；禁止重放已确认副作用步骤。
+      - |
+        记录 resume_success_rate 所需基础日志字段。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "resume_cursor\\|degraded"
+        label: "后端恢复协议字段存在"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "resume"
+        label: "前端继续执行入口存在"
+      - type: test
+        cmd: "python -c \"from pathlib import Path; files=['src-tauri/src/commands/agent.rs','src/components/ui/chat-ui.tsx']; bad=[]; [bad.append((f,n)) for f in files if Path(f).exists() for n in [sum(1 for _ in Path(f).open('r',encoding='utf-8'))] if n>1200]; assert not bad, f'code_shape_gate_fail:{bad}'\""
+        expect: "exit code 0"
+    review_checklist:
+      - "degraded -> resume_cursor -> resume turn 链路是否闭环"
+      - "恢复路径是否避免重复副作用执行"
+      - "是否具备 resume_success_rate 统计基础"
+      - "code_shape_gate 是否通过"
+
+dashboard:
+  last_updated: "2026-04-13"
+  completed_slices: []
+  current_slice: "6c.1"
+  blocked: []
+  notes: "Phase 6C 规划完成：按串行无冲突顺序执行（A->C->A+C前端->B->D->E），每个 slice 强制 code_shape_gate。"
+

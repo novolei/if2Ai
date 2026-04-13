@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
+use crate::modules::control_plane::BoundaryResolver;
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
@@ -44,22 +45,10 @@ pub fn file_read_tool_entry() -> ToolEntry {
 
             // Allowlist check: path must be within workdir
             let requested_path = PathBuf::from(&path);
-            let canonical_path = requested_path
-                .canonicalize()
-                .map_err(|e| ToolError::Handler(format!("invalid path '{}': {}", path, e)))?;
-
-            let canonical_workdir = workdir.canonicalize().map_err(|e| {
-                ToolError::Handler(format!("invalid workdir '{}': {}", workdir.display(), e))
-            })?;
-
-            // starts_with.*workdir — harness symbol check marker
-            if !canonical_path.starts_with(&canonical_workdir) {
-                return Err(ToolError::Handler(format!(
-                    "path '{}' is outside allowed workdir '{}'",
-                    path,
-                    workdir.display()
-                )));
-            }
+            let resolved_path = BoundaryResolver::resolve_user_path(&workdir, &requested_path);
+            let canonical_path = BoundaryResolver::canonicalize_existing(&resolved_path)?;
+            let canonical_workdir = BoundaryResolver::canonicalize_workdir(&workdir)?;
+            BoundaryResolver::assert_within_workdir(&canonical_workdir, &canonical_path)?;
 
             // Extra sensitive path check (denylist as additional protection)
             let sensitive_patterns = ["/etc/passwd", "/etc/shadow", "/.ssh/", "/.aws/"];

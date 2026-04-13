@@ -117,6 +117,9 @@ impl PermissionPolicy {
             required_mode,
         };
 
+        // Align with CLI runtime semantics:
+        // - Prompt mode always asks for confirmation.
+        // - WorkspaceWrite can escalate to DangerFullAccess through prompt.
         if current_mode == PermissionMode::Prompt
             || (current_mode == PermissionMode::WorkspaceWrite
                 && required_mode == PermissionMode::DangerFullAccess)

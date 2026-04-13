@@ -25,6 +25,10 @@ pub struct AppState {
     /// Permission prompt senders keyed by session_id.
     /// Used by respond_permission to send user decisions back to waiting prompters.
     pub permission_senders: Arc<Mutex<HashMap<String, Sender<PermissionPromptDecision>>>>,
+    /// Session-scoped permission overrides keyed by session_id -> tool_name.
+    /// Used for "remember in this session" decisions from the permission dialog.
+    pub permission_overrides:
+        Arc<Mutex<HashMap<String, HashMap<String, PermissionPromptDecision>>>>,
     /// Stream cancel senders keyed by stream_id.
     /// Used by stop_agent_stream to cancel an in-flight streaming response.
     pub stream_cancel_senders: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
@@ -44,6 +48,7 @@ impl AppState {
             tool_registry: Arc::new(tool_registry),
             project_manager: Arc::new(project_manager),
             permission_senders: Arc::new(Mutex::new(HashMap::new())),
+            permission_overrides: Arc::new(Mutex::new(HashMap::new())),
             stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
         }
     }

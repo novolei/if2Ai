@@ -22,10 +22,17 @@ struct PowerShellInput {
 /// Creates the PowerShell tool entry.
 #[must_use]
 pub fn powershell_tool_entry() -> ToolEntry {
-    let handler: ToolHandler = Arc::new(|args: serde_json::Value, _ctx: SharedToolContext| {
+    let handler: ToolHandler = Arc::new(|args: serde_json::Value, ctx: SharedToolContext| {
         Box::pin(async move {
             let input: PowerShellInput = serde_json::from_value(args.clone())
                 .map_err(|e| ToolError::Handler(format!("Invalid input: {e}")))?;
+
+            let workdir = {
+                let guard = ctx
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("failed to lock context: {e}")))?;
+                guard.workdir.clone()
+            };
 
             // PowerShell is primarily a Windows tool; on macOS/Linux try pwsh
             let cmd = if cfg!(windows) { "powershell" } else { "pwsh" };
@@ -33,6 +40,7 @@ pub fn powershell_tool_entry() -> ToolEntry {
             let output = std::process::Command::new(cmd)
                 .arg("-Command")
                 .arg(&input.command)
+                .current_dir(&workdir)
                 .output();
 
             match output {

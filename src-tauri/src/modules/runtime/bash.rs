@@ -90,7 +90,7 @@ pub fn execute_bash(input: BashCommandInput) -> io::Result<BashCommandOutput> {
             dangerously_disable_sandbox: input.dangerously_disable_sandbox,
             return_code_interpretation: None,
             no_output_expected: Some(true),
-            structured_content: None,
+            structured_content: Some(build_sandbox_structured_content(&sandbox_status)),
             persisted_output_path: None,
             persisted_output_size: None,
             sandbox_status: Some(sandbox_status),
@@ -124,7 +124,7 @@ async fn execute_bash_async(
                     dangerously_disable_sandbox: input.dangerously_disable_sandbox,
                     return_code_interpretation: Some(String::from("timeout")),
                     no_output_expected: Some(true),
-                    structured_content: None,
+                    structured_content: Some(build_sandbox_structured_content(&sandbox_status)),
                     persisted_output_path: None,
                     persisted_output_size: None,
                     sandbox_status: Some(sandbox_status),
@@ -159,7 +159,7 @@ async fn execute_bash_async(
         dangerously_disable_sandbox: input.dangerously_disable_sandbox,
         return_code_interpretation,
         no_output_expected,
-        structured_content: None,
+        structured_content: Some(build_sandbox_structured_content(&sandbox_status)),
         persisted_output_path: None,
         persisted_output_size: None,
         sandbox_status: Some(sandbox_status),
@@ -179,6 +179,16 @@ fn sandbox_status_for_input(input: &BashCommandInput, cwd: &std::path::Path) -> 
         input.allowed_mounts.clone(),
     );
     resolve_sandbox_status_for_request(&request, cwd)
+}
+
+fn build_sandbox_structured_content(status: &SandboxStatus) -> Vec<serde_json::Value> {
+    vec![serde_json::json!({
+        "type": "sandbox_status",
+        "active": status.active,
+        "enabled": status.enabled,
+        "decisionSummary": status.decision_summary(),
+        "status": status,
+    })]
 }
 
 fn prepare_command(

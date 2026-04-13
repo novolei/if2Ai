@@ -1,4 +1,4 @@
-import type { Project, ProjectMeta, SessionMeta } from '@/lib/tauri'
+import type { PermissionMode, Project, ProjectMeta, SessionMeta } from '@/lib/tauri'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 
@@ -17,6 +17,10 @@ export interface Message {
   toolArgs?: Record<string, unknown>
   toolDurationMs?: number
   isError?: boolean
+  toolStatus?: 'queued' | 'running' | 'completed' | 'error'
+  effectiveWorkdir?: string
+  policyDecision?: 'allow' | 'deny' | 'prompt'
+  evidenceId?: string
 }
 
 export interface Conversation {
@@ -53,6 +57,8 @@ export interface ChatWorkspaceProps {
   onStop?: () => void
   selectedModel: string
   onModelChange: Dispatch<SetStateAction<string>>
+  permissionMode: PermissionMode
+  onPermissionModeChange: Dispatch<SetStateAction<PermissionMode>>
   todos: TodoItem[]
   leftPaneWidth: number
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void

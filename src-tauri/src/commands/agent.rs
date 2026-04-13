@@ -2,11 +2,13 @@
 //!
 //! Provides the main agent execution commands for Tauri.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono;
 use tauri::{AppHandle, Emitter, State};
 use tokio::time::timeout;
 
@@ -14,6 +16,9 @@ use crate::commands::AppState;
 use crate::modules::api::providers::claw_provider::AuthSource;
 use crate::modules::api::providers::claw_provider::ClawApiClient;
 use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolDefinition};
+use crate::modules::control_plane::{
+    AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
+};
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
@@ -39,7 +44,16 @@ struct StreamTokenPayload {
     tool_args: Option<serde_json::Value>,
     tool_result: Option<String>,
     tool_duration_ms: Option<u64>,
+    effective_workdir: Option<String>,
+    policy_decision: Option<String>,
+    evidence_id: Option<String>,
 }
+
+const MAX_TOOL_RESULT_FOR_MODEL_CHARS: usize = 8_000;
+const TOOL_RESULT_PREVIEW_CHARS: usize = 320;
+const MAX_REQUEST_MESSAGE_COUNT: usize = 180;
+const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
+const MAX_STREAM_RETRY_ON_TIMEOUT: usize = 1;
 
 /// Response from a run_agent_turn command.
 #[derive(serde::Serialize)]
@@ -103,6 +117,32 @@ fn create_claw_client_from_settings() -> Result<(ClawApiClient, String), String>
     Ok((client, model))
 }
 
+fn flush_assistant_timeline_segment(
+    timeline_messages: &mut Vec<crate::modules::runtime::session::ConversationMessage>,
+    accumulated_text: &mut String,
+    accumulated_thinking: &mut String,
+) -> bool {
+    if accumulated_text.is_empty() && accumulated_thinking.is_empty() {
+        return false;
+    }
+
+    let text = std::mem::take(accumulated_text);
+    let thinking = std::mem::take(accumulated_thinking);
+
+    timeline_messages.push(crate::modules::runtime::session::ConversationMessage {
+        role: crate::modules::runtime::session::MessageRole::Assistant,
+        blocks: vec![ContentBlock::Text { text }],
+        usage: None,
+        thinking: if thinking.is_empty() {
+            None
+        } else {
+            Some(thinking)
+        },
+    });
+
+    true
+}
+
 /// Convert application session to runtime session.
 ///
 /// The application session has extra metadata (id, title, etc.) that we don't need
@@ -112,6 +152,69 @@ fn app_session_to_runtime(app_session: &AppSession) -> RuntimeSession {
         version: 1,
         messages: app_session.messages.clone(),
     }
+}
+
+/// Resolve session execution context for this turn/session.
+pub(crate) async fn resolve_session_execution_context(
+    state: &AppState,
+    app_session: &AppSession,
+    permission_mode: PermissionMode,
+    caller: &str,
+) -> SessionExecutionContext {
+    let resolver =
+        SessionContextResolver::new(state.session_manager.clone(), state.project_manager.clone());
+    resolver
+        .resolve_from_session(app_session, permission_mode, caller)
+        .await
+}
+
+fn log_context_fingerprint(caller: &str, context: &SessionExecutionContext) {
+    let fingerprint =
+        crate::modules::tools::context::context_fingerprint(&context.session_id, &context.workdir);
+    tracing::info!(
+        "[{}] context fingerprint='{}', session_id='{}', workdir='{}', permission_mode='{}'",
+        caller,
+        fingerprint,
+        context.session_id,
+        context.workdir.display(),
+        context.permission_mode.as_str()
+    );
+}
+
+#[derive(Debug, Clone)]
+struct ControlPlaneRuntimeSwitches {
+    control_plane_v2_enabled: bool,
+    boundary_enforce_mode: crate::modules::runtime::config::BoundaryEnforceMode,
+    sandbox_strict_mode: bool,
+}
+
+fn load_control_plane_switches(workdir: &std::path::Path) -> ControlPlaneRuntimeSwitches {
+    let mut switches = crate::modules::runtime::config::ConfigLoader::default_for(workdir)
+        .load()
+        .map(|loaded| ControlPlaneRuntimeSwitches {
+            control_plane_v2_enabled: loaded.control_plane().control_plane_v2_enabled(),
+            boundary_enforce_mode: loaded.control_plane().boundary_enforce_mode(),
+            sandbox_strict_mode: loaded.control_plane().sandbox_strict_mode(),
+        })
+        .unwrap_or(ControlPlaneRuntimeSwitches {
+            control_plane_v2_enabled: true,
+            boundary_enforce_mode: crate::modules::runtime::config::BoundaryEnforceMode::Enforce,
+            sandbox_strict_mode: true,
+        });
+    if let Ok(value) = std::env::var("IF2AI_CONTROL_PLANE_V2_ENABLED") {
+        switches.control_plane_v2_enabled = value != "0";
+    }
+    if let Ok(value) = std::env::var("IF2AI_BOUNDARY_ENFORCE_MODE") {
+        switches.boundary_enforce_mode = if value.eq_ignore_ascii_case("shadow") {
+            crate::modules::runtime::config::BoundaryEnforceMode::Shadow
+        } else {
+            crate::modules::runtime::config::BoundaryEnforceMode::Enforce
+        };
+    }
+    if let Ok(value) = std::env::var("IF2AI_SANDBOX_STRICT_MODE") {
+        switches.sandbox_strict_mode = value != "0";
+    }
+    switches
 }
 
 /// Real API client that calls the Claw API (Claude/MiniMax).
@@ -206,21 +309,7 @@ impl RealApiClient {
                 let content: Vec<InputContentBlock> = msg
                     .blocks
                     .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => {
-                            Some(InputContentBlock::Text { text: text.clone() })
-                        }
-                        ContentBlock::ToolUse { id, name, input } => {
-                            let input_value: serde_json::Value =
-                                serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
-                            Some(InputContentBlock::ToolUse {
-                                id: id.clone(),
-                                name: name.clone(),
-                                input: input_value,
-                            })
-                        }
-                        ContentBlock::ToolResult { .. } => None,
-                    })
+                    .map(runtime_block_to_input_block)
                     .collect();
 
                 let role = match msg.role {
@@ -285,11 +374,61 @@ impl RealApiClient {
 /// This allows ConversationRuntime to use the ToolRegistry for tool calls.
 struct ToolRegistryExecutor {
     tool_registry: Arc<crate::modules::tools::ToolRegistry>,
+    broker: ToolExecutionBroker,
+    execution_context: SessionExecutionContext,
 }
 
 impl ToolRegistryExecutor {
-    fn new(tool_registry: Arc<crate::modules::tools::ToolRegistry>) -> Self {
-        Self { tool_registry }
+    fn new_with_context(
+        tool_registry: Arc<crate::modules::tools::ToolRegistry>,
+        execution_context: SessionExecutionContext,
+    ) -> Self {
+        Self {
+            tool_registry: tool_registry.clone(),
+            broker: ToolExecutionBroker::new(tool_registry),
+            execution_context,
+        }
+    }
+
+    fn execute_with_trace(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+        trace_id: &str,
+    ) -> Result<String, crate::modules::runtime::conversation::ToolError> {
+        let args: serde_json::Value =
+            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+        let switches = load_control_plane_switches(&self.execution_context.workdir);
+        tracing::info!(
+            "[tool_executor] control_plane_v2_enabled={}, boundary_enforce_mode={}, sandbox_strict_mode={}",
+            switches.control_plane_v2_enabled,
+            switches.boundary_enforce_mode.as_str(),
+            switches.sandbox_strict_mode
+        );
+        let result = tokio::task::block_in_place(|| {
+            let handle = tokio::runtime::Handle::current();
+            if switches.control_plane_v2_enabled {
+                handle.block_on(self.broker.execute_with_trace(
+                    &self.execution_context,
+                    tool_name,
+                    args,
+                    trace_id,
+                ))
+            } else {
+                tracing::warn!(
+                    "[tool_executor] controlPlaneV2Enabled=false, falling back to direct dispatch_with_context"
+                );
+                handle.block_on(self.tool_registry.dispatch_with_context(
+                    tool_name,
+                    args,
+                    self.broker.to_tool_context(&self.execution_context),
+                ))
+            }
+        })
+        .map_err(|e: crate::modules::tools::ToolError| {
+            crate::modules::runtime::conversation::ToolError::new(e.to_string())
+        })?;
+        Ok(result)
     }
 }
 
@@ -299,19 +438,8 @@ impl ToolExecutor for ToolRegistryExecutor {
         tool_name: &str,
         input: &str,
     ) -> Result<String, crate::modules::runtime::conversation::ToolError> {
-        let args: serde_json::Value =
-            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
-
-        // Use block_in_place to run async code in a blocking context
-        let result = tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::current();
-            handle.block_on(self.tool_registry.dispatch(tool_name, args))
-        })
-        .map_err(|e: crate::modules::tools::ToolError| {
-            crate::modules::runtime::conversation::ToolError::new(e.to_string())
-        })?;
-
-        Ok(result)
+        let trace_id = AuditEmitter::new_trace_id();
+        self.execute_with_trace(tool_name, input, &trace_id)
     }
 
     fn get_definitions(&self) -> Vec<crate::modules::api::ToolDefinition> {
@@ -335,14 +463,159 @@ impl ToolExecutor for ToolRegistryExecutor {
 }
 
 /// Parse a permission_mode string into PermissionMode enum.
-fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
+pub(crate) fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
     match mode {
-        Some("readOnly") => PermissionMode::ReadOnly,
-        Some("workspaceWrite") => PermissionMode::WorkspaceWrite,
+        Some("readOnly") | Some("read-only") | Some("read_only") => PermissionMode::ReadOnly,
+        Some("workspaceWrite") | Some("workspace-write") | Some("workspace_write") => {
+            PermissionMode::WorkspaceWrite
+        }
         Some("prompt") => PermissionMode::Prompt,
-        Some("dangerFullAccess") | None => PermissionMode::DangerFullAccess,
+        Some("dangerFullAccess")
+        | Some("danger-full-access")
+        | Some("danger_full_access")
+        | None => PermissionMode::DangerFullAccess,
         _ => PermissionMode::DangerFullAccess,
     }
+}
+
+/// Build tool-level permission policy for the active mode.
+///
+/// Read-only tools are allowed in all modes.
+/// Workspace-write tools require at least WorkspaceWrite.
+/// Dangerous/system tools require DangerFullAccess (or prompt escalation).
+pub(crate) fn build_permission_policy(mode: PermissionMode) -> PermissionPolicy {
+    PermissionPolicy::new(mode)
+        // Read-only tools
+        .with_tool_requirement("read_file", PermissionMode::ReadOnly)
+        .with_tool_requirement("glob_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("grep_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("content_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("web_fetch", PermissionMode::ReadOnly)
+        .with_tool_requirement("web_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("WebFetch", PermissionMode::ReadOnly)
+        .with_tool_requirement("WebSearch", PermissionMode::ReadOnly)
+        .with_tool_requirement("tool_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("ToolSearch", PermissionMode::ReadOnly)
+        .with_tool_requirement("json_parse", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("memory_recall", PermissionMode::ReadOnly)
+        .with_tool_requirement("memory_export", PermissionMode::ReadOnly)
+        .with_tool_requirement("cron_list", PermissionMode::ReadOnly)
+        .with_tool_requirement("sleep", PermissionMode::ReadOnly)
+        .with_tool_requirement("Sleep", PermissionMode::ReadOnly)
+        .with_tool_requirement("SendUserMessage", PermissionMode::ReadOnly)
+        .with_tool_requirement("structured_output", PermissionMode::ReadOnly)
+        .with_tool_requirement("StructuredOutput", PermissionMode::ReadOnly)
+        // Workspace-write tools
+        .with_tool_requirement("file_write", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("file_edit", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("edit_file", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("NotebookEdit", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_store", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_forget", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_purge", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("TodoWrite", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("Config", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_add", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_remove", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_run", PermissionMode::WorkspaceWrite)
+        // Dangerous/system tools
+        .with_tool_requirement("bash", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("PowerShell", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("REPL", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("http_request", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("agent", PermissionMode::DangerFullAccess)
+}
+
+fn contains_unverified_file_claim(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let patterns = [
+        "已创建",
+        "已写入",
+        "已删除",
+        "已修改",
+        "created",
+        "written",
+        "deleted",
+        "successfully created",
+        "successfully wrote",
+        "successfully deleted",
+    ];
+    patterns
+        .iter()
+        .any(|p| text.contains(p) || lower.contains(p))
+}
+
+fn is_mutating_tool_success(tool_name: &str, input_json: &str, is_error: bool) -> bool {
+    if is_error {
+        return false;
+    }
+
+    let write_tools = [
+        "file_write",
+        "write_file",
+        "file_edit",
+        "edit_file",
+        "NotebookEdit",
+        "TodoWrite",
+        "memory_store",
+        "memory_forget",
+        "memory_purge",
+        "cron_add",
+        "cron_remove",
+        "cron_run",
+    ];
+    if write_tools.contains(&tool_name) {
+        return true;
+    }
+
+    // Shell-like tools can mutate files; inspect command heuristically.
+    if ["bash", "PowerShell", "REPL"].contains(&tool_name) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(input_json) {
+            let command = value.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            return shell_command_likely_mutates_files(command);
+        }
+    }
+
+    false
+}
+
+fn shell_command_likely_mutates_files(command: &str) -> bool {
+    let normalized = command.to_lowercase();
+    let mutation_markers = [
+        "rm ",
+        "mv ",
+        "cp ",
+        "touch ",
+        "mkdir ",
+        "rmdir ",
+        "chmod ",
+        "chown ",
+        "sed -i",
+        "perl -0pi",
+        "python -c",
+        "python - <<",
+        "node -e",
+        "tee ",
+        "printf ",
+        "cat >",
+        "cat <<",
+        "echo >",
+        "echo >>",
+        ">>",
+        " > ",
+        "| tee",
+        "git add",
+        "git mv",
+        "git rm",
+        "install -d",
+    ];
+
+    mutation_markers
+        .iter()
+        .any(|marker| normalized.contains(marker))
 }
 
 /// Run a single agent turn with the given user message.
@@ -398,16 +671,39 @@ pub async fn run_agent_turn(
     };
     let api_client = RealApiClient::new(claw_client, model, state.tool_registry.clone());
 
-    // Create tool executor bridge
-    let tool_executor = ToolRegistryExecutor::new(state.tool_registry.clone());
-
     // Create permission policy from parameter (defaults to DangerFullAccess)
     let mode = parse_permission_mode(permission_mode.as_deref());
-    let permission_policy = PermissionPolicy::new(mode);
+    let permission_policy = build_permission_policy(mode);
+    tracing::info!(
+        "[run_agent_turn] effective permission mode: {}",
+        mode.as_str()
+    );
 
-    // System prompt — use SystemPromptBuilder for dynamic prompt
-    let system_prompt_str = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
-    let system_prompt = vec![system_prompt_str];
+    // Create a per-turn execution context to avoid cross-session context leakage.
+    let execution_context =
+        resolve_session_execution_context(&state, &app_session, mode, "run_agent_turn").await;
+    log_context_fingerprint("run_agent_turn", &execution_context);
+
+    // Create tool executor bridge
+    let tool_executor =
+        ToolRegistryExecutor::new_with_context(state.tool_registry.clone(), execution_context);
+
+    // Build system prompt using SystemPromptBuilder with session workdir
+    let system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
+        &tool_executor.execution_context.workdir,
+        chrono::Local::now().format("%Y-%m-%d").to_string(),
+        std::env::consts::OS,
+        std::env::consts::FAMILY,
+    ) {
+        Ok(prompt_lines) => prompt_lines,
+        Err(e) => {
+            tracing::warn!(
+                "[run_agent_turn] Failed to build system prompt: {}, using fallback",
+                e
+            );
+            vec![crate::modules::runtime::prompt::SystemPromptBuilder::new().render()]
+        }
+    };
 
     // Create runtime
     let mut runtime = ConversationRuntime::new(
@@ -583,9 +879,12 @@ pub async fn start_agent_stream(
         stream_id, session_id, user_message
     );
     tracing::info!(
-        "[start_agent_stream] Starting - stream_id: {}, session_id: {}",
+        "[start_agent_stream] Starting - stream_id: {}, session_id: {}, requested_permission_mode: {}",
         stream_id,
-        session_id
+        session_id,
+        permission_mode
+            .as_deref()
+            .unwrap_or("dangerFullAccess(default)")
     );
 
     // Get the main window for emitting events
@@ -605,6 +904,11 @@ pub async fn start_agent_stream(
         app_session.messages.len()
     );
 
+    let mode = parse_permission_mode(permission_mode.as_deref());
+    let execution_context =
+        resolve_session_execution_context(&state, &app_session, mode, "start_agent_stream").await;
+    log_context_fingerprint("start_agent_stream", &execution_context);
+
     // Create API client
     let (claw_client, model) = create_claw_client_from_settings().map_err(|e| {
         tracing::error!("[start_agent_stream] Failed to create API client: {}", e);
@@ -620,21 +924,7 @@ pub async fn start_agent_stream(
             let content: Vec<InputContentBlock> = msg
                 .blocks
                 .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text { text } => {
-                        Some(InputContentBlock::Text { text: text.clone() })
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        let input_value: serde_json::Value =
-                            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
-                        Some(InputContentBlock::ToolUse {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: input_value,
-                        })
-                    }
-                    ContentBlock::ToolResult { .. } => None,
-                })
+                .map(runtime_block_to_input_block)
                 .collect();
 
             let role = match msg.role {
@@ -670,8 +960,22 @@ pub async fn start_agent_stream(
         })
         .collect();
 
-    // Build system prompt using SystemPromptBuilder
-    let system_prompt = crate::modules::runtime::prompt::SystemPromptBuilder::new().render();
+    // Build system prompt using SystemPromptBuilder with correct workdir
+    let system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
+        &execution_context.workdir,
+        chrono::Local::now().format("%Y-%m-%d").to_string(),
+        std::env::consts::OS,
+        std::env::consts::FAMILY,
+    ) {
+        Ok(prompt_lines) => prompt_lines.join("\n"),
+        Err(e) => {
+            tracing::warn!(
+                "[start_agent_stream] Failed to build system prompt: {}, using fallback",
+                e
+            );
+            crate::modules::runtime::prompt::SystemPromptBuilder::new().render()
+        }
+    };
 
     // Clone everything needed for the background task
     let session_manager = state.session_manager.clone();
@@ -683,7 +987,9 @@ pub async fn start_agent_stream(
     let tool_defs_for_stream = tool_defs.clone();
     let system_prompt_for_stream = system_prompt.clone();
     let permission_mode_for_stream = permission_mode.clone();
+    let execution_context_for_task = execution_context.clone();
     let permission_senders = state.permission_senders.clone();
+    let permission_overrides = state.permission_overrides.clone();
 
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
@@ -711,9 +1017,39 @@ pub async fn start_agent_stream(
         let mut accumulated_text = String::new();
         let mut accumulated_thinking = String::new();
         let mut token_count: u32 = 0;
+        let mut stream_failed = false;
+        let mut completion_already_emitted = false;
+        let mut has_successful_mutating_tool = false;
+        let mut terminal_status: Option<&'static str> = None;
+        let mut last_stream_error_reason: Option<String> = None;
+        let mut sanitize_rounds = 0usize;
+        let mut sanitized_dropped_empty_messages = 0usize;
+        let mut sanitized_dropped_orphan_tool_results = 0usize;
+        let mut sanitized_dropped_unmatched_tool_uses = 0usize;
+        let mut sanitize_orphan_samples: Vec<String> = Vec::new();
+        let mut sanitize_unmatched_samples: Vec<String> = Vec::new();
+        let mut preflight_trim_rounds = 0usize;
+        let mut preflight_dropped_messages_total = 0usize;
+        let mut preflight_trimmed_chars_total = 0usize;
+        let mut stream_start_retry_count = 0usize;
+        let mut stream_event_retry_count = 0usize;
+        let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
+        let permission_policy = build_permission_policy(mode);
+        let execution_context = SessionExecutionContext::new(
+            execution_context_for_task.session_id.clone(),
+            execution_context_for_task.project_id.clone(),
+            execution_context_for_task.workdir.clone(),
+            mode,
+        );
+        let execution_context_for_policy = execution_context.clone();
+        log_context_fingerprint("start_agent_stream_task", &execution_context);
+        let mut tool_executor = crate::commands::agent::ToolRegistryExecutor::new_with_context(
+            tool_registry_clone.clone(),
+            execution_context,
+        );
         const SAVE_INTERVAL: u32 = 50;
-        // Session-format tool result messages (for persistence)
-        let mut tool_result_session_messages: Vec<
+        // Session-format timeline messages (for persistence in chronological order)
+        let mut timeline_session_messages: Vec<
             crate::modules::runtime::session::ConversationMessage,
         > = Vec::new();
 
@@ -732,8 +1068,13 @@ pub async fn start_agent_stream(
                     tool_args: None,
                     tool_result: None,
                     tool_duration_ms: None,
+                    effective_workdir: None,
+                    policy_decision: None,
+                    evidence_id: None,
                 };
                 let _ = window.emit("agent-token", payload);
+                completion_already_emitted = true;
+                terminal_status = Some("cancelled_by_user");
                 break;
             }
 
@@ -742,11 +1083,105 @@ pub async fn start_agent_stream(
                     "[start_agent_stream] Tool loop exceeded max_iterations={}",
                     max_iterations
                 );
+                terminal_status = Some("max_iterations_reached");
                 break;
             }
             tool_loop_iter += 1;
 
+            tracing::info!(
+                "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}",
+                tool_loop_iter,
+                session_messages.len(),
+                accumulated_text.len()
+            );
+
             // Build API request for this iteration
+            let (trimmed_session_messages, preflight_stats) = apply_request_preflight_limits(
+                &session_messages,
+                MAX_REQUEST_MESSAGE_COUNT,
+                MAX_REQUEST_CHAR_BUDGET,
+            );
+            if preflight_stats.has_changes() {
+                preflight_trim_rounds += 1;
+                preflight_dropped_messages_total += preflight_stats.dropped_messages;
+                preflight_trimmed_chars_total += preflight_stats.trimmed_chars;
+                tracing::warn!(
+                    "[start_agent_stream] preflight request trim: stream_id={}, session_id={}, before_messages={}, after_messages={}, before_chars={}, after_chars={}, dropped_messages={}, trimmed_chars={}",
+                    stream_id_for_task,
+                    session_id,
+                    preflight_stats.before_messages,
+                    preflight_stats.after_messages,
+                    preflight_stats.before_chars,
+                    preflight_stats.after_chars,
+                    preflight_stats.dropped_messages,
+                    preflight_stats.trimmed_chars,
+                );
+            }
+            let (sanitized_session_messages, sanitize_stats) =
+                sanitize_messages_for_provider(&trimmed_session_messages);
+            if sanitize_stats.has_changes() {
+                sanitize_rounds += 1;
+                sanitized_dropped_empty_messages += sanitize_stats.dropped_empty_messages;
+                sanitized_dropped_orphan_tool_results += sanitize_stats.dropped_orphan_tool_results;
+                sanitized_dropped_unmatched_tool_uses += sanitize_stats.dropped_unmatched_tool_uses;
+                extend_sample_ids(
+                    &mut sanitize_orphan_samples,
+                    &sanitize_stats.orphan_tool_result_ids,
+                    12,
+                );
+                extend_sample_ids(
+                    &mut sanitize_unmatched_samples,
+                    &sanitize_stats.unmatched_tool_use_ids,
+                    12,
+                );
+                tracing::warn!(
+                    "[start_agent_stream] sanitized malformed tool history before request: stream_id={}, session_id={}, before_messages={}, after_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, orphan_tool_result_ids={:?}, unmatched_tool_use_ids={:?}",
+                    stream_id_for_task,
+                    session_id,
+                    session_messages.len(),
+                    sanitized_session_messages.len(),
+                    sanitize_stats.dropped_empty_messages,
+                    sanitize_stats.dropped_orphan_tool_results,
+                    sanitize_stats.dropped_unmatched_tool_uses,
+                    sanitize_stats.orphan_tool_result_ids,
+                    sanitize_stats.unmatched_tool_use_ids,
+                );
+            }
+            let mut request_messages = sanitized_session_messages.clone();
+            if preflight_stats.has_changes() || sanitize_stats.has_changes() {
+                request_messages.insert(
+                    0,
+                    InputMessage::user_text(format!(
+                        "[context_trim_notice] dropped_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}",
+                        preflight_stats.dropped_messages,
+                        sanitize_stats.dropped_empty_messages,
+                        sanitize_stats.dropped_orphan_tool_results,
+                        sanitize_stats.dropped_unmatched_tool_uses
+                    )),
+                );
+            }
+            let (final_request_messages, final_preflight_stats) = apply_request_preflight_limits(
+                &request_messages,
+                MAX_REQUEST_MESSAGE_COUNT,
+                MAX_REQUEST_CHAR_BUDGET,
+            );
+            if final_preflight_stats.has_changes() {
+                preflight_trim_rounds += 1;
+                preflight_dropped_messages_total += final_preflight_stats.dropped_messages;
+                preflight_trimmed_chars_total += final_preflight_stats.trimmed_chars;
+                tracing::warn!(
+                    "[start_agent_stream] final preflight trim: stream_id={}, session_id={}, before_messages={}, after_messages={}, before_chars={}, after_chars={}, dropped_messages={}, trimmed_chars={}",
+                    stream_id_for_task,
+                    session_id,
+                    final_preflight_stats.before_messages,
+                    final_preflight_stats.after_messages,
+                    final_preflight_stats.before_chars,
+                    final_preflight_stats.after_chars,
+                    final_preflight_stats.dropped_messages,
+                    final_preflight_stats.trimmed_chars,
+                );
+            }
+            session_messages = final_request_messages;
             let iter_api_request = MessageRequest {
                 model: model_for_stream.clone(),
                 max_tokens: 4096,
@@ -768,9 +1203,28 @@ pub async fn start_agent_stream(
             let mut stream = match claw_client.stream_message(&iter_api_request).await {
                 Ok(s) => s,
                 Err(e) => {
+                    let stream_error_reason = format_stream_error_reason(&e);
+                    if is_network_timeout_reason(&stream_error_reason)
+                        && stream_start_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
+                    {
+                        stream_start_retry_count += 1;
+                        tracing::warn!(
+                            "[start_agent_stream] start-stream timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
+                            stream_id_for_task,
+                            session_id,
+                            stream_start_retry_count,
+                            MAX_STREAM_RETRY_ON_TIMEOUT,
+                            stream_error_reason
+                        );
+                        tokio::time::sleep(Duration::from_millis(350)).await;
+                        continue;
+                    }
+                    stream_failed = true;
+                    last_stream_error_reason = Some(stream_error_reason.clone());
+                    terminal_status = Some("failed_to_start_stream");
                     tracing::error!(
                         "[start_agent_stream] Background task failed to start stream: {}",
-                        e
+                        stream_error_reason
                     );
                     let payload = StreamTokenPayload {
                         stream_id: stream_id_for_task.clone(),
@@ -781,11 +1235,16 @@ pub async fn start_agent_stream(
                         tool_name: None,
                         tool_status: None,
                         tool_args: None,
-                        tool_result: None,
+                        tool_result: Some(stream_error_reason),
                         tool_duration_ms: None,
+                        effective_workdir: None,
+                        policy_decision: None,
+                        evidence_id: None,
                     };
                     let _ = window.emit("agent-token", payload);
-                    return;
+                    // Save session and emit stream_complete even on error
+                    // (break from outer loop so cleanup code runs below)
+                    break;
                 }
             };
 
@@ -795,6 +1254,8 @@ pub async fn start_agent_stream(
             let mut index_to_tool_id: HashMap<u32, String> = HashMap::new();
             let mut index_to_tool_name: HashMap<u32, String> = HashMap::new();
             let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
+            let mut retry_outer_after_timeout = false;
+            let mut emitted_stream_delta_in_iteration = false;
 
             loop {
                 match stream.next_event().await {
@@ -802,7 +1263,16 @@ pub async fn start_agent_stream(
                         ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
                             crate::modules::api::ContentBlockDelta::TextDelta { text } => {
                                 accumulated_text.push_str(&text);
+                                emitted_stream_delta_in_iteration = true;
                                 token_count += 1;
+                                // Log every 5 text deltas to track streaming progress
+                                if token_count.is_multiple_of(5) {
+                                    tracing::info!(
+                                        "[start_agent_stream] text_delta: +{} chars, accumulated {} total",
+                                        text.len(),
+                                        accumulated_text.len()
+                                    );
+                                }
                                 if token_count.is_multiple_of(SAVE_INTERVAL) {
                                     let mut interim_session = app_session_clone.clone();
                                     interim_session.messages.push(
@@ -836,11 +1306,15 @@ pub async fn start_agent_stream(
                                     tool_args: None,
                                     tool_result: None,
                                     tool_duration_ms: None,
+                                    effective_workdir: None,
+                                    policy_decision: None,
+                                    evidence_id: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
                             crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
                                 accumulated_thinking.push_str(&thinking);
+                                emitted_stream_delta_in_iteration = true;
                                 let payload = StreamTokenPayload {
                                     stream_id: stream_id_for_task.clone(),
                                     text: None,
@@ -852,6 +1326,9 @@ pub async fn start_agent_stream(
                                     tool_args: None,
                                     tool_result: None,
                                     tool_duration_ms: None,
+                                    effective_workdir: None,
+                                    policy_decision: None,
+                                    evidence_id: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
@@ -892,19 +1369,10 @@ pub async fn start_agent_stream(
                                 }
                             }
 
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                text: None,
-                                thinking: None,
-                                event_type: "stream_complete".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                            };
-                            let _ = window.emit("agent-token", payload);
+                            tracing::info!(
+                                "[start_agent_stream] MessageStop received, {} pending tool uses",
+                                pending_tool_uses.len()
+                            );
                             break;
                         }
                         ApiStreamEvent::ContentBlockStart(start_event) => {
@@ -921,6 +1389,9 @@ pub async fn start_agent_stream(
                                         tool_args: None,
                                         tool_result: None,
                                         tool_duration_ms: None,
+                                        effective_workdir: None,
+                                        policy_decision: None,
+                                        evidence_id: None,
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -943,6 +1414,9 @@ pub async fn start_agent_stream(
                                         tool_args: None,
                                         tool_result: None,
                                         tool_duration_ms: None,
+                                        effective_workdir: None,
+                                        policy_decision: None,
+                                        evidence_id: Some(id.clone()),
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -952,17 +1426,75 @@ pub async fn start_agent_stream(
                         _ => {}
                     },
                     Ok(None) => {
-                        // Extract any remaining tools (same as MessageStop fallback)
+                        // Stream ended without MessageStop - extract any remaining tools
                         for (index, tool_id) in index_to_tool_id.drain() {
                             let tool_name = index_to_tool_name.remove(&index).unwrap_or_default();
                             if let Some(input_json) = tool_arguments.remove(&tool_id) {
                                 pending_tool_uses.push((tool_id, tool_name, input_json));
                             }
                         }
+                        tracing::info!(
+                            "[start_agent_stream] Stream ended (Ok(None)), {} pending tool uses",
+                            pending_tool_uses.len()
+                        );
                         break;
                     }
                     Err(e) => {
-                        tracing::error!("[start_agent_stream] Background task stream error: {}", e);
+                        let stream_error_reason = format_stream_error_reason(&e);
+                        if is_network_timeout_reason(&stream_error_reason)
+                            && index_to_tool_id.is_empty()
+                            && tool_arguments.is_empty()
+                            && pending_tool_uses.is_empty()
+                            && !emitted_stream_delta_in_iteration
+                            && stream_event_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
+                        {
+                            stream_event_retry_count += 1;
+                            retry_outer_after_timeout = true;
+                            tracing::warn!(
+                                "[start_agent_stream] stream-event timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
+                                stream_id_for_task,
+                                session_id,
+                                stream_event_retry_count,
+                                MAX_STREAM_RETRY_ON_TIMEOUT,
+                                stream_error_reason
+                            );
+                            break;
+                        }
+                        last_stream_error_reason = Some(stream_error_reason.clone());
+                        if terminal_status.is_none() {
+                            terminal_status = Some("stream_error");
+                        }
+                        tracing::error!(
+                            "[start_agent_stream] Background task stream error: {}",
+                            stream_error_reason
+                        );
+
+                        // Force-settle any in-flight tool cards so frontend does not
+                        // keep them in queued/running after stream failure.
+                        for (index, tool_id) in index_to_tool_id.drain() {
+                            let tool_name = index_to_tool_name
+                                .remove(&index)
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let payload = StreamTokenPayload {
+                                stream_id: stream_id_for_task.clone(),
+                                text: None,
+                                thinking: None,
+                                event_type: "tool_call_update".to_string(),
+                                tool_call_id: Some(tool_id.clone()),
+                                tool_name: Some(tool_name),
+                                tool_status: Some("error".to_string()),
+                                tool_args: None,
+                                tool_result: Some(stream_error_reason.clone()),
+                                tool_duration_ms: None,
+                                effective_workdir: Some(
+                                    execution_context_for_policy.workdir.display().to_string(),
+                                ),
+                                policy_decision: None,
+                                evidence_id: Some(tool_id),
+                            };
+                            let _ = window.emit("agent-token", payload);
+                        }
+
                         let payload = StreamTokenPayload {
                             stream_id: stream_id_for_task.clone(),
                             text: None,
@@ -972,27 +1504,51 @@ pub async fn start_agent_stream(
                             tool_name: None,
                             tool_status: None,
                             tool_args: None,
-                            tool_result: None,
+                            tool_result: Some(stream_error_reason),
                             tool_duration_ms: None,
+                            effective_workdir: None,
+                            policy_decision: None,
+                            evidence_id: None,
                         };
                         let _ = window.emit("agent-token", payload);
+                        stream_failed = true;
                         break;
                     }
                 }
             }
 
+            if retry_outer_after_timeout {
+                tokio::time::sleep(Duration::from_millis(350)).await;
+                continue;
+            }
+
             // If no tool calls, exit the outer loop
             if pending_tool_uses.is_empty() {
+                tracing::info!(
+                    "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
+                    accumulated_text.len()
+                );
+                if terminal_status.is_none() {
+                    terminal_status = Some("model_stop_no_tools");
+                }
                 break;
             }
 
-            // Execute each tool and append results to session_messages
-            let mut tool_executor =
-                crate::commands::agent::ToolRegistryExecutor::new(tool_registry_clone.clone());
+            tracing::info!(
+                "[start_agent_stream] Executing {} tools, accumulated_text so far: {} chars",
+                pending_tool_uses.len(),
+                accumulated_text.len()
+            );
 
-            // Permission policy from stream parameter
-            let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
-            let permission_policy = PermissionPolicy::new(mode);
+            // Persist the assistant segment that led to these tool calls before
+            // the tool results so reload preserves chronological order.
+            flush_assistant_timeline_segment(
+                &mut timeline_session_messages,
+                &mut accumulated_text,
+                &mut accumulated_thinking,
+            );
+
+            // Execute each tool and append results to session_messages
 
             // Set up TauriPermissionPrompter for interactive permission requests
             let (perm_tx, perm_rx): (
@@ -1003,9 +1559,19 @@ pub async fn start_agent_stream(
                 let mut senders = permission_senders.lock().unwrap();
                 senders.insert(session_id.clone(), perm_tx);
             }
-            let mut prompter = TauriPermissionPrompter::new(window.clone(), perm_rx);
+            let mut prompter =
+                TauriPermissionPrompter::new(window.clone(), session_id.clone(), perm_rx);
 
             for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
+                let policy_trace_id = AuditEmitter::new_trace_id();
+                tracing::info!(
+                    "[stream_audit_link] stream_id={}, session_id={}, tool_call_id={}, trace_id={}, tool_name={}",
+                    stream_id_for_task,
+                    session_id,
+                    tool_id,
+                    policy_trace_id,
+                    tool_name
+                );
                 // Emit running event
                 let _ = window.emit(
                     "agent-token",
@@ -1020,17 +1586,92 @@ pub async fn start_agent_stream(
                         tool_args: None,
                         tool_result: None,
                         tool_duration_ms: None,
+                        effective_workdir: Some(
+                            execution_context_for_policy.workdir.display().to_string(),
+                        ),
+                        policy_decision: Some("prompt".to_string()),
+                        evidence_id: Some(policy_trace_id.clone()),
                     },
                 );
 
-                // Permission check
-                let permission_outcome =
-                    permission_policy.authorize(&tool_name, &input_json, Some(&mut prompter));
+                // Permission check: apply session-scoped remember decisions first.
+                let remembered_decision = permission_overrides
+                    .lock()
+                    .ok()
+                    .and_then(|all| all.get(&session_id).cloned())
+                    .and_then(|tool_map| {
+                        tool_map
+                            .get(&tool_name)
+                            .cloned()
+                            .or_else(|| tool_map.get("*").cloned())
+                    });
+                let permission_outcome = match remembered_decision {
+                    Some(PermissionPromptDecision::Allow) => {
+                        crate::modules::runtime::permissions::PermissionOutcome::Allow
+                    }
+                    Some(PermissionPromptDecision::Deny { reason }) => {
+                        crate::modules::runtime::permissions::PermissionOutcome::Deny { reason }
+                    }
+                    None => {
+                        permission_policy.authorize(&tool_name, &input_json, Some(&mut prompter))
+                    }
+                };
+                match &permission_outcome {
+                    crate::modules::runtime::permissions::PermissionOutcome::Allow => {
+                        AuditEmitter::policy_decision_made(
+                            &policy_trace_id,
+                            &execution_context_for_policy.session_id,
+                            &tool_name,
+                            &execution_context_for_policy.workdir,
+                            mode,
+                            "allow",
+                        );
+                    }
+                    crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } => {
+                        AuditEmitter::policy_decision_made(
+                            &policy_trace_id,
+                            &execution_context_for_policy.session_id,
+                            &tool_name,
+                            &execution_context_for_policy.workdir,
+                            mode,
+                            &format!("deny:{reason}"),
+                        );
+                    }
+                }
+                if let crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } =
+                    &permission_outcome
+                {
+                    tracing::warn!(
+                        "[start_agent_stream] Permission denied for tool '{}' in mode {}: {}",
+                        tool_name,
+                        mode.as_str(),
+                        reason
+                    );
+                }
+
+                let tool_input: serde_json::Value =
+                    serde_json::from_str(&input_json).unwrap_or(serde_json::Value::Null);
+
+                timeline_session_messages.push(
+                    crate::modules::runtime::session::ConversationMessage::tool_use(
+                        tool_id.clone(),
+                        tool_name.clone(),
+                        input_json.clone(),
+                    ),
+                );
 
                 let start_time = std::time::Instant::now();
+                let denied_by_policy = matches!(
+                    permission_outcome,
+                    crate::modules::runtime::permissions::PermissionOutcome::Deny { .. }
+                );
                 let (result_text, is_error) = match permission_outcome {
                     crate::modules::runtime::permissions::PermissionOutcome::Allow => {
-                        match tool_executor.execute(&tool_name, &input_json) {
+                        match tool_executor.execute_with_trace(
+                            &tool_name,
+                            &input_json,
+                            &policy_trace_id,
+                        ) {
                             Ok(output) => (output, false),
                             Err(e) => (e.to_string(), true),
                         }
@@ -1039,7 +1680,11 @@ pub async fn start_agent_stream(
                         (reason, true)
                     }
                 };
+                let policy_decision = if denied_by_policy { "deny" } else { "allow" };
                 let duration_ms = start_time.elapsed().as_millis() as u64;
+                if is_mutating_tool_success(&tool_name, &input_json, is_error) {
+                    has_successful_mutating_tool = true;
+                }
 
                 // Emit completed/error event
                 let _ = window.emit(
@@ -1055,23 +1700,42 @@ pub async fn start_agent_stream(
                         tool_args: None,
                         tool_result: Some(result_text.clone()),
                         tool_duration_ms: Some(duration_ms),
+                        effective_workdir: Some(
+                            execution_context_for_policy.workdir.display().to_string(),
+                        ),
+                        policy_decision: Some(policy_decision.to_string()),
+                        evidence_id: Some(policy_trace_id.clone()),
                     },
                 );
 
-                // Append tool_result to session_messages (API format)
+                // Append tool_use as assistant message, then tool_result as user message.
+                // MiniMax requires this pairing: assistant tool_use + user tool_result.
                 session_messages.push(crate::modules::api::InputMessage {
-                    role: "tool".to_string(),
+                    role: "assistant".to_string(),
+                    content: vec![crate::modules::api::InputContentBlock::ToolUse {
+                        id: tool_id.clone(),
+                        name: tool_name.clone(),
+                        input: tool_input,
+                    }],
+                });
+                session_messages.push(crate::modules::api::InputMessage {
+                    role: "user".to_string(),
                     content: vec![crate::modules::api::InputContentBlock::ToolResult {
                         tool_use_id: tool_id.clone(),
                         content: vec![crate::modules::api::ToolResultContentBlock::Text {
-                            text: result_text.clone(),
+                            text: summarize_tool_result_for_model(
+                                &tool_name,
+                                &tool_id,
+                                &result_text,
+                                is_error,
+                            ),
                         }],
                         is_error,
                     }],
                 });
 
-                // Also collect session-format message for persistence
-                tool_result_session_messages.push(
+                // Also collect session-format message for persistence in order.
+                timeline_session_messages.push(
                     crate::modules::runtime::session::ConversationMessage::tool_result(
                         tool_id,
                         tool_name,
@@ -1081,6 +1745,38 @@ pub async fn start_agent_stream(
                 );
             }
             // Continue outer loop → send next LLM request with tool results
+            tracing::info!(
+                "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",
+                session_messages.len()
+            );
+        }
+
+        // Guardrail: do not allow "operation completed" claims without a successful
+        // mutating tool evidence in this request.
+        if contains_unverified_file_claim(&accumulated_text) && !has_successful_mutating_tool {
+            let guarded = "未执行工具，无法确认完成。".to_string();
+            tracing::warn!(
+                "[start_agent_stream] Rewriting unverified completion claim to guarded message"
+            );
+            accumulated_text = guarded.clone();
+            let _ = window.emit(
+                "agent-token",
+                StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: Some(guarded),
+                    thinking: None,
+                    event_type: "final_text_override".to_string(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_status: None,
+                    tool_args: None,
+                    tool_result: None,
+                    tool_duration_ms: None,
+                    effective_workdir: None,
+                    policy_decision: None,
+                    evidence_id: None,
+                },
+            );
         }
 
         // Save session with all accumulated messages
@@ -1093,24 +1789,15 @@ pub async fn start_agent_stream(
             usage: None,
             thinking: None,
         };
-        let assistant_msg = crate::modules::runtime::session::ConversationMessage {
-            role: crate::modules::runtime::session::MessageRole::Assistant,
-            blocks: vec![ContentBlock::Text {
-                text: accumulated_text.clone(),
-            }],
-            usage: None,
-            thinking: if accumulated_thinking.is_empty() {
-                None
-            } else {
-                Some(accumulated_thinking)
-            },
-        };
+        flush_assistant_timeline_segment(
+            &mut timeline_session_messages,
+            &mut accumulated_text,
+            &mut accumulated_thinking,
+        );
         updated_app_session.messages.push(user_msg);
-        updated_app_session.messages.push(assistant_msg);
-        // Append tool_result messages from the tool loop
         updated_app_session
             .messages
-            .extend(tool_result_session_messages);
+            .extend(timeline_session_messages);
 
         // Context compaction — compact if session exceeds token threshold
         let compaction_config = CompactionConfig::default();
@@ -1134,6 +1821,54 @@ pub async fn start_agent_stream(
         if let Err(e) = session_manager.save_session(&updated_app_session).await {
             tracing::error!("[start_agent_stream] Failed to save session: {}", e);
         }
+
+        // Emit stream_complete exactly once, and only after the full
+        // tool/LLM loop has finished for this request.
+        if !stream_failed && !completion_already_emitted {
+            let payload = StreamTokenPayload {
+                stream_id: stream_id_for_task.clone(),
+                text: None,
+                thinking: None,
+                event_type: "stream_complete".to_string(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_args: None,
+                tool_result: None,
+                tool_duration_ms: None,
+                effective_workdir: None,
+                policy_decision: None,
+                evidence_id: None,
+            };
+            let _ = window.emit("agent-token", payload);
+            if terminal_status.is_none() {
+                terminal_status = Some("completed");
+            }
+        }
+
+        tracing::info!(
+            "[stream_diag_summary] stream_id='{}', session_id='{}', status='{}', tool_loop_iter={}, token_count={}, stream_failed={}, completion_already_emitted={}, has_successful_mutating_tool={}, preflight_trim_rounds={}, preflight_dropped_messages_total={}, preflight_trimmed_chars_total={}, sanitize_rounds={}, dropped_empty_messages_total={}, dropped_orphan_tool_results_total={}, dropped_unmatched_tool_uses_total={}, start_retry_count={}, event_retry_count={}, orphan_tool_result_samples={:?}, unmatched_tool_use_samples={:?}, last_stream_error={}",
+            stream_id_for_task,
+            session_id,
+            terminal_status.unwrap_or("unknown"),
+            tool_loop_iter,
+            token_count,
+            stream_failed,
+            completion_already_emitted,
+            has_successful_mutating_tool,
+            preflight_trim_rounds,
+            preflight_dropped_messages_total,
+            preflight_trimmed_chars_total,
+            sanitize_rounds,
+            sanitized_dropped_empty_messages,
+            sanitized_dropped_orphan_tool_results,
+            sanitized_dropped_unmatched_tool_uses,
+            stream_start_retry_count,
+            stream_event_retry_count,
+            sanitize_orphan_samples,
+            sanitize_unmatched_samples,
+            last_stream_error_reason.as_deref().unwrap_or("none"),
+        );
     });
 
     // Return immediately with stream_id
@@ -1142,6 +1877,395 @@ pub async fn start_agent_stream(
         stream_id_return
     );
     Ok(stream_id_return)
+}
+
+fn format_stream_error_reason(error: &impl std::fmt::Display) -> String {
+    let raw = error.to_string();
+    let lower = raw.to_ascii_lowercase();
+    let kind = if lower.contains("timed out") || lower.contains("timeout") {
+        "network_timeout"
+    } else if lower.contains("invalid_request_error")
+        || lower.contains("invalid params")
+        || lower.contains("bad request")
+    {
+        "request_validation_error"
+    } else if lower.contains("permission")
+        || lower.contains("forbidden")
+        || lower.contains("denied")
+    {
+        "permission_error"
+    } else if lower.contains("connection") || lower.contains("broken pipe") || lower.contains("eof")
+    {
+        "network_transport_error"
+    } else {
+        "model_stream_error"
+    };
+    format!("{kind}: {raw}")
+}
+
+fn truncate_tool_result_for_model(result: &str) -> String {
+    let total_chars = result.chars().count();
+    if total_chars <= MAX_TOOL_RESULT_FOR_MODEL_CHARS {
+        return result.to_string();
+    }
+    let kept: String = result
+        .chars()
+        .take(MAX_TOOL_RESULT_FOR_MODEL_CHARS)
+        .collect();
+    format!(
+        "{kept}\n\n[tool_result_truncated_for_context: omitted {} chars]",
+        total_chars - MAX_TOOL_RESULT_FOR_MODEL_CHARS
+    )
+}
+
+fn summarize_tool_result_for_model(
+    tool_name: &str,
+    tool_use_id: &str,
+    result: &str,
+    is_error: bool,
+) -> String {
+    let preview: String = result.chars().take(TOOL_RESULT_PREVIEW_CHARS).collect();
+    let digest = short_text_digest(result);
+    let total_chars = result.chars().count();
+    let compact = format!(
+        "[tool_result_handle] tool={tool_name} id={tool_use_id} status={} chars={total_chars} digest={digest}\npreview:\n{}",
+        if is_error { "error" } else { "ok" },
+        preview
+    );
+    truncate_tool_result_for_model(&compact)
+}
+
+fn short_text_digest(text: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn runtime_block_to_input_block(block: &ContentBlock) -> InputContentBlock {
+    match block {
+        ContentBlock::Text { text } => InputContentBlock::Text { text: text.clone() },
+        ContentBlock::ToolUse { id, name, input } => {
+            let input_value: serde_json::Value =
+                serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+            InputContentBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: input_value,
+            }
+        }
+        ContentBlock::ToolResult {
+            tool_use_id,
+            output,
+            is_error,
+            ..
+        } => InputContentBlock::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: vec![crate::modules::api::ToolResultContentBlock::Text {
+                text: summarize_tool_result_for_model("history", tool_use_id, output, *is_error),
+            }],
+            is_error: *is_error,
+        },
+    }
+}
+
+#[derive(Debug, Default)]
+struct RequestPreflightStats {
+    before_messages: usize,
+    after_messages: usize,
+    before_chars: usize,
+    after_chars: usize,
+    dropped_messages: usize,
+    trimmed_chars: usize,
+}
+
+impl RequestPreflightStats {
+    fn has_changes(&self) -> bool {
+        self.dropped_messages > 0 || self.trimmed_chars > 0
+    }
+}
+
+fn apply_request_preflight_limits(
+    messages: &[InputMessage],
+    max_messages: usize,
+    max_chars: usize,
+) -> (Vec<InputMessage>, RequestPreflightStats) {
+    let before_chars = estimate_messages_char_count(messages);
+    let mut trimmed: Vec<InputMessage> = if messages.len() > max_messages {
+        messages[messages.len() - max_messages..].to_vec()
+    } else {
+        messages.to_vec()
+    };
+
+    while trimmed.len() > 1 && estimate_messages_char_count(&trimmed) > max_chars {
+        trimmed.remove(0);
+    }
+    if trimmed.len() == 1 && estimate_messages_char_count(&trimmed) > max_chars {
+        trimmed[0] = summarize_message_for_budget(&trimmed[0], max_chars);
+    }
+
+    let after_chars = estimate_messages_char_count(&trimmed);
+    let stats = RequestPreflightStats {
+        before_messages: messages.len(),
+        after_messages: trimmed.len(),
+        before_chars,
+        after_chars,
+        dropped_messages: messages.len().saturating_sub(trimmed.len()),
+        trimmed_chars: before_chars.saturating_sub(after_chars),
+    };
+    (trimmed, stats)
+}
+
+fn estimate_messages_char_count(messages: &[InputMessage]) -> usize {
+    messages
+        .iter()
+        .map(|message| {
+            let role_chars = message.role.chars().count();
+            let content_chars: usize = message
+                .content
+                .iter()
+                .map(|block| match block {
+                    InputContentBlock::Text { text } => text.chars().count(),
+                    InputContentBlock::ToolUse { id, name, input } => {
+                        id.chars().count()
+                            + name.chars().count()
+                            + input.to_string().chars().count()
+                    }
+                    InputContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        ..
+                    } => {
+                        tool_use_id.chars().count()
+                            + content
+                                .iter()
+                                .map(|part| match part {
+                                    crate::modules::api::ToolResultContentBlock::Text { text } => {
+                                        text.chars().count()
+                                    }
+                                    crate::modules::api::ToolResultContentBlock::Json { value } => {
+                                        value.to_string().chars().count()
+                                    }
+                                })
+                                .sum::<usize>()
+                    }
+                })
+                .sum();
+            role_chars + content_chars
+        })
+        .sum()
+}
+
+fn summarize_message_for_budget(message: &InputMessage, max_chars: usize) -> InputMessage {
+    let mut parts: Vec<String> = Vec::new();
+    for block in &message.content {
+        match block {
+            InputContentBlock::Text { text } => {
+                parts.push(format!(
+                    "text:{}",
+                    truncate_middle_chars(text, TOOL_RESULT_PREVIEW_CHARS)
+                ));
+            }
+            InputContentBlock::ToolUse { id, name, input } => {
+                parts.push(format!(
+                    "tool_use id={id} name={name} input={}",
+                    truncate_middle_chars(&input.to_string(), TOOL_RESULT_PREVIEW_CHARS)
+                ));
+            }
+            InputContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                let content_preview = content
+                    .iter()
+                    .map(|part| match part {
+                        crate::modules::api::ToolResultContentBlock::Text { text } => {
+                            truncate_middle_chars(text, TOOL_RESULT_PREVIEW_CHARS)
+                        }
+                        crate::modules::api::ToolResultContentBlock::Json { value } => {
+                            truncate_middle_chars(&value.to_string(), TOOL_RESULT_PREVIEW_CHARS)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                parts.push(format!(
+                    "tool_result id={tool_use_id} is_error={is_error} content={content_preview}"
+                ));
+            }
+        }
+    }
+    let joined = parts.join("\n");
+    let summary = format!(
+        "[context_trim_notice] latest message compacted for request budget. role={} compacted_content=\n{}",
+        message.role,
+        truncate_middle_chars(&joined, max_chars.saturating_sub(96))
+    );
+    InputMessage::user_text(summary)
+}
+
+fn truncate_middle_chars(input: &str, max_chars: usize) -> String {
+    let total = input.chars().count();
+    if total <= max_chars || max_chars < 16 {
+        return input.to_string();
+    }
+    let keep_head = max_chars / 2;
+    let keep_tail = max_chars.saturating_sub(keep_head + 14);
+    let head: String = input.chars().take(keep_head).collect();
+    let tail: String = input
+        .chars()
+        .rev()
+        .take(keep_tail)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{head}[...omitted...]{tail}")
+}
+
+fn is_network_timeout_reason(reason: &str) -> bool {
+    reason.to_ascii_lowercase().contains("network_timeout:")
+}
+
+#[derive(Debug, Default)]
+struct SanitizationStats {
+    dropped_empty_messages: usize,
+    dropped_orphan_tool_results: usize,
+    dropped_unmatched_tool_uses: usize,
+    orphan_tool_result_ids: Vec<String>,
+    unmatched_tool_use_ids: Vec<String>,
+}
+
+impl SanitizationStats {
+    fn has_changes(&self) -> bool {
+        self.dropped_empty_messages > 0
+            || self.dropped_orphan_tool_results > 0
+            || self.dropped_unmatched_tool_uses > 0
+    }
+
+    fn push_orphan_tool_result_id(&mut self, tool_use_id: &str) {
+        if self.orphan_tool_result_ids.len() < 8 {
+            self.orphan_tool_result_ids.push(tool_use_id.to_string());
+        }
+    }
+
+    fn push_unmatched_tool_use_id(&mut self, tool_use_id: &str) {
+        if self.unmatched_tool_use_ids.len() < 8 {
+            self.unmatched_tool_use_ids.push(tool_use_id.to_string());
+        }
+    }
+}
+
+fn sanitize_messages_for_provider(
+    messages: &[InputMessage],
+) -> (Vec<InputMessage>, SanitizationStats) {
+    let mut sanitized: Vec<InputMessage> = Vec::with_capacity(messages.len());
+    let mut expected_tool_results: HashSet<String> = HashSet::new();
+    let mut pending_assistant_index: Option<usize> = None;
+    let mut stats = SanitizationStats::default();
+
+    for message in messages {
+        if let Some(idx) = pending_assistant_index {
+            let matched = message.role == "user"
+                && message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        InputContentBlock::ToolResult { tool_use_id, .. } if expected_tool_results.contains(tool_use_id)
+                    )
+                });
+            if !matched {
+                let removed_ids = remove_tool_use_blocks(&mut sanitized[idx]);
+                stats.dropped_unmatched_tool_uses += removed_ids.len();
+                for tool_use_id in removed_ids {
+                    stats.push_unmatched_tool_use_id(&tool_use_id);
+                }
+                pending_assistant_index = None;
+                expected_tool_results.clear();
+            }
+        }
+
+        let mut next_content: Vec<InputContentBlock> = Vec::new();
+        for block in &message.content {
+            match block {
+                InputContentBlock::ToolResult { tool_use_id, .. } => {
+                    if message.role == "user" && expected_tool_results.contains(tool_use_id) {
+                        next_content.push(block.clone());
+                        expected_tool_results.remove(tool_use_id);
+                        if expected_tool_results.is_empty() {
+                            pending_assistant_index = None;
+                        }
+                    } else {
+                        stats.dropped_orphan_tool_results += 1;
+                        stats.push_orphan_tool_result_id(tool_use_id);
+                    }
+                }
+                _ => next_content.push(block.clone()),
+            }
+        }
+
+        if next_content.is_empty() {
+            stats.dropped_empty_messages += 1;
+            continue;
+        }
+
+        let tool_use_ids: HashSet<String> = next_content
+            .iter()
+            .filter_map(|block| match block {
+                InputContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let sanitized_message = InputMessage {
+            role: message.role.clone(),
+            content: next_content,
+        };
+        if !tool_use_ids.is_empty() && sanitized_message.role == "assistant" {
+            expected_tool_results = tool_use_ids;
+            pending_assistant_index = Some(sanitized.len());
+        }
+
+        if sanitized_message.content.is_empty() {
+            continue;
+        }
+        sanitized.push(sanitized_message);
+    }
+
+    if let Some(idx) = pending_assistant_index {
+        let removed_ids = remove_tool_use_blocks(&mut sanitized[idx]);
+        stats.dropped_unmatched_tool_uses += removed_ids.len();
+        for tool_use_id in removed_ids {
+            stats.push_unmatched_tool_use_id(&tool_use_id);
+        }
+    }
+
+    let result: Vec<InputMessage> = sanitized
+        .into_iter()
+        .filter(|message| !message.content.is_empty())
+        .collect();
+    (result, stats)
+}
+
+fn remove_tool_use_blocks(message: &mut InputMessage) -> Vec<String> {
+    let mut removed_ids: Vec<String> = Vec::new();
+    message.content.retain(|block| {
+        if let InputContentBlock::ToolUse { id, .. } = block {
+            removed_ids.push(id.clone());
+            return false;
+        }
+        true
+    });
+    removed_ids
+}
+
+fn extend_sample_ids(target: &mut Vec<String>, incoming: &[String], max_samples: usize) {
+    for sample in incoming {
+        if target.len() >= max_samples {
+            break;
+        }
+        if !target.iter().any(|existing| existing == sample) {
+            target.push(sample.clone());
+        }
+    }
 }
 
 /// Stop an in-flight streaming agent response.
@@ -1175,9 +2299,10 @@ pub fn stop_agent_stream(state: State<'_, AppState>, stream_id: String) -> Resul
 /// frontend and blocks on an mpsc channel until the user responds.
 ///
 /// Usage: register `respond_permission` on the frontend side and have it
-/// invoke with `{ sessionId, decision: "allow" | "deny" }`.
+/// invoke with `{ sessionId, decision: "allow" | "deny", scope?: "once" | "session" }`.
 pub struct TauriPermissionPrompter {
     window: tauri::WebviewWindow,
+    session_id: String,
     receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
 }
 
@@ -1186,18 +2311,31 @@ impl TauriPermissionPrompter {
     /// Create a new TauriPermissionPrompter.
     pub fn new(
         window: tauri::WebviewWindow,
+        session_id: String,
         receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
     ) -> Self {
-        Self { window, receiver }
+        Self {
+            window,
+            session_id,
+            receiver,
+        }
     }
 }
 
 impl PermissionPrompter for TauriPermissionPrompter {
     fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+        tracing::info!(
+            "[permission] request session_id={}, tool={}, current={}, required={}",
+            self.session_id,
+            request.tool_name,
+            request.current_mode.as_str(),
+            request.required_mode.as_str()
+        );
         // 1. emit confirmation event to the frontend
         let _ = self.window.emit(
             "permission-request",
             serde_json::json!({
+                "session_id": self.session_id,
                 "tool_name": request.tool_name,
                 "permission_mode": request.required_mode.as_str(),
                 "current_mode": request.current_mode.as_str(),
@@ -1215,7 +2353,13 @@ impl PermissionPrompter for TauriPermissionPrompter {
             .receiver
             .recv_timeout(std::time::Duration::from_secs(60))
         {
-            Ok(decision) => decision,
+            Ok(decision) => {
+                tracing::info!(
+                    "[permission] decision received for session_id={}",
+                    self.session_id
+                );
+                decision
+            }
             Err(_) => PermissionPromptDecision::Deny {
                 reason: "Permission request timed out".to_string(),
             },
@@ -1231,7 +2375,15 @@ pub fn respond_permission(
     state: State<'_, AppState>,
     session_id: String,
     decision: String,
+    tool_name: Option<String>,
+    scope: Option<String>,
 ) -> Result<(), String> {
+    tracing::info!(
+        "[permission] respond session_id={}, decision={}, scope={}",
+        session_id,
+        decision,
+        scope.as_deref().unwrap_or("once")
+    );
     let decision_enum = match decision.as_str() {
         "allow" => PermissionPromptDecision::Allow,
         _ => PermissionPromptDecision::Deny {
@@ -1251,6 +2403,28 @@ pub fn respond_permission(
     sender
         .send(decision_enum)
         .map_err(|_| "Failed to send permission decision".to_string())?;
+
+    // Optional session-scoped remember decision
+    if scope.as_deref() == Some("session") {
+        // Store by latest requested tool in this session if known from channel context.
+        // We cannot extract tool_name from the mpsc payload here, so we keep a coarse
+        // fallback decision bucket under "*" to be read by the prompter side.
+        let mut overrides = state
+            .permission_overrides
+            .lock()
+            .map_err(|e| format!("Failed to lock permission overrides: {e}"))?;
+        let session_map = overrides.entry(session_id).or_default();
+        let key = tool_name.unwrap_or_else(|| "*".to_string());
+        session_map.insert(
+            key,
+            match decision.as_str() {
+                "allow" => PermissionPromptDecision::Allow,
+                _ => PermissionPromptDecision::Deny {
+                    reason: "User denied permission (session policy)".to_string(),
+                },
+            },
+        );
+    }
 
     Ok(())
 }

@@ -4,10 +4,21 @@
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
+    use serde_json::json;
+    use tokio::task::yield_now;
+    use uuid::Uuid;
+
+    use crate::modules::control_plane::{SessionExecutionContext, ToolExecutionBroker};
     use crate::modules::memory::default_memory_provider;
+    use crate::modules::runtime::permissions::PermissionMode;
     use crate::modules::scheduler::default_scheduler;
+    use crate::modules::tools::builtin::{
+        bash_tool_entry, file_write_entry, grep_search_tool_entry,
+    };
     use crate::modules::tools::context::{SharedToolContext, ToolContext};
     use crate::modules::tools::registry::ToolRegistry;
 
@@ -208,5 +219,283 @@ mod tests {
 
         // Should have file tools
         assert!(!all_tools.is_empty(), "Should have file tools");
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("if2ai-phase6a-{label}-{}", Uuid::new_v4()))
+    }
+
+    fn create_broker_with_file_tools() -> (Arc<ToolRegistry>, ToolExecutionBroker) {
+        let context = Arc::new(std::sync::Mutex::new(ToolContext::default_for_workdir(
+            PathBuf::from("."),
+        )));
+        let registry = Arc::new(ToolRegistry::new(context));
+        registry
+            .register(file_write_entry())
+            .expect("register file_write");
+        registry
+            .register(grep_search_tool_entry())
+            .expect("register grep_search");
+        registry.register(bash_tool_entry()).expect("register bash");
+        let broker = ToolExecutionBroker::new(registry.clone());
+        (registry, broker)
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_sessions_file_write_isolated_workdirs() {
+        let root = unique_temp_dir("parallel-write");
+        let workdir_a = root.join("project_a");
+        let workdir_b = root.join("project_b");
+        tokio::fs::create_dir_all(&workdir_a)
+            .await
+            .expect("create workdir a");
+        tokio::fs::create_dir_all(&workdir_b)
+            .await
+            .expect("create workdir b");
+
+        let (_registry, broker) = create_broker_with_file_tools();
+        let context_a = SessionExecutionContext::new(
+            "session-a".to_string(),
+            "project-a".to_string(),
+            workdir_a.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+        let context_b = SessionExecutionContext::new(
+            "session-b".to_string(),
+            "project-b".to_string(),
+            workdir_b.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+
+        let write_a = broker.execute_with_trace(
+            &context_a,
+            "file_write",
+            json!({"path":"result.txt","content":"from-session-a"}),
+            "trace-session-a",
+        );
+        let write_b = broker.execute_with_trace(
+            &context_b,
+            "file_write",
+            json!({"path":"result.txt","content":"from-session-b"}),
+            "trace-session-b",
+        );
+        let (result_a, result_b) = tokio::join!(write_a, write_b);
+        assert!(result_a.is_ok(), "session A write should succeed");
+        assert!(result_b.is_ok(), "session B write should succeed");
+
+        let text_a = tokio::fs::read_to_string(workdir_a.join("result.txt"))
+            .await
+            .expect("read project A file");
+        let text_b = tokio::fs::read_to_string(workdir_b.join("result.txt"))
+            .await
+            .expect("read project B file");
+        assert_eq!(text_a, "from-session-a");
+        assert_eq!(text_b, "from-session-b");
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_grep_with_context_switch_has_no_cross_session_leak() {
+        let root = unique_temp_dir("grep-switch");
+        let workdir_a = root.join("project_a");
+        let workdir_b = root.join("project_b");
+        tokio::fs::create_dir_all(&workdir_a)
+            .await
+            .expect("create workdir a");
+        tokio::fs::create_dir_all(&workdir_b)
+            .await
+            .expect("create workdir b");
+        let mut content = String::new();
+        for _ in 0..20_000 {
+            content.push_str("filler_line\n");
+        }
+        content.push_str("needle_a\n");
+        tokio::fs::write(workdir_a.join("a.txt"), content)
+            .await
+            .expect("seed project A file");
+        tokio::fs::write(workdir_b.join("b.txt"), "needle_b\n")
+            .await
+            .expect("seed project B file");
+
+        let (registry, broker) = create_broker_with_file_tools();
+        let context_a = SessionExecutionContext::new(
+            "session-a".to_string(),
+            "project-a".to_string(),
+            workdir_a.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+
+        let grep_task = broker.execute_with_trace(
+            &context_a,
+            "grep_search",
+            json!({"pattern":"needle_a","path":"."}),
+            "trace-grep-a",
+        );
+        let registry_for_switch = registry.clone();
+        let switching = Arc::new(AtomicBool::new(true));
+        let switching_for_task = switching.clone();
+        let switch_task = tokio::spawn(async move {
+            while switching_for_task.load(Ordering::Relaxed) {
+                if let Ok(mut guard) = registry_for_switch.context().lock() {
+                    guard.workdir = workdir_b.clone();
+                }
+                yield_now().await;
+            }
+        });
+
+        let grep_result = grep_task.await;
+        switching.store(false, Ordering::Relaxed);
+        switch_task.await.expect("switch task should stop cleanly");
+        let output = grep_result.expect("grep should succeed under explicit context");
+        assert!(
+            output.contains("a.txt"),
+            "grep output should stay inside session A workdir"
+        );
+        assert!(
+            !output.contains("b.txt"),
+            "grep output must not leak session B workdir"
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn test_session_b_write_escape_into_session_a_is_blocked() {
+        let root = unique_temp_dir("escape-check");
+        let workdir_a = root.join("project_a");
+        let workdir_b = root.join("project_b");
+        tokio::fs::create_dir_all(&workdir_a)
+            .await
+            .expect("create workdir a");
+        tokio::fs::create_dir_all(&workdir_b)
+            .await
+            .expect("create workdir b");
+        tokio::fs::write(workdir_a.join("protected.txt"), "do-not-touch")
+            .await
+            .expect("seed protected file");
+
+        let (_registry, broker) = create_broker_with_file_tools();
+        let context_b = SessionExecutionContext::new(
+            "session-b".to_string(),
+            "project-b".to_string(),
+            workdir_b.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+        let result = broker
+            .execute_with_trace(
+                &context_b,
+                "file_write",
+                json!({"path":"../project_a/protected.txt","content":"intrusion"}),
+                "trace-escape-b",
+            )
+            .await;
+
+        assert!(result.is_err(), "path escape write should be denied");
+        let protected = tokio::fs::read_to_string(workdir_a.join("protected.txt"))
+            .await
+            .expect("read protected file");
+        assert_eq!(protected, "do-not-touch");
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_sessions_bash_executes_in_bound_workdirs() {
+        let root = unique_temp_dir("parallel-bash");
+        let workdir_a = root.join("project_a");
+        let workdir_b = root.join("project_b");
+        tokio::fs::create_dir_all(&workdir_a)
+            .await
+            .expect("create workdir a");
+        tokio::fs::create_dir_all(&workdir_b)
+            .await
+            .expect("create workdir b");
+
+        let (_registry, broker) = create_broker_with_file_tools();
+        let context_a = SessionExecutionContext::new(
+            "session-a".to_string(),
+            "project-a".to_string(),
+            workdir_a.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+        let context_b = SessionExecutionContext::new(
+            "session-b".to_string(),
+            "project-b".to_string(),
+            workdir_b.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+
+        let run_a = broker.execute_with_trace(
+            &context_a,
+            "bash",
+            json!({"command":"pwd","timeout":1000}),
+            "trace-bash-a",
+        );
+        let run_b = broker.execute_with_trace(
+            &context_b,
+            "bash",
+            json!({"command":"pwd","timeout":1000}),
+            "trace-bash-b",
+        );
+        let (result_a, result_b) = tokio::join!(run_a, run_b);
+        let output_a = result_a.expect("session A bash should succeed");
+        let output_b = result_b.expect("session B bash should succeed");
+        assert!(
+            output_a.contains(workdir_a.to_string_lossy().as_ref()),
+            "session A bash must execute inside session A workdir"
+        );
+        assert!(
+            output_b.contains(workdir_b.to_string_lossy().as_ref()),
+            "session B bash must execute inside session B workdir"
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_strict_mode_blocks_bash_when_sandbox_disabled() {
+        let root = unique_temp_dir("strict-sandbox-deny");
+        let workdir = root.join("project");
+        tokio::fs::create_dir_all(workdir.join(".claw"))
+            .await
+            .expect("create config dir");
+        tokio::fs::write(
+            workdir.join(".claw").join("settings.local.json"),
+            r#"{"sandbox":{"enabled":false}}"#,
+        )
+        .await
+        .expect("write sandbox config");
+
+        let (_registry, broker) = create_broker_with_file_tools();
+        let context = SessionExecutionContext::new(
+            "session-strict".to_string(),
+            "project-strict".to_string(),
+            workdir.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+        let result = broker
+            .execute_with_trace(
+                &context,
+                "bash",
+                json!({"command":"pwd","timeout":1000}),
+                "trace-strict-sandbox",
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "strict mode should deny bash without sandbox"
+        );
+        let error_text = result
+            .expect_err("bash should be denied")
+            .to_string()
+            .to_lowercase();
+        assert!(
+            error_text.contains("sandboxstrictmode") || error_text.contains("sandbox"),
+            "denial reason should mention sandbox strict mode"
+        );
+
+        let _ = tokio::fs::remove_dir_all(root).await;
     }
 }

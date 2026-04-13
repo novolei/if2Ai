@@ -1,0 +1,311 @@
+# Phase 6A: Desktop Control Plane Hardening
+# ─────────────────────────────────────────────────────────────────────────────
+# 混合策略落地（Claw-CLI 内核能力 + Desktop 控制平面）
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6a"
+  phase_status: completed           # draft | active | completed
+  title: "控制平面加固 — 会话隔离、统一边界、审计闭环、内核对齐"
+  owner: "@architects"
+  depends_on_phase: "5e"
+  design_docs:
+    - docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md
+    - docs/design-docs/project-workdir-boundary.md
+  human_checkpoints:
+    - after_slice: "6a.3"        # 核心边界链路完成后人工 review
+    - after_slice: "6a.6"        # 前后端策略可解释完成后人工 review
+
+slices:
+
+  - id: "6a.1"
+    title: "控制平面骨架：SessionContextResolver + ToolExecutionBroker"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-CP1"
+    impl_targets:
+      - src-tauri/src/modules/control_plane/mod.rs
+      - src-tauri/src/modules/control_plane/session_context.rs
+      - src-tauri/src/modules/control_plane/tool_execution_broker.rs
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/commands/tools.rs
+    baseline_ref: "src-tauri/src/commands/agent.rs, src-tauri/src/commands/tools.rs"
+    current_state: |
+      已有会话级 workdir 解析和 dispatch_with_context，但控制逻辑分散在命令层。
+      缺少统一 broker 负责上下文解析、策略执行、审计封装。
+    must_implement:
+      - |
+        新增 control_plane 模块，定义：
+        - SessionExecutionContext { session_id, project_id, workdir, permission_mode }
+        - SessionContextResolver::resolve(session_id) -> SessionExecutionContext
+        - ToolExecutionBroker::execute(context, tool_name, args)
+      - |
+        将 agent.rs / tools.rs 中重复的上下文拼装迁移到 broker，保持行为等价。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/session_context.rs"
+        grep: "pub struct SessionExecutionContext"
+        label: "SessionExecutionContext 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/tool_execution_broker.rs"
+        grep: "pub struct ToolExecutionBroker"
+        label: "ToolExecutionBroker 存在"
+    review_checklist:
+      - "命令层是否只做编排，不再包含边界/策略细节"
+      - "上下文是否不可变快照传递"
+      - "行为是否与现有路径等价"
+
+  - id: "6a.2"
+    title: "统一边界解析器：BoundaryResolver 落地并替换文件/搜索工具"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-CP2"
+    impl_targets:
+      - src-tauri/src/modules/control_plane/boundary_resolver.rs
+      - src-tauri/src/modules/tools/builtin/file_read.rs
+      - src-tauri/src/modules/tools/builtin/file_write.rs
+      - src-tauri/src/modules/tools/builtin/grep_search.rs
+      - src-tauri/src/modules/tools/builtin/glob_search.rs
+      - src-tauri/src/modules/tools/builtin/content_search.rs
+    baseline_ref: "builtin 各工具当前各自实现路径解析与越界判断"
+    current_state: |
+      路径解析逻辑分散，虽然近期已修复高风险点，但实现风格不统一，维护成本高。
+    must_implement:
+      - |
+        新增 BoundaryResolver，统一：
+        - resolve_user_path(workdir, input_path)
+        - canonicalize_with_missing_leaf_support(...)
+        - assert_within_workdir(...)
+      - |
+        文件/搜索工具全部改用 BoundaryResolver，不再直接手写 canonicalize + starts_with。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test file_write_ && cargo test grep_search_rejects_outside_workdir && cargo test content_search_rejects_outside_workdir && cargo test glob_search_rejects_outside_workdir"
+        expect: "all tests pass"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/boundary_resolver.rs"
+        grep: "assert_within_workdir"
+        label: "统一边界断言函数存在"
+    review_checklist:
+      - "路径校验逻辑是否集中到一个模块"
+      - "../、绝对路径、符号链接边界是否覆盖"
+      - "错误消息是否统一且可诊断"
+
+  - id: "6a.3"
+    title: "上下文隔离彻底化：禁止全局共享可变 ToolContext"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-CP3"
+    impl_targets:
+      - src-tauri/src/modules/tools/registry.rs
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/commands/tools.rs
+      - src-tauri/src/modules/tools/context.rs
+    baseline_ref: "ToolRegistry 仍保留默认共享 context 入口"
+    current_state: |
+      已支持 dispatch_with_context，但仍存在默认共享 context 的兼容路径，存在误用风险。
+    must_implement:
+      - |
+        通过 feature gate 或 API 约束，明确：
+        - 高风险工具必须使用 dispatch_with_context
+        - execute_tool 高风险调用必须带 session_id
+      - |
+        在关键执行路径记录 context 指纹（session_id/workdir hash）用于串扰检测。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/tools.rs"
+        grep: "requires session_id"
+        label: "高风险工具会话强绑定提示存在"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "dispatch_with_context"
+        label: "上下文隔离调度入口存在"
+    review_checklist:
+      - "是否仍存在高风险工具走共享 context 的路径"
+      - "并发会话下 context 指纹是否可观测"
+      - "兼容路径是否受限且可回滚"
+
+  - id: "6a.4"
+    title: "Claw-CLI 内核能力对齐：permissions/sandbox/hooks/config"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-KERNEL1"
+    impl_targets:
+      - src-tauri/src/modules/runtime/permissions.rs
+      - src-tauri/src/modules/runtime/sandbox.rs
+      - src-tauri/src/modules/runtime/bash.rs
+      - src-tauri/src/modules/runtime/hooks.rs
+      - src-tauri/src/modules/runtime/config.rs
+    baseline_ref: "rust/crates/runtime/src/{permissions,sandbox,bash,hooks,config}.rs"
+    current_state: |
+      Desktop runtime 与 CLI runtime 为同源演进，但语义存在局部差异，需统一策略解释。
+    must_implement:
+      - |
+        对齐权限和沙箱字段语义，保证 CLI/Desktop 同配置下判定一致（允许少量 Desktop UI 扩展）。
+      - |
+        优先复用 runtime/bash 的 sandbox status 输出结构到前端可消费链路。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/sandbox.rs"
+        grep: "SandboxStatus"
+        label: "SandboxStatus 结构保持可用"
+    review_checklist:
+      - "同权限配置下 CLI/Desktop 判定是否一致"
+      - "sandbox 降级语义是否保留并可解释"
+      - "hooks 前后置执行结果是否可追踪"
+
+  - id: "6a.5"
+    title: "审计闭环：AuditEmitter + 结构化事件模型"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-OBS1"
+    impl_targets:
+      - src-tauri/src/modules/control_plane/audit.rs
+      - src-tauri/src/modules/control_plane/tool_execution_broker.rs
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/commands/tools.rs
+    baseline_ref: "当前 tracing 日志分散，缺少统一审计模型"
+    current_state: |
+      目前日志可读但不结构化，跨工具回放困难，事件关联不稳定。
+    must_implement:
+      - |
+        定义统一审计事件：
+        - tool_execution_started
+        - policy_decision_made
+        - tool_execution_finished
+        - tool_execution_failed
+      - |
+        每条事件包含 trace_id, session_id, tool_name, effective_workdir, permission_mode, duration_ms。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/audit.rs"
+        grep: "tool_execution_started"
+        label: "审计事件类型定义存在"
+    review_checklist:
+      - "是否能按 trace_id 追踪完整链路"
+      - "是否避免记录敏感原文参数"
+      - "失败事件是否包含可操作诊断字段"
+
+  - id: "6a.6"
+    title: "前端可解释策略反馈：权限、workdir、证据一体展示"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-UX1"
+    impl_targets:
+      - src/App.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/lib/tauri.ts
+      - src/modules/chat/components/ChatWorkspace.tsx
+    baseline_ref: "已有工具卡片和 permission dialog，缺少统一策略可解释字段"
+    current_state: |
+      用户可见基础权限交互，但尚不能稳定看到 effective workdir 与策略决策细节。
+    must_implement:
+      - |
+        在 tool card 中展示：
+        - effective_workdir
+        - policy_decision (allow/deny/prompt)
+        - evidence_id
+      - |
+        保持“无工具成功证据不宣称写操作完成”的回复守卫逻辑。
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/ui/chat-ui.tsx"
+        grep: "evidence"
+        label: "工具证据字段展示逻辑存在"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "permission"
+        label: "权限决策事件处理存在"
+    review_checklist:
+      - "用户是否可见决策依据和执行目录"
+      - "无证据写操作是否被拦截并改写"
+      - "UI 是否不泄漏敏感参数"
+
+  - id: "6a.7"
+    title: "并发隔离验证：多会话工具执行压测与回归套件"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-TEST1"
+    impl_targets:
+      - harness/suites/phase6a-control-plane.yaml
+      - src-tauri/src/modules/tools/integration_phase4.rs
+      - src-tauri/src/integration_tests.rs
+    baseline_ref: "当前缺少针对多会话并发的边界回归"
+    current_state: |
+      已有单点测试，但多会话并发串扰场景验证不足。
+    must_implement:
+      - |
+        新增并发场景：
+        - session A/B 同时执行 file_write 到不同 project workdir
+        - session A 执行 grep_search 时 session B 切换 workdir
+        - 验证不存在跨会话串扰
+    acceptance:
+      - type: test
+        cmd: "cargo test -p if2ai-backend"
+        expect: "all tests pass"
+      - type: test
+        cmd: "python -m harness.runner run --slice 6a.7 --workspace . --suite harness/suites/phase6a-control-plane.yaml"
+        expect: "\"passed\": true"
+    review_checklist:
+      - "并发测试是否稳定可复现"
+      - "是否覆盖高风险工具（write/search/shell）"
+      - "失败日志是否包含 trace_id 和 session_id"
+
+  - id: "6a.8"
+    title: "灰度发布与回滚开关：控制平面策略上线治理"
+    status: done
+    design_ref: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+    backlog_ref: "POSTCLI-OPS1"
+    impl_targets:
+      - src-tauri/src/modules/runtime/config.rs
+      - src-tauri/src/modules/control_plane/tool_execution_broker.rs
+      - src-tauri/src/commands/agent.rs
+      - docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md
+    baseline_ref: "当前缺少系统化 feature flag 与 shadow mode 发布策略"
+    current_state: |
+      控制平面增强需要可控上线，缺少 shadow/enforce 模式和回滚说明。
+    must_implement:
+      - |
+        增加发布开关：
+        - controlPlaneV2Enabled
+        - boundaryEnforceMode (shadow|enforce)
+        - sandboxStrictMode
+      - |
+        将回滚手册与开关矩阵更新到 design doc。
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/config.rs"
+        grep: "controlPlaneV2Enabled\\|boundaryEnforceMode\\|sandboxStrictMode"
+        label: "灰度开关配置项存在"
+      - type: symbol
+        file: "docs/design-docs/postCLI/desktop-control-plane-hybrid-blueprint.md"
+        grep: "回滚"
+        label: "文档包含回滚策略"
+    review_checklist:
+      - "是否支持一键回退到旧执行路径"
+      - "shadow 模式是否只告警不阻断"
+      - "开关默认值是否安全"
+
+dashboard:
+  last_updated: "2026-04-13"
+  completed_slices: ["6a.1", "6a.2", "6a.3", "6a.4", "6a.5", "6a.6", "6a.7", "6a.8"]
+  current_slice: ""
+  blocked:
+    - "review gate 受历史仓库基线约束（非本 slice 改动）: no unwrap()/expect() outside tests, pub fn 文档缺失"
+  notes: "Phase 6A 全部完成：灰度开关与回滚矩阵落地，控制平面链路闭环。"

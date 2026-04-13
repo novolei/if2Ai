@@ -1,0 +1,39 @@
+# Harness Suite: Phase 6A Control Plane Concurrency
+# 用途: 验证多会话并发工具执行下不存在 workdir/context 串扰
+
+suite_id: "phase6a_control_plane"
+name: "Phase 6A Control Plane — Concurrency Isolation"
+description: "并发验证 session A/B 的 write/search 执行边界，确保不会跨会话串扰"
+runner: "cargo_test"
+
+test_cases:
+  - id: "p6a-001"
+    name: "并发 file_write 隔离"
+    description: "session A/B 同时写入不同 workdir，应各自落盘且互不覆盖"
+    type: "integration"
+    test_fn: "test_concurrent_sessions_file_write_isolated_workdirs"
+
+  - id: "p6a-002"
+    name: "grep + 上下文切换无串扰"
+    description: "session A 执行 grep 时切换默认 context 到 session B，不应影响 A 结果"
+    type: "integration"
+    test_fn: "test_concurrent_grep_with_context_switch_has_no_cross_session_leak"
+
+  - id: "p6a-003"
+    name: "跨会话路径逃逸阻断"
+    description: "session B 尝试写入 session A workdir 外文件应被边界校验拒绝"
+    type: "integration"
+    test_fn: "test_session_b_write_escape_into_session_a_is_blocked"
+
+  - id: "p6a-004"
+    name: "并发 bash 会话隔离"
+    description: "session A/B 并发执行 bash pwd，输出必须绑定各自 workdir"
+    type: "integration"
+    test_fn: "test_concurrent_sessions_bash_executes_in_bound_workdirs"
+
+  - id: "p6a-005"
+    name: "strict mode 禁止无沙箱 shell"
+    description: "sandboxStrictMode=true 且 sandbox.enabled=false 时，bash 必须被拒绝"
+    type: "integration"
+    test_fn: "test_sandbox_strict_mode_blocks_bash_when_sandbox_disabled"
+

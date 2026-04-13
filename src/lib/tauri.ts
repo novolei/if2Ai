@@ -21,6 +21,7 @@ export interface StreamTokenPayload {
     | 'thinking_delta'
     | 'thinking_start'
     | 'tool_call_update'
+    | 'final_text_override'
     | 'stream_complete'
     | 'stream_error';
   // tool_call_update 专用字段
@@ -30,7 +31,26 @@ export interface StreamTokenPayload {
   tool_args?: Record<string, unknown>;
   tool_result?: string;
   tool_duration_ms?: number;
+  effective_workdir?: string;
+  policy_decision?: 'allow' | 'deny' | 'prompt';
+  evidence_id?: string;
 }
+
+/**
+ * 权限请求事件载荷（后端 permission-request 事件）
+ */
+export interface PermissionRequestPayload {
+  session_id: string;
+  tool_name: string;
+  permission_mode: string;
+  current_mode: string;
+  message: string;
+}
+
+/**
+ * Agent 权限模式（映射后端 PermissionMode）
+ */
+export type PermissionMode = 'readOnly' | 'workspaceWrite' | 'dangerFullAccess'
 
 /**
  * 助手消息响应
@@ -73,6 +93,7 @@ export interface SessionMeta {
   id: string;
   title: string;
   created_at: string;
+  updated_at: string;
   pinned: boolean;
 }
 
@@ -107,11 +128,13 @@ export interface ProjectMeta {
  */
 export async function runAgentTurn(
   sessionId: string,
-  userMessage: string
+  userMessage: string,
+  permissionMode?: PermissionMode
 ): Promise<AgentTurnResponse> {
   return await invoke<AgentTurnResponse>('run_agent_turn', {
     sessionId,
     userMessage,
+    permissionMode,
   });
 }
 
@@ -124,11 +147,13 @@ export async function runAgentTurn(
  */
 export async function startAgentStream(
   sessionId: string,
-  userMessage: string
+  userMessage: string,
+  permissionMode?: PermissionMode
 ): Promise<string> {
   return await invoke<string>('start_agent_stream', {
     sessionId,
     userMessage,
+    permissionMode,
   });
 }
 
@@ -148,6 +173,33 @@ export async function listenToStream(
       callback(event.payload);
     }
   });
+}
+
+/**
+ * 监听后端权限请求事件
+ */
+export async function listenToPermissionRequests(
+  callback: (payload: PermissionRequestPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<PermissionRequestPayload>('permission-request', (event) => {
+    callback(event.payload)
+  })
+}
+
+/**
+ * 响应后端权限请求（allow / deny）
+ */
+export async function respondPermission(
+  sessionId: string,
+  decision: 'allow' | 'deny',
+  options?: { toolName?: string; scope?: 'once' | 'session' }
+): Promise<void> {
+  return await invoke<void>('respond_permission', {
+    sessionId,
+    decision,
+    toolName: options?.toolName,
+    scope: options?.scope,
+  })
 }
 
 /**
@@ -382,12 +434,16 @@ export interface ToolCallResult {
  */
 export async function executeTool(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  permissionMode?: PermissionMode,
+  sessionId?: string
 ): Promise<ToolCallResult> {
   try {
     const result = await invoke<string>('execute_tool', {
       name,
       args: JSON.stringify(args),
+      permissionMode,
+      sessionId,
     });
     return { success: true, output: result };
   } catch (e) {

@@ -62,6 +62,8 @@ export function ChatWorkspace({
   onStop,
   selectedModel,
   onModelChange,
+  permissionMode,
+  onPermissionModeChange,
   todos,
   leftPaneWidth,
   onResizeStart,
@@ -253,6 +255,7 @@ export function ChatWorkspace({
                 <ChatUI
                   sessionTitle={activeTitle}
                   projectLabel={currentProject?.name ?? 'if2Ai'}
+                  defaultWorkdir={currentProject?.workdir}
                   branchLabel={branchLabel}
                   messages={activeMessages}
                   input={input}
@@ -262,6 +265,8 @@ export function ChatWorkspace({
                   isLoading={isLoading}
                   selectedModel={selectedModel}
                   onModelChange={onModelChange}
+                  permissionMode={permissionMode}
+                  onPermissionModeChange={onPermissionModeChange}
                 />
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
@@ -281,6 +286,7 @@ export function ChatWorkspace({
                   <ChatUI
                     sessionTitle={activeTitle}
                     projectLabel={currentProject?.name ?? 'if2Ai'}
+                    defaultWorkdir={currentProject?.workdir}
                     branchLabel={branchLabel}
                     messages={[]}
                     input={input}
@@ -290,6 +296,8 @@ export function ChatWorkspace({
                     isLoading={isLoading}
                     selectedModel={selectedModel}
                     onModelChange={onModelChange}
+                    permissionMode={permissionMode}
+                    onPermissionModeChange={onPermissionModeChange}
                   />
                 </div>
               )}
