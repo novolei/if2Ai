@@ -272,12 +272,14 @@ mod tests {
             "file_write",
             json!({"path":"result.txt","content":"from-session-a"}),
             "trace-session-a",
+            None,
         );
         let write_b = broker.execute_with_trace(
             &context_b,
             "file_write",
             json!({"path":"result.txt","content":"from-session-b"}),
             "trace-session-b",
+            None,
         );
         let (result_a, result_b) = tokio::join!(write_a, write_b);
         assert!(result_a.is_ok(), "session A write should succeed");
@@ -331,6 +333,7 @@ mod tests {
             "grep_search",
             json!({"pattern":"needle_a","path":"."}),
             "trace-grep-a",
+            None,
         );
         let registry_for_switch = registry.clone();
         let switching = Arc::new(AtomicBool::new(true));
@@ -388,6 +391,7 @@ mod tests {
                 "file_write",
                 json!({"path":"../project_a/protected.txt","content":"intrusion"}),
                 "trace-escape-b",
+                None,
             )
             .await;
 
@@ -431,12 +435,14 @@ mod tests {
             "bash",
             json!({"command":"pwd","timeout":1000}),
             "trace-bash-a",
+            None,
         );
         let run_b = broker.execute_with_trace(
             &context_b,
             "bash",
             json!({"command":"pwd","timeout":1000}),
             "trace-bash-b",
+            None,
         );
         let (result_a, result_b) = tokio::join!(run_a, run_b);
         let output_a = result_a.expect("session A bash should succeed");
@@ -480,6 +486,7 @@ mod tests {
                 "bash",
                 json!({"command":"pwd","timeout":1000}),
                 "trace-strict-sandbox",
+                None,
             )
             .await;
 

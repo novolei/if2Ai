@@ -15,9 +15,9 @@
 | [已完成]       | Phase 5D     | UX 完善                                                          | `docs/exec-plans/active/phase-5d-ux-completion.yaml`             | N10, N7, F7, F9-F11, UI-8(前端), N11                                                     |
 | ~~**[当前]**~~ | ~~Phase 5E~~ | ~~长期增强 + 全局迁移~~                                          | ~~`docs/exec-plans/active/phase-5e-long-tail-enhancement.yaml`~~ | ~~F12, F13, F16, UI-4, UI-6, UI-7, N6, N8-N9, N3(阶段3:18工具), F25~~                    |
 | [已完成]       | Phase 5E     | 长期增强 + 全局迁移                                              | `docs/exec-plans/active/phase-5e-long-tail-enhancement.yaml`     | F12, F13, F16, UI-4, UI-6, UI-7, N6, N8-N9, N3(阶段3:18工具), F25                        |
-| [当前]         | Phase 6A     | 控制平面加固（Post-CLI）                                         | `docs/exec-plans/active/phase-6a-control-plane-hardening.yaml`   | POSTCLI-CP1~CP3, POSTCLI-KERNEL1, POSTCLI-OBS1, POSTCLI-UX1, POSTCLI-TEST1, POSTCLI-OPS1 |
+| [已完成]       | Phase 6A     | 控制平面加固（Post-CLI）                                         | `docs/exec-plans/active/phase-6a-control-plane-hardening.yaml`   | POSTCLI-CP1~CP3, POSTCLI-KERNEL1, POSTCLI-OBS1, POSTCLI-UX1, POSTCLI-TEST1, POSTCLI-OPS1 |
 | [草案]         | Phase 6B     | 记忆控制平面 — SQLite P0 + 向量搜索 + HRR + 自学习               | `docs/exec-plans/active/phase-6b-memory-control-plane.yaml`      | ADR-001~ADR-010 (SQLite P0, Token Budget, Vector Search, HRR, Self-Learning, Trajectory) |
-| [草案]         | Phase 6C     | 流可靠性控制平面 — TaskOutcome + Correlation + Governor + Resume | `docs/exec-plans/active/phase-6c-llm-stream-reliability.yaml`    | STREAM-REL-A1, C1, UX1, B1, D1, E1                                                       |
+| [已完成]       | Phase 6C     | 流可靠性控制平面 — TaskOutcome + Correlation + Governor + Resume | `docs/exec-plans/active/phase-6c-llm-stream-reliability.yaml`    | STREAM-REL-A1, C1, UX1, B1, D1, E1                                                       |
 
 > **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F17, F25, UI-1~UI-8, N1, N3-N12）。  
 > Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  

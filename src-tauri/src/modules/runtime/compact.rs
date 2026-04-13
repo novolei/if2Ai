@@ -36,6 +36,12 @@ pub fn estimate_session_tokens(session: &Session) -> usize {
 }
 
 #[must_use]
+/// Estimate token count from a character count using compact heuristics.
+pub fn estimate_token_count_from_chars(char_count: usize) -> usize {
+    char_count / 4 + 1
+}
+
+#[must_use]
 pub fn should_compact(session: &Session, config: CompactionConfig) -> bool {
     let start = compacted_summary_prefix_len(session);
     let compactable = &session.messages[start..];
@@ -396,11 +402,13 @@ fn estimate_message_tokens(message: &ConversationMessage) -> usize {
         .blocks
         .iter()
         .map(|block| match block {
-            ContentBlock::Text { text } => text.len() / 4 + 1,
-            ContentBlock::ToolUse { name, input, .. } => (name.len() + input.len()) / 4 + 1,
+            ContentBlock::Text { text } => estimate_token_count_from_chars(text.len()),
+            ContentBlock::ToolUse { name, input, .. } => {
+                estimate_token_count_from_chars(name.len() + input.len())
+            }
             ContentBlock::ToolResult {
                 tool_name, output, ..
-            } => (tool_name.len() + output.len()) / 4 + 1,
+            } => estimate_token_count_from_chars(tool_name.len() + output.len()),
         })
         .sum()
 }

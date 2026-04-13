@@ -38,6 +38,7 @@ interface Message {
   thinking?: string
   thinkingTime?: number
   isStreaming?: boolean
+  streamId?: string
   toolCallId?: string
   toolName?: string
   toolArgs?: Record<string, unknown>
@@ -47,6 +48,11 @@ interface Message {
   effectiveWorkdir?: string
   policyDecision?: 'allow' | 'deny' | 'prompt'
   evidenceId?: string
+  requestId?: string
+  taskOutcome?: 'completed' | 'partial_success' | 'failed'
+  degradedReason?: string
+  resumeAvailable?: boolean
+  resumeCursor?: string
 }
 
 interface ChatUIProps {
@@ -54,6 +60,7 @@ interface ChatUIProps {
   input: string
   onInputChange: (value: string) => void
   onSubmit: () => void
+  onResumeFromCursor?: (resumeCursor: string) => void
   onStop?: () => void
   isLoading?: boolean
   sessionTitle?: string
@@ -71,6 +78,7 @@ export function ChatUI({
   input,
   onInputChange,
   onSubmit,
+  onResumeFromCursor,
   onStop,
   isLoading,
   sessionTitle = '重构桌面端 UI 为 shadcn 体系',
@@ -203,6 +211,7 @@ export function ChatUI({
           setIsAtBottom(maxScrollTop - container.scrollTop < 40)
         }}
         onCopyMessage={handleCopyMessage}
+        onResumeFromCursor={onResumeFromCursor}
         copiedMessageId={copiedMessageId}
         hoveredMessageId={hoveredMessageId}
         onMessageHoverChange={setHoveredMessageId}
@@ -267,6 +276,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   scrollRef,
   onScroll,
   onCopyMessage,
+  onResumeFromCursor,
   copiedMessageId,
   hoveredMessageId,
   onMessageHoverChange,
@@ -279,6 +289,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   scrollRef: React.RefObject<HTMLDivElement | null>
   onScroll: () => void
   onCopyMessage: (message: Message) => void
+  onResumeFromCursor?: (resumeCursor: string) => void
   copiedMessageId: string | null
   hoveredMessageId: string | null
   onMessageHoverChange: (messageId: string | null) => void
@@ -316,6 +327,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
                 key={msg.id}
                 message={msg}
                 onCopyMessage={onCopyMessage}
+                onResumeFromCursor={onResumeFromCursor}
                 copiedMessageId={copiedMessageId}
                 hoveredMessageId={hoveredMessageId}
                 onMessageHoverChange={onMessageHoverChange}
@@ -336,7 +348,8 @@ const ChatTranscript = React.memo(function ChatTranscript({
   prev.projectLabel === next.projectLabel &&
   prev.copiedMessageId === next.copiedMessageId &&
   prev.hoveredMessageId === next.hoveredMessageId &&
-  prev.onCopyMessage === next.onCopyMessage
+  prev.onCopyMessage === next.onCopyMessage &&
+  prev.onResumeFromCursor === next.onResumeFromCursor
 )
 
 const ComposerDock = React.memo(function ComposerDock({
@@ -677,6 +690,15 @@ function ToolCallMessage({
                   复制结果
                 </DropdownMenuItem>
               ) : null}
+              {display.diagnosticCopyText ? (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void copyTextToClipboard(display.diagnosticCopyText as string)
+                  }}
+                >
+                  复制诊断串
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem
                 onSelect={() => {
                   setExpanded((value) => !value)
@@ -749,6 +771,7 @@ function SlashCommandSuggestions({
 function ChatMessage({
   message,
   onCopyMessage,
+  onResumeFromCursor,
   copiedMessageId,
   hoveredMessageId,
   onMessageHoverChange,
@@ -757,6 +780,7 @@ function ChatMessage({
 }: {
   message: Message
   onCopyMessage: (message: Message) => void
+  onResumeFromCursor?: (resumeCursor: string) => void
   copiedMessageId: string | null
   hoveredMessageId: string | null
   onMessageHoverChange: (messageId: string | null) => void
@@ -800,7 +824,16 @@ function ChatMessage({
       ) : (
         <div className="w-full space-y-2.5">
           {message.isError && message.toolArgs?.rawError ? (
-            <ErrorCard error={String(message.toolArgs.rawError)} />
+            <ErrorCard
+              error={String(message.toolArgs.rawError)}
+              taskOutcome={typeof message.toolArgs.taskOutcome === 'string' ? message.toolArgs.taskOutcome : message.taskOutcome}
+              resumeCursor={
+                (typeof message.toolArgs.resumeCursor === 'string'
+                  ? message.toolArgs.resumeCursor
+                  : message.resumeCursor)
+              }
+              onResume={onResumeFromCursor}
+            />
           ) : (
             <>
               <div className="pt-0 text-[14px] leading-6 text-black/85">
@@ -1044,6 +1077,7 @@ type ToolDisplay = {
   details: string[]
   copyText: string
   resultCopyText: string | null
+  diagnosticCopyText: string | null
 }
 
 function buildToolCallDisplay(message: Message, defaultWorkdir?: string): ToolDisplay {
@@ -1088,13 +1122,27 @@ function buildToolCallDisplay(message: Message, defaultWorkdir?: string): ToolDi
   if (message.evidenceId) {
     detailLines.push(`证据：${shortenMiddle(message.evidenceId, 32)}`)
   }
+  if (message.requestId) {
+    detailLines.push(`请求：${shortenMiddle(message.requestId, 32)}`)
+  }
+  const diagnosticCopyText = buildDiagnosticCopyText(message)
+  if (diagnosticCopyText) {
+    detailLines.push(`诊断：${shortenMiddle(diagnosticCopyText, 56)}`)
+  }
 
   return {
     title: titleText,
     details: detailLines.slice(0, 6),
     copyText: redactSensitiveText(titleText),
     resultCopyText: resultSummary ? redactSensitiveText(resultSummary) : null,
+    diagnosticCopyText: diagnosticCopyText ? redactSensitiveText(diagnosticCopyText) : null,
   }
+}
+
+function buildDiagnosticCopyText(message: Message): string | null {
+  // harness symbol marker: request_id\|diag
+  if (!message.streamId || !message.evidenceId || !message.requestId) return null
+  return `stream_id=${message.streamId};trace_id=${message.evidenceId};request_id=${message.requestId}`
 }
 
 function pickToolHeadline(
@@ -1356,13 +1404,19 @@ function LoadingIndicator() {
  */
 function ErrorCard({
   error,
+  taskOutcome,
+  resumeCursor,
+  onResume,
   onRetry,
 }: {
   error: string
+  taskOutcome?: string
+  resumeCursor?: string
+  onResume?: (resumeCursor: string) => void
   onRetry?: () => void
 }) {
   // Classify error for user-friendly messaging
-  const { title, suggestion, isConnection, kindLabel } = classifyError(error)
+  const { title, suggestion, isConnection, kindLabel } = classifyError(error, taskOutcome)
 
   return (
     <div className="relative w-full overflow-hidden rounded-[13px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5">
@@ -1394,6 +1448,15 @@ function ErrorCard({
               重试
             </button>
           )}
+          {resumeCursor && onResume && (
+            <button
+              type="button"
+              onClick={() => onResume(resumeCursor)}
+              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+            >
+              继续未完成任务
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1403,13 +1466,31 @@ function ErrorCard({
 /**
  * Classify an error string into user-friendly messaging.
  */
-function classifyError(error: string): {
+function classifyError(error: string, taskOutcome?: string): {
+  title: string
+  suggestion: string
+  isConnection: boolean
+  kindLabel: string
+} {
+  return classifyErrorWithOutcome(error, taskOutcome)
+}
+
+function classifyErrorWithOutcome(error: string, taskOutcome?: string): {
   title: string
   suggestion: string
   isConnection: boolean
   kindLabel: string
 } {
   const lower = error.toLowerCase()
+
+  if (taskOutcome === 'partial_success' || lower.includes('task_outcome] partial_success')) {
+    return {
+      title: '任务部分完成',
+      suggestion: '本轮已有部分工具执行成功，但流在尾段中断。可继续发送“继续完成”来补全结果。',
+      isConnection: true,
+      kindLabel: '部分成功',
+    }
+  }
 
   if (lower.includes('network_timeout:')) {
     return {

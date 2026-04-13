@@ -26,6 +26,7 @@ pub enum ApiError {
         attempts: u32,
         last_error: Box<ApiError>,
     },
+    Timeout(String),
     InvalidSseFrame(&'static str),
     BackoffOverflow {
         attempt: u32,
@@ -49,6 +50,7 @@ impl ApiError {
             Self::Http(error) => error.is_connect() || error.is_timeout() || error.is_request(),
             Self::Api { retryable, .. } => *retryable,
             Self::RetriesExhausted { last_error, .. } => last_error.is_retryable(),
+            Self::Timeout(_) => true,
             Self::MissingCredentials { .. }
             | Self::ExpiredOAuthToken
             | Self::Auth(_)
@@ -98,6 +100,7 @@ impl Display for ApiError {
                 attempts,
                 last_error,
             } => write!(f, "api failed after {attempts} attempts: {last_error}"),
+            Self::Timeout(stage) => write!(f, "timeout: {stage}"),
             Self::InvalidSseFrame(message) => write!(f, "invalid sse frame: {message}"),
             Self::BackoffOverflow {
                 attempt,

@@ -45,6 +45,7 @@ impl ToolExecutionBroker {
         tool_name: &str,
         args: Value,
         trace_id: &str,
+        request_id: Option<&str>,
     ) -> Result<String, ToolError> {
         let fingerprint = crate::modules::tools::context::context_fingerprint(
             &context.session_id,
@@ -64,6 +65,7 @@ impl ToolExecutionBroker {
             tool_name,
             &context.workdir,
             context.permission_mode,
+            request_id,
         );
         let started_at = Instant::now();
         let result = if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name) {
@@ -74,6 +76,7 @@ impl ToolExecutionBroker {
                 &context.workdir,
                 context.permission_mode,
                 "deny:sandbox_strict_mode_requires_sandbox_enabled",
+                request_id,
             );
             Err(ToolError::Handler(reason))
         } else {
@@ -94,6 +97,7 @@ impl ToolExecutionBroker {
                     &context.workdir,
                     context.permission_mode,
                     "shadow_allow_boundary_violation",
+                    request_id,
                 );
                 tracing::warn!(
                     "[tool_execution_broker] boundary violation observed in shadow mode; preserving original error semantics"
@@ -108,6 +112,7 @@ impl ToolExecutionBroker {
                 &context.workdir,
                 context.permission_mode,
                 started_at.elapsed(),
+                request_id,
             ),
             Err(err) => {
                 let (error_code, failure_stage, retryable, message) = summarize_tool_error(err);
@@ -123,6 +128,7 @@ impl ToolExecutionBroker {
                         error_code,
                         failure_stage,
                         retryable,
+                        request_id,
                     },
                 )
             }

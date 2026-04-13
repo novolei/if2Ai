@@ -182,7 +182,11 @@ impl ConversationMessage {
     }
 
     #[must_use]
-    pub fn tool_use(id: impl Into<String>, name: impl Into<String>, input: impl Into<String>) -> Self {
+    pub fn tool_use(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        input: impl Into<String>,
+    ) -> Self {
         Self {
             role: MessageRole::Assistant,
             blocks: vec![ContentBlock::ToolUse {
@@ -421,11 +425,11 @@ mod tests {
         session
             .messages
             .push(ConversationMessage::user_text("hello"));
-        session.messages.push(ConversationMessage::assistant(vec![
-            ContentBlock::Text {
+        session
+            .messages
+            .push(ConversationMessage::assistant(vec![ContentBlock::Text {
                 text: "thinking".to_string(),
-            },
-        ]));
+            }]));
         session
             .messages
             .push(ConversationMessage::tool_use("tool-1", "bash", "echo hi"));
@@ -463,7 +467,7 @@ mod tests {
         assert_eq!(restored, session);
         assert_eq!(restored.messages[2].role, MessageRole::Assistant);
         assert_eq!(
-            restored.messages[1].usage.expect("usage").total_tokens(),
+            restored.messages[3].usage.expect("usage").total_tokens(),
             17
         );
     }

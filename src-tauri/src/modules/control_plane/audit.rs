@@ -22,6 +22,10 @@ pub struct AuditEvent {
     pub failure_stage: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_outcome: Option<String>,
 }
 
 /// Emits unified structured audit events.
@@ -33,6 +37,7 @@ struct AuditContext<'a> {
     tool_name: &'a str,
     effective_workdir: &'a std::path::Path,
     permission_mode: PermissionMode,
+    request_id: Option<&'a str>,
 }
 
 struct FailureDetail<'a> {
@@ -46,6 +51,7 @@ pub struct FailureDiagnostic<'a> {
     pub error_code: &'a str,
     pub failure_stage: &'a str,
     pub retryable: bool,
+    pub request_id: Option<&'a str>,
 }
 
 impl AuditEmitter {
@@ -83,6 +89,8 @@ impl AuditEmitter {
             error_code,
             failure_stage,
             retryable,
+            request_id: context.request_id.map(ToOwned::to_owned),
+            task_outcome: None,
         }
     }
 
@@ -93,6 +101,7 @@ impl AuditEmitter {
         tool_name: &str,
         effective_workdir: &std::path::Path,
         permission_mode: PermissionMode,
+        request_id: Option<&str>,
     ) {
         let event = Self::base_event(
             "tool_execution_started",
@@ -102,6 +111,7 @@ impl AuditEmitter {
                 tool_name,
                 effective_workdir,
                 permission_mode,
+                request_id,
             },
             Duration::from_millis(0),
             None,
@@ -118,6 +128,7 @@ impl AuditEmitter {
         effective_workdir: &std::path::Path,
         permission_mode: PermissionMode,
         decision: &str,
+        request_id: Option<&str>,
     ) {
         let event = Self::base_event(
             "policy_decision_made",
@@ -127,6 +138,7 @@ impl AuditEmitter {
                 tool_name,
                 effective_workdir,
                 permission_mode,
+                request_id,
             },
             Duration::from_millis(0),
             Some(decision.to_string()),
@@ -143,6 +155,7 @@ impl AuditEmitter {
         effective_workdir: &std::path::Path,
         permission_mode: PermissionMode,
         duration: Duration,
+        request_id: Option<&str>,
     ) {
         let event = Self::base_event(
             "tool_execution_finished",
@@ -152,6 +165,7 @@ impl AuditEmitter {
                 tool_name,
                 effective_workdir,
                 permission_mode,
+                request_id,
             },
             duration,
             None,
@@ -178,6 +192,7 @@ impl AuditEmitter {
                 tool_name,
                 effective_workdir,
                 permission_mode,
+                request_id: diagnostic.request_id,
             },
             duration,
             Some(diagnostic.reason.to_string()),

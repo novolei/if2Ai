@@ -83,6 +83,7 @@ pub async fn execute_tool(
         SessionExecutionContext::stateless(workdir, mode)
     };
     let trace_id = AuditEmitter::new_trace_id();
+    let request_id = format!("non_stream:{}", trace_id);
     match permission_policy.authorize(&name, &args_for_auth, None) {
         PermissionOutcome::Allow => AuditEmitter::policy_decision_made(
             &trace_id,
@@ -91,6 +92,7 @@ pub async fn execute_tool(
             &execution_context.workdir,
             mode,
             "allow",
+            Some(request_id.as_str()),
         ),
         PermissionOutcome::Deny { reason } => {
             AuditEmitter::policy_decision_made(
@@ -100,6 +102,7 @@ pub async fn execute_tool(
                 &execution_context.workdir,
                 mode,
                 &format!("deny:{reason}"),
+                Some(request_id.as_str()),
             );
             return Err(format!("Permission denied: {reason}"));
         }
@@ -141,7 +144,13 @@ pub async fn execute_tool(
 
     if control_plane_v2_enabled {
         broker
-            .execute_with_trace(&execution_context, &name, args, &trace_id)
+            .execute_with_trace(
+                &execution_context,
+                &name,
+                args,
+                &trace_id,
+                Some(request_id.as_str()),
+            )
             .await
             .map_err(|e| e.to_string())
     } else {

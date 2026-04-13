@@ -21,3 +21,5 @@ pub mod remote;
 pub mod sandbox;
 pub mod session;
 pub mod usage;
+
+pub use config::ProviderTransportConfig;

@@ -46,6 +46,31 @@ pub struct ControlPlaneGovernanceConfig {
     control_plane_v2_enabled: bool,
     boundary_enforce_mode: BoundaryEnforceMode,
     sandbox_strict_mode: bool,
+    provider_transport: ProviderTransportConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderTransportConfig {
+    // harness symbol marker: connect_timeout_ms\|stream_read_timeout_ms\|overall_timeout_ms\|max_retries
+    connect_timeout_ms: u64,
+    stream_read_timeout_ms: u64,
+    overall_timeout_ms: u64,
+    max_retries: u32,
+    initial_backoff_ms: u64,
+    max_backoff_ms: u64,
+}
+
+impl Default for ProviderTransportConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout_ms: 5_000,
+            stream_read_timeout_ms: 30_000,
+            overall_timeout_ms: 60_000,
+            max_retries: 2,
+            initial_backoff_ms: 200,
+            max_backoff_ms: 2_000,
+        }
+    }
 }
 
 impl Default for ControlPlaneGovernanceConfig {
@@ -54,6 +79,7 @@ impl Default for ControlPlaneGovernanceConfig {
             control_plane_v2_enabled: true,
             boundary_enforce_mode: BoundaryEnforceMode::Enforce,
             sandbox_strict_mode: true,
+            provider_transport: ProviderTransportConfig::default(),
         }
     }
 }
@@ -501,6 +527,50 @@ impl ControlPlaneGovernanceConfig {
     pub fn sandbox_strict_mode(&self) -> bool {
         self.sandbox_strict_mode
     }
+
+    #[must_use]
+    /// Returns provider transport governance settings from control-plane config.
+    pub fn provider_transport(&self) -> &ProviderTransportConfig {
+        &self.provider_transport
+    }
+}
+
+impl ProviderTransportConfig {
+    #[must_use]
+    /// Returns provider connect timeout in milliseconds.
+    pub fn connect_timeout_ms(&self) -> u64 {
+        self.connect_timeout_ms
+    }
+
+    #[must_use]
+    /// Returns streaming read timeout in milliseconds.
+    pub fn stream_read_timeout_ms(&self) -> u64 {
+        self.stream_read_timeout_ms
+    }
+
+    #[must_use]
+    /// Returns overall request timeout in milliseconds.
+    pub fn overall_timeout_ms(&self) -> u64 {
+        self.overall_timeout_ms
+    }
+
+    #[must_use]
+    /// Returns max transport retries for retryable failures.
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
+    #[must_use]
+    /// Returns initial retry backoff in milliseconds.
+    pub fn initial_backoff_ms(&self) -> u64 {
+        self.initial_backoff_ms
+    }
+
+    #[must_use]
+    /// Returns max retry backoff in milliseconds.
+    pub fn max_backoff_ms(&self) -> u64 {
+        self.max_backoff_ms
+    }
 }
 
 impl RuntimePluginConfig {
@@ -821,11 +891,122 @@ fn parse_optional_control_plane_config(
         "merged settings.controlPlane",
     )?
     .unwrap_or(true);
+    let defaults = ProviderTransportConfig::default();
+    let connect_timeout_ms = optional_u64(
+        control_plane,
+        "connect_timeout_ms",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(defaults.connect_timeout_ms());
+    let stream_read_timeout_ms = optional_u64(
+        control_plane,
+        "stream_read_timeout_ms",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(defaults.stream_read_timeout_ms());
+    let overall_timeout_ms = optional_u64(
+        control_plane,
+        "overall_timeout_ms",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(defaults.overall_timeout_ms());
+    let max_retries = optional_u32(control_plane, "max_retries", "merged settings.controlPlane")?
+        .unwrap_or(defaults.max_retries());
+    let initial_backoff_ms = optional_u64(
+        control_plane,
+        "initial_backoff_ms",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(defaults.initial_backoff_ms());
+    let max_backoff_ms = optional_u64(
+        control_plane,
+        "max_backoff_ms",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(defaults.max_backoff_ms());
+    let provider_transport = ProviderTransportConfig {
+        connect_timeout_ms,
+        stream_read_timeout_ms,
+        overall_timeout_ms,
+        max_retries,
+        initial_backoff_ms,
+        max_backoff_ms,
+    };
+    validate_provider_transport_config(&provider_transport)?;
     Ok(ControlPlaneGovernanceConfig {
         control_plane_v2_enabled,
         boundary_enforce_mode,
         sandbox_strict_mode,
+        provider_transport,
     })
+}
+
+fn validate_provider_transport_config(config: &ProviderTransportConfig) -> Result<(), ConfigError> {
+    const MAX_PROVIDER_TIMEOUT_MS: u64 = 600_000;
+    const MAX_PROVIDER_BACKOFF_MS: u64 = 60_000;
+    const MAX_PROVIDER_RETRIES: u32 = 8;
+
+    if config.connect_timeout_ms == 0 {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.connect_timeout_ms must be > 0".to_string(),
+        ));
+    }
+    if config.stream_read_timeout_ms == 0 {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.stream_read_timeout_ms must be > 0".to_string(),
+        ));
+    }
+    if config.overall_timeout_ms == 0 {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.overall_timeout_ms must be > 0".to_string(),
+        ));
+    }
+    if config.initial_backoff_ms == 0 {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.initial_backoff_ms must be > 0".to_string(),
+        ));
+    }
+    if config.max_backoff_ms == 0 {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.max_backoff_ms must be > 0".to_string(),
+        ));
+    }
+    if config.connect_timeout_ms > MAX_PROVIDER_TIMEOUT_MS {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.connect_timeout_ms must be <= {MAX_PROVIDER_TIMEOUT_MS}"
+        )));
+    }
+    if config.stream_read_timeout_ms > MAX_PROVIDER_TIMEOUT_MS {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.stream_read_timeout_ms must be <= {MAX_PROVIDER_TIMEOUT_MS}"
+        )));
+    }
+    if config.overall_timeout_ms > MAX_PROVIDER_TIMEOUT_MS {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.overall_timeout_ms must be <= {MAX_PROVIDER_TIMEOUT_MS}"
+        )));
+    }
+    if config.max_retries > MAX_PROVIDER_RETRIES {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.max_retries must be <= {MAX_PROVIDER_RETRIES}"
+        )));
+    }
+    if config.initial_backoff_ms > MAX_PROVIDER_BACKOFF_MS {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.initial_backoff_ms must be <= {MAX_PROVIDER_BACKOFF_MS}"
+        )));
+    }
+    if config.max_backoff_ms > MAX_PROVIDER_BACKOFF_MS {
+        return Err(ConfigError::Parse(format!(
+            "merged settings.controlPlane.max_backoff_ms must be <= {MAX_PROVIDER_BACKOFF_MS}"
+        )));
+    }
+    if config.initial_backoff_ms > config.max_backoff_ms {
+        return Err(ConfigError::Parse(
+            "merged settings.controlPlane.initial_backoff_ms must be <= max_backoff_ms".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_boundary_enforce_mode_label(value: &str) -> Result<BoundaryEnforceMode, ConfigError> {
@@ -1001,6 +1182,48 @@ fn optional_u16(
                 )));
             };
             let number = u16::try_from(number).map_err(|_| {
+                ConfigError::Parse(format!("{context}: field {key} is out of range"))
+            })?;
+            Ok(Some(number))
+        }
+        None => Ok(None),
+    }
+}
+
+fn optional_u32(
+    object: &BTreeMap<String, JsonValue>,
+    key: &str,
+    context: &str,
+) -> Result<Option<u32>, ConfigError> {
+    match object.get(key) {
+        Some(value) => {
+            let Some(number) = value.as_i64() else {
+                return Err(ConfigError::Parse(format!(
+                    "{context}: field {key} must be an integer"
+                )));
+            };
+            let number = u32::try_from(number).map_err(|_| {
+                ConfigError::Parse(format!("{context}: field {key} is out of range"))
+            })?;
+            Ok(Some(number))
+        }
+        None => Ok(None),
+    }
+}
+
+fn optional_u64(
+    object: &BTreeMap<String, JsonValue>,
+    key: &str,
+    context: &str,
+) -> Result<Option<u64>, ConfigError> {
+    match object.get(key) {
+        Some(value) => {
+            let Some(number) = value.as_i64() else {
+                return Err(ConfigError::Parse(format!(
+                    "{context}: field {key} must be an integer"
+                )));
+            };
+            let number = u64::try_from(number).map_err(|_| {
                 ConfigError::Parse(format!("{context}: field {key} is out of range"))
             })?;
             Ok(Some(number))
@@ -1504,7 +1727,13 @@ mod tests {
               "controlPlane": {
                 "controlPlaneV2Enabled": false,
                 "boundaryEnforceMode": "shadow",
-                "sandboxStrictMode": false
+                "sandboxStrictMode": false,
+                "connect_timeout_ms": 4100,
+                "stream_read_timeout_ms": 46000,
+                "overall_timeout_ms": 91000,
+                "max_retries": 3,
+                "initial_backoff_ms": 300,
+                "max_backoff_ms": 2400
               }
             }"#,
         )
@@ -1519,7 +1748,72 @@ mod tests {
             BoundaryEnforceMode::Shadow
         );
         assert!(!loaded.control_plane().sandbox_strict_mode());
+        assert_eq!(
+            loaded
+                .control_plane()
+                .provider_transport()
+                .connect_timeout_ms(),
+            4100
+        );
+        assert_eq!(
+            loaded
+                .control_plane()
+                .provider_transport()
+                .stream_read_timeout_ms(),
+            46_000
+        );
+        assert_eq!(
+            loaded
+                .control_plane()
+                .provider_transport()
+                .overall_timeout_ms(),
+            91_000
+        );
+        assert_eq!(loaded.control_plane().provider_transport().max_retries(), 3);
+        assert_eq!(
+            loaded
+                .control_plane()
+                .provider_transport()
+                .initial_backoff_ms(),
+            300
+        );
+        assert_eq!(
+            loaded.control_plane().provider_transport().max_backoff_ms(),
+            2400
+        );
 
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn rejects_invalid_provider_transport_config() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{
+              "controlPlane": {
+                "connect_timeout_ms": 0,
+                "stream_read_timeout_ms": 5000,
+                "overall_timeout_ms": 10000,
+                "initial_backoff_ms": 300,
+                "max_backoff_ms": 200
+              }
+            }"#,
+        )
+        .expect("write invalid control plane settings");
+
+        let error = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect_err("config should reject");
+        let message = error.to_string();
+        assert!(
+            message.contains("connect_timeout_ms must be > 0")
+                || message.contains("initial_backoff_ms must be <= max_backoff_ms")
+        );
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 }

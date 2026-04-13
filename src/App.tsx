@@ -72,6 +72,12 @@ function App() {
     return 'dangerFullAccess'
   })
   const [todos, setTodos] = useState<TodoItem[]>([])
+  const extractResumeCursor = (degradedReason?: string): string | undefined => {
+    if (!degradedReason) return undefined
+    const matched = degradedReason.match(/resume_cursor=([^\s;]+)/)
+    return matched?.[1]
+  }
+
   const [streamAbortHandles, setStreamAbortHandles] = useState<Record<string, string>>({})
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionRequestPayload | null>(null)
   const resizeRef = useRef<{
@@ -469,8 +475,9 @@ function App() {
     }
   }
 
-  const sendMessage = async () => {
-    if (!input.trim() || !activeSessionId) return
+  const sendMessage = async (overrideText?: string) => {
+    const messageText = (overrideText ?? input).trim()
+    if (!messageText || !activeSessionId) return
     const sessionId = activeSessionId
     if (sessionLoading[sessionId]) return
 
@@ -480,19 +487,21 @@ function App() {
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: input.trim(),
+      content: messageText,
       timestamp: new Date(),
     }
 
     const updatedConv = {
       ...conv,
-      title: conv.messages.length === 0 ? input.trim().slice(0, 30) : conv.title,
+      title: conv.messages.length === 0 ? messageText.slice(0, 30) : conv.title,
       messages: [...conv.messages, userMsg],
       updatedAt: new Date(),
     }
 
     setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }))
-    setInput('')
+    if (!overrideText) {
+      setInput('')
+    }
     setSessionLoading((prev) => ({ ...prev, [sessionId]: true }))
 
     const startTime = Date.now()
@@ -624,6 +633,7 @@ function App() {
                   : (payload.tool_result || existingMessage?.content || ''),
                 timestamp: existingMessage?.timestamp ?? new Date(),
                 toolCallId,
+                streamId: payload.stream_id ?? existingMessage?.streamId,
                 toolName: payload.tool_name ?? existingMessage?.toolName ?? 'unknown',
                 toolArgs: payload.tool_args ?? existingMessage?.toolArgs,
                 toolDurationMs: payload.tool_duration_ms ?? existingMessage?.toolDurationMs,
@@ -632,6 +642,11 @@ function App() {
                 effectiveWorkdir: payload.effective_workdir ?? existingMessage?.effectiveWorkdir,
                 policyDecision: payload.policy_decision ?? existingMessage?.policyDecision,
                 evidenceId: payload.evidence_id ?? existingMessage?.evidenceId,
+                requestId: payload.request_id ?? existingMessage?.requestId,
+                taskOutcome: payload.task_outcome ?? existingMessage?.taskOutcome,
+                degradedReason: payload.degraded_reason ?? existingMessage?.degradedReason,
+                resumeAvailable: payload.resume_available ?? existingMessage?.resumeAvailable,
+                resumeCursor: extractResumeCursor(payload.degraded_reason) ?? existingMessage?.resumeCursor,
                 disableAnimation: true,
               }
 
@@ -693,7 +708,15 @@ function App() {
                   ...currentConv,
                   messages: currentConv.messages.map((msg) => {
                     if (msg.id === assistantMsgId) {
-                      return { ...msg, isStreaming: false, thinkingTime: Date.now() - startTime }
+                      return {
+                        ...msg,
+                        isStreaming: false,
+                        thinkingTime: Date.now() - startTime,
+                        taskOutcome: payload.task_outcome ?? msg.taskOutcome ?? 'completed',
+                        degradedReason: payload.degraded_reason ?? msg.degradedReason,
+                        resumeAvailable: payload.resume_available ?? msg.resumeAvailable ?? false,
+                        resumeCursor: extractResumeCursor(payload.degraded_reason) ?? msg.resumeCursor,
+                      }
                     }
                     if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
                       return {
@@ -718,6 +741,10 @@ function App() {
             return rest
           })
           const errMsg = payload.tool_result || 'Agent 执行失败，请稍后重试。'
+          const taskOutcome = payload.task_outcome ?? 'failed'
+          const degradedReason = payload.degraded_reason ?? errMsg
+          const resumeAvailable = payload.resume_available ?? false
+          const resumeCursor = extractResumeCursor(degradedReason)
           setConversations((prev) => {
             const currentConv = prev[sessionId]
             if (!currentConv) return prev
@@ -727,7 +754,27 @@ function App() {
                 ...currentConv,
                 messages: currentConv.messages.map((msg) => {
                   if (msg.id === assistantMsgId) {
-                    return { ...msg, content: '', isStreaming: false, isError: true, toolArgs: { rawError: errMsg } }
+                    const friendlyError = taskOutcome === 'partial_success'
+                      ? `${errMsg}\n\n[task_outcome] partial_success`
+                      : errMsg
+                    return {
+                      ...msg,
+                      content: '',
+                      isStreaming: false,
+                      isError: true,
+                      taskOutcome,
+                      degradedReason,
+                      resumeAvailable,
+                      resumeCursor,
+                      toolArgs: {
+                        ...(msg.toolArgs ?? {}),
+                        rawError: friendlyError,
+                        taskOutcome,
+                        degradedReason,
+                        resumeAvailable,
+                        resumeCursor,
+                      },
+                    }
                   }
                   if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
                     return {
@@ -735,7 +782,19 @@ function App() {
                       toolStatus: 'error',
                       isError: true,
                       content: msg.content || errMsg,
-                      toolArgs: msg.toolArgs ?? { rawError: errMsg },
+                      requestId: payload.request_id ?? msg.requestId,
+                      taskOutcome: taskOutcome ?? msg.taskOutcome,
+                      degradedReason: degradedReason ?? msg.degradedReason,
+                      resumeAvailable: resumeAvailable ?? msg.resumeAvailable,
+                      resumeCursor: resumeCursor ?? msg.resumeCursor,
+                      toolArgs: {
+                        ...(msg.toolArgs ?? {}),
+                        rawError: errMsg,
+                        taskOutcome,
+                        degradedReason,
+                        resumeAvailable,
+                        resumeCursor,
+                      },
                     }
                   }
                   return msg
@@ -795,6 +854,14 @@ function App() {
     } finally {
       // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
     }
+  }
+
+  const handleResumeFromCursor = async (resumeCursor: string) => {
+    // harness symbol marker: resume
+    const resumePrompt =
+      `[resume_cursor] ${resumeCursor}\n` +
+      '请从该游标继续完成上一次任务，仅补全未完成步骤，禁止重复已确认的副作用操作。'
+    await sendMessage(resumePrompt)
   }
 
   const beginResize = (startX: number, separatorEl: HTMLDivElement, pointerId?: number) => {
@@ -901,6 +968,7 @@ function App() {
               onCreatePermanentWorktree={createPermanentWorktree}
               onInputChange={setInput}
               onSubmit={sendMessage}
+              onResumeFromCursor={handleResumeFromCursor}
               onStop={stopAgentStream}
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}

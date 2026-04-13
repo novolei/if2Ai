@@ -137,3 +137,9 @@
 | 2026-04-13 | Phase 6A Slice 6a.7 完成：新增多会话并发隔离回归（file_write/grep_search/bash）与 phase6a-control-plane harness suite            |
 | 2026-04-13 | Phase 6A Slice 6a.8 完成：新增控制平面灰度开关（controlPlaneV2Enabled/boundaryEnforceMode/sandboxStrictMode）与回滚矩阵          |
 | 2026-04-13 | **Phase 6A 全部完成**：8/8 slices，控制平面加固闭环（隔离/边界/审计/灰度治理）                                                   |
+| 2026-04-13 | Phase 6C Slice 6c.1 完成：TaskOutcome 三真相聚合与终态透传（task_outcome/degraded_reason/resume_available）落地，范围审查通过    |
+| 2026-04-13 | Phase 6C Slice 6c.2 完成：request_id 贯穿 stream_diag_summary/stream_audit_link/audit 并规范化 diag_key，范围审查通过            |
+| 2026-04-13 | Phase 6C Slice 6c.3 完成：前端接入 task_outcome 并区分 partial_success/failed，工具卡支持复制诊断串，范围审查通过                |
+| 2026-04-13 | Phase 6C Slice 6c.4 完成：分层 timeout（connect/read/overall）与 retry/backoff 配置化接入，新增边界校验与溢出防护，范围审查通过  |
+| 2026-04-13 | Phase 6C Slice 6c.5 完成：ContextGovernor 三闸门统一 preflight（artifact/token/char）并复用 compact token 估算，范围审查通过     |
+| 2026-04-13 | Phase 6C Slice 6c.6 完成：degraded/resume_cursor 协议与一键继续入口落地，新增 is_resume_turn/inbound_resume_cursor 诊断字段      |

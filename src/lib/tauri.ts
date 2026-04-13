@@ -34,6 +34,11 @@ export interface StreamTokenPayload {
   effective_workdir?: string;
   policy_decision?: 'allow' | 'deny' | 'prompt';
   evidence_id?: string;
+  request_id?: string;
+  task_outcome?: 'completed' | 'partial_success' | 'failed';
+  degraded_reason?: string;
+  resume_available?: boolean;
+  resume_cursor?: string;
 }
 
 /**

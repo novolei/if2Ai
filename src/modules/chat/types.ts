@@ -12,6 +12,7 @@ export interface Message {
   disableAnimation?: boolean
   isStreaming?: boolean
   // tool_call_update fields
+  streamId?: string
   toolCallId?: string
   toolName?: string
   toolArgs?: Record<string, unknown>
@@ -21,6 +22,11 @@ export interface Message {
   effectiveWorkdir?: string
   policyDecision?: 'allow' | 'deny' | 'prompt'
   evidenceId?: string
+  requestId?: string
+  taskOutcome?: 'completed' | 'partial_success' | 'failed'
+  degradedReason?: string
+  resumeAvailable?: boolean
+  resumeCursor?: string
 }
 
 export interface Conversation {
@@ -54,6 +60,7 @@ export interface ChatWorkspaceProps {
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
   onInputChange: (value: string) => void
   onSubmit: () => void
+  onResumeFromCursor?: (resumeCursor: string) => void
   onStop?: () => void
   selectedModel: string
   onModelChange: Dispatch<SetStateAction<string>>

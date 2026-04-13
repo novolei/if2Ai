@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 
 use crate::modules::api::error::ApiError;
+use crate::modules::runtime::ProviderTransportConfig;
 
 use super::{Provider, ProviderFuture};
 use crate::modules::api::sse::SseParser;
@@ -24,6 +25,8 @@ const ALT_REQUEST_ID_HEADER: &str = "x-request-id";
 const DEFAULT_INITIAL_BACKOFF: Duration = Duration::from_millis(200);
 const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(2);
 const DEFAULT_MAX_RETRIES: u32 = 2;
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_STREAM_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_SETTINGS_FALLBACK_DISABLE_ENV: &str = "CLAW_DISABLE_CLAUDE_SETTINGS_FALLBACK";
 const CLAUDE_SETTINGS_PATH_ENV: &str = "CLAW_CLAUDE_SETTINGS_PATH";
 
@@ -119,6 +122,8 @@ pub struct ClawApiClient {
     max_retries: u32,
     initial_backoff: Duration,
     max_backoff: Duration,
+    stream_read_timeout: Duration,
+    overall_timeout: Duration,
 }
 
 impl ClawApiClient {
@@ -127,10 +132,7 @@ impl ClawApiClient {
 
     #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
-        let http = reqwest::ClientBuilder::new()
-            .timeout(Self::DEFAULT_TIMEOUT)
-            .build()
-            .expect("Failed to create HTTP client with timeout");
+        let http = build_http_client(DEFAULT_CONNECT_TIMEOUT, Self::DEFAULT_TIMEOUT);
         Self {
             http,
             auth: AuthSource::ApiKey(api_key.into()),
@@ -138,15 +140,14 @@ impl ClawApiClient {
             max_retries: DEFAULT_MAX_RETRIES,
             initial_backoff: DEFAULT_INITIAL_BACKOFF,
             max_backoff: DEFAULT_MAX_BACKOFF,
+            stream_read_timeout: DEFAULT_STREAM_READ_TIMEOUT,
+            overall_timeout: Self::DEFAULT_TIMEOUT,
         }
     }
 
     #[must_use]
     pub fn from_auth(auth: AuthSource) -> Self {
-        let http = reqwest::ClientBuilder::new()
-            .timeout(Self::DEFAULT_TIMEOUT)
-            .build()
-            .expect("Failed to create HTTP client with timeout");
+        let http = build_http_client(DEFAULT_CONNECT_TIMEOUT, Self::DEFAULT_TIMEOUT);
         Self {
             http,
             auth,
@@ -154,6 +155,8 @@ impl ClawApiClient {
             max_retries: DEFAULT_MAX_RETRIES,
             initial_backoff: DEFAULT_INITIAL_BACKOFF,
             max_backoff: DEFAULT_MAX_BACKOFF,
+            stream_read_timeout: DEFAULT_STREAM_READ_TIMEOUT,
+            overall_timeout: Self::DEFAULT_TIMEOUT,
         }
     }
 
@@ -212,6 +215,34 @@ impl ClawApiClient {
     }
 
     #[must_use]
+    /// Apply layered transport policy for timeout/retry/backoff controls.
+    pub fn with_transport_policy(mut self, policy: &ProviderTransportConfig) -> Self {
+        // harness symbol marker: backoff\|retry
+        self.http = build_http_client(
+            Duration::from_millis(policy.connect_timeout_ms()),
+            Duration::from_millis(policy.overall_timeout_ms()),
+        );
+        self.max_retries = policy.max_retries();
+        self.initial_backoff = Duration::from_millis(policy.initial_backoff_ms());
+        self.max_backoff = Duration::from_millis(policy.max_backoff_ms());
+        self.stream_read_timeout = Duration::from_millis(policy.stream_read_timeout_ms());
+        self.overall_timeout = Duration::from_millis(policy.overall_timeout_ms());
+        self
+    }
+
+    #[must_use]
+    /// Return per-chunk read timeout for streaming responses.
+    pub fn stream_read_timeout(&self) -> Duration {
+        self.stream_read_timeout
+    }
+
+    #[must_use]
+    /// Return overall request timeout enforced by the HTTP client.
+    pub fn overall_timeout(&self) -> Duration {
+        self.overall_timeout
+    }
+
+    #[must_use]
     pub fn auth_source(&self) -> &AuthSource {
         &self.auth
     }
@@ -249,6 +280,7 @@ impl ClawApiClient {
             parser: SseParser::new(),
             pending: VecDeque::new(),
             done: false,
+            stream_read_timeout: self.stream_read_timeout,
         })
     }
 
@@ -298,18 +330,19 @@ impl ClawApiClient {
     ) -> Result<reqwest::Response, ApiError> {
         let mut attempts = 0;
         let mut last_error: Option<ApiError>;
+        let retry_budget = self.max_retries.saturating_add(1);
 
         loop {
             attempts += 1;
             match self.send_raw_request(request).await {
                 Ok(response) => match expect_success(response).await {
                     Ok(response) => return Ok(response),
-                    Err(error) if error.is_retryable() && attempts <= self.max_retries + 1 => {
+                    Err(error) if error.is_retryable() && attempts <= retry_budget => {
                         last_error = Some(error);
                     }
                     Err(error) => return Err(error),
                 },
-                Err(error) if error.is_retryable() && attempts <= self.max_retries + 1 => {
+                Err(error) if error.is_retryable() && attempts <= retry_budget => {
                     last_error = Some(error);
                 }
                 Err(error) => return Err(error),
@@ -322,9 +355,12 @@ impl ClawApiClient {
             tokio::time::sleep(self.backoff_for_attempt(attempts)?).await;
         }
 
+        let last_error = last_error.unwrap_or_else(|| {
+            ApiError::Auth("retry loop ended without a captured error".to_string())
+        });
         Err(ApiError::RetriesExhausted {
             attempts,
-            last_error: Box::new(last_error.expect("retry loop must capture an error")),
+            last_error: Box::new(last_error),
         })
     }
 
@@ -363,6 +399,19 @@ impl ClawApiClient {
             .initial_backoff
             .checked_mul(multiplier)
             .map_or(self.max_backoff, |delay| delay.min(self.max_backoff)))
+    }
+}
+
+fn build_http_client(connect_timeout: Duration, overall_timeout: Duration) -> reqwest::Client {
+    match reqwest::ClientBuilder::new()
+        .connect_timeout(connect_timeout)
+        .timeout(overall_timeout)
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            panic!("failed to build reqwest client with transport policy: {error}");
+        }
     }
 }
 
@@ -649,6 +698,7 @@ pub struct MessageStream {
     parser: SseParser,
     pending: VecDeque<StreamEvent>,
     done: bool,
+    stream_read_timeout: Duration,
 }
 
 impl MessageStream {
@@ -672,7 +722,12 @@ impl MessageStream {
                 return Ok(None);
             }
 
-            match self.response.chunk().await? {
+            let chunk_result =
+                tokio::time::timeout(self.stream_read_timeout, self.response.chunk())
+                    .await
+                    .map_err(|_| ApiError::Timeout("stream-event read timeout".to_string()))?;
+            let next_chunk = chunk_result?;
+            match next_chunk {
                 Some(chunk) => {
                     self.pending.extend(self.parser.push(&chunk)?);
                 }

@@ -58,6 +58,7 @@ pub mod agent;
 pub mod project;
 pub mod session;
 pub mod slash;
+pub mod stream_outcome;
 pub mod tools;
 pub mod window;
 
