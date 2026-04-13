@@ -35,6 +35,9 @@
     },
     "bundle": {
         "active": true,
+        "resources": [
+            "../docs/references/bundled-skills/**"
+        ],
         "icon": [
             "icons/icon.png",
             "icons/icon@2x.png",

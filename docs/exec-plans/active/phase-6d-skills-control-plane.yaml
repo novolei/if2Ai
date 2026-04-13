@@ -1,0 +1,235 @@
+# Phase 6D: Skills Control Plane
+# ─────────────────────────────────────────────────────────────────────────────
+# 目标：在不引入无治理 Skills Hub 的前提下，构建可审计、可控、可演进的 Skills 平台
+# 优先级：P0 控制面 -> P1 用户治理 -> P2 分发渠道 -> P3 Agent 自治
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6d"
+  phase_status: draft
+  title: "Skills Control Plane — Bundled/Review/Distribution/Authoring Governance"
+  owner: "@architects"
+  depends_on_phase: "6c"
+  design_docs:
+    - docs/design-docs/postCLI/skills-control-plane-v1.md
+    - docs/design-docs/postCLI/ADR/ADR-010-Skills-Hub-Not-Introduced.md
+  execution_policy:
+    human_checkpoint_required: false
+    mandatory_code_reviewer_per_slice: true
+
+slices:
+  - id: "6d.1"
+    title: "P0: SkillsControlPlane 基础模型与来源优先级引擎"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P0-CORE"
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/skill.rs
+      - src-tauri/src/modules/tools/builtin/skill_search.rs
+      - src-tauri/src/modules/tools/registry.rs
+    baseline_ref: "当前仅目录发现，缺少来源优先级与冲突治理模型"
+    current_state: |
+      现有 skill/skill_search 可以读取技能，但同名冲突、来源优先级、治理语义尚未结构化。
+    must_implement:
+      - "定义 source precedence（workspace > user > builtin > remote-quarantine）"
+      - "同名 skill 冲突决策可解释且可审计"
+      - "保持现有 skill 调用兼容"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/skill.rs"
+        grep: "source|precedence|shadow"
+        label: "技能来源优先级与冲突治理逻辑存在"
+      - type: test
+        cmd: "cargo test -p if2ai-backend modules::tools::builtin::skill"
+        expect: "all tests pass"
+    review_checklist:
+      - "来源优先级是否稳定且 deterministic"
+      - "冲突 shadow 行为是否可解释"
+
+  - id: "6d.2"
+    title: "P0: Skill Manifest + 安全审查门禁（Prompt/Skill）"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P0-REVIEW"
+    impl_targets:
+      - src-tauri/src/modules/tools/registry.rs
+      - src-tauri/src/modules/tools/builtin/skill.rs
+      - src-tauri/src/modules/control_plane/audit.rs
+    baseline_ref: "缺少 skill.json manifest 与安全审查状态机"
+    current_state: |
+      当前技能读取以 SKILL.md 为主，无法做严格的版本/签名/风险审查决策。
+    must_implement:
+      - "定义并解析 skill.json（id/version/apiVersion/minAppVersion/capabilities/review）"
+      - "未通过审查技能禁止进入 active"
+      - "增加审查相关审计事件"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/builtin/skill.rs"
+        grep: "skill.json|review|quarantine|active"
+        label: "manifest 与审查状态逻辑存在"
+      - type: symbol
+        file: "src-tauri/src/modules/control_plane/audit.rs"
+        grep: "skill_review|skill_install|skill_enable"
+        label: "审计事件字段存在"
+    review_checklist:
+      - "审查门禁是否 fail-closed"
+      - "未审查技能是否被阻断"
+
+  - id: "6d.3"
+    title: "P0: APP bundled-skills 资源打包与只读策略"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P0-BUNDLED"
+    impl_targets:
+      - src-tauri/tauri.conf.json
+      - src-tauri/src/modules/tools/builtin/skill.rs
+      - docs/references/bundled-skills
+    baseline_ref: "bundled-skills 尚未明确作为 APP 资源包输入"
+    current_state: |
+      用户已提供 bundled-skills 语料，需纳入 APP 打包路径并定义只读运行语义。
+    must_implement:
+      - "将 bundled-skills 纳入 Tauri bundle resources"
+      - "运行时识别 bundled 来源并默认只读"
+      - "记录 bundled 源 metadata 以便 UI 展示"
+    acceptance:
+      - type: symbol
+        file: "src-tauri/tauri.conf.json"
+        grep: "bundled-skills|resources"
+        label: "tauri bundle resources 已纳入 bundled-skills"
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test -p if2ai-backend modules::tools::builtin::skill"
+        expect: "all tests pass"
+    review_checklist:
+      - "bundled skill 是否默认只读"
+      - "是否避免大规模目录搬迁导致风险"
+
+  - id: "6d.4"
+    title: "P1: 前端 Skills 管理（列表/启停/状态可见）"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P1-MANAGE"
+    impl_targets:
+      - src/modules/settings/SettingsApp.tsx
+      - src/modules/settings/data.ts
+      - src/lib/tauri.ts
+      - src-tauri/src/commands/slash.rs
+    baseline_ref: "前端缺少 skill 生命周期管理视图"
+    current_state: |
+      现有前端可触发 slash 命令，但无系统化启停管理与状态面板。
+    must_implement:
+      - "技能列表与状态（draft/quarantine/active/disabled）展示"
+      - "enable/disable 操作入口与确认"
+      - "冲突/shadow 说明展示"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/settings/SettingsApp.tsx"
+        grep: "skill|enable|disable|quarantine|active"
+        label: "前端技能治理入口存在"
+    review_checklist:
+      - "启停路径是否经过后端策略校验"
+      - "冲突解释是否对用户可见"
+
+  - id: "6d.5"
+    title: "P1: 前端手动创建/编辑 skill + 本地审查反馈"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P1-AUTHORING"
+    impl_targets:
+      - src/modules/settings/SettingsApp.tsx
+      - src/lib/tauri.ts
+      - src-tauri/src/commands/slash.rs
+      - src-tauri/src/modules/tools/builtin/skill.rs
+    baseline_ref: "缺少可视化 skill authoring 工作流"
+    current_state: |
+      用户可手工落地文件，但缺少创建/编辑/预审的完整前端路径。
+    must_implement:
+      - "新建 skill 草稿流程"
+      - "编辑后本地审查（prompt/security）结果提示"
+      - "审查失败阻断启用"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src/modules/settings/SettingsApp.tsx"
+        grep: "create skill|edit skill|review"
+        label: "前端创建/编辑/审查入口存在"
+    review_checklist:
+      - "草稿到启用链路是否闭环"
+      - "审查失败是否可解释"
+
+  - id: "6d.6"
+    title: "P2: skills.sh 分发接入（下载->验签->隔离->启用）"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P2-DISTRIBUTION"
+    impl_targets:
+      - src-tauri/src/modules/tools/registry.rs
+      - src-tauri/src/modules/control_plane/audit.rs
+      - src/lib/tauri.ts
+      - src/modules/settings/SettingsApp.tsx
+    baseline_ref: "缺少受控远端分发通道"
+    current_state: |
+      目前无标准化下载流程，也无签名校验与隔离状态。
+    must_implement:
+      - "skills.sh 下载通道（quarantine 默认）"
+      - "签名/完整性校验失败阻断"
+      - "stable/canary 渠道元信息"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/modules/tools/registry.rs"
+        grep: "quarantine|signature|checksum|channel"
+        label: "分发治理核心字段存在"
+    review_checklist:
+      - "下载是否默认隔离而非直接 active"
+      - "签名失败是否 fail-closed"
+
+  - id: "6d.7"
+    title: "P3: Agent 自创 skill（提案态）+ 审批发布"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
+    backlog_ref: "SKILL-CP-P3-AGENT-AUTHORING"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/tools/builtin/skill.rs
+      - src/lib/tauri.ts
+      - src/modules/settings/SettingsApp.tsx
+    baseline_ref: "Agent 无技能提案与审批发布闭环"
+    current_state: |
+      需要在不破坏安全边界的前提下，支持 Agent 产出 skill 草稿并走人工审批。
+    must_implement:
+      - "agent 生成 skill 仅进入 draft/proposal"
+      - "审批通过后才可 promotion to active"
+      - "记录 adoption 与 rollback 指标基础事件"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "skill_proposal|draft|approval"
+        label: "agent skill 提案路径存在"
+    review_checklist:
+      - "agent 是否无法绕过审查直接发布"
+      - "审批链路是否可追踪"
+
+dashboard:
+  last_updated: "2026-04-14"
+  completed_slices: []
+  current_slice: "6d.1"
+  blocked: []
+  notes: "Phase 6D 草案：已合并 Staff 架构优先级（P0->P3）与 bundled-skills/skills.sh/agent-authoring 需求。"
