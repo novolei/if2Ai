@@ -59,8 +59,8 @@ interface Message {
 interface ChatUIProps {
   messages: Message[]
   input: string
-  onInputChange: (value: string) => void
-  onSubmit: () => void
+  onInputChange?: (value: string) => void
+  onSubmit: (value?: string) => void
   onResumeFromCursor?: (resumeCursor: string) => void
   onStop?: () => void
   isLoading?: boolean
@@ -96,10 +96,10 @@ export function ChatUI({
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
-  const composerRef = React.useRef<HTMLDivElement>(null)
   const todoPanelRef = React.useRef<HTMLDivElement>(null)
   const isAtBottomRef = React.useRef(true)
   const lastBottomOccupancyRef = React.useRef(0)
+  const scrollRafRef = React.useRef<number | null>(null)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
@@ -107,10 +107,9 @@ export function ChatUI({
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
   const [isAtBottom, setIsAtBottom] = React.useState(true)
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
-  const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null)
   const [isTodoCollapsed, setIsTodoCollapsed] = React.useState(false)
-  const [composerHeight, setComposerHeight] = React.useState(196)
   const [todoPanelHeight, setTodoPanelHeight] = React.useState(0)
+  const [draftInput, setDraftInput] = React.useState(input)
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
     selectedIndex: number
@@ -131,7 +130,17 @@ export function ChatUI({
       if (slashTimerRef.current) {
         clearTimeout(slashTimerRef.current)
       }
+      if (scrollRafRef.current !== null) {
+        window.cancelAnimationFrame(scrollRafRef.current)
+      }
     }
+  }, [])
+
+  const updateBottomState = React.useCallback((container: HTMLDivElement) => {
+    const maxScrollTop = container.scrollHeight - container.clientHeight
+    const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
+    isAtBottomRef.current = nextIsAtBottom
+    setIsAtBottom((prev) => (prev === nextIsAtBottom ? prev : nextIsAtBottom))
   }, [])
 
   React.useEffect(() => {
@@ -141,16 +150,17 @@ export function ChatUI({
   React.useEffect(() => {
     if (!isAtBottomRef.current) return
     bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
-  }, [composerHeight, todoPanelHeight, isTodoCollapsed, todos.length])
+  }, [todoPanelHeight, isTodoCollapsed, todos.length])
+
+  React.useEffect(() => {
+    setDraftInput(input)
+  }, [input])
 
   React.useEffect(() => {
     const container = transcriptScrollRef.current
     if (!container) return
-    const maxScrollTop = container.scrollHeight - container.clientHeight
-    const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
-    isAtBottomRef.current = nextIsAtBottom
-    setIsAtBottom(nextIsAtBottom)
-  }, [messages, isLoading])
+    updateBottomState(container)
+  }, [messages, isLoading, updateBottomState])
 
   React.useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -158,16 +168,19 @@ export function ChatUI({
 
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`
-  }, [input])
+  }, [draftInput])
 
   React.useLayoutEffect(() => {
     const observeSize = (
       element: HTMLElement | null,
-      onChange: (height: number) => void
+      onChange: React.Dispatch<React.SetStateAction<number>>
     ) => {
       if (!element) return () => {}
 
-      const update = () => onChange(element.getBoundingClientRect().height)
+      const update = () => {
+        const next = Math.round(element.getBoundingClientRect().height)
+        onChange((prev) => (Math.abs(prev - next) >= 1 ? next : prev))
+      }
       update()
 
       const observer = new ResizeObserver(() => update())
@@ -175,24 +188,22 @@ export function ChatUI({
       return () => observer.disconnect()
     }
 
-    const cleanupComposer = observeSize(composerRef.current, setComposerHeight)
     const cleanupTodo = observeSize(todoPanelRef.current, setTodoPanelHeight)
 
     return () => {
-      cleanupComposer()
       cleanupTodo()
     }
-  }, [isTodoCollapsed, todos.length, input])
+  }, [isTodoCollapsed, todos.length])
 
   const hasTodos = todos.length > 0
   const transcriptBottomPadding = 20
-  const scrollToBottomButtonOffset = composerHeight - 10
+  const scrollToBottomButtonOffset = 186
 
   React.useLayoutEffect(() => {
     const container = transcriptScrollRef.current
     if (!container) return
 
-    const nextOccupancy = composerHeight + (hasTodos ? todoPanelHeight : 0)
+    const nextOccupancy = hasTodos ? todoPanelHeight : 0
     const delta = nextOccupancy - lastBottomOccupancyRef.current
     lastBottomOccupancyRef.current = nextOccupancy
 
@@ -203,7 +214,30 @@ export function ChatUI({
     if (!shouldKeepBottomAnchor) return
 
     container.scrollTop += delta
-  }, [composerHeight, todoPanelHeight, hasTodos])
+  }, [todoPanelHeight, hasTodos])
+
+  const submitDraft = React.useCallback(() => {
+    const next = draftInput.trim()
+    if (!next || isLoading) return
+    onSubmit(next)
+    setDraftInput('')
+    onInputChange?.('')
+  }, [draftInput, isLoading, onSubmit, onInputChange])
+
+  const handleTranscriptScroll = React.useCallback(() => {
+    const container = transcriptScrollRef.current
+    if (!container) return
+    if (container.scrollLeft !== 0) {
+      container.scrollLeft = 0
+    }
+    if (scrollRafRef.current !== null) return
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      const nextContainer = transcriptScrollRef.current
+      if (!nextContainer) return
+      updateBottomState(nextContainer)
+    })
+  }, [updateBottomState])
 
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Handle slash command overlay navigation
@@ -227,7 +261,7 @@ export function ChatUI({
       if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault()
         const selected = slashOverlay.suggestions[slashOverlay.selectedIndex]
-        onInputChange(selected)
+        setDraftInput(selected)
         setSlashOverlay(null)
         return
       }
@@ -240,7 +274,7 @@ export function ChatUI({
     // Enter to submit
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (input.trim() && !isLoading) onSubmit()
+      submitDraft()
     }
   }
 
@@ -267,22 +301,10 @@ export function ChatUI({
         defaultWorkdir={defaultWorkdir}
         bottomRef={bottomRef}
         scrollRef={transcriptScrollRef}
-        onScroll={() => {
-          const container = transcriptScrollRef.current
-          if (!container) return
-          if (container.scrollLeft !== 0) {
-            container.scrollLeft = 0
-          }
-          const maxScrollTop = container.scrollHeight - container.clientHeight
-          const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
-          isAtBottomRef.current = nextIsAtBottom
-          setIsAtBottom(nextIsAtBottom)
-        }}
+        onScroll={handleTranscriptScroll}
         onCopyMessage={handleCopyMessage}
         onResumeFromCursor={onResumeFromCursor}
         copiedMessageId={copiedMessageId}
-        hoveredMessageId={hoveredMessageId}
-        onMessageHoverChange={setHoveredMessageId}
       />
       {!isAtBottom && (
         <div
@@ -318,10 +340,9 @@ export function ChatUI({
         </div>
       )}
       <ComposerDock
-        containerRef={composerRef}
-        input={input}
-        onInputChange={onInputChange}
-        onSubmit={onSubmit}
+        input={draftInput}
+        onInputChange={setDraftInput}
+        onSubmit={submitDraft}
         onStop={onStop}
         isLoading={isLoading}
         selectedModel={modelValue}
@@ -343,7 +364,7 @@ export function ChatUI({
           suggestions={slashOverlay.suggestions}
           selectedIndex={slashOverlay.selectedIndex}
           onSelect={(selected) => {
-            onInputChange(selected)
+            setDraftInput(selected)
             setSlashOverlay(null)
           }}
         />
@@ -364,8 +385,6 @@ const ChatTranscript = React.memo(function ChatTranscript({
   onCopyMessage,
   onResumeFromCursor,
   copiedMessageId,
-  hoveredMessageId,
-  onMessageHoverChange,
 }: {
   messages: Message[]
   bottomPadding: number
@@ -378,8 +397,6 @@ const ChatTranscript = React.memo(function ChatTranscript({
   onCopyMessage: (message: Message) => void
   onResumeFromCursor?: (resumeCursor: string) => void
   copiedMessageId: string | null
-  hoveredMessageId: string | null
-  onMessageHoverChange: (messageId: string | null) => void
 }) {
   const primaryThinkingMessageIds = React.useMemo(() => {
     const primaryIds = new Set<string>()
@@ -424,8 +441,6 @@ const ChatTranscript = React.memo(function ChatTranscript({
                 onCopyMessage={onCopyMessage}
                 onResumeFromCursor={onResumeFromCursor}
                 copiedMessageId={copiedMessageId}
-                hoveredMessageId={hoveredMessageId}
-                onMessageHoverChange={onMessageHoverChange}
                 defaultWorkdir={defaultWorkdir}
                 isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
               />
@@ -443,7 +458,6 @@ const ChatTranscript = React.memo(function ChatTranscript({
   prev.sessionTitle === next.sessionTitle &&
   prev.projectLabel === next.projectLabel &&
   prev.copiedMessageId === next.copiedMessageId &&
-  prev.hoveredMessageId === next.hoveredMessageId &&
   prev.onCopyMessage === next.onCopyMessage &&
   prev.onResumeFromCursor === next.onResumeFromCursor
 )
@@ -454,7 +468,6 @@ const ComposerDock = React.memo(function ComposerDock({
   onSubmit,
   onStop,
   isLoading,
-  containerRef,
   selectedModel,
   setSelectedModel,
   permissionMode,
@@ -474,7 +487,6 @@ const ComposerDock = React.memo(function ComposerDock({
   onSubmit: () => void
   onStop?: () => void
   isLoading?: boolean
-  containerRef: React.RefObject<HTMLDivElement | null>
   selectedModel: string
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>
   permissionMode: PermissionMode
@@ -529,7 +541,7 @@ const ComposerDock = React.memo(function ComposerDock({
     }
   }
   return (
-    <div ref={containerRef} className="relative z-10 shrink-0 px-10 pb-2.5 pt-0">
+    <div className="relative z-10 shrink-0 px-10 pb-2.5 pt-0">
       <div className="mx-auto flex w-full max-w-[900px] flex-col">
         <div
           className={cn(
@@ -871,8 +883,6 @@ function ChatMessage({
   onCopyMessage,
   onResumeFromCursor,
   copiedMessageId,
-  hoveredMessageId,
-  onMessageHoverChange,
   defaultWorkdir,
   isPrimaryThinkingMessage,
 }: {
@@ -880,8 +890,6 @@ function ChatMessage({
   onCopyMessage: (message: Message) => void
   onResumeFromCursor?: (resumeCursor: string) => void
   copiedMessageId: string | null
-  hoveredMessageId: string | null
-  onMessageHoverChange: (messageId: string | null) => void
   defaultWorkdir?: string
   isPrimaryThinkingMessage?: boolean
 }) {
@@ -891,19 +899,14 @@ function ChatMessage({
   const hasContent = Boolean(message.content?.trim())
   const shortTime = formatShortTime(message.timestamp)
   const isCopied = copiedMessageId === message.id
-  const isHovered = hoveredMessageId === message.id
-  const showCopyButton = isHovered || isCopied
+  const showCopyButton = isCopied
 
   if (isTool) {
     return <ToolCallMessage message={message} defaultWorkdir={defaultWorkdir} />
   }
 
   return (
-    <div
-      className={cn('flex flex-col gap-2.5', isUser ? 'items-end' : 'items-start')}
-      onPointerEnter={() => onMessageHoverChange(message.id)}
-      onPointerLeave={() => onMessageHoverChange(null)}
-    >
+    <div className={cn('group flex flex-col gap-2.5', isUser ? 'items-end' : 'items-start')}>
       {isUser ? (
         <div className="flex max-w-[min(240px,75%)] flex-col items-end gap-1">
           <div className="rounded-[16px] bg-[#eef0f2] px-4 py-3 text-[13px] leading-6 text-black/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
@@ -1002,16 +1005,21 @@ function MarkdownContent({ content }: { content: string }) {
           </blockquote>
         ),
         table: ({ children }) => (
-          <div className="mb-4 overflow-hidden rounded-3xl border border-border/70 bg-background shadow-sm">
-            <table className="w-full border-collapse text-[13px]">{children}</table>
+          <div className="my-3 overflow-hidden rounded-[14px] border border-black/8 bg-[#f6f7f8] shadow-none ring-0">
+            <table className="w-full border-collapse text-[12px] text-black/75">{children}</table>
           </div>
         ),
-        thead: ({ children }) => <thead className="bg-muted/40">{children}</thead>,
+        thead: ({ children }) => <thead className="bg-[#f3f4f6]">{children}</thead>,
+        tbody: ({ children }) => <tbody className="[&_tr:last-child_td]:border-b-0">{children}</tbody>,
         th: ({ children }) => (
-          <th className="border-b border-border/70 px-4 py-3 text-left font-semibold">{children}</th>
+          <th className="border-b border-black/8 px-4 py-1.75 text-left text-[12px] font-medium tracking-tight text-black/70">
+            {children}
+          </th>
         ),
         td: ({ children }) => (
-          <td className="border-b border-border/50 px-4 py-3 align-top leading-7">{children}</td>
+          <td className="border-b border-black/7 px-4 py-1.75 align-top text-[12px] font-normal leading-5 text-black/72">
+            {children}
+          </td>
         ),
         hr: () => null,
         a: ({ children, href }) => (
@@ -1054,10 +1062,11 @@ function MarkdownContent({ content }: { content: string }) {
 function CodeBlock({ children }: { children: React.ReactNode }) {
   const [copied, setCopied] = React.useState(false)
   const [animateCopy, setAnimateCopy] = React.useState(false)
-  const language = extractCodeLanguage(children)
+  const rawCode = extractCodeText(children)
+  const displayCode = React.useMemo(() => normalizeCodeForDisplay(rawCode), [rawCode])
 
   const copyCode = async () => {
-    const text = extractCodeText(children)
+    const text = displayCode
     if (!text.trim()) return
 
     try {
@@ -1072,34 +1081,47 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   }
 
   const content = (
-    <div className="my-4 overflow-hidden rounded-[22px] border border-black/8 bg-white text-[12px] shadow-[0_1px_0_rgba(15,23,42,0.02)] ring-0">
-      <div className="flex h-8 items-center justify-between bg-[#f3f4f6] px-4">
-        <div className="font-mono text-[10px] font-light tracking-tight text-black/38">
-          {language ?? 'Code'}
+    <div className="my-3 overflow-hidden rounded-[14px] border border-black/8 bg-[#f6f7f8] text-[12px] shadow-none ring-0">
+      <div className="flex h-7 items-center justify-between border-b border-black/8 bg-[#f3f4f6] px-3.5">
+        <div className="font-mono text-[10px] tracking-tight text-black/45">
+          code
         </div>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
           className={cn(
-            'h-6 w-6 rounded-full text-black/38 transition-all duration-150 hover:bg-black/[0.02] hover:text-black/62',
-            animateCopy && 'scale-110 bg-emerald-500/10 text-emerald-600 shadow-[0_0_0_1px_rgba(16,185,129,0.12)]'
+            'inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] text-black/45 transition-all duration-150 hover:bg-black/[0.03] hover:text-black/68',
+            animateCopy && 'scale-[1.03] bg-emerald-500/10 text-emerald-600'
           )}
           onClick={copyCode}
           aria-label={copied ? '已复制' : '复制代码'}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </Button>
+          <span>{copied ? '已复制' : '复制'}</span>
+        </button>
       </div>
-      <div className="px-5 pb-4 pt-3">
-        <pre className="m-0 overflow-x-auto whitespace-pre-wrap bg-transparent !bg-transparent pt-0 font-mono text-[11px] font-light leading-7 text-foreground [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
-          {children}
+      <div className="bg-[#f6f7f8] px-4 pb-3 pt-2.5">
+        <pre className="m-0 overflow-x-auto whitespace-pre bg-transparent !bg-transparent font-mono text-[12px] leading-6 text-black/80">
+          {displayCode}
         </pre>
       </div>
     </div>
   )
 
   return content
+}
+
+function normalizeCodeForDisplay(text: string): string {
+  if (!looksLikeTreeText(text)) return text
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\n[ \t]*\n(?=[ \t]*[│├└┌┐┬┼─|])/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
+function looksLikeTreeText(text: string): boolean {
+  const treeCharCount = text.match(/[│├└┌┐┬┼─]/g)?.length ?? 0
+  const fileLikeCount = text.match(/([A-Za-z0-9._-]+\/|[A-Za-z0-9._-]+\.[A-Za-z0-9]+)/g)?.length ?? 0
+  return treeCharCount >= 3 && fileLikeCount >= 4
 }
 
 function MessageCopyButton({
@@ -1122,7 +1144,7 @@ function MessageCopyButton({
       aria-label={copied ? '已复制' : '复制消息'}
       className={cn(
         'h-4 w-4 shrink-0 rounded-full border-0 bg-transparent p-0 text-black/14 shadow-none transition-[opacity,color,background-color,box-shadow] duration-150 hover:bg-black/[0.016] hover:text-black/45',
-        visible ? 'opacity-100' : 'opacity-0',
+        visible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
         copied && 'opacity-100 bg-emerald-500/8 text-emerald-600 shadow-[0_0_0_1px_rgba(16,185,129,0.1)]',
         side === 'left' ? 'order-first' : 'order-last'
       )}
@@ -1130,17 +1152,6 @@ function MessageCopyButton({
       {copied ? <Check className="size-2.5" /> : <Copy className="size-2.5" />}
     </Button>
   )
-}
-
-function extractCodeLanguage(node: React.ReactNode): string | null {
-  if (!React.isValidElement(node)) return null
-
-  const child = (node.props as { children?: React.ReactNode }).children
-  if (!React.isValidElement(child)) return null
-
-  const className = (child.props as { className?: string }).className
-  const match = className?.match(/language-([a-z0-9_-]+)/i)
-  return match?.[1] ?? null
 }
 
 function extractCodeText(node: React.ReactNode): string {

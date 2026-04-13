@@ -339,6 +339,9 @@ function App() {
       }
 
       for (const msg of fullSession.messages) {
+        if (msg.role === "system") {
+          continue
+        }
         let pushedAssistantText = false
         for (const block of msg.blocks) {
           if (block.type === "tool_use" && block.tool_use_block) {
