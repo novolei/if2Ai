@@ -8,11 +8,13 @@ import {
   Mic,
   Plus,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Square,
   AlertTriangle,
   RotateCcw,
   TerminalSquare,
+  X,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -75,6 +77,72 @@ interface ChatUIProps {
   todos?: TodoItem[]
 }
 
+type DensityMode = 'comfortable' | 'compact'
+type FontMode = 'sans' | 'serif'
+
+const BOTTOM_EPSILON_PX = 120
+const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
+const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
+
+const SURFACE_CARD_TOKENS = {
+  radius: 'rounded-[14px]',
+  border: 'border border-black/8',
+  background: 'bg-[#f6f7f8]',
+  headerBackground: 'bg-[#f3f4f6]',
+  headerDivider: 'border-b border-black/8',
+  headerLabel: 'font-mono text-[10px] tracking-tight text-black/45',
+} as const
+
+function FontSansIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <text
+        x="2.3"
+        y="11.2"
+        fontSize="8.4"
+        fontWeight="600"
+        fontFamily="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
+        fill="currentColor"
+      >
+        Aa
+      </text>
+    </svg>
+  )
+}
+
+function FontSerifIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <text
+        x="2.1"
+        y="11.2"
+        fontSize="8.4"
+        fontWeight="600"
+        fontFamily="ui-serif, Georgia, Cambria, Times New Roman, serif"
+        fill="currentColor"
+      >
+        Aa
+      </text>
+    </svg>
+  )
+}
+
+function DensityCompactIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M3 5h10M3 8h10M3 11h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function DensityComfortableIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function ChatUI({
   messages,
   input,
@@ -99,6 +167,8 @@ export function ChatUI({
   const todoPanelRef = React.useRef<HTMLDivElement>(null)
   const isAtBottomRef = React.useRef(true)
   const forceAutoScrollRef = React.useRef(false)
+  const stickToBottomDuringStreamRef = React.useRef(true)
+  const lastScrollTopRef = React.useRef(0)
   const lastBottomOccupancyRef = React.useRef(0)
   const scrollRafRef = React.useRef<number | null>(null)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -111,6 +181,21 @@ export function ChatUI({
   const [isTodoCollapsed, setIsTodoCollapsed] = React.useState(false)
   const [todoPanelHeight, setTodoPanelHeight] = React.useState(0)
   const [draftInput, setDraftInput] = React.useState(input)
+  const [isViewControlExpanded, setIsViewControlExpanded] = React.useState(false)
+  const viewControlCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [showViewControlOnboarding, setShowViewControlOnboarding] = React.useState(false)
+  const [isViewControlOnboardingEnabled, setIsViewControlOnboardingEnabled] = React.useState(false)
+  const hasHoveredViewControlRef = React.useRef(false)
+  const [densityMode, setDensityMode] = React.useState<DensityMode>(() => {
+    if (typeof window === 'undefined') return 'comfortable'
+    const stored = window.localStorage.getItem(CHAT_DENSITY_MODE_STORAGE_KEY)
+    return stored === 'compact' ? 'compact' : 'comfortable'
+  })
+  const [fontMode, setFontMode] = React.useState<FontMode>(() => {
+    if (typeof window === 'undefined') return 'sans'
+    const stored = window.localStorage.getItem(CHAT_FONT_MODE_STORAGE_KEY)
+    return stored === 'serif' ? 'serif' : 'sans'
+  })
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
     selectedIndex: number
@@ -131,6 +216,9 @@ export function ChatUI({
       if (slashTimerRef.current) {
         clearTimeout(slashTimerRef.current)
       }
+      if (viewControlCloseTimerRef.current) {
+        clearTimeout(viewControlCloseTimerRef.current)
+      }
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
       }
@@ -139,16 +227,20 @@ export function ChatUI({
 
   const updateBottomState = React.useCallback((container: HTMLDivElement) => {
     const maxScrollTop = container.scrollHeight - container.clientHeight
-    const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
+    const nextIsAtBottom = maxScrollTop - container.scrollTop < BOTTOM_EPSILON_PX
     isAtBottomRef.current = nextIsAtBottom
+    if (nextIsAtBottom) {
+      stickToBottomDuringStreamRef.current = true
+    }
     setIsAtBottom((prev) => (prev === nextIsAtBottom ? prev : nextIsAtBottom))
   }, [])
 
   React.useEffect(() => {
     const shouldAutoScroll = isAtBottomRef.current || forceAutoScrollRef.current
+      || (Boolean(isLoading) && stickToBottomDuringStreamRef.current)
     if (!shouldAutoScroll) return
     bottomRef.current?.scrollIntoView({
-      behavior: forceAutoScrollRef.current ? 'auto' : 'smooth',
+      behavior: forceAutoScrollRef.current || isLoading ? 'auto' : 'smooth',
       block: 'end',
     })
     if (forceAutoScrollRef.current) {
@@ -166,6 +258,22 @@ export function ChatUI({
   React.useEffect(() => {
     setDraftInput(input)
   }, [input])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(CHAT_DENSITY_MODE_STORAGE_KEY, densityMode)
+  }, [densityMode])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(CHAT_FONT_MODE_STORAGE_KEY, fontMode)
+  }, [fontMode])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const dismissed = window.sessionStorage.getItem('chatViewControlOnboardingDismissedV1') === '1'
+    setIsViewControlOnboardingEnabled(!dismissed)
+  }, [])
 
   React.useEffect(() => {
     const container = transcriptScrollRef.current
@@ -231,6 +339,7 @@ export function ChatUI({
     const next = draftInput.trim()
     if (!next || isLoading) return
     forceAutoScrollRef.current = true
+    stickToBottomDuringStreamRef.current = true
     onSubmit(next)
     setDraftInput('')
     onInputChange?.('')
@@ -247,9 +356,16 @@ export function ChatUI({
       scrollRafRef.current = null
       const nextContainer = transcriptScrollRef.current
       if (!nextContainer) return
+      const nextScrollTop = nextContainer.scrollTop
+      const scrollDelta = nextScrollTop - lastScrollTopRef.current
+      lastScrollTopRef.current = nextScrollTop
+      if (isLoading && scrollDelta < -2) {
+        // User actively scrolls upward while streaming: pause sticky auto-follow.
+        stickToBottomDuringStreamRef.current = false
+      }
       updateBottomState(nextContainer)
     })
-  }, [updateBottomState])
+  }, [isLoading, updateBottomState])
 
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Handle slash command overlay navigation
@@ -303,8 +419,154 @@ export function ChatUI({
     }
   }, [])
 
+  const openViewControls = React.useCallback(() => {
+    if (viewControlCloseTimerRef.current) {
+      clearTimeout(viewControlCloseTimerRef.current)
+      viewControlCloseTimerRef.current = null
+    }
+    setIsViewControlExpanded(true)
+    if (!hasHoveredViewControlRef.current && isViewControlOnboardingEnabled) {
+      hasHoveredViewControlRef.current = true
+      setShowViewControlOnboarding(true)
+    }
+  }, [isViewControlOnboardingEnabled])
+
+  const scheduleCloseViewControls = React.useCallback(() => {
+    if (viewControlCloseTimerRef.current) {
+      clearTimeout(viewControlCloseTimerRef.current)
+    }
+    viewControlCloseTimerRef.current = setTimeout(() => {
+      setIsViewControlExpanded(false)
+      viewControlCloseTimerRef.current = null
+    }, 140)
+  }, [])
+
+  const dismissViewControlOnboarding = React.useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem('chatViewControlOnboardingDismissedV1', '1')
+    }
+    setIsViewControlOnboardingEnabled(false)
+    setShowViewControlOnboarding(false)
+  }, [])
+
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
+      <div className="pointer-events-none absolute right-10 top-3 z-30">
+        <div
+          className="pointer-events-auto relative inline-flex items-center"
+          onMouseEnter={openViewControls}
+          onMouseLeave={scheduleCloseViewControls}
+          onFocusCapture={openViewControls}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              scheduleCloseViewControls()
+            }
+          }}
+        >
+          <button
+            type="button"
+            title="显示阅读设置"
+            aria-label="显示阅读设置"
+            aria-expanded={isViewControlExpanded}
+            className={cn(
+              'inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/8 bg-white/86 text-black/60 shadow-[0_2px_6px_rgba(15,23,42,0.06)] backdrop-blur-sm transition-all duration-150',
+              isViewControlExpanded ? 'text-black/78 shadow-[0_4px_10px_rgba(15,23,42,0.09)]' : 'hover:text-black/75',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15'
+            )}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
+          <div
+            className={cn(
+              'ml-1 inline-flex items-center gap-1 overflow-hidden rounded-full border border-black/8 bg-white/82 backdrop-blur-sm transition-all duration-150 ease-out',
+              isViewControlExpanded
+                ? 'max-w-[280px] translate-x-0 scale-100 p-0.5 opacity-100'
+                : 'max-w-0 -translate-x-1 scale-[0.96] p-0 opacity-0'
+            )}
+          >
+            <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
+              <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">字体</span>
+              <button
+                type="button"
+                aria-label="字体切换为非衬线"
+                title="非衬线"
+                onClick={() => setFontMode('sans')}
+                className={cn(
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                  fontMode === 'sans'
+                    ? 'bg-black/9 text-black/82'
+                    : 'text-black/48 hover:text-black/72'
+                )}
+              >
+                <FontSansIcon className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="字体切换为衬线"
+                title="衬线"
+                onClick={() => setFontMode('serif')}
+                className={cn(
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                  fontMode === 'serif'
+                    ? 'bg-black/9 text-black/82'
+                    : 'text-black/48 hover:text-black/72'
+                )}
+              >
+                <FontSerifIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="h-4 w-px bg-black/10" />
+            <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
+              <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">密度</span>
+              <button
+                type="button"
+                aria-label="阅读密度切换为紧凑"
+                title="紧凑"
+                onClick={() => setDensityMode('compact')}
+                className={cn(
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                  densityMode === 'compact'
+                    ? 'bg-black/9 text-black/82'
+                    : 'text-black/48 hover:text-black/72'
+                )}
+              >
+                <DensityCompactIcon className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                aria-label="阅读密度切换为舒适"
+                title="舒适"
+                onClick={() => setDensityMode('comfortable')}
+                className={cn(
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                  densityMode === 'comfortable'
+                    ? 'bg-black/9 text-black/82'
+                    : 'text-black/48 hover:text-black/72'
+                )}
+              >
+                <DensityComfortableIcon className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+        {showViewControlOnboarding && (
+          <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
+            <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
+            <div className="relative z-10 flex items-center gap-1.5">
+              <span>阅读设置</span>
+              <button
+                type="button"
+                aria-label="关闭阅读设置提示"
+                title="关闭提示"
+                onClick={dismissViewControlOnboarding}
+                className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       <ChatTranscript
         messages={messages}
         bottomPadding={transcriptBottomPadding}
@@ -317,6 +579,8 @@ export function ChatUI({
         onCopyMessage={handleCopyMessage}
         onResumeFromCursor={onResumeFromCursor}
         copiedMessageId={copiedMessageId}
+        densityMode={densityMode}
+        fontMode={fontMode}
       />
       {!isAtBottom && (
         <div
@@ -398,6 +662,8 @@ const ChatTranscript = React.memo(function ChatTranscript({
   onCopyMessage,
   onResumeFromCursor,
   copiedMessageId,
+  densityMode,
+  fontMode,
 }: {
   messages: Message[]
   bottomPadding: number
@@ -410,6 +676,8 @@ const ChatTranscript = React.memo(function ChatTranscript({
   onCopyMessage: (message: Message) => void
   onResumeFromCursor?: (resumeCursor: string) => void
   copiedMessageId: string | null
+  densityMode: DensityMode
+  fontMode: FontMode
 }) {
   const primaryThinkingMessageIds = React.useMemo(() => {
     const primaryIds = new Set<string>()
@@ -446,16 +714,18 @@ const ChatTranscript = React.memo(function ChatTranscript({
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
         ) : (
-          <div className="space-y-3">
+          <div className={densityMode === 'compact' ? 'space-y-2' : 'space-y-3'}>
             {messages.map((msg) => (
               <ChatMessage
                 key={msg.id}
                 message={msg}
                 onCopyMessage={onCopyMessage}
                 onResumeFromCursor={onResumeFromCursor}
-                copiedMessageId={copiedMessageId}
+                isCopied={copiedMessageId === msg.id}
                 defaultWorkdir={defaultWorkdir}
                 isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
+                densityMode={densityMode}
+                fontMode={fontMode}
               />
             ))}
           </div>
@@ -471,6 +741,8 @@ const ChatTranscript = React.memo(function ChatTranscript({
   prev.sessionTitle === next.sessionTitle &&
   prev.projectLabel === next.projectLabel &&
   prev.copiedMessageId === next.copiedMessageId &&
+  prev.densityMode === next.densityMode &&
+  prev.fontMode === next.fontMode &&
   prev.onCopyMessage === next.onCopyMessage &&
   prev.onResumeFromCursor === next.onResumeFromCursor
 )
@@ -891,39 +1163,50 @@ function SlashCommandSuggestions({
   )
 }
 
-function ChatMessage({
+const ChatMessage = React.memo(function ChatMessage({
   message,
   onCopyMessage,
   onResumeFromCursor,
-  copiedMessageId,
+  isCopied,
   defaultWorkdir,
   isPrimaryThinkingMessage,
+  densityMode,
+  fontMode,
 }: {
   message: Message
   onCopyMessage: (message: Message) => void
   onResumeFromCursor?: (resumeCursor: string) => void
-  copiedMessageId: string | null
+  isCopied: boolean
   defaultWorkdir?: string
   isPrimaryThinkingMessage?: boolean
+  densityMode: DensityMode
+  fontMode: FontMode
 }) {
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
   const hasThinking = Boolean(message.thinking?.trim())
   const hasContent = Boolean(message.content?.trim())
   const shortTime = formatShortTime(message.timestamp)
-  const isCopied = copiedMessageId === message.id
   const showCopyButton = isCopied
+  const contentHash = React.useMemo(() => hashString(message.content), [message.content])
 
   if (isTool) {
     return <ToolCallMessage message={message} defaultWorkdir={defaultWorkdir} />
   }
 
   return (
-    <div className={cn('group flex flex-col gap-2.5', isUser ? 'items-end' : 'items-start')}>
+    <div className={cn('group flex flex-col', fontMode === 'serif' ? 'font-serif' : 'font-sans', densityMode === 'compact' ? 'gap-1.5' : 'gap-2.5', isUser ? 'items-end' : 'items-start')}>
       {isUser ? (
-        <div className="flex max-w-[min(240px,75%)] flex-col items-end gap-1">
-          <div className="rounded-[16px] bg-[#eef0f2] px-4 py-3 text-[13px] leading-6 text-black/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-            <pre className="whitespace-pre-wrap font-sans">{message.content}</pre>
+        <div className={cn('flex flex-col items-end gap-1', densityMode === 'compact' ? 'max-w-[min(620px,78%)]' : 'max-w-[min(680px,78%)]')}>
+          <div
+            className={cn(
+              'rounded-[16px] bg-[#eef0f2] px-4 text-black/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+              densityMode === 'compact' ? 'py-2 text-[12px] leading-5.5' : 'py-3 text-[13px] leading-6'
+            )}
+          >
+            <div className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', fontMode === 'serif' ? 'font-serif' : 'font-sans')}>
+              {message.content}
+            </div>
           </div>
           <div className="flex items-center gap-1.5 pr-1">
             <MessageCopyButton
@@ -950,7 +1233,12 @@ function ChatMessage({
             />
           ) : (
             <>
-              <div className="pt-0 text-[14px] leading-6 text-black/85">
+              <div
+                className={cn(
+                  'pt-0 font-normal text-black/80',
+                  densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
+                )}
+              >
                 {hasThinking && (
                   isPrimaryThinkingMessage ? (
                     <ThinkingBlock
@@ -974,7 +1262,11 @@ function ChatMessage({
 
                 {hasContent ? (
                   <>
-                    <MarkdownContent content={message.content} />
+                    <MarkdownContent
+                      content={message.content}
+                      contentHash={contentHash}
+                      densityMode={densityMode}
+                    />
                     <div className="mt-1.5 flex items-center gap-1.5 pl-1">
                       <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
                       <MessageCopyButton
@@ -993,44 +1285,108 @@ function ChatMessage({
       )}
     </div>
   )
-}
+}, (prev, next) =>
+  prev.message === next.message &&
+  prev.isCopied === next.isCopied &&
+  prev.defaultWorkdir === next.defaultWorkdir &&
+  prev.isPrimaryThinkingMessage === next.isPrimaryThinkingMessage &&
+  prev.densityMode === next.densityMode &&
+  prev.fontMode === next.fontMode &&
+  prev.onCopyMessage === next.onCopyMessage &&
+  prev.onResumeFromCursor === next.onResumeFromCursor
+)
 
-function MarkdownContent({ content }: { content: string }) {
+const markdownNormalizeCache = new Map<number, { source: string; normalized: string }>()
+
+const MarkdownContent = React.memo(function MarkdownContent({
+  content,
+  contentHash,
+  densityMode,
+}: {
+  content: string
+  contentHash: number
+  densityMode: DensityMode
+}) {
+  const normalizedContent = React.useMemo(() => {
+    const cached = markdownNormalizeCache.get(contentHash)
+    if (cached && cached.source === content) {
+      return cached.normalized
+    }
+    const normalized = normalizeAsciiDiagramBlocks(content)
+    markdownNormalizeCache.set(contentHash, { source: content, normalized })
+    if (markdownNormalizeCache.size > 300) {
+      const firstKey = markdownNormalizeCache.keys().next().value
+      if (firstKey !== undefined) markdownNormalizeCache.delete(firstKey)
+    }
+    return normalized
+  }, [content, contentHash])
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
       components={{
-        p: ({ children }) => <p className="whitespace-pre-wrap text-[14px] leading-7">{children}</p>,
-        h1: ({ children }) => <h1 className="mb-3 text-[20px] font-semibold tracking-tight">{children}</h1>,
-        h2: ({ children }) => <h2 className="mb-2.5 text-[18px] font-semibold tracking-tight">{children}</h2>,
-        h3: ({ children }) => <h3 className="mb-2 text-[16px] font-semibold tracking-tight">{children}</h3>,
-        ul: ({ children }) => <ul className="mb-4 ml-5 list-disc space-y-1.5 text-[14px] leading-7">{children}</ul>,
-        ol: ({ children }) => <ol className="mb-4 ml-5 list-decimal space-y-1.5 text-[14px] leading-7">{children}</ol>,
-        li: ({ children }) => <li className="leading-7">{children}</li>,
+        p: ({ children }) => (
+          <p
+            className={cn(
+              'my-2 whitespace-pre-wrap font-normal text-foreground/88 first:mt-0 last:mb-0',
+              densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
+            )}
+          >
+            {children}
+          </p>
+        ),
+        h1: ({ children }) => <h1 className="scroll-m-20 text-2xl font-semibold tracking-tight">{children}</h1>,
+        h2: ({ children }) => <h2 className="scroll-m-20 border-b pb-2 text-xl font-semibold tracking-tight first:mt-0">{children}</h2>,
+        h3: ({ children }) => <h3 className="scroll-m-20 text-lg font-semibold tracking-tight">{children}</h3>,
+        ul: ({ children }) => (
+          <ul
+            className={cn(
+              'my-3 ml-6 list-disc marker:text-black/45',
+              densityMode === 'compact' ? 'space-y-1 text-[12px] leading-5.25' : 'space-y-1.25 text-[13px] leading-5.75'
+            )}
+          >
+            {children}
+          </ul>
+        ),
+        ol: ({ children }) => (
+          <ol
+            className={cn(
+              'my-3 ml-6 list-decimal marker:text-black/45',
+              densityMode === 'compact' ? 'space-y-1 text-[12px] leading-5.25' : 'space-y-1.25 text-[13px] leading-5.75'
+            )}
+          >
+            {children}
+          </ol>
+        ),
+        li: ({ children }) => <li className={densityMode === 'compact' ? 'leading-5.25' : 'leading-5.75'}>{children}</li>,
         blockquote: ({ children }) => (
-          <blockquote className="mb-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 italic text-[14px] leading-7 text-muted-foreground">
-            <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-primary/70">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary/50" />
-              引用
-            </div>
-            <div className="leading-7">{children}</div>
+          <blockquote className={cn('mt-4 border-l-2 border-slate-300/90 pl-4 italic text-black/72', densityMode === 'compact' ? 'text-[13px] leading-6' : 'text-[14px] leading-7')}>
+            {children}
           </blockquote>
         ),
         table: ({ children }) => (
-          <div className="my-3 overflow-hidden rounded-[14px] border border-black/8 bg-[#f6f7f8] shadow-none ring-0">
-            <table className="w-full border-collapse text-[12px] text-black/75">{children}</table>
+          <div className={cn('my-3 overflow-hidden shadow-none ring-0', SURFACE_CARD_TOKENS.radius, SURFACE_CARD_TOKENS.border, SURFACE_CARD_TOKENS.background)}>
+            <table className={cn('w-full border-collapse text-black/75', densityMode === 'compact' ? 'text-[11.5px]' : 'text-[12px]')}>
+              {children}
+            </table>
           </div>
         ),
-        thead: ({ children }) => <thead className="bg-[#f3f4f6]">{children}</thead>,
+        thead: ({ children }) => <thead className={SURFACE_CARD_TOKENS.headerBackground}>{children}</thead>,
         tbody: ({ children }) => <tbody className="[&_tr:last-child_td]:border-b-0">{children}</tbody>,
         th: ({ children }) => (
-          <th className="border-b border-black/8 px-4 py-1.75 text-left text-[12px] font-medium tracking-tight text-black/70">
+          <th className={cn(
+            'border-b border-black/8 px-4 text-left font-medium tracking-tight text-black/70',
+            densityMode === 'compact' ? 'py-1 text-[11px]' : 'py-1.75 text-[12px]'
+          )}>
             {children}
           </th>
         ),
         td: ({ children }) => (
-          <td className="border-b border-black/7 px-4 py-1.75 align-top text-[12px] font-normal leading-5 text-black/72">
+          <td className={cn(
+            'border-b border-black/7 px-4 align-top font-normal text-black/72',
+            densityMode === 'compact' ? 'py-1 text-[11.5px] leading-4.5' : 'py-1.75 text-[12px] leading-5'
+          )}>
             {children}
           </td>
         ),
@@ -1064,15 +1420,25 @@ function MarkdownContent({ content }: { content: string }) {
             </code>
           )
         },
-        pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+        pre: ({ children }) => <CodeBlock densityMode={densityMode}>{children}</CodeBlock>,
       }}
     >
-      {content}
+      {normalizedContent}
     </ReactMarkdown>
   )
-}
+}, (prev, next) =>
+  prev.contentHash === next.contentHash &&
+  prev.content === next.content &&
+  prev.densityMode === next.densityMode
+)
 
-function CodeBlock({ children }: { children: React.ReactNode }) {
+function CodeBlock({
+  children,
+  densityMode,
+}: {
+  children: React.ReactNode
+  densityMode: DensityMode
+}) {
   const [copied, setCopied] = React.useState(false)
   const [animateCopy, setAnimateCopy] = React.useState(false)
   const rawCode = extractCodeText(children)
@@ -1094,9 +1460,14 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   }
 
   const content = (
-    <div className="my-3 overflow-hidden rounded-[14px] border border-black/8 bg-[#f6f7f8] text-[12px] shadow-none ring-0">
-      <div className="flex h-7 items-center justify-between border-b border-black/8 bg-[#f3f4f6] px-3.5">
-        <div className="font-mono text-[10px] tracking-tight text-black/45">
+    <div className={cn('my-3 overflow-hidden text-[12px] shadow-none ring-0', SURFACE_CARD_TOKENS.radius, SURFACE_CARD_TOKENS.border, SURFACE_CARD_TOKENS.background)}>
+      <div className={cn(
+        'flex items-center justify-between px-3.5',
+        SURFACE_CARD_TOKENS.headerBackground,
+        SURFACE_CARD_TOKENS.headerDivider,
+        densityMode === 'compact' ? 'h-6' : 'h-7'
+      )}>
+        <div className={SURFACE_CARD_TOKENS.headerLabel}>
           code
         </div>
         <button
@@ -1112,8 +1483,11 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
           <span>{copied ? '已复制' : '复制'}</span>
         </button>
       </div>
-      <div className="bg-[#f6f7f8] px-4 pb-3 pt-2.5">
-        <pre className="m-0 overflow-x-auto whitespace-pre bg-transparent !bg-transparent font-mono text-[12px] leading-6 text-black/80">
+      <div className={cn(SURFACE_CARD_TOKENS.background, densityMode === 'compact' ? 'px-3.5 pb-2.5 pt-2' : 'px-4 pb-3 pt-2.5')}>
+        <pre className={cn(
+          'm-0 overflow-x-auto whitespace-pre bg-transparent !bg-transparent font-mono text-black/80',
+          densityMode === 'compact' ? 'text-[11.5px] leading-5.5' : 'text-[12px] leading-6'
+        )}>
           {displayCode}
         </pre>
       </div>
@@ -1121,6 +1495,19 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   )
 
   return content
+}
+
+function normalizeAsciiDiagramBlocks(content: string): string {
+  return content
+}
+
+function hashString(input: string): number {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return hash >>> 0
 }
 
 function normalizeCodeForDisplay(text: string): string {
