@@ -11,6 +11,7 @@ import {
   createProject,
   deleteProject,
   renameProject,
+  renameSession,
   deleteSession,
   setSessionPinned,
   createSession,
@@ -71,7 +72,7 @@ function App() {
     }
     return 'dangerFullAccess'
   })
-  const [todos, setTodos] = useState<TodoItem[]>([])
+  const [sessionTodos, setSessionTodos] = useState<Record<string, TodoItem[]>>({})
   const extractResumeCursor = (degradedReason?: string): string | undefined => {
     if (!degradedReason) return undefined
     const matched = degradedReason.match(/resume_cursor=([^\s;]+)/)
@@ -85,9 +86,118 @@ function App() {
     startWidth: number
   } | null>(null)
 
+  const normalizeTodoItem = (value: unknown): TodoItem | null => {
+    if (!value || typeof value !== 'object') return null
+    const item = value as Record<string, unknown>
+    const content = typeof item.content === 'string' ? item.content : ''
+    const activeForm =
+      typeof item.activeForm === 'string'
+        ? item.activeForm
+        : typeof item.active_form === 'string'
+          ? item.active_form
+          : content
+    const status = item.status
+    if (
+      !content ||
+      (status !== 'pending' && status !== 'in_progress' && status !== 'completed')
+    ) {
+      return null
+    }
+    return {
+      content,
+      activeForm,
+      status,
+    }
+  }
+
+  const extractTodosFromToolResult = (raw: string | null | undefined): TodoItem[] | null => {
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw) as {
+        new_todos?: unknown[]
+        newTodos?: unknown[]
+      }
+      const candidates = Array.isArray(parsed.new_todos)
+        ? parsed.new_todos
+        : Array.isArray(parsed.newTodos)
+          ? parsed.newTodos
+          : null
+      if (!candidates) return null
+      return candidates
+        .map((item) => normalizeTodoItem(item))
+        .filter((item): item is TodoItem => item !== null)
+    } catch {
+      return null
+    }
+  }
+
+  const formatSessionTitle = (raw: string): string => {
+    if (raw.includes('[resume_cursor]')) {
+      return activeConv?.title ?? '继续当前任务'
+    }
+    const cleaned = raw
+      .replace(/\[resume_cursor\][\s\S]*$/gi, '')
+      .replace(/`+/g, '')
+      .replace(/[#>*_\-\[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (!cleaned) return '新对话'
+    const firstLine = cleaned.split(/[\n。！？!?]/).find((segment) => segment.trim())?.trim() ?? cleaned
+    return firstLine.slice(0, 30) || '新对话'
+  }
+
+  const deriveSessionTitle = (messages: Message[]): string => {
+    const latestUserMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'user' && message.content.trim())
+    if (latestUserMessage) return formatSessionTitle(latestUserMessage.content)
+
+    const latestAssistantMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim())
+    if (latestAssistantMessage) return formatSessionTitle(latestAssistantMessage.content)
+
+    return '新对话'
+  }
+
+  const syncSessionTitle = (projectId: string, sessionId: string, title: string) => {
+    const nextTitle = title.trim()
+    if (!nextTitle) return
+
+    setConversations((prev) => {
+      const conversation = prev[sessionId]
+      if (!conversation || conversation.title === nextTitle) return prev
+      return {
+        ...prev,
+        [sessionId]: {
+          ...conversation,
+          title: nextTitle,
+        },
+      }
+    })
+
+    setProjectSessions((prev) => {
+      const sessions = prev[projectId]
+      if (!sessions) return prev
+      let changed = false
+      const nextSessions = sessions.map((session) => {
+        if (session.id !== sessionId || session.title === nextTitle) return session
+        changed = true
+        return { ...session, title: nextTitle }
+      })
+      return changed ? { ...prev, [projectId]: nextSessions } : prev
+    })
+
+    void renameSession(sessionId, nextTitle).catch((err) => {
+      console.error('Failed to rename session:', err)
+    })
+  }
+
   const activeConv = activeSessionId ? conversations[activeSessionId] : null
   const isActiveSessionLoading = activeSessionId ? Boolean(sessionLoading[activeSessionId]) : false
-  const activeTitle = activeConv?.title ?? '重构桌面端 UI 为 shadcn 体系'
+  const activeTitle = activeConv?.title ?? '新对话'
+  const todos = activeSessionId ? sessionTodos[activeSessionId] ?? [] : []
   const branchLabel = 'feature/consolidate-codebase'
   const minLeftPaneWidth = 280
   const maxLeftPaneWidth = 520
@@ -189,6 +299,7 @@ function App() {
     setActiveSection('chat')
     setActiveProjectId(projectId)
     setActiveSessionId(sessionId)
+    setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
 
     const project = projectOverride ?? projects.find((item) => item.id === projectId)
     if (project) {
@@ -311,6 +422,7 @@ function App() {
           updatedAt: new Date(fullSession.updated_at),
         },
       }))
+      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
     } catch (err) {
       console.error('Failed to load session:', err)
       setConversations((prev) => ({
@@ -323,6 +435,7 @@ function App() {
           updatedAt: new Date(),
         },
       }))
+      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
     }
   }
 
@@ -356,6 +469,7 @@ function App() {
           updatedAt: new Date(),
         },
       }))
+      setSessionTodos((prev) => ({ ...prev, [session.id]: [] }))
     } catch (err) {
       console.error('Failed to create session:', err)
     }
@@ -397,6 +511,11 @@ function App() {
         delete next[sessionId]
         return next
       })
+      setSessionTodos((prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
       if (activeSessionId === sessionId) {
         setActiveSessionId(null)
       }
@@ -434,6 +553,7 @@ function App() {
           updatedAt: new Date(),
         },
       }))
+      setSessionTodos((prev) => ({ ...prev, [session.id]: [] }))
       setIsCreateProjectOpen(false)
     } catch (err) {
       console.error('Failed to create project:', err)
@@ -480,6 +600,7 @@ function App() {
     if (!messageText || !activeSessionId) return
     const sessionId = activeSessionId
     if (sessionLoading[sessionId]) return
+    setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
 
     const conv = conversations[sessionId]
     if (!conv) return
@@ -493,12 +614,12 @@ function App() {
 
     const updatedConv = {
       ...conv,
-      title: conv.messages.length === 0 ? messageText.slice(0, 30) : conv.title,
       messages: [...conv.messages, userMsg],
       updatedAt: new Date(),
     }
 
     setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }))
+    syncSessionTitle(conv.projectId, sessionId, deriveSessionTitle(updatedConv.messages))
     if (!overrideText) {
       setInput('')
     }
@@ -666,13 +787,12 @@ function App() {
           }
           // Parse TodoWrite SSE events
           if (payload.tool_name === 'TodoWrite' && payload.tool_result) {
-            try {
-              const result = JSON.parse(payload.tool_result)
-              if (result.newTodos) {
-                setTodos(result.newTodos)
-              }
-            } catch {
-              // ignore parse error
+            const nextTodos = extractTodosFromToolResult(payload.tool_result)
+            if (nextTodos) {
+              setSessionTodos((prev) => ({
+                ...prev,
+                [sessionId]: nextTodos,
+              }))
             }
           }
         } else if (payload.event_type === 'final_text_override' && payload.text) {
@@ -693,7 +813,6 @@ function App() {
           })
         } else if (payload.event_type === 'stream_complete') {
           setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
-          setTodos([])
           setStreamAbortHandles((prev) => {
             const { [sessionId]: _removed, ...rest } = prev
             return rest
@@ -979,7 +1098,6 @@ function App() {
               onResizeStart={startResize}
               onStartWindowDrag={startWindowDrag}
               runningSessionIds={runningSessionIds}
-              status={isActiveSessionLoading ? 'running' : 'idle'}
             />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />

@@ -325,6 +325,16 @@ export async function createSession(
 }
 
 /**
+ * 更新会话标题
+ */
+export async function renameSession(
+  id: string,
+  title: string
+): Promise<SessionMeta> {
+  return await invoke<SessionMeta>('rename_session', { id, title });
+}
+
+/**
  * 列出指定项目中的所有会话
  *
  * @param projectId - 项目 ID

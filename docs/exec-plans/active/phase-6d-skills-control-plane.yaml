@@ -87,7 +87,7 @@ slices:
     impl_targets:
       - src-tauri/tauri.conf.json
       - src-tauri/src/modules/tools/builtin/skill.rs
-      - docs/references/bundled-skills
+      - src-tauri/resources/bundled-skills
     baseline_ref: "bundled-skills 尚未明确作为 APP 资源包输入"
     current_state: |
       用户已提供 bundled-skills 语料，需纳入 APP 打包路径并定义只读运行语义。

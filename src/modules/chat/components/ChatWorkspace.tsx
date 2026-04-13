@@ -20,8 +20,6 @@ import {
 import { cn } from '@/lib/utils'
 import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
-import { TodoPanel } from '@/components/ui/TodoPanel'
-import { SessionStatus } from '@/components/SessionStatus'
 import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
@@ -70,7 +68,6 @@ export function ChatWorkspace({
   onResizeStart,
   onStartWindowDrag,
   runningSessionIds,
-  status,
 }: ChatWorkspaceProps) {
   const openNewChat = useMemo(() => {
     return () => {
@@ -246,30 +243,29 @@ export function ChatWorkspace({
             </header>
 
             <div className="min-h-0 flex-1 overflow-hidden">
-              {activeSessionId && (
-                <SessionStatus
-                  status={status ?? (isLoading ? 'running' : 'idle')}
-                />
-              )}
-              <TodoPanel todos={todos} />
               {activeSessionId ? (
-                <ChatUI
-                  sessionTitle={activeTitle}
-                  projectLabel={currentProject?.name ?? 'if2Ai'}
-                  defaultWorkdir={currentProject?.workdir}
-                  branchLabel={branchLabel}
-                  messages={activeMessages}
-                  input={input}
-                  onInputChange={onInputChange}
-                  onSubmit={onSubmit}
-              onResumeFromCursor={onResumeFromCursor}
-                  onStop={onStop}
-                  isLoading={isLoading}
-                  selectedModel={selectedModel}
-                  onModelChange={onModelChange}
-                  permissionMode={permissionMode}
-                  onPermissionModeChange={onPermissionModeChange}
-                />
+                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  <div className="min-h-0 flex-1">
+                    <ChatUI
+                      sessionTitle={activeTitle}
+                      projectLabel={currentProject?.name ?? 'if2Ai'}
+                      defaultWorkdir={currentProject?.workdir}
+                      branchLabel={branchLabel}
+                      messages={activeMessages}
+                      input={input}
+                      onInputChange={onInputChange}
+                      onSubmit={onSubmit}
+                      onResumeFromCursor={onResumeFromCursor}
+                      onStop={onStop}
+                      isLoading={isLoading}
+                      selectedModel={selectedModel}
+                      onModelChange={onModelChange}
+                      permissionMode={permissionMode}
+                      onPermissionModeChange={onPermissionModeChange}
+                      todos={todos}
+                    />
+                  </div>
+                </div>
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="mx-auto flex w-full max-w-[920px] flex-1 items-center justify-center px-6 py-8">
@@ -294,12 +290,14 @@ export function ChatWorkspace({
                     input={input}
                     onInputChange={onInputChange}
                     onSubmit={onSubmit}
+                    onResumeFromCursor={onResumeFromCursor}
                     onStop={onStop}
                     isLoading={isLoading}
                     selectedModel={selectedModel}
                     onModelChange={onModelChange}
                     permissionMode={permissionMode}
                     onPermissionModeChange={onPermissionModeChange}
+                    todos={[]}
                   />
                 </div>
               )}

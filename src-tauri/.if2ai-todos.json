@@ -1,0 +1,52 @@
+[
+  {
+    "content": "创建世界模型组件 (World Model)",
+    "activeForm": "创建世界模型组件",
+    "status": "pending"
+  },
+  {
+    "content": "创建观察编码器 (Observer Encoder)",
+    "activeForm": "创建观察编码器",
+    "status": "completed"
+  },
+  {
+    "content": "创建动态模型 (RSSM Dynamics)",
+    "activeForm": "创建动态模型",
+    "status": "completed"
+  },
+  {
+    "content": "创建奖励预测器 (Reward Predictor)",
+    "activeForm": "创建奖励预测器",
+    "status": "completed"
+  },
+  {
+    "content": "创建空闲时间监控模块 (Idle Monitor)",
+    "activeForm": "创建空闲时间监控",
+    "status": "pending"
+  },
+  {
+    "content": "创建梦境引擎 (Dream Engine)",
+    "activeForm": "创建梦境引擎",
+    "status": "pending"
+  },
+  {
+    "content": "创建想象策略模块 (Imaginary Policy)",
+    "activeForm": "创建想象策略",
+    "status": "pending"
+  },
+  {
+    "content": "创建世界模型训练器 (World Model Trainer)",
+    "activeForm": "创建世界模型训练器",
+    "status": "pending"
+  },
+  {
+    "content": "创建智能体核心 (Agent Core)",
+    "activeForm": "创建智能体核心",
+    "status": "pending"
+  },
+  {
+    "content": "创建API接口和调度器",
+    "activeForm": "创建API接口",
+    "status": "pending"
+  }
+]

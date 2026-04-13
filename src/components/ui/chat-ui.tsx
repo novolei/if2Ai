@@ -21,6 +21,7 @@ import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import type { PermissionMode } from "@/lib/tauri"
+import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
@@ -71,6 +72,7 @@ interface ChatUIProps {
   onModelChange?: React.Dispatch<React.SetStateAction<string>>
   permissionMode?: PermissionMode
   onPermissionModeChange?: React.Dispatch<React.SetStateAction<PermissionMode>>
+  todos?: TodoItem[]
 }
 
 export function ChatUI({
@@ -89,10 +91,15 @@ export function ChatUI({
   onModelChange: onModelChangeProp,
   permissionMode: permissionModeProp = 'dangerFullAccess',
   onPermissionModeChange: onPermissionModeChangeProp,
+  todos = [],
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+  const composerRef = React.useRef<HTMLDivElement>(null)
+  const todoPanelRef = React.useRef<HTMLDivElement>(null)
+  const isAtBottomRef = React.useRef(true)
+  const lastBottomOccupancyRef = React.useRef(0)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
@@ -101,6 +108,9 @@ export function ChatUI({
   const [isAtBottom, setIsAtBottom] = React.useState(true)
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
   const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null)
+  const [isTodoCollapsed, setIsTodoCollapsed] = React.useState(false)
+  const [composerHeight, setComposerHeight] = React.useState(196)
+  const [todoPanelHeight, setTodoPanelHeight] = React.useState(0)
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
     selectedIndex: number
@@ -129,10 +139,17 @@ export function ChatUI({
   }, [messages, isLoading])
 
   React.useEffect(() => {
+    if (!isAtBottomRef.current) return
+    bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+  }, [composerHeight, todoPanelHeight, isTodoCollapsed, todos.length])
+
+  React.useEffect(() => {
     const container = transcriptScrollRef.current
     if (!container) return
     const maxScrollTop = container.scrollHeight - container.clientHeight
-    setIsAtBottom(maxScrollTop - container.scrollTop < 40)
+    const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
+    isAtBottomRef.current = nextIsAtBottom
+    setIsAtBottom(nextIsAtBottom)
   }, [messages, isLoading])
 
   React.useLayoutEffect(() => {
@@ -142,6 +159,51 @@ export function ChatUI({
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`
   }, [input])
+
+  React.useLayoutEffect(() => {
+    const observeSize = (
+      element: HTMLElement | null,
+      onChange: (height: number) => void
+    ) => {
+      if (!element) return () => {}
+
+      const update = () => onChange(element.getBoundingClientRect().height)
+      update()
+
+      const observer = new ResizeObserver(() => update())
+      observer.observe(element)
+      return () => observer.disconnect()
+    }
+
+    const cleanupComposer = observeSize(composerRef.current, setComposerHeight)
+    const cleanupTodo = observeSize(todoPanelRef.current, setTodoPanelHeight)
+
+    return () => {
+      cleanupComposer()
+      cleanupTodo()
+    }
+  }, [isTodoCollapsed, todos.length, input])
+
+  const hasTodos = todos.length > 0
+  const transcriptBottomPadding = 20
+  const scrollToBottomButtonOffset = composerHeight - 10
+
+  React.useLayoutEffect(() => {
+    const container = transcriptScrollRef.current
+    if (!container) return
+
+    const nextOccupancy = composerHeight + (hasTodos ? todoPanelHeight : 0)
+    const delta = nextOccupancy - lastBottomOccupancyRef.current
+    lastBottomOccupancyRef.current = nextOccupancy
+
+    if (delta === 0) return
+
+    const distanceToBottom = container.scrollHeight - container.clientHeight - container.scrollTop
+    const shouldKeepBottomAnchor = isAtBottomRef.current || distanceToBottom < 180
+    if (!shouldKeepBottomAnchor) return
+
+    container.scrollTop += delta
+  }, [composerHeight, todoPanelHeight, hasTodos])
 
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Handle slash command overlay navigation
@@ -199,6 +261,7 @@ export function ChatUI({
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
       <ChatTranscript
         messages={messages}
+        bottomPadding={transcriptBottomPadding}
         sessionTitle={sessionTitle}
         projectLabel={projectLabel}
         defaultWorkdir={defaultWorkdir}
@@ -207,8 +270,13 @@ export function ChatUI({
         onScroll={() => {
           const container = transcriptScrollRef.current
           if (!container) return
+          if (container.scrollLeft !== 0) {
+            container.scrollLeft = 0
+          }
           const maxScrollTop = container.scrollHeight - container.clientHeight
-          setIsAtBottom(maxScrollTop - container.scrollTop < 40)
+          const nextIsAtBottom = maxScrollTop - container.scrollTop < 40
+          isAtBottomRef.current = nextIsAtBottom
+          setIsAtBottom(nextIsAtBottom)
         }}
         onCopyMessage={handleCopyMessage}
         onResumeFromCursor={onResumeFromCursor}
@@ -217,7 +285,10 @@ export function ChatUI({
         onMessageHoverChange={setHoveredMessageId}
       />
       {!isAtBottom && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[186px] z-20 flex justify-center px-6">
+        <div
+          className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
+          style={{ bottom: `${scrollToBottomButtonOffset}px` }}
+        >
           <button
             type="button"
             onClick={() => {
@@ -233,7 +304,21 @@ export function ChatUI({
           </button>
         </div>
       )}
+      {todos.length > 0 && (
+        <div className="relative z-0 shrink-0 px-10">
+          <div className="mx-auto w-full max-w-[700px]">
+            <TodoPanel
+              ref={todoPanelRef}
+              todos={todos}
+              collapsed={isTodoCollapsed}
+              onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
+              className="w-full translate-y-[8px]"
+            />
+          </div>
+        </div>
+      )}
       <ComposerDock
+        containerRef={composerRef}
         input={input}
         onInputChange={onInputChange}
         onSubmit={onSubmit}
@@ -269,6 +354,7 @@ export function ChatUI({
 
 const ChatTranscript = React.memo(function ChatTranscript({
   messages,
+  bottomPadding,
   sessionTitle,
   projectLabel,
   defaultWorkdir,
@@ -282,6 +368,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   onMessageHoverChange,
 }: {
   messages: Message[]
+  bottomPadding: number
   sessionTitle: string
   projectLabel: string
   defaultWorkdir?: string
@@ -316,8 +403,16 @@ const ChatTranscript = React.memo(function ChatTranscript({
   }, [messages])
 
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-10 py-6">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none"
+      style={{ overscrollBehaviorX: 'none' }}
+    >
+      <div
+        className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-10 pt-6"
+        style={{ paddingBottom: `${bottomPadding}px` }}
+      >
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
         ) : (
@@ -344,6 +439,7 @@ const ChatTranscript = React.memo(function ChatTranscript({
   )
 }, (prev, next) =>
   prev.messages === next.messages &&
+  prev.bottomPadding === next.bottomPadding &&
   prev.sessionTitle === next.sessionTitle &&
   prev.projectLabel === next.projectLabel &&
   prev.copiedMessageId === next.copiedMessageId &&
@@ -358,6 +454,7 @@ const ComposerDock = React.memo(function ComposerDock({
   onSubmit,
   onStop,
   isLoading,
+  containerRef,
   selectedModel,
   setSelectedModel,
   permissionMode,
@@ -377,6 +474,7 @@ const ComposerDock = React.memo(function ComposerDock({
   onSubmit: () => void
   onStop?: () => void
   isLoading?: boolean
+  containerRef: React.RefObject<HTMLDivElement | null>
   selectedModel: string
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>
   permissionMode: PermissionMode
@@ -431,7 +529,7 @@ const ComposerDock = React.memo(function ComposerDock({
     }
   }
   return (
-    <div className="shrink-0 px-10 pb-2.5 pt-0">
+    <div ref={containerRef} className="relative z-10 shrink-0 px-10 pb-2.5 pt-0">
       <div className="mx-auto flex w-full max-w-[900px] flex-col">
         <div
           className={cn(

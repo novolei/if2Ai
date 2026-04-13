@@ -412,6 +412,26 @@ impl SessionManager {
         Ok(session)
     }
 
+    /// Rename a session and persist the updated title.
+    pub async fn rename_session(
+        &self,
+        session_id: &str,
+        title: impl Into<String>,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        let next_title = title.into().trim().to_string();
+        if next_title.is_empty() {
+            return Err(SessionError::InvalidData(
+                "session title cannot be empty".to_string(),
+            ));
+        }
+
+        session.title = next_title;
+        session.updated_at = format_time(SystemTime::now());
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
     /// List all sessions (legacy path only, for backward compatibility).
     pub async fn list_sessions(&self) -> Result<Vec<SessionMeta>, SessionError> {
         self.init().await?;

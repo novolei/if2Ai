@@ -1,0 +1,18 @@
+{
+  "records": [
+    {
+      "timestamp": "2026-04-14T03:10:38.050134",
+      "command": "now",
+      "input": "",
+      "status": "completed"
+    },
+    {
+      "timestamp": "2026-04-14T03:10:42.234880",
+      "command": "now",
+      "input": "--city 深圳",
+      "status": "completed"
+    }
+  ],
+  "created": "2026-04-14T03:10:38.050128",
+  "tool": "weather-advisor"
+}

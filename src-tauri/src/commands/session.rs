@@ -69,6 +69,22 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
         .map_err(|e| e.to_string())
 }
 
+/// Rename a session in place.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn rename_session(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<SessionMeta, String> {
+    state
+        .session_manager
+        .rename_session(&id, title)
+        .await
+        .map(|session| SessionMeta::from_session(&session))
+        .map_err(|e| e.to_string())
+}
+
 /// Set the pinned state of a session.
 #[tauri::command]
 #[allow(dead_code)]

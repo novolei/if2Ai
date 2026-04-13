@@ -66,9 +66,9 @@ Notes:
 
 ### 5.1 Source of truth (initial)
 
-Existing bundled skill corpus is currently maintained at:
+Current bundled skill corpus is maintained at:
 
-- `docs/references/bundled-skills`
+- `src-tauri/resources/bundled-skills`
 
 ### 5.2 App packaging strategy (v1)
 
@@ -76,16 +76,14 @@ Use Tauri bundle resources to package this corpus into app artifacts.
 
 v1 decision:
 
-- keep current source path unchanged to avoid risky bulk move
-- include it through `src-tauri/tauri.conf.json` bundle resources
+- package `src-tauri/resources/bundled-skills/**` directly via Tauri resources
 - treat bundled corpus as read-only at runtime
 
 ### 5.3 Future optimization
 
-Introduce sync pipeline:
+Introduce sync and verification pipeline:
 
-- source: `docs/references/bundled-skills`
-- packaged target: `src-tauri/resources/bundled-skills` (generated mirror)
+- source and packaged root: `src-tauri/resources/bundled-skills`
 - checksum manifest validation during CI
 
 ## 6. Skill Manifest Contract

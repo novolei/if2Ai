@@ -15,6 +15,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import {
   DropdownMenu,
@@ -70,6 +71,8 @@ export function ProjectRail({
 }: ProjectRailProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({})
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [projectDraftName, setProjectDraftName] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
@@ -216,6 +219,10 @@ export function ProjectRail({
                 onCreatePermanentWorktree={onCreatePermanentWorktree}
                 runningSessionIds={runningSessionIds}
                 nowMs={nowMs}
+                editingProjectId={editingProjectId}
+                projectDraftName={projectDraftName}
+                setEditingProjectId={setEditingProjectId}
+                setProjectDraftName={setProjectDraftName}
               />
             ))
           )}
@@ -287,6 +294,10 @@ function ProjectGroup({
   onCreatePermanentWorktree,
   runningSessionIds,
   nowMs,
+  editingProjectId,
+  projectDraftName,
+  setEditingProjectId,
+  setProjectDraftName,
 }: {
   project: ProjectMeta
   sessions: SessionMeta[]
@@ -304,10 +315,15 @@ function ProjectGroup({
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
   runningSessionIds: string[]
   nowMs: number
+  editingProjectId: string | null
+  projectDraftName: string
+  setEditingProjectId: Dispatch<SetStateAction<string | null>>
+  setProjectDraftName: Dispatch<SetStateAction<string>>
 }) {
   const hasActiveSession = sessions.some((session) => session.id === activeSessionId)
   const isActiveProject = activeProjectId === project.id
   const isExpanded = expandedProjects[project.id] ?? isActiveProject
+  const isEditing = editingProjectId === project.id
 
   const toggleProject = () => {
     setExpandedProjects((prev) => ({
@@ -317,30 +333,84 @@ function ProjectGroup({
     onSelectProject(project.id)
   }
 
+  const beginInlineRename = () => {
+    setEditingProjectId(project.id)
+    setProjectDraftName(project.name)
+  }
+
+  const commitInlineRename = () => {
+    const trimmed = projectDraftName.trim()
+    if (trimmed && trimmed !== project.name) {
+      onRenameProject(project.id, trimmed)
+    }
+    setEditingProjectId(null)
+    setProjectDraftName('')
+  }
+
+  const cancelInlineRename = () => {
+    setEditingProjectId(null)
+    setProjectDraftName('')
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       <div className="group/project relative rounded-[16px] px-0.5 py-0.5 transition-colors hover:bg-black/[0.03] select-none">
-        <button
-          type="button"
-          onClick={toggleProject}
-          className={cn(
-            'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[14px] px-2.5 py-[7px] pr-12 text-left text-[13px] font-medium tracking-tight transition-colors',
-            isActiveProject ? 'bg-black/[0.04] text-black/90' : 'text-black/72 hover:text-black/90'
-          )}
-        >
-          <ChevronDown
+        {isEditing ? (
+          <div className="flex items-center gap-2 rounded-[14px] bg-black/[0.04] px-2.5 py-[6px] pr-2">
+            <button type="button" onClick={toggleProject} className="flex shrink-0 items-center gap-2 text-black/72">
+              <ChevronDown
+                className={cn(
+                  'size-3.5 shrink-0 text-black/30 transition-transform',
+                  !isExpanded && '-rotate-90'
+                )}
+              />
+              {isExpanded ? (
+                <FolderOpen className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+              ) : (
+                <Folder className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+              )}
+            </button>
+            <Input
+              autoFocus
+              value={projectDraftName}
+              onChange={(event) => setProjectDraftName(event.target.value)}
+              onBlur={commitInlineRename}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commitInlineRename()
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelInlineRename()
+                }
+              }}
+              className="h-8 flex-1 rounded-xl border-black/10 bg-white/90 px-2.5 text-[13px] shadow-none focus-visible:ring-0"
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={toggleProject}
             className={cn(
-              'size-3.5 shrink-0 text-black/30 transition-transform',
-              !isExpanded && '-rotate-90'
+              'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[14px] px-2.5 py-[7px] pr-12 text-left text-[13px] font-medium tracking-tight transition-colors',
+              isActiveProject ? 'bg-black/[0.04] text-black/90' : 'text-black/72 hover:text-black/90'
             )}
-          />
-          {isExpanded ? (
-            <FolderOpen className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
-          ) : (
-            <Folder className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
-          )}
-          <span className="min-w-0 flex-1 truncate">{project.name}</span>
-        </button>
+          >
+            <ChevronDown
+              className={cn(
+                'size-3.5 shrink-0 text-black/30 transition-transform',
+                !isExpanded && '-rotate-90'
+              )}
+            />
+            {isExpanded ? (
+              <FolderOpen className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+            ) : (
+              <Folder className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+            )}
+            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+          </button>
+        )}
 
         <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
           <Button
@@ -350,8 +420,7 @@ function ProjectGroup({
             className="pointer-events-auto size-[26px] rounded-full p-0 text-black/25 opacity-90 transition-colors hover:text-black/70 cursor-pointer"
             onClick={(event) => {
               event.stopPropagation()
-              const nextName = window.prompt('重命名项目', project.name)?.trim()
-              if (nextName) onRenameProject(project.id, nextName)
+              beginInlineRename()
             }}
           >
             <PencilLine className="size-4" />
@@ -359,7 +428,7 @@ function ProjectGroup({
           <ProjectMenu
             project={project}
             onDeleteProject={onDeleteProject}
-            onRenameProject={onRenameProject}
+            onRenameProject={beginInlineRename}
             onOpenInFinder={onOpenInFinder}
             onCreatePermanentWorktree={onCreatePermanentWorktree}
           />
@@ -523,7 +592,7 @@ function ProjectMenu({
 }: {
   project: ProjectMeta
   onDeleteProject: (id: string) => void
-  onRenameProject: (id: string, newName: string) => void
+  onRenameProject: () => void
   onOpenInFinder: (projectId: string) => void | Promise<unknown>
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
 }) {
@@ -570,8 +639,7 @@ function ProjectMenu({
         <DropdownMenuItem
           className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
           onSelect={() => {
-            const nextName = window.prompt('重命名项目', project.name)?.trim()
-            if (nextName) onRenameProject(project.id, nextName)
+            onRenameProject()
           }}
         >
           <PencilLine className="size-4 shrink-0 text-black/55" />
