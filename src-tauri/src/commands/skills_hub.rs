@@ -115,10 +115,13 @@ pub async fn hub_browse(
         }
     }
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&all_skills).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Found {} skills", all_skills.len()),
-        data: Some(serde_json::to_value(all_skills).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -173,10 +176,13 @@ pub async fn hub_search(
 
     all_skills.truncate(limit);
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&all_skills).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Found {} skills matching '{}'", all_skills.len(), query),
-        data: Some(serde_json::to_value(all_skills).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -232,10 +238,13 @@ pub async fn hub_inspect(source: String, identifier: String) -> Result<HubComman
         manifest: HashMap::new(),
     };
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&inspect_result).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Inspected skill: {}", bundle.name),
-        data: Some(serde_json::to_value(inspect_result).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -271,10 +280,13 @@ pub async fn hub_check(skills_dir: Option<String>) -> Result<HubCommandResult, S
         }));
     }
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&update_available).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Checked {} installed skills", lock_entries.len()),
-        data: Some(serde_json::to_value(update_available).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -368,10 +380,13 @@ pub async fn hub_audit(skills_dir: Option<String>) -> Result<HubCommandResult, S
         }
     }
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&results).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Audited {} skills", results.len()),
-        data: Some(serde_json::to_value(results).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -679,10 +694,13 @@ pub async fn hub_snapshot_import(
         }
     }
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&installed).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("Imported snapshot with {} skills", snapshot.skill_count()),
-        data: Some(serde_json::to_value(installed).unwrap()),
+        data: Some(data),
     })
 }
 
@@ -796,10 +814,13 @@ pub async fn hub_tap_list(skills_dir: Option<String>) -> Result<HubCommandResult
         Vec::new()
     };
 
+    // SAFETY: serde_json::to_value on Serialize types never fails
+    #[allow(clippy::expect_used)]
+    let data = serde_json::to_value(&taps).expect("serializable");
     Ok(HubCommandResult {
         success: true,
         message: format!("{} taps configured", taps.len()),
-        data: Some(serde_json::to_value(taps).unwrap()),
+        data: Some(data),
     })
 }
 

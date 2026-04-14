@@ -79,6 +79,7 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [leftPaneWidth, setLeftPaneWidth] = useState(304)
+  const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
@@ -118,6 +119,7 @@ function App() {
   const sessionLoadingRef = useRef<Record<string, boolean>>({})
   const autoResumeAttemptsRef = useRef<Record<string, number>>({})
   const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set())
+  const leftPaneCollapsedBeforePreviewRef = useRef(false)
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -1584,6 +1586,23 @@ function App() {
     beginResize(event.clientX, separatorEl, event.pointerId)
   }
 
+  const toggleLeftPane = () => {
+    setIsLeftPaneCollapsed((value) => !value)
+  }
+
+  const handlePreviewFocusChange = (active: boolean) => {
+    if (active) {
+      leftPaneCollapsedBeforePreviewRef.current = isLeftPaneCollapsed
+      if (!isLeftPaneCollapsed) {
+        setIsLeftPaneCollapsed(true)
+      }
+      return
+    }
+    if (!leftPaneCollapsedBeforePreviewRef.current) {
+      setIsLeftPaneCollapsed(false)
+    }
+  }
+
   const startWindowDrag = async (event: ReactMouseEvent<HTMLElement>) => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement | null
@@ -1647,8 +1666,11 @@ function App() {
               onPermissionModeChange={setPermissionMode}
               todos={todos}
               leftPaneWidth={leftPaneWidth}
+              isLeftPaneCollapsed={isLeftPaneCollapsed}
               onResizeStart={startResize}
+              onToggleLeftPane={toggleLeftPane}
               onStartWindowDrag={startWindowDrag}
+              onPreviewFocusChange={handlePreviewFocusChange}
               runningSessionIds={runningSessionIds}
             />
           ) : (

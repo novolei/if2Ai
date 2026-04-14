@@ -82,10 +82,7 @@ pub fn skill_search_tool_entry() -> ToolEntry {
         }),
         max_result_size: Some(16 * 1024),
         timeout_secs: Some(5),
-        // Disabled: redundant with skills_list + find-skills skill.
-        // skill_search was causing empty results when queries were in non-English,
-        // and the find-skills skill handles discovery use-cases more reliably.
-        disabled: true,
+        disabled: false,
         handler,
     }
 }

@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Code2,
   MessageSquare,
   MoreHorizontal,
@@ -65,8 +67,11 @@ export function ChatWorkspace({
   onPermissionModeChange,
   todos,
   leftPaneWidth,
+  isLeftPaneCollapsed,
   onResizeStart,
+  onToggleLeftPane,
   onStartWindowDrag,
+  onPreviewFocusChange,
   runningSessionIds,
 }: ChatWorkspaceProps) {
   const openNewChat = useMemo(() => {
@@ -79,7 +84,7 @@ export function ChatWorkspace({
   return (
     <div
       className="grid h-full min-h-0 min-w-0 overflow-hidden"
-      style={{ gridTemplateColumns: `${leftPaneWidth}px minmax(0, 1fr)` }}
+      style={{ gridTemplateColumns: `${isLeftPaneCollapsed ? 0 : leftPaneWidth}px minmax(0, 1fr)` }}
     >
       <ErrorBoundary
         fallback={
@@ -94,7 +99,13 @@ export function ChatWorkspace({
           </aside>
         }
       >
-        <aside className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px]">
+        <aside
+          className={cn(
+            'relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px] transition-[width,opacity,border-color] duration-300',
+            isLeftPaneCollapsed && 'pointer-events-none opacity-0 border-r-transparent'
+          )}
+          style={{ width: isLeftPaneCollapsed ? 0 : leftPaneWidth }}
+        >
           <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
             <ErrorBoundary
@@ -124,13 +135,15 @@ export function ChatWorkspace({
             </ErrorBoundary>
           </div>
 
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onPointerDown={onResizeStart}
-            className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
-            style={{ touchAction: 'none' }}
-          />
+          {!isLeftPaneCollapsed ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              onPointerDown={onResizeStart}
+              className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
+              style={{ touchAction: 'none' }}
+            />
+          ) : null}
         </aside>
       </ErrorBoundary>
 
@@ -153,6 +166,15 @@ export function ChatWorkspace({
               onMouseDown={onStartWindowDrag}
             >
               <div className="flex min-w-0 items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  data-window-no-drag="true"
+                  onClick={onToggleLeftPane}
+                >
+                  {isLeftPaneCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                </Button>
                 <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-black/5 text-black/70 lg:flex">
                   <MessageSquare className="h-4 w-4" />
                 </div>
@@ -263,6 +285,7 @@ export function ChatWorkspace({
                       permissionMode={permissionMode}
                       onPermissionModeChange={onPermissionModeChange}
                       todos={todos}
+                      onPreviewFocusChange={onPreviewFocusChange}
                     />
                   </div>
                 </div>
@@ -298,6 +321,7 @@ export function ChatWorkspace({
                     permissionMode={permissionMode}
                     onPermissionModeChange={onPermissionModeChange}
                     todos={[]}
+                    onPreviewFocusChange={onPreviewFocusChange}
                   />
                 </div>
               )}

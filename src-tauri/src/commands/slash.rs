@@ -6,14 +6,17 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashSet;
 use tauri::State;
 
 use crate::commands::AppState;
 use crate::modules::control_plane::audit::{AuditEmitter, SkillDistributionDiagnostic};
-use crate::modules::skills::commands::SkillCommands;
+use crate::modules::skills::commands::{SkillCommandInfo, SkillCommands};
 use crate::modules::tools::registry::{
     validate_distribution_envelope, SkillDistributionChannel, SkillDistributionEnvelope,
 };
+use crate::modules::tools::toolset::ToolSetRegistry;
+use crate::modules::tools::ToolRegistry;
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
@@ -52,6 +55,128 @@ pub struct AgentInfo {
     pub name: String,
     pub description: String,
     pub path: String,
+}
+
+// ── Skill toolset availability helpers ───────────────────────────────────────
+
+/// Returns toolset names where ALL tools in the toolset are registered.
+///
+/// A toolset is considered "available" if every tool it declares is actually
+/// registered in the tool registry. This matches the Hermes behavior where
+/// a skill with `requires_toolsets: [files]` only activates if all `files`
+/// tools (read_file, file_write, etc.) are present.
+fn available_toolsets(registry: &ToolRegistry) -> Vec<String> {
+    let toolset_registry = ToolSetRegistry::new();
+    let registered: HashSet<String> = registry.tool_names().into_iter().collect();
+
+    toolset_registry
+        .all_toolsets()
+        .iter()
+        .filter(|ts| ts.tools.iter().all(|t| registered.contains(t)))
+        .map(|ts| ts.name.clone())
+        .collect()
+}
+
+/// Find a skill's SkillCommandInfo by normalized command key.
+fn find_skill_info(workdir: &std::path::Path, skill_key: &str) -> Option<SkillCommandInfo> {
+    // Check workspace skills
+    let skills_dir = workdir.join(".if2ai/skills");
+    if skills_dir.exists() {
+        let scanner = SkillCommands::new(&skills_dir);
+        if let Ok(commands) = scanner.scan() {
+            if let Some(info) = commands.get(skill_key) {
+                return Some(info.clone());
+            }
+            // Try normalize match
+            for info in commands.values() {
+                if crate::modules::skills::commands::normalize_command_key(&info.name) == skill_key
+                {
+                    return Some(info.clone());
+                }
+            }
+        }
+    }
+
+    // Check other roots (user-level, builtin)
+    let roots = crate::modules::tools::builtin::skill::discover_skill_roots_with_metadata(workdir);
+    for root in &roots {
+        if root.source.as_label() == "remote-quarantine" {
+            continue;
+        }
+        let scanner = SkillCommands::new(&root.path);
+        if let Ok(commands) = scanner.scan() {
+            if let Some(info) = commands.get(skill_key) {
+                return Some(info.clone());
+            }
+            for info in commands.values() {
+                if crate::modules::skills::commands::normalize_command_key(&info.name) == skill_key
+                {
+                    return Some(info.clone());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Check if a skill's required toolsets are satisfied.
+///
+/// Returns (satisfied: bool, fallback_satisfied: bool, message: String).
+/// If satisfied is true, the skill can activate normally.
+/// If only fallback_satisfied is true, the skill can activate with fallback tools.
+/// If neither is true, returns an error message.
+fn check_skill_toolset_availability(
+    skill_info: &SkillCommandInfo,
+    available: &[String],
+) -> (bool, bool, String) {
+    if skill_info.requires_toolsets.is_empty() {
+        return (true, true, String::new());
+    }
+
+    let available_set: HashSet<&str> = available.iter().map(|s| s.as_str()).collect();
+
+    // Check if all required toolsets are satisfied
+    let all_satisfied = skill_info
+        .requires_toolsets
+        .iter()
+        .all(|ts| available_set.contains(ts.as_str()));
+
+    if all_satisfied {
+        return (true, true, String::new());
+    }
+
+    // Check if fallback can substitute
+    let fallback_set: HashSet<&str> = skill_info
+        .fallback_for_toolsets
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    let fallback_satisfies = skill_info
+        .requires_toolsets
+        .iter()
+        .all(|ts| available_set.contains(ts.as_str()) || fallback_set.contains(ts.as_str()));
+
+    if fallback_satisfies {
+        let msg = format!(
+            "[TOOLSET FALLBACK] Skill '{}' using fallback for toolsets: {:?}",
+            skill_info.name, skill_info.requires_toolsets
+        );
+        (false, true, msg)
+    } else {
+        let missing: Vec<&str> = skill_info
+            .requires_toolsets
+            .iter()
+            .filter(|ts| !available_set.contains(ts.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+        let msg = format!(
+            "[TOOLSET UNAVAILABLE] Skill '{}' requires toolsets {:?} which are not available. Missing: {:?}",
+            skill_info.name, skill_info.requires_toolsets, missing
+        );
+        (false, false, msg)
+    }
 }
 
 // ── Builtin slash command specs ───────────────────────────────────────────────
@@ -119,7 +244,7 @@ pub fn suggest_slash_commands(input: String, limit: Option<usize>) -> Vec<String
 #[tauri::command]
 #[allow(dead_code)]
 pub fn execute_slash_command(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     input: String,
     _session_id: String,
 ) -> Result<String, String> {
@@ -157,9 +282,36 @@ pub fn execute_slash_command(
         _ => {
             // Try to resolve as a skill slash command: /skill-name [instruction]
             let workdir = std::env::current_dir().unwrap_or_default();
-            match resolve_skill_slash_invocation(&workdir, &input) {
-                Some(invocation) => Ok(invocation),
-                None => Err(format!("Unknown command: {name}")),
+            let skill_key = name.trim_start_matches('/').to_lowercase();
+
+            // Find skill info for toolset validation
+            if let Some(skill_info) = find_skill_info(&workdir, &skill_key) {
+                // Check toolset availability
+                let available = available_toolsets(&state.tool_registry);
+                let (satisfied, fallback_satisfied, msg) =
+                    check_skill_toolset_availability(&skill_info, &available);
+
+                if !satisfied && !fallback_satisfied {
+                    // Skill requires toolsets that are not available
+                    return Err(msg);
+                }
+
+                // Build invocation
+                match resolve_skill_slash_invocation(&workdir, &input) {
+                    Some(mut invocation) => {
+                        if !msg.is_empty() {
+                            // Prepend warning message
+                            invocation = format!("{}\n\n{}", msg, invocation);
+                        }
+                        Ok(invocation)
+                    }
+                    None => Err(format!("Unknown command: {name}")),
+                }
+            } else {
+                match resolve_skill_slash_invocation(&workdir, &input) {
+                    Some(invocation) => Ok(invocation),
+                    None => Err(format!("Unknown command: {name}")),
+                }
             }
         }
     }

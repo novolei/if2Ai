@@ -18,7 +18,7 @@ use commands::{
     list_tools, list_toolsets, open_directory_path, open_project_in_finder, open_settings_window,
     parse_slash_command, read_file_preview, rename_project, rename_session, resolve_skill_slash,
     respond_permission, run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
-    suggest_slash_commands,
+    suggest_slash_commands, write_file_contents,
 };
 
 use tauri::{
@@ -119,6 +119,7 @@ fn main() {
             open_directory_path,
             list_directory_preview,
             read_file_preview,
+            write_file_contents,
             create_permanent_worktree,
             open_settings_window,
             close_settings_window,
@@ -200,7 +201,9 @@ fn main() {
                 .build(app)?;
 
             // Hide window on close button instead of exiting
-            let window = app.get_webview_window("main").unwrap();
+            // SAFETY: get_webview_window returns Some in setup, and run() error is unrecoverable
+            #[allow(clippy::expect_used)]
+            let window = app.get_webview_window("main").expect("main window must exist");
             let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
             let _ = window.set_background_color(Some(Color(0xf6, 0xf7, 0xf8, 0xff)));
             let window_clone = window.clone();
@@ -213,6 +216,7 @@ fn main() {
 
             Ok(())
         })
+        // SAFETY: run() error is unrecoverable for a desktop app
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

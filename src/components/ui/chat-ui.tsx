@@ -41,9 +41,10 @@ import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { listDirectoryPreview, openDirectoryPath, readFilePreview, type DirectoryEntryPreview, type FilePreviewPayload, type PermissionMode } from "@/lib/tauri"
+import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type DirectoryEntryPreview, type FilePreviewPayload, type PermissionMode } from "@/lib/tauri"
 import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
 import { WaveDotsAnimation } from "@/components/loading/WaveDotsAnimation"
+import { ProjectPreviewPanel } from "@/components/ui/ProjectPreviewPanel"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
@@ -98,6 +99,7 @@ interface ChatUIProps {
   permissionMode?: PermissionMode
   onPermissionModeChange?: React.Dispatch<React.SetStateAction<PermissionMode>>
   todos?: TodoItem[]
+  onPreviewFocusChange?: (active: boolean) => void
 }
 
 type DensityMode = 'comfortable' | 'compact'
@@ -111,6 +113,7 @@ const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
 const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
 const PROJECT_RAIL_MIN_WIDTH = 296
 const PROJECT_RAIL_MAX_WIDTH = 620
+const PREVIEW_AUTOSAVE_DELAY_MS = 900
 
 const SURFACE_CARD_TOKENS = {
   radius: 'rounded-[14px]',
@@ -197,6 +200,7 @@ export function ChatUI({
   permissionMode: permissionModeProp = 'dangerFullAccess',
   onPermissionModeChange: onPermissionModeChangeProp,
   todos = [],
+  onPreviewFocusChange,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
@@ -241,9 +245,15 @@ export function ChatUI({
   const [isProjectRailLoading, setIsProjectRailLoading] = React.useState(false)
   const [projectRailSort, setProjectRailSort] = React.useState<'recent' | 'name'>('recent')
   const [projectRailPath, setProjectRailPath] = React.useState<string | null>(defaultWorkdir ?? null)
-  const [projectRailPreview, setProjectRailPreview] = React.useState<FilePreviewPayload | null>(null)
   const [projectRailPreviewError, setProjectRailPreviewError] = React.useState<string | null>(null)
   const projectRailRefreshSeqRef = React.useRef(0)
+  const [projectPreviewTabs, setProjectPreviewTabs] = React.useState<FilePreviewPayload[]>([])
+  const [activeProjectPreviewPath, setActiveProjectPreviewPath] = React.useState<string | null>(null)
+  const [projectPreviewDrafts, setProjectPreviewDrafts] = React.useState<Record<string, string>>({})
+  const [projectPreviewSaveStates, setProjectPreviewSaveStates] = React.useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
+  const [projectPreviewDirtyPaths, setProjectPreviewDirtyPaths] = React.useState<string[]>([])
+  const projectPreviewSaveTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const projectRailOpenBeforePreviewRef = React.useRef(true)
   const [projectRailWidth, setProjectRailWidth] = React.useState(() => {
     if (typeof window === 'undefined') return 338
     const stored = Number(window.localStorage.getItem(PROJECT_RAIL_WIDTH_STORAGE_KEY))
@@ -278,6 +288,7 @@ export function ChatUI({
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
       }
+      Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
     }
   }, [])
 
@@ -332,11 +343,34 @@ export function ChatUI({
 
   React.useEffect(() => {
     setProjectRailPath(defaultWorkdir ?? null)
-    setProjectRailPreview(null)
     setProjectRailPreviewError(null)
     setProjectRailExpandedPaths([])
     setProjectRailTree({})
+    setProjectPreviewTabs([])
+    setActiveProjectPreviewPath(null)
+    setProjectPreviewDrafts({})
+    setProjectPreviewSaveStates({})
+    setProjectPreviewDirtyPaths([])
   }, [defaultWorkdir])
+
+  const isPreviewFocusMode = projectPreviewTabs.length > 0
+
+  React.useEffect(() => {
+    onPreviewFocusChange?.(isPreviewFocusMode)
+  }, [isPreviewFocusMode, onPreviewFocusChange])
+
+  React.useEffect(() => {
+    if (isPreviewFocusMode) {
+      projectRailOpenBeforePreviewRef.current = isProjectRailOpen
+      if (isProjectRailOpen) {
+        setIsProjectRailOpen(false)
+      }
+      return
+    }
+    if (projectRailOpenBeforePreviewRef.current) {
+      setIsProjectRailOpen(true)
+    }
+  }, [isPreviewFocusMode, isProjectRailOpen])
 
   const railRootPath = defaultWorkdir ?? null
 
@@ -590,13 +624,13 @@ export function ChatUI({
   const railEntries = React.useMemo(() => sortRailDirectoryEntries(projectRailEntries, projectRailSort), [projectRailEntries, projectRailSort])
 
   const railTitle = React.useMemo(() => {
-    if (projectRailPath) {
-      const trimmed = projectRailPath.replace(/[\\/]+$/, '')
+    if (railRootPath) {
+      const trimmed = railRootPath.replace(/[\\/]+$/, '')
       const parts = trimmed.split(/[\\/]/).filter(Boolean)
       return parts.at(-1) ?? projectLabel
     }
     return projectLabel
-  }, [projectRailPath, projectLabel])
+  }, [railRootPath, projectLabel])
 
   const railBreadcrumbs = React.useMemo<RailBreadcrumb[]>(() => {
     if (!defaultWorkdir || !projectRailPath) return []
@@ -667,7 +701,7 @@ export function ChatUI({
     setProjectRailPath(entry.path)
     setProjectRailExpandedPaths((current) => {
       if (current.includes(entry.path)) {
-        return current.filter((item) => item !== entry.path)
+        return current.filter((item) => item !== entry.path && !item.startsWith(`${entry.path}/`))
       }
       return [...current, entry.path]
     })
@@ -675,6 +709,82 @@ export function ChatUI({
       void loadProjectRailChildren(entry.path)
     }
   }, [loadProjectRailChildren, projectRailTree])
+
+  const savePreviewDraft = React.useCallback(async (path: string, content: string) => {
+    setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'saving' }))
+    try {
+      await writeFileContents(path, content)
+      setProjectPreviewTabs((current) => current.map((item) => item.path === path ? { ...item, content } : item))
+      setProjectPreviewDirtyPaths((current) => current.filter((item) => item !== path))
+      setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'saved' }))
+      window.setTimeout(() => {
+        setProjectPreviewSaveStates((current) => current[path] === 'saved' ? { ...current, [path]: 'idle' } : current)
+      }, 1200)
+      void refreshDirectoryPreview({ silent: true })
+    } catch (err) {
+      console.error('Failed to save preview draft:', err)
+      setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'error' }))
+    }
+  }, [refreshDirectoryPreview])
+
+  const schedulePreviewAutosave = React.useCallback((path: string, content: string) => {
+    const timers = projectPreviewSaveTimersRef.current
+    if (timers[path]) {
+      clearTimeout(timers[path])
+    }
+    timers[path] = setTimeout(() => {
+      delete timers[path]
+      void savePreviewDraft(path, content)
+    }, PREVIEW_AUTOSAVE_DELAY_MS)
+  }, [savePreviewDraft])
+
+  const openPreviewTab = React.useCallback((preview: FilePreviewPayload) => {
+    setProjectPreviewTabs((current) => current.some((item) => item.path === preview.path) ? current.map((item) => item.path === preview.path ? preview : item) : [...current, preview])
+    setActiveProjectPreviewPath(preview.path)
+    setProjectPreviewDrafts((current) => current[preview.path] !== undefined ? current : { ...current, [preview.path]: preview.content ?? '' })
+    setProjectPreviewSaveStates((current) => ({ ...current, [preview.path]: current[preview.path] ?? 'idle' }))
+    setProjectRailPreviewError(null)
+  }, [])
+
+  const closePreviewTab = React.useCallback((path: string) => {
+    const timers = projectPreviewSaveTimersRef.current
+    if (timers[path]) {
+      clearTimeout(timers[path])
+      delete timers[path]
+    }
+    if (projectPreviewDirtyPaths.includes(path)) {
+      const next = projectPreviewDrafts[path] ?? ''
+      void savePreviewDraft(path, next)
+    }
+    setProjectPreviewTabs((current) => {
+      const next = current.filter((item) => item.path !== path)
+      setActiveProjectPreviewPath((active) => {
+        if (active !== path) return active
+        return next.at(-1)?.path ?? null
+      })
+      return next
+    })
+    setProjectPreviewDirtyPaths((current) => current.filter((item) => item !== path))
+  }, [projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
+
+  const closePreviewPanel = React.useCallback(() => {
+    Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
+    projectPreviewSaveTimersRef.current = {}
+    projectPreviewDirtyPaths.forEach((path) => {
+      const next = projectPreviewDrafts[path] ?? ''
+      void savePreviewDraft(path, next)
+    })
+    setProjectPreviewTabs([])
+    setActiveProjectPreviewPath(null)
+    setProjectPreviewDirtyPaths([])
+  }, [projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
+
+  const handlePreviewDraftChange = React.useCallback((path: string, value: string) => {
+    setProjectPreviewDrafts((current) => ({ ...current, [path]: value }))
+    setProjectPreviewDirtyPaths((current) => current.includes(path) ? current : [...current, path])
+    setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'idle' }))
+    schedulePreviewAutosave(path, value)
+  }, [schedulePreviewAutosave])
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
@@ -809,84 +919,111 @@ export function ChatUI({
         </div>
       </div>
 
-      <div
-        className="flex min-h-0 flex-1 flex-col transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        style={{ paddingRight: isProjectRailOpen ? `${projectRailWidth + 16}px` : undefined }}
-      >
-        <ChatTranscript
-          messages={messages}
-          bottomPadding={transcriptBottomPadding}
-          sessionTitle={sessionTitle}
-          projectLabel={projectLabel}
-          defaultWorkdir={defaultWorkdir}
-          bottomRef={bottomRef}
-          scrollRef={transcriptScrollRef}
-          onScroll={handleTranscriptScroll}
-          onCopyMessage={handleCopyMessage}
-          onResumeFromCursor={onResumeFromCursor}
-          copiedMessageId={copiedMessageId}
-          densityMode={densityMode}
-          fontMode={fontMode}
-        />
-        {!isAtBottom && (
-          <div
-            className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
-            style={{ bottom: `${scrollToBottomButtonOffset}px` }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                forceAutoScrollRef.current = true
-                transcriptScrollRef.current?.scrollTo({
-                  top: transcriptScrollRef.current.scrollHeight,
-                  behavior: 'smooth',
-                })
-              }}
-              className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
-              aria-label="滚动到底部"
+      <div className={cn('grid min-h-0 flex-1', isPreviewFocusMode ? 'grid-cols-2' : 'grid-cols-1')}>
+        <div
+          className="relative flex min-h-0 flex-col transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+          style={{ paddingRight: !isPreviewFocusMode && isProjectRailOpen ? `${projectRailWidth + 16}px` : undefined }}
+        >
+          <ChatTranscript
+            messages={messages}
+            bottomPadding={transcriptBottomPadding}
+            sessionTitle={sessionTitle}
+            projectLabel={projectLabel}
+            defaultWorkdir={defaultWorkdir}
+            bottomRef={bottomRef}
+            scrollRef={transcriptScrollRef}
+            onScroll={handleTranscriptScroll}
+            onCopyMessage={handleCopyMessage}
+            onResumeFromCursor={onResumeFromCursor}
+            copiedMessageId={copiedMessageId}
+            densityMode={densityMode}
+            fontMode={fontMode}
+          />
+          {!isAtBottom && (
+            <div
+              className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
+              style={{ bottom: `${scrollToBottomButtonOffset}px` }}
             >
-              <ArrowDown className="h-[18px] w-[18px]" />
-            </button>
-          </div>
-        )}
-        {todos.length > 0 && (
-          <div className="relative z-0 shrink-0 px-10">
-            <div className="mx-auto w-full max-w-[700px]">
-              <TodoPanel
-                ref={todoPanelRef}
-                todos={todos}
-                collapsed={isTodoCollapsed}
-                onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
-                className="w-full translate-y-[8px]"
-              />
+              <button
+                type="button"
+                onClick={() => {
+                  forceAutoScrollRef.current = true
+                  transcriptScrollRef.current?.scrollTo({
+                    top: transcriptScrollRef.current.scrollHeight,
+                    behavior: 'smooth',
+                  })
+                }}
+                className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
+                aria-label="滚动到底部"
+              >
+                <ArrowDown className="h-[18px] w-[18px]" />
+              </button>
             </div>
-          </div>
-        )}
-        <ComposerDock
-          input={draftInput}
-          onInputChange={setDraftInput}
-          onSubmit={submitDraft}
-          onStop={onStop}
-          isLoading={isLoading}
-          selectedModel={modelValue}
-          setSelectedModel={handleModelChange}
-          permissionMode={permissionModeValue}
-          setPermissionMode={handlePermissionModeChange}
-          selectedStrength={selectedStrength}
-          setSelectedStrength={setSelectedStrength}
-          branchLabel={branchLabel}
-          isComposerFocused={isComposerFocused}
-          setIsComposerFocused={setIsComposerFocused}
-          textareaRef={textareaRef}
-          handleKeyDown={handleKeyDown}
-          setSlashOverlay={setSlashOverlay}
-          slashTimerRef={slashTimerRef}
-          onFileReferenceDrop={handleInsertProjectFileReference}
-        />
+          )}
+          {todos.length > 0 && (
+            <div className="relative z-0 shrink-0 px-10">
+              <div className="mx-auto w-full max-w-[700px]">
+                <TodoPanel
+                  ref={todoPanelRef}
+                  todos={todos}
+                  collapsed={isTodoCollapsed}
+                  onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
+                  className="w-full translate-y-[8px]"
+                />
+              </div>
+            </div>
+          )}
+          <ComposerDock
+            input={draftInput}
+            onInputChange={setDraftInput}
+            onSubmit={submitDraft}
+            onStop={onStop}
+            isLoading={isLoading}
+            selectedModel={modelValue}
+            setSelectedModel={handleModelChange}
+            permissionMode={permissionModeValue}
+            setPermissionMode={handlePermissionModeChange}
+            selectedStrength={selectedStrength}
+            setSelectedStrength={setSelectedStrength}
+            branchLabel={branchLabel}
+            isComposerFocused={isComposerFocused}
+            setIsComposerFocused={setIsComposerFocused}
+            textareaRef={textareaRef}
+            handleKeyDown={handleKeyDown}
+            setSlashOverlay={setSlashOverlay}
+            slashTimerRef={slashTimerRef}
+            onFileReferenceDrop={handleInsertProjectFileReference}
+          />
+        </div>
+
+        {isPreviewFocusMode ? (
+          <ProjectPreviewPanel
+            tabs={projectPreviewTabs}
+            activeTabPath={activeProjectPreviewPath}
+            drafts={projectPreviewDrafts}
+            saveStates={projectPreviewSaveStates}
+            dirtyPaths={projectPreviewDirtyPaths}
+            onSelectTab={setActiveProjectPreviewPath}
+            onCloseTab={closePreviewTab}
+            onClosePanel={closePreviewPanel}
+            onOpenExternally={(preview) => {
+              void openDirectoryPath(preview.path)
+            }}
+            onQuoteIntoChat={handleQuoteProjectFile}
+            onInsertIntoChat={(preview) => {
+              handleInsertProjectFileReference(preview.path)
+            }}
+            onChangeDraft={handlePreviewDraftChange}
+            onSaveNow={(path) => {
+              const next = projectPreviewDrafts[path] ?? ''
+              void savePreviewDraft(path, next)
+            }}
+          />
+        ) : null}
       </div>
 
       <ProjectFilesRail
-        open={isProjectRailOpen}
+        open={!isPreviewFocusMode && isProjectRailOpen}
         width={projectRailWidth}
         title={railTitle}
         projectLabel={projectLabel}
@@ -899,27 +1036,29 @@ export function ChatUI({
         isLoading={isProjectRailLoading}
         sortMode={projectRailSort}
         onSortModeChange={setProjectRailSort}
-        preview={projectRailPreview}
         previewError={projectRailPreviewError}
         onWidthChange={setProjectRailWidth}
-        onBackToList={() => {
-          setProjectRailPreview(null)
-          setProjectRailPreviewError(null)
-        }}
         onNavigateUp={() => {
           if (!projectRailPath || !defaultWorkdir) return
           const normalizedBase = defaultWorkdir.replace(/[\\/]+$/, '')
           const normalizedCurrent = projectRailPath.replace(/[\\/]+$/, '')
           if (normalizedCurrent === normalizedBase) return
           const parent = normalizedCurrent.split(/[\\/]/).slice(0, -1).join('/')
-          setProjectRailPreview(null)
           setProjectRailPreviewError(null)
-          setProjectRailPath(parent || normalizedBase)
+          const nextPath = parent || normalizedBase
+          setProjectRailPath(nextPath)
+          if (nextPath !== normalizedBase && !projectRailExpandedPaths.includes(nextPath)) {
+            setProjectRailExpandedPaths((current) => [...current, nextPath])
+            void loadProjectRailChildren(nextPath, { silent: true })
+          }
         }}
         onJumpToBreadcrumb={(path) => {
-          setProjectRailPreview(null)
           setProjectRailPreviewError(null)
           setProjectRailPath(path)
+          if (defaultWorkdir && path !== defaultWorkdir && !projectRailExpandedPaths.includes(path)) {
+            setProjectRailExpandedPaths((current) => [...current, path])
+            void loadProjectRailChildren(path, { silent: true })
+          }
         }}
         onOpenEntry={async (entry) => {
           if (entry.kind === 'folder') {
@@ -928,12 +1067,11 @@ export function ChatUI({
           }
           try {
             const preview = await readFilePreview(entry.path)
-            setProjectRailPreview(preview)
+            openPreviewTab(preview)
             setProjectRailPath(entry.path.split(/[\\/]/).slice(0, -1).join('/') || railRootPath)
             setProjectRailPreviewError(null)
           } catch (err) {
             console.error('Failed to read file preview:', err)
-            setProjectRailPreview(null)
             setProjectRailPreviewError('这个文件暂时不能在面板内预览。')
           }
         }}
@@ -941,13 +1079,6 @@ export function ChatUI({
         onOpenFolder={() => {
           if (!projectRailPath && !railRootPath) return
           void openDirectoryPath(projectRailPath ?? railRootPath!)
-        }}
-        onOpenPreviewExternally={(preview) => {
-          void openDirectoryPath(preview.path)
-        }}
-        onQuotePreviewIntoChat={handleQuoteProjectFile}
-        onInsertPreviewIntoChat={(preview) => {
-          handleInsertProjectFileReference(preview.path)
         }}
       />
 
@@ -979,18 +1110,13 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
   isLoading,
   sortMode,
   onSortModeChange,
-  preview,
   previewError,
   onWidthChange,
-  onBackToList,
   onNavigateUp,
   onJumpToBreadcrumb,
   onOpenEntry,
   onToggleFolder,
   onOpenFolder,
-  onOpenPreviewExternally,
-  onQuotePreviewIntoChat,
-  onInsertPreviewIntoChat,
 }: {
   open: boolean
   width: number
@@ -1005,18 +1131,13 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
   isLoading: boolean
   sortMode: 'recent' | 'name'
   onSortModeChange: React.Dispatch<React.SetStateAction<'recent' | 'name'>>
-  preview: FilePreviewPayload | null
   previewError: string | null
   onWidthChange: React.Dispatch<React.SetStateAction<number>>
-  onBackToList: () => void
   onNavigateUp: () => void
   onJumpToBreadcrumb: (path: string) => void
   onOpenEntry: (entry: DirectoryEntryPreview) => void | Promise<void>
   onToggleFolder: (entry: DirectoryEntryPreview) => void
   onOpenFolder: () => void
-  onOpenPreviewExternally: (preview: FilePreviewPayload) => void
-  onQuotePreviewIntoChat: (preview: FilePreviewPayload) => void
-  onInsertPreviewIntoChat: (preview: FilePreviewPayload) => void
 }) {
   const startResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1138,25 +1259,9 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
           </div>
 
           <div className="mt-3 min-h-0 flex-1 overflow-hidden">
-            {preview ? (
-              <ProjectRailFilePreview
-                preview={preview}
-                onBack={onBackToList}
-                onOpenExternally={onOpenPreviewExternally}
-                onQuoteIntoChat={onQuotePreviewIntoChat}
-                onInsertIntoChat={onInsertPreviewIntoChat}
-              />
-            ) : previewError ? (
+            {previewError ? (
               <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-6 text-center text-[13px] text-[#b6ab9d]">
                 <div>{previewError}</div>
-                <button
-                  type="button"
-                  onClick={onBackToList}
-                  className="mt-3 inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-3 py-1 text-[12px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
-                >
-                  <ChevronRight className="h-3 w-3 rotate-180" />
-                  <span>返回目录</span>
-                </button>
               </div>
             ) : isLoading ? (
               <div className="flex items-center gap-2 px-2 py-3 text-[13px] text-[#b4aa9f]">
@@ -1336,16 +1441,18 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
 
   return (
     <div>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         draggable={entry.kind === 'file'}
-        onClick={() => {
-          if (isFolder) {
-            onToggleFolder(entry)
-          }
-        }}
         onDoubleClick={() => {
           void onOpen(entry)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            void onOpen(entry)
+          }
         }}
         onDragStart={(event) => {
           if (entry.kind !== 'file') return
@@ -1355,13 +1462,24 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
         }}
         className={cn(
           'group flex w-full items-center gap-2 rounded-[14px] px-2 py-2 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f3eee6]',
-          isSelected && 'bg-[#f0ebe3] shadow-[inset_0_0_0_1px_rgba(219,208,194,0.7)]'
+          isSelected && 'bg-[#f0ebe3] shadow-[inset_0_0_0_1px_rgba(219,208,194,0.7)]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#dfd0bb]'
         )}
         style={{ paddingLeft: `${8 + level * 16}px` }}
       >
         <div className="flex h-4 w-4 shrink-0 items-center justify-center text-[#ccbba8]">
           {isFolder ? (
-            <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onToggleFolder(entry)
+              }}
+              className="inline-flex h-4 w-4 items-center justify-center rounded text-[#ccbba8] transition-colors hover:bg-[#eee7dc] hover:text-[#a08f7d]"
+            >
+              <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
+            </button>
           ) : (
             <span className="h-3.5 w-3.5" />
           )}
@@ -1379,25 +1497,31 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
         ) : (
           <ChevronRight className="h-4 w-4 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
         )}
-      </button>
+      </div>
 
       {isFolder && isExpanded ? (
         <div className="relative">
           <div className="absolute bottom-1 left-[17px] top-0 w-px bg-[#eee4d8]" style={{ left: `${22 + level * 16}px` }} />
           <div className="space-y-0.5 pt-0.5">
-            {children.map((child) => (
-              <ProjectRailTreeNode
-                key={child.path}
-                entry={child}
-                level={level + 1}
-                selectedPath={selectedPath}
-                childEntries={childEntries}
-                expandedPaths={expandedPaths}
-                loadingPaths={loadingPaths}
-                onOpen={onOpen}
-                onToggleFolder={onToggleFolder}
-              />
-            ))}
+            {children.length > 0 ? (
+              children.map((child) => (
+                <ProjectRailTreeNode
+                  key={child.path}
+                  entry={child}
+                  level={level + 1}
+                  selectedPath={selectedPath}
+                  childEntries={childEntries}
+                  expandedPaths={expandedPaths}
+                  loadingPaths={loadingPaths}
+                  onOpen={onOpen}
+                  onToggleFolder={onToggleFolder}
+                />
+              ))
+            ) : !isLoading ? (
+              <div className="px-2 py-1.5 text-[11px] italic text-[#c3b6a8]" style={{ paddingLeft: `${30 + level * 16}px` }}>
+                这个文件夹目前是空的
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1411,6 +1535,22 @@ function inferPreviewLanguage(fileName: string, kind?: FilePreviewPayload['kind'
   if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') return ext
   if (ext === 'rs' || ext === 'py' || ext === 'json' || ext === 'css' || ext === 'html' || ext === 'sh' || ext === 'md' || ext === 'sql' || ext === 'yaml' || ext === 'yml') return ext
   return 'text'
+}
+
+function sortRailDirectoryEntries(entries: DirectoryEntryPreview[], sortMode: 'recent' | 'name') {
+  const next = [...entries]
+  next.sort((a, b) => {
+    if (a.kind !== b.kind) {
+      return a.kind === 'folder' ? -1 : 1
+    }
+    if (sortMode === 'recent') {
+      const aTime = a.modified_ms ?? 0
+      const bTime = b.modified_ms ?? 0
+      if (aTime !== bTime) return bTime - aTime
+    }
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
+  return next
 }
 
 const ChatTranscript = React.memo(function ChatTranscript({

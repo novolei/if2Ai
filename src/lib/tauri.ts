@@ -135,10 +135,12 @@ export interface DirectoryEntryPreview {
 export interface FilePreviewPayload {
   name: string;
   path: string;
-  kind: 'markdown' | 'code' | 'image' | 'pdf';
+  kind: 'markdown' | 'code' | 'image' | 'pdf' | 'video' | 'html';
   mime_type?: string | null;
   content?: string | null;
   data_base64?: string | null;
+  editable: boolean;
+  language?: string | null;
 }
 
 /**
@@ -333,6 +335,13 @@ export async function readFilePreview(
   maxBytes = 128 * 1024
 ): Promise<FilePreviewPayload> {
   return await invoke<FilePreviewPayload>('read_file_preview', { path, maxBytes });
+}
+
+export async function writeFileContents(
+  path: string,
+  content: string
+): Promise<void> {
+  return await invoke<void>('write_file_contents', { path, content });
 }
 
 /**

@@ -78,7 +78,10 @@ export interface ChatWorkspaceProps {
   onPermissionModeChange: Dispatch<SetStateAction<PermissionMode>>
   todos: TodoItem[]
   leftPaneWidth: number
+  isLeftPaneCollapsed: boolean
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void
+  onToggleLeftPane: () => void
   onStartWindowDrag: (event: React.MouseEvent<HTMLElement>) => void
+  onPreviewFocusChange: (active: boolean) => void
   runningSessionIds: string[]
 }

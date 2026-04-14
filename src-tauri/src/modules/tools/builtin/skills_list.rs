@@ -36,9 +36,9 @@ pub fn skills_list_tool_entry() -> ToolEntry {
                 .map(|s| s.to_lowercase());
 
             let workdir = {
-                let lock = ctx.lock().map_err(|e| {
-                    ToolError::Handler(format!("Failed to lock tool context: {e}"))
-                })?;
+                let lock = ctx
+                    .lock()
+                    .map_err(|e| ToolError::Handler(format!("Failed to lock tool context: {e}")))?;
                 lock.workdir.clone()
             };
 
@@ -50,8 +50,11 @@ pub fn skills_list_tool_entry() -> ToolEntry {
                 .filter_map(|entry| {
                     // Category filter against name, description, or inferred tags
                     if let Some(cat) = &category_filter {
-                        let haystack =
-                            format!("{} {}", entry.name.to_lowercase(), entry.description.to_lowercase());
+                        let haystack = format!(
+                            "{} {}",
+                            entry.name.to_lowercase(),
+                            entry.description.to_lowercase()
+                        );
                         if !haystack.contains(cat.as_str()) {
                             return None;
                         }

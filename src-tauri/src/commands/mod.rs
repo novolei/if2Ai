@@ -71,6 +71,7 @@ pub use agent::{
 pub use project::{
     create_permanent_worktree, create_project, delete_project, get_project, list_directory_preview,
     list_projects, open_directory_path, open_project_in_finder, read_file_preview, rename_project,
+    write_file_contents,
 };
 #[allow(unused_imports)]
 pub use session::{

@@ -28,8 +28,11 @@ pub mod powershell;
 pub mod repl;
 pub mod send_user_message;
 pub mod skill;
+pub mod skill_find;
 pub mod skill_manage;
 pub mod skill_search;
+pub mod skill_view;
+pub mod skills_categories;
 pub mod skills_list;
 pub mod sleep;
 pub mod structured_output;
@@ -91,9 +94,15 @@ pub use send_user_message::send_user_message_tool_entry;
 #[allow(unused_imports)]
 pub use skill::skill_tool_entry;
 #[allow(unused_imports)]
+pub use skill_find::skill_find_tool_entry;
+#[allow(unused_imports)]
 pub use skill_manage::skill_manage_tool_entry;
 #[allow(unused_imports)]
 pub use skill_search::skill_search_tool_entry;
+#[allow(unused_imports)]
+pub use skill_view::skill_view_tool_entry;
+#[allow(unused_imports)]
+pub use skills_categories::skills_categories_tool_entry;
 #[allow(unused_imports)]
 pub use skills_list::skills_list_tool_entry;
 #[allow(unused_imports)]

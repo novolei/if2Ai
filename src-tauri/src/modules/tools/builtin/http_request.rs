@@ -3,10 +3,12 @@
 //! Provides flexible HTTP request functionality with method selection.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use reqwest::Client;
 use serde_json::Value;
+use url::{Host, Url};
 
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
@@ -19,6 +21,93 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 #[allow(dead_code)]
 const MAX_RESPONSE_SIZE: usize = 1024 * 1024;
 
+/// Cloud metadata IP ranges that should be blocked to prevent SSRF attacks.
+///
+/// These addresses are used by cloud providers to expose instance metadata:
+/// - 169.254.0.0/16: AWS, Azure, GCP, Alibaba Cloud metadata
+const BLOCKED_IP_RANGES: &[&str] = &[
+    "169.254.0.0/16", // AWS/Azure/GCP/Alibaba Cloud metadata
+];
+
+/// Hostnames that should be blocked to prevent SSRF attacks.
+const BLOCKED_HOSTS: &[&str] = &[
+    "metadata.google.internal", // GCP metadata
+    "metadata.goog",            // GCP alternative
+    "169.254.169.254",          // Cloud metadata (all providers)
+    "169.254.169.253",          // Azure DNS
+    "100.100.100.200",          // Alibaba Cloud metadata
+];
+
+/// Check if a URL attempts to access cloud metadata endpoints.
+///
+/// Returns an error message if the URL is blocked, None if it's safe.
+fn check_ssrf(url: &Url) -> Option<String> {
+    // Check hostname blocklist
+    let host = url.host_str().unwrap_or("");
+    let host_lower = host.to_lowercase();
+
+    for blocked in BLOCKED_HOSTS {
+        if host_lower == blocked.to_lowercase() {
+            return Some(format!(
+                "SSRF blocked: '{}' is a cloud metadata endpoint",
+                host
+            ));
+        }
+        // Check domain suffix match (e.g., *.metadata.google.internal)
+        if host_lower.ends_with(&blocked.to_lowercase()) && host_lower.len() > blocked.len() {
+            return Some(format!(
+                "SSRF blocked: '{}' resolves to a cloud metadata endpoint",
+                host
+            ));
+        }
+    }
+
+    // Check if host is an IP address in blocked ranges
+    if let Some(Host::Ipv4(ipv4)) = url.host() {
+        let ipv4_addr = ipv4.octets();
+        for range in BLOCKED_IP_RANGES {
+            if let Some((IpAddr::V4(network_ip), prefix_len)) = parse_cidr(range) {
+                let network_octets = network_ip.octets();
+                if prefix_len <= 32 {
+                    let mask = if prefix_len == 0 {
+                        0u32
+                    } else {
+                        !0u32 << (32 - prefix_len)
+                    };
+                    let network_u32 = u32::from_be_bytes(network_octets);
+                    let ip_u32 = u32::from_be_bytes(ipv4_addr);
+                    if (ip_u32 & mask) == (network_u32 & mask) {
+                        return Some(format!(
+                            "SSRF blocked: '{}' is in blocked IP range {}",
+                            ipv4, range
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse a CIDR notation string into (IpAddr, prefix_len).
+#[allow(clippy::unnecessary_wraps)]
+fn parse_cidr(cidr: &str) -> Option<(IpAddr, u8)> {
+    let parts: Vec<&str> = cidr.split('/').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let ip_str = parts[0];
+    let prefix_len: u8 = parts[1].parse().ok()?;
+
+    let ip: IpAddr = if ip_str.contains(':') {
+        ip_str.parse().ok()?
+    } else {
+        IpAddr::V4(ip_str.parse().ok()?)
+    };
+    Some((ip, prefix_len))
+}
+
 /// Creates the http_request tool entry for the registry.
 #[allow(dead_code)]
 #[must_use]
@@ -30,6 +119,15 @@ pub fn entry() -> ToolEntry {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| ToolError::Handler("missing required parameter: url".to_string()))?
                 .to_string();
+
+            // SSRF protection: check if URL attempts to access cloud metadata
+            let parsed_url = Url::parse(&url)
+                .map_err(|e| ToolError::Handler(format!("invalid URL '{}': {}", url, e)))?;
+            if let Some(blocked_msg) = check_ssrf(&parsed_url) {
+                return Err(ToolError::Handler(blocked_msg));
+            }
+
+            let url_str = parsed_url.as_str().to_string();
 
             let method = args
                 .get("method")
@@ -53,13 +151,13 @@ pub fn entry() -> ToolEntry {
                 .map_err(|e| ToolError::Handler(format!("failed to create HTTP client: {}", e)))?;
 
             let mut request = match method.as_str() {
-                "GET" => client.get(&url),
-                "POST" => client.post(&url),
-                "PUT" => client.put(&url),
-                "DELETE" => client.delete(&url),
-                "PATCH" => client.patch(&url),
-                "HEAD" => client.head(&url),
-                "OPTIONS" => client.request(reqwest::Method::OPTIONS, &url),
+                "GET" => client.get(&url_str),
+                "POST" => client.post(&url_str),
+                "PUT" => client.put(&url_str),
+                "DELETE" => client.delete(&url_str),
+                "PATCH" => client.patch(&url_str),
+                "HEAD" => client.head(&url_str),
+                "OPTIONS" => client.request(reqwest::Method::OPTIONS, &url_str),
                 _ => {
                     return Err(ToolError::Handler(format!(
                         "unsupported HTTP method: {}",
@@ -165,5 +263,35 @@ mod tests {
         assert_eq!(entry.name, "http_request");
         assert_eq!(entry.toolset, "web");
         assert!(!entry.disabled);
+    }
+
+    #[test]
+    fn test_ssrf_blocks_metadata_ip() {
+        let url = Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+        assert!(check_ssrf(&url).is_some());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_metadata_hostname() {
+        let url = Url::parse("http://metadata.google.internal/computeMetadata/v1/").unwrap();
+        assert!(check_ssrf(&url).is_some());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_alibaba_metadata() {
+        let url = Url::parse("http://100.100.100.200/latest/meta-data/").unwrap();
+        assert!(check_ssrf(&url).is_some());
+    }
+
+    #[test]
+    fn test_ssrf_allows_normal_url() {
+        let url = Url::parse("https://www.example.com/api/data").unwrap();
+        assert!(check_ssrf(&url).is_none());
+    }
+
+    #[test]
+    fn test_ssrf_allows_github() {
+        let url = Url::parse("https://api.github.com/repos/example").unwrap();
+        assert!(check_ssrf(&url).is_none());
     }
 }

@@ -33,6 +33,8 @@ pub struct FilePreviewPayload {
     pub mime_type: Option<String>,
     pub content: Option<String>,
     pub data_base64: Option<String>,
+    pub editable: bool,
+    pub language: Option<String>,
 }
 
 /// Create a new project.
@@ -199,7 +201,7 @@ pub async fn read_file_preview(
     max_bytes: Option<usize>,
 ) -> Result<FilePreviewPayload, String> {
     let file_path = PathBuf::from(path);
-    let max_size = max_bytes.unwrap_or(128 * 1024).max(1024).min(512 * 1024);
+    let max_size = max_bytes.unwrap_or(128 * 1024).clamp(1024, 512 * 1024);
 
     tokio::task::spawn_blocking(move || {
         let metadata = std::fs::metadata(&file_path).map_err(|err| err.to_string())?;
@@ -221,31 +223,49 @@ pub async fn read_file_preview(
 
         if let Some(mime_type) = preview_mime_type(&extension) {
             let bytes = std::fs::read(&file_path).map_err(|err| err.to_string())?;
+            let preview_kind = preview_binary_kind(mime_type);
             return Ok(FilePreviewPayload {
                 name,
                 path: file_path.to_string_lossy().to_string(),
-                kind: if mime_type == "application/pdf" {
-                    "pdf".to_string()
-                } else {
-                    "image".to_string()
-                },
+                kind: preview_kind.to_string(),
                 mime_type: Some(mime_type.to_string()),
                 content: None,
                 data_base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                editable: false,
+                language: None,
             });
         }
 
-        let content =
-            std::fs::read_to_string(&file_path).map_err(|_| "file is not valid UTF-8 text".to_string())?;
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|_| "file is not valid UTF-8 text".to_string())?;
+
+        let text_kind = preview_text_kind(&extension);
 
         Ok(FilePreviewPayload {
             name,
             path: file_path.to_string_lossy().to_string(),
-            kind: preview_text_kind(&extension).to_string(),
-            mime_type: None,
+            kind: text_kind.to_string(),
+            mime_type: if text_kind == "html" {
+                Some("text/html".to_string())
+            } else {
+                Some("text/plain".to_string())
+            },
             content: Some(content),
             data_base64: None,
+            editable: preview_text_editable(text_kind),
+            language: preview_language(&extension).map(|value| value.to_string()),
         })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn write_file_contents(path: String, content: String) -> Result<(), String> {
+    let file_path = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        std::fs::write(&file_path, content).map_err(|err| err.to_string())
     })
     .await
     .map_err(|err| err.to_string())?
@@ -260,14 +280,52 @@ fn preview_mime_type(extension: &str) -> Option<&'static str> {
         "bmp" => Some("image/bmp"),
         "svg" => Some("image/svg+xml"),
         "pdf" => Some("application/pdf"),
+        "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        "webm" => Some("video/webm"),
+        "m4v" => Some("video/x-m4v"),
         _ => None,
+    }
+}
+
+fn preview_binary_kind(mime_type: &str) -> &'static str {
+    if mime_type == "application/pdf" {
+        "pdf"
+    } else if mime_type.starts_with("video/") {
+        "video"
+    } else {
+        "image"
     }
 }
 
 fn preview_text_kind(extension: &str) -> &'static str {
     match extension {
         "md" | "markdown" => "markdown",
+        "html" | "htm" => "html",
         _ => "code",
+    }
+}
+
+fn preview_text_editable(kind: &str) -> bool {
+    matches!(kind, "markdown" | "code" | "html")
+}
+
+fn preview_language(extension: &str) -> Option<&'static str> {
+    match extension {
+        "md" | "markdown" => Some("markdown"),
+        "ts" => Some("typescript"),
+        "tsx" => Some("tsx"),
+        "js" => Some("javascript"),
+        "jsx" => Some("jsx"),
+        "json" => Some("json"),
+        "css" => Some("css"),
+        "html" | "htm" => Some("html"),
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "sh" => Some("shell"),
+        "yml" | "yaml" => Some("yaml"),
+        "sql" => Some("sql"),
+        _ => Some("text"),
     }
 }
 
