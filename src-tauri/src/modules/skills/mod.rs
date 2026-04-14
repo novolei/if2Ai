@@ -7,6 +7,7 @@
 //! - Skill sync: manifest-based bundled skill synchronization
 //! - Skill commands: slash command integration
 
+pub mod commands;
 pub mod guard;
 pub mod hub;
 pub mod manager;
