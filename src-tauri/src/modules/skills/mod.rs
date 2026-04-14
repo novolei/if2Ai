@@ -10,3 +10,4 @@
 pub mod guard;
 pub mod hub;
 pub mod manager;
+pub mod sync;
