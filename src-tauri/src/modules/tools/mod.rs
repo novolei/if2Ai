@@ -97,6 +97,12 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::skill_search_tool_entry()) {
         eprintln!("Failed to register SkillSearch tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::skills_list_tool_entry()) {
+        eprintln!("Failed to register skills_list tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::skill_manage_tool_entry()) {
+        eprintln!("Failed to register skill_manage tool: {}", e);
+    }
     if let Err(e) = registry.register(builtin::tool_search::tool_search_tool_entry(Arc::new(
         registry.clone(),
     ))) {

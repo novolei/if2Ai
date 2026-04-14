@@ -94,6 +94,14 @@ pub struct HubLock {
 }
 
 impl HubLock {
+    /// Get a clone of all entries.
+    pub fn get_entries(&self) -> Vec<HubLockEntry> {
+        self.entries
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
     /// Load hub lock from file, or return empty lock if file doesn't exist.
     pub fn load(lock_file: impl Into<PathBuf>) -> HubResult<Self> {
         let lock_file: PathBuf = lock_file.into();
@@ -303,7 +311,8 @@ pub struct HubState {
     pub sources: Vec<BoxedSkillSource>,
     /// GitHub authentication if configured.
     pub auth: Option<crate::modules::skills::hub::github::GitHubAuth>,
-    lock: HubLock,
+    /// Lock file manager for tracking installed skills.
+    pub lock: HubLock,
 }
 
 impl HubState {

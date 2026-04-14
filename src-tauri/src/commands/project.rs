@@ -2,6 +2,8 @@
 //!
 //! Provides project CRUD commands for the frontend.
 
+use base64::Engine;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -13,6 +15,24 @@ use crate::modules::projects::{Project, ProjectError, ProjectMeta};
 /// Convert ProjectError to String for Tauri.
 fn project_error_to_string(err: ProjectError) -> String {
     err.to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DirectoryEntryPreview {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub modified_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilePreviewPayload {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub mime_type: Option<String>,
+    pub content: Option<String>,
+    pub data_base64: Option<String>,
 }
 
 /// Create a new project.
@@ -101,6 +121,154 @@ pub async fn open_project_in_finder(state: State<'_, AppState>, id: String) -> R
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// Open an arbitrary directory path in the system file manager.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn open_directory_path(path: String) -> Result<(), String> {
+    let directory = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        open_path_in_file_manager(&directory).map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// List first-level directory entries for rail preview.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn list_directory_preview(
+    path: String,
+    limit: Option<usize>,
+) -> Result<Vec<DirectoryEntryPreview>, String> {
+    let directory = PathBuf::from(path);
+    let max_items = limit.unwrap_or(32).clamp(1, 120);
+
+    tokio::task::spawn_blocking(move || {
+        let entries = std::fs::read_dir(&directory).map_err(|err| err.to_string())?;
+        let mut items = Vec::new();
+
+        for entry_result in entries {
+            let entry = entry_result.map_err(|err| err.to_string())?;
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let path = entry.path();
+            let metadata = entry.metadata().map_err(|err| err.to_string())?;
+            let kind = if metadata.is_dir() {
+                "folder"
+            } else if metadata.is_file() {
+                "file"
+            } else {
+                continue;
+            };
+            let modified_ms = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis());
+
+            items.push(DirectoryEntryPreview {
+                name: file_name,
+                path: path.to_string_lossy().to_string(),
+                kind: kind.to_string(),
+                modified_ms,
+            });
+        }
+
+        items.sort_by(|a, b| match (a.kind.as_str(), b.kind.as_str()) {
+            ("folder", "file") => std::cmp::Ordering::Less,
+            ("file", "folder") => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        });
+        items.truncate(max_items);
+        Ok(items)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// Read a text file for inline preview.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn read_file_preview(
+    path: String,
+    max_bytes: Option<usize>,
+) -> Result<FilePreviewPayload, String> {
+    let file_path = PathBuf::from(path);
+    let max_size = max_bytes.unwrap_or(128 * 1024).max(1024).min(512 * 1024);
+
+    tokio::task::spawn_blocking(move || {
+        let metadata = std::fs::metadata(&file_path).map_err(|err| err.to_string())?;
+        if !metadata.is_file() {
+            return Err("path is not a file".to_string());
+        }
+        if metadata.len() as usize > max_size {
+            return Err("file too large for inline preview".to_string());
+        }
+        let name = file_path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
+        let extension = file_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if let Some(mime_type) = preview_mime_type(&extension) {
+            let bytes = std::fs::read(&file_path).map_err(|err| err.to_string())?;
+            return Ok(FilePreviewPayload {
+                name,
+                path: file_path.to_string_lossy().to_string(),
+                kind: if mime_type == "application/pdf" {
+                    "pdf".to_string()
+                } else {
+                    "image".to_string()
+                },
+                mime_type: Some(mime_type.to_string()),
+                content: None,
+                data_base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+            });
+        }
+
+        let content =
+            std::fs::read_to_string(&file_path).map_err(|_| "file is not valid UTF-8 text".to_string())?;
+
+        Ok(FilePreviewPayload {
+            name,
+            path: file_path.to_string_lossy().to_string(),
+            kind: preview_text_kind(&extension).to_string(),
+            mime_type: None,
+            content: Some(content),
+            data_base64: None,
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn preview_mime_type(extension: &str) -> Option<&'static str> {
+    match extension {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "svg" => Some("image/svg+xml"),
+        "pdf" => Some("application/pdf"),
+        _ => None,
+    }
+}
+
+fn preview_text_kind(extension: &str) -> &'static str {
+    match extension {
+        "md" | "markdown" => "markdown",
+        _ => "code",
+    }
 }
 
 /// Create a permanent git worktree for a project.

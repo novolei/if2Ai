@@ -27,6 +27,9 @@ export interface Message {
   degradedReason?: string
   resumeAvailable?: boolean
   resumeCursor?: string
+  statusLabel?: string
+  statusKind?: 'info' | 'success' | 'partial' | 'failed'
+  isRecovering?: boolean
 }
 
 export interface Conversation {

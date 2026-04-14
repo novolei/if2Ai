@@ -28,7 +28,13 @@ impl ToolExecutionBroker {
         &self,
         context: &SessionExecutionContext,
     ) -> crate::modules::tools::SharedToolContext {
-        Arc::new(Mutex::new(ToolContext::new(
+        let session_id = if context.session_id.is_empty() {
+            None
+        } else {
+            Some(context.session_id.clone())
+        };
+        Arc::new(Mutex::new(ToolContext::new_with_session(
+            session_id,
             context.workdir.clone(),
             context.permission_mode,
         )))

@@ -57,6 +57,7 @@ impl AppState {
 pub mod agent;
 pub mod project;
 pub mod session;
+pub mod skills_hub;
 pub mod slash;
 pub mod stream_outcome;
 pub mod tools;
@@ -68,8 +69,8 @@ pub use agent::{
 };
 #[allow(unused_imports)]
 pub use project::{
-    create_permanent_worktree, create_project, delete_project, get_project, list_projects,
-    open_project_in_finder, rename_project,
+    create_permanent_worktree, create_project, delete_project, get_project, list_directory_preview,
+    list_projects, open_directory_path, open_project_in_finder, read_file_preview, rename_project,
 };
 #[allow(unused_imports)]
 pub use session::{
@@ -77,13 +78,22 @@ pub use session::{
     rename_session, set_session_pinned,
 };
 #[allow(unused_imports)]
+pub use skills_hub::{
+    hub_audit, hub_browse, hub_check, hub_inspect, hub_install, hub_publish, hub_search,
+    hub_snapshot_export, hub_snapshot_import, hub_tap_add, hub_tap_list, hub_tap_remove,
+    hub_uninstall, hub_update,
+};
+#[allow(unused_imports)]
 pub use slash::{
     execute_slash_command, list_agents, list_skills, list_slash_commands, parse_slash_command,
-    suggest_slash_commands,
+    resolve_skill_slash, suggest_slash_commands,
 };
 #[allow(unused_imports)]
 pub use tools::{
-    execute_tool, get_tool_definitions, list_tools, list_toolsets, ToolCallResult, ToolDefinition,
+    execute_tool, fetch_skills_market_audits, get_tool_definitions, list_tools, list_toolsets,
+    ToolCallResult, ToolDefinition,
 };
 #[allow(unused_imports)]
-pub use window::{close_settings_window, open_settings_window};
+pub use window::{
+    close_settings_window, focus_main_window_and_prefill_prompt, open_settings_window,
+};

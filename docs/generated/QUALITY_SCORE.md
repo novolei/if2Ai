@@ -169,3 +169,9 @@
 | 2026-04-14 | Phase 6F Slice 6F.5 完成：Hub State Management (HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit/unified_search)，26 hub tests pass      |
 | 2026-04-14 | Phase 6F Slice 6F.6 完成：Skill Sync Manifest (manifest v1/v2, compute_dir_hash, sync with user mod detection)，10 sync tests pass      |
 | 2026-04-14 | Phase 6F Slice 6F.7 完成：Skill Commands (normalize_command_key, scan/resolve/invocation builder, platform compat)，7 commands tests pass      |
+| 2026-04-14 | Phase 6F Slice 6F.8 完成：Skill Config Variables (SkillConfigVar/Resolver, extract_config_vars, format_config_block)，8 tests pass      |
+| 2026-04-14 | Phase 6F Slice 6F.9 完成：Frontend UI Extensions (SkillsHubView/SkillEditor/SkillSecurityReport)，1137 lines TSX      |
+| 2026-04-14 | Phase 6F Slice 6F.10 完成：Integration Tests (122 skills tests pass: guard:38, manager:33, hub:26, sync:10, commands:7, config:8) |
+| 2026-04-14 | Phase 6F Slice 6F.11 完成：External Skills Dirs & Remote Passthrough (ExternalSkillsDirs + RemotePassthroughManager, 16 tests pass) |
+| 2026-04-14 | Phase 6F Slice 6F.12 完成：Snapshot Export/Import (SnapshotManager + SkillSnapshot types, 16 tests pass) |
+| 2026-04-14 | **Phase 6F ALL COMPLETE** (12/12 slices, 154+ tests pass) |

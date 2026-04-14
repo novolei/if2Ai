@@ -19,10 +19,11 @@
 //!
 //! # Usage
 //!
-//! ```
+//! ```ignore
 //! use skills::guard::{SkillsGuard, TrustLevel};
 //!
 //! let guard = SkillsGuard::new();
+//! // Scan a skill directory (path must exist)
 //! let result = guard.scan(skill_dir, "community");
 //! let (allowed, reason) = guard.should_allow_install(&result);
 //! ```

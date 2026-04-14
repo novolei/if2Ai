@@ -4,9 +4,15 @@
 //! from project-level and user-level skill directories.
 //! See docs/bs_gap/08-critical-fix-priority.md §F6.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use crate::modules::control_plane::audit::AuditEmitter;
+use crate::modules::skills::config::{
+    extract_config_vars, format_skill_config_block, SkillConfigResolver,
+};
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::skill_source_rank;
 use crate::modules::tools::registry::{SkillReviewStatus, ToolEntry, ToolError, ToolHandler};
@@ -18,6 +24,35 @@ pub enum SkillSource {
     User,
     Builtin,
     RemoteQuarantine,
+}
+
+static BUNDLED_SKILLS_DIR: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
+
+/// Stores the resolved bundled skills directory from Tauri runtime.
+///
+/// This should be called during app startup after Tauri path resolution.
+pub fn set_bundled_skills_dir(path: PathBuf) {
+    if let Ok(mut guard) = bundled_skills_dir_cell().write() {
+        *guard = Some(path);
+    }
+}
+
+fn bundled_skills_dir_cell() -> &'static RwLock<Option<PathBuf>> {
+    BUNDLED_SKILLS_DIR.get_or_init(|| RwLock::new(None))
+}
+
+fn bundled_skills_dir() -> Option<PathBuf> {
+    bundled_skills_dir_cell()
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+#[cfg(test)]
+fn clear_bundled_skills_dir_for_test() {
+    if let Ok(mut guard) = bundled_skills_dir_cell().write() {
+        *guard = None;
+    }
 }
 
 impl SkillSource {
@@ -51,6 +86,9 @@ struct SkillManifest {
     api_version: String,
     min_app_version: String,
     capabilities: Vec<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    tags: Vec<String>,
     review: SkillReviewMeta,
 }
 
@@ -128,9 +166,33 @@ pub fn skill_tool_entry() -> ToolEntry {
                 }
             };
 
-            tokio::fs::read_to_string(&skill_path)
+            let content = tokio::fs::read_to_string(&skill_path)
                 .await
-                .map_err(|e| ToolError::Handler(format!("Failed to read skill file: {e}")))
+                .map_err(|e| ToolError::Handler(format!("Failed to read skill file: {e}")))?;
+
+            // A3: Validate required_environment_variables from frontmatter.
+            let env_warning = check_required_env_vars(&content);
+
+            // A3: Resolve config variables from skill frontmatter + config file.
+            let config_block = resolve_skill_config_block(skill, &content, &workdir);
+
+            let mut output = format!(
+                "Skill '{skill}' loaded from '{}'.\n\
+Use the following skill content directly.\n\
+Do NOT call read_file for local skill cache paths (e.g. ~/.continue/.skills/... or similar), \
+because they can be outside the sandbox workdir and will fail.\n\n{}",
+                skill_path.display(),
+                content
+            );
+
+            if let Some(warning) = env_warning {
+                output.push_str(&format!("\n\n{warning}"));
+            }
+            if !config_block.is_empty() {
+                output.push_str(&format!("\n\n{config_block}"));
+            }
+
+            Ok(output)
         })
     });
 
@@ -162,57 +224,89 @@ pub fn resolve_skill_path(
 ) -> Result<std::path::PathBuf, String> {
     let roots = discover_skill_roots_with_metadata(workdir);
     let mut blocked_reasons = Vec::new();
+    let mut found_in_quarantine = false;
     for root in roots {
         let candidate = root.path.join(skill).join("SKILL.md");
         if candidate.is_file() {
             match is_skill_runnable(&candidate, root.source) {
                 Ok(()) => return Ok(candidate),
-                Err(reason) => blocked_reasons.push(format!(
-                    "source={} read_only={} path={} reason={reason}",
-                    root.source.as_label(),
-                    root.read_only,
-                    candidate.display()
-                )),
+                Err(reason) => {
+                    if root.source.as_label() == "remote-quarantine" {
+                        found_in_quarantine = true;
+                    }
+                    blocked_reasons.push(format!(
+                        "source={} read_only={} path={} reason={reason}",
+                        root.source.as_label(),
+                        root.read_only,
+                        candidate.display()
+                    ))
+                }
             }
         }
         let legacy = root.path.join(format!("{skill}.md"));
         if legacy.is_file() {
             match is_skill_runnable(&legacy, root.source) {
                 Ok(()) => return Ok(legacy),
-                Err(reason) => blocked_reasons.push(format!(
-                    "source={} read_only={} path={} reason={reason}",
-                    root.source.as_label(),
-                    root.read_only,
-                    legacy.display()
-                )),
+                Err(reason) => {
+                    if root.source.as_label() == "remote-quarantine" {
+                        found_in_quarantine = true;
+                    }
+                    blocked_reasons.push(format!(
+                        "source={} read_only={} path={} reason={reason}",
+                        root.source.as_label(),
+                        root.read_only,
+                        legacy.display()
+                    ))
+                }
             }
         }
     }
     if !blocked_reasons.is_empty() {
+        let quarantine_hint = if found_in_quarantine {
+            " Hint: This skill is in quarantine. Run '/skills review-path <path>' to review and approve it, then '/skills approve-path <path>' to activate."
+        } else {
+            ""
+        };
         return Err(format!(
-            "Skill '{skill}' is blocked by review gate: {}",
-            blocked_reasons.join(" || ")
+            "Skill '{skill}' is blocked by review gate: {}{}",
+            blocked_reasons.join(" || "),
+            quarantine_hint
         ));
     }
-    Err(format!("Skill '{skill}' not found in any search path"))
+    Err(format!("Skill '{skill}' not found in any search path. Install it from Settings > Skills Market or create with /skills create <name>."))
 }
 
 fn is_skill_runnable(skill_path: &std::path::Path, source: SkillSource) -> Result<(), String> {
-    if source == SkillSource::RemoteQuarantine {
-        return Err("skill is in quarantine source".to_string());
-    }
-    let manifest = load_skill_manifest(skill_path)?;
-    if manifest.review.status.allows_activation() {
-        Ok(())
+    let manifest = load_skill_manifest(skill_path, source)?;
+    if let Some(manifest) = manifest {
+        if manifest.review.status.allows_activation() {
+            Ok(())
+        } else if source == SkillSource::RemoteQuarantine {
+            Err("skill is in quarantine and not yet approved. Run '/skills review-path <path>' to review, then '/skills approve-path <path>' to activate.".to_string())
+        } else {
+            Err(format!(
+                "skill '{}' blocked by review status {:?}",
+                manifest.id, manifest.review.status
+            ))
+        }
     } else {
-        Err(format!(
-            "skill '{}' blocked by review status {:?}",
-            manifest.id, manifest.review.status
-        ))
+        // No manifest: quarantine source requires manifest, others allow legacy
+        if source == SkillSource::RemoteQuarantine {
+            return Err(
+                "skill in quarantine requires a manifest. Run '/skills review-path <path>' first."
+                    .to_string(),
+            );
+        }
+        // Transitional compatibility for legacy bundled skills:
+        // builtin skills are shipped by the app and may not yet carry skill.json.
+        Ok(())
     }
 }
 
-fn load_skill_manifest(skill_path: &std::path::Path) -> Result<SkillManifest, String> {
+fn load_skill_manifest(
+    skill_path: &std::path::Path,
+    source: SkillSource,
+) -> Result<Option<SkillManifest>, String> {
     let skill_file_name = skill_path
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
@@ -225,6 +319,9 @@ fn load_skill_manifest(skill_path: &std::path::Path) -> Result<SkillManifest, St
         .ok_or_else(|| "missing skill directory".to_string())?;
     let manifest_path = skill_dir.join("skill.json");
     if !manifest_path.is_file() {
+        if fallback_review_status_without_manifest(source, skill_dir).is_some() {
+            return Ok(None);
+        }
         return Err("skill.json missing; fail-closed".to_string());
     }
     let raw = std::fs::read_to_string(&manifest_path)
@@ -258,7 +355,51 @@ fn load_skill_manifest(skill_path: &std::path::Path) -> Result<SkillManifest, St
     {
         return Err("skill.json active/review_passed requires review.lastReviewedAt".to_string());
     }
-    Ok(manifest)
+    Ok(Some(manifest))
+}
+
+fn is_trusted_bundled_skill_path(skill_path: &std::path::Path) -> bool {
+    let Ok(canonical_skill_path) = skill_path.canonicalize() else {
+        return false;
+    };
+    if let Some(bundled_root) = bundled_skills_dir() {
+        if let Ok(canonical_root) = bundled_root.canonicalize() {
+            if canonical_skill_path.starts_with(canonical_root) {
+                return true;
+            }
+        }
+    }
+    // Dev-mode fallback: when Tauri resource resolution is unavailable, still trust
+    // workspace bundled skills roots to avoid classifying builtins as draft.
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    let dev_roots = [
+        cwd.join("src-tauri/resources/bundled-skills"),
+        cwd.join("resources/bundled-skills"),
+    ];
+    dev_roots.iter().any(|root| {
+        root.canonicalize()
+            .map(|canonical_root| canonical_skill_path.starts_with(canonical_root))
+            .unwrap_or(false)
+    })
+}
+
+/// Fallback review status when `skill.json` is missing.
+///
+/// Bundled trusted skills may temporarily run without manifest while we migrate
+/// legacy packaged skills to explicit manifest governance.
+#[must_use]
+pub(crate) fn fallback_review_status_without_manifest(
+    source: SkillSource,
+    skill_dir: &std::path::Path,
+) -> Option<&'static str> {
+    if source == SkillSource::Builtin && is_trusted_bundled_skill_path(&skill_dir.join("SKILL.md"))
+    {
+        Some("active")
+    } else {
+        None
+    }
 }
 
 /// Local prompt/security review for skill markdown content.
@@ -284,6 +425,180 @@ pub fn local_review_skill_content(content: &str) -> Result<(), String> {
         return Err("review blocked: empty skill content".to_string());
     }
     Ok(())
+}
+
+/// Check `required_environment_variables` declared in SKILL.md frontmatter.
+///
+/// Returns a warning string if any required env vars are missing so the model
+/// can inform the user before attempting to use the skill.
+pub(crate) fn check_required_env_vars(skill_content: &str) -> Option<String> {
+    let vars = parse_frontmatter_list(skill_content, "required_environment_variables");
+    if vars.is_empty() {
+        return None;
+    }
+    let missing: Vec<&str> = vars
+        .iter()
+        .filter(|v| std::env::var(v.as_str()).is_err())
+        .map(|v| v.as_str())
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[SKILL WARNING] The following required environment variables are not set: {}. \
+         Configure them in Settings > Skills before using this skill.",
+        missing.join(", ")
+    ))
+}
+
+/// Resolve `config:` variables from SKILL.md frontmatter against the workdir config file.
+///
+/// Looks for config values in `{workdir}/.if2ai/config.yaml` first, then
+/// `~/.if2ai/config.yaml`. Returns a formatted config block string (may be empty).
+pub(crate) fn resolve_skill_config_block(
+    skill_name: &str,
+    skill_content: &str,
+    workdir: &std::path::Path,
+) -> String {
+    // Parse frontmatter as JSON-compatible value for extract_config_vars
+    let frontmatter_json = parse_frontmatter_as_json(skill_content);
+    let config_vars = extract_config_vars(&frontmatter_json);
+    if config_vars.is_empty() {
+        return String::new();
+    }
+
+    // Try workdir-local config first, then user home config
+    let resolver = try_load_config_resolver(workdir);
+    let skill_config = resolver.get_for_skill(skill_name);
+    if !skill_config.is_empty() {
+        return format_skill_config_block(skill_name, &skill_config);
+    }
+
+    // Fall back to resolving declared vars with defaults
+    let resolved = resolver.resolve(&config_vars);
+    let non_empty: std::collections::HashMap<_, _> = resolved
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    format_skill_config_block(skill_name, &non_empty)
+}
+
+/// Load a `SkillConfigResolver` from workdir-local or user home config file.
+fn try_load_config_resolver(workdir: &std::path::Path) -> SkillConfigResolver {
+    // Try workdir/.if2ai/config.yaml
+    let local_cfg = workdir.join(".if2ai/config.yaml");
+    if local_cfg.is_file() {
+        if let Ok(resolver) = SkillConfigResolver::from_config_file(&local_cfg) {
+            return resolver;
+        }
+    }
+    // Try ~/.if2ai/config.yaml
+    if let Ok(home) = std::env::var("HOME") {
+        let home_cfg = std::path::PathBuf::from(home).join(".if2ai/config.yaml");
+        if home_cfg.is_file() {
+            if let Ok(resolver) = SkillConfigResolver::from_config_file(&home_cfg) {
+                return resolver;
+            }
+        }
+    }
+    SkillConfigResolver::new()
+}
+
+/// Parse a list value from SKILL.md frontmatter (inline array format: [a, b, c]).
+fn parse_frontmatter_list(content: &str, key: &str) -> Vec<String> {
+    let body = content.strip_prefix("---").unwrap_or(content);
+    let Some((header, _)) = body.split_once("---") else {
+        return Vec::new();
+    };
+    for line in header.lines() {
+        let line = line.trim();
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim() == key {
+                let v = v.trim();
+                if v.starts_with('[') && v.ends_with(']') {
+                    let inner = &v[1..v.len() - 1];
+                    return inner
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+                if !v.is_empty() {
+                    return vec![v.to_string()];
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Parse SKILL.md frontmatter into a serde_json::Value for use with `extract_config_vars`.
+fn parse_frontmatter_as_json(content: &str) -> serde_json::Value {
+    let body = content.strip_prefix("---").unwrap_or(content);
+    let Some((header, _)) = body.split_once("---") else {
+        return serde_json::Value::Object(serde_json::Map::new());
+    };
+
+    let mut map = serde_json::Map::new();
+    let mut in_config_array = false;
+    let mut config_items: Vec<serde_json::Value> = Vec::new();
+    let mut current_item: Option<serde_json::Map<String, serde_json::Value>> = None;
+
+    for line in header.lines() {
+        let trimmed = line.trim();
+        if trimmed == "config:" || trimmed == "configuration:" {
+            in_config_array = true;
+            continue;
+        }
+        if in_config_array {
+            if trimmed.starts_with("- ") || trimmed == "-" {
+                if let Some(item) = current_item.take() {
+                    config_items.push(serde_json::Value::Object(item));
+                }
+                current_item = Some(serde_json::Map::new());
+                let rest = trimmed.trim_start_matches('-').trim();
+                if !rest.is_empty() {
+                    if let Some((k, v)) = rest.split_once(':') {
+                        if let Some(ref mut item) = current_item {
+                            item.insert(
+                                k.trim().to_string(),
+                                serde_json::Value::String(v.trim().to_string()),
+                            );
+                        }
+                    }
+                }
+            } else if trimmed.starts_with(' ') || line.starts_with("  ") {
+                if let (Some(ref mut item), Some((k, v))) =
+                    (&mut current_item, trimmed.split_once(':'))
+                {
+                    item.insert(
+                        k.trim().to_string(),
+                        serde_json::Value::String(v.trim().to_string()),
+                    );
+                }
+            } else {
+                if let Some(item) = current_item.take() {
+                    config_items.push(serde_json::Value::Object(item));
+                }
+                in_config_array = false;
+            }
+        }
+        if !in_config_array {
+            if let Some((k, v)) = trimmed.split_once(':') {
+                map.insert(
+                    k.trim().to_string(),
+                    serde_json::Value::String(v.trim().to_string()),
+                );
+            }
+        }
+    }
+    if let Some(item) = current_item {
+        config_items.push(serde_json::Value::Object(item));
+    }
+    if !config_items.is_empty() {
+        map.insert("config".to_string(), serde_json::Value::Array(config_items));
+    }
+    serde_json::Value::Object(map)
 }
 
 /// Creates a draft skill proposal generated by agent output.
@@ -403,11 +718,7 @@ pub fn discover_skill_roots_with_metadata(workdir: &std::path::Path) -> Vec<Skil
     }
 
     // Built-in app bundled skills (desktop runtime baseline).
-    for dir in &[
-        "src-tauri/resources/bundled-skills",
-        "resources/bundled-skills",
-    ] {
-        let p = workdir.join(dir);
+    for p in discover_builtin_skill_roots(workdir) {
         if p.is_dir() {
             roots.push(SkillRoot {
                 path: p,
@@ -457,12 +768,39 @@ pub fn discover_skill_roots_with_metadata(workdir: &std::path::Path) -> Vec<Skil
     roots
 }
 
+fn discover_builtin_skill_roots(workdir: &std::path::Path) -> Vec<PathBuf> {
+    let mut roots = Vec::<PathBuf>::new();
+    if let Some(configured) = bundled_skills_dir() {
+        roots.push(configured);
+    }
+    // Runtime process cwd fallback (dev mode).
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd.join("src-tauri/resources/bundled-skills"));
+        roots.push(cwd.join("resources/bundled-skills"));
+    }
+    // Compile-time source tree fallback (dev mode when workdir points to user project).
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/bundled-skills"));
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/bundled-skills"));
+    // Session workdir fallback (legacy behavior).
+    roots.push(workdir.join("src-tauri/resources/bundled-skills"));
+    roots.push(workdir.join("resources/bundled-skills"));
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
+
+    fn bundled_dir_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn skill_tool_entry_has_correct_structure() {
@@ -581,6 +919,50 @@ mod tests {
 
         let resolved = resolve_skill_path("demo", &root).expect("active skill should resolve");
         assert!(resolved.ends_with("SKILL.md"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_skill_path_allows_builtin_without_manifest() {
+        let _guard = bundled_dir_lock()
+            .lock()
+            .expect("bundled dir lock should be available");
+        clear_bundled_skills_dir_for_test();
+        let root = std::env::temp_dir().join(format!("if2ai-skill-builtin-{}", Uuid::new_v4()));
+        let bundled_root = root.join("resources/bundled-skills");
+        let skill_dir = bundled_root.join("demo");
+        fs::create_dir_all(&skill_dir).expect("create builtin skill directory");
+        fs::write(skill_dir.join("SKILL.md"), "# Demo").expect("write skill file");
+        set_bundled_skills_dir(bundled_root);
+
+        let resolved = resolve_skill_path("demo", &root)
+            .expect("builtin skill without manifest should resolve");
+        assert!(resolved.ends_with("SKILL.md"));
+        clear_bundled_skills_dir_for_test();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_skill_path_blocks_untrusted_builtin_without_manifest() {
+        let _guard = bundled_dir_lock()
+            .lock()
+            .expect("bundled dir lock should be available");
+        clear_bundled_skills_dir_for_test();
+        let root = std::env::temp_dir().join(format!("if2ai-skill-untrusted-{}", Uuid::new_v4()));
+        let skill_dir = root.join("resources/bundled-skills/demo");
+        fs::create_dir_all(&skill_dir).expect("create builtin skill directory");
+        fs::write(skill_dir.join("SKILL.md"), "# Demo").expect("write skill file");
+
+        let resolved = resolve_skill_path("demo", &root);
+        assert!(
+            resolved.is_err(),
+            "builtin skill without manifest should fail when root is untrusted"
+        );
+        let message = resolved.expect_err("expected failure");
+        assert!(
+            message.contains("skill.json missing; fail-closed"),
+            "unexpected error message: {message}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

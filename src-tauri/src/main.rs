@@ -9,11 +9,15 @@ use std::process::Command;
 use commands::AppState;
 use commands::{
     close_settings_window, create_permanent_worktree, create_project, create_session,
-    delete_project, delete_session, execute_slash_command, execute_tool, get_project, get_session,
-    get_tool_definitions, list_agents, list_project_sessions, list_projects, list_sessions,
-    list_skills, list_slash_commands, list_tools, list_toolsets, open_project_in_finder,
-    open_settings_window, parse_slash_command, rename_project, rename_session, respond_permission,
-    run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
+    delete_project, delete_session, execute_slash_command, execute_tool,
+    fetch_skills_market_audits, focus_main_window_and_prefill_prompt, get_project, get_session,
+    get_tool_definitions, hub_audit, hub_browse, hub_check, hub_inspect, hub_install, hub_publish,
+    hub_search, hub_snapshot_export, hub_snapshot_import, hub_tap_add, hub_tap_list,
+    hub_tap_remove, hub_uninstall, hub_update, list_agents, list_directory_preview,
+    list_project_sessions, list_projects, list_sessions, list_skills, list_slash_commands,
+    list_tools, list_toolsets, open_directory_path, open_project_in_finder, open_settings_window,
+    parse_slash_command, read_file_preview, rename_project, rename_session, resolve_skill_slash,
+    respond_permission, run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
     suggest_slash_commands,
 };
 
@@ -112,10 +116,15 @@ fn main() {
             rename_project,
             delete_project,
             open_project_in_finder,
+            open_directory_path,
+            list_directory_preview,
+            read_file_preview,
             create_permanent_worktree,
             open_settings_window,
             close_settings_window,
+            focus_main_window_and_prefill_prompt,
             execute_tool,
+            fetch_skills_market_audits,
             list_tools,
             get_tool_definitions,
             list_toolsets,
@@ -123,10 +132,46 @@ fn main() {
             list_slash_commands,
             suggest_slash_commands,
             execute_slash_command,
+            resolve_skill_slash,
             list_skills,
             list_agents,
+            // Skills Hub CLI commands
+            hub_browse,
+            hub_search,
+            hub_inspect,
+            hub_check,
+            hub_install,
+            hub_update,
+            hub_audit,
+            hub_uninstall,
+            hub_publish,
+            hub_snapshot_export,
+            hub_snapshot_import,
+            hub_tap_add,
+            hub_tap_remove,
+            hub_tap_list,
         ])
         .setup(|app| {
+            let bundled_skills_dir = ["resources/bundled-skills", "bundled-skills"]
+                .iter()
+                .filter_map(|candidate| {
+                    app.path()
+                        .resolve(candidate, tauri::path::BaseDirectory::Resource)
+                        .ok()
+                })
+                .find(|path| path.is_dir());
+            if let Some(path) = bundled_skills_dir {
+                crate::modules::tools::builtin::skill::set_bundled_skills_dir(path.clone());
+                tracing::info!(
+                    "Resolved bundled skills dir from Tauri resources: {}",
+                    path.display()
+                );
+            } else {
+                tracing::warn!(
+                    "Failed to resolve bundled skills from Tauri resources; fallback only preserves discovery via workdir-relative paths"
+                );
+            }
+
             // Create system tray menu
             let show_item = MenuItem::with_id(app, "show", "Show If2Ai", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

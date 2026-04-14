@@ -93,4 +93,127 @@
       background-position: 200% 50%;
     }
   }
+
+  @keyframes loadingCaretBlink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+    46%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes loadingGlitchBase {
+    0%,
+    91%,
+    100% {
+      transform: translate3d(0, 0, 0);
+      filter: none;
+    }
+    92% {
+      transform: translate3d(-0.008em, 0, 0);
+      filter: saturate(1.03);
+    }
+    94% {
+      transform: translate3d(0.012em, 0, 0);
+      filter: brightness(1.02);
+    }
+    96% {
+      transform: translate3d(-0.006em, 0.006em, 0);
+    }
+  }
+
+  @keyframes loadingGlitchShiftA {
+    0%,
+    91%,
+    100% {
+      opacity: 0;
+      transform: translate3d(0, 0, 0);
+      clip-path: inset(0 0 0 0);
+    }
+    92% {
+      opacity: 0.18;
+      transform: translate3d(0.012em, -0.006em, 0);
+      clip-path: inset(18% 0 54% 0);
+    }
+    95% {
+      opacity: 0.1;
+      transform: translate3d(-0.01em, 0.006em, 0);
+      clip-path: inset(60% 0 10% 0);
+    }
+  }
+
+  @keyframes loadingGlitchShiftB {
+    0%,
+    90%,
+    100% {
+      opacity: 0;
+      transform: translate3d(0, 0, 0);
+      clip-path: inset(0 0 0 0);
+    }
+    93% {
+      opacity: 0.14;
+      transform: translate3d(-0.014em, 0.008em, 0);
+      clip-path: inset(28% 0 42% 0);
+    }
+    96% {
+      opacity: 0.08;
+      transform: translate3d(0.01em, -0.006em, 0);
+      clip-path: inset(70% 0 5% 0);
+    }
+  }
+
+  @keyframes loadingTitleGlow {
+    0%,
+    100% {
+      filter: brightness(1) saturate(1);
+      text-shadow:
+        0 0 0 rgba(255, 127, 50, 0),
+        0 10px 18px rgba(255, 110, 36, 0.14);
+    }
+    50% {
+      filter: brightness(1.03) saturate(1.02);
+      text-shadow:
+        0 0 18px rgba(255, 127, 50, 0.18),
+        0 12px 22px rgba(255, 110, 36, 0.18);
+    }
+  }
+
+  .loading-caret {
+    animation: loadingCaretBlink 1.02s steps(1, end) infinite;
+  }
+
+  .loading-glitch-base {
+    animation: loadingGlitchBase 4.6s linear infinite;
+  }
+
+  .loading-glitch-layer {
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+
+  .loading-glitch-layer-a {
+    animation: loadingGlitchShiftA 4.6s linear infinite;
+  }
+
+  .loading-glitch-layer-b {
+    animation: loadingGlitchShiftB 4.6s linear infinite;
+  }
+
+  .loading-title-main {
+    animation: loadingTitleGlow 3.2s ease-in-out infinite;
+  }
+
+  .loading-title-wordmark {
+    font-family:
+      "SF Pro Rounded",
+      "Avenir Next Rounded",
+      "Arial Rounded MT Bold",
+      "Nunito",
+      var(--font-sans);
+    font-feature-settings: "ss01" 1, "cv11" 1;
+    letter-spacing: -0.07em;
+  }
 }

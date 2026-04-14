@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Circle, ListTodo, Maximize2 } from 'lucide-react'
+import { ArrowRight, Check, CircleDashed, ListTodo, Maximize2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface TodoItem {
@@ -74,16 +74,7 @@ function TodoItemRow({ index, todo }: { index: number; todo: TodoItem }) {
 
   return (
     <div className="flex h-[30px] items-center gap-2.5 text-[13px] leading-[1.3] tracking-[-0.01em] text-[#1f1f1f]">
-      <div className="flex h-5 w-5 shrink-0 items-center justify-center">
-        <Circle
-          className={cn(
-            'h-3 w-3 stroke-[1.85]',
-            isCompleted && 'fill-[#1f1f1f] text-[#1f1f1f]',
-            isActive && 'text-[#7b7b7b]',
-            !isCompleted && !isActive && 'text-[#3a3a3a]'
-          )}
-        />
-      </div>
+      <TodoStatusIcon status={todo.status} />
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         <span className="shrink-0 tabular-nums text-[#1f1f1f]">{index + 1}.</span>
         <span
@@ -95,6 +86,30 @@ function TodoItemRow({ index, todo }: { index: number; todo: TodoItem }) {
           {todo.activeForm}
         </span>
       </div>
+    </div>
+  )
+}
+
+function TodoStatusIcon({ status }: { status: TodoItem['status'] }) {
+  if (status === 'completed') {
+    return (
+      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#7b7b75] text-[#7b7b75]">
+        <Check className="h-3 w-3 stroke-[2.4]" />
+      </div>
+    )
+  }
+
+  if (status === 'in_progress') {
+    return (
+      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#8a8a84] text-[#8a8a84]">
+        <ArrowRight className="h-3.25 w-3.25 stroke-[2.3]" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-5 w-5 shrink-0 items-center justify-center text-[#8f8f89]">
+      <CircleDashed className="h-4.5 w-4.5 stroke-[1.8]" />
     </div>
   )
 }

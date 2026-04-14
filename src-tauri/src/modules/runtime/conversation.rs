@@ -418,6 +418,11 @@ fn build_assistant_message(
             blocks,
             usage,
             thinking: thinking_result,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         },
         usage,
     ))

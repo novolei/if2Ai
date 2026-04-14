@@ -3,6 +3,16 @@
 //! Skill management CRUD actions.
 //!
 //! Ported from Hermes `skill_manager_tool.py`.
+//!
+//! # Scan Rollback
+//!
+//! Hermes implements scan rollback: before creating/editing a skill, the original
+//! state is backed up. If the security scan fails, the backup is restored.
+//!
+//! This ensures that:
+//! - Agent-created skills that fail scan don't corrupt existing skills
+//! - Edit operations can be rolled back if scan blocks the changes
+//! - The filesystem is always left in a consistent state
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -151,15 +161,19 @@ pub fn execute_action(
             skills_dir,
             guard,
         ),
-        SkillManageAction::Edit => {
-            edit_skill(name, input.content.as_deref().unwrap_or(""), skills_dir)
-        }
+        SkillManageAction::Edit => edit_skill(
+            name,
+            input.content.as_deref().unwrap_or(""),
+            skills_dir,
+            guard,
+        ),
         SkillManageAction::Patch => patch_skill(
             name,
             input.old_string.as_deref().unwrap_or(""),
             input.new_string.as_deref().unwrap_or(""),
             input.replace_all,
             skills_dir,
+            guard,
         ),
         SkillManageAction::Delete => delete_skill(name, skills_dir),
         SkillManageAction::WriteFile => write_skill_file(
@@ -195,15 +209,11 @@ fn create_skill(
         return Err(SkillManagerError::AlreadyExists(name.into()));
     }
 
-    // Create skill directory
-    ensure_dir(&skill_dir)?;
-
     // Build SKILL.md with frontmatter
     let frontmatter = build_frontmatter(name, category, content);
-    let skill_md_path = skill_dir.join("SKILL.md");
 
-    // Security scan before writing
-    // We scan the content to be written
+    // Security scan BEFORE creating any files (Hermes pattern)
+    // We scan in a temp directory first
     let temp_dir =
         tempfile::TempDir::new().map_err(|e| SkillManagerError::Io(std::io::Error::other(e)))?;
     let temp_skill_dir = temp_dir.path().join(name);
@@ -213,8 +223,13 @@ fn create_skill(
 
     let scan_result = guard.scan(&temp_skill_dir, "agent-created");
 
+    // IMPORTANT: Cleanup temp dir BEFORE checking scan result
+    // This is safe because we've already computed the frontmatter
+    drop(temp_dir);
+
     if !scan_result.findings.is_empty() {
-        // Security scan found issues
+        // Security scan found issues - rollback (nothing to rollback for create,
+        // but we return a clean blocked response)
         let blocked_reason = format!(
             "Security scan found {} findings: {:?}",
             scan_result.findings.len(),
@@ -223,7 +238,9 @@ fn create_skill(
         return Ok(SkillManageOutput::blocked(blocked_reason));
     }
 
-    // Write SKILL.md
+    // Scan passed - now create the skill directory and SKILL.md
+    ensure_dir(&skill_dir)?;
+    let skill_md_path = skill_dir.join("SKILL.md");
     atomic_write_str(&skill_md_path, &frontmatter, AtomicWriteOptions::default())?;
 
     Ok(SkillManageOutput::success(
@@ -233,10 +250,14 @@ fn create_skill(
 }
 
 /// Edit an existing skill's SKILL.md (full overwrite).
+///
+/// Implements scan rollback: the original SKILL.md is backed up before modification.
+/// If the security scan fails, the backup is restored.
 fn edit_skill(
     name: &str,
     content: &str,
     skills_dir: &Path,
+    guard: &SkillsGuard,
 ) -> SkillManagerResult<SkillManageOutput> {
     SkillValidator::validate_content_size(content)?;
 
@@ -247,8 +268,39 @@ fn edit_skill(
         return Err(SkillManagerError::NotFound(name.into()));
     }
 
+    // Read original content for rollback
+    let original_content = fs::read_to_string(&skill_md_path).ok();
+
     // Build SKILL.md with frontmatter (auto-generated name from skill name)
     let frontmatter = build_frontmatter(name, None, content);
+
+    // Scan in temp directory BEFORE modifying the real file (Hermes rollback pattern)
+    let temp_dir =
+        tempfile::TempDir::new().map_err(|e| SkillManagerError::Io(std::io::Error::other(e)))?;
+    let temp_skill_dir = temp_dir.path().join(name);
+    ensure_dir(&temp_skill_dir)?;
+    let temp_skill_md = temp_skill_dir.join("SKILL.md");
+    atomic_write_str(&temp_skill_md, &frontmatter, AtomicWriteOptions::default())?;
+
+    let scan_result = guard.scan(&temp_skill_dir, "agent-created");
+
+    // IMPORTANT: Cleanup temp dir BEFORE checking scan result
+    drop(temp_dir);
+
+    if !scan_result.findings.is_empty() {
+        // Scan failed - rollback to original content
+        if let Some(original) = original_content {
+            let _ = atomic_write_str(&skill_md_path, &original, AtomicWriteOptions::default());
+        }
+        let blocked_reason = format!(
+            "Security scan found {} findings: {:?}",
+            scan_result.findings.len(),
+            scan_result.verdict
+        );
+        return Ok(SkillManageOutput::blocked(blocked_reason));
+    }
+
+    // Scan passed - write the new content
     atomic_write_str(&skill_md_path, &frontmatter, AtomicWriteOptions::default())?;
 
     Ok(SkillManageOutput::success(
@@ -258,12 +310,16 @@ fn edit_skill(
 }
 
 /// Patch an existing skill's SKILL.md (find and replace).
+///
+/// Implements scan rollback: the original SKILL.md is backed up before modification.
+/// If the security scan fails, the backup is restored.
 fn patch_skill(
     name: &str,
     old: &str,
     new: &str,
     replace_all: bool,
     skills_dir: &Path,
+    guard: &SkillsGuard,
 ) -> SkillManagerResult<SkillManageOutput> {
     let skill_dir = skills_dir.join(name);
     let skill_md_path = skill_dir.join("SKILL.md");
@@ -272,9 +328,9 @@ fn patch_skill(
         return Err(SkillManagerError::NotFound(name.into()));
     }
 
-    let content = fs::read_to_string(&skill_md_path)?;
+    let original_content = fs::read_to_string(&skill_md_path)?;
 
-    if !content.contains(old) {
+    if !original_content.contains(old) {
         return Err(SkillManagerError::OperationFailed(format!(
             "String '{}' not found in SKILL.md",
             old
@@ -282,11 +338,35 @@ fn patch_skill(
     }
 
     let new_content = if replace_all {
-        content.replace(old, new)
+        original_content.replace(old, new)
     } else {
-        content.replacen(old, new, 1)
+        original_content.replacen(old, new, 1)
     };
 
+    // Scan in temp directory BEFORE modifying the real file (Hermes rollback pattern)
+    let temp_dir =
+        tempfile::TempDir::new().map_err(|e| SkillManagerError::Io(std::io::Error::other(e)))?;
+    let temp_skill_dir = temp_dir.path().join(name);
+    ensure_dir(&temp_skill_dir)?;
+    let temp_skill_md = temp_skill_dir.join("SKILL.md");
+    atomic_write_str(&temp_skill_md, &new_content, AtomicWriteOptions::default())?;
+
+    let scan_result = guard.scan(&temp_skill_dir, "agent-created");
+
+    // IMPORTANT: Cleanup temp dir BEFORE checking scan result
+    drop(temp_dir);
+
+    if !scan_result.findings.is_empty() {
+        // Scan failed - rollback to original content (already preserved in original_content)
+        let blocked_reason = format!(
+            "Security scan found {} findings: {:?}",
+            scan_result.findings.len(),
+            scan_result.verdict
+        );
+        return Ok(SkillManageOutput::blocked(blocked_reason));
+    }
+
+    // Scan passed - write the new content
     atomic_write_str(&skill_md_path, &new_content, AtomicWriteOptions::default())?;
 
     Ok(SkillManageOutput::success(
@@ -440,7 +520,8 @@ mod tests {
         let skill_md = skill_dir.join("SKILL.md");
         std::fs::write(&skill_md, "foo foo foo").unwrap();
 
-        let result = patch_skill("test-skill", "foo", "bar", true, tmp.path()).unwrap();
+        let guard = SkillsGuard::new();
+        let result = patch_skill("test-skill", "foo", "bar", true, tmp.path(), &guard).unwrap();
         assert!(result.success);
 
         let content = std::fs::read_to_string(&skill_md).unwrap();
@@ -455,7 +536,8 @@ mod tests {
         let skill_md = skill_dir.join("SKILL.md");
         std::fs::write(&skill_md, "foo foo foo").unwrap();
 
-        let result = patch_skill("test-skill", "foo", "bar", false, tmp.path()).unwrap();
+        let guard = SkillsGuard::new();
+        let result = patch_skill("test-skill", "foo", "bar", false, tmp.path(), &guard).unwrap();
         assert!(result.success);
 
         let content = std::fs::read_to_string(&skill_md).unwrap();

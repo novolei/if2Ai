@@ -46,6 +46,16 @@ pub struct ConversationMessage {
     /// Thinking content from the model (if any)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +168,11 @@ impl ConversationMessage {
             blocks: vec![ContentBlock::Text { text: text.into() }],
             usage: None,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 
@@ -168,6 +183,11 @@ impl ConversationMessage {
             blocks,
             usage: None,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 
@@ -178,6 +198,11 @@ impl ConversationMessage {
             blocks,
             usage,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 
@@ -196,6 +221,11 @@ impl ConversationMessage {
             }],
             usage: None,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 
@@ -216,6 +246,11 @@ impl ConversationMessage {
             }],
             usage: None,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 
@@ -240,6 +275,39 @@ impl ConversationMessage {
         );
         if let Some(usage) = self.usage {
             object.insert("usage".to_string(), usage_to_json(usage));
+        }
+        if let Some(thinking) = &self.thinking {
+            object.insert("thinking".to_string(), JsonValue::String(thinking.clone()));
+        }
+        if let Some(task_outcome) = &self.task_outcome {
+            object.insert(
+                "task_outcome".to_string(),
+                JsonValue::String(task_outcome.clone()),
+            );
+        }
+        if let Some(degraded_reason) = &self.degraded_reason {
+            object.insert(
+                "degraded_reason".to_string(),
+                JsonValue::String(degraded_reason.clone()),
+            );
+        }
+        if let Some(resume_available) = self.resume_available {
+            object.insert(
+                "resume_available".to_string(),
+                JsonValue::Bool(resume_available),
+            );
+        }
+        if let Some(resume_cursor) = &self.resume_cursor {
+            object.insert(
+                "resume_cursor".to_string(),
+                JsonValue::String(resume_cursor.clone()),
+            );
+        }
+        if let Some(request_id) = &self.request_id {
+            object.insert(
+                "request_id".to_string(),
+                JsonValue::String(request_id.clone()),
+            );
         }
         JsonValue::Object(object)
     }
@@ -280,6 +348,23 @@ impl ConversationMessage {
             blocks,
             usage,
             thinking,
+            task_outcome: object
+                .get("task_outcome")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            degraded_reason: object
+                .get("degraded_reason")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            resume_available: object.get("resume_available").and_then(JsonValue::as_bool),
+            resume_cursor: object
+                .get("resume_cursor")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            request_id: object
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         })
     }
 }

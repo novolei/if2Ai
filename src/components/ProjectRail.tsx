@@ -3,10 +3,10 @@ import {
   ArrowDownUp,
   Archive,
   ChevronDown,
-  Circle,
   Folder,
   FolderOpen,
   FolderPlus,
+  MessageSquare,
   MoreHorizontal,
   PencilLine,
   Pin,
@@ -141,8 +141,8 @@ export function ProjectRail({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden select-none">
-      <div className="shrink-0 px-3 py-2.5">
-        <div className="flex flex-col gap-1.5">
+      <div className="shrink-0 px-3 py-1.5">
+        <div className="flex flex-col gap-0.5">
           <RailNavItem
             icon={PencilLine}
             label="新线程"
@@ -153,7 +153,7 @@ export function ProjectRail({
           />
           <RailNavItem icon={Search} label="Search" />
         </div>
-        <div className="mt-2 flex flex-col gap-1">
+        <div className="mt-1 flex flex-col gap-0.5">
           {pinnedSessions.map((item) => (
             <RecentItem
               key={item.sessionId}
@@ -166,7 +166,7 @@ export function ProjectRail({
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-black/5 px-3 py-[9px]">
+      <div className="shrink-0 border-t border-black/5 px-3 py-1.5">
         <div className="flex items-center justify-between">
           <div className="text-[12px] font-medium tracking-tight text-black/35">线程</div>
           <div className="flex items-center gap-1 text-black/35">
@@ -195,8 +195,8 @@ export function ProjectRail({
         </div>
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-        <div className="flex flex-col gap-2.5">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-2.5">
+        <div className="flex flex-col gap-1">
           {projects.length === 0 ? (
             <div className="pl-2 text-[13px] text-black/30">暂无项目</div>
           ) : (
@@ -245,7 +245,7 @@ function RailNavItem({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-9 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[13px] font-medium tracking-tight text-black/80 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
+      className="flex h-7.5 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[12.5px] font-medium tracking-tight text-black/80 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
     >
       <Icon className="size-4 shrink-0 text-black/70" />
       <span>{label}</span>
@@ -268,7 +268,7 @@ function RecentItem({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-9 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[13px] font-medium tracking-tight text-black/78 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
+      className="flex h-7.5 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[12.5px] font-medium tracking-tight text-black/78 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
     >
       <Pin className={cn('size-3.5 shrink-0 rotate-45 text-black/35', pinned && 'text-black/40')} />
       <span className="min-w-0 flex-1 truncate">{title}</span>
@@ -353,10 +353,10 @@ function ProjectGroup({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="group/project relative rounded-[16px] px-0.5 py-0.5 transition-colors hover:bg-black/[0.03] select-none">
+    <div className="flex flex-col gap-0.5">
+      <div className="group/project relative rounded-[12px] px-0.5 py-0.5 transition-colors hover:bg-black/[0.03] select-none">
         {isEditing ? (
-          <div className="flex items-center gap-2 rounded-[14px] bg-black/[0.04] px-2.5 py-[6px] pr-2">
+          <div className="flex items-center gap-2 rounded-[10px] bg-black/[0.04] px-2.5 py-1 pr-2">
             <button type="button" onClick={toggleProject} className="flex shrink-0 items-center gap-2 text-black/72">
               <ChevronDown
                 className={cn(
@@ -385,7 +385,7 @@ function ProjectGroup({
                   cancelInlineRename()
                 }
               }}
-              className="h-8 flex-1 rounded-xl border-black/10 bg-white/90 px-2.5 text-[13px] shadow-none focus-visible:ring-0"
+              className="h-7 flex-1 rounded-xl border-black/10 bg-white/90 px-2.5 text-[12.5px] shadow-none focus-visible:ring-0"
             />
           </div>
         ) : (
@@ -393,7 +393,7 @@ function ProjectGroup({
             type="button"
             onClick={toggleProject}
             className={cn(
-              'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[14px] px-2.5 py-[7px] pr-12 text-left text-[13px] font-medium tracking-tight transition-colors',
+              'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[10px] px-2.5 py-[5px] pr-12 text-left text-[12.5px] font-medium tracking-tight transition-colors',
               isActiveProject ? 'bg-black/[0.04] text-black/90' : 'text-black/72 hover:text-black/90'
             )}
           >
@@ -437,9 +437,9 @@ function ProjectGroup({
 
       <div className={cn('flex flex-col gap-0.5', !isExpanded && 'hidden')}>
         {sessions.length === 0 ? (
-          <div className="pl-7 text-[13px] text-black/25">无线程</div>
+          <div className="pl-5 text-[12.5px] text-black/25">无线程</div>
         ) : (
-          <div className="flex flex-col gap-0.5 pl-7">
+          <div className="flex flex-col gap-0.5 pl-5">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -447,6 +447,7 @@ function ProjectGroup({
                 sessionId={session.id}
                 title={session.title}
                 age={formatRelativeAge(session.updated_at, nowMs)}
+                messageCount={session.message_count}
                 isPinned={session.pinned}
                 isRunning={runningSessionIds.includes(session.id)}
                 isActive={activeSessionId === session.id}
@@ -469,6 +470,7 @@ function SessionRow({
   sessionId,
   title,
   age,
+  messageCount,
   isPinned,
   isRunning,
   isActive,
@@ -480,6 +482,7 @@ function SessionRow({
   sessionId: string
   title: string
   age: string
+  messageCount: number
   isPinned: boolean
   isRunning: boolean
   isActive?: boolean
@@ -499,8 +502,10 @@ function SessionRow({
         }
       }}
       className={cn(
-        'group/session grid h-[34px] cursor-pointer grid-cols-[18px_minmax(0,1fr)_4.25rem] items-center gap-2 rounded-[14px] px-2 text-[13px] font-medium tracking-tight transition-colors',
-        isActive ? 'bg-black/[0.05] text-black/90' : 'text-black/78 hover:bg-black/[0.03] hover:text-black/90'
+        'group/session grid h-[28px] w-full cursor-pointer grid-cols-[18px_minmax(0,1fr)_5.75rem] items-center gap-2 rounded-[10px] px-2.5 text-[12px] font-medium tracking-tight transition-colors',
+        isActive
+          ? 'bg-emerald-50 text-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.06)]'
+          : 'text-black/78 hover:bg-black/[0.03] hover:text-black/90'
       )}
     >
       <button
@@ -513,7 +518,7 @@ function SessionRow({
           void onTogglePinSession(projectId, sessionId, isPinned)
         }}
       >
-        <Circle
+        <MessageSquare
           className={cn(
             'absolute size-3.5 transition-all',
             isPinned ? 'opacity-0 scale-75' : 'opacity-100 scale-100 group-hover/session:opacity-0'
@@ -532,10 +537,12 @@ function SessionRow({
       <span className="min-w-0 truncate">{title}</span>
 
       <div className="relative flex h-full min-w-0 items-center justify-end">
-        <span className="flex shrink-0 items-center justify-end gap-1.5 pr-1 text-right text-[12px] font-medium text-black/36 transition-opacity duration-150 group-hover/session:opacity-0">
+        <span className="flex shrink-0 items-center justify-end gap-1.5 pr-1 text-right text-[11.5px] font-medium text-black/36 transition-opacity duration-150 group-hover/session:opacity-0">
           {isRunning ? (
             <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)] animate-pulse" />
           ) : null}
+          <span>{messageCount}</span>
+          <span className="text-black/18">·</span>
           <span>{age}</span>
         </span>
 

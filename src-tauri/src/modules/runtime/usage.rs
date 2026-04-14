@@ -305,6 +305,11 @@ mod tests {
                     cache_creation_input_tokens: 1,
                     cache_read_input_tokens: 0,
                 }),
+                task_outcome: None,
+                degraded_reason: None,
+                resume_available: None,
+                resume_cursor: None,
+                request_id: None,
             }],
         };
 

@@ -12,6 +12,8 @@ use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ToolContext {
+    /// Optional session id for session-scoped tool state.
+    pub session_id: Option<String>,
     /// The allowed working directory for file operations.
     pub workdir: PathBuf,
     /// The permission mode controlling what operations are allowed.
@@ -43,6 +45,21 @@ impl ToolContext {
         permission_mode: crate::modules::runtime::permissions::PermissionMode,
     ) -> Self {
         Self {
+            session_id: None,
+            workdir,
+            permission_mode,
+        }
+    }
+
+    /// Creates a new ToolContext with explicit session id.
+    #[must_use]
+    pub fn new_with_session(
+        session_id: Option<String>,
+        workdir: PathBuf,
+        permission_mode: crate::modules::runtime::permissions::PermissionMode,
+    ) -> Self {
+        Self {
+            session_id,
             workdir,
             permission_mode,
         }
@@ -52,6 +69,7 @@ impl ToolContext {
     #[must_use]
     pub fn default_for_workdir(workdir: PathBuf) -> Self {
         Self {
+            session_id: None,
             workdir,
             permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
         }

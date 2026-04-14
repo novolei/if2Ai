@@ -34,16 +34,50 @@ struct TodoWriteResult {
 }
 
 /// Determines the file path for todo persistence.
-/// Uses IF2AI_TODO_STORE env var, falling back to .if2ai-todos.json in cwd.
-fn todo_store_path() -> std::path::PathBuf {
+/// Uses IF2AI_TODO_STORE env var, falling back to
+/// `$IF2AI_HOME/todos/session-<session_id>.json` or
+/// `$HOME/.if2ai/todos/session-<session_id>.json`.
+fn todo_store_path(session_id: Option<&str>) -> std::path::PathBuf {
     let env_var = std::env::var("IF2AI_TODO_STORE").unwrap_or_default();
-    if env_var.is_empty() {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join(".if2ai-todos.json")
-    } else {
-        std::path::PathBuf::from(env_var)
+    if !env_var.is_empty() {
+        return std::path::PathBuf::from(env_var);
     }
+
+    let session_key = sanitize_session_key(session_id);
+    let file_name = format!("session-{session_key}.json");
+
+    if let Ok(if2ai_home) = std::env::var("IF2AI_HOME") {
+        return std::path::PathBuf::from(if2ai_home)
+            .join("todos")
+            .join(file_name);
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join(".if2ai")
+        .join("todos")
+        .join(file_name)
+}
+
+fn sanitize_session_key(session_id: Option<&str>) -> String {
+    let raw = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("global");
+    let mut normalized: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if normalized.is_empty() {
+        normalized = "global".to_string();
+    }
+    normalized
 }
 
 /// Creates the TodoWrite tool entry for the registry.
@@ -51,13 +85,19 @@ fn todo_store_path() -> std::path::PathBuf {
 #[must_use]
 pub fn todo_write_tool_entry() -> ToolEntry {
     let handler: ToolHandler = Arc::new(
-        |args: serde_json::Value, _context: crate::modules::tools::context::SharedToolContext| {
+        |args: serde_json::Value, context: crate::modules::tools::context::SharedToolContext| {
             Box::pin(async move {
                 let input: TodoWriteInput = serde_json::from_value(args.clone())
                     .map_err(|e| ToolError::Handler(format!("Invalid TodoWrite input: {e}")))?;
 
-                let result =
-                    execute_todo_write_internal(&input.todos).map_err(ToolError::Handler)?;
+                let session_id = {
+                    let guard = context.lock().map_err(|e| {
+                        ToolError::Handler(format!("Failed to lock tool context: {e}"))
+                    })?;
+                    guard.session_id.clone()
+                };
+                let result = execute_todo_write_internal(&input.todos, session_id.as_deref())
+                    .map_err(ToolError::Handler)?;
 
                 serde_json::to_string_pretty(&result).map_err(|e| ToolError::Handler(e.to_string()))
             })
@@ -107,8 +147,15 @@ pub fn todo_write_tool_entry() -> ToolEntry {
 
 /// Core todo persistence logic.
 /// Reads old todos, writes new ones, returns both for comparison.
-fn execute_todo_write_internal(todos: &Vec<TodoItem>) -> Result<TodoWriteResult, String> {
-    let store_path = todo_store_path();
+fn execute_todo_write_internal(
+    todos: &Vec<TodoItem>,
+    session_id: Option<&str>,
+) -> Result<TodoWriteResult, String> {
+    let store_path = todo_store_path(session_id);
+    if let Some(parent) = store_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create todo store directory: {e}"))?;
+    }
 
     let old_todos = if store_path.exists() {
         let content = std::fs::read_to_string(&store_path)
@@ -185,7 +232,37 @@ mod tests {
         assert!(output.contains("in_progress"));
 
         // Clean up test file
-        let path = todo_store_path();
+        let path = todo_store_path(None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn todo_write_uses_session_scoped_store_path() {
+        let entry = todo_write_tool_entry();
+        let handler = entry.handler.clone();
+        let ctx = Arc::new(std::sync::Mutex::new(ToolContext::new_with_session(
+            Some("session:abc/123".to_string()),
+            std::path::PathBuf::from("."),
+            crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+        )));
+
+        let todos = json!({
+            "todos": [
+                {
+                    "content": "Session scoped todo",
+                    "activeForm": "Persist per session",
+                    "status": "pending"
+                }
+            ]
+        });
+
+        let result = handler(todos, ctx).await;
+        assert!(result.is_ok());
+
+        let path = todo_store_path(Some("session:abc/123"));
+        assert!(path
+            .to_string_lossy()
+            .contains("session-session_abc_123.json"));
         let _ = std::fs::remove_file(&path);
     }
 }

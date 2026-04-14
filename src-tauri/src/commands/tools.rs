@@ -8,6 +8,7 @@ use crate::modules::control_plane::{
 };
 use crate::modules::runtime::permissions::PermissionOutcome;
 use crate::modules::tools::{ToolSet, ToolSetRegistry};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -33,6 +34,94 @@ pub struct ToolCallResult {
     pub output: Option<String>,
     /// Error message if failed
     pub error: Option<String>,
+}
+
+/// Skills Market audit row parsed from skills.sh.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsMarketAuditItem {
+    pub skill: String,
+    pub repo: String,
+    pub gen: String,
+    pub socket_alerts: String,
+    pub snyk_risk: String,
+}
+
+/// Fetch and parse skills market audits from skills.sh.
+#[tauri::command]
+pub async fn fetch_skills_market_audits() -> Result<Vec<SkillsMarketAuditItem>, String> {
+    let response = reqwest::Client::new()
+        .get("https://skills.sh/audits")
+        .send()
+        .await
+        .map_err(|e| format!("request audits failed: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("request audits failed: HTTP {}", response.status()));
+    }
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("read audits body failed: {}", e))?;
+    let mut rows: Vec<SkillsMarketAuditItem> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let anchor_re = Regex::new(r#"<a[^>]*href="/([^/"]+)/([^/"]+)/([^/"]+)"[^>]*>(?s)(.*?)</a>"#)
+        .map_err(|e| format!("compile anchor regex failed: {}", e))?;
+    let tag_re =
+        Regex::new(r"<[^>]+>").map_err(|e| format!("compile strip-tag regex failed: {}", e))?;
+    let ws_re =
+        Regex::new(r"\s+").map_err(|e| format!("compile whitespace regex failed: {}", e))?;
+    let gen_re = Regex::new(r"(?i)\b(Safe|Warn|Unsafe)\b")
+        .map_err(|e| format!("compile gen regex failed: {}", e))?;
+    let socket_re = Regex::new(r"(?i)(\d+\s*alerts?)")
+        .map_err(|e| format!("compile socket regex failed: {}", e))?;
+    let risk_re = Regex::new(r"(?i)(Low Risk|Med Risk|High Risk|Critical)")
+        .map_err(|e| format!("compile risk regex failed: {}", e))?;
+
+    for caps in anchor_re.captures_iter(&html) {
+        let owner = caps.get(1).map_or("", |m| m.as_str());
+        let repository = caps.get(2).map_or("", |m| m.as_str());
+        let skill = caps.get(3).map_or("", |m| m.as_str());
+        if owner.is_empty() || repository.is_empty() || skill.is_empty() {
+            continue;
+        }
+        if owner.starts_with("_next") || owner == "audits" || owner == "docs" {
+            continue;
+        }
+        let repo = format!("{owner}/{repository}");
+        let dedupe = format!("{repo}/{skill}").to_lowercase();
+        if seen.contains(&dedupe) {
+            continue;
+        }
+        seen.insert(dedupe);
+        let inner = caps.get(4).map_or("", |m| m.as_str());
+        let stripped = tag_re.replace_all(inner, " ");
+        let row_text = ws_re.replace_all(&stripped, " ").trim().to_string();
+        let gen = gen_re
+            .captures(&row_text)
+            .and_then(|m| m.get(1).map(|v| v.as_str().to_string()))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let socket_alerts = socket_re
+            .captures(&row_text)
+            .and_then(|m| m.get(1).map(|v| v.as_str().to_string()))
+            .unwrap_or_else(|| "0 alerts".to_string());
+        let snyk_risk = risk_re
+            .captures(&row_text)
+            .and_then(|m| m.get(1).map(|v| v.as_str().to_string()))
+            .unwrap_or_else(|| "Unknown".to_string());
+        rows.push(SkillsMarketAuditItem {
+            skill: skill.to_string(),
+            repo,
+            gen,
+            socket_alerts,
+            snyk_risk,
+        });
+        if rows.len() >= 200 {
+            break;
+        }
+    }
+
+    Ok(rows)
 }
 
 /// Execute a tool by name with JSON arguments.

@@ -2,7 +2,7 @@
 //!
 //! Provides commands for managing application windows.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Open the settings window.
 /// If the settings window already exists, focus it instead of creating a new one.
@@ -43,6 +43,29 @@ pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
 pub fn close_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
         window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Focus the main chat window and prefill the composer prompt.
+#[tauri::command]
+#[allow(dead_code)]
+pub fn focus_main_window_and_prefill_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    main_window.show().map_err(|e| e.to_string())?;
+    main_window.set_focus().map_err(|e| e.to_string())?;
+    main_window
+        .emit(
+            "if2ai-chat-prefill",
+            serde_json::json!({
+                "prompt": prompt,
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+    if let Some(settings_window) = app.get_webview_window("settings") {
+        settings_window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

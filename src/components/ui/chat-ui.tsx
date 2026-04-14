@@ -1,12 +1,27 @@
 import * as React from "react"
 import {
   ArrowDown,
+  ArrowUpRight,
+  Bot,
   ChevronDown,
+  ChevronRight,
   Check,
+  Circle,
+  FileText,
+  File,
+  Folder,
+  FolderOpen,
+  Globe,
+  GripVertical,
+  House,
+  Lock,
+  Clock3,
   Copy,
+  LoaderCircle,
   MoreHorizontal,
   Mic,
   Plus,
+  Search,
   Send,
   SlidersHorizontal,
   Sparkles,
@@ -14,7 +29,11 @@ import {
   AlertTriangle,
   RotateCcw,
   TerminalSquare,
+  UserRound,
+  Wrench,
   X,
+  Quote,
+  ScanSearch,
 } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -22,8 +41,9 @@ import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import type { PermissionMode } from "@/lib/tauri"
+import { listDirectoryPreview, openDirectoryPath, readFilePreview, type DirectoryEntryPreview, type FilePreviewPayload, type PermissionMode } from "@/lib/tauri"
 import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
+import { WaveDotsAnimation } from "@/components/loading/WaveDotsAnimation"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import {
   DropdownMenu,
@@ -56,6 +76,9 @@ interface Message {
   degradedReason?: string
   resumeAvailable?: boolean
   resumeCursor?: string
+  statusLabel?: string
+  statusKind?: 'info' | 'success' | 'partial' | 'failed'
+  isRecovering?: boolean
 }
 
 interface ChatUIProps {
@@ -79,10 +102,15 @@ interface ChatUIProps {
 
 type DensityMode = 'comfortable' | 'compact'
 type FontMode = 'sans' | 'serif'
+type RailBreadcrumb = { label: string; path: string }
+type RailTreeMap = Record<string, DirectoryEntryPreview[]>
 
 const BOTTOM_EPSILON_PX = 120
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
 const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
+const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
+const PROJECT_RAIL_MIN_WIDTH = 296
+const PROJECT_RAIL_MAX_WIDTH = 620
 
 const SURFACE_CARD_TOKENS = {
   radius: 'rounded-[14px]',
@@ -143,6 +171,15 @@ function DensityComfortableIcon({ className }: { className?: string }) {
   )
 }
 
+function RailToggleIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <rect x="2" y="2.25" width="12" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 2.75v10.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function ChatUI({
   messages,
   input,
@@ -195,6 +232,25 @@ export function ChatUI({
     if (typeof window === 'undefined') return 'sans'
     const stored = window.localStorage.getItem(CHAT_FONT_MODE_STORAGE_KEY)
     return stored === 'serif' ? 'serif' : 'sans'
+  })
+  const [isProjectRailOpen, setIsProjectRailOpen] = React.useState(true)
+  const [projectRailEntries, setProjectRailEntries] = React.useState<DirectoryEntryPreview[]>([])
+  const [projectRailTree, setProjectRailTree] = React.useState<RailTreeMap>({})
+  const [projectRailExpandedPaths, setProjectRailExpandedPaths] = React.useState<string[]>([])
+  const [projectRailLoadingPaths, setProjectRailLoadingPaths] = React.useState<string[]>([])
+  const [isProjectRailLoading, setIsProjectRailLoading] = React.useState(false)
+  const [projectRailSort, setProjectRailSort] = React.useState<'recent' | 'name'>('recent')
+  const [projectRailPath, setProjectRailPath] = React.useState<string | null>(defaultWorkdir ?? null)
+  const [projectRailPreview, setProjectRailPreview] = React.useState<FilePreviewPayload | null>(null)
+  const [projectRailPreviewError, setProjectRailPreviewError] = React.useState<string | null>(null)
+  const projectRailRefreshSeqRef = React.useRef(0)
+  const [projectRailWidth, setProjectRailWidth] = React.useState(() => {
+    if (typeof window === 'undefined') return 338
+    const stored = Number(window.localStorage.getItem(PROJECT_RAIL_WIDTH_STORAGE_KEY))
+    if (Number.isFinite(stored)) {
+      return Math.min(PROJECT_RAIL_MAX_WIDTH, Math.max(PROJECT_RAIL_MIN_WIDTH, stored))
+    }
+    return 338
   })
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
@@ -268,6 +324,88 @@ export function ChatUI({
     if (typeof window === 'undefined') return
     window.localStorage.setItem(CHAT_FONT_MODE_STORAGE_KEY, fontMode)
   }, [fontMode])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(PROJECT_RAIL_WIDTH_STORAGE_KEY, String(projectRailWidth))
+  }, [projectRailWidth])
+
+  React.useEffect(() => {
+    setProjectRailPath(defaultWorkdir ?? null)
+    setProjectRailPreview(null)
+    setProjectRailPreviewError(null)
+    setProjectRailExpandedPaths([])
+    setProjectRailTree({})
+  }, [defaultWorkdir])
+
+  const railRootPath = defaultWorkdir ?? null
+
+  const refreshDirectoryPreview = React.useCallback(async (options?: { silent?: boolean }) => {
+    if (!railRootPath || !isProjectRailOpen) return
+
+    const requestId = ++projectRailRefreshSeqRef.current
+    if (!options?.silent) {
+      setIsProjectRailLoading(true)
+    }
+
+    try {
+      const rootEntries = await listDirectoryPreview(railRootPath, 64)
+      if (projectRailRefreshSeqRef.current !== requestId) return
+      const uniquePaths = Array.from(new Set(projectRailExpandedPaths)).filter((path) => path && path !== railRootPath)
+      const childResults = await Promise.all(
+        uniquePaths.map(async (path) => {
+          try {
+            const entries = await listDirectoryPreview(path, 64)
+            return [path, sortRailDirectoryEntries(entries, projectRailSort)] as const
+          } catch {
+            return [path, []] as const
+          }
+        })
+      )
+      if (projectRailRefreshSeqRef.current !== requestId) return
+      setProjectRailEntries(sortRailDirectoryEntries(rootEntries, projectRailSort))
+      setProjectRailTree(Object.fromEntries(childResults))
+    } catch (err) {
+      console.error('Failed to load directory preview:', err)
+      if (projectRailRefreshSeqRef.current === requestId && !options?.silent) {
+        setProjectRailEntries([])
+        setProjectRailTree({})
+      }
+    } finally {
+      if (projectRailRefreshSeqRef.current === requestId && !options?.silent) {
+        setIsProjectRailLoading(false)
+      }
+    }
+  }, [railRootPath, isProjectRailOpen, projectRailExpandedPaths, projectRailSort])
+
+  React.useEffect(() => {
+    void refreshDirectoryPreview()
+  }, [refreshDirectoryPreview])
+
+  React.useEffect(() => {
+    if (!railRootPath || !isProjectRailOpen) return
+    const intervalId = window.setInterval(() => {
+      void refreshDirectoryPreview({ silent: true })
+    }, 2500)
+    return () => window.clearInterval(intervalId)
+  }, [railRootPath, isProjectRailOpen, refreshDirectoryPreview])
+
+  React.useEffect(() => {
+    if (!railRootPath || !isProjectRailOpen) return
+    const timeoutId = window.setTimeout(() => {
+      void refreshDirectoryPreview({ silent: true })
+    }, isLoading ? 800 : 260)
+    return () => window.clearTimeout(timeoutId)
+  }, [messages, isLoading, railRootPath, isProjectRailOpen, refreshDirectoryPreview])
+
+  React.useEffect(() => {
+    if (!railRootPath || !isProjectRailOpen) return
+    const onFocus = () => {
+      void refreshDirectoryPreview({ silent: true })
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [railRootPath, isProjectRailOpen, refreshDirectoryPreview])
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return
@@ -449,9 +587,112 @@ export function ChatUI({
     setShowViewControlOnboarding(false)
   }, [])
 
+  const railEntries = React.useMemo(() => sortRailDirectoryEntries(projectRailEntries, projectRailSort), [projectRailEntries, projectRailSort])
+
+  const railTitle = React.useMemo(() => {
+    if (projectRailPath) {
+      const trimmed = projectRailPath.replace(/[\\/]+$/, '')
+      const parts = trimmed.split(/[\\/]/).filter(Boolean)
+      return parts.at(-1) ?? projectLabel
+    }
+    return projectLabel
+  }, [projectRailPath, projectLabel])
+
+  const railBreadcrumbs = React.useMemo<RailBreadcrumb[]>(() => {
+    if (!defaultWorkdir || !projectRailPath) return []
+    const normalize = (value: string) => value.replace(/[\\/]+$/, '')
+    const base = normalize(defaultWorkdir)
+    const current = normalize(projectRailPath)
+    const crumbs: RailBreadcrumb[] = [{ label: railTitle, path: base }]
+    if (!current.startsWith(base)) return crumbs
+    const suffix = current.slice(base.length).replace(/^[/\\]+/, '')
+    if (!suffix) return crumbs
+
+    let runningPath = base
+    for (const segment of suffix.split(/[\\/]/).filter(Boolean)) {
+      runningPath = `${runningPath}/${segment}`
+      crumbs.push({ label: segment, path: runningPath })
+    }
+    return crumbs
+  }, [defaultWorkdir, projectRailPath, railTitle])
+
+  const appendToDraft = React.useCallback((text: string) => {
+    const next = draftInput.trim().length === 0 ? text : `${draftInput.replace(/\s+$/, '')}\n${text}`
+    setDraftInput(next)
+    onInputChange?.(next)
+  }, [draftInput, onInputChange])
+
+  const handleQuoteProjectFile = React.useCallback((preview: FilePreviewPayload) => {
+    const language = inferPreviewLanguage(preview.name, preview.kind)
+    if (preview.kind === 'markdown' || preview.kind === 'code') {
+      const snippet = (preview.content ?? '').slice(0, 1600).trim()
+      appendToDraft([
+        `请结合这个文件继续处理：\`${preview.path}\``,
+        `\`\`\`${language}`,
+        snippet,
+        '```',
+      ].join('\n'))
+      return
+    }
+    appendToDraft(`请参考这个文件：\`${preview.path}\``)
+  }, [appendToDraft])
+
+  const handleInsertProjectFileReference = React.useCallback((path: string) => {
+    appendToDraft(`请把 \`${path}\` 作为当前上下文文件一起考虑。`)
+  }, [appendToDraft])
+
+  const loadProjectRailChildren = React.useCallback(async (path: string, options?: { silent?: boolean }) => {
+    setProjectRailLoadingPaths((current) => current.includes(path) ? current : [...current, path])
+    try {
+      const entries = await listDirectoryPreview(path, 64)
+      setProjectRailTree((current) => ({
+        ...current,
+        [path]: sortRailDirectoryEntries(entries, projectRailSort),
+      }))
+    } catch (err) {
+      console.error('Failed to load project rail children:', err)
+      if (!options?.silent) {
+        setProjectRailTree((current) => ({
+          ...current,
+          [path]: [],
+        }))
+      }
+    } finally {
+      setProjectRailLoadingPaths((current) => current.filter((item) => item !== path))
+    }
+  }, [projectRailSort])
+
+  const handleToggleProjectRailFolder = React.useCallback((entry: DirectoryEntryPreview) => {
+    if (entry.kind !== 'folder') return
+    setProjectRailPath(entry.path)
+    setProjectRailExpandedPaths((current) => {
+      if (current.includes(entry.path)) {
+        return current.filter((item) => item !== entry.path)
+      }
+      return [...current, entry.path]
+    })
+    if (!projectRailTree[entry.path]) {
+      void loadProjectRailChildren(entry.path)
+    }
+  }, [loadProjectRailChildren, projectRailTree])
+
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
-      <div className="pointer-events-none absolute right-10 top-3 z-30">
+      <div className="pointer-events-none absolute right-6 top-3 z-30 flex items-start gap-2">
+        <button
+          type="button"
+          title={isProjectRailOpen ? '关闭项目 Rail' : '打开项目 Rail'}
+          aria-label={isProjectRailOpen ? '关闭项目 Rail' : '打开项目 Rail'}
+          aria-expanded={isProjectRailOpen}
+          onClick={() => setIsProjectRailOpen((value) => !value)}
+          className={cn(
+            'pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-[12px] border border-[#ddd7cc] bg-[#f8f5ef]/96 text-[#3e3a33] shadow-[0_6px_18px_rgba(72,58,36,0.08)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#fbf8f3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d8d1c6]',
+            isProjectRailOpen && 'bg-[#f3efe8] shadow-[0_8px_18px_rgba(72,58,36,0.11)]'
+          )}
+        >
+          <RailToggleIcon className="h-[18px] w-[18px]" />
+        </button>
+
         <div
           className="pointer-events-auto relative inline-flex items-center"
           onMouseEnter={openViewControls}
@@ -548,94 +789,168 @@ export function ChatUI({
               </button>
             </div>
           </div>
+          {showViewControlOnboarding && (
+            <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
+              <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
+              <div className="relative z-10 flex items-center gap-1.5">
+                <span>阅读设置</span>
+                <button
+                  type="button"
+                  aria-label="关闭阅读设置提示"
+                  title="关闭提示"
+                  onClick={dismissViewControlOnboarding}
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-        {showViewControlOnboarding && (
-          <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
-            <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
-            <div className="relative z-10 flex items-center gap-1.5">
-              <span>阅读设置</span>
-              <button
-                type="button"
-                aria-label="关闭阅读设置提示"
-                title="关闭提示"
-                onClick={dismissViewControlOnboarding}
-                className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
-              >
-                <X className="h-3 w-3" />
-              </button>
+      </div>
+
+      <div
+        className="flex min-h-0 flex-1 flex-col transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ paddingRight: isProjectRailOpen ? `${projectRailWidth + 16}px` : undefined }}
+      >
+        <ChatTranscript
+          messages={messages}
+          bottomPadding={transcriptBottomPadding}
+          sessionTitle={sessionTitle}
+          projectLabel={projectLabel}
+          defaultWorkdir={defaultWorkdir}
+          bottomRef={bottomRef}
+          scrollRef={transcriptScrollRef}
+          onScroll={handleTranscriptScroll}
+          onCopyMessage={handleCopyMessage}
+          onResumeFromCursor={onResumeFromCursor}
+          copiedMessageId={copiedMessageId}
+          densityMode={densityMode}
+          fontMode={fontMode}
+        />
+        {!isAtBottom && (
+          <div
+            className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
+            style={{ bottom: `${scrollToBottomButtonOffset}px` }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                forceAutoScrollRef.current = true
+                transcriptScrollRef.current?.scrollTo({
+                  top: transcriptScrollRef.current.scrollHeight,
+                  behavior: 'smooth',
+                })
+              }}
+              className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
+              aria-label="滚动到底部"
+            >
+              <ArrowDown className="h-[18px] w-[18px]" />
+            </button>
+          </div>
+        )}
+        {todos.length > 0 && (
+          <div className="relative z-0 shrink-0 px-10">
+            <div className="mx-auto w-full max-w-[700px]">
+              <TodoPanel
+                ref={todoPanelRef}
+                todos={todos}
+                collapsed={isTodoCollapsed}
+                onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
+                className="w-full translate-y-[8px]"
+              />
             </div>
           </div>
         )}
+        <ComposerDock
+          input={draftInput}
+          onInputChange={setDraftInput}
+          onSubmit={submitDraft}
+          onStop={onStop}
+          isLoading={isLoading}
+          selectedModel={modelValue}
+          setSelectedModel={handleModelChange}
+          permissionMode={permissionModeValue}
+          setPermissionMode={handlePermissionModeChange}
+          selectedStrength={selectedStrength}
+          setSelectedStrength={setSelectedStrength}
+          branchLabel={branchLabel}
+          isComposerFocused={isComposerFocused}
+          setIsComposerFocused={setIsComposerFocused}
+          textareaRef={textareaRef}
+          handleKeyDown={handleKeyDown}
+          setSlashOverlay={setSlashOverlay}
+          slashTimerRef={slashTimerRef}
+          onFileReferenceDrop={handleInsertProjectFileReference}
+        />
       </div>
-      <ChatTranscript
-        messages={messages}
-        bottomPadding={transcriptBottomPadding}
-        sessionTitle={sessionTitle}
+
+      <ProjectFilesRail
+        open={isProjectRailOpen}
+        width={projectRailWidth}
+        title={railTitle}
         projectLabel={projectLabel}
-        defaultWorkdir={defaultWorkdir}
-        bottomRef={bottomRef}
-        scrollRef={transcriptScrollRef}
-        onScroll={handleTranscriptScroll}
-        onCopyMessage={handleCopyMessage}
-        onResumeFromCursor={onResumeFromCursor}
-        copiedMessageId={copiedMessageId}
-        densityMode={densityMode}
-        fontMode={fontMode}
+        breadcrumbs={railBreadcrumbs}
+        currentPath={projectRailPath}
+        entries={railEntries}
+        childEntries={projectRailTree}
+        expandedPaths={projectRailExpandedPaths}
+        loadingPaths={projectRailLoadingPaths}
+        isLoading={isProjectRailLoading}
+        sortMode={projectRailSort}
+        onSortModeChange={setProjectRailSort}
+        preview={projectRailPreview}
+        previewError={projectRailPreviewError}
+        onWidthChange={setProjectRailWidth}
+        onBackToList={() => {
+          setProjectRailPreview(null)
+          setProjectRailPreviewError(null)
+        }}
+        onNavigateUp={() => {
+          if (!projectRailPath || !defaultWorkdir) return
+          const normalizedBase = defaultWorkdir.replace(/[\\/]+$/, '')
+          const normalizedCurrent = projectRailPath.replace(/[\\/]+$/, '')
+          if (normalizedCurrent === normalizedBase) return
+          const parent = normalizedCurrent.split(/[\\/]/).slice(0, -1).join('/')
+          setProjectRailPreview(null)
+          setProjectRailPreviewError(null)
+          setProjectRailPath(parent || normalizedBase)
+        }}
+        onJumpToBreadcrumb={(path) => {
+          setProjectRailPreview(null)
+          setProjectRailPreviewError(null)
+          setProjectRailPath(path)
+        }}
+        onOpenEntry={async (entry) => {
+          if (entry.kind === 'folder') {
+            handleToggleProjectRailFolder(entry)
+            return
+          }
+          try {
+            const preview = await readFilePreview(entry.path)
+            setProjectRailPreview(preview)
+            setProjectRailPath(entry.path.split(/[\\/]/).slice(0, -1).join('/') || railRootPath)
+            setProjectRailPreviewError(null)
+          } catch (err) {
+            console.error('Failed to read file preview:', err)
+            setProjectRailPreview(null)
+            setProjectRailPreviewError('这个文件暂时不能在面板内预览。')
+          }
+        }}
+        onToggleFolder={handleToggleProjectRailFolder}
+        onOpenFolder={() => {
+          if (!projectRailPath && !railRootPath) return
+          void openDirectoryPath(projectRailPath ?? railRootPath!)
+        }}
+        onOpenPreviewExternally={(preview) => {
+          void openDirectoryPath(preview.path)
+        }}
+        onQuotePreviewIntoChat={handleQuoteProjectFile}
+        onInsertPreviewIntoChat={(preview) => {
+          handleInsertProjectFileReference(preview.path)
+        }}
       />
-      {!isAtBottom && (
-        <div
-          className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
-          style={{ bottom: `${scrollToBottomButtonOffset}px` }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              forceAutoScrollRef.current = true
-              transcriptScrollRef.current?.scrollTo({
-                top: transcriptScrollRef.current.scrollHeight,
-                behavior: 'smooth',
-              })
-            }}
-            className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
-            aria-label="滚动到底部"
-          >
-            <ArrowDown className="h-[18px] w-[18px]" />
-          </button>
-        </div>
-      )}
-      {todos.length > 0 && (
-        <div className="relative z-0 shrink-0 px-10">
-          <div className="mx-auto w-full max-w-[700px]">
-            <TodoPanel
-              ref={todoPanelRef}
-              todos={todos}
-              collapsed={isTodoCollapsed}
-              onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
-              className="w-full translate-y-[8px]"
-            />
-          </div>
-        </div>
-      )}
-      <ComposerDock
-        input={draftInput}
-        onInputChange={setDraftInput}
-        onSubmit={submitDraft}
-        onStop={onStop}
-        isLoading={isLoading}
-        selectedModel={modelValue}
-        setSelectedModel={handleModelChange}
-        permissionMode={permissionModeValue}
-        setPermissionMode={handlePermissionModeChange}
-        selectedStrength={selectedStrength}
-        setSelectedStrength={setSelectedStrength}
-        branchLabel={branchLabel}
-        isComposerFocused={isComposerFocused}
-        setIsComposerFocused={setIsComposerFocused}
-        textareaRef={textareaRef}
-        handleKeyDown={handleKeyDown}
-        setSlashOverlay={setSlashOverlay}
-        slashTimerRef={slashTimerRef}
-      />
+
       {slashOverlay?.visible && (
         <SlashCommandSuggestions
           suggestions={slashOverlay.suggestions}
@@ -648,6 +963,454 @@ export function ChatUI({
       )}
     </div>
   )
+}
+
+const ProjectFilesRail = React.memo(function ProjectFilesRail({
+  open,
+  width,
+  title,
+  projectLabel,
+  breadcrumbs,
+  currentPath,
+  entries,
+  childEntries,
+  expandedPaths,
+  loadingPaths,
+  isLoading,
+  sortMode,
+  onSortModeChange,
+  preview,
+  previewError,
+  onWidthChange,
+  onBackToList,
+  onNavigateUp,
+  onJumpToBreadcrumb,
+  onOpenEntry,
+  onToggleFolder,
+  onOpenFolder,
+  onOpenPreviewExternally,
+  onQuotePreviewIntoChat,
+  onInsertPreviewIntoChat,
+}: {
+  open: boolean
+  width: number
+  title: string
+  projectLabel: string
+  breadcrumbs: RailBreadcrumb[]
+  currentPath: string | null
+  entries: DirectoryEntryPreview[]
+  childEntries: RailTreeMap
+  expandedPaths: string[]
+  loadingPaths: string[]
+  isLoading: boolean
+  sortMode: 'recent' | 'name'
+  onSortModeChange: React.Dispatch<React.SetStateAction<'recent' | 'name'>>
+  preview: FilePreviewPayload | null
+  previewError: string | null
+  onWidthChange: React.Dispatch<React.SetStateAction<number>>
+  onBackToList: () => void
+  onNavigateUp: () => void
+  onJumpToBreadcrumb: (path: string) => void
+  onOpenEntry: (entry: DirectoryEntryPreview) => void | Promise<void>
+  onToggleFolder: (entry: DirectoryEntryPreview) => void
+  onOpenFolder: () => void
+  onOpenPreviewExternally: (preview: FilePreviewPayload) => void
+  onQuotePreviewIntoChat: (preview: FilePreviewPayload) => void
+  onInsertPreviewIntoChat: (preview: FilePreviewPayload) => void
+}) {
+  const startResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = width
+    const separatorEl = event.currentTarget
+    const pointerId = event.pointerId
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const delta = startX - moveEvent.clientX
+      onWidthChange(Math.min(PROJECT_RAIL_MAX_WIDTH, Math.max(PROJECT_RAIL_MIN_WIDTH, startWidth + delta)))
+    }
+
+    const handleUp = () => {
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+      try {
+        separatorEl.releasePointerCapture(pointerId)
+      } catch {
+        // ignore pointer capture release failures
+      }
+    }
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    try {
+      separatorEl.setPointerCapture(pointerId)
+    } catch {
+      // ignore pointer capture failures
+    }
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+  }, [onWidthChange, width])
+
+  return (
+    <aside
+      className={cn(
+        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 origin-right transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        open ? 'translate-x-0 scale-100 opacity-100' : 'translate-x-6 scale-[0.97] opacity-0'
+      )}
+      style={{ width: `${width}px` }}
+      aria-hidden={!open}
+    >
+      <div
+        className="pointer-events-auto absolute inset-y-5 -left-3 flex w-6 cursor-col-resize items-center justify-center"
+        onPointerDown={startResize}
+      >
+        <div className="flex h-16 w-3 items-center justify-center rounded-full bg-white/82 shadow-[0_8px_20px_rgba(78,61,38,0.08)] backdrop-blur-sm">
+          <GripVertical className="h-4 w-4 text-[#cabdac]" />
+        </div>
+      </div>
+      <div className="pointer-events-auto flex h-full flex-col rounded-[28px] border border-[#ddd7cb] bg-[#f8f5ee]/96 p-3 shadow-[0_18px_40px_rgba(92,73,45,0.09)] backdrop-blur-xl">
+        <div className="flex items-center justify-between px-3 pt-1.5">
+          <div className="min-w-0">
+            <div className="text-[22px] font-medium tracking-[-0.03em] text-[#b67f63]" style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}>
+              {title}
+            </div>
+            {breadcrumbs.length > 1 ? (
+              <div className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden text-[11px] text-[#bdb2a5]">
+                <button
+                  type="button"
+                  onClick={onNavigateUp}
+                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors hover:bg-[#eee7dc] hover:text-[#8f8070]"
+                >
+                  <ChevronRight className="h-3 w-3 rotate-180" />
+                  <span>返回上级</span>
+                </button>
+                <div className="flex min-w-0 items-center overflow-hidden">
+                  {breadcrumbs.map((crumb, index) => (
+                    <React.Fragment key={crumb.path}>
+                      {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-[#d3c7b9]" /> : null}
+                      <button
+                        type="button"
+                        onClick={() => onJumpToBreadcrumb(crumb.path)}
+                        className={cn(
+                          'truncate rounded px-1 py-0.5 transition-colors hover:bg-[#eee7dc] hover:text-[#8f8070]',
+                          index === breadcrumbs.length - 1 ? 'font-mono italic text-[#a39382]' : 'text-[#bdb2a5]'
+                        )}
+                      >
+                        {crumb.label}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-10 items-center gap-1.5 rounded-[14px] border border-[#e7ded1] bg-[#fffdfa]/94 px-3 text-[12px] font-medium text-[#a59a8d] shadow-[0_6px_14px_rgba(104,84,59,0.07)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>项目技能</span>
+          </button>
+        </div>
+
+        <div className="mt-3 rounded-[24px] border border-[#e7dfd3] bg-[#fbf9f4]/96 px-4 pb-4 pt-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+          <button
+            type="button"
+            onClick={onOpenFolder}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-[16px] border border-[#e5ddd1] bg-white/90 text-[14px] font-medium text-[#b4aba0] shadow-[0_6px_14px_rgba(117,95,66,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
+          >
+            <Folder className="h-4 w-4 stroke-[1.9]" />
+            <span>打开文件夹</span>
+          </button>
+
+          <div className="mt-4 flex items-center justify-between px-1">
+            <div className="text-[11px] uppercase tracking-[0.24em] text-[#d1c7bb]">{projectLabel}</div>
+            <button
+              type="button"
+              onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
+              className="inline-flex items-center gap-1 text-[12px] text-[#b6ab9f] transition-colors duration-150 hover:text-[#8e7f71]"
+            >
+              <Clock3 className="h-3.5 w-3.5" />
+              <span>{sortMode === 'recent' ? '时间' : '名称'}</span>
+            </button>
+          </div>
+
+          <div className="mt-3 min-h-0 flex-1 overflow-hidden">
+            {preview ? (
+              <ProjectRailFilePreview
+                preview={preview}
+                onBack={onBackToList}
+                onOpenExternally={onOpenPreviewExternally}
+                onQuoteIntoChat={onQuotePreviewIntoChat}
+                onInsertIntoChat={onInsertPreviewIntoChat}
+              />
+            ) : previewError ? (
+              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-6 text-center text-[13px] text-[#b6ab9d]">
+                <div>{previewError}</div>
+                <button
+                  type="button"
+                  onClick={onBackToList}
+                  className="mt-3 inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-3 py-1 text-[12px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
+                >
+                  <ChevronRight className="h-3 w-3 rotate-180" />
+                  <span>返回目录</span>
+                </button>
+              </div>
+            ) : isLoading ? (
+              <div className="flex items-center gap-2 px-2 py-3 text-[13px] text-[#b4aa9f]">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <span>正在整理当前项目文件…</span>
+              </div>
+            ) : entries.length === 0 ? (
+              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-6 text-center text-[13px] text-[#b6ab9d]">
+                当前目录里还没有可显示的文件。
+              </div>
+            ) : (
+              <div className="h-full overflow-y-auto pr-1">
+                <ProjectRailGroup title="项目目录" count={entries.length}>
+                  <div className="space-y-0.5">
+                    {entries.map((entry) => (
+                      <ProjectRailTreeNode
+                        key={entry.path}
+                        entry={entry}
+                        level={0}
+                        selectedPath={currentPath}
+                        childEntries={childEntries}
+                        expandedPaths={expandedPaths}
+                        loadingPaths={loadingPaths}
+                        onOpen={onOpenEntry}
+                        onToggleFolder={onToggleFolder}
+                      />
+                    ))}
+                  </div>
+                </ProjectRailGroup>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </aside>
+  )
+})
+
+function ProjectRailGroup({
+  title,
+  count,
+  children,
+}: {
+  title: string
+  count: number
+  children: React.ReactNode
+}) {
+  return (
+    <section className="mb-4">
+      <div className="mb-1.5 flex items-center justify-between px-1.5">
+        <div className="text-[11px] uppercase tracking-[0.22em] text-[#c4b8aa]">{title}</div>
+        <div className="text-[10.5px] text-[#d0c5b8]">{count}</div>
+      </div>
+      <div className="space-y-0.5">{children}</div>
+    </section>
+  )
+}
+
+function ProjectRailFilePreview({
+  preview,
+  onBack,
+  onOpenExternally,
+  onQuoteIntoChat,
+  onInsertIntoChat,
+}: {
+  preview: FilePreviewPayload
+  onBack: () => void
+  onOpenExternally: (preview: FilePreviewPayload) => void
+  onQuoteIntoChat: (preview: FilePreviewPayload) => void
+  onInsertIntoChat: (preview: FilePreviewPayload) => void
+}) {
+  const codeFence = React.useMemo(() => {
+    const raw = preview.content ?? ''
+    const language = inferPreviewLanguage(preview.name, preview.kind)
+    return `\`\`\`${language}\n${raw}\n\`\`\``
+  }, [preview.content, preview.kind, preview.name])
+  const dataUrl = React.useMemo(() => {
+    if (!preview.data_base64 || !preview.mime_type) return null
+    return `data:${preview.mime_type};base64,${preview.data_base64}`
+  }, [preview.data_base64, preview.mime_type])
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center justify-between border-b border-[#ece3d7] px-1 pb-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-3 py-1 text-[12px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
+        >
+          <ChevronRight className="h-3 w-3 rotate-180" />
+          <span>返回目录</span>
+        </button>
+        <div className="min-w-0 truncate pl-3 text-[12px] text-[#b8ac9d]">{preview.name}</div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onOpenExternally(preview)}
+          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+        >
+          <ArrowUpRight className="h-3.5 w-3.5" />
+          <span>在外部打开</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onQuoteIntoChat(preview)}
+          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+        >
+          <Quote className="h-3.5 w-3.5" />
+          <span>在聊天中引用</span>
+        </button>
+        <button
+          type="button"
+          draggable
+          onClick={() => onInsertIntoChat(preview)}
+          onDragStart={(event) => {
+            const payload = `请把 \`${preview.path}\` 作为当前上下文文件一起考虑。`
+            event.dataTransfer.setData('text/plain', payload)
+            event.dataTransfer.effectAllowed = 'copy'
+          }}
+          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+        >
+          <ScanSearch className="h-3.5 w-3.5" />
+          <span>拖入上下文</span>
+        </button>
+      </div>
+      <div className="mt-3 min-h-0 overflow-auto rounded-[18px] border border-[#e8dfd3] bg-[#fffdf8]/88">
+        {preview.kind === 'image' && dataUrl ? (
+          <div className="flex min-h-full items-start justify-center p-4">
+            <img src={dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-[14px] object-contain shadow-[0_10px_24px_rgba(47,36,22,0.08)]" />
+          </div>
+        ) : preview.kind === 'pdf' && dataUrl ? (
+          <iframe title={preview.name} src={dataUrl} className="h-full min-h-[520px] w-full rounded-[18px]" />
+        ) : preview.kind === 'markdown' ? (
+          <div className="px-4 py-4 text-[13px] leading-6 text-black/70">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              {preview.content ?? ''}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <div className="px-4 py-4 text-[12px] leading-6 text-black/68">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              {codeFence}
+            </ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
+  entry,
+  level,
+  selectedPath,
+  childEntries,
+  expandedPaths,
+  loadingPaths,
+  onOpen,
+  onToggleFolder,
+}: {
+  entry: DirectoryEntryPreview
+  level: number
+  selectedPath: string | null
+  childEntries: RailTreeMap
+  expandedPaths: string[]
+  loadingPaths: string[]
+  onOpen: (entry: DirectoryEntryPreview) => void | Promise<void>
+  onToggleFolder: (entry: DirectoryEntryPreview) => void
+}) {
+  const isFolder = entry.kind === 'folder'
+  const isExpanded = expandedPaths.includes(entry.path)
+  const isLoading = loadingPaths.includes(entry.path)
+  const children = childEntries[entry.path] ?? []
+  const Icon = isFolder ? (isExpanded ? FolderOpen : Folder) : File
+  const isSelected = selectedPath === entry.path
+
+  return (
+    <div>
+      <button
+        type="button"
+        draggable={entry.kind === 'file'}
+        onClick={() => {
+          if (isFolder) {
+            onToggleFolder(entry)
+          }
+        }}
+        onDoubleClick={() => {
+          void onOpen(entry)
+        }}
+        onDragStart={(event) => {
+          if (entry.kind !== 'file') return
+          const payload = `请把 \`${entry.path}\` 作为当前上下文文件一起考虑。`
+          event.dataTransfer.setData('text/plain', payload)
+          event.dataTransfer.effectAllowed = 'copy'
+        }}
+        className={cn(
+          'group flex w-full items-center gap-2 rounded-[14px] px-2 py-2 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f3eee6]',
+          isSelected && 'bg-[#f0ebe3] shadow-[inset_0_0_0_1px_rgba(219,208,194,0.7)]'
+        )}
+        style={{ paddingLeft: `${8 + level * 16}px` }}
+      >
+        <div className="flex h-4 w-4 shrink-0 items-center justify-center text-[#ccbba8]">
+          {isFolder ? (
+            <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
+          ) : (
+            <span className="h-3.5 w-3.5" />
+          )}
+        </div>
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] text-[#bf866a] transition-transform duration-150 group-hover:-translate-y-0.5">
+          <Icon className="h-4.5 w-4.5 stroke-[1.85]" />
+        </div>
+        <div className="min-w-0 flex-1 truncate text-[14px] font-medium tracking-[-0.015em]">
+          {entry.name}
+        </div>
+        {isLoading ? (
+          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#c5b9aa]" />
+        ) : isFolder ? (
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#d0c5b8]">{children.length > 0 ? children.length : ''}</div>
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
+        )}
+      </button>
+
+      {isFolder && isExpanded ? (
+        <div className="relative">
+          <div className="absolute bottom-1 left-[17px] top-0 w-px bg-[#eee4d8]" style={{ left: `${22 + level * 16}px` }} />
+          <div className="space-y-0.5 pt-0.5">
+            {children.map((child) => (
+              <ProjectRailTreeNode
+                key={child.path}
+                entry={child}
+                level={level + 1}
+                selectedPath={selectedPath}
+                childEntries={childEntries}
+                expandedPaths={expandedPaths}
+                loadingPaths={loadingPaths}
+                onOpen={onOpen}
+                onToggleFolder={onToggleFolder}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+})
+
+function inferPreviewLanguage(fileName: string, kind?: FilePreviewPayload['kind']) {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
+  if (kind === 'markdown' || ext === 'md' || ext === 'markdown') return 'markdown'
+  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') return ext
+  if (ext === 'rs' || ext === 'py' || ext === 'json' || ext === 'css' || ext === 'html' || ext === 'sh' || ext === 'md' || ext === 'sql' || ext === 'yaml' || ext === 'yml') return ext
+  return 'text'
 }
 
 const ChatTranscript = React.memo(function ChatTranscript({
@@ -766,6 +1529,7 @@ const ComposerDock = React.memo(function ComposerDock({
   handleKeyDown,
   setSlashOverlay,
   slashTimerRef,
+  onFileReferenceDrop,
 }: {
   input: string
   onInputChange: (value: string) => void
@@ -792,7 +1556,9 @@ const ComposerDock = React.memo(function ComposerDock({
     } | null>
   >
   slashTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>
+  onFileReferenceDrop: (value: string) => void
 }) {
+  const [isDropTarget, setIsDropTarget] = React.useState(false)
   const handleInputWithSlashDetect = (value: string) => {
     if (slashTimerRef.current) {
       clearTimeout(slashTimerRef.current)
@@ -842,11 +1608,28 @@ const ComposerDock = React.memo(function ComposerDock({
               value={input}
               onChange={(e) => handleInputWithSlashDetect(e.target.value)}
               onKeyDown={handleKeyDown}
+              onDragOver={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'copy'
+                setIsDropTarget(true)
+              }}
+              onDragLeave={() => setIsDropTarget(false)}
+              onDrop={(event) => {
+                event.preventDefault()
+                const payload = event.dataTransfer.getData('text/plain').trim()
+                if (payload) {
+                  onFileReferenceDrop(payload)
+                }
+                setIsDropTarget(false)
+              }}
               disabled={isLoading}
               rows={1}
               onFocus={() => setIsComposerFocused(true)}
               onBlur={() => setIsComposerFocused(false)}
-              className="min-h-[70px] resize-none border-0 bg-transparent px-0 py-0.5 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0"
+              className={cn(
+                'min-h-[70px] resize-none border-0 bg-transparent px-0 py-0.5 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0',
+                isDropTarget && 'rounded-[16px] bg-[#f5efe6]/75 outline outline-1 outline-[#e6d7c3]'
+              )}
             />
 
             <div className="mt-1.5 flex flex-col gap-1.5">
@@ -993,10 +1776,10 @@ function ToolCallMessage({
   const [expanded, setExpanded] = React.useState(false)
   const [isHovered, setIsHovered] = React.useState(false)
   const status = normalizeToolStatus(message)
-  const display = buildToolCallDisplay(message, defaultWorkdir)
-  const isRunning = status === 'running' || status === 'queued'
+  const display = buildToolCallDisplay(message, defaultWorkdir, status)
   const title = status === 'error' ? `执行失败：${display.title}` : display.title
   const hasDetails = display.details.length > 0
+  const ToolGlyph = getToolCallGlyph(message.toolName, message.toolArgs)
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
@@ -1017,42 +1800,28 @@ function ToolCallMessage({
             type="button"
             onClick={() => setExpanded((value) => !value)}
             className={cn(
-              'group flex min-w-0 flex-1 items-center gap-1.5 rounded-none px-0 py-[2px] text-left transition-colors duration-150',
+              'group flex min-w-0 flex-1 items-center gap-2 rounded-none px-0 py-[2px] text-left transition-colors duration-150',
               status === 'error' ? 'hover:text-rose-600/90' : 'hover:text-black/70'
             )}
             aria-label={expanded ? '折叠工具调用' : '展开工具调用'}
           >
-            <div className="relative flex size-4 shrink-0 items-center justify-center text-black/38">
-              <TerminalSquare
-                className={cn(
-                  'absolute h-3.5 w-3.5 transition-all duration-150',
-                  expanded ? 'opacity-0 scale-90' : 'opacity-100 scale-100',
-                  isHovered && 'opacity-0 scale-90'
-                )}
-              />
-              <ChevronDown
-                className={cn(
-                  'absolute h-3.5 w-3.5 transition-all duration-150',
-                  expanded
-                    ? 'opacity-100 rotate-180 scale-100'
-                    : isHovered
-                      ? 'opacity-100 scale-100'
-                      : 'opacity-0 scale-90'
-                )}
-              />
+            <div className="flex size-4 shrink-0 items-center justify-center text-black/34">
+              <ToolGlyph className="h-3.5 w-3.5" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className={cn('truncate text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-black/50')}>
-                {title}
+              <div className={cn('flex items-center gap-1.5 text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-black/50')}>
+                <span className="truncate">{title}</span>
+                <ToolStatusGlyph status={status} />
               </div>
             </div>
 
-            {isRunning ? (
-              <div className="ml-1 shrink-0 opacity-70">
-                <LoadingIndicator />
-              </div>
-            ) : null}
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 shrink-0 text-black/28 transition-all duration-150',
+                expanded ? 'rotate-180 text-black/42' : isHovered ? 'text-black/42' : 'text-black/24'
+              )}
+            />
           </button>
 
           <DropdownMenu>
@@ -1109,13 +1878,24 @@ function ToolCallMessage({
           <div className="ml-[10px] border-l-[1.5px] border-black/10 pl-3 pt-1">
             {hasDetails ? (
               <div className="flex flex-col gap-0.5">
-                {display.details.map((line) => (
+                {display.details.map((line, index) => (
                   <div
-                    key={line}
-                    className="flex min-w-0 items-start gap-1.5 text-[11.5px] leading-5 text-black/36"
+                    key={`${line}-${index}`}
+                    className={cn(
+                      'flex min-w-0 items-center gap-1.5 text-[11.5px] leading-5 text-black/36',
+                      index === 0 && 'px-0.5 py-0.5 text-black/42'
+                    )}
                   >
-                    <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-black/18" />
-                    <span className="min-w-0 truncate font-mono">{line}</span>
+                    {index === 0 ? (
+                      <div className="flex size-4 shrink-0 items-center justify-center text-black/28">
+                        <ToolGlyph className="h-3.5 w-3.5" />
+                      </div>
+                    ) : (
+                      <span className="mt-[1px] h-1 w-1 shrink-0 rounded-full bg-black/18" />
+                    )}
+                    <span className="min-w-0 truncate">
+                      {index === 0 ? renderInlineToolSummary(line) : <span className="font-mono">{line}</span>}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1189,6 +1969,8 @@ const ChatMessage = React.memo(function ChatMessage({
   const shortTime = formatShortTime(message.timestamp)
   const showCopyButton = isCopied
   const contentHash = React.useMemo(() => hashString(message.content), [message.content])
+  const showStatusLabel = !isUser && !isTool && Boolean(message.statusLabel)
+  const statusMeta = getAssistantStatusMeta(message)
 
   if (isTool) {
     return <ToolCallMessage message={message} defaultWorkdir={defaultWorkdir} />
@@ -1221,16 +2003,38 @@ const ChatMessage = React.memo(function ChatMessage({
       ) : (
         <div className="w-full space-y-2.5">
           {message.isError && message.toolArgs?.rawError ? (
-            <ErrorCard
-              error={String(message.toolArgs.rawError)}
-              taskOutcome={typeof message.toolArgs.taskOutcome === 'string' ? message.toolArgs.taskOutcome : message.taskOutcome}
-              resumeCursor={
-                (typeof message.toolArgs.resumeCursor === 'string'
+            (() => {
+              const taskOutcome =
+                typeof message.toolArgs.taskOutcome === 'string'
+                  ? message.toolArgs.taskOutcome
+                  : message.taskOutcome
+              const resumeCursor =
+                typeof message.toolArgs.resumeCursor === 'string'
                   ? message.toolArgs.resumeCursor
-                  : message.resumeCursor)
-              }
-              onResume={onResumeFromCursor}
-            />
+                  : message.resumeCursor
+              const degradedReason =
+                typeof message.toolArgs.degradedReason === 'string'
+                  ? message.toolArgs.degradedReason
+                  : message.degradedReason
+              const rawError = String(message.toolArgs.rawError)
+
+              return taskOutcome === 'partial_success' ? (
+                <RecoveryCard
+                  error={rawError}
+                  degradedReason={degradedReason}
+                  resumeCursor={resumeCursor}
+                  isRecovering={Boolean(message.isRecovering)}
+                  onResume={onResumeFromCursor}
+                />
+              ) : (
+                <ErrorCard
+                  error={rawError}
+                  taskOutcome={taskOutcome}
+                  resumeCursor={resumeCursor}
+                  onResume={onResumeFromCursor}
+                />
+              )
+            })()
           ) : (
             <>
               <div
@@ -1257,6 +2061,16 @@ const ChatMessage = React.memo(function ChatMessage({
                 {!hasThinking && message.isStreaming ? (
                   <div className="mb-2.5 flex items-start">
                     <LoadingIndicator />
+                  </div>
+                ) : null}
+
+                {showStatusLabel ? (
+                  <div className={cn(
+                    'mb-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-4',
+                    statusMeta.containerClass
+                  )}>
+                    <span className={cn('h-1.5 w-1.5 rounded-full', statusMeta.dotClass)} />
+                    <span>{message.statusLabel}</span>
                   </div>
                 ) : null}
 
@@ -1320,6 +2134,11 @@ const MarkdownContent = React.memo(function MarkdownContent({
     }
     return normalized
   }, [content, contentHash])
+  const skillsReport = React.useMemo(() => parseSkillsSlashReport(content), [content])
+
+  if (skillsReport) {
+    return <SkillsSlashReport report={skillsReport} densityMode={densityMode} />
+  }
 
   return (
     <ReactMarkdown
@@ -1336,9 +2155,9 @@ const MarkdownContent = React.memo(function MarkdownContent({
             {children}
           </p>
         ),
-        h1: ({ children }) => <h1 className="scroll-m-20 text-2xl font-semibold tracking-tight">{children}</h1>,
-        h2: ({ children }) => <h2 className="scroll-m-20 border-b pb-2 text-xl font-semibold tracking-tight first:mt-0">{children}</h2>,
-        h3: ({ children }) => <h3 className="scroll-m-20 text-lg font-semibold tracking-tight">{children}</h3>,
+        h1: ({ children }) => <h1 className="scroll-m-20 text-xl font-semibold leading-[1.55] tracking-tight">{children}</h1>,
+        h2: ({ children }) => <h2 className="scroll-m-20 border-b pb-2 text-lg font-semibold leading-[1.55] tracking-tight first:mt-0">{children}</h2>,
+        h3: ({ children }) => <h3 className="scroll-m-20 text-base font-semibold leading-[1.5] tracking-tight">{children}</h3>,
         ul: ({ children }) => (
           <ul
             className={cn(
@@ -1361,7 +2180,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
         ),
         li: ({ children }) => <li className={densityMode === 'compact' ? 'leading-5.25' : 'leading-5.75'}>{children}</li>,
         blockquote: ({ children }) => (
-          <blockquote className={cn('mt-4 border-l-2 border-slate-300/90 pl-4 italic text-black/72', densityMode === 'compact' ? 'text-[13px] leading-6' : 'text-[14px] leading-7')}>
+          <blockquote className={cn('mt-4 border-l-2 border-slate-300/90 pl-4 italic text-black/72', densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75')}>
             {children}
           </blockquote>
         ),
@@ -1432,6 +2251,244 @@ const MarkdownContent = React.memo(function MarkdownContent({
   prev.densityMode === next.densityMode
 )
 
+type ParsedSkillsReport = {
+  total: number
+  enabled: number
+  items: Array<{
+    name: string
+    sourceKey: string
+    sourceLabel: string
+    enabled: boolean
+    status: string
+    shadowedBy?: string
+  }>
+}
+
+type GroupedSkillsReportItem = {
+  name: string
+  variants: ParsedSkillsReport['items']
+}
+
+function SkillsSlashReport({
+  report,
+  densityMode,
+}: {
+  report: ParsedSkillsReport
+  densityMode: DensityMode
+}) {
+  const groupedItems = React.useMemo(() => groupSkillsReportItems(report.items), [report.items])
+
+  return (
+    <div className={cn('my-2.5 space-y-3.5', densityMode === 'compact' ? 'text-[12px]' : 'text-[13px]')}>
+      <div className="flex items-center gap-2 text-black/78">
+        <div className="flex size-7 items-center justify-center rounded-[10px] bg-black/[0.035] text-black/42">
+          <Sparkles className="size-4" />
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="font-medium tracking-tight">Skills</span>
+          <span className="text-black/42">{report.total} total</span>
+          <span className="text-black/28">/</span>
+          <span className="text-black/42">{report.enabled} enabled</span>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {groupedItems.map((group) => {
+          const primary = group.variants[0]
+          const SourceGlyph = getSkillSourceGlyph(primary.sourceKey)
+          const isActive = primary.enabled && (primary.status === 'active' || primary.status === 'review_passed')
+
+          return (
+            <div key={`${group.name}-${group.variants.length}`} className="flex gap-3">
+              <div className="flex w-5 shrink-0 justify-center pt-1">
+                <span className={cn(
+                  'size-2 rounded-full',
+                  isActive ? 'bg-emerald-500/80' : primary.enabled ? 'bg-amber-400/85' : 'bg-black/18'
+                )} />
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="truncate font-medium tracking-tight text-black/78">{group.name}</div>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-black/[0.03] px-2 py-0.5 text-[10.5px] text-black/42">
+                    <SourceGlyph className="size-3" />
+                    <span>{primary.sourceLabel}</span>
+                  </span>
+                  {group.variants.length > 1 ? (
+                    <span className="shrink-0 text-[10.5px] text-black/34">{group.variants.length} variants</span>
+                  ) : null}
+                </div>
+                <div className="space-y-1">
+                  {group.variants.map((variant, index) => (
+                    <SkillMetaRow
+                      key={`${group.name}-${variant.sourceKey}-${variant.shadowedBy ?? 'active'}-${index}`}
+                      item={variant}
+                      showSource={group.variants.length > 1}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function SkillMetaRow({
+  item,
+  showSource,
+}: {
+  item: ParsedSkillsReport['items'][number]
+  showSource: boolean
+}) {
+  const SourceGlyph = getSkillSourceGlyph(item.sourceKey)
+
+  return (
+    <div className="flex min-w-0 items-start gap-2 text-[11px] text-black/38">
+      {showSource ? (
+        <span className="inline-flex shrink-0 items-center gap-1 text-black/32">
+          <SourceGlyph className="size-3" />
+          <span>{item.sourceLabel}</span>
+        </span>
+      ) : (
+        <span className={cn('mt-[4px] size-1.5 shrink-0 rounded-full', item.enabled ? 'bg-emerald-500/55' : 'bg-black/14')} />
+      )}
+      <div className="min-w-0 truncate">
+        <span>{item.enabled ? 'enabled' : 'disabled'}</span>
+        <span className="px-1 text-black/18">·</span>
+        <span>
+          <span className="text-black/30">status </span>
+          <span className="font-mono italic text-black/46">{item.status}</span>
+        </span>
+        {item.shadowedBy ? (
+          <>
+            <span className="px-1 text-black/18">·</span>
+            <span>
+              <span className="text-black/30">shadowed by </span>
+              <span className="font-mono italic text-black/46">{item.shadowedBy}</span>
+            </span>
+          </>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function groupSkillsReportItems(items: ParsedSkillsReport['items']): GroupedSkillsReportItem[] {
+  const groups = new Map<string, GroupedSkillsReportItem>()
+
+  for (const item of items) {
+    const key = item.name.toLowerCase()
+    const existing = groups.get(key)
+    if (existing) {
+      existing.variants.push(item)
+    } else {
+      groups.set(key, { name: item.name, variants: [item] })
+    }
+  }
+
+  for (const group of groups.values()) {
+    group.variants.sort((a, b) => getSkillVariantPriority(b) - getSkillVariantPriority(a))
+  }
+
+  return Array.from(groups.values())
+}
+
+function getSkillVariantPriority(item: ParsedSkillsReport['items'][number]) {
+  let score = 0
+  if (item.enabled) score += 4
+  if (item.status === 'active' || item.status === 'review_passed') score += 3
+  if (!item.shadowedBy) score += 2
+  if (item.sourceKey === 'workspace') score += 1.5
+  else if (item.sourceKey === 'user') score += 1
+  else if (item.sourceKey === 'builtin') score += 0.5
+  return score
+}
+
+function parseSkillsSlashReport(content: string): ParsedSkillsReport | null {
+  const normalized = content.replace(/\r\n/g, '\n').trim()
+  const lines = normalized.split('\n').map((line) => line.trimEnd())
+  const header = lines[0]?.match(/^📋\s+Skills\s+\((\d+)\s+total,\s+(\d+)\s+enabled\)$/)
+  if (!header) return null
+
+  const items: ParsedSkillsReport['items'] = []
+  let current: ParsedSkillsReport['items'][number] | null = null
+
+  for (const rawLine of lines.slice(2)) {
+    const line = rawLine.trim()
+    if (!line) continue
+
+    const itemMatch = line.match(/^(🟢|⚪)(✅|🔒|📝|❌|⚠️)\s+(.+?)\s+(🏠 builtin|👤 user|📁 workspace|🔒 quarantine|[^\s]+)$/)
+    if (itemMatch) {
+      if (current) items.push(current)
+      current = {
+        enabled: itemMatch[1] === '🟢',
+        status: normalizeSkillStatusFromEmoji(itemMatch[2]),
+        name: itemMatch[3].trim(),
+        sourceKey: normalizeSkillSourceKey(itemMatch[4]),
+        sourceLabel: normalizeSkillSourceLabel(itemMatch[4]),
+      }
+      continue
+    }
+
+    if (!current) continue
+
+    const metaMatch = line.match(/^└\s+(enabled|disabled)\s+\|\s+status:\s+(.+)$/)
+    if (metaMatch) {
+      current.enabled = metaMatch[1] === 'enabled'
+      current.status = metaMatch[2].trim()
+      continue
+    }
+
+    const shadowedMatch = line.match(/^└\s+shadowed by\s+(.+)$/)
+    if (shadowedMatch) {
+      current.shadowedBy = shadowedMatch[1].trim()
+    }
+  }
+
+  if (current) items.push(current)
+  if (!items.length) return null
+
+  return {
+    total: Number(header[1]),
+    enabled: Number(header[2]),
+    items,
+  }
+}
+
+function normalizeSkillStatusFromEmoji(emoji: string) {
+  if (emoji === '✅') return 'active'
+  if (emoji === '🔒') return 'quarantine'
+  if (emoji === '📝') return 'draft'
+  if (emoji === '❌') return 'disabled'
+  return 'warning'
+}
+
+function normalizeSkillSourceKey(sourceLabel: string) {
+  if (sourceLabel.includes('builtin')) return 'builtin'
+  if (sourceLabel.includes('user')) return 'user'
+  if (sourceLabel.includes('workspace')) return 'workspace'
+  if (sourceLabel.includes('quarantine')) return 'quarantine'
+  return sourceLabel
+}
+
+function normalizeSkillSourceLabel(sourceLabel: string) {
+  return sourceLabel
+    .replace('🏠 ', '')
+    .replace('👤 ', '')
+    .replace('📁 ', '')
+    .replace('🔒 ', '')
+}
+
+function getSkillSourceGlyph(sourceKey: string): React.ComponentType<{ className?: string }> {
+  if (sourceKey === 'builtin') return House
+  if (sourceKey === 'user') return UserRound
+  if (sourceKey === 'workspace') return FolderOpen
+  if (sourceKey === 'quarantine') return Lock
+  return Sparkles
+}
+
 function CodeBlock({
   children,
   densityMode,
@@ -1443,6 +2500,32 @@ function CodeBlock({
   const [animateCopy, setAnimateCopy] = React.useState(false)
   const rawCode = extractCodeText(children)
   const displayCode = React.useMemo(() => normalizeCodeForDisplay(rawCode), [rawCode])
+
+  if (looksLikeKeywordLineBlock(rawCode)) {
+    return (
+      <div
+        className={cn(
+          'my-2 text-black/76',
+          densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
+        )}
+      >
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{normalizeKeywordLineForDisplay(displayCode.trim())}</div>
+      </div>
+    )
+  }
+
+  if (looksLikeNarrativeTextBlock(rawCode)) {
+    return (
+      <div
+        className={cn(
+          'my-3 pl-4 text-black/72 italic',
+          densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
+        )}
+      >
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{normalizeNarrativeTextForDisplay(displayCode.trim())}</div>
+      </div>
+    )
+  }
 
   const copyCode = async () => {
     const text = displayCode
@@ -1498,7 +2581,88 @@ function CodeBlock({
 }
 
 function normalizeAsciiDiagramBlocks(content: string): string {
-  return content
+  return content.replace(/```(?:[\w-]+)?\n([\s\S]*?)```/g, (fullMatch, rawBlock) => {
+    const transformed = transformAsciiRelationshipBlock(rawBlock)
+    return transformed ?? fullMatch
+  })
+}
+
+function transformAsciiRelationshipBlock(rawBlock: string): string | null {
+  const normalized = rawBlock.replace(/\r\n/g, '\n').trim()
+  if (!looksLikeRelationshipBox(normalized)) return null
+
+  const cleanedLines = normalized
+    .split('\n')
+    .map((line) => stripBoxDrawingLine(line))
+    .filter((line) => line.length > 0 && !looksLikeDecorativeNoiseLine(line))
+
+  if (cleanedLines.length < 3) return null
+
+  const firstLine = cleanedLines[0]
+  const bodyLines = cleanedLines.slice(1)
+  const quoteLines: string[] = [`> **${firstLine}**`, '>']
+
+  for (const line of bodyLines) {
+    const bulletText = line.replace(/^([✦•◆▪●○\-*]+)\s*/, '').trim()
+    if (/^([✦•◆▪●○\-*]+)/.test(line)) {
+      quoteLines.push(`> - ${bulletText}`)
+      continue
+    }
+    if (looksLikeRelationshipHeading(line)) {
+      if (quoteLines[quoteLines.length - 1] !== '>') {
+        quoteLines.push('>')
+      }
+      quoteLines.push(`> **${line}**`)
+      continue
+    }
+    quoteLines.push(`> ${line}`)
+  }
+
+  return quoteLines.join('\n')
+}
+
+function looksLikeRelationshipBox(text: string): boolean {
+  const boxCharCount = text.match(/[│┌┐└┘─/\\_|-]/g)?.length ?? 0
+  const bulletCount = text.match(/^[ \t]*[✦•◆▪●○\-*]/gm)?.length ?? 0
+  const numberedCount = text.match(/^[ \t]*(?:\d+[.)]|\d+️⃣|[①②③④⑤⑥⑦⑧⑨⑩]|🔟)/gm)?.length ?? 0
+  const headingCount = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => stripBoxDrawingLine(line))
+    .filter((line) => looksLikeRelationshipHeading(line)).length
+  const codeSignalCount = text.match(/[{}();=<>]/g)?.length ?? 0
+  return boxCharCount >= 8 && codeSignalCount < 6 && (bulletCount >= 2 || numberedCount >= 2 || headingCount >= 3)
+}
+
+function looksLikeRelationshipHeading(line: string): boolean {
+  const normalized = line.trim()
+  if (!normalized) return false
+  return /^(?:\d+[.)]|\d+️⃣|[①②③④⑤⑥⑦⑧⑨⑩]|🔟)\s*/.test(normalized)
+}
+
+function stripBoxDrawingLine(line: string): string {
+  const trimmed = line.trim()
+  if (!trimmed) return ''
+  if (/^[┌┐└┘─│/\\_|+\-\s]+$/.test(trimmed)) return ''
+
+  const cleaned = trimmed
+    .replace(/^[│\s]+/, '')
+    .replace(/[│\s]+$/, '')
+    .replace(/^[┌┐└┘─/\\_|+\-\s]+/, '')
+    .replace(/[┌┐└┘─/\\_|+\-\s]+$/, '')
+    .trim()
+    .replace(/\s+[\/\\|]+\s*$/g, '')
+    .replace(/^\s*[\/\\|]+\s+/g, '')
+    .trim()
+
+  if (looksLikeDecorativeNoiseLine(cleaned)) return ''
+  return cleaned
+}
+
+function looksLikeDecorativeNoiseLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return true
+  return /^[\/\\|_\-+]+$/.test(trimmed)
 }
 
 function hashString(input: string): number {
@@ -1522,6 +2686,66 @@ function looksLikeTreeText(text: string): boolean {
   const treeCharCount = text.match(/[│├└┌┐┬┼─]/g)?.length ?? 0
   const fileLikeCount = text.match(/([A-Za-z0-9._-]+\/|[A-Za-z0-9._-]+\.[A-Za-z0-9]+)/g)?.length ?? 0
   return treeCharCount >= 3 && fileLikeCount >= 4
+}
+
+function looksLikeNarrativeTextBlock(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, '\n').trim()
+  if (!normalized || normalized.length < 16) return false
+
+  const contentLines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  const lineCount = contentLines.length
+  const punctuationSignals = normalized.match(/[「」『』。！？：…]/g)?.length ?? 0
+  const dialogueSignals = normalized.match(/(^|\n)\s*[\p{Script=Han}A-Za-z0-9_-]{1,12}[:：]/gu)?.length ?? 0
+  const quoteLineCount = contentLines.filter((line) => /^[[「『“"']/u.test(line)).length
+  const codeSignals = normalized.match(/[{}();=<>`]/g)?.length ?? 0
+  const cjkCharCount = normalized.match(/[\p{Script=Han}]/gu)?.length ?? 0
+  const shortLineCount = contentLines.filter((line) => line.length <= 28).length
+  const plainLineCount = contentLines.filter((line) => !/^[\-*•◆▪●○]/.test(line)).length
+
+  if (codeSignals >= 6) return false
+
+  if (lineCount >= 3 && punctuationSignals >= 3 && dialogueSignals >= 1) {
+    return true
+  }
+
+  if (lineCount >= 2 && quoteLineCount === lineCount && punctuationSignals >= 2) {
+    return true
+  }
+
+  if (lineCount >= 3 && cjkCharCount >= 12 && punctuationSignals >= 1 && shortLineCount >= 2) {
+    return true
+  }
+
+  if (lineCount >= 3 && plainLineCount === lineCount && shortLineCount >= 2 && cjkCharCount >= 10) {
+    return true
+  }
+
+  return lineCount >= 4 && cjkCharCount >= 16 && codeSignals === 0
+}
+
+function normalizeNarrativeTextForDisplay(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+}
+
+function looksLikeKeywordLineBlock(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, '\n').trim()
+  if (!normalized || normalized.includes('\n')) return false
+  const separatorCount = normalized.match(/\|/g)?.length ?? 0
+  const codeSignals = normalized.match(/[{}();=<>`[\]]/g)?.length ?? 0
+  const cjkCharCount = normalized.match(/[\p{Script=Han}A-Za-z]/gu)?.length ?? 0
+  return separatorCount >= 4 && codeSignals === 0 && cjkCharCount >= 8
+}
+
+function normalizeKeywordLineForDisplay(text: string): string {
+  return text
+    .replace(/\s*\|\s*/g, '  |  ')
+    .replace(/\s{3,}/g, '  ')
 }
 
 function MessageCopyButton({
@@ -1581,6 +2805,102 @@ function normalizeToolStatus(message: Message): 'queued' | 'running' | 'complete
   return 'running'
 }
 
+function getAssistantStatusMeta(message: Message) {
+  const kind = message.statusKind
+    ?? (message.taskOutcome === 'partial_success'
+      ? 'partial'
+      : message.taskOutcome === 'failed'
+        ? 'failed'
+        : message.taskOutcome === 'completed'
+          ? 'success'
+          : 'info')
+  if (kind === 'success') {
+    return {
+      containerClass: 'border-emerald-200/80 bg-emerald-50/75 text-emerald-800/85',
+      dotClass: 'bg-emerald-500',
+    }
+  }
+  if (kind === 'partial') {
+    return {
+      containerClass: 'border-amber-200/80 bg-amber-50/80 text-amber-800/85',
+      dotClass: 'bg-amber-500',
+    }
+  }
+  if (kind === 'failed') {
+    return {
+      containerClass: 'border-rose-200/80 bg-rose-50/80 text-rose-800/85',
+      dotClass: 'bg-rose-500',
+    }
+  }
+  return {
+    containerClass: 'border-sky-200/80 bg-sky-50/80 text-sky-800/85',
+    dotClass: 'bg-sky-500',
+  }
+}
+
+function ToolStatusGlyph({
+  status,
+}: {
+  status: 'queued' | 'running' | 'completed' | 'error'
+}) {
+  if (status === 'queued' || status === 'running') {
+    return (
+      <span className="relative flex h-3 w-3 shrink-0 items-center justify-center opacity-80">
+        <span className="absolute inset-0 rounded-full bg-sky-400/10 animate-ping" />
+        <LoaderCircle className="relative h-3 w-3 animate-spin text-sky-500/80" strokeWidth={2} />
+      </span>
+    )
+  }
+
+  if (status === 'completed') {
+    return (
+      <span className="inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full bg-emerald-500/88 text-white">
+        <Check className="h-2.1 w-2.1" strokeWidth={3} />
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full bg-rose-500/88 text-white">
+      <X className="h-2.1 w-2.1" strokeWidth={3} />
+    </span>
+  )
+}
+
+function getToolCallGlyph(
+  toolName?: string,
+  args?: Record<string, unknown>
+): React.ComponentType<{ className?: string }> {
+  const normalized = (toolName ?? '').toLowerCase()
+  const maybeCommand = pickToolString(args ?? {}, ['command', 'cmd', 'shell'])
+
+  if (normalized === 'skill' || normalized.includes('skill/') || normalized.includes('.skill')) {
+    return Sparkles
+  }
+  if (normalized.includes('web_search')) {
+    return Globe
+  }
+  if (normalized.includes('glob_search') || normalized.includes('grep_search') || normalized.includes('content_search') || normalized.includes('tool_search') || normalized.includes('skill_search')) {
+    return Search
+  }
+  if (normalized.includes('read_file')) {
+    return FileText
+  }
+  if (normalized.includes('file_write')) {
+    return FolderOpen
+  }
+  if (maybeCommand || normalized.includes('command') || normalized.includes('exec') || normalized.includes('shell')) {
+    return Wrench
+  }
+  if (normalized.includes('weather')) {
+    return Globe
+  }
+  if (normalized.includes('agent') || normalized.includes('assistant')) {
+    return Bot
+  }
+  return TerminalSquare
+}
+
 type ToolDisplay = {
   title: string
   details: string[]
@@ -1589,7 +2909,11 @@ type ToolDisplay = {
   diagnosticCopyText: string | null
 }
 
-function buildToolCallDisplay(message: Message, defaultWorkdir?: string): ToolDisplay {
+function buildToolCallDisplay(
+  message: Message,
+  defaultWorkdir?: string,
+  status: 'queued' | 'running' | 'completed' | 'error' = 'completed'
+): ToolDisplay {
   const toolName = (message.toolName ?? 'unknown_tool').trim()
   const args = message.toolArgs ?? {}
   const normalizedToolName = toolName.toLowerCase()
@@ -1601,6 +2925,7 @@ function buildToolCallDisplay(message: Message, defaultWorkdir?: string): ToolDi
   const resultSummary = summarizeToolResult(message.content)
   const titleText = pickToolHeadline(
     normalizedToolName,
+    status,
     args,
     command,
     path,
@@ -1656,6 +2981,7 @@ function buildDiagnosticCopyText(message: Message): string | null {
 
 function pickToolHeadline(
   toolName: string,
+  status: 'queued' | 'running' | 'completed' | 'error',
   args: Record<string, unknown>,
   command: string | null,
   path: string | null,
@@ -1698,11 +3024,14 @@ function pickToolHeadline(
   }
 
   if (toolName.includes('read_file')) {
-    return path ? `读取了 ${shortenMiddle(path, 28)}` : '读取了文件'
+    return path ? `查看了 ${shortenMiddle(path, 28)}` : '查看了文件'
   }
 
   if (toolName.includes('file_write')) {
-    return path ? `写入了 ${shortenMiddle(path, 28)}` : '写入了文件'
+    if (status === 'queued' || status === 'running') {
+      return path ? `正在写入 ${shortenMiddle(path, 28)}` : '正在写入文件'
+    }
+    return path ? `已写入 ${shortenMiddle(path, 28)}` : '已写入文件'
   }
 
   if (toolName.includes('web_search')) {
@@ -1722,11 +3051,11 @@ function pickToolHeadline(
   }
 
   if (toolName === 'skill' || toolName.includes('skill/') || toolName.includes('.skill')) {
-    return skillName ? `调用了技能 ${shortenMiddle(skillName, 24)}` : '调用了技能'
+    return skillName ? `调用了 ${shortenMiddle(skillName, 24)}` : '调用了技能'
   }
 
   if (command) {
-    return `执行了命令 ${truncateText(redactSensitiveText(command), 46)}`
+    return `执行了 ${truncateText(redactSensitiveText(command), 48)}`
   }
 
   if (path) {
@@ -1757,6 +3086,11 @@ function buildToolDetailLines(
 ): string[] {
   const detailLines: string[] = []
   const targetPath = path || defaultWorkdir || ''
+  const summaryLine = buildToolCommandResultLine(toolName, command, skillName, resultSummary)
+
+  if (summaryLine) {
+    detailLines.push(summaryLine)
+  }
 
   if (toolName.includes('glob_search')) {
     if (targetPath) detailLines.push(`范围：${shortenMiddle(targetPath, 56)}`)
@@ -1777,11 +3111,11 @@ function buildToolDetailLines(
     if (pattern) detailLines.push(`关键词：${shortenMiddle(pattern, 56)}`)
   } else if (toolName === 'skill' || toolName.includes('skill/') || toolName.includes('.skill')) {
     if (skillName) detailLines.push(`技能：${shortenMiddle(skillName, 56)}`)
-  } else if (command) {
+  } else if (command && !summaryLine) {
     detailLines.push(`命令：${truncateText(redactSensitiveText(command), 92)}`)
   }
 
-  if (resultSummary) {
+  if (resultSummary && !summaryLine) {
     detailLines.push(`结果：${truncateText(resultSummary, 96)}`)
   }
 
@@ -1791,6 +3125,72 @@ function buildToolDetailLines(
   }
 
   return detailLines.slice(0, 3)
+}
+
+function buildToolCommandResultLine(
+  toolName: string,
+  command: string | null,
+  skillName: string | null,
+  resultSummary: string
+) {
+  const toolOrCommandPart = command
+    ? `命令：${truncateText(redactSensitiveText(command), resultSummary ? 68 : 108)}`
+    : skillName
+      ? `工具：${truncateText(skillName, resultSummary ? 34 : 72)}`
+      : `工具：${truncateText(normalizeToolLabel(toolName), resultSummary ? 22 : 48)}`
+  const resultPart = resultSummary
+    ? `结果：${truncateText(resultSummary, command ? 24 : 52)}`
+    : ''
+
+  if (toolOrCommandPart && resultPart) {
+    return `${toolOrCommandPart} · ${resultPart}`
+  }
+
+  return toolOrCommandPart || resultPart || ''
+}
+
+function normalizeToolLabel(toolName: string) {
+  const normalized = toolName.trim().toLowerCase()
+
+  if (!normalized) return 'unknown_tool'
+  if (normalized.includes('glob_search')) return 'glob_search'
+  if (normalized.includes('grep_search') || normalized.includes('content_search')) return 'grep_search'
+  if (normalized.includes('read_file')) return 'read_file'
+  if (normalized.includes('file_write')) return 'file_write'
+  if (normalized.includes('web_search')) return 'web_search'
+  if (normalized.includes('weather')) return 'weather'
+  if (normalized.includes('tool_search')) return 'tool_search'
+  if (normalized.includes('skill_search')) return 'skill_search'
+  if (normalized === 'skill' || normalized.includes('skill/') || normalized.includes('.skill')) return 'skill'
+
+  return toolName.trim()
+}
+
+function renderInlineToolSummary(line: string) {
+  const segments = line.split(' · ').filter(Boolean)
+
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 truncate">
+      {segments.map((segment, index) => {
+        const separatorNeeded = index > 0
+        const colonIndex = segment.indexOf('：')
+        const label = colonIndex >= 0 ? segment.slice(0, colonIndex + 1) : ''
+        const value = colonIndex >= 0 ? segment.slice(colonIndex + 1).trim() : segment
+
+        return (
+          <React.Fragment key={`${segment}-${index}`}>
+            {separatorNeeded ? <span className="shrink-0 text-black/24">·</span> : null}
+            <span className="inline-flex min-w-0 items-center gap-1">
+              {label ? <span className="shrink-0 text-black/34">{label}</span> : null}
+              <span className="min-w-0 truncate rounded-[5px] bg-black/[0.04] px-1.5 py-[1px] font-mono italic text-black/48">
+                {value}
+              </span>
+            </span>
+          </React.Fragment>
+        )
+      })}
+    </span>
+  )
 }
 
 function pickToolString(args: Record<string, unknown>, keys: readonly string[]): string | null {
@@ -1827,12 +3227,24 @@ function summarizeToolResult(content: string): string {
       return `返回 ${count} 项结果`
     }
 
-    for (const key of ['results', 'items', 'entries', 'files'] as const) {
+    for (const key of [
+      'results',
+      'items',
+      'entries',
+      'files',
+      'todos',
+      'new_todos',
+      'newTodos',
+    ] as const) {
       const value = record[key]
       if (Array.isArray(value)) {
         return `返回 ${value.length} 项结果`
       }
     }
+
+    // For generic JSON object outputs (like TodoWrite payloads),
+    // avoid falling back to the first line "{" in tool cards.
+    return '返回对象结果'
   }
 
   if (Array.isArray(parsed)) {
@@ -1899,10 +3311,78 @@ function EmptyState({ sessionTitle, projectLabel }: { sessionTitle: string; proj
 
 function LoadingIndicator() {
   return (
-    <div className="flex items-center gap-1 px-0.5 py-0.5">
-      <span className="h-1.5 w-1.5 rounded-full bg-black/32 animate-bounce [animation-delay:0ms]" />
-      <span className="h-1.5 w-1.5 rounded-full bg-black/32 animate-bounce [animation-delay:150ms]" />
-      <span className="h-1.5 w-1.5 rounded-full bg-black/32 animate-bounce [animation-delay:300ms]" />
+    <div className="flex items-center px-0.5 py-1">
+      <WaveDotsAnimation
+        amplitude={11.04}
+        ballRadius={3}
+        count={6}
+        delay={0.19}
+        horizontalStretch={1.10625}
+        topStartColor="#fb923c"
+        topEndColor="#f97316"
+        bottomStartColor="#f59e0b"
+        bottomEndColor="#ea580c"
+        className="opacity-85"
+      />
+    </div>
+  )
+}
+
+function RecoveryCard({
+  error,
+  degradedReason,
+  resumeCursor,
+  isRecovering,
+  onResume,
+}: {
+  error: string
+  degradedReason?: string
+  resumeCursor?: string
+  isRecovering?: boolean
+  onResume?: (resumeCursor: string) => void
+}) {
+  const reasonLabel = summarizeDegradedReason(degradedReason)
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-[13px] border border-emerald-200/70 bg-emerald-50/55 px-3 py-2.5">
+      <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-emerald-400/90" />
+      <div className="flex items-start gap-2.5 pl-2 pr-1">
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10">
+          <Check className="h-3.5 w-3.5 text-emerald-600" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-900/90">任务已部分完成</div>
+            <span className="rounded-full border border-emerald-300/70 bg-emerald-100/80 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-700/90">
+              {isRecovering ? '恢复中' : '可继续恢复'}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[11.5px] leading-4.5 text-emerald-800/70">
+            {isRecovering
+              ? '正在基于已保留的恢复点继续补全未完成部分，不会重复已确认的副作用操作。'
+              : '已保留本轮已确认的执行结果。继续后只补全未完成部分，不会重复已确认的副作用操作。'}
+          </div>
+          {reasonLabel ? (
+            <div className="mt-1 text-[11px] leading-4 text-emerald-700/75">
+              中断原因：{reasonLabel}
+            </div>
+          ) : null}
+          <div className="mt-1.25 break-words rounded-md bg-white/45 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-700/70">
+            {truncateText(error, 500)}
+          </div>
+          {resumeCursor && onResume ? (
+            <button
+              type="button"
+              onClick={() => onResume(resumeCursor)}
+              disabled={isRecovering}
+              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-100/90 px-2.5 py-1 text-[11px] font-medium text-emerald-800 transition-colors hover:bg-emerald-200/80 disabled:cursor-default disabled:opacity-60"
+            >
+              <RotateCcw className="h-3 w-3" />
+              {isRecovering ? '正在恢复未完成任务…' : '继续未完成任务'}
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1970,6 +3450,19 @@ function ErrorCard({
       </div>
     </div>
   )
+}
+
+function summarizeDegradedReason(degradedReason?: string) {
+  if (!degradedReason) return null
+  const normalized = degradedReason.split(';')[0]?.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized.includes('network_timeout')) return '模型流超时'
+  if (normalized.includes('network_transport_error')) return '网络传输中断'
+  if (normalized.includes('request_validation_error')) return '请求校验失败'
+  if (normalized.includes('permission_error')) return '权限受限'
+  if (normalized.includes('max_iterations_reached')) return '达到迭代上限'
+  if (normalized.includes('read_only_success_before_failure')) return '只读工具已完成，但回答尾段中断'
+  return degradedReason.split(';')[0] ?? null
 }
 
 /**

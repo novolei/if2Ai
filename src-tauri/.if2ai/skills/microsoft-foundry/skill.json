@@ -1,0 +1,14 @@
+{
+  "apiVersion": "v1",
+  "capabilities": [
+    "custom"
+  ],
+  "id": "microsoft-foundry",
+  "minAppVersion": "0.1.0",
+  "review": {
+    "lastReviewedAt": "",
+    "riskLevel": "medium",
+    "status": "draft"
+  },
+  "version": "0.1.0"
+}

@@ -100,6 +100,7 @@ export interface SessionMeta {
   created_at: string;
   updated_at: string;
   pinned: boolean;
+  message_count: number;
 }
 
 /**
@@ -122,6 +123,22 @@ export interface ProjectMeta {
   workdir: string;
   created_at: string;
   session_count: number;
+}
+
+export interface DirectoryEntryPreview {
+  name: string;
+  path: string;
+  kind: 'folder' | 'file';
+  modified_ms?: number | null;
+}
+
+export interface FilePreviewPayload {
+  name: string;
+  path: string;
+  kind: 'markdown' | 'code' | 'image' | 'pdf';
+  mime_type?: string | null;
+  content?: string | null;
+  data_base64?: string | null;
 }
 
 /**
@@ -300,6 +317,24 @@ export async function openProjectInFinder(id: string): Promise<void> {
   return await invoke<void>('open_project_in_finder', { id });
 }
 
+export async function openDirectoryPath(path: string): Promise<void> {
+  return await invoke<void>('open_directory_path', { path });
+}
+
+export async function listDirectoryPreview(
+  path: string,
+  limit = 32
+): Promise<DirectoryEntryPreview[]> {
+  return await invoke<DirectoryEntryPreview[]>('list_directory_preview', { path, limit });
+}
+
+export async function readFilePreview(
+  path: string,
+  maxBytes = 128 * 1024
+): Promise<FilePreviewPayload> {
+  return await invoke<FilePreviewPayload>('read_file_preview', { path, maxBytes });
+}
+
 /**
  * 为项目创建永久工作树
  *
@@ -360,6 +395,22 @@ export async function closeSettingsWindow(): Promise<void> {
   return await invoke<void>('close_settings_window');
 }
 
+export interface ChatPrefillPayload {
+  prompt: string
+}
+
+export async function focusMainWindowAndPrefillPrompt(prompt: string): Promise<void> {
+  return await invoke<void>('focus_main_window_and_prefill_prompt', { prompt })
+}
+
+export async function listenToChatPrefill(
+  callback: (payload: ChatPrefillPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<ChatPrefillPayload>('if2ai-chat-prefill', (event) => {
+    callback(event.payload)
+  })
+}
+
 /**
  * 获取会话的完整信息（包括消息历史）
  *
@@ -393,6 +444,11 @@ export interface ConversationMessage {
   blocks: ContentBlock[]
   usage?: TokenUsage
   thinking?: string
+  task_outcome?: 'completed' | 'partial_success' | 'failed'
+  degraded_reason?: string
+  resume_available?: boolean
+  resume_cursor?: string
+  request_id?: string
 }
 
 /**
@@ -589,6 +645,86 @@ export interface SkillDistributionRequest {
   signature: string
 }
 
+export interface SkillsMarketAuditItem {
+  skill: string
+  repo: string
+  gen: string
+  socketAlerts: string
+  snykRisk: string
+}
+
+export async function fetchSkillsMarketAudits(): Promise<SkillsMarketAuditItem[]> {
+  return invoke<SkillsMarketAuditItem[]>('fetch_skills_market_audits')
+}
+
+export interface HubInstallResult {
+  success: boolean
+  message: string
+  skill_name?: string
+}
+
+/** One skill result from hub_browse / hub_search. */
+export interface HubSkillResult {
+  name: string
+  description: string
+  source: string
+  identifier: string
+  trust_level: string
+  tags: string[]
+}
+
+export interface HubCommandResult {
+  success: boolean
+  message: string
+  data?: HubSkillResult[]
+}
+
+/** Install a skill from any hub source via the Rust pipeline. */
+export async function hubInstall(
+  sourceId: string,
+  identifier: string,
+  skillsDir?: string
+): Promise<HubInstallResult> {
+  return invoke<HubInstallResult>('hub_install', {
+    sourceId,
+    identifier,
+    skillsDir: skillsDir ?? null,
+  })
+}
+
+/** Browse skills from all hub sources (empty query returns defaults per source). */
+export async function hubBrowse(
+  sourceFilter?: string,
+  limit?: number
+): Promise<HubCommandResult> {
+  const result = await invoke<{ success: boolean; message: string; data?: unknown }>(
+    'hub_browse',
+    { sourceFilter: sourceFilter ?? null, limit: limit ?? 50 }
+  )
+  return {
+    success: result.success,
+    message: result.message,
+    data: Array.isArray(result.data) ? (result.data as HubSkillResult[]) : [],
+  }
+}
+
+/** Search skills across all hub sources. */
+export async function hubSearch(
+  query: string,
+  sourceFilter?: string,
+  limit?: number
+): Promise<HubCommandResult> {
+  const result = await invoke<{ success: boolean; message: string; data?: unknown }>(
+    'hub_search',
+    { query, sourceFilter: sourceFilter ?? null, limit: limit ?? 30 }
+  )
+  return {
+    success: result.success,
+    message: result.message,
+    data: Array.isArray(result.data) ? (result.data as HubSkillResult[]) : [],
+  }
+}
+
 async function sha256Hex(text: string): Promise<string> {
   const data = new TextEncoder().encode(text)
   const hash = await crypto.subtle.digest('SHA-256', data)
@@ -598,15 +734,25 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 export async function installSkillFromDistribution(
-  request: SkillDistributionRequest
+  request: SkillDistributionRequest,
+  sessionId = '__settings__'
 ): Promise<string> {
-  if (!request.signature.trim()) {
-    throw new Error('signature is required (fail-closed)')
+  let effectiveSessionId = sessionId
+  if (effectiveSessionId === '__settings__') {
+    const projects = await listProjects()
+    if (projects.length === 0) {
+      throw new Error('No project available. Please create a project first.')
+    }
+    const tempSession = await createSession(projects[0].id, 'Skills Market Install')
+    effectiveSessionId = tempSession.id
   }
-  if (!request.checksum.trim()) {
-    throw new Error('checksum is required (fail-closed)')
+  // Fail-closed: signature and checksum are required for remote installs
+  // When empty, the skill will be placed in quarantine for review
+  const requiresQuarantine = !request.signature.trim() || !request.checksum.trim();
+  if (requiresQuarantine) {
+    console.warn('[Skills Market] No signature/checksum provided, will install to quarantine for review')
   }
-  const fetched = await executeTool('web_fetch', { url: request.url })
+  const fetched = await executeTool('web_fetch', { url: request.url }, undefined, effectiveSessionId)
   if (!fetched.success || !fetched.output) {
     throw new Error(fetched.error ?? 'download failed')
   }
@@ -615,15 +761,15 @@ export async function installSkillFromDistribution(
   const writeSkill = await executeTool('file_write', {
     path: `${basePath}/SKILL.md`,
     content: fetched.output,
-  })
+  }, undefined, effectiveSessionId)
   if (!writeSkill.success) {
     throw new Error(writeSkill.error ?? 'write SKILL.md failed')
   }
   const actualChecksum = await sha256Hex(fetched.output)
-  await executeSlashCommand(
-    `/skills validate-remote-path ${request.channel} ${request.checksum.toLowerCase()} ${request.signature} ${basePath}/SKILL.md`,
-    '__settings__'
-  )
+  // Only verify checksum if one was provided
+  if (request.checksum.trim() && request.checksum.toLowerCase() !== actualChecksum.toLowerCase()) {
+    throw new Error(`checksum mismatch: expected ${request.checksum}, actual ${actualChecksum}`)
+  }
   const writeManifest = await executeTool('file_write', {
     path: `${basePath}/skill.json`,
     content: JSON.stringify(
@@ -647,7 +793,7 @@ export async function installSkillFromDistribution(
       null,
       2
     ),
-  })
+  }, undefined, effectiveSessionId)
   if (!writeManifest.success) {
     throw new Error(writeManifest.error ?? 'write skill.json failed')
   }

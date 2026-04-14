@@ -125,6 +125,11 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         blocks: vec![ContentBlock::Text { text: continuation }],
         usage: None,
         thinking: None,
+        task_outcome: None,
+        degraded_reason: None,
+        resume_available: None,
+        resume_cursor: None,
+        request_id: None,
     }];
     compacted_messages.extend(preserved);
 
@@ -557,6 +562,11 @@ mod tests {
                     }],
                     thinking: None,
                     usage: None,
+                    task_outcome: None,
+                    degraded_reason: None,
+                    resume_available: None,
+                    resume_cursor: None,
+                    request_id: None,
                 },
             ],
         };
@@ -668,6 +678,11 @@ mod tests {
                     }],
                     thinking: None,
                     usage: None,
+                    task_outcome: None,
+                    degraded_reason: None,
+                    resume_available: None,
+                    resume_cursor: None,
+                    request_id: None,
                 },
                 ConversationMessage::user_text("tiny"),
                 ConversationMessage::assistant(vec![ContentBlock::Text {

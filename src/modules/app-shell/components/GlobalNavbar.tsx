@@ -19,14 +19,14 @@ export function GlobalNavbar({
 }) {
   return (
     <aside
-      className="relative z-30 flex h-full min-h-0 w-[88px] flex-col items-center border-r border-black/5 bg-[#f2f3f4]/56 pt-14 pb-4 select-none backdrop-blur-[2px]"
+      className="relative z-30 flex h-full min-h-0 w-[76px] flex-col items-center border-r border-black/5 bg-[#f2f3f4]/56 pt-14 pb-4 select-none backdrop-blur-[2px]"
       onMouseDown={onStartWindowDrag}
     >
       <div className="window-no-drag flex flex-col items-center gap-5" data-window-no-drag="true">
         <img
           src={appIconSrc}
           alt="If2Ai"
-          className="size-12 rounded-[16px] border border-black/5 bg-black object-cover shadow-sm"
+          className="size-12 rounded-[16px] bg-white/85 object-cover ring-1 ring-black/10 shadow-[0_2px_6px_rgba(0,0,0,0.16)]"
         />
         <div className="flex flex-col gap-3.5">
           <NavTooltipButton

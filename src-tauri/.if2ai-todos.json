@@ -1,0 +1,37 @@
+[
+  {
+    "content": "创建项目结构和HTML骨架",
+    "activeForm": "创建项目结构",
+    "status": "completed"
+  },
+  {
+    "content": "实现泡泡绘制和颜色系统",
+    "activeForm": "实现泡泡颜色系统",
+    "status": "in_progress"
+  },
+  {
+    "content": "实现发射器和角度控制",
+    "activeForm": "实现发射器控制",
+    "status": "pending"
+  },
+  {
+    "content": "实现泡泡发射和碰撞检测",
+    "activeForm": "实现碰撞检测",
+    "status": "pending"
+  },
+  {
+    "content": "实现相同颜色消除逻辑",
+    "activeForm": "实现消除逻辑",
+    "status": "pending"
+  },
+  {
+    "content": "添加计分和掉落检测",
+    "activeForm": "添加游戏机制",
+    "status": "pending"
+  },
+  {
+    "content": "美化界面和视觉效果",
+    "activeForm": "完善视觉效果",
+    "status": "pending"
+  }
+]

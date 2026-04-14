@@ -63,6 +63,9 @@ pub struct SessionMeta {
     /// Whether the session is pinned.
     #[serde(default)]
     pub pinned: bool,
+    /// Logical total message count for the session, including compacted history.
+    #[serde(default)]
+    pub message_count: usize,
 }
 
 #[allow(dead_code)]
@@ -76,6 +79,7 @@ impl SessionMeta {
             created_at: session.created_at.clone(),
             updated_at: session.updated_at.clone(),
             pinned: session.pinned,
+            message_count: session.logical_message_count(),
         }
     }
 }
@@ -101,6 +105,10 @@ pub struct Session {
     /// Whether the session is pinned.
     #[serde(default)]
     pub pinned: bool,
+    /// Logical total message count for the session, including messages that may
+    /// have been compacted out of the persisted transcript.
+    #[serde(default)]
+    pub message_count: usize,
 }
 
 #[allow(dead_code)]
@@ -123,6 +131,16 @@ impl Session {
             updated_at: now_str,
             token_count: 0,
             pinned: false,
+            message_count: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn logical_message_count(&self) -> usize {
+        if self.message_count == 0 {
+            self.messages.len()
+        } else {
+            self.message_count.max(self.messages.len())
         }
     }
 }
@@ -364,6 +382,7 @@ impl SessionManager {
         // the true "last active" time even when callers only mutate messages.
         let mut session_for_save = session.clone();
         session_for_save.updated_at = format_time(SystemTime::now());
+        session_for_save.message_count = session_for_save.logical_message_count();
 
         let path = self.session_path(&session_for_save.id, &session_for_save.project_id);
         let contents = serde_json::to_string_pretty(&session_for_save)
@@ -395,6 +414,7 @@ impl SessionManager {
 
         session.messages.push(msg);
         session.updated_at = format_time(SystemTime::now());
+        session.message_count = session.messages.len().max(session.message_count);
 
         self.save_session(&session).await
     }
@@ -534,6 +554,11 @@ mod tests {
             }],
             thinking: None,
             usage: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: None,
         }
     }
 

@@ -14,8 +14,8 @@ meta:
 
 dashboard:
   last_updated: 2026-04-14
-  completed_slices: ['6F.1', '6F.2', '6F.3', '6F.4', '6F.5', '6F.6', '6F.7']
-  current_slice: 6F.8
+  completed_slices: ['6F.1', '6F.2', '6F.3', '6F.4', '6F.5', '6F.6', '6F.7', '6F.8', '6F.9', '6F.10', '6F.11', '6F.12']
+  current_slice: 6F DONE
   blocked: []
   notes: >
     Phase 6F aligns if2Ai Skill Control Plane with Hermes Agent skill architecture.
@@ -26,7 +26,12 @@ dashboard:
     6F.5 Hub State Management done - HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit/unified_search.
     6F.6 Skill Sync Manifest done - manifest v1/v2, compute_dir_hash, sync with user mod detection.
     6F.7 Skill Commands done - normalize_command_key, platform compatibility, scan/resolve/invocation builder.
-    Priority: 6F.1-2 (Security + CRUD) > 6F.3-6 (Hub) > 6F.7-8 (Commands + Config) > 6F.9-10 (UI + Tests)
+    6F.8 Skill Config Variables done - SkillConfigVar/Resolver, extract_config_vars, format_config_block.
+    6F.9 Frontend UI Extensions done - SkillsHubView/SkillEditor/SkillSecurityReport components.
+    6F.10 Integration Tests done - 122 skills tests pass (guard:38, manager:33, hub:26, sync:10, commands:7, config:8).
+    6F.11 External Skills Dirs done - ExternalSkillsDirs + RemotePassthroughManager, 16 tests pass.
+    6F.12 Snapshot Export/Import done - SnapshotManager, SkillSnapshot types, 16 tests pass.
+    **Phase 6F ALL COMPLETE**
 
 # ---------------------------------------------------------------------------
 # Slice 6F.1: SkillsGuard Threat Scanner
@@ -403,7 +408,7 @@ slices:
 
   - id: 6F.8
     name: Skill Config Variables
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.7
     backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.8
@@ -442,7 +447,7 @@ slices:
 
   - id: 6F.9
     name: Frontend UI Extensions
-    status: pending
+    status: done
     priority: P2
     depends_on: 6F.1, 6F.2, 6F.5
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §2.1
@@ -480,7 +485,7 @@ slices:
 
   - id: 6F.10
     name: Integration Tests
-    status: pending
+    status: done
     priority: P1
     depends_on: 6F.1, 6F.2, 6F.3, 6F.4, 6F.5, 6F.6, 6F.7, 6F.8
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §7
@@ -518,7 +523,7 @@ slices:
 
   - id: 6F.11
     name: External Skills Dirs & Remote Passthrough
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.X
     backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.11
@@ -554,7 +559,7 @@ slices:
 
   - id: 6F.12
     name: Snapshot Export/Import
-    status: pending
+    status: done
     priority: P2
     depends_on: 6F.5
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.X

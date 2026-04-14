@@ -18,7 +18,10 @@ import {
   getSession,
   openProjectInFinder,
   openSettingsWindow,
+  listenToChatPrefill,
   invoke,
+  executeSlashCommand,
+  suggestSlashCommands,
   type PermissionRequestPayload,
   type PermissionMode,
   type Project,
@@ -43,7 +46,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
-const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
+const appIconSrc = `${new URL('../src-tauri/icons/icon-128.png', import.meta.url).href}?v=20260414c`
 const PLACEHOLDER_SESSION_TITLE = '新对话'
 const MAX_AUTO_TITLE_TURNS = 3
 const MAX_AUTO_RENAME_COUNT = 2
@@ -92,14 +95,29 @@ function App() {
   })
   const [sessionTodos, setSessionTodos] = useState<Record<string, TodoItem[]>>({})
   const [sessionTitleStates, setSessionTitleStates] = useState<Record<string, SessionTitleState>>({})
-  const extractResumeCursor = (degradedReason?: string): string | undefined => {
-    if (!degradedReason) return undefined
-    const matched = degradedReason.match(/resume_cursor=([^\s;]+)/)
-    return matched?.[1]
+  const setRecoveryStateForCursor = (sessionId: string, resumeCursor: string, isRecovering: boolean) => {
+    setConversations((prev) => {
+      const currentConv = prev[sessionId]
+      if (!currentConv) return prev
+      return {
+        ...prev,
+        [sessionId]: {
+          ...currentConv,
+          messages: currentConv.messages.map((msg) => {
+            if (msg.taskOutcome !== 'partial_success') return msg
+            if (msg.resumeCursor !== resumeCursor) return msg
+            return { ...msg, isRecovering }
+          }),
+        },
+      }
+    })
   }
 
   const [streamAbortHandles, setStreamAbortHandles] = useState<Record<string, string>>({})
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionRequestPayload | null>(null)
+  const sessionLoadingRef = useRef<Record<string, boolean>>({})
+  const autoResumeAttemptsRef = useRef<Record<string, number>>({})
+  const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set())
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -150,6 +168,60 @@ function App() {
     }
   }
 
+  const buildLoopCompletionStatus = (
+    messages: Message[],
+    streamId: string | undefined,
+    taskOutcome?: Message['taskOutcome'],
+    degradedReason?: string
+  ): { label: string; kind: NonNullable<Message['statusKind']> } => {
+    const scopedToolMessages = messages.filter((msg) => {
+      if (msg.role !== 'tool') return false
+      if (!streamId) return true
+      return msg.streamId === streamId
+    })
+    const total = scopedToolMessages.length
+    const completed = scopedToolMessages.filter((msg) => msg.toolStatus === 'completed').length
+    const failed = scopedToolMessages.filter((msg) => msg.toolStatus === 'error').length
+
+    if (taskOutcome === 'partial_success') {
+      if (degradedReason?.includes('max_iterations_reached')) {
+        return {
+          label: total > 0
+            ? `本轮已完成 ${completed}/${total} 个步骤，达到迭代上限，可继续未完成部分`
+            : '达到迭代上限，可继续未完成部分',
+          kind: 'partial',
+        }
+      }
+      return {
+        label: total > 0
+          ? `本轮部分完成：已完成 ${completed}/${total} 个步骤`
+          : '本轮任务部分完成，可继续补全',
+        kind: 'partial',
+      }
+    }
+
+    if (taskOutcome === 'failed') {
+      return {
+        label: total > 0
+          ? `本轮执行失败：已完成 ${completed}/${total} 个步骤`
+          : '本轮执行失败',
+        kind: 'failed',
+      }
+    }
+
+    if (total === 0) return { label: '本轮执行完成', kind: 'success' }
+    if (failed > 0) {
+      return {
+        label: `本轮执行完成：成功 ${completed} 个，失败 ${failed} 个`,
+        kind: 'partial',
+      }
+    }
+    return {
+      label: `本轮执行完成：共完成 ${completed} 个步骤`,
+      kind: 'success',
+    }
+  }
+
   const normalizeSessionTitleSource = (raw: string): string => {
     const cleaned = raw
       .replace(/\[resume_cursor\][\s\S]*$/gi, '')
@@ -192,37 +264,37 @@ function App() {
     const normalized = normalizeSessionTitleSource(content)
     if (!normalized) return false
     if (normalized.includes('[resume_cursor]')) return false
-    if (normalized.length < 4) return false
+    if (normalized.length < 2) return false
     const lower = normalized.toLowerCase()
-    return !GENERIC_USER_PROMPTS.some((prompt) => lower === prompt || lower.startsWith(`${prompt} `))
+    return !GENERIC_USER_PROMPTS.some((prompt) => lower === prompt)
   }
 
   const getMeaningfulUserMessages = (messages: Message[]): Message[] =>
     messages.filter((message) => message.role === 'user' && isMeaningfulUserMessage(message.content))
 
   const getInitialSessionTitleCandidate = (messages: Message[]): string | null => {
-    const firstMeaningfulMessage = getMeaningfulUserMessages(messages)[0]
-    if (!firstMeaningfulMessage) return null
-    const nextTitle = formatSessionTitle(firstMeaningfulMessage.content)
+    const meaningfulMessages = getMeaningfulUserMessages(messages)
+    const seedMessage =
+      meaningfulMessages.find((message) => formatSessionTitle(message.content) !== PLACEHOLDER_SESSION_TITLE)
+      ?? meaningfulMessages[0]
+    if (!seedMessage) return null
+    const nextTitle = formatSessionTitle(seedMessage.content)
     return nextTitle === PLACEHOLDER_SESSION_TITLE ? null : nextTitle
   }
 
   const getCorrectionTitleCandidate = (messages: Message[], currentTitle: string): string | null => {
     const userMessages = getMeaningfulUserMessages(messages)
     if (userMessages.length < 2) return null
-    const recentCandidates = userMessages.slice(-2).map((message) => formatSessionTitle(message.content))
+    const recentCandidates = userMessages
+      .slice(-2)
+      .map((message) => formatSessionTitle(message.content))
+      .filter((candidate) => candidate && candidate !== PLACEHOLDER_SESSION_TITLE)
+    if (recentCandidates.length === 0) return null
     const [previousCandidate, latestCandidate] = recentCandidates
-    if (
-      !previousCandidate ||
-      !latestCandidate ||
-      previousCandidate === PLACEHOLDER_SESSION_TITLE ||
-      latestCandidate === PLACEHOLDER_SESSION_TITLE
-    ) {
-      return null
-    }
-    if (previousCandidate !== latestCandidate) return null
-    if (areTitlesSimilar(latestCandidate, currentTitle)) return null
-    return latestCandidate
+    const resolvedCandidate = latestCandidate ?? previousCandidate
+    if (!resolvedCandidate) return null
+    if (areTitlesSimilar(resolvedCandidate, currentTitle)) return null
+    return resolvedCandidate
   }
 
   const getInitialSessionTitleState = (
@@ -248,7 +320,8 @@ function App() {
     sessionId: string,
     conversation: Conversation
   ) => {
-    const titleState = sessionTitleStates[sessionId] ?? getInitialSessionTitleState(conversation.title)
+    const titleState =
+      sessionTitleStates[sessionId] ?? getInitialSessionTitleState(conversation.title, conversation.messages)
     const meaningfulUserMessages = getMeaningfulUserMessages(conversation.messages)
     const meaningfulTurnCount = meaningfulUserMessages.length
 
@@ -357,10 +430,12 @@ function App() {
   const maxLeftPaneWidth = 520
   const activeMessages = useMemo(
     () =>
-      activeConv?.messages.map((msg) => ({
-        ...msg,
-        content: msg.content || ' ',
-      })) ?? [],
+      activeConv?.messages
+        .filter((msg) => !(msg.role === 'user' && msg.content.includes('[resume_cursor]')))
+        .map((msg) => ({
+          ...msg,
+          content: msg.content || ' ',
+        })) ?? [],
     [activeConv?.messages]
   )
   const runningSessionIds = Object.entries(sessionLoading)
@@ -394,6 +469,15 @@ function App() {
   }, [permissionMode])
 
   useEffect(() => {
+    sessionLoadingRef.current = sessionLoading
+  }, [sessionLoading])
+
+  useEffect(() => {
+    if (!activeConv || !activeSessionId) return
+    maybeAutoRenameSession(activeConv.projectId, activeSessionId, activeConv)
+  }, [activeConv, activeSessionId])
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined
 
     listenToPermissionRequests((payload) => {
@@ -404,6 +488,25 @@ function App() {
       console.error('Failed to listen permission requests:', err)
     })
 
+    return () => {
+      if (unlisten) unlisten()
+    }
+  }, [])
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    listenToChatPrefill((payload) => {
+      setActiveSection('chat')
+      if (typeof payload?.prompt === 'string' && payload.prompt.trim()) {
+        setInput(payload.prompt)
+      }
+    })
+      .then((dispose) => {
+        unlisten = dispose
+      })
+      .catch((err) => {
+        console.error('Failed to listen chat prefill event:', err)
+      })
     return () => {
       if (unlisten) unlisten()
     }
@@ -427,6 +530,11 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const refreshProjectSessions = async (projectId: string) => {
+    const sessions = await listProjectSessions(projectId)
+    setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
   }
 
   const handleSelectProject = async (projectId: string) => {
@@ -475,6 +583,7 @@ function App() {
       const baseTimestamp = new Date(fullSession.updated_at)
       const convertedMessages: Message[] = []
       const toolMessageIndexById = new Map<string, number>()
+      let recoveredTodos: TodoItem[] = []
 
       const upsertToolMessage = (toolCallId: string, nextMessage: Message) => {
         const existingIndex = toolMessageIndexById.get(toolCallId)
@@ -496,6 +605,13 @@ function App() {
         if (msg.role === "system") {
           continue
         }
+        const messageOutcome = {
+          requestId: msg.request_id,
+          taskOutcome: msg.task_outcome,
+          degradedReason: msg.degraded_reason,
+          resumeAvailable: msg.resume_available,
+          resumeCursor: msg.resume_cursor,
+        }
         let pushedAssistantText = false
         for (const block of msg.blocks) {
           if (block.type === "tool_use" && block.tool_use_block) {
@@ -513,6 +629,7 @@ function App() {
               evidenceId: toolCallId,
               effectiveWorkdir: project?.workdir,
               disableAnimation: true,
+              ...messageOutcome,
             })
             continue
           }
@@ -536,7 +653,18 @@ function App() {
               effectiveWorkdir: project?.workdir,
               isError: false,
               disableAnimation: true,
+              ...messageOutcome,
             })
+            const isTodoWriteResult =
+              (block.tool_name ?? '').trim() === 'TodoWrite' ||
+              (existingIndex !== undefined &&
+                convertedMessages[existingIndex]?.toolName?.trim() === 'TodoWrite')
+            if (isTodoWriteResult) {
+              const nextTodos = extractTodosFromToolResult(block.output)
+              if (nextTodos) {
+                recoveredTodos = nextTodos
+              }
+            }
             continue
           }
 
@@ -549,6 +677,7 @@ function App() {
               timestamp: baseTimestamp,
               thinking: msg.thinking,
               disableAnimation: true,
+              ...messageOutcome,
             })
           }
         }
@@ -565,6 +694,7 @@ function App() {
             timestamp: baseTimestamp,
             thinking: msg.thinking,
             disableAnimation: true,
+            ...messageOutcome,
           })
         }
       }
@@ -586,7 +716,7 @@ function App() {
           convertedMessages
         ),
       }))
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
+      setSessionTodos((prev) => ({ ...prev, [sessionId]: recoveredTodos }))
     } catch (err) {
       console.error('Failed to load session:', err)
       setConversations((prev) => ({
@@ -607,7 +737,7 @@ function App() {
     }
   }
 
-  const handleNewChat = async (projectId: string) => {
+  const handleNewChat = async (projectId: string): Promise<string | null> => {
     try {
       setActiveSection('chat')
       const session = await createSession(projectId, PLACEHOLDER_SESSION_TITLE)
@@ -645,8 +775,10 @@ function App() {
         },
       }))
       setSessionTodos((prev) => ({ ...prev, [session.id]: [] }))
+      return session.id
     } catch (err) {
       console.error('Failed to create session:', err)
+      return null
     }
   }
 
@@ -782,15 +914,41 @@ function App() {
     }
   }
 
-  const sendMessage = async (overrideText?: string) => {
+  const buildResumePrompt = (resumeCursor: string) =>
+    `[resume_cursor] ${resumeCursor}\n` +
+    '请从该游标继续完成上一次任务，仅补全未完成步骤，禁止重复已确认的副作用操作。'
+
+  const sendMessage = async (
+    overrideText?: string,
+    options?: {
+      sessionIdOverride?: string
+      isInternalResume?: boolean
+      resumeCursor?: string
+    }
+  ) => {
     const messageText = (overrideText ?? input).trim()
-    if (!messageText || !activeSessionId) return
-    const sessionId = activeSessionId
-    if (sessionLoading[sessionId]) return
-    setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
+    let targetSessionId = options?.sessionIdOverride ?? activeSessionId
+    if (!targetSessionId && !options?.sessionIdOverride) {
+      const fallbackProjectId = activeProjectId ?? projects[0]?.id ?? null
+      if (fallbackProjectId) {
+        targetSessionId = await handleNewChat(fallbackProjectId)
+      }
+    }
+    if (!messageText || !targetSessionId) return
+    const sessionId = targetSessionId
+    if (sessionLoadingRef.current[sessionId]) return
+    if (!options?.isInternalResume) {
+      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
+    }
 
     const conv = conversations[sessionId]
     if (!conv) return
+
+    if (!options?.isInternalResume) {
+      autoResumeAttemptsRef.current[sessionId] = 0
+    } else if (options.resumeCursor) {
+      setRecoveryStateForCursor(sessionId, options.resumeCursor, true)
+    }
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -830,6 +988,8 @@ function App() {
         content: '',
         timestamp: new Date(),
         isStreaming: true,
+        statusLabel: options?.isInternalResume ? '正在恢复未完成任务…' : undefined,
+        statusKind: options?.isInternalResume ? 'info' : undefined,
       }
 
       setConversations((prev) => {
@@ -858,7 +1018,9 @@ function App() {
           [activeSessionId]: {
             ...currentConv,
             messages: currentConv.messages.map((msg) =>
-              msg.id === finalizedAssistantId ? { ...msg, isStreaming: false } : msg
+              msg.id === finalizedAssistantId
+                ? { ...msg, isStreaming: false, statusLabel: undefined, statusKind: undefined }
+                : msg
             ),
           },
         }
@@ -896,7 +1058,7 @@ function App() {
             ...currentConv,
             messages: currentConv.messages.map((msg) =>
               msg.id === currentAssistantId
-                ? { ...msg, content: nextText, thinking: nextThinking || msg.thinking }
+                ? { ...msg, content: nextText, thinking: nextThinking || msg.thinking, statusLabel: undefined, statusKind: undefined }
                 : msg
             ),
           },
@@ -919,6 +1081,57 @@ function App() {
       })
     }
 
+    // Detect slash commands - handle them directly without going to the agent
+    if (messageText.startsWith('/')) {
+      const cmdPrefix = messageText.split(/\s+/)[0]
+      const suggestions = await suggestSlashCommands(cmdPrefix, 1)
+      if (suggestions.length > 0) {
+        setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+        try {
+          const result = await executeSlashCommand(messageText, sessionId)
+          const assistantMsgId = crypto.randomUUID()
+          const assistantMsg: Message = {
+            id: assistantMsgId,
+            role: 'assistant',
+            content: result,
+            timestamp: new Date(),
+            isStreaming: false,
+          }
+          setConversations((prev) => {
+            const currentConv = prev[sessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: [...currentConv.messages, assistantMsg],
+              },
+            }
+          })
+        } catch (err) {
+          const errorMsg: Message = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: String(err),
+            timestamp: new Date(),
+            isStreaming: false,
+          }
+          setConversations((prev) => {
+            const currentConv = prev[sessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: [...currentConv.messages, errorMsg],
+              },
+            }
+          })
+        }
+        return
+      }
+    }
+
     try {
       createAssistantMessage()
       const streamId = await startAgentStream(sessionId, userMsg.content, permissionMode)
@@ -927,11 +1140,41 @@ function App() {
       const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
         if (payload.event_type === 'text_delta' && payload.text) {
           ensureAssistantMessage()
+          if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
+            setConversations((prev) => {
+              const currentConv = prev[sessionId]
+              if (!currentConv) return prev
+              return {
+                ...prev,
+                [sessionId]: {
+                  ...currentConv,
+                  messages: currentConv.messages.map((msg) =>
+                    msg.id === assistantMsgId ? { ...msg, statusLabel: undefined, statusKind: undefined } : msg
+                  ),
+                },
+              }
+            })
+          }
           accumulatedText += payload.text
           hasPendingTextDelta = true
           scheduleAssistantFlush()
         } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
           ensureAssistantMessage()
+          if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
+            setConversations((prev) => {
+              const currentConv = prev[sessionId]
+              if (!currentConv) return prev
+              return {
+                ...prev,
+                [sessionId]: {
+                  ...currentConv,
+                  messages: currentConv.messages.map((msg) =>
+                    msg.id === assistantMsgId ? { ...msg, statusLabel: undefined, statusKind: undefined } : msg
+                  ),
+                },
+              }
+            })
+          }
           accumulatedThinking += payload.thinking
           hasPendingThinkingDelta = true
           scheduleAssistantFlush()
@@ -977,7 +1220,7 @@ function App() {
                 taskOutcome: payload.task_outcome ?? existingMessage?.taskOutcome,
                 degradedReason: payload.degraded_reason ?? existingMessage?.degradedReason,
                 resumeAvailable: payload.resume_available ?? existingMessage?.resumeAvailable,
-                resumeCursor: extractResumeCursor(payload.degraded_reason) ?? existingMessage?.resumeCursor,
+                resumeCursor: payload.resume_cursor ?? existingMessage?.resumeCursor,
                 disableAnimation: true,
               }
 
@@ -1016,12 +1259,14 @@ function App() {
             if (!currentConv) return prev
             return {
               ...prev,
-              [activeSessionId]: {
-                ...currentConv,
-                messages: currentConv.messages.map((msg) =>
-                  msg.id === currentAssistantId ? { ...msg, content: accumulatedText } : msg
-                ),
-              },
+                [activeSessionId]: {
+                  ...currentConv,
+                  messages: currentConv.messages.map((msg) =>
+                    msg.id === currentAssistantId
+                      ? { ...msg, content: accumulatedText, statusLabel: undefined, statusKind: undefined }
+                      : msg
+                  ),
+                },
             }
           })
         } else if (payload.event_type === 'stream_complete') {
@@ -1032,10 +1277,38 @@ function App() {
             const { [sessionId]: _removed, ...rest } = prev
             return rest
           })
+          void refreshProjectSessions(conv.projectId).catch((error) => {
+            console.error('Failed to refresh session counts:', error)
+          })
+          autoResumeAttemptsRef.current[sessionId] = 0
+          attemptedAutoResumeCursorsRef.current.clear()
+          setConversations((prev) => {
+            const currentConv = prev[sessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: currentConv.messages.map((msg) =>
+                  msg.isRecovering ? { ...msg, isRecovering: false } : msg
+                ),
+              },
+            }
+          })
           if (assistantMsgId) {
+            const streamTaskOutcome = payload.task_outcome
+            const streamDegradedReason = payload.degraded_reason
+            const streamResumeAvailable = payload.resume_available
+            const streamResumeCursor = payload.resume_cursor
             setConversations((prev) => {
               const currentConv = prev[sessionId]
               if (!currentConv) return prev
+              const finalStatus = buildLoopCompletionStatus(
+                currentConv.messages,
+                payload.stream_id,
+                streamTaskOutcome,
+                streamDegradedReason
+              )
               return {
                 ...prev,
                 [sessionId]: {
@@ -1046,10 +1319,12 @@ function App() {
                         ...msg,
                         isStreaming: false,
                         thinkingTime: Date.now() - startTime,
-                        taskOutcome: payload.task_outcome ?? msg.taskOutcome ?? 'completed',
-                        degradedReason: payload.degraded_reason ?? msg.degradedReason,
-                        resumeAvailable: payload.resume_available ?? msg.resumeAvailable ?? false,
-                        resumeCursor: extractResumeCursor(payload.degraded_reason) ?? msg.resumeCursor,
+                        taskOutcome: streamTaskOutcome ?? msg.taskOutcome ?? 'completed',
+                        degradedReason: streamDegradedReason ?? msg.degradedReason,
+                        resumeAvailable: streamResumeAvailable ?? msg.resumeAvailable ?? false,
+                        resumeCursor: streamResumeCursor ?? msg.resumeCursor,
+                        statusLabel: finalStatus.label,
+                        statusKind: finalStatus.kind,
                       }
                     }
                     if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
@@ -1076,11 +1351,27 @@ function App() {
             const { [sessionId]: _removed, ...rest } = prev
             return rest
           })
+          void refreshProjectSessions(conv.projectId).catch((error) => {
+            console.error('Failed to refresh session counts:', error)
+          })
+          setConversations((prev) => {
+            const currentConv = prev[sessionId]
+            if (!currentConv) return prev
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: currentConv.messages.map((msg) =>
+                  msg.isRecovering ? { ...msg, isRecovering: false } : msg
+                ),
+              },
+            }
+          })
           const errMsg = payload.tool_result || 'Agent 执行失败，请稍后重试。'
           const taskOutcome = payload.task_outcome ?? 'failed'
           const degradedReason = payload.degraded_reason ?? errMsg
           const resumeAvailable = payload.resume_available ?? false
-          const resumeCursor = extractResumeCursor(degradedReason)
+          const resumeCursor = payload.resume_cursor
           setConversations((prev) => {
             const currentConv = prev[sessionId]
             if (!currentConv) return prev
@@ -1102,6 +1393,8 @@ function App() {
                       degradedReason,
                       resumeAvailable,
                       resumeCursor,
+                      statusLabel: undefined,
+                      statusKind: undefined,
                       toolArgs: {
                         ...(msg.toolArgs ?? {}),
                         rawError: friendlyError,
@@ -1138,6 +1431,25 @@ function App() {
               },
             }
           })
+          if (taskOutcome === 'partial_success' && resumeAvailable && resumeCursor) {
+            const cursorKey = `${sessionId}:${resumeCursor}`
+            const attemptCount = autoResumeAttemptsRef.current[sessionId] ?? 0
+            if (
+              !attemptedAutoResumeCursorsRef.current.has(cursorKey)
+              && attemptCount < 2
+            ) {
+              attemptedAutoResumeCursorsRef.current.add(cursorKey)
+              autoResumeAttemptsRef.current[sessionId] = attemptCount + 1
+              setRecoveryStateForCursor(sessionId, resumeCursor, true)
+              window.setTimeout(() => {
+                void sendMessage(buildResumePrompt(resumeCursor), {
+                  sessionIdOverride: sessionId,
+                  isInternalResume: true,
+                  resumeCursor,
+                })
+              }, 80)
+            }
+          }
         }
       })
     } catch (err) {
@@ -1160,7 +1472,15 @@ function App() {
               ...currentConv,
               messages: currentConv.messages.map((msg) =>
                 msg.id === assistantMsgId
-                  ? { ...msg, content: '', isStreaming: false, isError: true, toolArgs: { rawError: errorMessage } }
+                  ? {
+                    ...msg,
+                    content: '',
+                    isStreaming: false,
+                    isError: true,
+                    statusLabel: undefined,
+                    statusKind: undefined,
+                    toolArgs: { rawError: errorMessage },
+                  }
                   : msg
               ),
             },
@@ -1187,17 +1507,32 @@ function App() {
         }))
       }
       setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+      void refreshProjectSessions(conv.projectId).catch((error) => {
+        console.error('Failed to refresh session counts:', error)
+      })
+      setConversations((prev) => {
+        const currentConv = prev[sessionId]
+        if (!currentConv) return prev
+        return {
+          ...prev,
+          [sessionId]: {
+            ...currentConv,
+            messages: currentConv.messages.map((msg) =>
+              msg.isRecovering ? { ...msg, isRecovering: false } : msg
+            ),
+          },
+        }
+      })
     } finally {
       // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
     }
   }
 
   const handleResumeFromCursor = async (resumeCursor: string) => {
-    // harness symbol marker: resume
-    const resumePrompt =
-      `[resume_cursor] ${resumeCursor}\n` +
-      '请从该游标继续完成上一次任务，仅补全未完成步骤，禁止重复已确认的副作用操作。'
-    await sendMessage(resumePrompt)
+    await sendMessage(buildResumePrompt(resumeCursor), {
+      isInternalResume: true,
+      resumeCursor,
+    })
   }
 
   const beginResize = (startX: number, separatorEl: HTMLDivElement, pointerId?: number) => {
@@ -1261,7 +1596,7 @@ function App() {
   }
 
   return (
-    <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '88px minmax(0, 1fr)' }}>
+    <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
       <GlobalNavbar
         activeSection={activeSection}
         onSelectSection={setActiveSection}

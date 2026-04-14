@@ -40,6 +40,10 @@ pub struct SkillConfigVar {
     /// Default value if not set in config.
     #[serde(default)]
     pub default: Option<String>,
+    /// Interactive prompt message shown when requesting this config value.
+    /// If present, the user will be prompted to enter a value interactively.
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -50,7 +54,23 @@ impl SkillConfigVar {
             key: key.to_string(),
             description: description.to_string(),
             default: default.map(String::from),
+            prompt: None,
         }
+    }
+
+    /// Create a new config variable with a prompt.
+    pub fn with_prompt(key: &str, description: &str, default: Option<&str>, prompt: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            description: description.to_string(),
+            default: default.map(String::from),
+            prompt: Some(prompt.to_string()),
+        }
+    }
+
+    /// Check if this config variable requires interactive prompting.
+    pub fn requires_prompt(&self) -> bool {
+        self.prompt.is_some()
     }
 }
 
@@ -187,7 +207,10 @@ impl SkillConfigResolver {
 ///   - key: API_KEY
 ///     description: Your API key
 ///     default: ""
+///     prompt: "Enter your API key:"
 /// ```
+///
+/// The `prompt` field is optional and enables interactive configuration.
 #[allow(dead_code)]
 pub fn extract_config_vars(frontmatter: &serde_json::Value) -> Vec<SkillConfigVar> {
     let mut vars = Vec::new();
@@ -206,11 +229,16 @@ pub fn extract_config_vars(frontmatter: &serde_json::Value) -> Vec<SkillConfigVa
                         .get("default")
                         .and_then(|d| d.as_str())
                         .map(String::from);
+                    let prompt = item
+                        .get("prompt")
+                        .and_then(|p| p.as_str())
+                        .map(String::from);
 
                     vars.push(SkillConfigVar {
                         key: key.to_string(),
                         description,
                         default,
+                        prompt,
                     });
                 }
             }
@@ -232,11 +260,16 @@ pub fn extract_config_vars(frontmatter: &serde_json::Value) -> Vec<SkillConfigVa
                             .get("default")
                             .and_then(|d| d.as_str())
                             .map(String::from);
+                        let prompt = item
+                            .get("prompt")
+                            .and_then(|p| p.as_str())
+                            .map(String::from);
 
                         vars.push(SkillConfigVar {
                             key: key.to_string(),
                             description,
                             default,
+                            prompt,
                         });
                     }
                 }

@@ -55,6 +55,23 @@ struct StreamTokenPayload {
     task_outcome: Option<String>,
     degraded_reason: Option<String>,
     resume_available: Option<bool>,
+    resume_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PersistedTurnOutcome {
+    task_outcome: String,
+    degraded_reason: Option<String>,
+    resume_available: bool,
+    resume_cursor: Option<String>,
+    request_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResumeCursor {
+    stream_id: String,
+    tool_loop_iter: usize,
+    token_count: u32,
 }
 
 const MAX_TOOL_RESULT_FOR_MODEL_CHARS: usize = 8_000;
@@ -146,6 +163,7 @@ fn flush_assistant_timeline_segment(
     timeline_messages: &mut Vec<crate::modules::runtime::session::ConversationMessage>,
     accumulated_text: &mut String,
     accumulated_thinking: &mut String,
+    persisted_outcome: Option<&PersistedTurnOutcome>,
 ) -> bool {
     if accumulated_text.is_empty() && accumulated_thinking.is_empty() {
         return false;
@@ -163,6 +181,11 @@ fn flush_assistant_timeline_segment(
         } else {
             Some(thinking)
         },
+        task_outcome: persisted_outcome.map(|value| value.task_outcome.clone()),
+        degraded_reason: persisted_outcome.and_then(|value| value.degraded_reason.clone()),
+        resume_available: persisted_outcome.map(|value| value.resume_available),
+        resume_cursor: persisted_outcome.and_then(|value| value.resume_cursor.clone()),
+        request_id: persisted_outcome.map(|value| value.request_id.clone()),
     });
 
     true
@@ -422,8 +445,7 @@ impl ToolRegistryExecutor {
         trace_id: &str,
         request_id: Option<&str>,
     ) -> Result<String, crate::modules::runtime::conversation::ToolError> {
-        let args: serde_json::Value =
-            serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+        let args = parse_tool_input_json(input);
         let switches = load_control_plane_switches(&self.execution_context.workdir);
         tracing::info!(
             "[tool_executor] control_plane_v2_enabled={}, boundary_enforce_mode={}, sandbox_strict_mode={}",
@@ -822,6 +844,11 @@ pub async fn run_agent_turn(
 
             // Get the updated session from the runtime
             let updated_runtime_session = runtime.into_session();
+            let next_message_count = app_session.logical_message_count()
+                + updated_runtime_session
+                    .messages
+                    .len()
+                    .saturating_sub(app_session.messages.len());
 
             // Context compaction — compact if session exceeds token threshold
             let compaction_config = CompactionConfig::default();
@@ -837,6 +864,7 @@ pub async fn run_agent_turn(
             // Update the application session with the new messages
             let mut updated_app_session = app_session;
             updated_app_session.messages = final_runtime_session.messages;
+            updated_app_session.message_count = next_message_count;
 
             // Save the updated session
             state
@@ -970,6 +998,23 @@ pub async fn start_agent_stream(
             e
         })?;
 
+    let inbound_resume_cursor = extract_resume_cursor_marker(&user_message);
+    if let Some(cursor_value) = inbound_resume_cursor.as_deref() {
+        let parsed_cursor = parse_resume_cursor(cursor_value)
+            .ok_or_else(|| format!("invalid resume cursor: {cursor_value}"))?;
+        if !session_contains_resume_cursor(&app_session, &parsed_cursor) {
+            return Err(format!(
+                "resume cursor not found or expired: {cursor_value}"
+            ));
+        }
+    }
+
+    let normalized_user_message = if inbound_resume_cursor.is_some() {
+        strip_resume_cursor_marker(&user_message)
+    } else {
+        user_message.trim().to_string()
+    };
+
     // Convert session messages to API format
     let runtime_session = app_session_to_runtime(&app_session);
     let messages: Vec<InputMessage> = runtime_session
@@ -995,7 +1040,7 @@ pub async fn start_agent_stream(
 
     // Add the user's new message
     let mut all_messages = messages;
-    all_messages.push(InputMessage::user_text(&user_message));
+    all_messages.push(InputMessage::user_text(&normalized_user_message));
 
     // Get tool definitions from registry and convert to ToolDefinition format
     let definitions = state.tool_registry.get_definitions(None);
@@ -1035,8 +1080,7 @@ pub async fn start_agent_stream(
     // Clone everything needed for the background task
     let session_manager = state.session_manager.clone();
     let app_session_clone = app_session.clone();
-    let user_message_clone = user_message.clone();
-    let inbound_resume_cursor = extract_resume_cursor_marker(&user_message);
+    let user_message_clone = normalized_user_message.clone();
     let tool_registry_clone = state.tool_registry.clone();
     let model_for_stream = model.clone();
     let messages_for_stream = all_messages.clone();
@@ -1083,8 +1127,10 @@ pub async fn start_agent_stream(
         let mut sanitized_dropped_empty_messages = 0usize;
         let mut sanitized_dropped_orphan_tool_results = 0usize;
         let mut sanitized_dropped_unmatched_tool_uses = 0usize;
+        let mut sanitized_dropped_invalid_tool_use_inputs = 0usize;
         let mut sanitize_orphan_samples: Vec<String> = Vec::new();
         let mut sanitize_unmatched_samples: Vec<String> = Vec::new();
+        let mut sanitize_invalid_tool_use_samples: Vec<String> = Vec::new();
         let mut preflight_trim_rounds = 0usize;
         let mut preflight_dropped_messages_total = 0usize;
         let mut preflight_trimmed_chars_total = 0usize;
@@ -1145,6 +1191,7 @@ pub async fn start_agent_stream(
                     task_outcome: Some(cancelled_truth.task_outcome.to_string()),
                     degraded_reason: cancelled_truth.degraded_reason,
                     resume_available: Some(cancelled_truth.resume_available),
+                    resume_cursor: None,
                 };
                 let _ = window.emit("agent-token", payload);
                 completion_already_emitted = true;
@@ -1199,6 +1246,8 @@ pub async fn start_agent_stream(
                 sanitized_dropped_empty_messages += sanitize_stats.dropped_empty_messages;
                 sanitized_dropped_orphan_tool_results += sanitize_stats.dropped_orphan_tool_results;
                 sanitized_dropped_unmatched_tool_uses += sanitize_stats.dropped_unmatched_tool_uses;
+                sanitized_dropped_invalid_tool_use_inputs +=
+                    sanitize_stats.dropped_invalid_tool_use_inputs;
                 extend_sample_ids(
                     &mut sanitize_orphan_samples,
                     &sanitize_stats.orphan_tool_result_ids,
@@ -1209,8 +1258,13 @@ pub async fn start_agent_stream(
                     &sanitize_stats.unmatched_tool_use_ids,
                     12,
                 );
+                extend_sample_ids(
+                    &mut sanitize_invalid_tool_use_samples,
+                    &sanitize_stats.invalid_tool_use_input_ids,
+                    12,
+                );
                 tracing::warn!(
-                    "[start_agent_stream] sanitized malformed tool history before request: stream_id={}, session_id={}, before_messages={}, after_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, orphan_tool_result_ids={:?}, unmatched_tool_use_ids={:?}",
+                    "[start_agent_stream] sanitized malformed tool history before request: stream_id={}, session_id={}, before_messages={}, after_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, dropped_invalid_tool_use_inputs={}, orphan_tool_result_ids={:?}, unmatched_tool_use_ids={:?}, invalid_tool_use_input_ids={:?}",
                     stream_id_for_task,
                     session_id,
                     session_messages.len(),
@@ -1218,8 +1272,10 @@ pub async fn start_agent_stream(
                     sanitize_stats.dropped_empty_messages,
                     sanitize_stats.dropped_orphan_tool_results,
                     sanitize_stats.dropped_unmatched_tool_uses,
+                    sanitize_stats.dropped_invalid_tool_use_inputs,
                     sanitize_stats.orphan_tool_result_ids,
                     sanitize_stats.unmatched_tool_use_ids,
+                    sanitize_stats.invalid_tool_use_input_ids,
                 );
             }
             let mut request_messages = sanitized_session_messages.clone();
@@ -1227,11 +1283,12 @@ pub async fn start_agent_stream(
                 request_messages.insert(
                     0,
                     InputMessage::user_text(format!(
-                        "[context_trim_notice] dropped_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}",
+                        "[context_trim_notice] dropped_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, dropped_invalid_tool_use_inputs={}",
                         preflight_stats.dropped_messages,
                         sanitize_stats.dropped_empty_messages,
                         sanitize_stats.dropped_orphan_tool_results,
-                        sanitize_stats.dropped_unmatched_tool_uses
+                        sanitize_stats.dropped_unmatched_tool_uses,
+                        sanitize_stats.dropped_invalid_tool_use_inputs
                     )),
                 );
             }
@@ -1316,10 +1373,7 @@ pub async fn start_agent_stream(
                     let resume_cursor = user_visible_truth.resume_available.then(|| {
                         build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count)
                     });
-                    let degraded_reason = with_resume_cursor(
-                        user_visible_truth.degraded_reason.clone(),
-                        resume_cursor.as_deref(),
-                    );
+                    let degraded_reason = user_visible_truth.degraded_reason.clone();
                     let payload = StreamTokenPayload {
                         stream_id: stream_id_for_task.clone(),
                         text: None,
@@ -1338,6 +1392,7 @@ pub async fn start_agent_stream(
                         task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                         degraded_reason,
                         resume_available: Some(user_visible_truth.resume_available),
+                        resume_cursor,
                     };
                     let _ = window.emit("agent-token", payload);
                     // Save session and emit stream_complete even on error
@@ -1399,6 +1454,11 @@ pub async fn start_agent_stream(
                                             } else {
                                                 Some(accumulated_thinking.clone())
                                             },
+                                            task_outcome: None,
+                                            degraded_reason: None,
+                                            resume_available: None,
+                                            resume_cursor: None,
+                                            request_id: Some(provider_request_id.clone()),
                                         },
                                     );
                                     let _ = session_manager.save_session(&interim_session).await;
@@ -1425,6 +1485,7 @@ pub async fn start_agent_stream(
                                     task_outcome: None,
                                     degraded_reason: None,
                                     resume_available: None,
+                                    resume_cursor: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
@@ -1449,6 +1510,7 @@ pub async fn start_agent_stream(
                                     task_outcome: None,
                                     degraded_reason: None,
                                     resume_available: None,
+                                    resume_cursor: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
@@ -1516,6 +1578,7 @@ pub async fn start_agent_stream(
                                         task_outcome: None,
                                         degraded_reason: None,
                                         resume_available: None,
+                                        resume_cursor: None,
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -1545,6 +1608,7 @@ pub async fn start_agent_stream(
                                         task_outcome: None,
                                         degraded_reason: None,
                                         resume_available: None,
+                                        resume_cursor: None,
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -1610,10 +1674,7 @@ pub async fn start_agent_stream(
                         let resume_cursor = user_visible_truth.resume_available.then(|| {
                             build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count)
                         });
-                        let degraded_reason = with_resume_cursor(
-                            user_visible_truth.degraded_reason.clone(),
-                            resume_cursor.as_deref(),
-                        );
+                        let degraded_reason = user_visible_truth.degraded_reason.clone();
 
                         // Force-settle any in-flight tool cards so frontend does not
                         // keep them in queued/running after stream failure.
@@ -1641,6 +1702,7 @@ pub async fn start_agent_stream(
                                 task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                                 degraded_reason: degraded_reason.clone(),
                                 resume_available: Some(user_visible_truth.resume_available),
+                                resume_cursor: resume_cursor.clone(),
                             };
                             let _ = window.emit("agent-token", payload);
                         }
@@ -1663,6 +1725,7 @@ pub async fn start_agent_stream(
                             task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                             degraded_reason,
                             resume_available: Some(user_visible_truth.resume_available),
+                            resume_cursor,
                         };
                         let _ = window.emit("agent-token", payload);
                         stream_failed = true;
@@ -1700,6 +1763,7 @@ pub async fn start_agent_stream(
                 &mut timeline_session_messages,
                 &mut accumulated_text,
                 &mut accumulated_thinking,
+                None,
             );
 
             // Execute each tool and append results to session_messages
@@ -1762,6 +1826,7 @@ pub async fn start_agent_stream(
                         task_outcome: None,
                         degraded_reason: None,
                         resume_available: None,
+                        resume_cursor: None,
                     },
                 );
 
@@ -1822,8 +1887,7 @@ pub async fn start_agent_stream(
                     );
                 }
 
-                let tool_input: serde_json::Value =
-                    serde_json::from_str(&input_json).unwrap_or(serde_json::Value::Null);
+                let tool_input = parse_tool_input_json(&input_json);
 
                 timeline_session_messages.push(
                     crate::modules::runtime::session::ConversationMessage::tool_use(
@@ -1886,6 +1950,7 @@ pub async fn start_agent_stream(
                         task_outcome: None,
                         degraded_reason: None,
                         resume_available: None,
+                        resume_cursor: None,
                     },
                 );
 
@@ -1924,6 +1989,9 @@ pub async fn start_agent_stream(
                         is_error,
                     ),
                 );
+                if let Some(last_message) = timeline_session_messages.last_mut() {
+                    last_message.request_id = Some(provider_request_id.clone());
+                }
             }
             // Continue outer loop → send next LLM request with tool results
             tracing::info!(
@@ -1960,9 +2028,33 @@ pub async fn start_agent_stream(
                     task_outcome: None,
                     degraded_reason: None,
                     resume_available: None,
+                    resume_cursor: None,
                 },
             );
         }
+
+        let user_visible_truth = TaskOutcomeResolver::resolve(
+            ExecutionTruth {
+                has_successful_tool,
+                has_successful_mutating_tool,
+            },
+            &ConversationTruth {
+                stream_failed,
+                terminal_status: terminal_status.unwrap_or("unknown"),
+                last_stream_error_reason: last_stream_error_reason.clone(),
+            },
+        );
+        let resume_cursor = user_visible_truth
+            .resume_available
+            .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
+        let degraded_reason = user_visible_truth.degraded_reason.clone();
+        let persisted_turn_outcome = PersistedTurnOutcome {
+            task_outcome: user_visible_truth.task_outcome.to_string(),
+            degraded_reason: degraded_reason.clone(),
+            resume_available: user_visible_truth.resume_available,
+            resume_cursor: resume_cursor.clone(),
+            request_id: provider_request_id.clone(),
+        };
 
         // Save session with all accumulated messages
         let mut updated_app_session = app_session_clone;
@@ -1973,16 +2065,48 @@ pub async fn start_agent_stream(
             }],
             usage: None,
             thinking: None,
+            task_outcome: None,
+            degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            request_id: Some(provider_request_id.clone()),
         };
         flush_assistant_timeline_segment(
             &mut timeline_session_messages,
             &mut accumulated_text,
             &mut accumulated_thinking,
+            if stream_failed || user_visible_truth.task_outcome == "partial_success" {
+                Some(&persisted_turn_outcome)
+            } else {
+                None
+            },
         );
+        if (stream_failed || user_visible_truth.task_outcome == "partial_success")
+            && timeline_session_messages
+                .last()
+                .is_none_or(|message| message.resume_cursor.as_deref() != resume_cursor.as_deref())
+        {
+            timeline_session_messages.push(crate::modules::runtime::session::ConversationMessage {
+                role: crate::modules::runtime::session::MessageRole::Assistant,
+                blocks: vec![ContentBlock::Text {
+                    text: String::new(),
+                }],
+                usage: None,
+                thinking: None,
+                task_outcome: Some(persisted_turn_outcome.task_outcome.clone()),
+                degraded_reason: persisted_turn_outcome.degraded_reason.clone(),
+                resume_available: Some(persisted_turn_outcome.resume_available),
+                resume_cursor: persisted_turn_outcome.resume_cursor.clone(),
+                request_id: Some(persisted_turn_outcome.request_id.clone()),
+            });
+        }
+        let appended_message_count = 1 + timeline_session_messages.len();
         updated_app_session.messages.push(user_msg);
         updated_app_session
             .messages
             .extend(timeline_session_messages);
+        updated_app_session.message_count =
+            updated_app_session.logical_message_count() + appended_message_count;
 
         // Context compaction — compact if session exceeds token threshold
         let compaction_config = CompactionConfig::default();
@@ -2009,24 +2133,6 @@ pub async fn start_agent_stream(
 
         // Emit stream_complete exactly once, and only after the full
         // tool/LLM loop has finished for this request.
-        let user_visible_truth = TaskOutcomeResolver::resolve(
-            ExecutionTruth {
-                has_successful_tool,
-                has_successful_mutating_tool,
-            },
-            &ConversationTruth {
-                stream_failed,
-                terminal_status: terminal_status.unwrap_or("unknown"),
-                last_stream_error_reason: last_stream_error_reason.clone(),
-            },
-        );
-        let resume_cursor = user_visible_truth
-            .resume_available
-            .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
-        let degraded_reason = with_resume_cursor(
-            user_visible_truth.degraded_reason.clone(),
-            resume_cursor.as_deref(),
-        );
         if !stream_failed && !completion_already_emitted {
             let payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
@@ -2046,6 +2152,7 @@ pub async fn start_agent_stream(
                 task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                 degraded_reason: degraded_reason.clone(),
                 resume_available: Some(user_visible_truth.resume_available),
+                resume_cursor: resume_cursor.clone(),
             };
             let _ = window.emit("agent-token", payload);
             if terminal_status.is_none() {
@@ -2053,8 +2160,20 @@ pub async fn start_agent_stream(
             }
         }
 
+        if is_resume_turn {
+            tracing::info!(
+                "[resume_outcome] session_id='{}', stream_id='{}', request_id='{}', inbound_resume_cursor='{}', task_outcome='{}', success={}",
+                session_id,
+                stream_id_for_task,
+                provider_request_id.as_str(),
+                inbound_resume_cursor.as_deref().unwrap_or("none"),
+                user_visible_truth.task_outcome,
+                user_visible_truth.task_outcome == "completed"
+            );
+        }
+
         tracing::info!(
-            "[stream_diag_summary] stream_id='{}', session_id='{}', request_id='{}', status='{}', task_outcome='{}', degraded_reason='{}', resume_available={}, resume_cursor='{}', is_resume_turn={}, inbound_resume_cursor='{}', tool_loop_iter={}, token_count={}, stream_failed={}, completion_already_emitted={}, has_successful_tool={}, has_successful_mutating_tool={}, preflight_trim_rounds={}, preflight_dropped_messages_total={}, preflight_trimmed_chars_total={}, sanitize_rounds={}, dropped_empty_messages_total={}, dropped_orphan_tool_results_total={}, dropped_unmatched_tool_uses_total={}, start_retry_count={}, event_retry_count={}, orphan_tool_result_samples={:?}, unmatched_tool_use_samples={:?}, last_stream_error={}",
+            "[stream_diag_summary] stream_id='{}', session_id='{}', request_id='{}', status='{}', task_outcome='{}', degraded_reason='{}', resume_available={}, resume_cursor='{}', is_resume_turn={}, inbound_resume_cursor='{}', tool_loop_iter={}, token_count={}, stream_failed={}, completion_already_emitted={}, has_successful_tool={}, has_successful_mutating_tool={}, preflight_trim_rounds={}, preflight_dropped_messages_total={}, preflight_trimmed_chars_total={}, sanitize_rounds={}, dropped_empty_messages_total={}, dropped_orphan_tool_results_total={}, dropped_unmatched_tool_uses_total={}, dropped_invalid_tool_use_inputs_total={}, start_retry_count={}, event_retry_count={}, orphan_tool_result_samples={:?}, unmatched_tool_use_samples={:?}, invalid_tool_use_input_samples={:?}, last_stream_error={}",
             stream_id_for_task,
             session_id,
             provider_request_id.as_str(),
@@ -2078,10 +2197,12 @@ pub async fn start_agent_stream(
             sanitized_dropped_empty_messages,
             sanitized_dropped_orphan_tool_results,
             sanitized_dropped_unmatched_tool_uses,
+            sanitized_dropped_invalid_tool_use_inputs,
             stream_start_retry_count,
             stream_event_retry_count,
             sanitize_orphan_samples,
             sanitize_unmatched_samples,
+            sanitize_invalid_tool_use_samples,
             last_stream_error_reason.as_deref().unwrap_or("none"),
         );
     });
@@ -2161,11 +2282,56 @@ fn build_resume_cursor(stream_id: &str, tool_loop_iter: usize, token_count: u32)
     format!("resume_cursor:v1:{stream_id}:{tool_loop_iter}:{token_count}")
 }
 
-fn with_resume_cursor(reason: Option<String>, resume_cursor: Option<&str>) -> Option<String> {
-    match (reason, resume_cursor) {
-        (Some(reason), Some(cursor)) => Some(format!("{reason};resume_cursor={cursor}")),
-        (None, Some(cursor)) => Some(format!("degraded;resume_cursor={cursor}")),
-        (reason, None) => reason,
+fn parse_resume_cursor(value: &str) -> Option<ResumeCursor> {
+    let mut parts = value.split(':');
+    if parts.next()? != "resume_cursor" || parts.next()? != "v1" {
+        return None;
+    }
+    let stream_id = parts.next()?.to_string();
+    let tool_loop_iter = parts.next()?.parse().ok()?;
+    let token_count = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(ResumeCursor {
+        stream_id,
+        tool_loop_iter,
+        token_count,
+    })
+}
+
+fn session_contains_resume_cursor(app_session: &AppSession, resume_cursor: &ResumeCursor) -> bool {
+    app_session.messages.iter().any(|message| {
+        message.resume_available == Some(true)
+            && message.resume_cursor.as_deref()
+                == Some(&build_resume_cursor(
+                    &resume_cursor.stream_id,
+                    resume_cursor.tool_loop_iter,
+                    resume_cursor.token_count,
+                ))
+    })
+}
+
+fn strip_resume_cursor_marker(message: &str) -> String {
+    let marker = "[resume_cursor]";
+    if let Some(start) = message.find(marker) {
+        let before = &message[..start];
+        let tail = &message[start + marker.len()..];
+        let remainder = tail
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or_default()
+            .trim();
+        let merged = format!("{} {}", before.trim(), remainder)
+            .trim()
+            .to_string();
+        if merged.is_empty() {
+            "请从上一次中断处继续完成未完成部分，禁止重复已确认的副作用操作。".to_string()
+        } else {
+            merged
+        }
+    } else {
+        message.trim().to_string()
     }
 }
 
@@ -2190,8 +2356,7 @@ fn runtime_block_to_input_block(block: &ContentBlock) -> InputContentBlock {
     match block {
         ContentBlock::Text { text } => InputContentBlock::Text { text: text.clone() },
         ContentBlock::ToolUse { id, name, input } => {
-            let input_value: serde_json::Value =
-                serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+            let input_value = parse_tool_input_json(input);
             InputContentBlock::ToolUse {
                 id: id.clone(),
                 name: name.clone(),
@@ -2363,6 +2528,149 @@ impl ContextGovernor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::modules::memory;
+    use crate::modules::runtime::permissions::PermissionPolicy;
+    use crate::modules::runtime::session::{MessageRole, Session as RuntimeSession};
+    use crate::modules::scheduler;
+    use crate::modules::tools::{register_builtin_tools, ToolContext, ToolRegistry};
+
+    struct TempDirGuard {
+        path: std::path::PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(path: std::path::PathBuf) -> Self {
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    struct ScriptedSkillApiClient {
+        call_count: usize,
+    }
+
+    impl ApiClient for ScriptedSkillApiClient {
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count += 1;
+            match self.call_count {
+                1 => {
+                    let has_skill_definition = request
+                        .tools
+                        .as_ref()
+                        .is_some_and(|tools| tools.iter().any(|tool| tool.name == "skill"));
+                    assert!(
+                        has_skill_definition,
+                        "request should include skill tool definition"
+                    );
+                    Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-skill-1".to_string(),
+                            name: "skill".to_string(),
+                            input: r#"{"skill":"demo-skill"}"#.to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ])
+                }
+                2 => {
+                    let last_message = request
+                        .messages
+                        .last()
+                        .ok_or_else(|| RuntimeError::api_error("missing tool result message"))?;
+                    assert_eq!(last_message.role, MessageRole::Tool);
+                    let has_expected_skill_content = last_message.blocks.iter().any(|block| {
+                        matches!(
+                            block,
+                            ContentBlock::ToolResult { output, .. }
+                                if output.contains("# Demo Skill")
+                        )
+                    });
+                    assert!(
+                        has_expected_skill_content,
+                        "tool result should contain loaded SKILL.md content"
+                    );
+                    Ok(vec![
+                        AssistantEvent::TextDelta("技能已执行".to_string()),
+                        AssistantEvent::MessageStop,
+                    ])
+                }
+                _ => Err(RuntimeError::api_error("unexpected extra API call")),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agent_loop_executes_skill_tool_end_to_end() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        let workdir = std::env::temp_dir().join(format!("if2ai-agent-skill-e2e-{nanos}"));
+        let _workdir_guard = TempDirGuard::new(workdir.clone());
+        let skill_dir = workdir.join(".if2ai/skills/demo-skill");
+        fs::create_dir_all(&skill_dir).expect("create skill directory");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "# Demo Skill\n\nUse demo skill.",
+        )
+        .expect("write skill markdown");
+        fs::write(
+            skill_dir.join("skill.json"),
+            r#"{
+  "id": "demo-skill",
+  "version": "1.0.0",
+  "apiVersion": "v1",
+  "minAppVersion": "0.1.0",
+  "capabilities": ["custom"],
+  "review": {
+    "status": "active",
+    "riskLevel": "low",
+    "lastReviewedAt": "2026-04-14T00:00:00Z"
+  }
+}"#,
+        )
+        .expect("write skill manifest");
+
+        let context = std::sync::Arc::new(Mutex::new(ToolContext::default_for_workdir(
+            workdir.clone(),
+        )));
+        let registry = Arc::new(ToolRegistry::new(context));
+        register_builtin_tools(
+            &registry,
+            memory::default_memory_provider(),
+            scheduler::default_scheduler(),
+        );
+
+        let execution_context =
+            SessionExecutionContext::stateless(workdir.clone(), PermissionMode::DangerFullAccess);
+        let tool_executor = ToolRegistryExecutor::new_with_context(registry, execution_context);
+        let mut runtime = ConversationRuntime::new(
+            RuntimeSession::new(),
+            ScriptedSkillApiClient { call_count: 0 },
+            tool_executor,
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        );
+
+        let summary = runtime
+            .run_turn("请运行 demo-skill", None)
+            .expect("runtime should complete skill loop");
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(summary.tool_results.len(), 1);
+    }
+}
+
 fn apply_request_preflight_limits(
     messages: &[InputMessage],
     max_messages: usize,
@@ -2514,8 +2822,10 @@ struct SanitizationStats {
     dropped_empty_messages: usize,
     dropped_orphan_tool_results: usize,
     dropped_unmatched_tool_uses: usize,
+    dropped_invalid_tool_use_inputs: usize,
     orphan_tool_result_ids: Vec<String>,
     unmatched_tool_use_ids: Vec<String>,
+    invalid_tool_use_input_ids: Vec<String>,
 }
 
 impl SanitizationStats {
@@ -2523,6 +2833,7 @@ impl SanitizationStats {
         self.dropped_empty_messages > 0
             || self.dropped_orphan_tool_results > 0
             || self.dropped_unmatched_tool_uses > 0
+            || self.dropped_invalid_tool_use_inputs > 0
     }
 
     fn push_orphan_tool_result_id(&mut self, tool_use_id: &str) {
@@ -2534,6 +2845,13 @@ impl SanitizationStats {
     fn push_unmatched_tool_use_id(&mut self, tool_use_id: &str) {
         if self.unmatched_tool_use_ids.len() < 8 {
             self.unmatched_tool_use_ids.push(tool_use_id.to_string());
+        }
+    }
+
+    fn push_invalid_tool_use_input_id(&mut self, tool_use_id: &str) {
+        if self.invalid_tool_use_input_ids.len() < 8 {
+            self.invalid_tool_use_input_ids
+                .push(tool_use_id.to_string());
         }
     }
 }
@@ -2579,6 +2897,14 @@ fn sanitize_messages_for_provider(
                     } else {
                         stats.dropped_orphan_tool_results += 1;
                         stats.push_orphan_tool_result_id(tool_use_id);
+                    }
+                }
+                InputContentBlock::ToolUse { id, input, .. } => {
+                    if input.is_object() {
+                        next_content.push(block.clone());
+                    } else {
+                        stats.dropped_invalid_tool_use_inputs += 1;
+                        stats.push_invalid_tool_use_input_id(id);
                     }
                 }
                 _ => next_content.push(block.clone()),
@@ -2651,6 +2977,13 @@ fn extend_sample_ids(target: &mut Vec<String>, incoming: &[String], max_samples:
         if !target.iter().any(|existing| existing == sample) {
             target.push(sample.clone());
         }
+    }
+}
+
+fn parse_tool_input_json(raw_input: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(raw_input) {
+        Ok(value) if value.is_object() => value,
+        _ => serde_json::json!({}),
     }
 }
 

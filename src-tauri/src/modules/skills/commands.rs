@@ -71,6 +71,14 @@ pub struct SkillCommandInfo {
     pub config_block: Option<String>,
     /// Activation note template.
     pub activation_note: Option<String>,
+    /// Toolsets required for this skill to activate.
+    /// If specified, the skill will only activate if all listed toolsets are available.
+    #[serde(default)]
+    pub requires_toolsets: Vec<String>,
+    /// Toolsets that can be used as fallback if required toolsets are not available.
+    /// Used when requires_toolsets is specified but not all are satisfied.
+    #[serde(default)]
+    pub fallback_for_toolsets: Vec<String>,
 }
 
 impl SkillCommandInfo {
@@ -90,6 +98,50 @@ impl SkillCommandInfo {
                     (p_lower == *alias && *target == platform) || (p_lower == *target && *alias == platform)
                 })
         })
+    }
+
+    /// Check if this skill has conditional activation requirements.
+    #[allow(dead_code)]
+    pub fn has_conditional_activation(&self) -> bool {
+        !self.requires_toolsets.is_empty()
+    }
+
+    /// Check if the required toolsets are available.
+    ///
+    /// Returns (satisfied, satisfied_by_fallback) where:
+    /// - satisfied: true if all required toolsets are available
+    /// - satisfied_by_fallback: true if fallback toolsets can substitute
+    #[allow(dead_code)]
+    pub fn check_toolsets_availability(&self, available_toolsets: &[String]) -> (bool, bool) {
+        if self.requires_toolsets.is_empty() {
+            return (true, true);
+        }
+
+        let available: std::collections::HashSet<_> =
+            available_toolsets.iter().map(|s| s.as_str()).collect();
+
+        let all_satisfied = self
+            .requires_toolsets
+            .iter()
+            .all(|ts| available.contains(ts.as_str()));
+
+        if all_satisfied {
+            return (true, true);
+        }
+
+        // Check if fallback can substitute
+        let fallback_available: std::collections::HashSet<_> = self
+            .fallback_for_toolsets
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+
+        let fallback_satisfies = self
+            .requires_toolsets
+            .iter()
+            .all(|ts| available.contains(ts.as_str()) || fallback_available.contains(ts.as_str()));
+
+        (all_satisfied, fallback_satisfies)
     }
 }
 
@@ -388,11 +440,24 @@ impl SkillCommands {
             .to_string();
 
         // Extract frontmatter if present
-        let (description, platforms, config_block, activation_note) = if content.starts_with("---")
-        {
+        let (
+            description,
+            platforms,
+            config_block,
+            activation_note,
+            requires_toolsets,
+            fallback_for_toolsets,
+        ) = if content.starts_with("---") {
             self.parse_frontmatter(&content)?
         } else {
-            (String::new(), Vec::new(), None, None)
+            (
+                String::new(),
+                Vec::new(),
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
         };
 
         // Scan for supporting files (files in skill_dir that aren't SKILL.md)
@@ -423,6 +488,8 @@ impl SkillCommands {
             enabled: true,
             config_block,
             activation_note,
+            requires_toolsets,
+            fallback_for_toolsets,
         })
     }
 
@@ -431,11 +498,20 @@ impl SkillCommands {
     fn parse_frontmatter(
         &self,
         content: &str,
-    ) -> CommandResult<(String, Vec<String>, Option<String>, Option<String>)> {
+    ) -> CommandResult<(
+        String,
+        Vec<String>,
+        Option<String>,
+        Option<String>,
+        Vec<String>,
+        Vec<String>,
+    )> {
         let mut description = String::new();
         let mut platforms = Vec::new();
         let mut config_block = None;
         let activation_note = None;
+        let mut requires_toolsets = Vec::new();
+        let mut fallback_for_toolsets = Vec::new();
 
         // Find frontmatter boundaries
         let start = content.find("---").map(|i| i + 3);
@@ -477,11 +553,41 @@ impl SkillCommands {
                     if !config_lines.is_empty() {
                         config_block = Some(config_lines.join("\n"));
                     }
+                } else if line.starts_with("requires_toolsets:") {
+                    let toolsets_str = line.strip_prefix("requires_toolsets:").unwrap_or("").trim();
+                    if toolsets_str.starts_with('[') && toolsets_str.ends_with(']') {
+                        let inner = &toolsets_str[1..toolsets_str.len() - 1];
+                        requires_toolsets = inner
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                } else if line.starts_with("fallback_for_toolsets:") {
+                    let toolsets_str = line
+                        .strip_prefix("fallback_for_toolsets:")
+                        .unwrap_or("")
+                        .trim();
+                    if toolsets_str.starts_with('[') && toolsets_str.ends_with(']') {
+                        let inner = &toolsets_str[1..toolsets_str.len() - 1];
+                        fallback_for_toolsets = inner
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
                 }
             }
         }
 
-        Ok((description, platforms, config_block, activation_note))
+        Ok((
+            description,
+            platforms,
+            config_block,
+            activation_note,
+            requires_toolsets,
+            fallback_for_toolsets,
+        ))
     }
 }
 
@@ -567,6 +673,8 @@ mod tests {
             enabled: true,
             config_block: None,
             activation_note: None,
+            requires_toolsets: vec![],
+            fallback_for_toolsets: vec![],
         };
 
         assert!(info.is_available_on_platform("darwin"));
