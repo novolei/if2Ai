@@ -6,9 +6,14 @@
 //! - Skill hub: multi-source skill marketplace adapters
 //! - Skill sync: manifest-based bundled skill synchronization
 //! - Skill commands: slash command integration
+//! - External dirs: external skills directories support
+//! - Remote passthrough: remote backend environment variable passthrough
 
 pub mod commands;
+pub mod config;
+pub mod external_dirs;
 pub mod guard;
 pub mod hub;
 pub mod manager;
+pub mod remote_passthrough;
 pub mod sync;

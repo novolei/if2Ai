@@ -92,6 +92,7 @@ pub struct ScanResult {
 }
 
 /// SkillsGuard — threat scanner for skill directories.
+#[derive(Debug, Clone)]
 pub struct SkillsGuard {
     patterns: Vec<ThreatPattern>,
 }

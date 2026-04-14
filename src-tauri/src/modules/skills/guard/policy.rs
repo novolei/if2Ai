@@ -5,7 +5,7 @@
 //! Ported from Hermes `tools/skills_guard.py` lines 39-47.
 
 /// Trust level of a skill source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TrustLevel {
     /// Built-in skills packaged with the app — never scanned, always trusted.
     Builtin,
