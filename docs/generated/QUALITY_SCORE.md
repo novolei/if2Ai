@@ -2,9 +2,9 @@
 
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
-**更新时间**: 2026-04-13
-**当前 Phase**: Phase 6A 执行中（控制平面加固）
-**整体状态**: ✅ Phase 5 系列完成；Phase 6A 已完成 3/8（6a.1-6a.3）
+**更新时间**: 2026-04-14
+**当前 Phase**: Phase 6F 执行中（Skill Control Plane v2）
+**整体状态**: ✅ Phase 5 系列完成；Phase 6F 已完成 5/12（6F.1-6F.5）
 
 ---
 
@@ -22,7 +22,7 @@
 | Phase 5D — UX 完善          | ✅ 完成 (8/8)   | 2026-04-13 | ✅ 0 errors | ✅ 202 tests | ✅       |
 | Phase 5E — 长期增强         | ✅ 完成 (6/6)   | 2026-04-13 | ✅ 0 errors | ✅ 215 tests | ✅       |
 | Phase 6A — 控制平面加固     | ✅ 完成 (8/8)  | 2026-04-13 | ✅ 0 errors | ✅ 222 tests | ✅       |
-| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (1/10) | 2026-04-14 | ✅ 0 errors | ✅ 272 tests | ✅       |
+| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (5/12) | 2026-04-14 | ✅ 0 errors | ✅ 331 tests | ✅       |
 
 ---
 
@@ -95,6 +95,7 @@
 | 6F.2  | SkillManager CRUD             | ✅ done | CRUD actions, validation, atomic writes, security scan integration     |
 | 6F.3  | Hub Source Framework          | ✅ done | SkillSource trait, GitHubSource adapter, 4 auth methods               |
 | 6F.4  | Hub Source Implementations     | ✅ done | 6 additional sources (skills.sh, ClawHub, Marketplace, etc.)       |
+| 6F.5  | Hub State Management         | ✅ done | HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit           |
 
 ---
 
@@ -163,3 +164,4 @@
 | 2026-04-14 | Phase 6D Slice 6d.6 完成：skills.sh 分发接入 stable/canary 通道，后端 artifact checksum+signature 校验 fail-closed，默认 quarantine                     |
 | 2026-04-14 | Phase 6D Slice 6d.7 完成：agent skill_proposal->draft、approval/rollback 治理闭环与 adoption/rollback 事件路径落地通过审查                              |
 | 2026-04-14 | Phase 6F Slice 6F.1 完成：SkillsGuard threat scanner (60+ patterns, 15 categories, invisible unicode, structural limits, Hermes trust policy)             |
+| 2026-04-14 | Phase 6F Slice 6F.5 完成：Hub State Management (HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit/unified_search)，26 hub tests pass      |

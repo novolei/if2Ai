@@ -14,8 +14,8 @@ meta:
 
 dashboard:
   last_updated: 2026-04-14
-  completed_slices: ['6F.1', '6F.2', '6F.3', '6F.4']
-  current_slice: 6F.5
+  completed_slices: ['6F.1', '6F.2', '6F.3', '6F.4', '6F.5']
+  current_slice: 6F.6
   blocked: []
   notes: >
     Phase 6F aligns if2Ai Skill Control Plane with Hermes Agent skill architecture.
@@ -23,6 +23,7 @@ dashboard:
     6F.2 SkillManager done - CRUD actions, validation, atomic writes, security scan integration.
     6F.3 Hub Source Framework done - SkillSource trait, GitHubSource adapter with 4 auth methods.
     6F.4 Hub Source Implementations done - 6 additional sources (skills.sh, ClawHub, Marketplace, etc.).
+    6F.5 Hub State Management done - HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit/unified_search.
     Priority: 6F.1-2 (Security + CRUD) > 6F.3-6 (Hub) > 6F.7-8 (Commands + Config) > 6F.9-10 (UI + Tests)
 
 # ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ slices:
 
   - id: 6F.5
     name: Hub State Management
-    status: pending
+    status: done
     priority: P1
     depends_on: 6F.3
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.4
