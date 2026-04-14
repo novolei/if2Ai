@@ -17,7 +17,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
   {
     id: 'skills',
     label: '技能管理',
-    description: '启用、关闭和排序可用技能。',
+    description: '查看状态并执行 enable/disable，含 quarantine/active 冲突说明。',
     icon: Sparkles,
   },
   {

@@ -12,9 +12,9 @@ use commands::{
     delete_project, delete_session, execute_slash_command, execute_tool, get_project, get_session,
     get_tool_definitions, list_agents, list_project_sessions, list_projects, list_sessions,
     list_skills, list_slash_commands, list_tools, list_toolsets, open_project_in_finder,
-    open_settings_window, parse_slash_command, rename_project, rename_session,
-    respond_permission, run_agent_turn, set_session_pinned, start_agent_stream,
-    stop_agent_stream, suggest_slash_commands,
+    open_settings_window, parse_slash_command, rename_project, rename_session, respond_permission,
+    run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
+    suggest_slash_commands,
 };
 
 use tauri::{

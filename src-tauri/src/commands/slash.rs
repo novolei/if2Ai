@@ -4,10 +4,15 @@
 //! to the frontend via Tauri IPC.
 //! See docs/bs_gap/08-critical-fix-priority.md §F5, §F17.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::modules::control_plane::audit::{AuditEmitter, SkillDistributionDiagnostic};
+use crate::modules::tools::registry::{
+    validate_distribution_envelope, SkillDistributionChannel, SkillDistributionEnvelope,
+};
 
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
@@ -32,6 +37,12 @@ pub struct SkillInfo {
     pub name: String,
     pub description: String,
     pub path: String,
+    pub source: String,
+    pub review_status: String,
+    pub status: String,
+    pub enabled: bool,
+    pub read_only: bool,
+    pub shadowed_by: Option<String>,
 }
 
 /// Info about a discovered agent.
@@ -127,16 +138,8 @@ pub fn execute_slash_command(
             Ok("Conversation cleared.".to_string())
         }
         "/skills" => {
-            let skills = list_skills_impl(&std::env::current_dir().unwrap_or_default());
-            if skills.is_empty() {
-                Ok("No skills found.".to_string())
-            } else {
-                let lines: Vec<String> = skills
-                    .iter()
-                    .map(|s| format!("{} — {}", s.name, s.description))
-                    .collect();
-                Ok(lines.join("\n"))
-            }
+            let workdir = std::env::current_dir().unwrap_or_default();
+            handle_skills_command(&workdir, &input)
         }
         "/agents" => {
             let agents = list_agents_impl(&std::env::current_dir().unwrap_or_default());
@@ -166,24 +169,442 @@ pub fn list_skills(cwd: Option<String>) -> Vec<SkillInfo> {
 }
 
 fn list_skills_impl(workdir: &std::path::Path) -> Vec<SkillInfo> {
-    let roots = crate::modules::tools::builtin::skill::discover_skill_roots(workdir);
+    let roots = crate::modules::tools::builtin::skill::discover_skill_roots_with_metadata(workdir);
     let mut skills = Vec::new();
+    let state = load_skill_state(workdir);
+    let mut winners: std::collections::BTreeMap<String, (usize, String)> =
+        std::collections::BTreeMap::new();
     for root in roots {
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            for entry in entries.flatten() {
+        if let Ok(entries) = std::fs::read_dir(&root.path) {
+            let mut sorted_entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+            sorted_entries.sort_by_key(|item| item.path());
+            for entry in sorted_entries {
                 let skill_md = entry.path().join("SKILL.md");
                 if skill_md.is_file() {
                     let name = entry.file_name().to_string_lossy().into_owned();
+                    let key = name.to_lowercase();
+                    let review_status = read_skill_status(&entry.path());
+                    let default_enabled =
+                        review_status == "active" || review_status == "review_passed";
+                    let path_key = entry.path().to_string_lossy().into_owned();
+                    let enabled = state
+                        .get(&path_key)
+                        .copied()
+                        .or_else(|| state.get(&key).copied())
+                        .unwrap_or(default_enabled);
+                    let shadowed_by = winners.get(&key).and_then(|(winner_rank, winner_label)| {
+                        if *winner_rank <= root.precedence {
+                            Some(winner_label.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if !winners.contains_key(&key)
+                        || winners
+                            .get(&key)
+                            .is_some_and(|(rank, _)| root.precedence < *rank)
+                    {
+                        winners.insert(
+                            key.clone(),
+                            (
+                                root.precedence,
+                                format!("{}@{}", name, root.source.as_label()),
+                            ),
+                        );
+                    }
                     skills.push(SkillInfo {
                         name,
                         description: String::new(),
                         path: entry.path().to_string_lossy().into_owned(),
+                        source: root.source.as_label().to_string(),
+                        review_status: review_status.clone(),
+                        status: if !enabled
+                            && (review_status == "active" || review_status == "review_passed")
+                        {
+                            "disabled".to_string()
+                        } else {
+                            review_status
+                        },
+                        enabled,
+                        read_only: root.read_only,
+                        shadowed_by,
                     });
                 }
             }
         }
     }
+    skills.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
     skills
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillManifestLite {
+    review: SkillReviewLite,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillReviewLite {
+    status: crate::modules::tools::registry::SkillReviewStatus,
+}
+
+fn read_skill_status(skill_dir: &std::path::Path) -> String {
+    let manifest = skill_dir.join("skill.json");
+    let Ok(raw) = std::fs::read_to_string(manifest) else {
+        return "draft".to_string();
+    };
+    serde_json::from_str::<SkillManifestLite>(&raw)
+        .map(|manifest| match manifest.review.status {
+            crate::modules::tools::registry::SkillReviewStatus::Draft => "draft".to_string(),
+            crate::modules::tools::registry::SkillReviewStatus::Quarantine => {
+                "quarantine".to_string()
+            }
+            crate::modules::tools::registry::SkillReviewStatus::ReviewPassed => {
+                "review_passed".to_string()
+            }
+            crate::modules::tools::registry::SkillReviewStatus::Active => "active".to_string(),
+            crate::modules::tools::registry::SkillReviewStatus::Disabled => "disabled".to_string(),
+        })
+        .unwrap_or_else(|_| "draft".to_string())
+}
+
+fn skill_state_path(workdir: &std::path::Path) -> std::path::PathBuf {
+    workdir.join(".if2ai").join("skill-state.json")
+}
+
+fn load_skill_state(workdir: &std::path::Path) -> std::collections::BTreeMap<String, bool> {
+    let path = skill_state_path(workdir);
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return std::collections::BTreeMap::new();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_skill_state(
+    workdir: &std::path::Path,
+    state: &std::collections::BTreeMap<String, bool>,
+) -> Result<(), String> {
+    let path = skill_state_path(workdir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create state dir failed: {e}"))?;
+    }
+    let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    std::fs::write(path, raw).map_err(|e| format!("write skill state failed: {e}"))?;
+    Ok(())
+}
+
+fn handle_skills_command(workdir: &std::path::Path, input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
+    if let Some(args) = trimmed.strip_prefix("/skills validate-remote-path ") {
+        return validate_remote_distribution_path(workdir, args);
+    }
+    if let Some(name) = trimmed.strip_prefix("/skills create ") {
+        return create_skill_draft(workdir, name.trim());
+    }
+    if let Some(target_path) = trimmed.strip_prefix("/skills review-path ") {
+        return review_skill_path(workdir, target_path.trim());
+    }
+    if let Some(target_path) = trimmed.strip_prefix("/skills approve-path ") {
+        return approve_skill_path(workdir, target_path.trim());
+    }
+    if let Some(target_path) = trimmed.strip_prefix("/skills rollback-path ") {
+        return rollback_skill_path(workdir, target_path.trim());
+    }
+    if let Some(target_path) = trimmed.strip_prefix("/skills enable-path ") {
+        return set_skill_enabled(workdir, target_path.trim(), true, true);
+    }
+    if let Some(target_path) = trimmed.strip_prefix("/skills disable-path ") {
+        return set_skill_enabled(workdir, target_path.trim(), false, true);
+    }
+    let mut tokens = input.split_whitespace();
+    let _ = tokens.next();
+    let action = tokens.next();
+    let target = tokens.next();
+    match (action, target) {
+        (Some("enable"), Some(name)) => set_skill_enabled(workdir, name, true, false),
+        (Some("disable"), Some(name)) => set_skill_enabled(workdir, name, false, false),
+        _ => {
+            let skills = list_skills_impl(workdir);
+            if skills.is_empty() {
+                Ok("No skills found.".to_string())
+            } else {
+                let lines: Vec<String> = skills
+                    .iter()
+                    .map(|s| {
+                        format!(
+                            "{} [{}:{}] {}{}",
+                            s.name,
+                            s.source,
+                            s.status,
+                            if s.enabled { "enabled" } else { "disabled" },
+                            s.shadowed_by
+                                .as_ref()
+                                .map_or(String::new(), |by| format!(" shadowed_by={by}"))
+                        )
+                    })
+                    .collect();
+                Ok(lines.join("\n"))
+            }
+        }
+    }
+}
+
+fn validate_remote_distribution_path(
+    workdir: &std::path::Path,
+    args: &str,
+) -> Result<String, String> {
+    let mut parts = args.split_whitespace();
+    let channel = parts.next().ok_or_else(|| "missing channel".to_string())?;
+    let checksum = parts.next().ok_or_else(|| "missing checksum".to_string())?;
+    let signature = parts
+        .next()
+        .ok_or_else(|| "missing signature".to_string())?;
+    let skill_path = parts
+        .next()
+        .ok_or_else(|| "missing skill path".to_string())?;
+    let channel = match channel {
+        "stable" => SkillDistributionChannel::Stable,
+        "canary" => SkillDistributionChannel::Canary,
+        other => return Err(format!("unsupported channel: {other}")),
+    };
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace path: {e}"))?;
+    let canonical_skill = std::path::PathBuf::from(skill_path)
+        .canonicalize()
+        .map_err(|e| format!("invalid skill artifact path: {e}"))?;
+    if !canonical_skill.starts_with(&canonical_workdir) {
+        return Err("artifact path outside workspace".to_string());
+    }
+    let content = std::fs::read_to_string(&canonical_skill)
+        .map_err(|e| format!("read skill artifact failed: {e}"))?;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(content.as_bytes());
+    let digest = hasher.finalize();
+    let actual_checksum = hex::encode(digest);
+    if actual_checksum != checksum {
+        return Err(format!(
+            "checksum mismatch: expected {checksum}, got {actual_checksum}"
+        ));
+    }
+    let envelope = SkillDistributionEnvelope {
+        channel,
+        checksum: actual_checksum.clone(),
+        signature: signature.to_string(),
+        quarantine: true,
+    };
+    validate_distribution_envelope(&envelope).map_err(ToString::to_string)?;
+    let trace_id = AuditEmitter::new_trace_id();
+    AuditEmitter::skill_distribution(
+        &trace_id,
+        "slash.skills",
+        "remote-distribution",
+        workdir,
+        SkillDistributionDiagnostic {
+            channel: match channel {
+                SkillDistributionChannel::Stable => "stable",
+                SkillDistributionChannel::Canary => "canary",
+            },
+            checksum: &actual_checksum,
+            signature,
+            request_id: None,
+        },
+    );
+    Ok("distribution artifact verified".to_string())
+}
+
+fn set_skill_enabled(
+    workdir: &std::path::Path,
+    target: &str,
+    enable: bool,
+    by_path: bool,
+) -> Result<String, String> {
+    let skills = list_skills_impl(workdir);
+    let selected = if by_path {
+        skills
+            .iter()
+            .find(|item| item.path == target)
+            .ok_or_else(|| format!("Skill path '{target}' not found"))?
+    } else {
+        skills
+            .iter()
+            .find(|item| item.name.eq_ignore_ascii_case(target))
+            .ok_or_else(|| format!("Skill '{target}' not found"))?
+    };
+    if enable && !(selected.review_status == "active" || selected.review_status == "review_passed")
+    {
+        return Err(format!(
+            "Skill '{}' cannot be enabled because status is '{}'",
+            selected.name, selected.review_status
+        ));
+    }
+    let mut state = load_skill_state(workdir);
+    state.insert(selected.path.clone(), enable);
+    save_skill_state(workdir, &state)?;
+    Ok(format!(
+        "Skill '{}' {}",
+        selected.name,
+        if enable { "enabled" } else { "disabled" }
+    ))
+}
+
+fn create_skill_draft(workdir: &std::path::Path, name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("skill name is required".to_string());
+    }
+    let safe_name = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let skill_dir = workdir.join(".if2ai/skills").join(&safe_name);
+    std::fs::create_dir_all(&skill_dir).map_err(|e| format!("create skill dir failed: {e}"))?;
+    let skill_md = skill_dir.join("SKILL.md");
+    if !skill_md.is_file() {
+        std::fs::write(
+            &skill_md,
+            format!(
+                "---\nname: {safe_name}\ndescription: Draft skill\n---\n# {safe_name}\n\nWrite your skill here.\n"
+            ),
+        )
+        .map_err(|e| format!("write SKILL.md failed: {e}"))?;
+    }
+    let manifest = skill_dir.join("skill.json");
+    let manifest_json = serde_json::json!({
+      "id": safe_name,
+      "version": "0.1.0",
+      "apiVersion": "v1",
+      "minAppVersion": "0.1.0",
+      "capabilities": ["custom"],
+      "review": {
+        "status": "draft",
+        "riskLevel": "medium",
+        "lastReviewedAt": ""
+      }
+    });
+    std::fs::write(
+        &manifest,
+        serde_json::to_string_pretty(&manifest_json).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write skill.json failed: {e}"))?;
+    let envelope = SkillDistributionEnvelope {
+        channel: SkillDistributionChannel::Stable,
+        checksum: "local-draft".to_string(),
+        signature: "local-draft".to_string(),
+        quarantine: true,
+    };
+    validate_distribution_envelope(&envelope).map_err(ToString::to_string)?;
+    let trace_id = AuditEmitter::new_trace_id();
+    AuditEmitter::skill_distribution(
+        &trace_id,
+        "slash.skills",
+        &safe_name,
+        workdir,
+        SkillDistributionDiagnostic {
+            channel: "stable",
+            checksum: "local-draft",
+            signature: "local-draft",
+            request_id: None,
+        },
+    );
+    Ok(format!("create skill draft: {}", skill_dir.display()))
+}
+
+fn review_skill_path(workdir: &std::path::Path, target_path: &str) -> Result<String, String> {
+    let full_path = std::path::PathBuf::from(target_path)
+        .canonicalize()
+        .map_err(|e| format!("invalid skill path: {e}"))?;
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace path: {e}"))?;
+    if !full_path.starts_with(&canonical_workdir) {
+        return Err("review blocked: path outside workspace".to_string());
+    }
+    let skill_md = full_path.join("SKILL.md");
+    let raw =
+        std::fs::read_to_string(&skill_md).map_err(|e| format!("read SKILL.md failed: {e}"))?;
+    let review_result = crate::modules::tools::builtin::skill::local_review_skill_content(&raw);
+    let status = if review_result.is_ok() {
+        "review_passed"
+    } else {
+        "quarantine"
+    };
+    let manifest = full_path.join("skill.json");
+    let mut manifest_json = if manifest.is_file() {
+        serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(&manifest)
+                .map_err(|e| format!("read skill.json failed: {e}"))?,
+        )
+        .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    manifest_json["review"] = serde_json::json!({
+      "status": status,
+      "riskLevel": if review_result.is_ok() { "low" } else { "high" },
+      "lastReviewedAt": chrono::Utc::now().to_rfc3339(),
+    });
+    std::fs::write(
+        &manifest,
+        serde_json::to_string_pretty(&manifest_json).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("write skill.json failed: {e}"))?;
+    match review_result {
+        Ok(()) => Ok("review: pass".to_string()),
+        Err(reason) => Ok(format!("review: blocked ({reason})")),
+    }
+}
+
+fn approve_skill_path(workdir: &std::path::Path, target_path: &str) -> Result<String, String> {
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace path: {e}"))?;
+    let canonical_skill = std::path::PathBuf::from(target_path)
+        .canonicalize()
+        .map_err(|e| format!("invalid skill path: {e}"))?;
+    if !canonical_skill.starts_with(&canonical_workdir) {
+        return Err("approval blocked: path outside workspace".to_string());
+    }
+    crate::modules::tools::builtin::skill::approve_skill_proposal(&canonical_skill)?;
+    let trace_id = AuditEmitter::new_trace_id();
+    AuditEmitter::skill_enable(
+        &trace_id,
+        "slash.skills",
+        "skill_proposal_approval",
+        workdir,
+        "adoption",
+        None,
+    );
+    Ok("approval: promoted to active".to_string())
+}
+
+fn rollback_skill_path(workdir: &std::path::Path, target_path: &str) -> Result<String, String> {
+    let canonical_workdir = workdir
+        .canonicalize()
+        .map_err(|e| format!("invalid workspace path: {e}"))?;
+    let canonical_skill = std::path::PathBuf::from(target_path)
+        .canonicalize()
+        .map_err(|e| format!("invalid skill path: {e}"))?;
+    if !canonical_skill.starts_with(&canonical_workdir) {
+        return Err("rollback blocked: path outside workspace".to_string());
+    }
+    crate::modules::tools::builtin::skill::rollback_skill_proposal(&canonical_skill)?;
+    let trace_id = AuditEmitter::new_trace_id();
+    AuditEmitter::skill_enable(
+        &trace_id,
+        "slash.skills",
+        "skill_proposal_rollback",
+        workdir,
+        "rollback",
+        None,
+    );
+    Ok("rollback: moved to quarantine".to_string())
 }
 
 /// List available agents discovered in agent directories.

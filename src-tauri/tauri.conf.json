@@ -36,7 +36,8 @@
     "bundle": {
         "active": true,
         "resources": [
-            "resources/bundled-skills"
+            "resources/bundled-skills",
+            "resources/bundled-skills/README.md"
         ],
         "icon": [
             "icons/icon.png",

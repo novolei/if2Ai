@@ -527,3 +527,129 @@ export async function suggestSlashCommands(input: string, limit = 8): Promise<st
 export async function executeSlashCommand(input: string, sessionId: string): Promise<string> {
   return invoke<string>('execute_slash_command', { input, sessionId });
 }
+
+export interface SkillInfo {
+  name: string
+  description: string
+  path: string
+  source: 'workspace' | 'user' | 'builtin' | 'remote-quarantine'
+  review_status: 'draft' | 'quarantine' | 'review_passed' | 'active' | 'disabled'
+  status: 'draft' | 'quarantine' | 'review_passed' | 'active' | 'disabled'
+  enabled: boolean
+  read_only: boolean
+  shadowed_by?: string
+}
+
+export async function listSkills(cwd?: string): Promise<SkillInfo[]> {
+  return invoke<SkillInfo[]>('list_skills', { cwd })
+}
+
+export async function setSkillEnabled(
+  skillPath: string,
+  enabled: boolean,
+  sessionId = '__settings__'
+): Promise<string> {
+  const action = enabled ? 'enable-path' : 'disable-path'
+  return executeSlashCommand(`/skills ${action} ${skillPath}`, sessionId)
+}
+
+export async function createSkillDraft(
+  skillName: string,
+  sessionId = '__settings__'
+): Promise<string> {
+  return executeSlashCommand(`/skills create ${skillName}`, sessionId)
+}
+
+export async function reviewSkillDraft(
+  skillPath: string,
+  sessionId = '__settings__'
+): Promise<string> {
+  return executeSlashCommand(`/skills review-path ${skillPath}`, sessionId)
+}
+
+export async function approveSkillProposal(
+  skillPath: string,
+  sessionId = '__settings__'
+): Promise<string> {
+  return executeSlashCommand(`/skills approve-path ${skillPath}`, sessionId)
+}
+
+export async function rollbackSkillProposal(
+  skillPath: string,
+  sessionId = '__settings__'
+): Promise<string> {
+  return executeSlashCommand(`/skills rollback-path ${skillPath}`, sessionId)
+}
+
+export interface SkillDistributionRequest {
+  skillName: string
+  url: string
+  channel: 'stable' | 'canary'
+  checksum: string
+  signature: string
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+export async function installSkillFromDistribution(
+  request: SkillDistributionRequest
+): Promise<string> {
+  if (!request.signature.trim()) {
+    throw new Error('signature is required (fail-closed)')
+  }
+  if (!request.checksum.trim()) {
+    throw new Error('checksum is required (fail-closed)')
+  }
+  const fetched = await executeTool('web_fetch', { url: request.url })
+  if (!fetched.success || !fetched.output) {
+    throw new Error(fetched.error ?? 'download failed')
+  }
+  const safeName = request.skillName.replace(/[^a-zA-Z0-9_-]/g, '-')
+  const basePath = `.if2ai/skills-quarantine/${safeName}`
+  const writeSkill = await executeTool('file_write', {
+    path: `${basePath}/SKILL.md`,
+    content: fetched.output,
+  })
+  if (!writeSkill.success) {
+    throw new Error(writeSkill.error ?? 'write SKILL.md failed')
+  }
+  const actualChecksum = await sha256Hex(fetched.output)
+  await executeSlashCommand(
+    `/skills validate-remote-path ${request.channel} ${request.checksum.toLowerCase()} ${request.signature} ${basePath}/SKILL.md`,
+    '__settings__'
+  )
+  const writeManifest = await executeTool('file_write', {
+    path: `${basePath}/skill.json`,
+    content: JSON.stringify(
+      {
+        id: safeName,
+        version: '0.1.0',
+        apiVersion: 'v1',
+        minAppVersion: '0.1.0',
+        capabilities: ['custom'],
+        distribution: {
+          channel: request.channel,
+          checksum: actualChecksum,
+          signature: request.signature,
+        },
+        review: {
+          status: 'quarantine',
+          riskLevel: 'high',
+          lastReviewedAt: '',
+        },
+      },
+      null,
+      2
+    ),
+  })
+  if (!writeManifest.success) {
+    throw new Error(writeManifest.error ?? 'write skill.json failed')
+  }
+  return `downloaded to quarantine: ${basePath}`
+}

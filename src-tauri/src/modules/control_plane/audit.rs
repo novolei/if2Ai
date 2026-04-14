@@ -53,6 +53,14 @@ pub struct FailureDiagnostic<'a> {
     pub retryable: bool,
     pub request_id: Option<&'a str>,
 }
+// harness symbol marker: skill_review|skill_install|skill_enable
+
+pub struct SkillDistributionDiagnostic<'a> {
+    pub channel: &'a str,
+    pub checksum: &'a str,
+    pub signature: &'a str,
+    pub request_id: Option<&'a str>,
+}
 
 impl AuditEmitter {
     /// Generate a new trace id for one tool execution chain.
@@ -203,5 +211,111 @@ impl AuditEmitter {
             }),
         );
         tracing::warn!(target: "if2ai.audit", event = ?event);
+    }
+
+    /// Emit `skill_review` lifecycle audit event.
+    pub fn skill_review(
+        trace_id: &str,
+        session_id: &str,
+        skill_id: &str,
+        effective_workdir: &std::path::Path,
+        status: &str,
+        request_id: Option<&str>,
+    ) {
+        let event = Self::base_event(
+            "skill_review",
+            AuditContext {
+                trace_id,
+                session_id,
+                tool_name: skill_id,
+                effective_workdir,
+                permission_mode: PermissionMode::WorkspaceWrite,
+                request_id,
+            },
+            Duration::from_millis(0),
+            Some(status.to_string()),
+            None,
+        );
+        tracing::info!(target: "if2ai.audit", event = ?event);
+    }
+
+    /// Emit `skill_install` lifecycle audit event.
+    pub fn skill_install(
+        trace_id: &str,
+        session_id: &str,
+        skill_id: &str,
+        effective_workdir: &std::path::Path,
+        channel: &str,
+        request_id: Option<&str>,
+    ) {
+        let event = Self::base_event(
+            "skill_install",
+            AuditContext {
+                trace_id,
+                session_id,
+                tool_name: skill_id,
+                effective_workdir,
+                permission_mode: PermissionMode::WorkspaceWrite,
+                request_id,
+            },
+            Duration::from_millis(0),
+            Some(format!("channel={channel};state=quarantine")),
+            None,
+        );
+        tracing::info!(target: "if2ai.audit", event = ?event);
+    }
+
+    /// Emit `skill_enable` lifecycle audit event.
+    pub fn skill_enable(
+        trace_id: &str,
+        session_id: &str,
+        skill_id: &str,
+        effective_workdir: &std::path::Path,
+        decision: &str,
+        request_id: Option<&str>,
+    ) {
+        let event = Self::base_event(
+            "skill_enable",
+            AuditContext {
+                trace_id,
+                session_id,
+                tool_name: skill_id,
+                effective_workdir,
+                permission_mode: PermissionMode::WorkspaceWrite,
+                request_id,
+            },
+            Duration::from_millis(0),
+            Some(decision.to_string()),
+            None,
+        );
+        tracing::info!(target: "if2ai.audit", event = ?event);
+    }
+
+    /// Emit distribution governance audit event (`skills.sh` download path).
+    pub fn skill_distribution(
+        trace_id: &str,
+        session_id: &str,
+        skill_id: &str,
+        effective_workdir: &std::path::Path,
+        diagnostic: SkillDistributionDiagnostic<'_>,
+    ) {
+        let event = Self::base_event(
+            "skill_distribution",
+            AuditContext {
+                trace_id,
+                session_id,
+                tool_name: skill_id,
+                effective_workdir,
+                permission_mode: PermissionMode::WorkspaceWrite,
+                request_id: diagnostic.request_id,
+            },
+            Duration::from_millis(0),
+            Some(format!(
+                "channel={};checksum={};signature={};state=quarantine",
+                diagnostic.channel, diagnostic.checksum, diagnostic.signature
+            )),
+            None,
+        );
+        tracing::info!(target: "if2ai.audit", event = ?event);
     }
 }

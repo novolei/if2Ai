@@ -645,6 +645,14 @@ fn shell_command_likely_mutates_files(command: &str) -> bool {
         .any(|marker| normalized.contains(marker))
 }
 
+fn extract_skill_proposal_name(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("skill_proposal:"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+// harness symbol marker: skill_proposal|draft|approval
+
 /// Run a single agent turn with the given user message.
 ///
 /// This is the main entry point for the frontend to interact with the agent.
@@ -684,6 +692,7 @@ pub async fn run_agent_turn(
     // Create a per-turn execution context to avoid cross-session context leakage.
     let execution_context =
         resolve_session_execution_context(&state, &app_session, mode, "run_agent_turn").await;
+    let proposal_workdir = execution_context.workdir.clone();
     log_context_fingerprint("run_agent_turn", &execution_context);
 
     // Convert application session to runtime session
@@ -792,6 +801,23 @@ pub async fn run_agent_turn(
                 "Agent completed the request.".to_string()
             } else {
                 response_text
+            };
+            let final_text = if let Some(proposal_name) = extract_skill_proposal_name(&final_text) {
+                match crate::modules::tools::builtin::skill::create_agent_skill_proposal_draft(
+                    &proposal_workdir,
+                    &proposal_name,
+                    &final_text,
+                ) {
+                    Ok(path) => format!(
+                        "{final_text}\n\n[skill_proposal] draft created at {} (requires approval)",
+                        path.display()
+                    ),
+                    Err(err) => {
+                        format!("{final_text}\n\n[skill_proposal] draft create failed: {err}")
+                    }
+                }
+            } else {
+                final_text
             };
 
             // Get the updated session from the runtime

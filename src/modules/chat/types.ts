@@ -37,6 +37,13 @@ export interface Conversation {
   updatedAt: Date
 }
 
+export type SessionTitleStage = 'placeholder' | 'provisional' | 'locked' | 'manual'
+
+export interface SessionTitleState {
+  stage: SessionTitleStage
+  autoRenameCount: number
+}
+
 export interface ChatWorkspaceProps {
   projects: ProjectMeta[]
   projectSessions: Record<string, SessionMeta[]>

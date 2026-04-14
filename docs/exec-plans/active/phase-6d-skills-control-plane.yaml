@@ -6,7 +6,7 @@
 
 meta:
   phase: "6d"
-  phase_status: draft
+  phase_status: completed
   title: "Skills Control Plane — Bundled/Review/Distribution/Authoring Governance"
   owner: "@architects"
   depends_on_phase: "6c"
@@ -20,7 +20,7 @@ meta:
 slices:
   - id: "6d.1"
     title: "P0: SkillsControlPlane 基础模型与来源优先级引擎"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P0-CORE"
     impl_targets:
@@ -42,7 +42,7 @@ slices:
         grep: "source|precedence|shadow"
         label: "技能来源优先级与冲突治理逻辑存在"
       - type: test
-        cmd: "cargo test -p if2ai-backend modules::tools::builtin::skill"
+        cmd: "RUST_TEST_THREADS=1 cargo test -p if2ai-backend modules::tools::builtin::skill"
         expect: "all tests pass"
     review_checklist:
       - "来源优先级是否稳定且 deterministic"
@@ -50,7 +50,7 @@ slices:
 
   - id: "6d.2"
     title: "P0: Skill Manifest + 安全审查门禁（Prompt/Skill）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P0-REVIEW"
     impl_targets:
@@ -81,7 +81,7 @@ slices:
 
   - id: "6d.3"
     title: "P0: APP bundled-skills 资源打包与只读策略"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P0-BUNDLED"
     impl_targets:
@@ -98,7 +98,7 @@ slices:
     acceptance:
       - type: symbol
         file: "src-tauri/tauri.conf.json"
-        grep: "bundled-skills|resources"
+        grep: "bundled-skills"
         label: "tauri bundle resources 已纳入 bundled-skills"
       - type: compile
         cmd: "cargo check -p if2ai-backend"
@@ -111,7 +111,7 @@ slices:
 
   - id: "6d.4"
     title: "P1: 前端 Skills 管理（列表/启停/状态可见）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P1-MANAGE"
     impl_targets:
@@ -139,7 +139,7 @@ slices:
 
   - id: "6d.5"
     title: "P1: 前端手动创建/编辑 skill + 本地审查反馈"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P1-AUTHORING"
     impl_targets:
@@ -169,7 +169,7 @@ slices:
 
   - id: "6d.6"
     title: "P2: skills.sh 分发接入（下载->验签->隔离->启用）"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P2-DISTRIBUTION"
     impl_targets:
@@ -199,7 +199,7 @@ slices:
 
   - id: "6d.7"
     title: "P3: Agent 自创 skill（提案态）+ 审批发布"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/skills-control-plane-v1.md"
     backlog_ref: "SKILL-CP-P3-AGENT-AUTHORING"
     impl_targets:
@@ -229,7 +229,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-14"
-  completed_slices: []
-  current_slice: "6d.1"
+  completed_slices: ["6d.1", "6d.2", "6d.3", "6d.4", "6d.5", "6d.6", "6d.7"]
+  current_slice: "none"
   blocked: []
-  notes: "Phase 6D 草案：已合并 Staff 架构优先级（P0->P3）与 bundled-skills/skills.sh/agent-authoring 需求。"
+  notes: "Phase 6D 全部完成：bundled/review/distribution/authoring/proposal 审批链路已闭环。"

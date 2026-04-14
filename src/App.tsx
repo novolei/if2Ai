@@ -30,7 +30,7 @@ import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
-import type { Conversation, Message } from '@/modules/chat/types'
+import type { Conversation, Message, SessionTitleState } from '@/modules/chat/types'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 import { Button } from '@/components/ui/button'
@@ -44,6 +44,24 @@ import {
 } from '@/components/ui/dialog'
 
 const appIconSrc = new URL('../src-tauri/icons/icon-128.png', import.meta.url).href
+const PLACEHOLDER_SESSION_TITLE = '新对话'
+const MAX_AUTO_TITLE_TURNS = 3
+const MAX_AUTO_RENAME_COUNT = 2
+const GENERIC_USER_PROMPTS = [
+  '继续',
+  '继续完成',
+  '帮我看看',
+  '看一下',
+  '改一下',
+  '优化一下',
+  '修一下',
+  '处理一下',
+  '请继续',
+  '开始',
+  '你好',
+  'hi',
+  'hello',
+]
 
 function App() {
   const appWindow = getCurrentWindow()
@@ -73,6 +91,7 @@ function App() {
     return 'dangerFullAccess'
   })
   const [sessionTodos, setSessionTodos] = useState<Record<string, TodoItem[]>>({})
+  const [sessionTitleStates, setSessionTitleStates] = useState<Record<string, SessionTitleState>>({})
   const extractResumeCursor = (degradedReason?: string): string | undefined => {
     if (!degradedReason) return undefined
     const matched = degradedReason.match(/resume_cursor=([^\s;]+)/)
@@ -131,34 +150,169 @@ function App() {
     }
   }
 
-  const formatSessionTitle = (raw: string): string => {
-    if (raw.includes('[resume_cursor]')) {
-      return activeConv?.title ?? '继续当前任务'
-    }
+  const normalizeSessionTitleSource = (raw: string): string => {
     const cleaned = raw
       .replace(/\[resume_cursor\][\s\S]*$/gi, '')
+      .replace(/^(请|帮我|麻烦|继续|继续帮我|继续把|我想|想要|我要|需要|请先|先帮我)\s*/u, '')
+      .replace(/(一下|一下子|好吗|可以吗|吧|谢谢|thanks|thank you)\s*$/giu, '')
       .replace(/`+/g, '')
       .replace(/[#>*_\-\[\]]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
 
-    if (!cleaned) return '新对话'
-    const firstLine = cleaned.split(/[\n。！？!?]/).find((segment) => segment.trim())?.trim() ?? cleaned
-    return firstLine.slice(0, 30) || '新对话'
+    return cleaned
   }
 
-  const deriveSessionTitle = (messages: Message[]): string => {
-    const latestUserMessage = [...messages]
-      .reverse()
-      .find((message) => message.role === 'user' && message.content.trim())
-    if (latestUserMessage) return formatSessionTitle(latestUserMessage.content)
+  const formatSessionTitle = (raw: string): string => {
+    if (raw.includes('[resume_cursor]')) {
+      return activeConv?.title ?? '继续当前任务'
+    }
+    const cleaned = normalizeSessionTitleSource(raw)
 
-    const latestAssistantMessage = [...messages]
-      .reverse()
-      .find((message) => message.role === 'assistant' && message.content.trim())
-    if (latestAssistantMessage) return formatSessionTitle(latestAssistantMessage.content)
+    if (!cleaned) return PLACEHOLDER_SESSION_TITLE
+    const firstLine = cleaned.split(/[\n。！？!?]/).find((segment) => segment.trim())?.trim() ?? cleaned
+    return firstLine.slice(0, 30) || PLACEHOLDER_SESSION_TITLE
+  }
 
-    return '新对话'
+  const normalizeTitleComparison = (value: string): string =>
+    value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+
+  const areTitlesSimilar = (a: string, b: string): boolean => {
+    const normalizedA = normalizeTitleComparison(a)
+    const normalizedB = normalizeTitleComparison(b)
+    if (!normalizedA || !normalizedB) return false
+    return (
+      normalizedA === normalizedB ||
+      normalizedA.includes(normalizedB) ||
+      normalizedB.includes(normalizedA)
+    )
+  }
+
+  const isMeaningfulUserMessage = (content: string): boolean => {
+    const normalized = normalizeSessionTitleSource(content)
+    if (!normalized) return false
+    if (normalized.includes('[resume_cursor]')) return false
+    if (normalized.length < 4) return false
+    const lower = normalized.toLowerCase()
+    return !GENERIC_USER_PROMPTS.some((prompt) => lower === prompt || lower.startsWith(`${prompt} `))
+  }
+
+  const getMeaningfulUserMessages = (messages: Message[]): Message[] =>
+    messages.filter((message) => message.role === 'user' && isMeaningfulUserMessage(message.content))
+
+  const getInitialSessionTitleCandidate = (messages: Message[]): string | null => {
+    const firstMeaningfulMessage = getMeaningfulUserMessages(messages)[0]
+    if (!firstMeaningfulMessage) return null
+    const nextTitle = formatSessionTitle(firstMeaningfulMessage.content)
+    return nextTitle === PLACEHOLDER_SESSION_TITLE ? null : nextTitle
+  }
+
+  const getCorrectionTitleCandidate = (messages: Message[], currentTitle: string): string | null => {
+    const userMessages = getMeaningfulUserMessages(messages)
+    if (userMessages.length < 2) return null
+    const recentCandidates = userMessages.slice(-2).map((message) => formatSessionTitle(message.content))
+    const [previousCandidate, latestCandidate] = recentCandidates
+    if (
+      !previousCandidate ||
+      !latestCandidate ||
+      previousCandidate === PLACEHOLDER_SESSION_TITLE ||
+      latestCandidate === PLACEHOLDER_SESSION_TITLE
+    ) {
+      return null
+    }
+    if (previousCandidate !== latestCandidate) return null
+    if (areTitlesSimilar(latestCandidate, currentTitle)) return null
+    return latestCandidate
+  }
+
+  const getInitialSessionTitleState = (
+    title: string,
+    existingMessages: Message[] = []
+  ): SessionTitleState => {
+    if (title && title !== PLACEHOLDER_SESSION_TITLE) {
+      return {
+        stage: 'locked',
+        autoRenameCount: MAX_AUTO_RENAME_COUNT,
+      }
+    }
+
+    const userTurnCount = getMeaningfulUserMessages(existingMessages).length
+    return {
+      stage: userTurnCount === 0 ? 'placeholder' : 'provisional',
+      autoRenameCount: 0,
+    }
+  }
+
+  const maybeAutoRenameSession = (
+    projectId: string,
+    sessionId: string,
+    conversation: Conversation
+  ) => {
+    const titleState = sessionTitleStates[sessionId] ?? getInitialSessionTitleState(conversation.title)
+    const meaningfulUserMessages = getMeaningfulUserMessages(conversation.messages)
+    const meaningfulTurnCount = meaningfulUserMessages.length
+
+    if (titleState.stage === 'manual' || titleState.stage === 'locked') return
+
+    if (meaningfulTurnCount === 0) return
+
+    if (meaningfulTurnCount > MAX_AUTO_TITLE_TURNS) {
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [sessionId]: {
+          ...titleState,
+          stage: 'locked',
+          autoRenameCount: Math.max(titleState.autoRenameCount, 1),
+        },
+      }))
+      return
+    }
+
+    const currentTitle = conversation.title || PLACEHOLDER_SESSION_TITLE
+    const initialCandidate = getInitialSessionTitleCandidate(conversation.messages)
+    if (
+      titleState.stage === 'placeholder' &&
+      initialCandidate &&
+      !areTitlesSimilar(initialCandidate, currentTitle)
+    ) {
+      syncSessionTitle(projectId, sessionId, initialCandidate)
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [sessionId]: {
+          stage: 'provisional',
+          autoRenameCount: 1,
+        },
+      }))
+      return
+    }
+
+    if (
+      titleState.stage === 'provisional' &&
+      titleState.autoRenameCount < MAX_AUTO_RENAME_COUNT
+    ) {
+      const correctionCandidate = getCorrectionTitleCandidate(conversation.messages, currentTitle)
+      if (correctionCandidate) {
+        syncSessionTitle(projectId, sessionId, correctionCandidate)
+        setSessionTitleStates((prev) => ({
+          ...prev,
+          [sessionId]: {
+            stage: 'locked',
+            autoRenameCount: titleState.autoRenameCount + 1,
+          },
+        }))
+        return
+      }
+
+      if (meaningfulTurnCount >= MAX_AUTO_TITLE_TURNS) {
+        setSessionTitleStates((prev) => ({
+          ...prev,
+          [sessionId]: {
+            ...titleState,
+            stage: 'locked',
+          },
+        }))
+      }
+    }
   }
 
   const syncSessionTitle = (projectId: string, sessionId: string, title: string) => {
@@ -420,10 +574,17 @@ function App() {
         [sessionId]: {
           id: sessionId,
           projectId,
-          title: fullSession.title || sessionMeta?.title || '新对话',
+          title: fullSession.title || sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
           messages: convertedMessages,
           updatedAt: new Date(fullSession.updated_at),
         },
+      }))
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [sessionId]: getInitialSessionTitleState(
+          fullSession.title || sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
+          convertedMessages
+        ),
       }))
       setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
     } catch (err) {
@@ -433,10 +594,14 @@ function App() {
         [sessionId]: {
           id: sessionId,
           projectId,
-          title: sessionMeta?.title || '新对话',
+          title: sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
           messages: [],
           updatedAt: new Date(),
         },
+      }))
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [sessionId]: getInitialSessionTitleState(sessionMeta?.title || PLACEHOLDER_SESSION_TITLE),
       }))
       setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
     }
@@ -445,7 +610,7 @@ function App() {
   const handleNewChat = async (projectId: string) => {
     try {
       setActiveSection('chat')
-      const session = await createSession(projectId, '新对话')
+      const session = await createSession(projectId, PLACEHOLDER_SESSION_TITLE)
       const sessions = await listProjectSessions(projectId)
       setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
 
@@ -467,9 +632,16 @@ function App() {
         [session.id]: {
           id: session.id,
           projectId,
-          title: '新对话',
+          title: PLACEHOLDER_SESSION_TITLE,
           messages: [],
           updatedAt: new Date(),
+        },
+      }))
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [session.id]: {
+          stage: 'placeholder',
+          autoRenameCount: 0,
         },
       }))
       setSessionTodos((prev) => ({ ...prev, [session.id]: [] }))
@@ -514,6 +686,11 @@ function App() {
         delete next[sessionId]
         return next
       })
+      setSessionTitleStates((prev) => {
+        const next = { ...prev }
+        delete next[sessionId]
+        return next
+      })
       setSessionTodos((prev) => {
         const next = { ...prev }
         delete next[sessionId]
@@ -541,7 +718,7 @@ function App() {
     try {
       const newProject = await createProject(name, workdir)
       await loadProjects()
-      const session = await createSession(newProject.id, '新对话')
+      const session = await createSession(newProject.id, PLACEHOLDER_SESSION_TITLE)
 
       setCurrentProject(newProject)
       setActiveProjectId(newProject.id)
@@ -551,9 +728,16 @@ function App() {
         [session.id]: {
           id: session.id,
           projectId: newProject.id,
-          title: '新对话',
+          title: PLACEHOLDER_SESSION_TITLE,
           messages: [],
           updatedAt: new Date(),
+        },
+      }))
+      setSessionTitleStates((prev) => ({
+        ...prev,
+        [session.id]: {
+          stage: 'placeholder',
+          autoRenameCount: 0,
         },
       }))
       setSessionTodos((prev) => ({ ...prev, [session.id]: [] }))
@@ -622,7 +806,7 @@ function App() {
     }
 
     setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }))
-    syncSessionTitle(conv.projectId, sessionId, deriveSessionTitle(updatedConv.messages))
+    maybeAutoRenameSession(conv.projectId, sessionId, updatedConv)
     if (!overrideText) {
       setInput('')
     }

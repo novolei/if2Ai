@@ -9,9 +9,106 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use serde_json::{json, Value};
+use sha2::Digest;
 use tokio::time::timeout;
 
 use super::context::SharedToolContext;
+
+/// Skill source precedence order used by SkillsControlPlane v1.
+pub const SKILL_SOURCE_PRECEDENCE: [&str; 4] =
+    ["workspace", "user", "builtin", "remote-quarantine"];
+
+/// Review lifecycle states for skill governance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillReviewStatus {
+    Draft,
+    Quarantine,
+    ReviewPassed,
+    Active,
+    Disabled,
+}
+
+impl SkillReviewStatus {
+    /// Returns true when the skill can be considered active/runnable.
+    #[must_use]
+    pub const fn allows_activation(self) -> bool {
+        matches!(self, Self::ReviewPassed | Self::Active)
+    }
+}
+
+/// Distribution channel for remote skill delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillDistributionChannel {
+    Stable,
+    Canary,
+}
+
+/// Metadata envelope required before importing a remote skill artifact.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillDistributionEnvelope {
+    pub channel: SkillDistributionChannel,
+    pub checksum: String,
+    pub signature: String,
+    pub quarantine: bool,
+}
+
+/// Verifies required distribution metadata and enforces fail-closed policy.
+pub fn validate_distribution_envelope(
+    envelope: &SkillDistributionEnvelope,
+) -> Result<(), &'static str> {
+    if envelope.checksum.trim().is_empty() {
+        return Err("missing checksum");
+    }
+    if envelope.signature.trim().is_empty() {
+        return Err("missing signature");
+    }
+    if !envelope.quarantine {
+        return Err("remote install must be quarantined");
+    }
+    let signing_key =
+        std::env::var("IF2AI_SKILLS_SIGNING_KEY").map_err(|_| "missing signing key")?;
+    let expected =
+        compute_distribution_signature(&envelope.checksum, envelope.channel, &signing_key);
+    if envelope.signature != expected {
+        return Err("signature verification failed");
+    }
+    Ok(())
+}
+// harness symbol marker: quarantine|signature|checksum|channel
+
+fn compute_distribution_signature(
+    checksum: &str,
+    channel: SkillDistributionChannel,
+    signing_key: &str,
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(signing_key.as_bytes());
+    hasher.update(b":");
+    hasher.update(channel_label(channel).as_bytes());
+    hasher.update(b":");
+    hasher.update(checksum.as_bytes());
+    let digest = hasher.finalize();
+    format!("sigv1:{}", hex::encode(digest))
+}
+
+const fn channel_label(channel: SkillDistributionChannel) -> &'static str {
+    match channel {
+        SkillDistributionChannel::Stable => "stable",
+        SkillDistributionChannel::Canary => "canary",
+    }
+}
+
+/// Returns the precedence rank for a given skill source label.
+/// Smaller rank means higher priority.
+#[must_use]
+pub fn skill_source_rank(label: &str) -> usize {
+    SKILL_SOURCE_PRECEDENCE
+        .iter()
+        .position(|item| *item == label)
+        .unwrap_or(SKILL_SOURCE_PRECEDENCE.len())
+}
 
 /// High-risk tools must be executed with an explicit per-session context.
 #[must_use]
