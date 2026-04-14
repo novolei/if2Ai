@@ -94,6 +94,7 @@
 | 6F.1  | SkillsGuard Threat Scanner    | ✅ done | 60+ patterns, 15 categories, invisible unicode, structural limits      |
 | 6F.2  | SkillManager CRUD             | ✅ done | CRUD actions, validation, atomic writes, security scan integration     |
 | 6F.3  | Hub Source Framework          | ✅ done | SkillSource trait, GitHubSource adapter, 4 auth methods               |
+| 6F.4  | Hub Source Implementations     | ✅ done | 6 additional sources (skills.sh, ClawHub, Marketplace, etc.)       |
 
 ---
 
