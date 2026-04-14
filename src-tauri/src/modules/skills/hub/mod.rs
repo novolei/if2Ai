@@ -15,6 +15,7 @@ pub mod marketplace;
 pub mod optional;
 pub mod skills_sh;
 pub mod source;
+pub mod state;
 pub mod types;
 pub mod well_known;
 
@@ -24,6 +25,7 @@ pub use marketplace::{ClaudeMarketplaceSource, LobeHubSource};
 pub use optional::OptionalSkillSource;
 pub use skills_sh::SkillsShSource;
 pub use source::{BoxedSkillSource, SkillSource};
+pub use state::{AuditEvent, AuditEventType, HubLock, HubLockEntry, HubPaths, HubState};
 pub use types::{HubError, HubResult, SkillBundle, SkillMeta};
 pub use well_known::WellKnownSource;
 
