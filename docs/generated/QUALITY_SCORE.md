@@ -4,7 +4,7 @@
 
 **更新时间**: 2026-04-14
 **当前 Phase**: Phase 6F 执行中（Skill Control Plane v2）
-**整体状态**: ✅ Phase 5 系列完成；Phase 6F 已完成 6/12（6F.1-6F.6）
+**整体状态**: ✅ Phase 5 系列完成；Phase 6F 已完成 7/12（6F.1-6F.7）
 
 ---
 
@@ -22,7 +22,7 @@
 | Phase 5D — UX 完善          | ✅ 完成 (8/8)   | 2026-04-13 | ✅ 0 errors | ✅ 202 tests | ✅       |
 | Phase 5E — 长期增强         | ✅ 完成 (6/6)   | 2026-04-13 | ✅ 0 errors | ✅ 215 tests | ✅       |
 | Phase 6A — 控制平面加固     | ✅ 完成 (8/8)  | 2026-04-13 | ✅ 0 errors | ✅ 222 tests | ✅       |
-| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (6/12) | 2026-04-14 | ✅ 0 errors | ✅ 341 tests | ✅       |
+| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (7/12) | 2026-04-14 | ✅ 0 errors | ✅ 348 tests | ✅       |
 
 ---
 
@@ -97,6 +97,7 @@
 | 6F.4  | Hub Source Implementations     | ✅ done | 6 additional sources (skills.sh, ClawHub, Marketplace, etc.)       |
 | 6F.5  | Hub State Management         | ✅ done | HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit           |
 | 6F.6  | Skill Sync Manifest         | ✅ done | manifest v1/v2, compute_dir_hash, sync with user mod detection           |
+| 6F.7  | Skill Commands              | ✅ done | normalize_command_key, scan/resolve/invocation builder, platform compat  |
 
 ---
 
@@ -167,3 +168,4 @@
 | 2026-04-14 | Phase 6F Slice 6F.1 完成：SkillsGuard threat scanner (60+ patterns, 15 categories, invisible unicode, structural limits, Hermes trust policy)             |
 | 2026-04-14 | Phase 6F Slice 6F.5 完成：Hub State Management (HubPaths/HubLock/HubState/AuditEvent, quarantine/lock/audit/unified_search)，26 hub tests pass      |
 | 2026-04-14 | Phase 6F Slice 6F.6 完成：Skill Sync Manifest (manifest v1/v2, compute_dir_hash, sync with user mod detection)，10 sync tests pass      |
+| 2026-04-14 | Phase 6F Slice 6F.7 完成：Skill Commands (normalize_command_key, scan/resolve/invocation builder, platform compat)，7 commands tests pass      |
