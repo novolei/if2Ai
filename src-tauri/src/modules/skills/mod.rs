@@ -8,6 +8,7 @@
 //! - Skill commands: slash command integration
 //! - External dirs: external skills directories support
 //! - Remote passthrough: remote backend environment variable passthrough
+//! - Snapshot: skill export/import functionality
 
 pub mod commands;
 pub mod config;
@@ -16,4 +17,5 @@ pub mod guard;
 pub mod hub;
 pub mod manager;
 pub mod remote_passthrough;
+pub mod snapshot;
 pub mod sync;
