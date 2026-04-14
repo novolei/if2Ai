@@ -1,0 +1,630 @@
+# Phase 6F: Skill Control Plane v2 — Hermes Alignment
+#
+# Design-ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md
+# Backlog: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md
+
+meta:
+  phase: 6F
+  name: Skill Control Plane v2 — Hermes Alignment
+  status: draft
+  design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md
+  backlog: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md
+  created: 2026-04-14
+  total_slices: 12
+
+dashboard:
+  last_updated: 2026-04-14
+  completed_slices: ['6F.1']
+  current_slice: 6F.2
+  blocked: []
+  notes: >
+    Phase 6F aligns if2Ai Skill Control Plane with Hermes Agent skill architecture.
+    6F.1 SkillsGuard done - 60+ patterns, invisible unicode, structural limits, trust policy.
+    Priority: 6F.1-2 (Security + CRUD) > 6F.3-6 (Hub) > 6F.7-8 (Commands + Config) > 6F.9-10 (UI + Tests)
+
+# ---------------------------------------------------------------------------
+# Slice 6F.1: SkillsGuard Threat Scanner
+# ---------------------------------------------------------------------------
+
+slices:
+
+  - id: 6F.1
+    name: SkillsGuard Threat Scanner
+    status: done
+    priority: P0
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.1
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.1
+
+    impl_targets:
+      - src-tauri/src/modules/skills/guard/mod.rs
+      - src-tauri/src/modules/skills/guard/threat_patterns.rs
+      - src-tauri/src/modules/skills/guard/invisible_unicode.rs
+      - src-tauri/src/modules/skills/guard/structural_limits.rs
+      - src-tauri/src/modules/skills/guard/policy.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No skills/guard module exists. Current skill_review only has 5 basic patterns
+      in local_review_skill_content().
+
+    must_implement:
+      - "struct ScanResult with all fields (skill_name, source, trust_level, verdict, findings, scanned_at, summary)"
+      - "enum ThreatCategory with 15 categories (Exfiltration, Injection, Destructive, Persistence, Network, Obfuscation, Crypto, SupplyChain, PrivilegeEscalation, CredentialExposure, AgentConfigPersistence, ContextExfiltration, Jailbreak, InvisibleUnicode, StructuralLimits)"
+      - "enum TrustLevel (Builtin, Trusted, Community, AgentCreated)"
+      - "SkillsGuard::scan() - scan entire skill directory recursively"
+      - "SkillsGuard::scan_content() - scan single file content"
+      - "SkillsGuard::should_allow_install() - returns (bool, reason)"
+      - "SkillsGuard::format_report() - human-readable report"
+      - "TRUSTED_REPOS whitelist (openai/skills, anthropics/skills)"
+      - "INSTALL_POLICY matching Hermes exactly (AgentCreated: dangerous = ask)"
+      - "content_hash() function"
+      - "60+ threat patterns (see Hermes skills_guard.py lines 82-484)"
+      - "Invisible unicode detection (8 zero-width/bidirectional chars)"
+      - "Structural limits check (MAX_FILE_COUNT=50, MAX_TOTAL_SIZE_KB=1024, MAX_SINGLE_FILE_KB=256)"
+
+    acceptance:
+      - "cargo test skills::guard"
+      - "All 60+ threat patterns from Hermes skills_guard.py implemented"
+      - "Trust-level policy matches Hermes INSTALL_POLICY exactly (AgentCreated:ask on dangerous)"
+      - "ScanResult includes pattern_id, severity, category, file, line, match, description"
+      - "Invisible unicode detection works"
+      - "Structural limits enforced"
+
+    review_checklist:
+      - "ScanResult struct has all required fields from Hermes lines 56-76"
+      - "ThreatCategory enum covers 15 categories from Hermes THREAT_PATTERNS"
+      - "TrustLevel enum matches Hermes trust_level values"
+      - "INSTALL_POLICY table matches Hermes lines 39-47 exactly"
+      - "TRUSTED_REPOS contains openai/skills and anthropics/skills"
+      - "should_allow_install returns (bool, reason) tuple"
+      - "format_report generates human-readable output"
+      - "content_hash function implemented"
+      - "AgentCreated: dangerous verdict = Ask action (not Block)"
+      - "Invisible unicode detection for \\u200b, \\u200c, \\u200d, \\u2060, \\u2062, \\u2063, \\u2064, \\uFEFF, \\u202a, \\u202b, \\u202c, \\u202d, \\u202e, \\u2066, \\u2067, \\u2068, \\u2069"
+      - "Structural limits: MAX_FILE_COUNT=50, MAX_TOTAL_SIZE_KB=1024, MAX_SINGLE_FILE_KB=256"
+
+    hermes_reference:
+      file: tools/skills_guard.py
+      lines: "56-76 (ScanResult/Finding), 39-47 (INSTALL_POLICY), 82-484 (THREAT_PATTERNS), 487-489 (STRUCTURAL_LIMITS), 505-523 (INVISIBLE_UNICODE)"
+
+  - id: 6F.2
+    name: SkillManager CRUD
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.2
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.2
+
+    impl_targets:
+      - src-tauri/src/modules/skills/manager/mod.rs
+      - src-tauri/src/modules/skills/manager/actions.rs
+      - src-tauri/src/modules/skills/manager/atomic_write.rs
+      - src-tauri/src/modules/skills/manager/validator.rs
+      - src-tauri/src/modules/skills/mod.rs
+      - src-tauri/src/modules/tools/mod.rs
+
+    current_state: |
+      Only create_agent_skill_proposal_draft() exists in skill.rs.
+      No edit, patch, delete, write_file, remove_file actions.
+
+    must_implement:
+      - "enum SkillManageAction (Create, Edit, Patch, Delete, WriteFile, RemoveFile)"
+      - "struct SkillManageInput with all fields"
+      - "struct SkillManageResult with all fields"
+      - "SkillManager::create() - full skill creation with SKILL.md + directory"
+      - "SkillManager::edit() - replace entire SKILL.md"
+      - "SkillManager::patch() - fuzzy find-and-replace"
+      - "SkillManager::delete() - remove skill directory"
+      - "SkillManager::write_file() - add supporting file"
+      - "SkillManager::remove_file() - remove supporting file"
+      - "SkillValidator with all constants (MAX_NAME_LENGTH=64, MAX_DESCRIPTION_LENGTH=1024, MAX_SKILL_CONTENT_CHARS=100000, MAX_SUPPORTING_FILE_BYTES=1048576)"
+      - "Security scan before create action"
+      - "AllowedSubdirs validation (references, templates, scripts, assets)"
+      - "Atomic writes (temp file + rename, Hermes skill_manager_tool.py line 257)"
+      - "Scan rollback on block (backup + restore, Hermes skill_manager_tool.py lines 329-333)"
+
+    acceptance:
+      - "cargo test skills::manager"
+      - "All 6 actions implemented (create/edit/patch/delete/write_file/remove_file)"
+      - "Validator constants match Hermes exactly"
+      - "Security scan runs before create"
+      - "AllowedSubdirs enforced for write_file/remove_file"
+      - "Atomic writes prevent partial file corruption"
+      - "Scan failure triggers rollback to previous state"
+
+    review_checklist:
+      - "SkillManageAction enum has all 6 variants"
+      - "SkillManageInput struct has all required fields"
+      - "SkillManager implements all 6 CRUD methods"
+      - "MAX_NAME_LENGTH = 64"
+      - "MAX_DESCRIPTION_LENGTH = 1024"
+      - "MAX_SKILL_CONTENT_CHARS = 100000"
+      - "MAX_SUPPORTING_FILE_BYTES = 1048576"
+      - "AllowedSubdirs = {references, templates, scripts, assets}"
+      - "Security scan called before create"
+      - "VALID_NAME_RE pattern matches Hermes r'^[a-z0-9][a-z0-9._-]*$'"
+      - "atomic_write() uses tempfile.mkstemp + os.replace()"
+      - "Scan rollback creates backup and restores on failure"
+
+    hermes_reference:
+      file: tools/skill_manager_tool.py
+      lines: "14-20 (Actions), 83-92 (constants), 99-174 (validation), 48-74 (security scan), 257 (atomic writes), 329-333 (scan rollback)"
+
+  - id: 6F.3
+    name: Hub Source Framework
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.3
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.3
+
+    impl_targets:
+      - src-tauri/src/modules/skills/hub/mod.rs
+      - src-tauri/src/modules/skills/hub/source.rs
+      - src-tauri/src/modules/skills/hub/types.rs
+      - src-tauri/src/modules/skills/hub/github.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No hub module exists. Only basic skills.sh fetch in tools.rs.
+
+    must_implement:
+      - "#[async_trait] SkillSource trait (search/fetch/inspect/source_id/trust_level_for)"
+      - "struct SkillMeta with all fields"
+      - "struct SkillBundle with all fields"
+      - "struct HubError with code and message"
+      - "GitHubAuth with 4 auth methods (PAT, gh CLI, GitHub App, anonymous)"
+      - "GitHubSource with DEFAULT_TAPS (openai/skills, anthropics/skills, VoltAgent/awesome-agent-skills, garrytan/gstack)"
+      - "GitHubSource::trust_level_for checking TRUSTED_REPOS"
+
+    acceptance:
+      - "cargo test skills::hub"
+      - "SkillSource trait compiles with #[async_trait]"
+      - "GitHubAuth supports all 4 authentication methods"
+      - "GitHubSource DEFAULT_TAPS contains 4 repos"
+      - "trust_level_for returns correct TrustLevel"
+
+    review_checklist:
+      - "SkillSource trait has all 5 methods (search, fetch, inspect, source_id, trust_level_for)"
+      - "#[async_trait] used correctly"
+      - "SkillMeta has all fields from Hermes lines 63-74"
+      - "SkillBundle has all fields from Hermes lines 77-85"
+      - "GitHubAuth::new() initializes correctly"
+      - "GitHubAuth::get_headers() returns auth headers"
+      - "GitHubAuth::is_authenticated() works"
+      - "GitHubAuth::auth_method() returns 'pat', 'gh-cli', 'github-app', or 'anonymous'"
+      - "GitHubSource DEFAULT_TAPS matches Hermes"
+      - "trust_level_for checks TRUSTED_REPOS whitelist"
+
+    hermes_reference:
+      file: tools/skills_hub.py
+      lines: "252-274 (SkillSource ABC), 284-405 (GitHubSource), 129-245 (GitHubAuth)"
+
+  - id: 6F.4
+    name: Hub Source Implementations
+    status: pending
+    priority: P1
+    depends_on: 6F.3
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.3
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.4
+
+    impl_targets:
+      - src-tauri/src/modules/skills/hub/skills_sh.rs
+      - src-tauri/src/modules/skills/hub/clawhub.rs
+      - src-tauri/src/modules/skills/hub/marketplace.rs
+      - src-tauri/src/modules/skills/hub/well_known.rs
+      - src-tauri/src/modules/skills/hub/optional.rs
+
+    current_state: |
+      Only GitHubSource exists from 6F.3.
+
+    must_implement:
+      - "SkillsShSource - skills.sh registry adapter"
+      - "ClawHubSource - clawhub.ai adapter"
+      - "ClaudeMarketplaceSource - Claude Code marketplace"
+      - "LobeHubSource - LobeHub agent marketplace"
+      - "WellKnownSource - /.well-known/skills/index.json"
+      - "OptionalSkillSource - built-in optional skills (trust_level=Builtin)"
+      - "create_source_router() - create all sources"
+
+    acceptance:
+      - "cargo test skills::hub"
+      - "All 7 sources implement SkillSource trait"
+      - "Each source has unique source_id"
+      - "trust_level_for returns correct TrustLevel per source"
+      - "create_source_router() creates all 7 sources"
+
+    review_checklist:
+      - "SkillsShSource source_id = 'skills-sh'"
+      - "ClawHubSource source_id = 'clawhub'"
+      - "ClaudeMarketplaceSource source_id = 'claude-marketplace'"
+      - "LobeHubSource source_id = 'lobehub'"
+      - "WellKnownSource source_id = 'well-known'"
+      - "OptionalSkillSource source_id = 'optional'"
+      - "OptionalSkillSource trust_level_for returns TrustLevel::Builtin"
+      - "create_source_router() includes all 7 sources"
+
+  - id: 6F.5
+    name: Hub State Management
+    status: pending
+    priority: P1
+    depends_on: 6F.3
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.4
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.5
+
+    impl_targets:
+      - src-tauri/src/modules/skills/hub/state.rs
+
+    current_state: |
+      No hub state management exists.
+
+    must_implement:
+      - "struct HubPaths with all paths (skills_dir, hub_dir, quarantine_dir, lock_file, audit_log, taps_file, index_cache_dir)"
+      - "HubPaths::ensure_dirs() - create all required directories"
+      - "struct HubLockEntry with all fields"
+      - "struct HubLock with RwLock<Vec<HubLockEntry>>"
+      - "HubLock::load() and HubLock::save()"
+      - "HubLock::add(), remove(), get()"
+      - "struct HubState with paths, sources, lock"
+      - "HubState::quarantine_bundle() - copy bundle to quarantine/"
+      - "HubState::install_from_quarantine() - install from quarantine"
+      - "HubState::record_install() - add to lock.json"
+      - "HubState::unified_search() - search all sources with dedup"
+      - "struct AuditEvent with all fields"
+      - "HubState::append_audit_log()"
+
+    acceptance:
+      - "cargo test skills::hub::state"
+      - "HubPaths matches Hermes ~/.if2ai/skills/.hub/ structure"
+      - "HubLock read/write lock.json correct"
+      - "quarantine_bundle copies to quarantine/"
+      - "unified_search deduplicates by trust level"
+
+    review_checklist:
+      - "HubPaths matches Hermes lines 46-53 exactly"
+      - "HubLockEntry has all fields (skill_name, source, identifier, installed_at, version)"
+      - "HubLock uses RwLock for thread safety"
+      - "quarantine_bundle returns PathBuf"
+      - "install_from_quarantine installs from quarantine/ to skills/"
+      - "record_install adds to lock.json"
+      - "unified_search uses trust rank {builtin:2, trusted:1, community:0}"
+      - "AuditEvent has timestamp, event_type, skill_name, source, identifier, details"
+
+  - id: 6F.6
+    name: Skill Sync Manifest
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.5
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.6
+
+    impl_targets:
+      - src-tauri/src/modules/skills/sync/mod.rs
+      - src-tauri/src/modules/skills/sync/manifest.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No skill sync exists. Bundled skills are statically packaged only.
+
+    must_implement:
+      - "struct SkillManifest with HashMap<String, String> (name -> hash)"
+      - "SkillManifest::read() - read v1 (plain) and v2 (name:hash) formats"
+      - "SkillManifest::write() - write v2 format atomically"
+      - "SkillManifest::get_hash(), set_hash(), remove()"
+      - "struct SkillSync with bundled_dir, user_dir, manifest_path"
+      - "SkillSync::sync() - full sync logic"
+      - "SkillSync::discover_bundled_skills() - find SKILL.md files"
+      - "SkillSync::compute_dir_hash() - MD5 hash of directory"
+      - "struct SyncResult with all fields (copied, updated, skipped, user_modified, cleaned, total_bundled)"
+      - "Backup + restore on failure"
+
+    acceptance:
+      - "cargo test skills::sync"
+      - "Manifest supports v1 and v2 formats"
+      - "User modification detection works (hash comparison)"
+      - "Sync result has all 6 fields"
+      - "Backup created before update, restored on failure"
+
+    review_checklist:
+      - "Manifest v2 format is 'name:hash' per Hermes line 68"
+      - "Manifest v1 migration sets empty hash per Hermes line 72-73"
+      - "_dir_hash matches Hermes lines 141-152 (MD5, sorted files)"
+      - "sync_skills logic matches Hermes lines 180-250"
+      - "NEW skill: copy to user dir, record hash"
+      - "EXISTING + user unchanged: safe to update"
+      - "EXISTING + user modified: SKIP"
+      - "DELETED by user: respected, not re-added"
+      - "Backup created with .bak suffix before update"
+      - "Backup restored on failure"
+
+    hermes_reference:
+      file: tools/skills_sync.py
+      lines: "52-108 (manifest), 141-152 (_dir_hash), 155-280 (sync logic)"
+
+  - id: 6F.7
+    name: Skill Commands
+    status: pending
+    priority: P2
+    depends_on: 6F.2
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.6
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.7
+
+    impl_targets:
+      - src-tauri/src/modules/skills/commands.rs
+      - src-tauri/src/modules/skills/mod.rs
+      - src-tauri/src/commands/slash.rs
+      - src-tauri/src/modules/tools/mod.rs
+
+    current_state: |
+      Only /skills command exists in slash.rs for listing/discovery.
+      No /skill-name direct invocation.
+
+    must_implement:
+      - "struct SkillCommandInfo with name, description, skill_md_path, skill_dir"
+      - "SkillCommands::scan() - dynamic scan of skills/ directory"
+      - "SkillCommands::get() - return cached command map"
+      - "SkillCommands::resolve() - /skill_name -> /skill-name normalization"
+      - "SkillCommands::build_invocation_message() - build activation message"
+      - "SkillCommands::build_preloaded_prompt() - session preloading"
+      - "struct SkillInvocationBuilder"
+      - "SkillInvocationBuilder::with_config()"
+      - "normalize_command_key() - spaces/underscores to hyphens"
+      - "EXCLUDED_SKILL_DIRS = {'.git', '.github', '.hub'}"
+      - "PLATFORM_MAP = {macos: darwin, linux: linux, windows: win32}"
+      - "platform compatibility check"
+      - "disabled skills reading from config"
+
+    acceptance:
+      - "cargo test skills::commands"
+      - "scan_skill_commands() rescans on each call"
+      - "/skill-name normalization works (spaces/underscores -> hyphens)"
+      - "activation_note format: '[SYSTEM: The user has invoked...]'"
+      - "supporting_files listed correctly"
+      - "platform compatibility checked"
+      - "disabled skills respected"
+
+    review_checklist:
+      - "scan_skill_commands matches Hermes lines 200-262"
+      - "normalize_command_key matches Hermes lines 244-251"
+      - "_SKILL_INVALID_CHARS regex: r'[^a-z0-9-]'"
+      - "_SKILL_MULTI_HYPHEN regex: r'-{2,}'"
+      - "EXCLUDED_SKILL_DIRS = {'.git', '.github', '.hub'}"
+      - "PLATFORM_MAP matches skill_utils.py"
+      - "activation_note format from Hermes lines 316-318"
+      - "supporting_files list from Hermes lines 160-187"
+      - "config injection from Hermes lines 82-118"
+
+    hermes_reference:
+      file: agent/skill_commands.py
+      lines: "200-262 (scan), 244-251 (normalize), 291-326 (invocation), 121-197 (message building)"
+
+  - id: 6F.8
+    name: Skill Config Variables
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.7
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.8
+
+    impl_targets:
+      - src-tauri/src/modules/skills/config.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No config variable resolution exists.
+
+    must_implement:
+      - "struct SkillConfigVar with key, description, default"
+      - "struct SkillConfigResolver with config_values HashMap"
+      - "SkillConfigResolver::from_config_file()"
+      - "SkillConfigResolver::resolve() - resolve multiple vars"
+      - "SkillConfigResolver::resolve_single()"
+      - "extract_config_vars() - from metadata.hermes.config"
+      - "format_config_block() - format as [Skill config (from ...): key = value]"
+
+    acceptance:
+      - "cargo test skills::config"
+      - "extract_config_vars parses metadata.hermes.config"
+      - "resolve reads from config.yaml"
+      - "format_config_block produces correct output"
+
+    review_checklist:
+      - "SkillConfigVar has key, description, default fields"
+      - "extract_config_vars looks for metadata.hermes.config"
+      - "resolve_skill_config_values reads config.yaml"
+      - "format_config_block matches Hermes lines 111-115"
+
+    hermes_reference:
+      file: agent/skill_commands.py
+      lines: "82-118 (_inject_skill_config), agent/skill_utils.py 180-200 (extract_skill_config_vars)"
+
+  - id: 6F.9
+    name: Frontend UI Extensions
+    status: pending
+    priority: P2
+    depends_on: 6F.1, 6F.2, 6F.5
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §2.1
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.9
+
+    impl_targets:
+      - src/modules/skills/SkillsHubView.tsx
+      - src/modules/skills/SkillEditor.tsx
+      - src/modules/skills/SkillSecurityReport.tsx
+      - src/modules/settings/pages/SkillsSettingsPage.tsx
+
+    current_state: |
+      SkillsSettingsPage.tsx exists with basic listing/enable/disable.
+      No hub browser, editor, or security report UI.
+
+    must_implement:
+      - "SkillsHubView - hub search interface with source filter tabs"
+      - "SkillEditor - create/edit/patch UI with frontmatter validation"
+      - "SkillSecurityReport - display findings with severity/category"
+      - "interface HubSearchResult"
+      - "interface SecurityFinding"
+      - "Integration with existing SkillsSettingsPage"
+
+    acceptance:
+      - "npm test SkillsHubView"
+      - "npm test SkillEditor"
+      - "npm test SkillSecurityReport"
+      - "All components render without errors"
+
+    review_checklist:
+      - "SkillsHubView has search input and source filter"
+      - "SkillEditor shows frontmatter validation errors"
+      - "SkillSecurityReport displays pattern_id, severity, category, file, line, match, description"
+      - "Integration with SkillsSettingsPage works"
+
+  - id: 6F.10
+    name: Integration Tests
+    status: pending
+    priority: P1
+    depends_on: 6F.1, 6F.2, 6F.3, 6F.4, 6F.5, 6F.6, 6F.7, 6F.8
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §7
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.10
+
+    impl_targets:
+      - src-tauri/src/modules/skills/guard/tests.rs
+      - src-tauri/src/modules/skills/manager/tests.rs
+      - src-tauri/src/modules/skills/hub/tests.rs
+      - src-tauri/src/modules/skills/sync/tests.rs
+      - src-tauri/src/modules/skills/commands/tests.rs
+
+    current_state: |
+      No comprehensive integration tests for skills module.
+
+    must_implement:
+      - "guard/tests.rs - 15+ pattern tests, trust policy tests"
+      - "manager/tests.rs - 6 action CRUD tests, validation tests"
+      - "hub/tests.rs - source adapter tests, state management tests"
+      - "sync/tests.rs - manifest v1/v2 tests, sync logic tests"
+      - "commands/tests.rs - scan tests, invocation tests"
+
+    acceptance:
+      - "cargo test skills::guard"
+      - "cargo test skills::manager"
+      - "cargo test skills::hub"
+      - "cargo test skills::sync"
+      - "cargo test skills::commands"
+      - "All tests pass"
+
+    review_checklist:
+      - "Each test module has comprehensive tests"
+      - "Edge cases covered (empty dirs, invalid inputs)"
+      - "Mock external services appropriately"
+
+  - id: 6F.11
+    name: External Skills Dirs & Remote Passthrough
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.X
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.11
+
+    impl_targets:
+      - src-tauri/src/modules/skills/external_dirs.rs
+      - src-tauri/src/modules/skills/remote_passthrough.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No external skills directories or remote backend passthrough support.
+
+    must_implement:
+      - "get_external_skills_dirs() - read from skills.external_dirs config"
+      - "get_all_skills_dirs() - return local ~/.if2ai/skills/ + external dirs"
+      - "Remote backend env passthrough for docker/singularity/modal/ssh/daytona"
+      - "required_credential_files support for Modal/Docker mounting"
+
+    acceptance:
+      - "cargo test skills::external"
+      - "External dirs read from config"
+      - "Remote passthrough registered correctly"
+
+    review_checklist:
+      - "get_external_skills_dirs reads skills.external_dirs from config.yaml"
+      - "get_all_skills_dirs includes local + external dirs"
+      - "REMOTE_ENV_BACKENDS = {docker, singularity, modal, ssh, daytona}"
+      - "required_credential_files declared in skill frontmatter"
+
+    hermes_reference:
+      file: agent/skill_utils.py
+      lines: "173-225 (external dirs), skills_tool.py 209-273 (credential files), skills_tool.py 1161-1179 (remote passthrough)"
+
+  - id: 6F.12
+    name: Snapshot Export/Import
+    status: pending
+    priority: P2
+    depends_on: 6F.5
+    design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.X
+    backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.12
+
+    impl_targets:
+      - src-tauri/src/modules/skills/snapshot/mod.rs
+      - src-tauri/src/modules/skills/snapshot/types.rs
+      - src-tauri/src/modules/skills/mod.rs
+
+    current_state: |
+      No snapshot export/import functionality.
+
+    must_implement:
+      - "Snapshot format with hermes_version, exported_at, skills, taps"
+      - "do_snapshot_export() - export hub skill config to JSON"
+      - "do_snapshot_import() - re-install skills from snapshot file"
+      - "TapsManager integration for snapshot taps"
+
+    acceptance:
+      - "cargo test skills::snapshot"
+      - "Export produces valid JSON"
+      - "Import re-installs skills correctly"
+
+    review_checklist:
+      - "Snapshot format: {hermes_version, exported_at, skills[], taps[]}"
+      - "Each skill entry: {name, source, identifier, category}"
+      - "TapsManager serializable to snapshot"
+      - "Import handles missing skills gracefully"
+
+    hermes_reference:
+      file: hermes_cli/skills_hub.py
+      lines: "877-962 (snapshot export/import)"
+
+# ---------------------------------------------------------------------------
+# Execution Notes
+# ---------------------------------------------------------------------------
+
+execution_notes:
+  parallel_slices: |
+    6F.1, 6F.3, 6F.6, 6F.8 are independent and can run in parallel.
+    6F.2 depends on 6F.1.
+    6F.4 depends on 6F.3.
+    6F.5 depends on 6F.3.
+    6F.7 depends on 6F.2.
+    6F.9 (External) has no deps.
+    6F.10 (Snapshot) depends on 6F.5.
+    6F.11 (UI) depends on 6F.1-6F.10.
+    6F.12 (Tests) depends on all.
+
+  recommended_order: |
+    Stage 1 (parallel):
+      - 6F.1 (SkillsGuard) - P0, no deps, ~1200 lines
+      - 6F.3 (Hub Framework) - P1, no deps, ~500 lines
+      - 6F.6 (Skill Sync) - P1, no deps, ~400 lines
+      - 6F.8 (Config) - P2, no deps, ~300 lines
+    Stage 2:
+      - 6F.2 (SkillManager) - P0, depends on 6F.1, ~700 lines
+    Stage 3:
+      - 6F.4 (Hub 8 Sources) - P1, depends on 6F.3, ~1000 lines
+      - 6F.5 (Hub State) - P1, depends on 6F.3, ~400 lines
+    Stage 4:
+      - 6F.7 (Commands) - P2, depends on 6F.2, ~500 lines
+      - 6F.9 (External) - P2, no deps, ~300 lines
+    Stage 5:
+      - 6F.10 (Snapshot) - P2, depends on 6F.5, ~400 lines
+    Stage 6:
+      - 6F.11 (UI) - P2, depends on 6F.1-6F.10, ~2000 lines
+    Stage 7:
+      - 6F.12 (Tests) - P1, depends on all, ~800 lines
+
+  risk_mitigation: |
+    - Hub sources depend on external APIs - add timeouts and fallback
+    - GitHubAuth token resolution should be tested with all 4 methods
+    - manifest write should be atomic (temp file + rename)
+    - skill sync backup should be created before any modification
+    - AgentCreated trust level: dangerous = ask, not block
+    - LobeHub integration: 14,000+ skills, pagination required
+    - ClawHub: always community trust (historical incident)

@@ -21,7 +21,8 @@
 | Phase 5C — 安全与系统连接   | ✅ 完成 (7/7)   | 2026-04-13 | ✅ 0 errors | ✅ 198 tests | ✅       |
 | Phase 5D — UX 完善          | ✅ 完成 (8/8)   | 2026-04-13 | ✅ 0 errors | ✅ 202 tests | ✅       |
 | Phase 5E — 长期增强         | ✅ 完成 (6/6)   | 2026-04-13 | ✅ 0 errors | ✅ 215 tests | ✅       |
-| Phase 6A — 控制平面加固     | ⏳ 进行中 (3/8) | 2026-04-13 | ✅ 0 errors | ✅ 222 tests | ✅       |
+| Phase 6A — 控制平面加固     | ✅ 完成 (8/8)  | 2026-04-13 | ✅ 0 errors | ✅ 222 tests | ✅       |
+| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (1/10) | 2026-04-14 | ✅ 0 errors | ✅ 272 tests | ✅       |
 
 ---
 
@@ -83,6 +84,14 @@
 | 5b.3  | F2 — 工具执行 + 多轮循环     | ✅ done | 完整工具循环: 权限检查 → 执行 → result 回传 → 继续 LLM + P1 并行工具修复 |
 | 5b.4  | UI-5 — Message.role "tool"   | ✅ done | 前端工具消息渲染（ToolCallMessage 组件）                                 |
 | 5b.5  | 5B 集成测试                  | ✅ done | session/types/permissions 测试通过                                       |
+
+---
+
+## Phase 6F — Slice 详情
+
+| Slice | 标题                          | 状态   | 备注                                                                    |
+| ----- | ----------------------------- | ------ | --------------------------------------------------------------------- |
+| 6F.1  | SkillsGuard Threat Scanner    | ✅ done | 60+ patterns, 15 categories, invisible unicode, structural limits      |
 
 ---
 
@@ -150,3 +159,4 @@
 | 2026-04-14 | Phase 6D Slice 6d.5 完成：create/edit/review 前端流程与本地审查反馈落地，审查失败阻断启用并完成安全修复（路径 canonicalize）                            |
 | 2026-04-14 | Phase 6D Slice 6d.6 完成：skills.sh 分发接入 stable/canary 通道，后端 artifact checksum+signature 校验 fail-closed，默认 quarantine                     |
 | 2026-04-14 | Phase 6D Slice 6d.7 完成：agent skill_proposal->draft、approval/rollback 治理闭环与 adoption/rollback 事件路径落地通过审查                              |
+| 2026-04-14 | Phase 6F Slice 6F.1 完成：SkillsGuard threat scanner (60+ patterns, 15 categories, invisible unicode, structural limits, Hermes trust policy)             |
