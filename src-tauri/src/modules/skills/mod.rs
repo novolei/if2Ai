@@ -8,3 +8,4 @@
 //! - Skill commands: slash command integration
 
 pub mod guard;
+pub mod manager;
