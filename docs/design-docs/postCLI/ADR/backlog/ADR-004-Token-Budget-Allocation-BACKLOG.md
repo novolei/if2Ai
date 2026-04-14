@@ -2,10 +2,18 @@
 
 ## 概述
 
-**目标**: 实现上下文预算分配和槽位管理
+**目标**: 在 `src-tauri/src/modules/runtime/` 中实现完整的上下文预算分配和槽位管理
 **ADR**: [ADR-004](./ADR-004-Token-Budget-Allocation.md)
 **优先级**: P0
 **预估工时**: 2-3 天
+
+**现状**:
+- ✅ `conversation.rs` 有简单 max_token_budget 字段 (部分实现)
+- ✅ `compact.rs` compaction 存在
+- ❌ ContextBudget/ContextSlots 不存在 (需要新建)
+- ❌ WorkingMemory 滑动窗口不存在 (需要新建)
+- ❌ FrozenSnapshot 不存在 (需要新建)
+- ❌ Weibull 衰减不存在 (需要新建)
 
 ---
 

@@ -2,10 +2,11 @@
 
 ## 概述
 
-**目标**: 实现轨迹学习，仅作为导出用途（不运行 RL 训练）
+**目标**: 在 `src-tauri/src/modules/learning/` 中实现轨迹学习模块 (作为 learning 模块的一部分)
 **ADR**: [ADR-009](./ADR-009-Trajectory-Learning-Timing-P3.md)
 **优先级**: P3
 **预估工时**: 3-4 天
+**备注**: 轨迹学习依赖 learning 模块存在，先执行 ADR-008 (6b.6)
 
 ---
 

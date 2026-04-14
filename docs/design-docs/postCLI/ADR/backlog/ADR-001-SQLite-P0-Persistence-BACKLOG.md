@@ -18,12 +18,14 @@
 **具体任务**:
 - [ ] 在 `src-tauri/Cargo.toml` 中添加依赖 `sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }`
 - [ ] 添加 `rusqlite` 作为可选依赖用于 FTS5 支持
-- [ ] 创建 `src-tauri/src/modules/memory/providers/` 目录
+- [ ] 创建 `src-tauri/src/modules/memory/providers/` 目录 (NEW)
+- [ ] 创建 `src-tauri/src/modules/security/` 目录 (NEW)
 - [ ] 验证 SQLite 功能正常：编写测试 `#[test] fn sqlite_connection_works()`
 
 **验收标准**:
-- [ ] `cargo build --package if2ai` 成功无错误
+- [ ] `cargo build --package if2ai-backend` 成功无错误
 - [ ] SQLite 连接测试通过
+- [ ] 新目录已创建
 
 **测试标准**:
 ```rust
@@ -37,30 +39,33 @@ async fn sqlite_connection_works() {
 
 ---
 
-### TASK-001-02: 数据库 Schema 设计
+### TASK-001-02: 扩展 MemoryEntry 结构体
 
-**目标**: 设计并实现 SQLite 表结构
+**目标**: 为 MemoryEntry 添加持久化所需的扩展字段
 
 **具体任务**:
-- [ ] 设计 `memory_entries` 表 schema:
-  - `key TEXT PRIMARY KEY` — 记忆唯一标识
-  - `content TEXT NOT NULL` — 记忆内容
-  - `category TEXT NOT NULL` — 分类 (Core/Daily/Conversation)
-  - `created_at TEXT NOT NULL` — RFC3339 时间戳
-  - `updated_at TEXT NOT NULL` — RFC3339 时间戳
-  - `importance REAL DEFAULT 0.5` — 重要性评分
-  - `access_count INTEGER DEFAULT 0` — 访问次数
-  - `trust_score REAL DEFAULT 0.0` — 信任评分
-- [ ] 设计索引:
-  - `CREATE INDEX idx_memory_category ON memory_entries(category)`
-  - `CREATE INDEX idx_memory_created_at ON memory_entries(created_at)`
-- [ ] 编写 Schema 迁移 SQL 文件 `migrations/001_create_memory_entries.sql`
-- [ ] 编写测试验证表创建成功
+- [ ] 在 `src-tauri/src/modules/memory/mod.rs` 中扩展 `MemoryEntry` 结构体:
+  ```rust
+  pub struct MemoryEntry {
+      pub key: String,                    // 现有字段
+      pub content: String,               // 现有字段
+      pub category: MemoryCategory,       // 现有字段
+      pub created_at: DateTime<Utc>,     // 现有字段
+      pub updated_at: DateTime<Utc>,      // 现有字段
+      // 新增字段:
+      pub importance: f32,               // 重要性评分 (默认 0.5)
+      pub access_count: u32,             // 访问次数 (默认 0)
+      pub trust_score: f32,              // 信任评分 (默认 0.0, 范围 -1.0~1.0)
+  }
+  ```
+- [ ] 更新 `InMemoryMemoryProvider` 实现以支持新字段
+- [ ] 确保 serde Serialize/Deserialize 正确处理新字段
+- [ ] 编写测试验证扩展后的 MemoryEntry
 
 **验收标准**:
-- [ ] Schema 定义在代码中可查看
-- [ ] 索引创建语句存在
-- [ ] 测试覆盖表创建和索引
+- [ ] `src-tauri/src/modules/memory/mod.rs` 中的 MemoryEntry 包含 importance/access_count/trust_score 字段
+- [ ] InMemoryMemoryProvider 实现更新支持新字段
+- [ ] serde Serialize/Deserialize 测试通过
 
 **测试标准**:
 ```rust
@@ -81,11 +86,12 @@ async fn create_memory_entries_table() {
 
 ---
 
-### TASK-001-03: SqliteMemoryProvider 结构体实现
+### TASK-001-03: SqliteMemoryProvider 结构体实现 (NEW FILE)
 
-**目标**: 实现 `SqliteMemoryProvider` 结构体
+**目标**: 在 `src-tauri/src/modules/memory/providers/sqlite_provider.rs` 中实现 SqliteMemoryProvider
 
 **具体任务**:
+- [ ] 创建 `src-tauri/src/modules/memory/providers/sqlite_provider.rs` (NEW FILE)
 - [ ] 定义 `SqliteMemoryProvider` 结构体，包含 `pool: SqlitePool` 字段
 - [ ] 实现 `new(db_path: PathBuf) -> Result<Self, MemoryError>` 构造函数
 - [ ] 在构造函数中调用 `create_table_if_not_exists()`

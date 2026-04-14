@@ -2,10 +2,11 @@
 
 ## 概述
 
-**目标**: 实现多层安全防护，保护记忆系统和用户数据
+**目标**: 在 `src-tauri/src/modules/security/` 中实现多层安全防护 (NEW MODULE)
 **ADR**: [ADR-006](./ADR-006-Security-Design.md)
 **优先级**: P0 (安全相关)
 **预估工时**: 3-4 天
+**现状**: `src-tauri/src/modules/security/` 目录不存在，需要创建
 
 ---
 

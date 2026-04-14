@@ -2,10 +2,11 @@
 
 ## 概述
 
-**目标**: 实现与记忆存储分离的自学习模块
+**目标**: 在 `src-tauri/src/modules/learning/` 中实现自学习模块 (NEW MODULE)
 **ADR**: [ADR-008](./ADR-008-Self-Learning-Modules-Independence.md)
 **优先级**: P2b
 **预估工时**: 5-6 天
+**现状**: `src-tauri/src/modules/learning/` 目录不存在，需要创建
 
 ---
 

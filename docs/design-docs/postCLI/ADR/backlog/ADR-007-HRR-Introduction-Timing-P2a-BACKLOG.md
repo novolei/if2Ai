@@ -2,11 +2,12 @@
 
 ## 概述
 
-**目标**: 实现 HRR (Holographic Reduced Representations) 作为 LanceDB 的代数推理补充
+**目标**: 在 `src-tauri/src/modules/memory/hrr/` 中实现 HRR 代数推理模块 (NEW SUBMODULE)
 **ADR**: [ADR-007](./ADR-007-HRR-Introduction-Timing-P2a.md)
-**依赖**: ADR-001 (SQLite), ADR-003 (LanceDB)
+**依赖**: ADR-001 (SQLite P0), ADR-003 (LanceDB) — 先执行这两个
 **优先级**: P2a
 **预估工时**: 6-8 天
+**现状**: `src-tauri/src/modules/memory/hrr/` 目录不存在，需要创建
 
 ---
 

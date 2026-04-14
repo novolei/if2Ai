@@ -7,6 +7,13 @@
 **优先级**: P0/P1
 **预估工时**: 2-3 天 (P0) + 3-4 天 (P1)
 
+**现状**:
+- ✅ MemoryProvider trait 存在 (5方法)
+- ✅ 被动调用已实现 (LLM显式调用 memory.recall)
+- ❌ 主动检索不存在 (需要新建)
+- ❌ QueryIntent/Intent分类器不存在 (需要新建)
+- ❌ RRF Fusion 不存在 (需要新建)
+
 ---
 
 ## P0 阶段：被动调用模式

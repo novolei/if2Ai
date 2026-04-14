@@ -2,11 +2,12 @@
 
 ## 概述
 
-**目标**: 实现离线向量搜索，支持语义记忆检索
+**目标**: 在 `src-tauri/src/modules/memory/providers/` 和 `src-tauri/src/modules/memory/embedding/` 中实现向量搜索 (NEW FILES)
 **ADR**: [ADR-003](./ADR-003-FastEmbed-LanceDB-Selection.md)
-**依赖**: ADR-001 (SQLite P0)
+**依赖**: ADR-001 (SQLite P0) — 先执行
 **优先级**: P1
 **预估工时**: 5-7 天
+**现状**: 向量搜索功能不存在，需要新建
 
 ---
 

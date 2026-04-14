@@ -56,24 +56,23 @@ slices:
     baseline_ref: "src-tauri/src/modules/memory/mod.rs (InMemoryMemoryProvider — BUG: 进程重启丢失数据)"
 
     current_state: |
-      当前 InMemoryMemoryProvider 使用 HashMap 存储在进程内存中。
-      ❌ CRITICAL BUG: 进程重启后所有记忆数据丢失。
-      ❌ 无输入验证、无路径验证、无原子写入。
+      【已实现】
+      ✅ MemoryProvider trait (5方法: store/recall/delete/purge_category/export)
+      ✅ InMemoryMemoryProvider (HashMap实现, 有BUG: 进程重启丢失数据)
+      ✅ 5个memory工具已注册: memory_store, memory_recall, memory_forget, memory_purge, memory_export
+      ✅ Compaction (src-tauri/src/modules/runtime/compact.rs)
+      ✅ Token budget (conversation.rs max_token_budget 字段)
 
-    must_implement: |
-      # ADR-001 核心实现 (TASK-001-01 ~ TASK-001-07)
-      - SqliteMemoryProvider 结构体 (pool: SqlitePool)
-      - SQLite 表: memory_entries (key, content, category, created_at, updated_at, importance, access_count, trust_score)
-      - 索引: category, created_at
-      - store/recall/delete/purge_category/export 实现
-      - 数据库路径: ~/.if2ai/memory/memory.db
+      【缺失 — 需要新建】
+      ❌ SqliteMemoryProvider (需新建 providers/sqlite_provider.rs)
+      ❌ MemoryEntry 缺少 importance/access_count/trust_score 字段
+      ❌ Security 模块 (providers/security/ 目录不存在)
+      ❌ 路径验证/输入验证/原子写入 (需新建)
+      ❌ Learning 模块 (不存在)
+      ❌ HRR/FastEmbed/LanceDB (不存在)
 
-      # ADR-006 安全实现 (TASK-006-01 ~ TASK-006-07)
-      - validate_memory_entry(key, content): Key 长度 1-256, Content ≤ 1MB
-      - contains_injection_pattern(): 检测 XSS/注入模式
-      - validate_safe_path(): 防止路径遍历
-      - atomic_write(): temp 文件 + sync_all() + rename
-      - MemoryAccessContext: 权限检查 (session/project 隔离)
+      【CRITICAL BUG】
+      ❌ InMemoryMemoryProvider 进程重启后所有记忆数据丢失
 
     acceptance:
       - type: compile
