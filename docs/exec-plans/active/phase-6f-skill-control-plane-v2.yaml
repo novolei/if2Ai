@@ -14,12 +14,13 @@ meta:
 
 dashboard:
   last_updated: 2026-04-14
-  completed_slices: ['6F.1']
-  current_slice: 6F.2
+  completed_slices: ['6F.1', '6F.2']
+  current_slice: 6F.3
   blocked: []
   notes: >
     Phase 6F aligns if2Ai Skill Control Plane with Hermes Agent skill architecture.
     6F.1 SkillsGuard done - 60+ patterns, invisible unicode, structural limits, trust policy.
+    6F.2 SkillManager done - CRUD actions, validation, atomic writes, security scan integration.
     Priority: 6F.1-2 (Security + CRUD) > 6F.3-6 (Hub) > 6F.7-8 (Commands + Config) > 6F.9-10 (UI + Tests)
 
 # ---------------------------------------------------------------------------
@@ -89,7 +90,7 @@ slices:
 
   - id: 6F.2
     name: SkillManager CRUD
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/Skill-Control-Plane-v2.md §3.2
     backlog_ref: docs/design-docs/postCLI/backlog/Skill-Control-Plane-v2-BACKLOG.md §6F.2

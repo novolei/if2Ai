@@ -92,6 +92,7 @@
 | Slice | 标题                          | 状态   | 备注                                                                    |
 | ----- | ----------------------------- | ------ | --------------------------------------------------------------------- |
 | 6F.1  | SkillsGuard Threat Scanner    | ✅ done | 60+ patterns, 15 categories, invisible unicode, structural limits      |
+| 6F.2  | SkillManager CRUD             | ✅ done | CRUD actions, validation, atomic writes, security scan integration     |
 
 ---
 
