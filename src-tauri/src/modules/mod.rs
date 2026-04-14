@@ -20,6 +20,7 @@ pub mod projects;
 pub mod runtime;
 pub mod scheduler;
 pub mod session;
+pub mod skills;
 pub mod tools;
 
 #[allow(unused_imports)]

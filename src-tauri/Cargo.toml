@@ -25,6 +25,8 @@ async-trait = "0.1"
 sha2 = "0.9"
 dashmap = "5"
 hex = "0.4.3"
+once_cell = "1"
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
