@@ -114,11 +114,24 @@ fn main() {
     ));
     let memory_provider = create_memory_provider();
     let scheduler_provider = modules::scheduler::default_scheduler();
-    modules::tools::register_builtin_tools(&tool_registry, memory_provider, scheduler_provider);
+    modules::tools::register_builtin_tools(
+        &tool_registry,
+        memory_provider.clone(),
+        scheduler_provider,
+    );
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
-    // Create app state
-    let app_state = AppState::new(session_manager, tool_registry, project_manager);
+    // Initialize context budget (default: 4000 tokens, 10/20/30/40%)
+    let context_budget = modules::runtime::budget::ContextBudget::default();
+
+    // Create app state — now includes memory infrastructure
+    let app_state = AppState::new(
+        session_manager,
+        tool_registry,
+        project_manager,
+        memory_provider,
+        context_budget,
+    );
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

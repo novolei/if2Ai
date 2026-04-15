@@ -13,8 +13,11 @@ use std::sync::Mutex;
 
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 
+// Memory and learning infrastructure
+use crate::modules::memory::SharedMemoryProvider;
+use crate::modules::runtime::budget::ContextBudget;
+
 /// Application state shared across all Tauri commands.
-#[allow(dead_code)]
 pub struct AppState {
     /// Session manager for conversation persistence.
     pub session_manager: Arc<SessionManager>,
@@ -32,9 +35,18 @@ pub struct AppState {
     /// Stream cancel senders keyed by stream_id.
     /// Used by stop_agent_stream to cancel an in-flight streaming response.
     pub stream_cancel_senders: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
+
+    // ── Memory & Learning Infrastructure (Phase 6BW) ──
+    /// Shared memory provider (SQLite / Vector / Hybrid).
+    /// Wired into agent loop in slices 6bw.2-6bw.7.
+    #[allow(dead_code)]
+    pub memory_provider: SharedMemoryProvider,
+    /// Context budget configuration (default: 4000 tokens, 10/20/30/40%).
+    /// Wired into agent loop in slice 6bw.2.
+    #[allow(dead_code)]
+    pub context_budget: ContextBudget,
 }
 
-#[allow(dead_code)]
 impl AppState {
     /// Create a new AppState with the given managers.
     #[must_use]
@@ -42,6 +54,8 @@ impl AppState {
         session_manager: SessionManager,
         tool_registry: ToolRegistry,
         project_manager: ProjectManager,
+        memory_provider: SharedMemoryProvider,
+        context_budget: ContextBudget,
     ) -> Self {
         Self {
             session_manager: Arc::new(session_manager),
@@ -50,6 +64,8 @@ impl AppState {
             permission_senders: Arc::new(Mutex::new(HashMap::new())),
             permission_overrides: Arc::new(Mutex::new(HashMap::new())),
             stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
+            memory_provider,
+            context_budget,
         }
     }
 }
