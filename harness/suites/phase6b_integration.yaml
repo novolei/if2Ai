@@ -1,0 +1,144 @@
+# Harness Suite: Phase 6B Memory Control Plane Integration
+# 用途: 验证 Phase 6B 所有模块的完整性和集成正确性
+# 覆盖: SQLite P0, Token Budget, 主动检索, 向量搜索, HRR, 自学习, 轨迹学习, 上游兼容
+
+suite_id: "phase6b_memory_control_plane"
+name: "Phase 6B Memory Control Plane — Full Integration"
+description: "端到端验证 Phase 6B 所有 8 个 slices 的功能正确性和模块集成"
+runner: "cargo_test"
+
+test_cases:
+  # ── 6b.1: SQLite P0 ──
+  - id: "p6b-001"
+    name: "SQLite 持久化存在"
+    description: "SqliteMemoryProvider 必须存在并能存储/检索条目"
+    type: "integration"
+    test_fn: "test_sqlite_provider_store_and_recall"
+
+  - id: "p6b-002"
+    name: "安全路径验证"
+    description: "PathSanitizer 必须拒绝路径逃逸"
+    type: "integration"
+    test_fn: "test_path_sanitizer_blocks_escape"
+
+  # ── 6b.2: Token Budget ──
+  - id: "p6b-003"
+    name: "ContextBudget 默认值"
+    description: "total=4000, 10/20/30/40% 分配"
+    type: "unit"
+    test_fn: "test_context_budget_defaults_10_20_30_40"
+
+  - id: "p6b-004"
+    name: "WorkingMemory 滑动窗口"
+    description: "超过 max_turns=8 时必须驱逐最旧条目"
+    type: "unit"
+    test_fn: "test_working_memory_evicts_when_over_max_turns"
+
+  - id: "p6b-005"
+    name: "FrozenSnapshot 哈希验证"
+    description: "修改 prompt 后 verify 必须失败"
+    type: "unit"
+    test_fn: "test_frozen_snapshot_detects_prompt_modification"
+
+  - id: "p6b-006"
+    name: "WeibullDecay 衰减"
+    description: "旧条目 decay 分数应低于新条目"
+    type: "unit"
+    test_fn: "test_weibull_decay_old_entries_have_lower_score"
+
+  # ── 6b.3: 主动检索 ──
+  - id: "p6b-007"
+    name: "QueryIntent 分类"
+    description: "fix/bug → Code, remember → Task, who → Person"
+    type: "unit"
+    test_fn: "test_query_intent_classification_all_types"
+
+  - id: "p6b-008"
+    name: "RRF Fusion 去重"
+    description: "融合多个结果列表时必须去重和正确排序"
+    type: "unit"
+    test_fn: "test_rrf_fusion_deduplication_and_ranking"
+
+  # ── 6b.4: 向量搜索 ──
+  - id: "p6b-009"
+    name: "LanceDB 表创建和插入"
+    description: "表必须可创建、插入、搜索"
+    type: "unit"
+    test_fn: "test_lancedb_create_insert_search"
+
+  - id: "p6b-010"
+    name: "VectorMemoryProvider MemoryProvider trait"
+    description: "必须实现 store/recall/delete/purge/export"
+    type: "unit"
+    test_fn: "test_vector_memory_provider_implements_trait"
+
+  # ── 6b.5: HRR ──
+  - id: "p6b-011"
+    name: "HRR bind/unbind roundtrip"
+    description: "unbind(bind(key, value), key) 应近似 value"
+    type: "unit"
+    test_fn: "test_hrr_bind_unbind_roundtrip"
+
+  - id: "p6b-012"
+    name: "HolographicStore 容量管理"
+    description: "容量为 O(√dim)，必须拒绝或驱逐超额条目"
+    type: "unit"
+    test_fn: "test_holographic_store_capacity_management"
+
+  - id: "p6b-013"
+    name: "HRR contradict 检测"
+    description: "反向向量必须被检测为矛盾"
+    type: "unit"
+    test_fn: "test_hrr_contradict_detects_opposition"
+
+  # ── 6b.6: 自学习 ──
+  - id: "p6b-014"
+    name: "SelfModel 结构和更新"
+    description: "必须能添加 capabilities 和记录 turns"
+    type: "unit"
+    test_fn: "test_self_model_structure_and_updates"
+
+  - id: "p6b-015"
+    name: "ReflectionEngine 分析"
+    description: "必须能从 session 中提取工具序列模式"
+    type: "unit"
+    test_fn: "test_reflection_engine_analyzes_sessions"
+
+  - id: "p6b-016"
+    name: "TrustTracker 分数调整"
+    description: "Helpful +0.05, Unhelpful -0.10, 边界 [-1, 1]"
+    type: "unit"
+    test_fn: "test_trust_tracker_adjustment_and_bounds"
+
+  # ── 6b.7: 轨迹学习 ──
+  - id: "p6b-017"
+    name: "Trajectory ShareGPT 格式"
+    description: "from_session 必须产生正确的 human/gpt 交替"
+    type: "unit"
+    test_fn: "test_trajectory_sharegpt_format"
+
+  - id: "p6b-018"
+    name: "TrajectoryManager 文件记录"
+    description: "record 必须写入 JSONL 文件并遵守最小长度"
+    type: "unit"
+    test_fn: "test_trajectory_manager_records_to_file"
+
+  - id: "p6b-019"
+    name: "TrajectoryManager 导出合并"
+    description: "export_all 必须合并所有 JSONL 文件"
+    type: "unit"
+    test_fn: "test_trajectory_manager_export_combines_files"
+
+  # ── 6b.8: 上游兼容 ──
+  - id: "p6b-020"
+    name: "claw-cli 兼容导出"
+    description: "export_for_clawcli 必须产生正确 JSON 且无扩展字段"
+    type: "unit"
+    test_fn: "test_clawcli_export_correct_json_no_extended_fields"
+
+  - id: "p6b-021"
+    name: "compact.rs 溯源注释"
+    description: "文件头部必须包含 adapted from iClaw/hermes-agent"
+    type: "symbol"
+    file: "src-tauri/src/modules/runtime/compact.rs"
+    grep: "adapted from.*iClaw.*hermes-agent"
