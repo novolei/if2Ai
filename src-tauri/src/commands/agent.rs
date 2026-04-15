@@ -20,6 +20,7 @@ use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolD
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
+use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
@@ -702,6 +703,36 @@ async fn retrieve_memory_context(state: &AppState, user_message: &str) -> String
     }
 }
 
+/// Record the conversation as a trajectory for future RL training.
+///
+/// Converts the session to ShareGPT format and appends to the daily JSONL file.
+/// Errors are logged as warnings and never block the main flow.
+/// Short sessions (<3 turns) are silently skipped per privacy defaults.
+async fn record_trajectory_if_possible(session: &RuntimeSession, system_prompt: &[String]) {
+    let trajectories_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".if2ai")
+        .join("trajectories");
+
+    let manager = match TrajectoryManager::new(trajectories_dir) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("[record_trajectory] Failed to create TrajectoryManager: {e}");
+            return;
+        }
+    };
+
+    let system_text = system_prompt.join("\n");
+    match manager.record(session, &system_text, "if2ai-default").await {
+        Ok(id) => {
+            tracing::info!("[record_trajectory] Recorded trajectory {id}");
+        }
+        Err(e) => {
+            tracing::debug!("[record_trajectory] Skipping trajectory record: {e}");
+        }
+    }
+}
+
 /// Run a single agent turn with the given user message.
 ///
 /// This is the main entry point for the frontend to interact with the agent.
@@ -790,6 +821,8 @@ pub async fn run_agent_turn(
             vec![crate::modules::runtime::prompt::SystemPromptBuilder::new().render()]
         }
     };
+    // Keep a clone for trajectory recording (system_prompt is moved into ConversationRuntime)
+    let system_prompt_for_trajectory = system_prompt.clone();
 
     // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories
     let memory_context = retrieve_memory_context(&state, &user_message).await;
@@ -888,6 +921,9 @@ pub async fn run_agent_turn(
                     .len()
                     .saturating_sub(app_session.messages.len());
 
+            // Keep a clone for trajectory recording (before compaction may consume it)
+            let trajectory_session = updated_runtime_session.clone();
+
             // Context compaction — compact if session exceeds token threshold
             let compaction_config = CompactionConfig::default();
             let final_runtime_session =
@@ -910,6 +946,9 @@ pub async fn run_agent_turn(
                 .save_session(&updated_app_session)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            // Record trajectory after session save (non-blocking, warn-only)
+            record_trajectory_if_possible(&trajectory_session, &system_prompt_for_trajectory).await;
 
             tracing::info!("[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}", final_text.len(), thinking_content.as_ref().map(|s| s.len()), session_id);
             Ok(RunAgentTurnResponse {
