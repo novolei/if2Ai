@@ -2,9 +2,9 @@
 
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
-**更新时间**: 2026-04-14
-**当前 Phase**: Phase 6F 执行中（Skill Control Plane v2）
-**整体状态**: ✅ Phase 5 系列完成；Phase 6F 已完成 7/12（6F.1-6F.7）
+**更新时间**: 2026-04-15
+**当前 Phase**: Phase 6B 完成（Memory Control Plane）
+**整体状态**: ✅ Phase 6B 全部完成（9/9 slices）
 
 ---
 
@@ -22,7 +22,8 @@
 | Phase 5D — UX 完善          | ✅ 完成 (8/8)   | 2026-04-13 | ✅ 0 errors | ✅ 202 tests | ✅       |
 | Phase 5E — 长期增强         | ✅ 完成 (6/6)   | 2026-04-13 | ✅ 0 errors | ✅ 215 tests | ✅       |
 | Phase 6A — 控制平面加固     | ✅ 完成 (8/8)  | 2026-04-13 | ✅ 0 errors | ✅ 222 tests | ✅       |
-| Phase 6F — Skill Control Plane v2 | ⏳ 进行中 (7/12) | 2026-04-14 | ✅ 0 errors | ✅ 348 tests | ✅       |
+| Phase 6B — Memory Control Plane | ✅ 完成 (9/9)  | 2026-04-15 | ✅ 0 errors | ✅ 573 tests | ✅       |
+| Phase 6F — Skill Control Plane v2 | ✅ 完成 (12/12) | 2026-04-14 | ✅ 0 errors | ✅ 348 tests | ✅       |
 
 ---
 
@@ -101,6 +102,22 @@
 
 ---
 
+## Phase 6B — Slice 详情
+
+| Slice | 标题                          | 状态   | 备注                                                                    |
+| ----- | ----------------------------- | ------ | ----------------------------------------------------------------------- |
+| 6b.1  | SQLite P0 + Security          | ✅ done | SqliteMemoryProvider, PathSanitizer, AtomicWrite, AccessControl         |
+| 6b.2  | Token Budget + WorkingMemory  | ✅ done | ContextBudget 4000/10-20-30-40%, FrozenSnapshot, WeibullDecay           |
+| 6b.3  | Active Retrieval + Intent     | ✅ done | QueryIntent 5 types, RRF Fusion (k=60), ActiveRetrievalManager          |
+| 6b.4  | FastEmbed + LanceDB           | ✅ done | FastEmbedProvider 384d, LanceDBMemory IVF-PQ, VectorMemoryProvider      |
+| 6b.5  | HRR Algebraic Reasoning       | ✅ done | HRR bind/unbind/bundle, HolographicStore, HybridMemoryProvider          |
+| 6b.6  | Self-Learning Modules         | ✅ done | SelfModel, StandardReflectionEngine, TrustTracker (+0.05/-0.10)         |
+| 6b.7  | Trajectory Learning           | ✅ done | ShareGPT JSONL export, TrajectoryManager, privacy controls              |
+| 6b.8  | Upstream Compatibility        | ✅ done | claw-cli export (strips extended fields), provenance docs               |
+| 6b.9  | Integration Test Suite        | ✅ done | harness/suites/phase6b_integration.yaml (21 test cases), 573 tests pass |
+
+---
+
 ## 代码质量指标（当前）
 
 - **编译错误**: 0（Phase 1 目标: 0）✅
@@ -108,7 +125,7 @@
 - **测试覆盖率**: 215 tests pass
 - **unwrap() 用量**: 少量（main.rs binary entry point + tools/lib.rs pre-existing）
 - **Phase 1 进度**: 12/12 slices done (1.1-1.12 all complete)
-- **测试结果**: 157+157+1 = 315 tests pass
+- **测试结果**: 573 tests pass (all workspace)
 
 ---
 
@@ -175,3 +192,13 @@
 | 2026-04-14 | Phase 6F Slice 6F.11 完成：External Skills Dirs & Remote Passthrough (ExternalSkillsDirs + RemotePassthroughManager, 16 tests pass) |
 | 2026-04-14 | Phase 6F Slice 6F.12 完成：Snapshot Export/Import (SnapshotManager + SkillSnapshot types, 16 tests pass) |
 | 2026-04-14 | **Phase 6F ALL COMPLETE** (12/12 slices, 154+ tests pass) |
+| 2026-04-15 | Phase 6B Slice 6b.1 完成：SQLite P0 持久化 + 安全加固 (SqliteMemoryProvider, PathSanitizer, AtomicWrite, AccessControl) |
+| 2026-04-15 | Phase 6B Slice 6b.2 完成：Token Budget + WorkingMemory (ContextBudget 4000/10-20-30-40%, FrozenSnapshot, WeibullDecay lambda=7d/k=1.2) |
+| 2026-04-15 | Phase 6B Slice 6b.3 完成：Active Retrieval + Intent (QueryIntent 5 types, RRF Fusion k=60, ActiveRetrievalManager) |
+| 2026-04-15 | Phase 6B Slice 6b.4 完成：FastEmbed + LanceDB (384d offline embeddings, IVF-PQ vector store, hybrid FTS5+Vector search) |
+| 2026-04-15 | Phase 6B Slice 6b.5 完成：HRR Algebraic Reasoning (circular convolution bind/unbind, HolographicStore capacity O(√dim), HybridMemoryProvider) |
+| 2026-04-15 | Phase 6B Slice 6b.6 完成：Self-Learning Modules (SelfModel capabilities/limitations, StandardReflectionEngine tool sequences, TrustTracker +0.05/-0.10) |
+| 2026-04-15 | Phase 6B Slice 6b.7 完成：Trajectory Learning (ShareGPT JSONL export, TrajectoryManager with date rotation, privacy controls) |
+| 2026-04-15 | Phase 6B Slice 6b.8 完成：Upstream Compatibility (claw-cli export strips extended fields, UPSTREAM-RELATIONSHIP.md, compact.rs provenance) |
+| 2026-04-15 | Phase 6B Slice 6b.9 完成：Integration Test Suite (phase6b_integration.yaml 21 test cases, 573 workspace tests pass) |
+| 2026-04-15 | **Phase 6B ALL COMPLETE** (9/9 slices, 573 tests pass, 0 clippy warnings) |

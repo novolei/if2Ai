@@ -7,7 +7,7 @@
 
 meta:
   phase: "6b"
-  phase_status: draft
+  phase_status: complete
   title: "记忆控制平面 — SQLite P0 + 向量搜索 + Token 预算 + 安全加固"
   owner: "@architects"
   depends_on_phase: "6a"
@@ -539,7 +539,7 @@ slices:
 
   - id: "6b.9"
     title: "6B 集成测试 + 整体回归"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/"
     backlog_ref: "All ADRs"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5", "6b.6", "6b.7", "6b.8"]
-  current_slice: "6b.9"
+  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5", "6b.6", "6b.7", "6b.8", "6b.9"]
+  current_slice: "done"
   blocked: []
-  notes: "6B.1~6B.8 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning, HybridMemoryProvider, Self-Learning (SelfModel, ReflectionEngine, TrustTracker), Trajectory Learning (ShareGPT export), Upstream Compatibility (claw-cli export, provenance docs). 573 tests pass, clippy clean."
+  notes: "Phase 6B COMPLETE. All 9 slices done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning, HybridMemoryProvider, Self-Learning (SelfModel, ReflectionEngine, TrustTracker), Trajectory Learning (ShareGPT export), Upstream Compatibility (claw-cli export, provenance docs), Integration test suite (21 test cases). 573 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
