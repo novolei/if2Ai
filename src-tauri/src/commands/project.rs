@@ -201,16 +201,8 @@ pub async fn read_file_preview(
     max_bytes: Option<usize>,
 ) -> Result<FilePreviewPayload, String> {
     let file_path = PathBuf::from(path);
-    let max_size = max_bytes.unwrap_or(128 * 1024).clamp(1024, 512 * 1024);
 
     tokio::task::spawn_blocking(move || {
-        let metadata = std::fs::metadata(&file_path).map_err(|err| err.to_string())?;
-        if !metadata.is_file() {
-            return Err("path is not a file".to_string());
-        }
-        if metadata.len() as usize > max_size {
-            return Err("file too large for inline preview".to_string());
-        }
         let name = file_path
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
@@ -220,8 +212,25 @@ pub async fn read_file_preview(
             .and_then(|value| value.to_str())
             .map(|value| value.to_ascii_lowercase())
             .unwrap_or_default();
+        let binary_mime_type = preview_mime_type(&extension);
+        let max_size = if binary_mime_type.is_some() {
+            max_bytes
+                .unwrap_or(10 * 1024 * 1024)
+                .clamp(32 * 1024, 32 * 1024 * 1024)
+        } else {
+            max_bytes
+                .unwrap_or(128 * 1024)
+                .clamp(1024, 512 * 1024)
+        };
+        let metadata = std::fs::metadata(&file_path).map_err(|err| err.to_string())?;
+        if !metadata.is_file() {
+            return Err("path is not a file".to_string());
+        }
+        if metadata.len() as usize > max_size {
+            return Err("file too large for inline preview".to_string());
+        }
 
-        if let Some(mime_type) = preview_mime_type(&extension) {
+        if let Some(mime_type) = binary_mime_type {
             let bytes = std::fs::read(&file_path).map_err(|err| err.to_string())?;
             let preview_kind = preview_binary_kind(mime_type);
             return Ok(FilePreviewPayload {

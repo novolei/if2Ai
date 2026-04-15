@@ -26,6 +26,7 @@ import {
   Send,
   Sparkles,
   Square,
+  Paperclip,
   AlertTriangle,
   RotateCcw,
   TerminalSquare,
@@ -111,6 +112,12 @@ type DensityMode = 'comfortable' | 'compact'
 type FontMode = 'sans' | 'serif'
 type RailBreadcrumb = { label: string; path: string }
 type RailTreeMap = Record<string, DirectoryEntryPreview[]>
+type ComposerDropItem = {
+  id: string
+  name: string
+  path: string
+  kind: 'file' | 'folder'
+}
 
 const BOTTOM_EPSILON_PX = 120
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
@@ -119,6 +126,7 @@ const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
 const PROJECT_RAIL_MIN_WIDTH = 296
 const PROJECT_RAIL_MAX_WIDTH = 620
 const PREVIEW_AUTOSAVE_DELAY_MS = 900
+const PROJECT_RAIL_NOTICE_DURATION_MS = 2800
 
 const SURFACE_CARD_TOKENS = {
   radius: 'rounded-[14px]',
@@ -232,6 +240,8 @@ export function ChatUI({
   const [projectRailPath, setProjectRailPath] = React.useState<string | null>(defaultWorkdir ?? null)
   const [projectRailPreviewError, setProjectRailPreviewError] = React.useState<string | null>(null)
   const projectRailRefreshSeqRef = React.useRef(0)
+  const projectRailNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [composerDropItems, setComposerDropItems] = React.useState<ComposerDropItem[]>([])
   const [projectPreviewTabs, setProjectPreviewTabs] = React.useState<FilePreviewPayload[]>([])
   const [activeProjectPreviewPath, setActiveProjectPreviewPath] = React.useState<string | null>(null)
   const [isProjectPreviewOpen, setIsProjectPreviewOpen] = React.useState(false)
@@ -274,6 +284,9 @@ export function ChatUI({
       }
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
+      }
+      if (projectRailNoticeTimerRef.current) {
+        clearTimeout(projectRailNoticeTimerRef.current)
       }
       Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
     }
@@ -331,6 +344,11 @@ export function ChatUI({
   React.useEffect(() => {
     setProjectRailPath(defaultWorkdir ?? null)
     setProjectRailPreviewError(null)
+    setComposerDropItems([])
+    if (projectRailNoticeTimerRef.current) {
+      clearTimeout(projectRailNoticeTimerRef.current)
+      projectRailNoticeTimerRef.current = null
+    }
     setProjectRailExpandedPaths([])
     setProjectRailTree({})
     setProjectPreviewTabs([])
@@ -370,6 +388,20 @@ export function ChatUI({
   }, [isPreviewFocusMode, isProjectRailOpen, onProjectRailOpenChange])
 
   const railRootPath = defaultWorkdir ?? null
+
+  const showProjectRailNotice = React.useCallback((message: string | null) => {
+    if (projectRailNoticeTimerRef.current) {
+      clearTimeout(projectRailNoticeTimerRef.current)
+      projectRailNoticeTimerRef.current = null
+    }
+    setProjectRailPreviewError(message)
+    if (message) {
+      projectRailNoticeTimerRef.current = window.setTimeout(() => {
+        setProjectRailPreviewError((current) => current === message ? null : current)
+        projectRailNoticeTimerRef.current = null
+      }, PROJECT_RAIL_NOTICE_DURATION_MS)
+    }
+  }, [])
 
   const refreshDirectoryPreview = React.useCallback(async (options?: { silent?: boolean }) => {
     if (!railRootPath || !isProjectRailOpen) return
@@ -499,14 +531,38 @@ export function ChatUI({
   }, [todoPanelHeight, hasTodos])
 
   const submitDraft = React.useCallback(() => {
-    const next = draftInput.trim()
+    const messageText = draftInput.trim()
+    const attachmentItems = composerDropItems.filter((item) => item.kind === 'file')
+    const folderReferenceItems = composerDropItems.filter((item) => item.kind === 'folder')
+    const segments: string[] = []
+
+    if (attachmentItems.length > 0) {
+      segments.push([
+        '附件文件：',
+        ...attachmentItems.map((item) => `- \`${item.path}\``),
+      ].join('\n'))
+    }
+
+    if (folderReferenceItems.length > 0) {
+      segments.push([
+        '引用文件夹：',
+        ...folderReferenceItems.map((item) => `- \`${item.path}\``),
+      ].join('\n'))
+    }
+
+    if (messageText) {
+      segments.push(messageText)
+    }
+
+    const next = segments.join('\n\n').trim()
     if (!next || isLoading) return
     forceAutoScrollRef.current = true
     stickToBottomDuringStreamRef.current = true
     onSubmit(next)
     setDraftInput('')
+    setComposerDropItems([])
     onInputChange?.('')
-  }, [draftInput, isLoading, onSubmit, onInputChange])
+  }, [composerDropItems, draftInput, isLoading, onSubmit, onInputChange])
 
   const handleTranscriptScroll = React.useCallback(() => {
     const container = transcriptScrollRef.current
@@ -644,6 +700,14 @@ export function ChatUI({
   const handleInsertProjectFileReference = React.useCallback((path: string) => {
     appendToDraft(`请把 \`${path}\` 作为当前上下文文件一起考虑。`)
   }, [appendToDraft])
+
+  const handleComposerDropItem = React.useCallback((item: ComposerDropItem) => {
+    setComposerDropItems((current) => current.some((entry) => entry.path === item.path && entry.kind === item.kind) ? current : [...current, item])
+  }, [])
+
+  const handleRemoveComposerDropItem = React.useCallback((id: string) => {
+    setComposerDropItems((current) => current.filter((item) => item.id !== id))
+  }, [])
 
   const loadProjectRailChildren = React.useCallback(async (path: string, options?: { silent?: boolean }) => {
     setProjectRailLoadingPaths((current) => current.includes(path) ? current : [...current, path])
@@ -846,7 +910,9 @@ export function ChatUI({
             handleKeyDown={handleKeyDown}
             setSlashOverlay={setSlashOverlay}
             slashTimerRef={slashTimerRef}
-            onFileReferenceDrop={handleInsertProjectFileReference}
+            dropItems={composerDropItems}
+            onRemoveDropItem={handleRemoveComposerDropItem}
+            onFileReferenceDrop={handleComposerDropItem}
           />
         </div>
 
@@ -898,7 +964,7 @@ export function ChatUI({
           const normalizedCurrent = projectRailPath.replace(/[\\/]+$/, '')
           if (normalizedCurrent === normalizedBase) return
           const parent = normalizedCurrent.split(/[\\/]/).slice(0, -1).join('/')
-          setProjectRailPreviewError(null)
+          showProjectRailNotice(null)
           const nextPath = parent || normalizedBase
           setProjectRailPath(nextPath)
           if (nextPath !== normalizedBase && !projectRailExpandedPaths.includes(nextPath)) {
@@ -907,7 +973,7 @@ export function ChatUI({
           }
         }}
         onJumpToBreadcrumb={(path) => {
-          setProjectRailPreviewError(null)
+          showProjectRailNotice(null)
           setProjectRailPath(path)
           if (defaultWorkdir && path !== defaultWorkdir && !projectRailExpandedPaths.includes(path)) {
             setProjectRailExpandedPaths((current) => [...current, path])
@@ -923,10 +989,10 @@ export function ChatUI({
             const preview = await readFilePreview(entry.path)
             openPreviewTab(preview)
             setProjectRailPath(entry.path.split(/[\\/]/).slice(0, -1).join('/') || railRootPath)
-            setProjectRailPreviewError(null)
+            showProjectRailNotice(null)
           } catch (err) {
             console.error('Failed to read file preview:', err)
-            setProjectRailPreviewError('这个文件暂时不能在面板内预览。')
+            showProjectRailNotice('这个文件暂时不能在面板内预览。')
           }
         }}
         onToggleFolder={handleToggleProjectRailFolder}
@@ -1142,10 +1208,11 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
 
               <div className="mt-2 min-h-0 flex-1 overflow-hidden bg-transparent">
                 {previewError ? (
-                  <div className="px-1 py-5 text-center text-[11.5px] text-[#b6ab9d]">
-                    <div>{previewError}</div>
+                  <div className="mb-2 rounded-[10px] border border-[#eedfd2] bg-[#fbf3ea] px-3 py-2 text-[11px] text-[#b08c72]">
+                    {previewError}
                   </div>
-                ) : isLoading ? (
+                ) : null}
+                {isLoading ? (
                   <div className="flex items-center gap-2 px-1 py-3 text-[11.5px] text-[#b4aa9f]">
                     <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                     <span>正在整理当前项目文件…</span>
@@ -1326,7 +1393,7 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
       <div
         role="button"
         tabIndex={0}
-        draggable={entry.kind === 'file'}
+        draggable
         onClick={() => {
           if (entry.kind === 'folder') {
             void onOpen(entry)
@@ -1344,9 +1411,13 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
           }
         }}
         onDragStart={(event) => {
-          if (entry.kind !== 'file') return
-          const payload = `请把 \`${entry.path}\` 作为当前上下文文件一起考虑。`
-          event.dataTransfer.setData('text/plain', payload)
+          const payload = JSON.stringify({
+            path: entry.path,
+            name: entry.name,
+            kind: entry.kind,
+          })
+          event.dataTransfer.setData('application/x-if2ai-rail-entry', payload)
+          event.dataTransfer.setData('text/plain', entry.path)
           event.dataTransfer.effectAllowed = 'copy'
         }}
         className={cn(
@@ -1561,6 +1632,8 @@ const ComposerDock = React.memo(function ComposerDock({
   handleKeyDown,
   setSlashOverlay,
   slashTimerRef,
+  dropItems,
+  onRemoveDropItem,
   onFileReferenceDrop,
 }: {
   input: string
@@ -1591,7 +1664,9 @@ const ComposerDock = React.memo(function ComposerDock({
     } | null>
   >
   slashTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>
-  onFileReferenceDrop: (value: string) => void
+  dropItems: ComposerDropItem[]
+  onRemoveDropItem: (id: string) => void
+  onFileReferenceDrop: (item: ComposerDropItem) => void
 }) {
   const [isDropTarget, setIsDropTarget] = React.useState(false)
   const handleInputWithSlashDetect = (value: string) => {
@@ -1639,6 +1714,27 @@ const ComposerDock = React.memo(function ComposerDock({
       style={{ paddingRight: `${40 + contentRightInset}px` }}
     >
       <div className="mx-auto flex w-full flex-col transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${contentMaxWidth}px` }}>
+        {dropItems.length > 0 ? (
+          <div className="mb-3 flex flex-wrap gap-2 px-1">
+            {dropItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onRemoveDropItem(item.id)}
+                className="group inline-flex max-w-full items-center gap-2 rounded-[16px] border border-[#e7d9c8] bg-[#fffdf9] px-3 py-2 text-left text-[#54473b] shadow-[0_4px_10px_rgba(97,75,45,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#dbc7b3] hover:bg-white"
+                title={item.path}
+              >
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[#8e7b69]">
+                  {item.kind === 'file' ? <Paperclip className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
+                </span>
+                <span className="truncate text-[12.5px] font-medium tracking-[-0.015em]">{item.name}</span>
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[#c0b1a0] transition-colors group-hover:text-[#8f7c69]">
+                  <X className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div
           className={cn(
             'rounded-[20px] border border-black/5 bg-white/42 px-4 py-2 backdrop-blur-xl transition-[box-shadow,border-color,transform,background-color,opacity] duration-300 ease-out',
@@ -1661,9 +1757,21 @@ const ComposerDock = React.memo(function ComposerDock({
               onDragLeave={() => setIsDropTarget(false)}
               onDrop={(event) => {
                 event.preventDefault()
-                const payload = event.dataTransfer.getData('text/plain').trim()
-                if (payload) {
-                  onFileReferenceDrop(payload)
+                const structuredPayload = event.dataTransfer.getData('application/x-if2ai-rail-entry').trim()
+                if (structuredPayload) {
+                  try {
+                    const parsed = JSON.parse(structuredPayload) as { path: string; name: string; kind: 'file' | 'folder' }
+                    if (parsed.path && parsed.name && (parsed.kind === 'file' || parsed.kind === 'folder')) {
+                      onFileReferenceDrop({
+                        id: `${parsed.kind}:${parsed.path}`,
+                        path: parsed.path,
+                        name: parsed.name,
+                        kind: parsed.kind,
+                      })
+                    }
+                  } catch (error) {
+                    console.error('Failed to parse dropped rail entry:', error)
+                  }
                 }
                 setIsDropTarget(false)
               }}
@@ -1673,9 +1781,14 @@ const ComposerDock = React.memo(function ComposerDock({
               onBlur={() => setIsComposerFocused(false)}
               className={cn(
                 'min-h-[70px] resize-none border-0 bg-transparent px-0 py-0.5 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0',
-                isDropTarget && 'rounded-[16px] bg-[#f5efe6]/75 outline outline-1 outline-[#e6d7c3]'
+                isDropTarget && 'rounded-[16px] bg-[#f8f2ea]/82 outline outline-1 outline-[#e6d7c3]'
               )}
             />
+            {isDropTarget ? (
+              <div className="pointer-events-none absolute inset-x-4 top-3 rounded-[16px] border border-dashed border-[#ddccb7] bg-[#fffaf4]/88 px-4 py-3 text-[12px] text-[#9d846d] backdrop-blur-sm">
+                文件会作为附件发送，文件夹会作为引用附加到消息里。
+              </div>
+            ) : null}
 
             <div className="mt-1.5 flex flex-col gap-1.5">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
