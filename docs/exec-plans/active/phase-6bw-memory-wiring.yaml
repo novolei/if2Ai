@@ -467,7 +467,7 @@ slices:
 
   - id: "6bw.9"
     title: "前端 Settings — Token Budget 配置 + Trajectory 导出"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-14; TASK-012-15"
     impl_targets:
@@ -515,10 +515,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6bw.1", "6bw.2", "6bw.3", "6bw.4", "6bw.5", "6bw.6", "6bw.7", "6bw.8"]
-  current_slice: "6bw.9"
+  completed_slices: ["6bw.1", "6bw.2", "6bw.3", "6bw.4", "6bw.5", "6bw.6", "6bw.7", "6bw.8", "6bw.9"]
+  current_slice: "done"
   blocked: []
-  notes: "6bw.1-6bw.8 done: All backend wiring + Memory Browser UI complete. Next: 6bw.9 Settings UI (Token Budget + Trajectory Export)."
+  notes: "Phase 6BW complete: All 9 slices done. Backend wiring, Memory Browser UI, Settings UI with Token Budget + Trajectory Export."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wiring 关系矩阵
