@@ -265,7 +265,7 @@ slices:
 
   - id: "6b.5"
     title: "MEM-CP6 — HRR 代数推理 (P2a)"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-007-HRR-Introduction-Timing-P2a.md"
     backlog_ref: "TASK-007-01 ~ TASK-007-11"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4"]
-  current_slice: "6b.5"
+  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5"]
+  current_slice: "6b.6"
   blocked: []
-  notes: "6B.1~6B.4 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider (MemoryProvider trait), hybrid search. 513 tests pass, clippy clean."
+  notes: "6B.1~6B.5 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning (bind/unbind/bundle/similarity), HolographicStore (capacity-managed), HybridMemoryProvider (LanceDB+HRR). 535 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
