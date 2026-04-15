@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ChevronDown,
   ChevronLeft,
@@ -31,8 +31,77 @@ const modelItems = [
   { value: 'gpt-4.1', label: 'GPT-4.1' },
 ]
 
+const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
+const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
+type DensityMode = 'comfortable' | 'compact'
+type FontMode = 'sans' | 'serif'
+
 function formatModelName(model: string): string {
   return model.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function HeaderViewStyleControls({
+  fontMode,
+  densityMode,
+  onFontModeChange,
+  onDensityModeChange,
+}: {
+  fontMode: FontMode
+  densityMode: DensityMode
+  onFontModeChange: (mode: FontMode) => void
+  onDensityModeChange: (mode: DensityMode) => void
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 px-1 py-0.5 text-[12px] text-black/62">
+      <div className="inline-flex items-center gap-1.5">
+        <span className="select-none text-[11px] font-medium text-black/50">字体</span>
+        <button
+          type="button"
+          onClick={() => onFontModeChange('sans')}
+          className={cn(
+            'inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] font-semibold transition-colors',
+            fontMode === 'sans' ? 'text-black/92' : 'text-black/42 hover:text-black/70'
+          )}
+        >
+          Aa
+        </button>
+        <button
+          type="button"
+          onClick={() => onFontModeChange('serif')}
+          className={cn(
+            'inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] font-semibold transition-colors',
+            fontMode === 'serif' ? 'font-serif text-black/92' : 'font-serif text-black/42 hover:text-black/70'
+          )}
+        >
+          Aa
+        </button>
+      </div>
+      <div className="h-5 w-px bg-black/10" />
+      <div className="inline-flex items-center gap-1.5">
+        <span className="select-none text-[11px] font-medium text-black/50">密度</span>
+        <button
+          type="button"
+          onClick={() => onDensityModeChange('compact')}
+          className={cn(
+            'inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] transition-colors',
+            densityMode === 'compact' ? 'text-black/92' : 'text-black/42 hover:text-black/70'
+          )}
+        >
+          ≡
+        </button>
+        <button
+          type="button"
+          onClick={() => onDensityModeChange('comfortable')}
+          className={cn(
+            'inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] transition-colors',
+            densityMode === 'comfortable' ? 'text-black/92' : 'text-black/42 hover:text-black/70'
+          )}
+        >
+          ☰
+        </button>
+      </div>
+    </div>
+  )
 }
 
 export function ChatWorkspace({
@@ -76,12 +145,48 @@ export function ChatWorkspace({
   onPreviewFocusChange,
   runningSessionIds,
 }: ChatWorkspaceProps) {
+  const [densityMode, setDensityMode] = useState<DensityMode>(() => {
+    if (typeof window === 'undefined') return 'comfortable'
+    try {
+      const stored = window.localStorage.getItem(CHAT_DENSITY_MODE_STORAGE_KEY)
+      return stored === 'compact' ? 'compact' : 'comfortable'
+    } catch {
+      return 'comfortable'
+    }
+  })
+  const [fontMode, setFontMode] = useState<FontMode>(() => {
+    if (typeof window === 'undefined') return 'sans'
+    try {
+      const stored = window.localStorage.getItem(CHAT_FONT_MODE_STORAGE_KEY)
+      return stored === 'serif' ? 'serif' : 'sans'
+    } catch {
+      return 'sans'
+    }
+  })
   const openNewChat = useMemo(() => {
     return () => {
       const targetProjectId = activeProjectId ?? projects[0]?.id
       if (targetProjectId) onNewChat(targetProjectId)
     }
   }, [activeProjectId, onNewChat, projects])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(CHAT_DENSITY_MODE_STORAGE_KEY, densityMode)
+    } catch {
+      // Ignore storage failures so layout controls never crash the main workspace.
+    }
+  }, [densityMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(CHAT_FONT_MODE_STORAGE_KEY, fontMode)
+    } catch {
+      // Ignore storage failures so layout controls never crash the main workspace.
+    }
+  }, [fontMode])
 
   return (
     <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
@@ -147,18 +252,26 @@ export function ChatWorkspace({
         </aside>
       </ErrorBoundary>
 
-      <main className="relative z-10 flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent">
+      <main
+        className="relative z-10 flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent transition-[padding-left] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ paddingLeft: isLeftPaneCollapsed ? 0 : leftPaneWidth }}
+      >
         <ErrorBoundary
-          fallback={
+          fallback={(errorMessage) => (
             <div className="flex h-full min-h-0 items-center justify-center px-6">
                 <div className="max-w-md rounded-3xl border border-black/5 bg-white px-6 py-5 text-center shadow-sm">
                 <div className="text-[14px] font-semibold tracking-tight">主内容加载异常</div>
                 <div className="mt-2 text-[12px] leading-5 text-black/45">
                   主工作区发生了运行时错误，但左侧栏仍然保持可用。
                 </div>
+                {errorMessage ? (
+                  <div className="mt-3 rounded-xl border border-black/6 bg-black/[0.03] px-3 py-2 text-left font-mono text-[11px] leading-5 text-black/55">
+                    {errorMessage}
+                  </div>
+                ) : null}
               </div>
             </div>
-          }
+          )}
         >
           <div className="flex min-h-0 flex-1 flex-col">
             <header
@@ -202,6 +315,14 @@ export function ChatWorkspace({
                 >
                   <Play className="h-4 w-4" />
                 </Button>
+                <div className="window-no-drag" data-window-no-drag="true">
+                  <HeaderViewStyleControls
+                    fontMode={fontMode}
+                    densityMode={densityMode}
+                    onFontModeChange={setFontMode}
+                    onDensityModeChange={setDensityMode}
+                  />
+                </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -278,6 +399,9 @@ export function ChatWorkspace({
                       todos={todos}
                       isProjectRailOpen={isRightRailOpen}
                       onProjectRailOpenChange={onRightRailOpenChange}
+                      isLeftPaneCollapsed={isLeftPaneCollapsed}
+                      densityMode={densityMode}
+                      fontMode={fontMode}
                       onPreviewFocusChange={onPreviewFocusChange}
                     />
                   </div>
@@ -316,6 +440,9 @@ export function ChatWorkspace({
                     todos={[]}
                     isProjectRailOpen={isRightRailOpen}
                     onProjectRailOpenChange={onRightRailOpenChange}
+                    isLeftPaneCollapsed={isLeftPaneCollapsed}
+                    densityMode={densityMode}
+                    fontMode={fontMode}
                     onPreviewFocusChange={onPreviewFocusChange}
                   />
                 </div>

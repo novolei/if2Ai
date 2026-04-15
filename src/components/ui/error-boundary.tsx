@@ -3,15 +3,16 @@ import { AlertCircle } from 'lucide-react'
 
 type ErrorBoundaryProps = {
   children: ReactNode
-  fallback?: ReactNode
+  fallback?: ReactNode | ((errorMessage?: string) => ReactNode)
 }
 
 type ErrorBoundaryState = {
   hasError: boolean
+  errorMessage?: string
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { hasError: false }
+  state: ErrorBoundaryState = { hasError: false, errorMessage: undefined }
 
   static getDerivedStateFromError() {
     return { hasError: true }
@@ -19,11 +20,23 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: unknown) {
     console.error('ErrorBoundary caught an error:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    this.setState({ errorMessage })
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.setState({ hasError: false, errorMessage: undefined })
+    }
   }
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback
+      if (this.props.fallback) {
+        return typeof this.props.fallback === 'function'
+          ? this.props.fallback(this.state.errorMessage)
+          : this.props.fallback
+      }
 
       return (
         <div className="flex h-full min-h-0 items-center justify-center p-6">
@@ -35,6 +48,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="mt-2 text-[12px] leading-5 text-black/45">
               这个区域发生了运行时错误，已经被隔离，避免整页白屏或侧栏消失。
             </div>
+            {this.state.errorMessage ? (
+              <div className="mt-3 rounded-xl border border-black/6 bg-black/[0.03] px-3 py-2 text-left font-mono text-[11px] leading-5 text-black/55">
+                {this.state.errorMessage}
+              </div>
+            ) : null}
           </div>
         </div>
       )

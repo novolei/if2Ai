@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   ArrowDown,
+  ArrowUpDown,
   ArrowUpRight,
   Bot,
   ChevronDown,
@@ -23,7 +24,6 @@ import {
   Plus,
   Search,
   Send,
-  SlidersHorizontal,
   Sparkles,
   Square,
   AlertTriangle,
@@ -101,6 +101,9 @@ interface ChatUIProps {
   todos?: TodoItem[]
   isProjectRailOpen?: boolean
   onProjectRailOpenChange?: React.Dispatch<React.SetStateAction<boolean>>
+  isLeftPaneCollapsed?: boolean
+  densityMode?: DensityMode
+  fontMode?: FontMode
   onPreviewFocusChange?: (active: boolean) => void
 }
 
@@ -195,6 +198,9 @@ export function ChatUI({
   todos = [],
   isProjectRailOpen: isProjectRailOpenProp = true,
   onProjectRailOpenChange,
+  isLeftPaneCollapsed = false,
+  densityMode: densityModeProp = 'comfortable',
+  fontMode: fontModeProp = 'sans',
   onPreviewFocusChange,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
@@ -217,21 +223,6 @@ export function ChatUI({
   const [isTodoCollapsed, setIsTodoCollapsed] = React.useState(false)
   const [todoPanelHeight, setTodoPanelHeight] = React.useState(0)
   const [draftInput, setDraftInput] = React.useState(input)
-  const [isViewControlExpanded, setIsViewControlExpanded] = React.useState(false)
-  const viewControlCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [showViewControlOnboarding, setShowViewControlOnboarding] = React.useState(false)
-  const [isViewControlOnboardingEnabled, setIsViewControlOnboardingEnabled] = React.useState(false)
-  const hasHoveredViewControlRef = React.useRef(false)
-  const [densityMode, setDensityMode] = React.useState<DensityMode>(() => {
-    if (typeof window === 'undefined') return 'comfortable'
-    const stored = window.localStorage.getItem(CHAT_DENSITY_MODE_STORAGE_KEY)
-    return stored === 'compact' ? 'compact' : 'comfortable'
-  })
-  const [fontMode, setFontMode] = React.useState<FontMode>(() => {
-    if (typeof window === 'undefined') return 'sans'
-    const stored = window.localStorage.getItem(CHAT_FONT_MODE_STORAGE_KEY)
-    return stored === 'serif' ? 'serif' : 'sans'
-  })
   const [projectRailEntries, setProjectRailEntries] = React.useState<DirectoryEntryPreview[]>([])
   const [projectRailTree, setProjectRailTree] = React.useState<RailTreeMap>({})
   const [projectRailExpandedPaths, setProjectRailExpandedPaths] = React.useState<string[]>([])
@@ -243,6 +234,7 @@ export function ChatUI({
   const projectRailRefreshSeqRef = React.useRef(0)
   const [projectPreviewTabs, setProjectPreviewTabs] = React.useState<FilePreviewPayload[]>([])
   const [activeProjectPreviewPath, setActiveProjectPreviewPath] = React.useState<string | null>(null)
+  const [isProjectPreviewOpen, setIsProjectPreviewOpen] = React.useState(false)
   const [projectPreviewDrafts, setProjectPreviewDrafts] = React.useState<Record<string, string>>({})
   const [projectPreviewSaveStates, setProjectPreviewSaveStates] = React.useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const [projectPreviewDirtyPaths, setProjectPreviewDirtyPaths] = React.useState<string[]>([])
@@ -258,6 +250,8 @@ export function ChatUI({
     return 338
   })
   const isProjectRailOpen = isProjectRailOpenProp
+  const densityMode = densityModeProp
+  const fontMode = fontModeProp
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
     selectedIndex: number
@@ -277,9 +271,6 @@ export function ChatUI({
     return () => {
       if (slashTimerRef.current) {
         clearTimeout(slashTimerRef.current)
-      }
-      if (viewControlCloseTimerRef.current) {
-        clearTimeout(viewControlCloseTimerRef.current)
       }
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
@@ -344,12 +335,23 @@ export function ChatUI({
     setProjectRailTree({})
     setProjectPreviewTabs([])
     setActiveProjectPreviewPath(null)
+    setIsProjectPreviewOpen(false)
     setProjectPreviewDrafts({})
     setProjectPreviewSaveStates({})
     setProjectPreviewDirtyPaths([])
   }, [defaultWorkdir])
 
-  const isPreviewFocusMode = projectPreviewTabs.length > 0
+  const isPreviewFocusMode = isProjectPreviewOpen && projectPreviewTabs.length > 0
+  const chatVisibleRightInset = !isPreviewFocusMode && isProjectRailOpen ? projectRailWidth + 28 : 0
+  const transcriptMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 980 : 1120)
+    : (isProjectRailOpen ? 900 : 1020)
+  const composerMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 940 : 1080)
+    : (isProjectRailOpen ? 860 : 980)
+  const todoMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 820 : 960)
+    : (isProjectRailOpen ? 760 : 860)
 
   React.useEffect(() => {
     onPreviewFocusChange?.(isPreviewFocusMode)
@@ -435,12 +437,6 @@ export function ChatUI({
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [railRootPath, isProjectRailOpen, refreshDirectoryPreview])
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return
-    const dismissed = window.sessionStorage.getItem('chatViewControlOnboardingDismissedV1') === '1'
-    setIsViewControlOnboardingEnabled(!dismissed)
-  }, [])
 
   React.useEffect(() => {
     const container = transcriptScrollRef.current
@@ -595,36 +591,6 @@ export function ChatUI({
     }
   }, [])
 
-  const openViewControls = React.useCallback(() => {
-    if (viewControlCloseTimerRef.current) {
-      clearTimeout(viewControlCloseTimerRef.current)
-      viewControlCloseTimerRef.current = null
-    }
-    setIsViewControlExpanded(true)
-    if (!hasHoveredViewControlRef.current && isViewControlOnboardingEnabled) {
-      hasHoveredViewControlRef.current = true
-      setShowViewControlOnboarding(true)
-    }
-  }, [isViewControlOnboardingEnabled])
-
-  const scheduleCloseViewControls = React.useCallback(() => {
-    if (viewControlCloseTimerRef.current) {
-      clearTimeout(viewControlCloseTimerRef.current)
-    }
-    viewControlCloseTimerRef.current = setTimeout(() => {
-      setIsViewControlExpanded(false)
-      viewControlCloseTimerRef.current = null
-    }, 140)
-  }, [])
-
-  const dismissViewControlOnboarding = React.useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem('chatViewControlOnboardingDismissedV1', '1')
-    }
-    setIsViewControlOnboardingEnabled(false)
-    setShowViewControlOnboarding(false)
-  }, [])
-
   const railEntries = React.useMemo(() => sortRailDirectoryEntries(projectRailEntries, projectRailSort), [projectRailEntries, projectRailSort])
 
   const railTitle = React.useMemo(() => {
@@ -745,6 +711,7 @@ export function ChatUI({
   const openPreviewTab = React.useCallback((preview: FilePreviewPayload) => {
     setProjectPreviewTabs((current) => current.some((item) => item.path === preview.path) ? current.map((item) => item.path === preview.path ? preview : item) : [...current, preview])
     setActiveProjectPreviewPath(preview.path)
+    setIsProjectPreviewOpen(true)
     setProjectPreviewDrafts((current) => current[preview.path] !== undefined ? current : { ...current, [preview.path]: preview.content ?? '' })
     setProjectPreviewSaveStates((current) => ({ ...current, [preview.path]: current[preview.path] ?? 'idle' }))
     setProjectRailPreviewError(null)
@@ -766,10 +733,14 @@ export function ChatUI({
         if (active !== path) return active
         return next.at(-1)?.path ?? null
       })
+      if (next.length === 0) {
+        setIsProjectPreviewOpen(false)
+        onProjectRailOpenChange?.(true)
+      }
       return next
     })
     setProjectPreviewDirtyPaths((current) => current.filter((item) => item !== path))
-  }, [projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
+  }, [onProjectRailOpenChange, projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
 
   const closePreviewPanel = React.useCallback(() => {
     Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
@@ -778,10 +749,9 @@ export function ChatUI({
       const next = projectPreviewDrafts[path] ?? ''
       void savePreviewDraft(path, next)
     })
-    setProjectPreviewTabs([])
-    setActiveProjectPreviewPath(null)
-    setProjectPreviewDirtyPaths([])
-  }, [projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
+    setIsProjectPreviewOpen(false)
+    onProjectRailOpenChange?.(true)
+  }, [onProjectRailOpenChange, projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
 
   const handlePreviewDraftChange = React.useCallback((path: string, value: string) => {
     setProjectPreviewDrafts((current) => ({ ...current, [path]: value }))
@@ -794,123 +764,6 @@ export function ChatUI({
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
       <div className={cn('grid min-h-0 flex-1', isPreviewFocusMode ? 'grid-cols-2' : 'grid-cols-1')}>
         <div className="relative flex min-h-0 flex-col">
-          <div className="pointer-events-none absolute right-6 top-3 z-30 flex items-start gap-2">
-            <div
-              className="pointer-events-auto relative inline-flex items-center"
-              onMouseEnter={openViewControls}
-              onMouseLeave={scheduleCloseViewControls}
-              onFocusCapture={openViewControls}
-              onBlurCapture={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  scheduleCloseViewControls()
-                }
-              }}
-            >
-              <button
-                type="button"
-                title="显示阅读设置"
-                aria-label="显示阅读设置"
-                aria-expanded={isViewControlExpanded}
-                className={cn(
-                  'inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/8 bg-white/86 text-black/60 shadow-[0_2px_6px_rgba(15,23,42,0.06)] backdrop-blur-sm transition-all duration-150',
-                  isViewControlExpanded ? 'text-black/78 shadow-[0_4px_10px_rgba(15,23,42,0.09)]' : 'hover:text-black/75',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15'
-                )}
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </button>
-              <div
-                className={cn(
-                  'ml-1 inline-flex items-center gap-1 overflow-hidden rounded-full border border-black/8 bg-white/82 backdrop-blur-sm transition-all duration-150 ease-out',
-                  isViewControlExpanded
-                    ? 'max-w-[280px] translate-x-0 scale-100 p-0.5 opacity-100'
-                    : 'max-w-0 -translate-x-1 scale-[0.96] p-0 opacity-0'
-                )}
-              >
-                <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
-                  <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">字体</span>
-                  <button
-                    type="button"
-                    aria-label="字体切换为非衬线"
-                    title="非衬线"
-                    onClick={() => setFontMode('sans')}
-                    className={cn(
-                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                      fontMode === 'sans'
-                        ? 'bg-black/9 text-black/82'
-                        : 'text-black/48 hover:text-black/72'
-                    )}
-                  >
-                    <FontSansIcon className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="字体切换为衬线"
-                    title="衬线"
-                    onClick={() => setFontMode('serif')}
-                    className={cn(
-                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                      fontMode === 'serif'
-                        ? 'bg-black/9 text-black/82'
-                        : 'text-black/48 hover:text-black/72'
-                    )}
-                  >
-                    <FontSerifIcon className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="h-4 w-px bg-black/10" />
-                <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
-                  <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">密度</span>
-                  <button
-                    type="button"
-                    aria-label="阅读密度切换为紧凑"
-                    title="紧凑"
-                    onClick={() => setDensityMode('compact')}
-                    className={cn(
-                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                      densityMode === 'compact'
-                        ? 'bg-black/9 text-black/82'
-                        : 'text-black/48 hover:text-black/72'
-                    )}
-                  >
-                    <DensityCompactIcon className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="阅读密度切换为舒适"
-                    title="舒适"
-                    onClick={() => setDensityMode('comfortable')}
-                    className={cn(
-                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                      densityMode === 'comfortable'
-                        ? 'bg-black/9 text-black/82'
-                        : 'text-black/48 hover:text-black/72'
-                    )}
-                  >
-                    <DensityComfortableIcon className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-              {showViewControlOnboarding && (
-                <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
-                  <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
-                  <div className="relative z-10 flex items-center gap-1.5">
-                    <span>阅读设置</span>
-                    <button
-                      type="button"
-                      aria-label="关闭阅读设置提示"
-                      title="关闭提示"
-                      onClick={dismissViewControlOnboarding}
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
           <ChatTranscript
             messages={messages}
             bottomPadding={transcriptBottomPadding}
@@ -925,31 +778,42 @@ export function ChatUI({
             copiedMessageId={copiedMessageId}
             densityMode={densityMode}
             fontMode={fontMode}
+            isLeftPaneCollapsed={isLeftPaneCollapsed}
+            contentRightInset={chatVisibleRightInset}
+            contentMaxWidth={transcriptMaxWidth}
           />
           {!isAtBottom && (
             <div
-              className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-6"
-              style={{ bottom: `${scrollToBottomButtonOffset}px` }}
+              className="pointer-events-none absolute inset-x-0 z-20 px-10 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              style={{ paddingRight: `${40 + chatVisibleRightInset}px`, bottom: `${scrollToBottomButtonOffset}px` }}
             >
-              <button
-                type="button"
-                onClick={() => {
-                  forceAutoScrollRef.current = true
-                  transcriptScrollRef.current?.scrollTo({
-                    top: transcriptScrollRef.current.scrollHeight,
-                    behavior: 'smooth',
-                  })
-                }}
-                className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
-                aria-label="滚动到底部"
+              <div
+                className="mx-auto flex w-full justify-center transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                style={{ maxWidth: `${transcriptMaxWidth}px` }}
               >
-                <ArrowDown className="h-[18px] w-[18px]" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    forceAutoScrollRef.current = true
+                    transcriptScrollRef.current?.scrollTo({
+                      top: transcriptScrollRef.current.scrollHeight,
+                      behavior: 'smooth',
+                    })
+                  }}
+                  className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
+                  aria-label="滚动到底部"
+                >
+                  <ArrowDown className="h-[18px] w-[18px]" />
+                </button>
+              </div>
             </div>
           )}
           {todos.length > 0 && (
-            <div className="relative z-0 shrink-0 px-10">
-              <div className="mx-auto w-full max-w-[700px]">
+            <div
+              className="relative z-0 shrink-0 px-10 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              style={{ paddingRight: `${40 + chatVisibleRightInset}px` }}
+            >
+              <div className="mx-auto w-full transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${todoMaxWidth}px` }}>
                 <TodoPanel
                   ref={todoPanelRef}
                   todos={todos}
@@ -975,6 +839,9 @@ export function ChatUI({
             branchLabel={branchLabel}
             isComposerFocused={isComposerFocused}
             setIsComposerFocused={setIsComposerFocused}
+            isLeftPaneCollapsed={isLeftPaneCollapsed}
+            contentRightInset={chatVisibleRightInset}
+            contentMaxWidth={composerMaxWidth}
             textareaRef={textareaRef}
             handleKeyDown={handleKeyDown}
             setSlashOverlay={setSlashOverlay}
@@ -1164,10 +1031,10 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
   return (
     <aside
       className={cn(
-        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 origin-right transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        open ? 'translate-x-0 opacity-100' : 'translate-x-[calc(100%+20px)] opacity-0'
+        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 overflow-hidden origin-right transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        open ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0'
       )}
-      style={{ width: `${width}px` }}
+      style={{ width: open ? `${width}px` : '0px' }}
       aria-hidden={!open}
     >
       <div
@@ -1178,109 +1045,136 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
           <GripVertical className="h-4 w-4 text-[#cabdac]" />
         </div>
       </div>
-      <div className="pointer-events-auto flex h-full flex-col rounded-[26px] border border-[#ddd7cb] bg-[#f8f5ee]/97 p-2.5 shadow-[0_18px_40px_rgba(92,73,45,0.09)] backdrop-blur-xl">
-        <div className="flex items-start justify-between gap-3 px-2.5 pt-1">
-          <div className="min-w-0">
-            <div className="text-[18px] font-medium tracking-[-0.03em] text-[#b67f63]" style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}>
-              {title}
-            </div>
-            {breadcrumbs.length > 1 ? (
-              <div className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden text-[10px] text-[#bdb2a5]">
-                <button
-                  type="button"
-                  onClick={onNavigateUp}
-                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors hover:bg-[#eee7dc] hover:text-[#8f8070]"
+      <div className="pointer-events-auto flex h-full flex-col justify-start">
+        <div className="h-3 shrink-0" />
+        <div className="min-h-0 flex-1 px-2 pb-2">
+          <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-[#e7ddd0] bg-[#fdfbf7] shadow-[0_16px_36px_rgba(96,75,47,0.06),inset_0_1px_0_rgba(255,255,255,0.92)]">
+            <div className="flex items-start justify-between gap-3 px-4 pt-4">
+              <div className="min-w-0 flex-1 pr-2">
+                <div
+                  className="truncate text-[18px] font-medium tracking-[-0.03em] text-[#bb8363]"
+                  style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}
                 >
-                  <ChevronRight className="h-3 w-3 rotate-180" />
-                  <span>返回上级</span>
-                </button>
-                <div className="flex min-w-0 items-center overflow-hidden">
-                  {breadcrumbs.map((crumb, index) => (
-                    <React.Fragment key={crumb.path}>
-                      {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-[#d3c7b9]" /> : null}
-                      <button
-                        type="button"
-                        onClick={() => onJumpToBreadcrumb(crumb.path)}
-                        className={cn(
-                          'truncate rounded px-1 py-0.5 transition-colors hover:bg-[#eee7dc] hover:text-[#8f8070]',
-                          index === breadcrumbs.length - 1 ? 'font-mono italic text-[#a39382]' : 'text-[#bdb2a5]'
-                        )}
-                      >
-                        {crumb.label}
-                      </button>
-                    </React.Fragment>
-                  ))}
+                  {title}
                 </div>
               </div>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5 rounded-[16px] border border-[#e7ded1] bg-[#fffdfa]/92 p-1 shadow-[0_6px_14px_rgba(104,84,59,0.07)]">
-            <button
-              type="button"
-              onClick={onOpenFolder}
-              className="inline-flex h-8 items-center gap-1.5 rounded-[12px] border border-[#ebe2d6] bg-white/92 px-2.5 text-[11px] font-medium text-[#9f9387] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
-            >
-              <Folder className="h-3.5 w-3.5 stroke-[1.9]" />
-              <span>打开文件夹</span>
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-8 items-center gap-1.5 rounded-[12px] border border-transparent bg-transparent px-2.5 text-[11px] font-medium text-[#a59a8d] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#ebe2d6] hover:bg-white/94"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>项目技能</span>
-            </button>
-          </div>
-        </div>
+              <div className="flex shrink-0 items-center gap-1 pt-0.5">
+                <button
+                  type="button"
+                  onClick={onOpenFolder}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-[11px] border border-[#e6d8c7] bg-[#f7f1e8] px-2.25 text-[10px] font-medium text-[#ad9a88] transition-all duration-200 hover:border-[#d9c8b3] hover:bg-[#f9f4ed] hover:text-[#927b67]"
+                >
+                  <Folder className="h-3.25 w-3.25 stroke-[1.85]" />
+                  <span>打开文件夹</span>
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-[11px] border border-[#e6d8c7] bg-[#f7f1e8] px-2.25 text-[10px] font-medium text-[#ad9a88] transition-all duration-200 hover:border-[#d9c8b3] hover:bg-[#f9f4ed] hover:text-[#927b67]"
+                >
+                  <Sparkles className="h-3.25 w-3.25" />
+                  <span>项目技能 · 2</span>
+                </button>
+              </div>
+            </div>
 
-        <div className="mt-2.5 rounded-[22px] border border-[#e7dfd3] bg-[#fbf9f4]/96 px-3.5 pb-3.5 pt-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-          <div className="flex items-center justify-between px-0.5">
-            <div className="text-[10px] uppercase tracking-[0.24em] text-[#d1c7bb]">{projectLabel}</div>
-            <button
-              type="button"
-              onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
-              className="inline-flex items-center gap-1 rounded-full px-1.5 py-1 text-[10.5px] text-[#b6ab9f] transition-colors duration-150 hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
-            >
-              <Clock3 className="h-3.25 w-3.25" />
-              <span>{sortMode === 'recent' ? '时间' : '名称'}</span>
-            </button>
-          </div>
+            <div className="mt-2 flex items-center justify-between border-b border-[#ece3d7] px-4 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="text-[11px] font-semibold tracking-[-0.01em] text-[#a89a8b]">技能</div>
+                <div className="inline-flex min-w-7 items-center justify-center rounded-full bg-[#efebe4] px-2 py-0.5 text-[10px] text-[#a79a8d]">
+                  {entries.length}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#b7aa9c] transition-colors hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
 
-          <div className="mt-2.5 min-h-0 flex-1 overflow-hidden">
-            {previewError ? (
-              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-5 text-center text-[11.5px] text-[#b6ab9d]">
-                <div>{previewError}</div>
-              </div>
-            ) : isLoading ? (
-              <div className="flex items-center gap-2 px-2 py-3 text-[11.5px] text-[#b4aa9f]">
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                <span>正在整理当前项目文件…</span>
-              </div>
-            ) : entries.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-5 text-center text-[11.5px] text-[#b6ab9d]">
-                当前目录里还没有可显示的文件。
-              </div>
-            ) : (
-              <div className="h-full overflow-y-auto pr-1">
-                <ProjectRailGroup title="项目目录" count={entries.length}>
-                  <div className="space-y-0.5">
-                    {entries.map((entry) => (
-                      <ProjectRailTreeNode
-                        key={entry.path}
-                        entry={entry}
-                        level={0}
-                        selectedPath={currentPath}
-                        childEntries={childEntries}
-                        expandedPaths={expandedPaths}
-                        loadingPaths={loadingPaths}
-                        onOpen={onOpenEntry}
-                        onToggleFolder={onToggleFolder}
-                      />
-                    ))}
+            <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-3">
+              <div className="flex items-center justify-between gap-3 px-0.5">
+                {breadcrumbs.length > 1 ? (
+                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden rounded-[10px] bg-[#f7f1e8] px-2.5 py-1 text-[10.5px] text-[#bf9a82]">
+                    <>
+                      <button
+                        type="button"
+                        onClick={onNavigateUp}
+                        className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[#d2b5a0] transition-colors hover:bg-[#efe6da] hover:text-[#a88469]"
+                      >
+                        <ChevronRight className="h-3 w-3 rotate-180" />
+                      </button>
+                      <div className="flex min-w-0 items-center overflow-hidden">
+                        {breadcrumbs.map((crumb, index) => (
+                          <React.Fragment key={crumb.path}>
+                            {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-[#d7c0ae]" /> : null}
+                            <button
+                              type="button"
+                              onClick={() => onJumpToBreadcrumb(crumb.path)}
+                              className={cn(
+                                'min-w-0 shrink truncate rounded px-0.5 py-0.5 transition-colors hover:text-[#9e7558]',
+                                index === breadcrumbs.length - 1 ? 'font-medium text-[#bb8a6b]' : 'text-[#c7a893]'
+                              )}
+                            >
+                              {crumb.label}
+                            </button>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </>
                   </div>
-                </ProjectRailGroup>
+                ) : (
+                  <div className="min-w-0 flex-1" />
+                )}
+                <button
+                  type="button"
+                  onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-1 text-[11px] text-[#b2a598] transition-colors duration-150 hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
+                >
+                  {sortMode === 'recent' ? (
+                    <Clock3 className="h-3.25 w-3.25" />
+                  ) : (
+                    <ArrowUpDown className="h-3.25 w-3.25" />
+                  )}
+                  <span>{sortMode === 'recent' ? '时间' : '名称'}</span>
+                </button>
               </div>
-            )}
+
+              <div className="mt-2 min-h-0 flex-1 overflow-hidden bg-transparent">
+                {previewError ? (
+                  <div className="px-1 py-5 text-center text-[11.5px] text-[#b6ab9d]">
+                    <div>{previewError}</div>
+                  </div>
+                ) : isLoading ? (
+                  <div className="flex items-center gap-2 px-1 py-3 text-[11.5px] text-[#b4aa9f]">
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    <span>正在整理当前项目文件…</span>
+                  </div>
+                ) : entries.length === 0 ? (
+                  <div className="px-1 py-5 text-center text-[11.5px] text-[#b6ab9d]">
+                    当前目录里还没有可显示的文件。
+                  </div>
+                ) : (
+                  <div className="h-full min-h-0 overflow-y-auto px-0 py-0">
+                    <div className="space-y-0 pb-1">
+                      {entries.map((entry) => (
+                        <ProjectRailTreeNode
+                          key={entry.path}
+                          entry={entry}
+                          level={0}
+                          selectedPath={currentPath}
+                          childEntries={childEntries}
+                          expandedPaths={expandedPaths}
+                          loadingPaths={loadingPaths}
+                          onOpen={onOpenEntry}
+                          onToggleFolder={onToggleFolder}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1298,7 +1192,7 @@ function ProjectRailGroup({
   children: React.ReactNode
 }) {
   return (
-    <section className="mb-3">
+    <section className="mb-2">
       <div className="mb-1.5 flex items-center justify-between px-1">
         <div className="text-[10px] uppercase tracking-[0.22em] text-[#c4b8aa]">{title}</div>
         <div className="text-[10px] text-[#d0c5b8]">{count}</div>
@@ -1433,8 +1327,15 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
         role="button"
         tabIndex={0}
         draggable={entry.kind === 'file'}
+        onClick={() => {
+          if (entry.kind === 'folder') {
+            void onOpen(entry)
+          }
+        }}
         onDoubleClick={() => {
-          void onOpen(entry)
+          if (entry.kind === 'file') {
+            void onOpen(entry)
+          }
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -1449,48 +1350,39 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
           event.dataTransfer.effectAllowed = 'copy'
         }}
         className={cn(
-          'group flex w-full items-center gap-1.5 rounded-[12px] px-2 py-1.5 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f3eee6]',
-          isSelected && 'bg-[#f0ebe3] shadow-[inset_0_0_0_1px_rgba(219,208,194,0.7)]',
+          'group flex w-full cursor-pointer items-center gap-2 rounded-[11px] px-0.5 py-1 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f6f1e9]',
+          isSelected && 'bg-[#f4efe7]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#dfd0bb]'
         )}
-        style={{ paddingLeft: `${8 + level * 14}px` }}
+        style={{ paddingLeft: `${2 + level * 12}px` }}
       >
         <div className="flex h-4 w-4 shrink-0 items-center justify-center text-[#ccbba8]">
           {isFolder ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                onToggleFolder(entry)
-              }}
-              className="inline-flex h-4 w-4 items-center justify-center rounded text-[#ccbba8] transition-colors hover:bg-[#eee7dc] hover:text-[#a08f7d]"
-            >
+            <span className="inline-flex h-4 w-4 items-center justify-center text-[#ccbba8]">
               <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
-            </button>
+            </span>
           ) : (
             <span className="h-3.5 w-3.5" />
           )}
         </div>
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[9px] text-[#bf866a] transition-transform duration-150 group-hover:-translate-y-0.5">
-          <Icon className="h-4 w-4 stroke-[1.85]" />
+        <div className="flex h-5 w-5 shrink-0 items-center justify-center text-[#c88766] transition-transform duration-150 group-hover:-translate-y-0.5">
+          <Icon className="h-[15px] w-[15px] stroke-[1.65]" />
         </div>
-        <div className="min-w-0 flex-1 truncate text-[12px] font-medium tracking-[-0.01em]">
+        <div className="min-w-0 flex-1 truncate text-[12px] font-[380] tracking-[-0.01em] text-[#46413b] [font-feature-settings:'ss01'_1,'cv01'_1]">
           {entry.name}
         </div>
         {isLoading ? (
           <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#c5b9aa]" />
         ) : isFolder ? (
-          <div className="text-[9.5px] uppercase tracking-[0.16em] text-[#d0c5b8]">{children.length > 0 ? children.length : ''}</div>
+          <div className="text-[9.5px] uppercase tracking-[0.16em] text-[#d0c5b8]">{children.length > 0 ? '' : ''}</div>
         ) : (
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
         )}
       </div>
 
       {isFolder && isExpanded ? (
-        <div className="relative">
-          <div className="absolute bottom-1 left-[17px] top-0 w-px bg-[#eee4d8]" style={{ left: `${20 + level * 14}px` }} />
-          <div className="space-y-0.5 pt-0.5">
+        <div>
+          <div className="space-y-0 pt-0.5">
             {children.length > 0 ? (
               children.map((child) => (
                 <ProjectRailTreeNode
@@ -1506,7 +1398,7 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
                 />
               ))
             ) : !isLoading ? (
-              <div className="px-2 py-1.5 text-[10px] italic text-[#c3b6a8]" style={{ paddingLeft: `${28 + level * 14}px` }}>
+              <div className="px-2 py-1 text-[10px] italic text-[#c3b6a8]" style={{ paddingLeft: `${16 + level * 12}px` }}>
                 这个文件夹目前是空的
               </div>
             ) : null}
@@ -1555,6 +1447,9 @@ const ChatTranscript = React.memo(function ChatTranscript({
   copiedMessageId,
   densityMode,
   fontMode,
+  isLeftPaneCollapsed,
+  contentRightInset,
+  contentMaxWidth,
 }: {
   messages: Message[]
   bottomPadding: number
@@ -1569,6 +1464,9 @@ const ChatTranscript = React.memo(function ChatTranscript({
   copiedMessageId: string | null
   densityMode: DensityMode
   fontMode: FontMode
+  isLeftPaneCollapsed: boolean
+  contentRightInset: number
+  contentMaxWidth: number
 }) {
   const primaryThinkingMessageIds = React.useMemo(() => {
     const primaryIds = new Set<string>()
@@ -1595,12 +1493,12 @@ const ChatTranscript = React.memo(function ChatTranscript({
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none"
-      style={{ overscrollBehaviorX: 'none' }}
+      className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none"
+      style={{ overscrollBehaviorX: 'none', paddingRight: `${contentRightInset}px` }}
     >
       <div
-        className="mx-auto flex w-full max-w-[920px] flex-col gap-4 px-10 pt-6"
-        style={{ paddingBottom: `${bottomPadding}px` }}
+        className="mx-auto flex w-full flex-col gap-4 px-10 pt-6 transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ paddingBottom: `${bottomPadding}px`, maxWidth: `${contentMaxWidth}px` }}
       >
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
@@ -1634,6 +1532,9 @@ const ChatTranscript = React.memo(function ChatTranscript({
   prev.copiedMessageId === next.copiedMessageId &&
   prev.densityMode === next.densityMode &&
   prev.fontMode === next.fontMode &&
+  prev.isLeftPaneCollapsed === next.isLeftPaneCollapsed &&
+  prev.contentRightInset === next.contentRightInset &&
+  prev.contentMaxWidth === next.contentMaxWidth &&
   prev.onCopyMessage === next.onCopyMessage &&
   prev.onResumeFromCursor === next.onResumeFromCursor
 )
@@ -1653,6 +1554,9 @@ const ComposerDock = React.memo(function ComposerDock({
   branchLabel,
   isComposerFocused,
   setIsComposerFocused,
+  isLeftPaneCollapsed,
+  contentRightInset,
+  contentMaxWidth,
   textareaRef,
   handleKeyDown,
   setSlashOverlay,
@@ -1673,6 +1577,9 @@ const ComposerDock = React.memo(function ComposerDock({
   branchLabel: string
   isComposerFocused: boolean
   setIsComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
+  isLeftPaneCollapsed: boolean
+  contentRightInset: number
+  contentMaxWidth: number
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   setSlashOverlay: React.Dispatch<
@@ -1727,8 +1634,11 @@ const ComposerDock = React.memo(function ComposerDock({
     }
   }
   return (
-    <div className="relative z-10 shrink-0 px-10 pb-2.5 pt-0">
-      <div className="mx-auto flex w-full max-w-[900px] flex-col">
+    <div
+      className="relative z-10 shrink-0 px-10 pb-2.5 pt-0 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+      style={{ paddingRight: `${40 + contentRightInset}px` }}
+    >
+      <div className="mx-auto flex w-full flex-col transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${contentMaxWidth}px` }}>
         <div
           className={cn(
             'rounded-[20px] border border-black/5 bg-white/42 px-4 py-2 backdrop-blur-xl transition-[box-shadow,border-color,transform,background-color,opacity] duration-300 ease-out',
