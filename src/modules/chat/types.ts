@@ -77,6 +77,9 @@ export interface ChatWorkspaceProps {
   permissionMode: PermissionMode
   onPermissionModeChange: Dispatch<SetStateAction<PermissionMode>>
   todos: TodoItem[]
+  isRightRailOpen: boolean
+  onToggleRightRail: () => void
+  onRightRailOpenChange: Dispatch<SetStateAction<boolean>>
   leftPaneWidth: number
   isLeftPaneCollapsed: boolean
   onResizeStart: (event: React.PointerEvent<HTMLDivElement>) => void

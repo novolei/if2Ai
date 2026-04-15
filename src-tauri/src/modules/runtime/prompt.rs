@@ -212,8 +212,8 @@ pub(crate) fn collect_skill_index_entries(
 ///
 /// Returns `None` when no skills are installed, so the section is omitted entirely.
 ///
-/// The section instructs the model to scan the index and call `skill(skill="<name>")`
-/// when a skill matches the current task.
+/// The section instructs the model to scan the index and call
+/// `skill_view(name="<name>")` when a skill matches the current task.
 pub fn build_skills_index(workdir: &Path, available_toolsets: Option<&[String]>) -> Option<String> {
     let mtime_hash = compute_skills_dir_hash(workdir);
 
@@ -271,7 +271,7 @@ pub fn build_skills_index(workdir: &Path, available_toolsets: Option<&[String]>)
         "## Skills (mandatory)\n\
          Before replying, scan the skills below. \
          If one clearly matches your task, load it with \
-         `skill(skill=\"<name>\")` and follow its instructions. \
+         `skill_view(name=\"<name>\")` and follow its instructions. \
          If a skill is outdated or missing steps, patch it immediately with \
          `skill_manage(action=\"patch\")`.\n\
          After completing a complex task (5+ tool calls) or discovering a \

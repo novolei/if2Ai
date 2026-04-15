@@ -18,6 +18,22 @@ use crate::modules::tools::builtin::skill::discover_skill_roots_with_metadata;
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
+/// Maximum SKILL.md content returned by skill_view (characters).
+/// Keep this modest to avoid context blow-up when model redundantly calls
+/// both `skill` and `skill_view`.
+const MAX_SKILL_VIEW_CONTENT_CHARS: usize = 4096;
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    let count = input.chars().count();
+    if count <= max_chars {
+        return input.to_string();
+    }
+    let truncated: String = input.chars().take(max_chars).collect();
+    format!(
+        "{truncated}\n\n[skill_view content truncated: showing first {max_chars} chars of {count}]"
+    )
+}
+
 /// Skill view result returned as JSON.
 #[derive(serde::Serialize)]
 struct SkillViewResult {
@@ -83,7 +99,9 @@ pub fn skill_view_tool_entry() -> ToolEntry {
         toolset: "utility".to_string(),
         description: "View the full content of a skill including metadata, linked files, \
                       required environment variables, and readiness status. \
-                      Use file_path to read a specific supporting file."
+                      Use file_path to read a specific supporting file. \
+                      Prefer `skill` for activation in normal conversations; \
+                      `skill_view` is primarily for inspection/debugging."
             .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -166,7 +184,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
     };
 
     // Read SKILL.md content
-    let content = match std::fs::read_to_string(&skill_md) {
+    let raw_content = match std::fs::read_to_string(&skill_md) {
         Ok(c) => c,
         Err(e) => {
             return SkillViewResult {
@@ -182,20 +200,18 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                 asset_files: Vec::new(),
                 required_env_vars: Vec::new(),
                 readiness: "unknown".to_string(),
-                path: skill_dir
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default(),
+                path: format!("skill://{}", name),
                 error: Some(format!("Failed to read skill: {}", e)),
                 file_content: None,
                 is_binary: None,
             };
         }
     };
+    let content = truncate_chars(&raw_content, MAX_SKILL_VIEW_CONTENT_CHARS);
 
     // Parse frontmatter
     let (description, tags, related_skills, required_env_vars, _frontmatter) =
-        parse_frontmatter(&content);
+        parse_frontmatter(&raw_content);
 
     // Check readiness based on required env vars
     let readiness = check_readiness_from_vars(&required_env_vars);
@@ -218,7 +234,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                     asset_files: Vec::new(),
                     required_env_vars,
                     readiness,
-                    path: dir.display().to_string(),
+                    path: format!("skill://{}", name),
                     error: Some("Path traversal ('..') is not allowed.".to_string()),
                     file_content: None,
                     is_binary: None,
@@ -242,7 +258,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                     asset_files: Vec::new(),
                     required_env_vars,
                     readiness,
-                    path: dir.display().to_string(),
+                    path: format!("skill://{}", name),
                     error: Some("Path escapes skill directory boundary.".to_string()),
                     file_content: None,
                     is_binary: None,
@@ -263,7 +279,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                     asset_files: Vec::new(),
                     required_env_vars,
                     readiness,
-                    path: dir.display().to_string(),
+                    path: format!("skill://{}", name),
                     error: Some(format!("File '{}' not found in skill.", rel_path)),
                     file_content: None,
                     is_binary: None,
@@ -286,7 +302,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                         asset_files: Vec::new(),
                         required_env_vars,
                         readiness,
-                        path: dir.display().to_string(),
+                        path: format!("skill://{}", name),
                         error: None,
                         file_content: Some(file_content),
                         is_binary: Some(false),
@@ -310,7 +326,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
                         asset_files: Vec::new(),
                         required_env_vars,
                         readiness,
-                        path: dir.display().to_string(),
+                        path: format!("skill://{}", name),
                         error: None,
                         file_content: Some(format!(
                             "[Binary file: {}, size: {} bytes]",
@@ -344,10 +360,7 @@ fn view_skill(workdir: &std::path::Path, name: &str, file_path: Option<&str>) ->
         asset_files,
         required_env_vars,
         readiness,
-        path: skill_dir
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
+        path: format!("skill://{}", name),
         error: None,
         file_content: None,
         is_binary: None,

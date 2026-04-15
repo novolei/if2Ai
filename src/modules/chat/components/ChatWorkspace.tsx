@@ -7,7 +7,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   Play,
-  Plus,
   SlidersHorizontal,
   Sparkles,
   SquareTerminal,
@@ -66,6 +65,9 @@ export function ChatWorkspace({
   permissionMode,
   onPermissionModeChange,
   todos,
+  isRightRailOpen,
+  onToggleRightRail,
+  onRightRailOpenChange,
   leftPaneWidth,
   isLeftPaneCollapsed,
   onResizeStart,
@@ -82,14 +84,11 @@ export function ChatWorkspace({
   }, [activeProjectId, onNewChat, projects])
 
   return (
-    <div
-      className="grid h-full min-h-0 min-w-0 overflow-hidden"
-      style={{ gridTemplateColumns: `${isLeftPaneCollapsed ? 0 : leftPaneWidth}px minmax(0, 1fr)` }}
-    >
+    <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
       <ErrorBoundary
         fallback={
           <aside
-            className="relative z-20 flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px]"
+            className="absolute inset-y-0 left-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px]"
             style={{ width: leftPaneWidth }}
           >
             <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
@@ -101,53 +100,54 @@ export function ChatWorkspace({
       >
         <aside
           className={cn(
-            'relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px] transition-[width,opacity,border-color] duration-300',
-            isLeftPaneCollapsed && 'pointer-events-none opacity-0 border-r-transparent'
+            'absolute inset-y-0 left-0 z-20 flex min-h-0 origin-left flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/88 shadow-[18px_0_36px_rgba(15,23,42,0.08)] backdrop-blur-[6px] transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            isLeftPaneCollapsed ? 'pointer-events-none -translate-x-full opacity-0' : 'translate-x-0 opacity-100'
           )}
-          style={{ width: isLeftPaneCollapsed ? 0 : leftPaneWidth }}
+          style={{ width: leftPaneWidth }}
+          aria-hidden={isLeftPaneCollapsed}
         >
-          <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
-            <ErrorBoundary
-              fallback={
-                <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
-                  左侧栏加载异常
-                </div>
-              }
-            >
-              <ProjectRail
-                projects={projects}
-                projectSessions={projectSessions}
-                activeProjectId={activeProjectId}
-                activeSessionId={activeSessionId}
-                onSelectProject={onSelectProject}
-                onSelectSession={onSelectSession}
-                onNewChat={onNewChat}
-                onDeleteProject={onDeleteProject}
-                onRenameProject={onRenameProject}
-                onDeleteSession={onDeleteSession}
-                onTogglePinSession={onTogglePinSession}
-                onOpenInFinder={onOpenInFinder}
-                onCreatePermanentWorktree={onCreatePermanentWorktree}
-                runningSessionIds={runningSessionIds}
-                loading={loading}
-              />
-            </ErrorBoundary>
+          <div className="flex h-full min-h-0 min-w-0 flex-col">
+            <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
+              <ErrorBoundary
+                fallback={
+                  <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
+                    左侧栏加载异常
+                  </div>
+                }
+              >
+                <ProjectRail
+                  projects={projects}
+                  projectSessions={projectSessions}
+                  activeProjectId={activeProjectId}
+                  activeSessionId={activeSessionId}
+                  onSelectProject={onSelectProject}
+                  onSelectSession={onSelectSession}
+                  onNewChat={onNewChat}
+                  onDeleteProject={onDeleteProject}
+                  onRenameProject={onRenameProject}
+                  onDeleteSession={onDeleteSession}
+                  onTogglePinSession={onTogglePinSession}
+                  onOpenInFinder={onOpenInFinder}
+                  onCreatePermanentWorktree={onCreatePermanentWorktree}
+                  runningSessionIds={runningSessionIds}
+                  loading={loading}
+                />
+              </ErrorBoundary>
+            </div>
           </div>
 
-          {!isLeftPaneCollapsed ? (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              onPointerDown={onResizeStart}
-              className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
-              style={{ touchAction: 'none' }}
-            />
-          ) : null}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={onResizeStart}
+            className="absolute right-0 top-0 z-30 h-full w-4 cursor-col-resize touch-none select-none bg-transparent"
+            style={{ touchAction: 'none' }}
+          />
         </aside>
       </ErrorBoundary>
 
-      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-transparent">
+      <main className="relative z-10 flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent">
         <ErrorBoundary
           fallback={
             <div className="flex h-full min-h-0 items-center justify-center px-6">
@@ -169,7 +169,7 @@ export function ChatWorkspace({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(242,236,227,0.92))] hover:text-black/82 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                   data-window-no-drag="true"
                   onClick={onToggleLeftPane}
                 >
@@ -243,24 +243,15 @@ export function ChatWorkspace({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(243,236,226,0.94))] hover:text-black/82 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                   data-window-no-drag="true"
+                  title={isRightRailOpen ? '关闭右侧 Rail' : '打开右侧 Rail'}
+                  aria-label={isRightRailOpen ? '关闭右侧 Rail' : '打开右侧 Rail'}
+                  aria-pressed={isRightRailOpen}
+                  onClick={onToggleRightRail}
                 >
                   <SquareTerminal className="h-4 w-4" />
                 </Button>
-                <div className="h-6 w-px bg-black/10" />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
-                  data-window-no-drag="true"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-                <div className="ml-1 flex items-center gap-2 text-[15px] font-medium">
-                  <span className="text-muted-foreground">—</span>
-                  <span className="text-muted-foreground">—</span>
-                </div>
               </div>
             </header>
 
@@ -285,6 +276,8 @@ export function ChatWorkspace({
                       permissionMode={permissionMode}
                       onPermissionModeChange={onPermissionModeChange}
                       todos={todos}
+                      isProjectRailOpen={isRightRailOpen}
+                      onProjectRailOpenChange={onRightRailOpenChange}
                       onPreviewFocusChange={onPreviewFocusChange}
                     />
                   </div>
@@ -321,6 +314,8 @@ export function ChatWorkspace({
                     permissionMode={permissionMode}
                     onPermissionModeChange={onPermissionModeChange}
                     todos={[]}
+                    isProjectRailOpen={isRightRailOpen}
+                    onProjectRailOpenChange={onRightRailOpenChange}
                     onPreviewFocusChange={onPreviewFocusChange}
                   />
                 </div>

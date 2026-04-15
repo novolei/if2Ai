@@ -593,6 +593,18 @@ export async function executeSlashCommand(input: string, sessionId: string): Pro
   return invoke<string>('execute_slash_command', { input, sessionId });
 }
 
+/**
+ * Resolve a `/skill-name [instruction]` slash input into a full skill invocation
+ * message (containing the SKILL.md content) that can be sent directly to the agent.
+ * Returns null if the input does not match any installed skill.
+ */
+export async function resolveSkillSlash(
+  input: string,
+  cwd?: string
+): Promise<string | null> {
+  return invoke<string | null>('resolve_skill_slash', { input, cwd: cwd ?? null })
+}
+
 export interface SkillInfo {
   name: string
   description: string
@@ -807,4 +819,61 @@ export async function installSkillFromDistribution(
     throw new Error(writeManifest.error ?? 'write skill.json failed')
   }
   return `downloaded to quarantine: ${basePath}`
+}
+
+// ─── Web Search Configuration ──────────────────────────────────────────────
+
+/** A configured web search provider entry returned by the backend. */
+export interface WebSearchProviderEntry {
+  id: string
+  name: string
+  /** Redacted key preview shown in the UI, e.g. "tvly-abc…xyz". */
+  key_preview: string | null
+  base_url: string | null
+  enabled: boolean
+}
+
+/** Return all configured providers (keys are redacted). */
+export async function getWebSearchConfig(): Promise<WebSearchProviderEntry[]> {
+  return invoke<WebSearchProviderEntry[]>('get_web_search_config')
+}
+
+/** Add or update a provider.  `api_key` and `base_url` are optional. */
+export async function upsertWebSearchProvider(
+  id: string,
+  name: string,
+  apiKey?: string,
+  baseUrl?: string,
+  enabled?: boolean
+): Promise<WebSearchProviderEntry[]> {
+  return invoke<WebSearchProviderEntry[]>('upsert_web_search_provider', {
+    provider: { id, name, api_key: apiKey ?? null, base_url: baseUrl ?? null, enabled: enabled ?? true },
+  })
+}
+
+/** Remove a provider by id. */
+export async function removeWebSearchProvider(id: string): Promise<WebSearchProviderEntry[]> {
+  return invoke<WebSearchProviderEntry[]>('remove_web_search_provider', { id })
+}
+
+/** Reorder providers by supplying the new ordered list of ids. */
+export async function reorderWebSearchProviders(
+  orderedIds: string[]
+): Promise<WebSearchProviderEntry[]> {
+  return invoke<WebSearchProviderEntry[]>('reorder_web_search_providers', {
+    orderedIds,
+  })
+}
+
+/** Validate an API key / base URL for the given provider. Returns a success message or throws. */
+export async function validateWebSearchKey(
+  providerId: string,
+  apiKey?: string,
+  baseUrl?: string
+): Promise<string> {
+  return invoke<string>('validate_web_search_key', {
+    providerId,
+    apiKey: apiKey ?? null,
+    baseUrl: baseUrl ?? null,
+  })
 }

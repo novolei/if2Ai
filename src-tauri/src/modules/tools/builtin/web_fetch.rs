@@ -12,9 +12,15 @@ use url::{Host, Url};
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
-/// Maximum content length: 50KB
-#[allow(dead_code)]
-const MAX_CONTENT_LENGTH: usize = 50 * 1024;
+/// Maximum text content returned to the LLM (**bytes** after HTML stripping).
+/// Using a byte limit (not char limit) prevents the off-by-one where 50 000
+/// Unicode chars can exceed the same value interpreted as bytes by the registry.
+const MAX_CONTENT_BYTES: usize = 48 * 1024; // 49 152 bytes — safely < broker limit
+
+/// Maximum raw HTML bytes we read from the network before aborting.
+/// HTML can be 5–10× the final text size; 2MB is a generous ceiling that still
+/// protects against fetching huge binary files or endless streams.
+const MAX_RAW_BYTES: usize = 2 * 1024 * 1024;
 
 /// Default timeout for web requests
 #[allow(dead_code)]
@@ -33,6 +39,23 @@ const BLOCKED_HOSTS: &[&str] = &[
     "169.254.169.253",          // Azure DNS
     "100.100.100.200",          // Alibaba Cloud metadata
 ];
+
+/// Truncate a UTF-8 string to at most `max_bytes` bytes without splitting a
+/// multi-byte character boundary.
+fn truncate_to_bytes(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_owned();
+    }
+    // Walk char boundaries until we exceed max_bytes.
+    let mut byte_end = 0;
+    for (idx, _) in s.char_indices() {
+        if idx > max_bytes {
+            break;
+        }
+        byte_end = idx;
+    }
+    s[..byte_end].to_owned()
+}
 
 /// Check if a URL attempts to access cloud metadata endpoints (SSRF protection).
 fn check_ssrf(url: &Url) -> Option<String> {
@@ -119,7 +142,7 @@ pub fn entry() -> ToolEntry {
                 .get("max_length")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
-                .unwrap_or(MAX_CONTENT_LENGTH);
+                .unwrap_or(MAX_CONTENT_BYTES);
 
             // Validate URL
             let url = Url::parse(&url_str)
@@ -144,18 +167,31 @@ pub fn entry() -> ToolEntry {
                 .await
                 .map_err(|e| ToolError::Handler(format!("failed to fetch URL: {}", e)))?;
 
-            let content_length = response.content_length().unwrap_or(0);
-            if content_length > (max_length * 2) as u64 {
+            // Only abort early for truly unreasonable sizes (binary files, etc.).
+            // Normal HTML pages can be 200–500KB but strip down to 20–50KB of
+            // text.  Checking Content-Length here and rejecting anything > 100KB
+            // was too aggressive — removed in favour of a streaming byte limit.
+            let declared_len = response.content_length().unwrap_or(0);
+            if declared_len > MAX_RAW_BYTES as u64 {
                 return Err(ToolError::Handler(format!(
-                    "content length {} exceeds limit",
-                    content_length
+                    "response too large ({} bytes); use a more specific URL or selector",
+                    declared_len
                 )));
             }
 
-            let html = response
-                .text()
+            // Read the body (capped later at MAX_RAW_BYTES by truncation).
+            // We read all bytes first because reqwest 0.11 doesn't expose
+            // a simple incremental read without the `stream` feature.
+            let raw_bytes = response
+                .bytes()
                 .await
-                .map_err(|e| ToolError::Handler(format!("failed to read response: {}", e)))?;
+                .map_err(|e| ToolError::Handler(format!("failed to read response body: {}", e)))?;
+            let capped = if raw_bytes.len() > MAX_RAW_BYTES {
+                &raw_bytes[..MAX_RAW_BYTES]
+            } else {
+                &raw_bytes[..]
+            };
+            let html = String::from_utf8_lossy(capped).into_owned();
 
             let result = if let Some(sel) = selector {
                 // Convert simple CSS selector to regex pattern
@@ -196,14 +232,17 @@ pub fn entry() -> ToolEntry {
                 }
                 results.join("\n")
             } else {
-                // Return plain text (strip HTML tags) up to max_length
+                // Return plain text (strip HTML tags) up to max_length bytes.
+                // We truncate by UTF-8 byte count (not char count) so the result
+                // always fits within the broker's max_result_size byte limit even
+                // for pages with multibyte characters (CJK, emoji, etc.).
                 // SAFETY: This regex pattern is a static string literal that is always valid.
                 // Regex::new() can only fail with an invalid pattern, which cannot happen here.
                 #[allow(clippy::expect_used)]
                 let tag_re = Regex::new(r"<[^>]+>").expect("regex pattern is valid static string");
                 let text = tag_re.replace_all(&html, " ");
                 let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                normalized.chars().take(max_length).collect()
+                truncate_to_bytes(&normalized, max_length)
             };
 
             Ok(result)
@@ -232,7 +271,7 @@ pub fn entry() -> ToolEntry {
             },
             "required": ["url"]
         }),
-        max_result_size: Some(50 * 1024),
+        max_result_size: Some(64 * 1024),
         timeout_secs: Some(30),
         disabled: false,
         handler,

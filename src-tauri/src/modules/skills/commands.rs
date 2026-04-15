@@ -355,10 +355,22 @@ impl SkillCommands {
             .get(cmd_key)
             .ok_or_else(|| CommandError::NotFound(cmd_key.to_string()))?;
 
-        let activation_note = format!(
-            "[SYSTEM: The user has invoked skill '{}' with instruction: {}]",
-            info.name, user_instruction
-        );
+        // Use a natural framing that does not resemble prompt-injection patterns.
+        // "[SYSTEM: ...]" triggers injection-detection heuristics in Claude/GPT
+        // and causes the model to refuse the skill.
+        let activation_note = if user_instruction.is_empty() {
+            format!(
+                "The user wants to use the '{}' skill. \
+                 Please follow the skill instructions below and respond accordingly.",
+                info.name
+            )
+        } else {
+            format!(
+                "The user wants to use the '{}' skill with the following request: {}\n\n\
+                 Please follow the skill instructions below and respond accordingly.",
+                info.name, user_instruction
+            )
+        };
 
         let skill_content = fs::read_to_string(&info.skill_md_path)
             .map_err(|e| CommandError::ReadError(e.to_string()))?;
@@ -685,7 +697,8 @@ mod tests {
     #[test]
     fn test_skill_invocation_builder() {
         let builder = SkillInvocationBuilder::new(
-            "[SYSTEM: invoked]".to_string(),
+            "The user wants to use a skill. Please follow the skill instructions below."
+                .to_string(),
             "# My Skill\n\nThis is the content.".to_string(),
         )
         .with_supporting_file("config.json")
@@ -693,7 +706,7 @@ mod tests {
         .with_config(Some("key: value".to_string()));
 
         let message = builder.build();
-        assert!(message.contains("[SYSTEM: invoked]"));
+        assert!(message.contains("The user wants to use a skill"));
         assert!(message.contains("# My Skill"));
         assert!(message.contains("config.json"));
         assert!(message.contains("Setup step 1"));

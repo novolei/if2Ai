@@ -61,6 +61,7 @@ pub mod skills_hub;
 pub mod slash;
 pub mod stream_outcome;
 pub mod tools;
+pub mod web_search;
 pub mod window;
 
 #[allow(unused_imports)]
@@ -93,6 +94,11 @@ pub use slash::{
 pub use tools::{
     execute_tool, fetch_skills_market_audits, get_tool_definitions, list_tools, list_toolsets,
     ToolCallResult, ToolDefinition,
+};
+#[allow(unused_imports)]
+pub use web_search::{
+    get_web_search_config, remove_web_search_provider, reorder_web_search_providers,
+    upsert_web_search_provider, validate_web_search_key, ProviderEntry,
 };
 #[allow(unused_imports)]
 pub use window::{

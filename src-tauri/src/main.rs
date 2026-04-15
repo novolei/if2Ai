@@ -11,14 +11,16 @@ use commands::{
     close_settings_window, create_permanent_worktree, create_project, create_session,
     delete_project, delete_session, execute_slash_command, execute_tool,
     fetch_skills_market_audits, focus_main_window_and_prefill_prompt, get_project, get_session,
-    get_tool_definitions, hub_audit, hub_browse, hub_check, hub_inspect, hub_install, hub_publish,
-    hub_search, hub_snapshot_export, hub_snapshot_import, hub_tap_add, hub_tap_list,
-    hub_tap_remove, hub_uninstall, hub_update, list_agents, list_directory_preview,
+    get_tool_definitions, get_web_search_config, hub_audit, hub_browse, hub_check, hub_inspect,
+    hub_install, hub_publish, hub_search, hub_snapshot_export, hub_snapshot_import, hub_tap_add,
+    hub_tap_list, hub_tap_remove, hub_uninstall, hub_update, list_agents, list_directory_preview,
     list_project_sessions, list_projects, list_sessions, list_skills, list_slash_commands,
     list_tools, list_toolsets, open_directory_path, open_project_in_finder, open_settings_window,
-    parse_slash_command, read_file_preview, rename_project, rename_session, resolve_skill_slash,
-    respond_permission, run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
-    suggest_slash_commands, write_file_contents,
+    parse_slash_command, read_file_preview, remove_web_search_provider, rename_project,
+    rename_session, reorder_web_search_providers, resolve_skill_slash, respond_permission,
+    run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
+    suggest_slash_commands, upsert_web_search_provider, validate_web_search_key,
+    write_file_contents,
 };
 
 use tauri::{
@@ -151,6 +153,12 @@ fn main() {
             hub_tap_add,
             hub_tap_remove,
             hub_tap_list,
+            // Web search configuration
+            get_web_search_config,
+            upsert_web_search_provider,
+            remove_web_search_provider,
+            reorder_web_search_providers,
+            validate_web_search_key,
         ])
         .setup(|app| {
             let bundled_skills_dir = ["resources/bundled-skills", "bundled-skills"]

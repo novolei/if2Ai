@@ -22,6 +22,7 @@ import {
   invoke,
   executeSlashCommand,
   suggestSlashCommands,
+  resolveSkillSlash,
   type PermissionRequestPayload,
   type PermissionMode,
   type Project,
@@ -86,6 +87,7 @@ function App() {
   const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
+  const [isRightRailOpen, setIsRightRailOpen] = useState(true)
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === 'undefined') return 'dangerFullAccess'
     const stored = localStorage.getItem('permissionMode')
@@ -120,6 +122,7 @@ function App() {
   const autoResumeAttemptsRef = useRef<Record<string, number>>({})
   const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set())
   const leftPaneCollapsedBeforePreviewRef = useRef(false)
+  const wasPreviewFocusModeRef = useRef(false)
   const resizeRef = useRef<{
     startX: number
     startWidth: number
@@ -1083,11 +1086,165 @@ function App() {
       })
     }
 
-    // Detect slash commands - handle them directly without going to the agent
+    // Detect slash commands
     if (messageText.startsWith('/')) {
       const cmdPrefix = messageText.split(/\s+/)[0]
       const suggestions = await suggestSlashCommands(cmdPrefix, 1)
       if (suggestions.length > 0) {
+        // Check if this is a skill-based slash command: resolve the invocation
+        // message (contains full SKILL.md) and send it to the agent for LLM
+        // processing.  Builtin commands (/help, /clear, /skills, /agents) always
+        // start with a known prefix that does NOT resolve via resolveSkillSlash,
+        // so they fall through to executeSlashCommand as before.
+        const cwd = currentProject?.workdir
+        const skillInvocation = await resolveSkillSlash(messageText, cwd)
+        if (skillInvocation) {
+          // Skill slash: route through the agent so the LLM activates the skill
+          // via the skill() tool and then responds according to its instructions.
+          try {
+            createAssistantMessage()
+            const streamId = await startAgentStream(sessionId, skillInvocation, permissionMode)
+            setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: streamId }))
+            const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
+              if (payload.event_type === 'text_delta' && payload.text) {
+                ensureAssistantMessage()
+                if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
+                  setConversations((prev) => {
+                    const currentConv = prev[sessionId]
+                    if (!currentConv) return prev
+                    return {
+                      ...prev,
+                      [sessionId]: {
+                        ...currentConv,
+                        messages: currentConv.messages.map((msg) =>
+                          msg.id === assistantMsgId ? { ...msg, statusLabel: undefined, statusKind: undefined } : msg
+                        ),
+                      },
+                    }
+                  })
+                }
+                accumulatedText += payload.text
+                hasPendingTextDelta = true
+                scheduleAssistantFlush()
+              } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
+                ensureAssistantMessage()
+                accumulatedThinking += payload.thinking
+                hasPendingThinkingDelta = true
+                scheduleAssistantFlush()
+              } else if (payload.event_type === 'tool_call_update') {
+                cancelScheduledAssistantFlush()
+                flushAssistantDeltas()
+                const toolCallId = payload.tool_call_id
+                if (toolCallId) {
+                  const nextStatus = payload.tool_status ?? 'running'
+                  if (!seenToolCallIds.has(toolCallId)) {
+                    seenToolCallIds.add(toolCallId)
+                    finalizeCurrentAssistantSegment()
+                  }
+                  setConversations((prev) => {
+                    const currentConv = prev[sessionId]
+                    if (!currentConv) return prev
+                    const existingIndex = currentConv.messages.findIndex(
+                      (msg) => msg.role === 'tool' && msg.toolCallId === toolCallId
+                    )
+                    const existingMessage = existingIndex >= 0 ? currentConv.messages[existingIndex] : undefined
+                    const updatedToolMessage: Message = {
+                      id: existingMessage?.id ?? `tool-${toolCallId}-${Date.now()}`,
+                      role: 'tool',
+                      content: nextStatus === 'queued' || nextStatus === 'running'
+                        ? existingMessage?.content ?? ''
+                        : (payload.tool_result || existingMessage?.content || ''),
+                      timestamp: existingMessage?.timestamp ?? new Date(),
+                      toolCallId,
+                      streamId: payload.stream_id ?? existingMessage?.streamId,
+                      toolName: payload.tool_name ?? existingMessage?.toolName ?? 'unknown',
+                      toolArgs: payload.tool_args ?? existingMessage?.toolArgs,
+                      toolDurationMs: payload.tool_duration_ms ?? existingMessage?.toolDurationMs,
+                      isError: nextStatus === 'error' || existingMessage?.isError,
+                      toolStatus: nextStatus,
+                      effectiveWorkdir: payload.effective_workdir ?? existingMessage?.effectiveWorkdir,
+                      policyDecision: payload.policy_decision ?? existingMessage?.policyDecision,
+                      evidenceId: payload.evidence_id ?? existingMessage?.evidenceId,
+                      requestId: payload.request_id ?? existingMessage?.requestId,
+                      taskOutcome: payload.task_outcome ?? existingMessage?.taskOutcome,
+                      degradedReason: payload.degraded_reason ?? existingMessage?.degradedReason,
+                      resumeAvailable: payload.resume_available ?? existingMessage?.resumeAvailable,
+                      resumeCursor: payload.resume_cursor ?? existingMessage?.resumeCursor,
+                      disableAnimation: true,
+                    }
+                    const nextMessages =
+                      existingIndex >= 0
+                        ? currentConv.messages.map((msg, index) => (index === existingIndex ? updatedToolMessage : msg))
+                        : [...currentConv.messages, updatedToolMessage]
+                    return {
+                      ...prev,
+                      [sessionId]: { ...currentConv, messages: nextMessages },
+                    }
+                  })
+                  if (payload.tool_name === 'TodoWrite' && payload.tool_result) {
+                    const nextTodos = extractTodosFromToolResult(payload.tool_result)
+                    if (nextTodos) {
+                      setSessionTodos((prev) => ({ ...prev, [sessionId]: nextTodos }))
+                    }
+                  }
+                }
+              } else if (payload.event_type === 'stream_complete') {
+                cancelScheduledAssistantFlush()
+                flushAssistantDeltas()
+                setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+                setStreamAbortHandles((prev) => {
+                  const { [sessionId]: _removed, ...rest } = prev
+                  return rest
+                })
+                void refreshProjectSessions(conv.projectId).catch(() => {})
+                if (assistantMsgId) {
+                  setConversations((prev) => {
+                    const currentConv = prev[sessionId]
+                    if (!currentConv) return prev
+                    return {
+                      ...prev,
+                      [sessionId]: {
+                        ...currentConv,
+                        messages: currentConv.messages.map((msg) => {
+                          if (msg.id === assistantMsgId) {
+                            return {
+                              ...msg,
+                              isStreaming: false,
+                              thinkingTime: Date.now() - startTime,
+                              taskOutcome: payload.task_outcome ?? msg.taskOutcome ?? 'completed',
+                              degradedReason: payload.degraded_reason ?? msg.degradedReason,
+                              resumeAvailable: payload.resume_available ?? msg.resumeAvailable ?? false,
+                              resumeCursor: payload.resume_cursor ?? msg.resumeCursor,
+                            }
+                          }
+                          if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
+                            return { ...msg, toolStatus: 'error', isError: true }
+                          }
+                          return msg
+                        }),
+                      },
+                    }
+                  })
+                }
+                unlisten()
+              } else if (payload.event_type === 'stream_error') {
+                cancelScheduledAssistantFlush()
+                flushAssistantDeltas()
+                unlisten()
+                setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+                setStreamAbortHandles((prev) => {
+                  const { [sessionId]: _removed, ...rest } = prev
+                  return rest
+                })
+              }
+            })
+          } catch (err) {
+            setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
+          }
+          return
+        }
+
+        // Builtin slash command: execute and display result as a static message
         setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
         try {
           const result = await executeSlashCommand(messageText, sessionId)
@@ -1592,15 +1749,17 @@ function App() {
 
   const handlePreviewFocusChange = (active: boolean) => {
     if (active) {
+      wasPreviewFocusModeRef.current = true
       leftPaneCollapsedBeforePreviewRef.current = isLeftPaneCollapsed
       if (!isLeftPaneCollapsed) {
         setIsLeftPaneCollapsed(true)
       }
       return
     }
-    if (!leftPaneCollapsedBeforePreviewRef.current) {
+    if (wasPreviewFocusModeRef.current && !leftPaneCollapsedBeforePreviewRef.current) {
       setIsLeftPaneCollapsed(false)
     }
+    wasPreviewFocusModeRef.current = false
   }
 
   const startWindowDrag = async (event: ReactMouseEvent<HTMLElement>) => {
@@ -1665,6 +1824,9 @@ function App() {
               permissionMode={permissionMode}
               onPermissionModeChange={setPermissionMode}
               todos={todos}
+              isRightRailOpen={isRightRailOpen}
+              onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
+              onRightRailOpenChange={setIsRightRailOpen}
               leftPaneWidth={leftPaneWidth}
               isLeftPaneCollapsed={isLeftPaneCollapsed}
               onResizeStart={startResize}

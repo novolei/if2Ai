@@ -99,6 +99,8 @@ interface ChatUIProps {
   permissionMode?: PermissionMode
   onPermissionModeChange?: React.Dispatch<React.SetStateAction<PermissionMode>>
   todos?: TodoItem[]
+  isProjectRailOpen?: boolean
+  onProjectRailOpenChange?: React.Dispatch<React.SetStateAction<boolean>>
   onPreviewFocusChange?: (active: boolean) => void
 }
 
@@ -174,15 +176,6 @@ function DensityComfortableIcon({ className }: { className?: string }) {
   )
 }
 
-function RailToggleIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <rect x="2" y="2.25" width="12" height="11.5" rx="2.25" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 2.75v10.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 export function ChatUI({
   messages,
   input,
@@ -200,6 +193,8 @@ export function ChatUI({
   permissionMode: permissionModeProp = 'dangerFullAccess',
   onPermissionModeChange: onPermissionModeChangeProp,
   todos = [],
+  isProjectRailOpen: isProjectRailOpenProp = true,
+  onProjectRailOpenChange,
   onPreviewFocusChange,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
@@ -237,7 +232,6 @@ export function ChatUI({
     const stored = window.localStorage.getItem(CHAT_FONT_MODE_STORAGE_KEY)
     return stored === 'serif' ? 'serif' : 'sans'
   })
-  const [isProjectRailOpen, setIsProjectRailOpen] = React.useState(true)
   const [projectRailEntries, setProjectRailEntries] = React.useState<DirectoryEntryPreview[]>([])
   const [projectRailTree, setProjectRailTree] = React.useState<RailTreeMap>({})
   const [projectRailExpandedPaths, setProjectRailExpandedPaths] = React.useState<string[]>([])
@@ -254,6 +248,7 @@ export function ChatUI({
   const [projectPreviewDirtyPaths, setProjectPreviewDirtyPaths] = React.useState<string[]>([])
   const projectPreviewSaveTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const projectRailOpenBeforePreviewRef = React.useRef(true)
+  const wasPreviewFocusModeRef = React.useRef(false)
   const [projectRailWidth, setProjectRailWidth] = React.useState(() => {
     if (typeof window === 'undefined') return 338
     const stored = Number(window.localStorage.getItem(PROJECT_RAIL_WIDTH_STORAGE_KEY))
@@ -262,6 +257,7 @@ export function ChatUI({
     }
     return 338
   })
+  const isProjectRailOpen = isProjectRailOpenProp
   const [slashOverlay, setSlashOverlay] = React.useState<{
     visible: boolean
     selectedIndex: number
@@ -363,14 +359,13 @@ export function ChatUI({
     if (isPreviewFocusMode) {
       projectRailOpenBeforePreviewRef.current = isProjectRailOpen
       if (isProjectRailOpen) {
-        setIsProjectRailOpen(false)
+        onProjectRailOpenChange?.(false)
       }
-      return
+    } else if (wasPreviewFocusModeRef.current && projectRailOpenBeforePreviewRef.current) {
+      onProjectRailOpenChange?.(true)
     }
-    if (projectRailOpenBeforePreviewRef.current) {
-      setIsProjectRailOpen(true)
-    }
-  }, [isPreviewFocusMode, isProjectRailOpen])
+    wasPreviewFocusModeRef.current = isPreviewFocusMode
+  }, [isPreviewFocusMode, isProjectRailOpen, onProjectRailOpenChange])
 
   const railRootPath = defaultWorkdir ?? null
 
@@ -561,8 +556,17 @@ export function ChatUI({
       if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault()
         const selected = slashOverlay.suggestions[slashOverlay.selectedIndex]
-        setDraftInput(selected)
-        setSlashOverlay(null)
+        // If the user has already typed past the slash command (i.e. there is
+        // instruction text after the command), Enter should submit rather than
+        // autocomplete. Tab always autocompletes.
+        const hasInstructionText = draftInput.trim().includes(' ')
+        if (e.key === 'Enter' && hasInstructionText) {
+          setSlashOverlay(null)
+          submitDraft()
+        } else {
+          setDraftInput(selected)
+          setSlashOverlay(null)
+        }
         return
       }
       if (e.key === 'Escape') {
@@ -788,142 +792,125 @@ export function ChatUI({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-transparent">
-      <div className="pointer-events-none absolute right-6 top-3 z-30 flex items-start gap-2">
-        <button
-          type="button"
-          title={isProjectRailOpen ? '关闭项目 Rail' : '打开项目 Rail'}
-          aria-label={isProjectRailOpen ? '关闭项目 Rail' : '打开项目 Rail'}
-          aria-expanded={isProjectRailOpen}
-          onClick={() => setIsProjectRailOpen((value) => !value)}
-          className={cn(
-            'pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-[12px] border border-[#ddd7cc] bg-[#f8f5ef]/96 text-[#3e3a33] shadow-[0_6px_18px_rgba(72,58,36,0.08)] backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#fbf8f3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d8d1c6]',
-            isProjectRailOpen && 'bg-[#f3efe8] shadow-[0_8px_18px_rgba(72,58,36,0.11)]'
-          )}
-        >
-          <RailToggleIcon className="h-[18px] w-[18px]" />
-        </button>
-
-        <div
-          className="pointer-events-auto relative inline-flex items-center"
-          onMouseEnter={openViewControls}
-          onMouseLeave={scheduleCloseViewControls}
-          onFocusCapture={openViewControls}
-          onBlurCapture={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              scheduleCloseViewControls()
-            }
-          }}
-        >
-          <button
-            type="button"
-            title="显示阅读设置"
-            aria-label="显示阅读设置"
-            aria-expanded={isViewControlExpanded}
-            className={cn(
-              'inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/8 bg-white/86 text-black/60 shadow-[0_2px_6px_rgba(15,23,42,0.06)] backdrop-blur-sm transition-all duration-150',
-              isViewControlExpanded ? 'text-black/78 shadow-[0_4px_10px_rgba(15,23,42,0.09)]' : 'hover:text-black/75',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15'
-            )}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-          </button>
-          <div
-            className={cn(
-              'ml-1 inline-flex items-center gap-1 overflow-hidden rounded-full border border-black/8 bg-white/82 backdrop-blur-sm transition-all duration-150 ease-out',
-              isViewControlExpanded
-                ? 'max-w-[280px] translate-x-0 scale-100 p-0.5 opacity-100'
-                : 'max-w-0 -translate-x-1 scale-[0.96] p-0 opacity-0'
-            )}
-          >
-            <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
-              <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">字体</span>
+      <div className={cn('grid min-h-0 flex-1', isPreviewFocusMode ? 'grid-cols-2' : 'grid-cols-1')}>
+        <div className="relative flex min-h-0 flex-col">
+          <div className="pointer-events-none absolute right-6 top-3 z-30 flex items-start gap-2">
+            <div
+              className="pointer-events-auto relative inline-flex items-center"
+              onMouseEnter={openViewControls}
+              onMouseLeave={scheduleCloseViewControls}
+              onFocusCapture={openViewControls}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  scheduleCloseViewControls()
+                }
+              }}
+            >
               <button
                 type="button"
-                aria-label="字体切换为非衬线"
-                title="非衬线"
-                onClick={() => setFontMode('sans')}
+                title="显示阅读设置"
+                aria-label="显示阅读设置"
+                aria-expanded={isViewControlExpanded}
                 className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                  fontMode === 'sans'
-                    ? 'bg-black/9 text-black/82'
-                    : 'text-black/48 hover:text-black/72'
+                  'inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/8 bg-white/86 text-black/60 shadow-[0_2px_6px_rgba(15,23,42,0.06)] backdrop-blur-sm transition-all duration-150',
+                  isViewControlExpanded ? 'text-black/78 shadow-[0_4px_10px_rgba(15,23,42,0.09)]' : 'hover:text-black/75',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15'
                 )}
               >
-                <FontSansIcon className="h-4 w-4" />
+                <SlidersHorizontal className="h-4 w-4" />
               </button>
-              <button
-                type="button"
-                aria-label="字体切换为衬线"
-                title="衬线"
-                onClick={() => setFontMode('serif')}
+              <div
                 className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                  fontMode === 'serif'
-                    ? 'bg-black/9 text-black/82'
-                    : 'text-black/48 hover:text-black/72'
+                  'ml-1 inline-flex items-center gap-1 overflow-hidden rounded-full border border-black/8 bg-white/82 backdrop-blur-sm transition-all duration-150 ease-out',
+                  isViewControlExpanded
+                    ? 'max-w-[280px] translate-x-0 scale-100 p-0.5 opacity-100'
+                    : 'max-w-0 -translate-x-1 scale-[0.96] p-0 opacity-0'
                 )}
               >
-                <FontSerifIcon className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="h-4 w-px bg-black/10" />
-            <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
-              <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">密度</span>
-              <button
-                type="button"
-                aria-label="阅读密度切换为紧凑"
-                title="紧凑"
-                onClick={() => setDensityMode('compact')}
-                className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                  densityMode === 'compact'
-                    ? 'bg-black/9 text-black/82'
-                    : 'text-black/48 hover:text-black/72'
-                )}
-              >
-                <DensityCompactIcon className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                aria-label="阅读密度切换为舒适"
-                title="舒适"
-                onClick={() => setDensityMode('comfortable')}
-                className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
-                  densityMode === 'comfortable'
-                    ? 'bg-black/9 text-black/82'
-                    : 'text-black/48 hover:text-black/72'
-                )}
-              >
-                <DensityComfortableIcon className="h-4 w-4" />
-              </button>
+                <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
+                  <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">字体</span>
+                  <button
+                    type="button"
+                    aria-label="字体切换为非衬线"
+                    title="非衬线"
+                    onClick={() => setFontMode('sans')}
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                      fontMode === 'sans'
+                        ? 'bg-black/9 text-black/82'
+                        : 'text-black/48 hover:text-black/72'
+                    )}
+                  >
+                    <FontSansIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="字体切换为衬线"
+                    title="衬线"
+                    onClick={() => setFontMode('serif')}
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                      fontMode === 'serif'
+                        ? 'bg-black/9 text-black/82'
+                        : 'text-black/48 hover:text-black/72'
+                    )}
+                  >
+                    <FontSerifIcon className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="h-4 w-px bg-black/10" />
+                <div className="inline-flex items-center gap-1 rounded-full bg-black/[0.03] px-1 py-0.5">
+                  <span className="select-none pl-0.5 text-[10px] font-medium tracking-wide text-black/46">密度</span>
+                  <button
+                    type="button"
+                    aria-label="阅读密度切换为紧凑"
+                    title="紧凑"
+                    onClick={() => setDensityMode('compact')}
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                      densityMode === 'compact'
+                        ? 'bg-black/9 text-black/82'
+                        : 'text-black/48 hover:text-black/72'
+                    )}
+                  >
+                    <DensityCompactIcon className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="阅读密度切换为舒适"
+                    title="舒适"
+                    onClick={() => setDensityMode('comfortable')}
+                    className={cn(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-full border border-transparent transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/15',
+                      densityMode === 'comfortable'
+                        ? 'bg-black/9 text-black/82'
+                        : 'text-black/48 hover:text-black/72'
+                    )}
+                  >
+                    <DensityComfortableIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              {showViewControlOnboarding && (
+                <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
+                  <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
+                  <div className="relative z-10 flex items-center gap-1.5">
+                    <span>阅读设置</span>
+                    <button
+                      type="button"
+                      aria-label="关闭阅读设置提示"
+                      title="关闭提示"
+                      onClick={dismissViewControlOnboarding}
+                      className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-          {showViewControlOnboarding && (
-            <div className="pointer-events-auto absolute right-0 top-9 flex items-center gap-1.5 rounded-md border border-black/8 bg-white/92 px-2 py-1 text-[11px] text-black/60 shadow-[0_6px_14px_rgba(15,23,42,0.07)] backdrop-blur-sm">
-              <div className="absolute -top-1 right-3 h-2 w-2 rotate-45 border-l border-t border-black/8 bg-white/92" />
-              <div className="relative z-10 flex items-center gap-1.5">
-                <span>阅读设置</span>
-                <button
-                  type="button"
-                  aria-label="关闭阅读设置提示"
-                  title="关闭提示"
-                  onClick={dismissViewControlOnboarding}
-                  className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-black/40 transition-colors duration-150 hover:bg-black/5 hover:text-black/65"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div className={cn('grid min-h-0 flex-1', isPreviewFocusMode ? 'grid-cols-2' : 'grid-cols-1')}>
-        <div
-          className="relative flex min-h-0 flex-col transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ paddingRight: !isPreviewFocusMode && isProjectRailOpen ? `${projectRailWidth + 16}px` : undefined }}
-        >
           <ChatTranscript
             messages={messages}
             bottomPadding={transcriptBottomPadding}
@@ -1177,8 +1164,8 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
   return (
     <aside
       className={cn(
-        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 origin-right transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        open ? 'translate-x-0 scale-100 opacity-100' : 'translate-x-6 scale-[0.97] opacity-0'
+        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 origin-right transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        open ? 'translate-x-0 opacity-100' : 'translate-x-[calc(100%+20px)] opacity-0'
       )}
       style={{ width: `${width}px` }}
       aria-hidden={!open}
@@ -1191,14 +1178,14 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
           <GripVertical className="h-4 w-4 text-[#cabdac]" />
         </div>
       </div>
-      <div className="pointer-events-auto flex h-full flex-col rounded-[28px] border border-[#ddd7cb] bg-[#f8f5ee]/96 p-3 shadow-[0_18px_40px_rgba(92,73,45,0.09)] backdrop-blur-xl">
-        <div className="flex items-center justify-between px-3 pt-1.5">
+      <div className="pointer-events-auto flex h-full flex-col rounded-[26px] border border-[#ddd7cb] bg-[#f8f5ee]/97 p-2.5 shadow-[0_18px_40px_rgba(92,73,45,0.09)] backdrop-blur-xl">
+        <div className="flex items-start justify-between gap-3 px-2.5 pt-1">
           <div className="min-w-0">
-            <div className="text-[22px] font-medium tracking-[-0.03em] text-[#b67f63]" style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}>
+            <div className="text-[18px] font-medium tracking-[-0.03em] text-[#b67f63]" style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}>
               {title}
             </div>
             {breadcrumbs.length > 1 ? (
-              <div className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden text-[11px] text-[#bdb2a5]">
+              <div className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden text-[10px] text-[#bdb2a5]">
                 <button
                   type="button"
                   onClick={onNavigateUp}
@@ -1227,49 +1214,50 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
               </div>
             ) : null}
           </div>
-          <button
-            type="button"
-            className="inline-flex h-10 items-center gap-1.5 rounded-[14px] border border-[#e7ded1] bg-[#fffdfa]/94 px-3 text-[12px] font-medium text-[#a59a8d] shadow-[0_6px_14px_rgba(104,84,59,0.07)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>项目技能</span>
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5 rounded-[16px] border border-[#e7ded1] bg-[#fffdfa]/92 p-1 shadow-[0_6px_14px_rgba(104,84,59,0.07)]">
+            <button
+              type="button"
+              onClick={onOpenFolder}
+              className="inline-flex h-8 items-center gap-1.5 rounded-[12px] border border-[#ebe2d6] bg-white/92 px-2.5 text-[11px] font-medium text-[#9f9387] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
+            >
+              <Folder className="h-3.5 w-3.5 stroke-[1.9]" />
+              <span>打开文件夹</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-[12px] border border-transparent bg-transparent px-2.5 text-[11px] font-medium text-[#a59a8d] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#ebe2d6] hover:bg-white/94"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>项目技能</span>
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 rounded-[24px] border border-[#e7dfd3] bg-[#fbf9f4]/96 px-4 pb-4 pt-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-          <button
-            type="button"
-            onClick={onOpenFolder}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-[16px] border border-[#e5ddd1] bg-white/90 text-[14px] font-medium text-[#b4aba0] shadow-[0_6px_14px_rgba(117,95,66,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
-          >
-            <Folder className="h-4 w-4 stroke-[1.9]" />
-            <span>打开文件夹</span>
-          </button>
-
-          <div className="mt-4 flex items-center justify-between px-1">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-[#d1c7bb]">{projectLabel}</div>
+        <div className="mt-2.5 rounded-[22px] border border-[#e7dfd3] bg-[#fbf9f4]/96 px-3.5 pb-3.5 pt-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+          <div className="flex items-center justify-between px-0.5">
+            <div className="text-[10px] uppercase tracking-[0.24em] text-[#d1c7bb]">{projectLabel}</div>
             <button
               type="button"
               onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
-              className="inline-flex items-center gap-1 text-[12px] text-[#b6ab9f] transition-colors duration-150 hover:text-[#8e7f71]"
+              className="inline-flex items-center gap-1 rounded-full px-1.5 py-1 text-[10.5px] text-[#b6ab9f] transition-colors duration-150 hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
             >
-              <Clock3 className="h-3.5 w-3.5" />
+              <Clock3 className="h-3.25 w-3.25" />
               <span>{sortMode === 'recent' ? '时间' : '名称'}</span>
             </button>
           </div>
 
-          <div className="mt-3 min-h-0 flex-1 overflow-hidden">
+          <div className="mt-2.5 min-h-0 flex-1 overflow-hidden">
             {previewError ? (
-              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-6 text-center text-[13px] text-[#b6ab9d]">
+              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-5 text-center text-[11.5px] text-[#b6ab9d]">
                 <div>{previewError}</div>
               </div>
             ) : isLoading ? (
-              <div className="flex items-center gap-2 px-2 py-3 text-[13px] text-[#b4aa9f]">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
+              <div className="flex items-center gap-2 px-2 py-3 text-[11.5px] text-[#b4aa9f]">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                 <span>正在整理当前项目文件…</span>
               </div>
             ) : entries.length === 0 ? (
-              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-6 text-center text-[13px] text-[#b6ab9d]">
+              <div className="rounded-[16px] border border-dashed border-[#e6ddd0] px-4 py-5 text-center text-[11.5px] text-[#b6ab9d]">
                 当前目录里还没有可显示的文件。
               </div>
             ) : (
@@ -1310,10 +1298,10 @@ function ProjectRailGroup({
   children: React.ReactNode
 }) {
   return (
-    <section className="mb-4">
-      <div className="mb-1.5 flex items-center justify-between px-1.5">
-        <div className="text-[11px] uppercase tracking-[0.22em] text-[#c4b8aa]">{title}</div>
-        <div className="text-[10.5px] text-[#d0c5b8]">{count}</div>
+    <section className="mb-3">
+      <div className="mb-1.5 flex items-center justify-between px-1">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-[#c4b8aa]">{title}</div>
+        <div className="text-[10px] text-[#d0c5b8]">{count}</div>
       </div>
       <div className="space-y-0.5">{children}</div>
     </section>
@@ -1345,22 +1333,22 @@ function ProjectRailFilePreview({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-[#ece3d7] px-1 pb-3">
+      <div className="flex items-center justify-between border-b border-[#ece3d7] px-1 pb-2.5">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-3 py-1 text-[12px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
+          className="inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-2.5 py-1 text-[11px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
         >
           <ChevronRight className="h-3 w-3 rotate-180" />
           <span>返回目录</span>
         </button>
-        <div className="min-w-0 truncate pl-3 text-[12px] text-[#b8ac9d]">{preview.name}</div>
+        <div className="min-w-0 truncate pl-3 text-[11px] text-[#b8ac9d]">{preview.name}</div>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => onOpenExternally(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
         >
           <ArrowUpRight className="h-3.5 w-3.5" />
           <span>在外部打开</span>
@@ -1368,7 +1356,7 @@ function ProjectRailFilePreview({
         <button
           type="button"
           onClick={() => onQuoteIntoChat(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
         >
           <Quote className="h-3.5 w-3.5" />
           <span>在聊天中引用</span>
@@ -1382,7 +1370,7 @@ function ProjectRailFilePreview({
             event.dataTransfer.setData('text/plain', payload)
             event.dataTransfer.effectAllowed = 'copy'
           }}
-          className="inline-flex items-center gap-1.5 rounded-[12px] border border-[#e8dfd3] bg-white/84 px-3 py-1.5 text-[12px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
         >
           <ScanSearch className="h-3.5 w-3.5" />
           <span>拖入上下文</span>
@@ -1396,13 +1384,13 @@ function ProjectRailFilePreview({
         ) : preview.kind === 'pdf' && dataUrl ? (
           <iframe title={preview.name} src={dataUrl} className="h-full min-h-[520px] w-full rounded-[18px]" />
         ) : preview.kind === 'markdown' ? (
-          <div className="px-4 py-4 text-[13px] leading-6 text-black/70">
+          <div className="px-4 py-4 text-[12px] leading-5.5 text-black/70">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {preview.content ?? ''}
             </ReactMarkdown>
           </div>
         ) : (
-          <div className="px-4 py-4 text-[12px] leading-6 text-black/68">
+          <div className="px-4 py-4 text-[11px] leading-5.5 text-black/68">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {codeFence}
             </ReactMarkdown>
@@ -1461,11 +1449,11 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
           event.dataTransfer.effectAllowed = 'copy'
         }}
         className={cn(
-          'group flex w-full items-center gap-2 rounded-[14px] px-2 py-2 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f3eee6]',
+          'group flex w-full items-center gap-1.5 rounded-[12px] px-2 py-1.5 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f3eee6]',
           isSelected && 'bg-[#f0ebe3] shadow-[inset_0_0_0_1px_rgba(219,208,194,0.7)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#dfd0bb]'
         )}
-        style={{ paddingLeft: `${8 + level * 16}px` }}
+        style={{ paddingLeft: `${8 + level * 14}px` }}
       >
         <div className="flex h-4 w-4 shrink-0 items-center justify-center text-[#ccbba8]">
           {isFolder ? (
@@ -1484,24 +1472,24 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
             <span className="h-3.5 w-3.5" />
           )}
         </div>
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] text-[#bf866a] transition-transform duration-150 group-hover:-translate-y-0.5">
-          <Icon className="h-4.5 w-4.5 stroke-[1.85]" />
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[9px] text-[#bf866a] transition-transform duration-150 group-hover:-translate-y-0.5">
+          <Icon className="h-4 w-4 stroke-[1.85]" />
         </div>
-        <div className="min-w-0 flex-1 truncate text-[14px] font-medium tracking-[-0.015em]">
+        <div className="min-w-0 flex-1 truncate text-[12px] font-medium tracking-[-0.01em]">
           {entry.name}
         </div>
         {isLoading ? (
           <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#c5b9aa]" />
         ) : isFolder ? (
-          <div className="text-[10px] uppercase tracking-[0.18em] text-[#d0c5b8]">{children.length > 0 ? children.length : ''}</div>
+          <div className="text-[9.5px] uppercase tracking-[0.16em] text-[#d0c5b8]">{children.length > 0 ? children.length : ''}</div>
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
         )}
       </div>
 
       {isFolder && isExpanded ? (
         <div className="relative">
-          <div className="absolute bottom-1 left-[17px] top-0 w-px bg-[#eee4d8]" style={{ left: `${22 + level * 16}px` }} />
+          <div className="absolute bottom-1 left-[17px] top-0 w-px bg-[#eee4d8]" style={{ left: `${20 + level * 14}px` }} />
           <div className="space-y-0.5 pt-0.5">
             {children.length > 0 ? (
               children.map((child) => (
@@ -1518,7 +1506,7 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
                 />
               ))
             ) : !isLoading ? (
-              <div className="px-2 py-1.5 text-[11px] italic text-[#c3b6a8]" style={{ paddingLeft: `${30 + level * 16}px` }}>
+              <div className="px-2 py-1.5 text-[10px] italic text-[#c3b6a8]" style={{ paddingLeft: `${28 + level * 14}px` }}>
                 这个文件夹目前是空的
               </div>
             ) : null}
@@ -1709,6 +1697,13 @@ const ComposerDock = React.memo(function ComposerDock({
 
     if (value.startsWith('/')) {
       const cmdPart = value.split(/\s+/)[0]
+      // Once the user has typed a space after the command (i.e. started writing
+      // an instruction), dismiss the autocomplete overlay — it is no longer
+      // needed and would interfere with Enter-to-submit.
+      if (value.includes(' ')) {
+        setSlashOverlay(null)
+        return
+      }
       slashTimerRef.current = setTimeout(async () => {
         try {
           const { suggestSlashCommands } = await import('@/lib/tauri')
@@ -1906,6 +1901,8 @@ const ComposerDock = React.memo(function ComposerDock({
   )
 })
 
+const WEB_SEARCH_NO_KEY_PREFIX = '[web_search: 当前使用 DuckDuckGo 免费搜索'
+
 function ToolCallMessage({
   message,
   defaultWorkdir,
@@ -1920,6 +1917,12 @@ function ToolCallMessage({
   const title = status === 'error' ? `执行失败：${display.title}` : display.title
   const hasDetails = display.details.length > 0
   const ToolGlyph = getToolCallGlyph(message.toolName, message.toolArgs)
+
+  // Detect web_search no-key notice injected by backend.
+  const showNoKeyBanner =
+    message.toolName === 'web_search' &&
+    typeof message.content === 'string' &&
+    message.content.includes(WEB_SEARCH_NO_KEY_PREFIX)
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
@@ -2016,6 +2019,19 @@ function ToolCallMessage({
 
         <CollapsibleContent className="overflow-hidden">
           <div className="ml-[10px] border-l-[1.5px] border-black/10 pl-3 pt-1">
+            {showNoKeyBanner && (
+              <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11.5px] leading-5 text-amber-700">
+                <span className="mt-0.5 shrink-0">⚠️</span>
+                <span>
+                  当前使用 DuckDuckGo 免费搜索，结果质量有限。
+                  在{' '}
+                  <span className="font-medium underline underline-offset-2 cursor-pointer">
+                    设置 → Web Search
+                  </span>{' '}
+                  中添加 Tavily / Brave 等服务商以获得更准确的搜索结果。
+                </span>
+              </div>
+            )}
             {hasDetails ? (
               <div className="flex flex-col gap-0.5">
                 {display.details.map((line, index) => (

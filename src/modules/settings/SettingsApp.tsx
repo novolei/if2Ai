@@ -16,6 +16,7 @@ import { ConnectionsSettingsPage } from './pages/ConnectionsSettingsPage'
 import { RemoteSettingsPage } from './pages/RemoteSettingsPage'
 import { AboutSettingsPage } from './pages/AboutSettingsPage'
 import { SkillsSettingsPage } from './pages/SkillsSettingsPage'
+import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 
 interface SettingsAppProps {
   onClose: () => void
@@ -168,6 +169,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
             onRollbackSkill={(skill) => void handleProposalAction(skill, 'rollback')}
           />
         )
+      case 'web-search':
+        return <WebSearchSettingsPage />
       case 'connections':
         return <ConnectionsSettingsPage state={state} actions={actions} />
       case 'remote':

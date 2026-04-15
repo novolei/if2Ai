@@ -227,17 +227,43 @@ pub fn list_slash_commands() -> Vec<SlashCommandSpecDto> {
 }
 
 /// Suggest slash commands matching the input prefix.
+///
+/// Returns builtin commands first, then skill-based slash commands discovered
+/// from all known skill roots.
 #[tauri::command]
 #[allow(dead_code)]
 pub fn suggest_slash_commands(input: String, limit: Option<usize>) -> Vec<String> {
-    let specs = builtin_specs();
     let lim = limit.unwrap_or(10);
-    specs
+    let mut results: Vec<String> = builtin_specs()
         .iter()
         .filter(|s| s.name.starts_with(&input))
-        .take(lim)
         .map(|s| s.name.clone())
-        .collect()
+        .collect();
+
+    if results.len() < lim {
+        let workdir = std::env::current_dir().unwrap_or_default();
+        let roots =
+            crate::modules::tools::builtin::skill::discover_skill_roots_with_metadata(&workdir);
+        let mut seen: std::collections::HashSet<String> = results.iter().cloned().collect();
+        'outer: for root in &roots {
+            if let Ok(entries) = std::fs::read_dir(&root.path) {
+                for entry in entries.flatten() {
+                    if results.len() >= lim {
+                        break 'outer;
+                    }
+                    let skill_name = entry.file_name().to_string_lossy().to_string();
+                    let candidate = format!("/{skill_name}");
+                    if candidate.starts_with(&input) && seen.insert(candidate.clone()) {
+                        // Only suggest if a SKILL.md actually exists
+                        if entry.path().join("SKILL.md").exists() {
+                            results.push(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    results
 }
 
 /// Execute a slash command and return the result message.
@@ -331,7 +357,26 @@ pub fn resolve_skill_slash(cwd: Option<String>, input: String) -> Option<String>
     resolve_skill_slash_invocation(&workdir, &input)
 }
 
-/// Internal helper: resolve `/skill-name instruction` to a built invocation message.
+fn resolve_skill_command_key(
+    commands: &std::collections::HashMap<String, SkillCommandInfo>,
+    input_skill: &str,
+) -> Option<String> {
+    let normalized = crate::modules::skills::commands::normalize_command_key(input_skill);
+    if commands.contains_key(&normalized) {
+        return Some(normalized);
+    }
+    commands.values().find_map(|info| {
+        let by_name = crate::modules::skills::commands::normalize_command_key(&info.name);
+        if by_name == normalized {
+            Some(by_name)
+        } else {
+            None
+        }
+    })
+}
+
+/// Internal helper: resolve `/skill-name instruction` to a Hermes-style
+/// invocation message that embeds the full skill content server-side.
 fn resolve_skill_slash_invocation(workdir: &std::path::Path, input: &str) -> Option<String> {
     if !input.starts_with('/') {
         return None;
@@ -340,29 +385,24 @@ fn resolve_skill_slash_invocation(workdir: &std::path::Path, input: &str) -> Opt
     let command = parts.next()?;
     let instruction = parts.next().unwrap_or("").trim();
 
-    // Strip leading slash and check if this matches a skill
+    // Strip leading slash and check if this matches a skill.
     let skill_name = command.trim_start_matches('/');
     if skill_name.is_empty() {
         return None;
     }
 
-    // Scan skills directory for a match
+    // Scan workspace skills directory for a match.
     let skills_dir = workdir.join(".if2ai/skills");
     let scanner = SkillCommands::new(&skills_dir);
     if let Ok(commands) = scanner.scan() {
-        if commands.contains_key(skill_name)
-            || commands.contains_key(&skill_name.replace('-', "_"))
-            || commands.values().any(|info| {
-                crate::modules::skills::commands::normalize_command_key(&info.name) == skill_name
-            })
-        {
+        if let Some(command_key) = resolve_skill_command_key(&commands, skill_name) {
             return scanner
-                .build_invocation_message(skill_name, instruction)
+                .build_invocation_message(&command_key, instruction)
                 .ok();
         }
     }
 
-    // Also check other roots (user-level, builtin)
+    // Also check other roots (user-level, builtin).
     let roots = crate::modules::tools::builtin::skill::discover_skill_roots_with_metadata(workdir);
     for root in &roots {
         if root.source.as_label() == "remote-quarantine" {
@@ -370,9 +410,9 @@ fn resolve_skill_slash_invocation(workdir: &std::path::Path, input: &str) -> Opt
         }
         let scanner = SkillCommands::new(&root.path);
         if let Ok(commands) = scanner.scan() {
-            if commands.contains_key(skill_name) {
+            if let Some(command_key) = resolve_skill_command_key(&commands, skill_name) {
                 return scanner
-                    .build_invocation_message(skill_name, instruction)
+                    .build_invocation_message(&command_key, instruction)
                     .ok();
             }
         }

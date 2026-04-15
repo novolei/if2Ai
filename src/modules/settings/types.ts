@@ -4,6 +4,7 @@ export type SettingsSectionId =
   | 'general'
   | 'usage'
   | 'skills'
+  | 'web-search'
   | 'connections'
   | 'remote'
   | 'about'

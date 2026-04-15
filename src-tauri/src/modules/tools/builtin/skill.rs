@@ -176,12 +176,12 @@ pub fn skill_tool_entry() -> ToolEntry {
             // A3: Resolve config variables from skill frontmatter + config file.
             let config_block = resolve_skill_config_block(skill, &content, &workdir);
 
+            // Intentionally omit the real file path to prevent the LLM from
+            // re-reading the file via bash/read_file and wasting context budget.
             let mut output = format!(
-                "Skill '{skill}' loaded from '{}'.\n\
-Use the following skill content directly.\n\
-Do NOT call read_file for local skill cache paths (e.g. ~/.continue/.skills/... or similar), \
-because they can be outside the sandbox workdir and will fail.\n\n{}",
-                skill_path.display(),
+                "Skill '{skill}' loaded successfully. \
+The full skill content is provided below — do NOT attempt to reload it via bash, \
+read_file, or any other tool; it is already complete.\n\n{}",
                 content
             );
 

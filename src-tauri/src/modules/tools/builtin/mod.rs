@@ -40,6 +40,7 @@ pub mod todo_write;
 pub mod tool_search;
 pub mod web_fetch;
 pub mod web_search;
+pub mod web_search_config;
 
 #[allow(unused_imports)]
 pub use agent::agent_tool_entry;

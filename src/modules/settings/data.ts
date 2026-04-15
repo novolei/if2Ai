@@ -1,4 +1,4 @@
-import { BarChart3, Info, Link2, Radio, Settings, Sparkles } from 'lucide-react'
+import { BarChart3, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
 import type { SettingsSectionMeta } from './types'
 
 export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
@@ -19,6 +19,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: '技能管理',
     description: '查看状态并执行 enable/disable，含 quarantine/active 冲突说明。',
     icon: Sparkles,
+  },
+  {
+    id: 'web-search',
+    label: 'Web Search',
+    description: '配置 web_search 工具的搜索服务商及 API Key，支持 Tavily、Brave、Serper、SearXNG。',
+    icon: Search,
   },
   {
     id: 'connections',

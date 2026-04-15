@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::modules::control_plane::audit::{AuditEmitter, FailureDiagnostic};
 use crate::modules::control_plane::session_context::SessionExecutionContext;
@@ -13,6 +16,94 @@ use crate::modules::tools::{ToolContext, ToolError, ToolRegistry};
 #[derive(Clone)]
 pub struct ToolExecutionBroker {
     tool_registry: Arc<ToolRegistry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SkillTurnGuardState {
+    skill_loaded_successfully: bool,
+    updated_at: Instant,
+}
+
+static SKILL_TURN_GUARD: OnceLock<Mutex<HashMap<String, SkillTurnGuardState>>> = OnceLock::new();
+const SKILL_TURN_GUARD_TTL_SECS: u64 = 30 * 60; // 30 minutes
+
+fn skill_turn_guard() -> &'static Mutex<HashMap<String, SkillTurnGuardState>> {
+    SKILL_TURN_GUARD.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn guard_request_key(request_id: Option<&str>) -> Option<String> {
+    request_id.map(ToString::to_string)
+}
+
+fn cleanup_stale_guard_entries(entries: &mut HashMap<String, SkillTurnGuardState>) {
+    let ttl = Duration::from_secs(SKILL_TURN_GUARD_TTL_SECS);
+    entries.retain(|_, state| state.updated_at.elapsed() <= ttl);
+}
+
+fn mark_skill_loaded_for_request(request_id: Option<&str>) {
+    let Some(key) = guard_request_key(request_id) else {
+        return;
+    };
+    if let Ok(mut entries) = skill_turn_guard().lock() {
+        cleanup_stale_guard_entries(&mut entries);
+        entries.insert(
+            key,
+            SkillTurnGuardState {
+                skill_loaded_successfully: true,
+                updated_at: Instant::now(),
+            },
+        );
+    }
+}
+
+fn request_already_loaded_skill(request_id: Option<&str>) -> bool {
+    let Some(key) = guard_request_key(request_id) else {
+        return false;
+    };
+    if let Ok(mut entries) = skill_turn_guard().lock() {
+        cleanup_stale_guard_entries(&mut entries);
+        if let Some(state) = entries.get_mut(&key) {
+            state.updated_at = Instant::now();
+            return state.skill_loaded_successfully;
+        }
+    }
+    false
+}
+
+fn is_skill_file_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized.contains("/.if2ai/skills/")
+        || normalized.contains("/.claude/skills/")
+        || normalized.starts_with(".if2ai/skills/")
+        || normalized.starts_with(".claude/skills/")
+}
+
+fn post_skill_reload_denial_reason(
+    request_id: Option<&str>,
+    tool_name: &str,
+    args: &Value,
+) -> Option<String> {
+    if !request_already_loaded_skill(request_id) {
+        return None;
+    }
+    if tool_name == "skill_view" {
+        return Some(
+            "skill already loaded in this turn; do not call skill_view again. \
+Use the existing skill tool result and continue the task."
+                .to_string(),
+        );
+    }
+    if tool_name == "read_file" {
+        let target_path = args.get("path").and_then(|value| value.as_str())?;
+        if is_skill_file_path(target_path) {
+            return Some(
+                "skill already loaded in this turn; do not read skill files via read_file. \
+Use the existing skill tool result and continue the task."
+                    .to_string(),
+            );
+        }
+    }
+    None
 }
 
 impl ToolExecutionBroker {
@@ -74,23 +165,38 @@ impl ToolExecutionBroker {
             request_id,
         );
         let started_at = Instant::now();
-        let result = if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name) {
-            AuditEmitter::policy_decision_made(
-                trace_id,
-                &context.session_id,
-                tool_name,
-                &context.workdir,
-                context.permission_mode,
-                "deny:sandbox_strict_mode_requires_sandbox_enabled",
-                request_id,
-            );
-            Err(ToolError::Handler(reason))
-        } else {
-            let execution_context = self.to_tool_context(context);
-            self.tool_registry
-                .dispatch_with_context(tool_name, args, execution_context)
-                .await
-        };
+        let result =
+            if let Some(reason) = post_skill_reload_denial_reason(request_id, tool_name, &args) {
+                AuditEmitter::policy_decision_made(
+                    trace_id,
+                    &context.session_id,
+                    tool_name,
+                    &context.workdir,
+                    context.permission_mode,
+                    "deny:skill_reload_guard",
+                    request_id,
+                );
+                Err(ToolError::Handler(reason))
+            } else if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name) {
+                AuditEmitter::policy_decision_made(
+                    trace_id,
+                    &context.session_id,
+                    tool_name,
+                    &context.workdir,
+                    context.permission_mode,
+                    "deny:sandbox_strict_mode_requires_sandbox_enabled",
+                    request_id,
+                );
+                Err(ToolError::Handler(reason))
+            } else {
+                let execution_context = self.to_tool_context(context);
+                self.tool_registry
+                    .dispatch_with_context(tool_name, args, execution_context)
+                    .await
+            };
+        if result.is_ok() && tool_name == "skill" {
+            mark_skill_loaded_for_request(request_id);
+        }
         if let Err(err) = &result {
             if resolve_boundary_enforce_mode(&context.workdir)
                 == crate::modules::runtime::config::BoundaryEnforceMode::Shadow
