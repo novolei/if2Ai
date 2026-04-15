@@ -134,7 +134,7 @@ slices:
 
   - id: "6b.3"
     title: "MEM-CP4 — 主动检索 + Intent 路由 + RRF Fusion"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-002-Active-Retrieval-vs-Passive-Invocation.md"
     backlog_ref: "TASK-002-P0-01 ~ TASK-002-P1-06"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2"]
-  current_slice: "6b.3"
+  completed_slices: ["6b.1", "6b.2", "6b.3"]
+  current_slice: "6b.4"
   blocked: []
-  notes: "6B.1+6B.2 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay. 483 tests pass, clippy clean."
+  notes: "6B.1~6B.3 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager. 504 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
