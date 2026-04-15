@@ -20,6 +20,7 @@ use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolD
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
+use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
 };
@@ -679,6 +680,28 @@ fn extract_skill_proposal_name(text: &str) -> Option<String> {
 }
 // harness symbol marker: skill_proposal|draft|approval
 
+/// Retrieve relevant memories and format them as context for the LLM.
+///
+/// Classifies the user message intent, queries the memory provider,
+/// and returns a formatted context string. Returns empty string on any error
+/// to avoid blocking the main flow.
+async fn retrieve_memory_context(state: &AppState, user_message: &str) -> String {
+    let manager = ActiveRetrievalManager::with_defaults();
+    match manager
+        .retrieve_as_context(user_message, &*state.memory_provider)
+        .await
+    {
+        Ok(context) => context,
+        Err(e) => {
+            tracing::warn!(
+                "[retrieve_memory_context] Retrieval failed, proceeding without memory context: {}",
+                e
+            );
+            String::new()
+        }
+    }
+}
+
 /// Run a single agent turn with the given user message.
 ///
 /// This is the main entry point for the frontend to interact with the agent.
@@ -752,7 +775,7 @@ pub async fn run_agent_turn(
         ToolRegistryExecutor::new_with_context(state.tool_registry.clone(), execution_context);
 
     // Build system prompt using SystemPromptBuilder with session workdir
-    let system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
+    let mut system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
         &tool_executor.execution_context.workdir,
         chrono::Local::now().format("%Y-%m-%d").to_string(),
         std::env::consts::OS,
@@ -767,6 +790,16 @@ pub async fn run_agent_turn(
             vec![crate::modules::runtime::prompt::SystemPromptBuilder::new().render()]
         }
     };
+
+    // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories
+    let memory_context = retrieve_memory_context(&state, &user_message).await;
+    if !memory_context.is_empty() {
+        tracing::info!(
+            "[run_agent_turn] Injecting {} chars of memory context",
+            memory_context.len()
+        );
+        system_prompt.push(memory_context);
+    }
 
     // Create runtime
     let mut runtime = ConversationRuntime::new(
