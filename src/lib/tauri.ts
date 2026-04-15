@@ -877,3 +877,41 @@ export async function validateWebSearchKey(
     baseUrl: baseUrl ?? null,
   })
 }
+
+// ─── Memory Settings Configuration ─────────────────────────────────────────
+
+/** Memory configuration returned by the backend. */
+export interface MemoryConfig {
+  total_tokens: number
+  system_pct: number
+  episodic_pct: number
+  semantic_pct: number
+  working_pct: number
+  trajectory_count: number
+}
+
+/** Configuration input to persist. */
+export interface MemoryConfigInput {
+  total_tokens: number
+  system_pct: number
+  episodic_pct: number
+  semantic_pct: number
+  working_pct: number
+}
+
+/** Get the current memory configuration. */
+export async function getMemoryConfig(): Promise<MemoryConfig> {
+  return invoke<MemoryConfig>('get_memory_config')
+}
+
+/** Save memory configuration. */
+export async function setMemoryConfig(
+  config: MemoryConfigInput
+): Promise<MemoryConfig> {
+  return invoke<MemoryConfig>('set_memory_config', { config })
+}
+
+/** Export trajectories to a user-selected directory. */
+export async function exportTrajectories(): Promise<string> {
+  return invoke<string>('export_trajectories')
+}

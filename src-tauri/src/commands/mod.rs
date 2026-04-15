@@ -74,6 +74,7 @@ pub mod agent;
 pub mod memory;
 pub mod project;
 pub mod session;
+pub mod settings;
 pub mod skills_hub;
 pub mod slash;
 pub mod stream_outcome;
@@ -97,6 +98,10 @@ pub use project::{
 pub use session::{
     create_session, delete_session, get_session, list_project_sessions, list_sessions,
     rename_session, set_session_pinned,
+};
+#[allow(unused_imports)]
+pub use settings::{
+    export_trajectories, get_memory_config, set_memory_config, MemoryConfig, MemoryConfigInput,
 };
 #[allow(unused_imports)]
 pub use skills_hub::{

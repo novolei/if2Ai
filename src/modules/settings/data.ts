@@ -1,4 +1,4 @@
-import { BarChart3, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
+import { BarChart3, Brain, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
 import type { SettingsSectionMeta } from './types'
 
 export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
@@ -25,6 +25,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: 'Web Search',
     description: '配置 web_search 工具的搜索服务商及 API Key，支持 Tavily、Brave、Serper、SearXNG。',
     icon: Search,
+  },
+  {
+    id: 'memory',
+    label: '记忆配置',
+    description: '管理记忆 Token 预算分配与轨迹导出。',
+    icon: Brain,
   },
   {
     id: 'connections',
