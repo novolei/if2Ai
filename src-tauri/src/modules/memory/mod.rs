@@ -7,7 +7,9 @@
 //!
 //! - [`SqliteMemoryProvider`] — SQLite-backed (default, persistent)
 //! - [`InMemoryMemoryProvider`] — In-memory (deprecated, for tests only)
+//! - [`VectorMemoryProvider`] — Vector-backed (FastEmbed + LanceDB, P1)
 
+pub mod embedding;
 pub mod intent;
 mod providers;
 pub mod retrieval;
