@@ -331,7 +331,7 @@ slices:
 
   - id: "6b.6"
     title: "LEARN-1 — SelfModel + ReflectionEngine + TrustTracker"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-008-Self-Learning-Modules-Independence.md"
     backlog_ref: "TASK-008-01 ~ TASK-008-08"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5"]
-  current_slice: "6b.6"
+  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5", "6b.6"]
+  current_slice: "6b.7"
   blocked: []
-  notes: "6B.1~6B.5 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning (bind/unbind/bundle/similarity), HolographicStore (capacity-managed), HybridMemoryProvider (LanceDB+HRR). 535 tests pass, clippy clean."
+  notes: "6B.1~6B.6 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning, HybridMemoryProvider, Self-Learning (SelfModel, ReflectionEngine, TrustTracker). 559 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
