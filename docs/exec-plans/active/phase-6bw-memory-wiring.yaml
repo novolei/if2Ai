@@ -29,7 +29,7 @@ slices:
 
   - id: "6bw.1"
     title: "AppState 扩展 — memory_provider, context_budget, trajectory_manager, learning_module"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-01"
     impl_targets:
@@ -87,7 +87,7 @@ slices:
 
   - id: "6bw.2"
     title: "ContextBudget 接入 — 替代 max_token_budget 简单检查"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-02"
     impl_targets:
@@ -136,7 +136,7 @@ slices:
 
   - id: "6bw.3"
     title: "ActiveRetrievalManager 接入 — Pre-LLM-Call 上下文注入"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-03"
     impl_targets:
@@ -185,7 +185,7 @@ slices:
 
   - id: "6bw.4"
     title: "TrajectoryManager 接入 — Session 结束后 record"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-06"
     impl_targets:
@@ -233,7 +233,7 @@ slices:
 
   - id: "6bw.5"
     title: "WorkingMemory + FrozenSnapshot + WeibullDecay 三线接入"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-05; TASK-012-08; TASK-012-09"
     impl_targets:
@@ -293,7 +293,7 @@ slices:
 
   - id: "6bw.6"
     title: "LearningModule 接入 + Vector/HRR dead_code 清理 + 测试修复"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-07; TASK-012-04; TASK-012-10"
     impl_targets:
@@ -356,7 +356,7 @@ slices:
 
   - id: "6bw.7"
     title: "Provider 升级 — Vector 优先回退 SQLite + HybridMemoryProvider 配置化"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-11; TASK-012-12"
     impl_targets:
@@ -515,10 +515,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: []
-  current_slice: "6bw.1"
+  completed_slices: ["6bw.1", "6bw.2", "6bw.3", "6bw.4", "6bw.5", "6bw.6", "6bw.7"]
+  current_slice: "6bw.8"
   blocked: []
-  notes: "Phase 6BW 创建: 将 Phase 6B 所有孤岛模块接入生产管线。9 slices: AppState 扩展, ContextBudget, ActiveRetrieval, Trajectory, WorkingMemory+Snapshot+Decay, LearningModule+dead_code 清理, Provider 升级, Memory Browser UI, Settings UI."
+  notes: "6bw.1-6bw.7 done: All backend memory wiring complete. Next: 6bw.8 Frontend Memory Browser UI."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wiring 关系矩阵

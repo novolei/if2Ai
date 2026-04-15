@@ -37,8 +37,96 @@ fn cleanup_processes() {
     let _ = Command::new("pkill").args(["-f", "if2ai-backend"]).spawn();
 }
 
-/// Create the memory provider, preferring SQLite but falling back to in-memory.
+/// Create the memory provider, preferring VectorMemoryProvider but falling
+/// back to SQLite with a 30-second timeout guard.
+///
+/// Priority: Hybrid (HRR + Vector) > Vector (FastEmbed + LanceDB) > SQLite > InMemory
 fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!(
+                "[memory] Failed to create tokio runtime for memory init: {e}, falling back to SQLite"
+            );
+            return create_sqlite_provider();
+        }
+    };
+
+    // Check if HRR algebraic reasoning is enabled via environment variable.
+    // Default: false — HRR is an experimental feature.
+    let hrr_enabled = std::env::var("IF2AI_HRR_ENABLED")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    if hrr_enabled {
+        match runtime.block_on(create_hybrid_provider()) {
+            Ok(provider) => {
+                tracing::info!("[memory] HybridMemoryProvider (HRR + Vector) initialized");
+                return provider;
+            }
+            Err(e) => {
+                tracing::warn!("[memory] HybridMemoryProvider failed: {e}, falling back to Vector");
+            }
+        }
+    }
+
+    // Attempt VectorMemoryProvider with 30s timeout (FastEmbed model load can be slow)
+    let vector_result = runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let db_path = dirs::data_local_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".if2ai")
+                .join("memory")
+                .join("vector_db");
+
+            let config = modules::memory::VectorProviderConfig {
+                db_path,
+                vector_search_enabled: true,
+            };
+
+            modules::memory::VectorMemoryProvider::new(config).await
+        })
+        .await
+    });
+
+    match vector_result {
+        Ok(Ok(provider)) => {
+            tracing::info!("[memory] VectorMemoryProvider initialized successfully");
+            std::sync::Arc::new(provider) as modules::memory::SharedMemoryProvider
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "[memory] VectorMemoryProvider initialization failed: {e}, falling back to SQLite"
+            );
+            create_sqlite_provider()
+        }
+        Err(_) => {
+            tracing::warn!(
+                "[memory] VectorMemoryProvider timed out after 30s, falling back to SQLite"
+            );
+            create_sqlite_provider()
+        }
+    }
+}
+
+/// Create a HybridMemoryProvider (HRR + LanceDB) for algebraic reasoning.
+async fn create_hybrid_provider() -> Result<modules::memory::SharedMemoryProvider, String> {
+    use crate::modules::memory::hrr::integration::HybridConfig;
+
+    let hrr_config = HybridConfig {
+        hrr_enabled: true,
+        hrr_capacity: 0,
+    };
+
+    let provider = modules::memory::hrr::integration::HybridMemoryProvider::new(hrr_config)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(std::sync::Arc::new(provider) as modules::memory::SharedMemoryProvider)
+}
+
+/// Create a SQLite-backed memory provider as fallback.
+fn create_sqlite_provider() -> modules::memory::SharedMemoryProvider {
     let db_path = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".if2ai")

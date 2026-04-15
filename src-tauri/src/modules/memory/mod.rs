@@ -17,7 +17,7 @@ mod providers;
 pub mod retrieval;
 pub mod working_memory;
 
-pub use providers::SqliteMemoryProvider;
+pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
