@@ -9,6 +9,7 @@
 //! - [`InMemoryMemoryProvider`] — In-memory (deprecated, for tests only)
 
 mod providers;
+pub mod working_memory;
 
 pub use providers::SqliteMemoryProvider;
 

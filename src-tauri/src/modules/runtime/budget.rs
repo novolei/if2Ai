@@ -1,0 +1,383 @@
+//! Token budget allocation and context slot tracking
+//!
+//! Manages how the LLM context window (default 4000 tokens) is distributed
+//! across System, Episodic, Semantic, and Working memory slots.
+
+#![allow(dead_code)]
+
+use serde::{Deserialize, Serialize};
+
+use crate::modules::memory::MemoryEntry;
+
+/// Error type for budget validation
+#[derive(Debug, thiserror::Error)]
+pub enum BudgetError {
+    #[error("percentages must sum to 1.0, got {0}")]
+    PercentagesMustSumToOne(f32),
+
+    #[error("slot not found: {0}")]
+    SlotNotFound(String),
+
+    #[error("budget exceeded: used {used} of {budget} tokens")]
+    BudgetExceeded { used: usize, budget: usize },
+}
+
+/// Token slot type identifiers
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotType {
+    System,
+    Episodic,
+    Semantic,
+    Working,
+}
+
+impl SlotType {
+    /// Returns the string representation of this slot type
+    pub fn as_str(&self) -> &str {
+        match self {
+            SlotType::System => "system",
+            SlotType::Episodic => "episodic",
+            SlotType::Semantic => "semantic",
+            SlotType::Working => "working",
+        }
+    }
+}
+
+/// A single context slot tracking token usage and memory entries
+#[derive(Debug, Clone)]
+pub struct Slot {
+    pub budget: usize,
+    pub used: usize,
+    pub entries: Vec<MemoryEntry>,
+}
+
+impl Slot {
+    /// Create a new slot with the given token budget
+    pub fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            used: 0,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Remaining tokens available in this slot
+    pub fn available(&self) -> usize {
+        self.budget.saturating_sub(self.used)
+    }
+
+    /// Add a memory entry to the slot, updating used token count
+    pub fn add(&mut self, entry: MemoryEntry, token_count: usize) {
+        self.used += token_count;
+        self.entries.push(entry);
+    }
+
+    /// Remove entries from the front until used tokens are within budget
+    pub fn evict<F>(&mut self, entry_token_fn: F)
+    where
+        F: Fn(&MemoryEntry) -> usize,
+    {
+        while self.used > self.budget && !self.entries.is_empty() {
+            let first = self.entries.remove(0);
+            let tokens = entry_token_fn(&first);
+            self.used = self.used.saturating_sub(tokens);
+        }
+    }
+
+    /// Remove entries with the lowest priority until within budget
+    pub fn evict_lowest_priority<F>(&mut self, entry_token_fn: F)
+    where
+        F: Fn(&MemoryEntry) -> usize,
+    {
+        while self.used > self.budget && !self.entries.is_empty() {
+            let mut min_idx = 0;
+            for (i, entry) in self.entries.iter().enumerate().skip(1) {
+                if entry.importance < self.entries[min_idx].importance {
+                    min_idx = i;
+                }
+            }
+            let removed = self.entries.remove(min_idx);
+            let tokens = entry_token_fn(&removed);
+            self.used = self.used.saturating_sub(tokens);
+        }
+    }
+}
+
+/// Context budget configuration specifying how tokens are distributed
+///
+/// Default allocation (4000 tokens total):
+/// - System: 10% (400 tokens) — Frozen snapshot
+/// - Episodic: 20% (800 tokens) — Rolling LLM summary
+/// - Semantic: 30% (1200 tokens) — Vector + FTS
+/// - Working: 40% (1600 tokens) — Sliding window (8 turns)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextBudget {
+    /// Total budget in tokens (default: 4000)
+    pub total: usize,
+    /// System slot percentage (default: 10%)
+    pub system_pct: f32,
+    /// Episodic slot percentage (default: 20%)
+    pub episodic_pct: f32,
+    /// Semantic slot percentage (default: 30%)
+    pub semantic_pct: f32,
+    /// Working slot percentage (default: 40%)
+    pub working_pct: f32,
+}
+
+impl Default for ContextBudget {
+    fn default() -> Self {
+        Self {
+            total: 4000,
+            system_pct: 0.10,
+            episodic_pct: 0.20,
+            semantic_pct: 0.30,
+            working_pct: 0.40,
+        }
+    }
+}
+
+impl ContextBudget {
+    /// Create a new budget with custom total tokens, keeping default percentages
+    pub fn with_total(total: usize) -> Self {
+        Self {
+            total,
+            ..Default::default()
+        }
+    }
+
+    /// System slot token allocation
+    pub fn system_tokens(&self) -> usize {
+        (self.total as f32 * self.system_pct) as usize
+    }
+
+    /// Episodic slot token allocation
+    pub fn episodic_tokens(&self) -> usize {
+        (self.total as f32 * self.episodic_pct) as usize
+    }
+
+    /// Semantic slot token allocation
+    pub fn semantic_tokens(&self) -> usize {
+        (self.total as f32 * self.semantic_pct) as usize
+    }
+
+    /// Working slot token allocation
+    pub fn working_tokens(&self) -> usize {
+        (self.total as f32 * self.working_pct) as usize
+    }
+
+    /// Validate that percentages sum to 1.0 (within floating-point tolerance)
+    pub fn validate(&self) -> Result<(), BudgetError> {
+        let sum = self.system_pct + self.episodic_pct + self.semantic_pct + self.working_pct;
+        if (sum - 1.0).abs() > 0.001 {
+            return Err(BudgetError::PercentagesMustSumToOne(sum));
+        }
+        Ok(())
+    }
+}
+
+/// Context slots tracking actual token usage per slot
+#[derive(Debug, Clone)]
+pub struct ContextSlots {
+    pub system: Slot,
+    pub episodic: Slot,
+    pub semantic: Slot,
+    pub working: Slot,
+}
+
+impl ContextSlots {
+    /// Create slots from a budget configuration
+    pub fn new(budget: ContextBudget) -> Self {
+        Self {
+            system: Slot::new(budget.system_tokens()),
+            episodic: Slot::new(budget.episodic_tokens()),
+            semantic: Slot::new(budget.semantic_tokens()),
+            working: Slot::new(budget.working_tokens()),
+        }
+    }
+
+    /// Remaining tokens available in a named slot
+    pub fn available(&self, slot_type: SlotType) -> usize {
+        match slot_type {
+            SlotType::System => self.system.available(),
+            SlotType::Episodic => self.episodic.available(),
+            SlotType::Semantic => self.semantic.available(),
+            SlotType::Working => self.working.available(),
+        }
+    }
+
+    /// Total remaining tokens across all slots
+    pub fn total_available(&self) -> usize {
+        self.system.available()
+            + self.episodic.available()
+            + self.semantic.available()
+            + self.working.available()
+    }
+
+    /// Get a mutable reference to a slot by type
+    pub fn slot_mut(&mut self, slot_type: SlotType) -> Result<&mut Slot, BudgetError> {
+        match slot_type {
+            SlotType::System => Ok(&mut self.system),
+            SlotType::Episodic => Ok(&mut self.episodic),
+            SlotType::Semantic => Ok(&mut self.semantic),
+            SlotType::Working => Ok(&mut self.working),
+        }
+    }
+}
+
+/// Estimate token count for a text string using character-based heuristic
+///
+/// Uses a 4:1 character-to-token ratio, which is a reasonable approximation
+/// for English text. For accurate counting, use a tokenizer library.
+#[must_use]
+pub fn estimate_tokens(text: &str) -> usize {
+    text.len() / 4 + 1
+}
+
+/// Estimate token count for a memory entry
+#[must_use]
+pub fn estimate_entry_tokens(entry: &MemoryEntry) -> usize {
+    estimate_tokens(&entry.key) + estimate_tokens(&entry.content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn test_entry(key: &str, content: &str, importance: f64) -> MemoryEntry {
+        let now = Utc::now();
+        MemoryEntry {
+            key: key.to_string(),
+            content: content.to_string(),
+            category: crate::modules::memory::MemoryCategory::Core,
+            created_at: now,
+            updated_at: now,
+            importance,
+            access_count: 0,
+            trust_score: 0.0,
+        }
+    }
+
+    #[test]
+    fn default_budget_values() {
+        let budget = ContextBudget::default();
+        assert_eq!(budget.total, 4000);
+        assert_eq!(budget.system_tokens(), 400);
+        assert_eq!(budget.episodic_tokens(), 800);
+        assert_eq!(budget.semantic_tokens(), 1200);
+        assert_eq!(budget.working_tokens(), 1600);
+    }
+
+    #[test]
+    fn custom_total_budget() {
+        let budget = ContextBudget::with_total(8000);
+        assert_eq!(budget.total, 8000);
+        assert_eq!(budget.system_tokens(), 800);
+        assert_eq!(budget.working_tokens(), 3200);
+    }
+
+    #[test]
+    fn validate_accepts_valid_percentages() {
+        let budget = ContextBudget::default();
+        assert!(budget.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_percentages() {
+        let budget = ContextBudget {
+            total: 4000,
+            system_pct: 0.10,
+            episodic_pct: 0.20,
+            semantic_pct: 0.30,
+            working_pct: 0.50, // sums to 1.1
+        };
+        let err = budget.validate().unwrap_err();
+        assert!(matches!(err, BudgetError::PercentagesMustSumToOne(_)));
+    }
+
+    #[test]
+    fn slots_initial_budgets() {
+        let budget = ContextBudget::default();
+        let slots = ContextSlots::new(budget);
+        assert_eq!(slots.system.budget, 400);
+        assert_eq!(slots.episodic.budget, 800);
+        assert_eq!(slots.semantic.budget, 1200);
+        assert_eq!(slots.working.budget, 1600);
+        assert_eq!(slots.system.used, 0);
+    }
+
+    #[test]
+    fn slot_available_tokens() {
+        let mut slot = Slot::new(100);
+        assert_eq!(slot.available(), 100);
+        slot.used = 30;
+        assert_eq!(slot.available(), 70);
+    }
+
+    #[test]
+    fn slots_available_by_type() {
+        let budget = ContextBudget::default();
+        let slots = ContextSlots::new(budget);
+        assert_eq!(slots.available(SlotType::System), 400);
+        assert_eq!(slots.available(SlotType::Working), 1600);
+        assert_eq!(slots.total_available(), 4000);
+    }
+
+    #[test]
+    fn slot_add_entries() {
+        let mut slot = Slot::new(1000);
+        let entry = test_entry("k1", "Hello world", 0.5);
+        let tokens = estimate_entry_tokens(&entry);
+        slot.add(entry, tokens);
+        assert_eq!(slot.entries.len(), 1);
+        assert_eq!(slot.used, tokens);
+    }
+
+    #[test]
+    fn slot_evict_from_front() {
+        let mut slot = Slot::new(50);
+        let e1 = test_entry("k1", &"a".repeat(100), 0.8);
+        let e2 = test_entry("k2", &"b".repeat(100), 0.5);
+        slot.add(e1, 26);
+        slot.add(e2, 26);
+        assert_eq!(slot.used, 52);
+        assert!(slot.used > slot.budget);
+
+        slot.evict(estimate_entry_tokens);
+        assert_eq!(slot.entries.len(), 1);
+        assert!(slot.used <= slot.budget);
+    }
+
+    #[test]
+    fn slot_evict_lowest_priority() {
+        let mut slot = Slot::new(60);
+        let e1 = test_entry("k1", &"a".repeat(100), 0.9);
+        let e2 = test_entry("k2", &"b".repeat(100), 0.3);
+        let e3 = test_entry("k3", &"c".repeat(100), 0.7);
+        slot.add(e1, 26);
+        slot.add(e2, 26);
+        slot.add(e3, 26);
+        assert_eq!(slot.used, 78);
+
+        slot.evict_lowest_priority(estimate_entry_tokens);
+        // Should have removed e2 (lowest importance 0.3)
+        assert_eq!(slot.entries.len(), 2);
+        assert_eq!(slot.entries[0].key, "k1");
+        assert_eq!(slot.entries[1].key, "k3");
+    }
+
+    #[test]
+    fn estimate_tokens_basic() {
+        assert_eq!(estimate_tokens("hello"), 2); // 5/4 + 1
+        assert_eq!(estimate_tokens(""), 1); // 0/4 + 1
+        assert_eq!(estimate_tokens("abcdefghijklmnop"), 5); // 16/4 + 1
+    }
+
+    #[test]
+    fn slot_type_as_str() {
+        assert_eq!(SlotType::System.as_str(), "system");
+        assert_eq!(SlotType::Episodic.as_str(), "episodic");
+        assert_eq!(SlotType::Semantic.as_str(), "semantic");
+        assert_eq!(SlotType::Working.as_str(), "working");
+    }
+}
