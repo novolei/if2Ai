@@ -10,6 +10,7 @@
 //! - [`VectorMemoryProvider`] — Vector-backed (FastEmbed + LanceDB, P1)
 
 pub mod embedding;
+pub mod hrr;
 pub mod intent;
 mod providers;
 pub mod retrieval;

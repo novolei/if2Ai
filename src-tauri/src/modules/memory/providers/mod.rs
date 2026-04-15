@@ -9,4 +9,5 @@ mod lancedb;
 mod sqlite_provider;
 mod vector_provider;
 
+pub(crate) use lancedb::{LanceDBError, LanceDBMemory, ScoredMemory};
 pub use sqlite_provider::SqliteMemoryProvider;
