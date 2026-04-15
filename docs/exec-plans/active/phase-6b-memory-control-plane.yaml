@@ -60,7 +60,7 @@ slices:
 
   - id: "6b.2"
     title: "MEM-CP3 — Token 预算槽位 + Working Memory 滑动窗口"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-004-Token-Budget-Allocation.md"
     backlog_ref: "TASK-004-01 ~ TASK-004-08"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1"]
-  current_slice: "6b.2"
+  completed_slices: ["6b.1", "6b.2"]
+  current_slice: "6b.3"
   blocked: []
-  notes: "6B.1 done: SQLite P0 + Security — 20 files changed, 1149 insertions. All 449 tests pass, clippy clean, review PASS."
+  notes: "6B.1+6B.2 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay. 483 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
