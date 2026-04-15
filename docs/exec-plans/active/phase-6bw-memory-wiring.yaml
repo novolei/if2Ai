@@ -409,7 +409,7 @@ slices:
 
   - id: "6bw.8"
     title: "前端 Memory Browser — 查看/搜索/删除记忆"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
     backlog_ref: "TASK-012-13"
     impl_targets:
@@ -515,10 +515,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6bw.1", "6bw.2", "6bw.3", "6bw.4", "6bw.5", "6bw.6", "6bw.7"]
-  current_slice: "6bw.8"
+  completed_slices: ["6bw.1", "6bw.2", "6bw.3", "6bw.4", "6bw.5", "6bw.6", "6bw.7", "6bw.8"]
+  current_slice: "6bw.9"
   blocked: []
-  notes: "6bw.1-6bw.7 done: All backend memory wiring complete. Next: 6bw.8 Frontend Memory Browser UI."
+  notes: "6bw.1-6bw.8 done: All backend wiring + Memory Browser UI complete. Next: 6bw.9 Settings UI (Token Budget + Trajectory Export)."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wiring 关系矩阵
