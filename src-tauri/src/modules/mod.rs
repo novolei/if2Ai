@@ -14,6 +14,7 @@
 pub mod api;
 pub mod commands;
 pub mod control_plane;
+pub mod learning;
 pub mod memory;
 pub mod plugins;
 pub mod projects;
@@ -30,6 +31,8 @@ pub use api::*;
 pub use commands::*;
 #[allow(unused_imports)]
 pub use control_plane::*;
+#[allow(unused_imports)]
+pub use learning::*;
 #[allow(unused_imports)]
 pub use memory::*;
 #[allow(unused_imports)]
