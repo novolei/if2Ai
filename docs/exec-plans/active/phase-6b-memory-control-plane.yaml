@@ -200,7 +200,7 @@ slices:
 
   - id: "6b.4"
     title: "MEM-CP5 — FastEmbed + LanceDB 向量搜索"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-003-FastEmbed-LanceDB-Selection.md"
     backlog_ref: "TASK-003-01 ~ TASK-003-08"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2", "6b.3"]
-  current_slice: "6b.4"
+  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4"]
+  current_slice: "6b.5"
   blocked: []
-  notes: "6B.1~6B.3 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager. 504 tests pass, clippy clean."
+  notes: "6B.1~6B.4 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider (MemoryProvider trait), hybrid search. 513 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
