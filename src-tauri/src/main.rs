@@ -15,12 +15,12 @@ use commands::{
     hub_install, hub_publish, hub_search, hub_snapshot_export, hub_snapshot_import, hub_tap_add,
     hub_tap_list, hub_tap_remove, hub_uninstall, hub_update, list_agents, list_directory_preview,
     list_project_sessions, list_projects, list_sessions, list_skills, list_slash_commands,
-    list_tools, list_toolsets, open_directory_path, open_project_in_finder, open_settings_window,
-    parse_slash_command, read_file_preview, remove_web_search_provider, rename_project,
-    rename_session, reorder_web_search_providers, resolve_skill_slash, respond_permission,
-    run_agent_turn, set_session_pinned, start_agent_stream, stop_agent_stream,
-    suggest_slash_commands, upsert_web_search_provider, validate_web_search_key,
-    write_file_contents,
+    list_tools, list_toolsets, memory_delete, memory_export, memory_purge, memory_recall,
+    open_directory_path, open_project_in_finder, open_settings_window, parse_slash_command,
+    read_file_preview, remove_web_search_provider, rename_project, rename_session,
+    reorder_web_search_providers, resolve_skill_slash, respond_permission, run_agent_turn,
+    set_session_pinned, start_agent_stream, stop_agent_stream, suggest_slash_commands,
+    upsert_web_search_provider, validate_web_search_key, write_file_contents,
 };
 
 use tauri::{
@@ -262,6 +262,11 @@ fn main() {
             resolve_skill_slash,
             list_skills,
             list_agents,
+            // Memory Browser commands
+            memory_recall,
+            memory_delete,
+            memory_export,
+            memory_purge,
             // Skills Hub CLI commands
             hub_browse,
             hub_search,

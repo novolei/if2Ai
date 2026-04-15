@@ -35,6 +35,7 @@ import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspac
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message, SessionTitleState } from '@/modules/chat/types'
+import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 import { Button } from '@/components/ui/button'
@@ -1835,6 +1836,8 @@ function App() {
               onPreviewFocusChange={handlePreviewFocusChange}
               runningSessionIds={runningSessionIds}
             />
+          ) : activeSection === 'memory' ? (
+            <MemoryBrowser />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
           )}

@@ -269,14 +269,13 @@ impl MemoryProvider for VectorMemoryProvider {
     }
 
     async fn purge_category(&self, category: &str) -> Result<(), MemoryError> {
-        // LanceDB doesn't have a bulk delete by filter in the simple API.
-        // We retrieve all entries and delete matching ones.
-        let all_results = self
-            .hybrid_search("", Some(category), usize::MAX)
+        // Direct LanceDB query — no embedding needed
+        let db = self.lancedb.read().await;
+        let all_results = db
+            .export_all(Some(category))
             .await
             .map_err(|e| MemoryError::Generic(format!("search for purge failed: {e}")))?;
 
-        let db = self.lancedb.read().await;
         for scored in &all_results {
             db.delete(&scored.key)
                 .await
@@ -287,11 +286,12 @@ impl MemoryProvider for VectorMemoryProvider {
     }
 
     async fn export(&self, category: Option<&str>) -> Result<Vec<MemoryEntry>, MemoryError> {
-        // Export all entries, optionally filtered by category
-        let all_results = self
-            .hybrid_search("", category, usize::MAX)
+        // Direct LanceDB query — no embedding needed
+        let db = self.lancedb.read().await;
+        let all_results = db
+            .export_all(category)
             .await
-            .map_err(|e| MemoryError::Generic(format!("search for export failed: {e}")))?;
+            .map_err(|e| MemoryError::Generic(format!("lancedb export failed: {e}")))?;
 
         Ok(all_results.iter().map(scored_to_entry).collect())
     }

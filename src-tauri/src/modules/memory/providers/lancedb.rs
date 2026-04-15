@@ -248,6 +248,22 @@ impl LanceDBMemory {
         Ok(count)
     }
 
+    /// Export all entries, optionally filtered by category, without requiring an embedding.
+    /// Used by `MemoryProvider::export` to list entries directly.
+    pub async fn export_all(
+        &self,
+        category: Option<&str>,
+    ) -> Result<Vec<ScoredMemory>, LanceDBError> {
+        let mut query = self.table.query();
+
+        if let Some(cat) = category {
+            query = query.only_if(format!("category = '{}'", cat));
+        }
+
+        let results = query.execute().await?;
+        scored_memories_from_stream(results).await
+    }
+
     /// Return a reference to the LanceDB connection
     pub fn connection(&self) -> &lancedb::Connection {
         &self.db

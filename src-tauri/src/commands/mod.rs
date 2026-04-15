@@ -71,6 +71,7 @@ impl AppState {
 }
 
 pub mod agent;
+pub mod memory;
 pub mod project;
 pub mod session;
 pub mod skills_hub;
@@ -84,6 +85,8 @@ pub mod window;
 pub use agent::{
     respond_permission, run_agent_turn, start_agent_stream, stop_agent_stream, RunAgentTurnResponse,
 };
+#[allow(unused_imports)]
+pub use memory::{memory_delete, memory_export, memory_purge, memory_recall, MemoryEntryDto};
 #[allow(unused_imports)]
 pub use project::{
     create_permanent_worktree, create_project, delete_project, get_project, list_directory_preview,

@@ -12,6 +12,7 @@ export function SectionWorkspace({
   const titles = {
     skills: '技能和应用',
     automation: '自动化',
+    memory: '记忆',
   } as const
 
   return (
