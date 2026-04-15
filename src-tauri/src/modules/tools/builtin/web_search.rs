@@ -295,10 +295,7 @@ async fn search_tavily(
 
     if !response.status().is_success() {
         let status = response.status();
-        let msg = response
-            .text()
-            .await
-            .unwrap_or_else(|_| status.to_string());
+        let msg = response.text().await.unwrap_or_else(|_| status.to_string());
         return Err(ToolError::Handler(format!(
             "Tavily error {}: {}",
             status, msg
@@ -317,7 +314,11 @@ async fn search_tavily(
     }
 
     let mut sorted = resp.results;
-    sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for r in sorted.into_iter().take(max_results) {
         let snippet = if r.content.is_empty() {
@@ -538,16 +539,10 @@ pub fn entry() -> ToolEntry {
                         }
                     }
                     "searxng" => {
-                        let base = provider
-                            .base_url
-                            .as_deref()
-                            .unwrap_or("https://searx.be");
+                        let base = provider.base_url.as_deref().unwrap_or("https://searx.be");
                         search_searxng(&client, base, &query, max_results).await
                     }
-                    other => Err(ToolError::Handler(format!(
-                        "Unknown provider: {}",
-                        other
-                    ))),
+                    other => Err(ToolError::Handler(format!("Unknown provider: {}", other))),
                 };
 
                 match result {
@@ -570,11 +565,10 @@ pub fn entry() -> ToolEntry {
                 encoded_query
             );
 
-            let response = client
-                .get(&api_url)
-                .send()
-                .await
-                .map_err(|e| ToolError::Handler(format!("web_search DDG request failed: {}", e)))?;
+            let response =
+                client.get(&api_url).send().await.map_err(|e| {
+                    ToolError::Handler(format!("web_search DDG request failed: {}", e))
+                })?;
 
             if !response.status().is_success() {
                 return Err(ToolError::Handler(format!(
@@ -583,13 +577,13 @@ pub fn entry() -> ToolEntry {
                 )));
             }
 
-            let body = response.text().await.map_err(|e| {
-                ToolError::Handler(format!("failed to read DDG response: {}", e))
-            })?;
+            let body = response
+                .text()
+                .await
+                .map_err(|e| ToolError::Handler(format!("failed to read DDG response: {}", e)))?;
 
-            let ddg: DdgResponse = serde_json::from_str(&body).map_err(|e| {
-                ToolError::Handler(format!("failed to parse DDG response: {}", e))
-            })?;
+            let ddg: DdgResponse = serde_json::from_str(&body)
+                .map_err(|e| ToolError::Handler(format!("failed to parse DDG response: {}", e)))?;
 
             let primary = format_ddg_response(&ddg, max_results);
 

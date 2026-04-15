@@ -37,6 +37,29 @@ fn cleanup_processes() {
     let _ = Command::new("pkill").args(["-f", "if2ai-backend"]).spawn();
 }
 
+/// Create the memory provider, preferring SQLite but falling back to in-memory.
+fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
+    let db_path = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".if2ai")
+        .join("memory")
+        .join("memory.db");
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match modules::memory::SqliteMemoryProvider::new(db_path) {
+        Ok(p) => std::sync::Arc::new(p) as modules::memory::SharedMemoryProvider,
+        Err(e) => {
+            tracing::error!(
+                "[memory] Failed to create SqliteMemoryProvider: {e}, falling back to in-memory"
+            );
+            #[allow(deprecated)]
+            let fallback = modules::memory::InMemoryMemoryProvider::new();
+            std::sync::Arc::new(fallback) as modules::memory::SharedMemoryProvider
+        }
+    }
+}
+
 fn main() {
     // Initialize directories
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
@@ -89,7 +112,7 @@ fn main() {
     let tool_registry = modules::tools::ToolRegistry::new(std::sync::Arc::new(
         std::sync::Mutex::new(default_tool_context),
     ));
-    let memory_provider = modules::memory::default_memory_provider();
+    let memory_provider = create_memory_provider();
     let scheduler_provider = modules::scheduler::default_scheduler();
     modules::tools::register_builtin_tools(&tool_registry, memory_provider, scheduler_provider);
     let project_manager = modules::projects::ProjectManager::new(projects_dir);

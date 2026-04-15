@@ -2652,7 +2652,7 @@ mod tests {
         let registry = Arc::new(ToolRegistry::new(context));
         register_builtin_tools(
             &registry,
-            memory::default_memory_provider(),
+            memory::default_memory_provider().await,
             scheduler::default_scheduler(),
         );
 

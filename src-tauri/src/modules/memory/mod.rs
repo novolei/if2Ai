@@ -1,11 +1,21 @@
-//! Memory module - provides long-term memory storage and retrieval
+//! Memory module — provides long-term memory storage and retrieval
 //!
 //! This module defines the MemoryProvider trait and related types for
 //! storing and retrieving persistent memory across sessions.
+//!
+//! # Providers
+//!
+//! - [`SqliteMemoryProvider`] — SQLite-backed (default, persistent)
+//! - [`InMemoryMemoryProvider`] — In-memory (deprecated, for tests only)
+
+mod providers;
+
+pub use providers::SqliteMemoryProvider;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -17,6 +27,12 @@ pub struct MemoryEntry {
     pub category: MemoryCategory,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Importance score (0.0 - 1.0), used for eviction prioritization
+    pub importance: f64,
+    /// Number of times this entry has been accessed
+    pub access_count: u64,
+    /// Trust score (-1.0 to 1.0), adjusted by feedback
+    pub trust_score: f64,
 }
 
 /// Memory category for organizing memory entries
@@ -51,6 +67,12 @@ pub enum MemoryError {
     CategoryNotFound(String),
 }
 
+impl From<rusqlite::Error> for MemoryError {
+    fn from(e: rusqlite::Error) -> Self {
+        MemoryError::Generic(e.to_string())
+    }
+}
+
 /// Trait for memory storage providers
 /// Implement this trait to provide different storage backends (in-memory, file-based, etc.)
 #[async_trait]
@@ -82,11 +104,20 @@ pub trait MemoryProvider: Send + Sync {
 }
 
 /// In-memory implementation of MemoryProvider
+///
+/// **Deprecated**: This provider loses all data on process restart.
+/// Use [`SqliteMemoryProvider`] instead for production use.
+/// This is only intended for testing.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use SqliteMemoryProvider instead — InMemoryMemoryProvider loses all data on restart"
+)]
 #[derive(Debug, Default)]
 pub struct InMemoryMemoryProvider {
     entries: RwLock<HashMap<String, MemoryEntry>>,
 }
 
+#[allow(deprecated)]
 impl InMemoryMemoryProvider {
     pub fn new() -> Self {
         Self {
@@ -95,6 +126,7 @@ impl InMemoryMemoryProvider {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl MemoryProvider for InMemoryMemoryProvider {
     async fn store(
@@ -110,6 +142,9 @@ impl MemoryProvider for InMemoryMemoryProvider {
             category: category.clone(),
             created_at: now,
             updated_at: now,
+            importance: 0.5,
+            access_count: 0,
+            trust_score: 0.0,
         };
         let mut entries = self.entries.write().await;
         entries.insert(key.to_string(), entry);
@@ -171,7 +206,32 @@ impl MemoryProvider for InMemoryMemoryProvider {
 /// Global memory provider instance
 pub type SharedMemoryProvider = Arc<dyn MemoryProvider>;
 
-/// Default in-memory memory provider
-pub fn default_memory_provider() -> SharedMemoryProvider {
-    Arc::new(InMemoryMemoryProvider::new())
+/// Default SQLite memory provider
+///
+/// Creates a persistent provider backed by `~/.if2ai/memory/memory.db`.
+/// Data survives process restarts.
+#[allow(dead_code)]
+pub async fn default_memory_provider() -> SharedMemoryProvider {
+    let db_path = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".if2ai")
+        .join("memory")
+        .join("memory.db");
+
+    // Ensure parent directory exists
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    match SqliteMemoryProvider::new(db_path) {
+        Ok(provider) => Arc::new(provider),
+        Err(e) => {
+            tracing::error!(
+                "[memory] Failed to create SqliteMemoryProvider: {e}, falling back to in-memory"
+            );
+            #[allow(deprecated)]
+            let fallback = InMemoryMemoryProvider::new();
+            Arc::new(fallback)
+        }
+    }
 }

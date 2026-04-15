@@ -83,6 +83,7 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::modules::memory::InMemoryMemoryProvider;

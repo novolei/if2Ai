@@ -88,6 +88,7 @@ fn format_as_markdown(entries: &[MemoryEntry]) -> String {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::modules::memory::InMemoryMemoryProvider;

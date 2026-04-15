@@ -218,9 +218,7 @@ pub async fn read_file_preview(
                 .unwrap_or(10 * 1024 * 1024)
                 .clamp(32 * 1024, 32 * 1024 * 1024)
         } else {
-            max_bytes
-                .unwrap_or(128 * 1024)
-                .clamp(1024, 512 * 1024)
+            max_bytes.unwrap_or(128 * 1024).clamp(1024, 512 * 1024)
         };
         let metadata = std::fs::metadata(&file_path).map_err(|err| err.to_string())?;
         if !metadata.is_file() {

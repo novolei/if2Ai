@@ -48,7 +48,7 @@ mod tests {
         let registry = ToolRegistry::new(context);
 
         // Register all tools
-        let memory = default_memory_provider();
+        let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
         crate::modules::tools::register_builtin_tools(&registry, memory, scheduler);
 
@@ -147,7 +147,7 @@ mod tests {
     /// Test memory_store and memory_recall integration
     #[tokio::test]
     async fn test_memory_store_and_recall() {
-        let memory = default_memory_provider();
+        let memory = default_memory_provider().await;
 
         // Store a memory
         memory
@@ -209,7 +209,7 @@ mod tests {
     async fn test_tools_have_correct_toolsets() {
         let context = test_context();
         let registry = ToolRegistry::new(context);
-        let memory = default_memory_provider();
+        let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
         crate::modules::tools::register_builtin_tools(&registry, memory, scheduler);
 
