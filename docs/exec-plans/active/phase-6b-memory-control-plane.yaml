@@ -407,7 +407,7 @@ slices:
 
   - id: "6b.7"
     title: "LEARN-2 — TrajectoryManager + ShareGPT JSONL 导出"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-009-Trajectory-Learning-Timing-P3.md"
     backlog_ref: "TASK-009-01 ~ TASK-009-06"
     impl_targets:
@@ -590,10 +590,10 @@ slices:
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
   last_updated: "2026-04-15"
-  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5", "6b.6"]
-  current_slice: "6b.7"
+  completed_slices: ["6b.1", "6b.2", "6b.3", "6b.4", "6b.5", "6b.6", "6b.7"]
+  current_slice: "6b.8"
   blocked: []
-  notes: "6B.1~6B.6 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning, HybridMemoryProvider, Self-Learning (SelfModel, ReflectionEngine, TrustTracker). 559 tests pass, clippy clean."
+  notes: "6B.1~6B.7 done: SQLite P0, Security, Token Budget, WorkingMemory, FrozenSnapshot, WeibullDecay, Intent Routing, RRF Fusion, ActiveRetrievalManager, FastEmbed 384d, LanceDB vector store, VectorMemoryProvider, hybrid search, HRR algebraic reasoning, HybridMemoryProvider, Self-Learning (SelfModel, ReflectionEngine, TrustTracker), Trajectory Learning (ShareGPT export, file rotation, privacy controls). 569 tests pass, clippy clean."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
