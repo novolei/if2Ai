@@ -8,7 +8,9 @@
 //! - [`SqliteMemoryProvider`] — SQLite-backed (default, persistent)
 //! - [`InMemoryMemoryProvider`] — In-memory (deprecated, for tests only)
 
+pub mod intent;
 mod providers;
+pub mod retrieval;
 pub mod working_memory;
 
 pub use providers::SqliteMemoryProvider;
