@@ -9,6 +9,7 @@
 //! - [`InMemoryMemoryProvider`] — In-memory (deprecated, for tests only)
 //! - [`VectorMemoryProvider`] — Vector-backed (FastEmbed + LanceDB, P1)
 
+pub mod compat;
 pub mod embedding;
 pub mod hrr;
 pub mod intent;

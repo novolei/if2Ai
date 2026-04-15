@@ -1,3 +1,15 @@
+//! Context compaction for session management
+//!
+//! This implementation is adapted from:
+//! - iClaw/agent/context_compressor.py (UClaw)
+//! - hermes-agent/agent/context_compressor.py
+//!
+//! Changes from upstream:
+//! - Rust async/await instead of Python asyncio
+//! - Token counting using simple char-based estimation instead of tiktoken
+//! - SessionManager integration for persistence
+//! - Weibull decay with configurable lambda/k parameters
+
 #![allow(dead_code)]
 
 use super::session::{ContentBlock, ConversationMessage, MessageRole, Session};
