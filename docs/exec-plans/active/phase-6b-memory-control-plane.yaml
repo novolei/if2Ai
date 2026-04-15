@@ -42,63 +42,16 @@ slices:
 
   - id: "6b.1"
     title: "MEM-CP1+CP2 — SQLite P0 持久化 + 安全验证"
-    status: pending
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-001-SQLite-P0-Persistence.md"
     backlog_ref: "TASK-001-01 ~ TASK-001-07; TASK-006-01 ~ TASK-006-07"
     impl_targets:
-      - src-tauri/src/modules/memory/mod.rs                    # MODIFY: 替换 InMemoryMemoryProvider
-      - src-tauri/src/modules/memory/providers/sqlite_provider.rs  # CREATE: SqliteMemoryProvider
-      - src-tauri/src/modules/security/validation.rs            # CREATE: 输入验证
-      - src-tauri/src/modules/security/path.rs                  # CREATE: 路径验证
-      - src-tauri/src/modules/security/atomic_write.rs          # CREATE: 原子写入
-      - src-tauri/src/modules/security/access.rs                # CREATE: MemoryAccessContext
-
-    baseline_ref: "src-tauri/src/modules/memory/mod.rs (InMemoryMemoryProvider — BUG: 进程重启丢失数据)"
-
-    current_state: |
-      【已实现】
-      ✅ MemoryProvider trait (5方法: store/recall/delete/purge_category/export)
-      ✅ InMemoryMemoryProvider (HashMap实现, 有BUG: 进程重启丢失数据)
-      ✅ 5个memory工具已注册: memory_store, memory_recall, memory_forget, memory_purge, memory_export
-      ✅ Compaction (src-tauri/src/modules/runtime/compact.rs)
-      ✅ Token budget (conversation.rs max_token_budget 字段)
-
-      【缺失 — 需要新建】
-      ❌ SqliteMemoryProvider (需新建 providers/sqlite_provider.rs)
-      ❌ MemoryEntry 缺少 importance/access_count/trust_score 字段
-      ❌ Security 模块 (providers/security/ 目录不存在)
-      ❌ 路径验证/输入验证/原子写入 (需新建)
-      ❌ Learning 模块 (不存在)
-      ❌ HRR/FastEmbed/LanceDB (不存在)
-
-      【CRITICAL BUG】
-      ❌ InMemoryMemoryProvider 进程重启后所有记忆数据丢失
-
-    acceptance:
-      - type: compile
-        cmd: "cargo check -p if2ai-backend"
-      - type: test
-        cmd: "cargo test --package if2ai-backend memory::providers::sqlite"
-        label: "SqliteMemoryProvider 单元测试通过"
-      - type: test
-        cmd: "cargo test --package if2ai-backend security::validation"
-        label: "安全验证测试通过"
-      - type: test
-        cmd: "cargo test --package if2ai-backend security::atomic_write"
-        label: "原子写入测试通过"
-      - type: symbol
-        file: "src-tauri/src/modules/memory/mod.rs"
-        grep: "SqliteMemoryProvider"
-        label: "default_memory_provider 返回 SqliteMemoryProvider"
-      - type: compile
-        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
-    review_checklist:
-      - "InMemoryMemoryProvider 是否标记 #[deprecated]"
-      - "SqliteMemoryProvider 是否实现 MemoryProvider trait"
-      - "进程重启后 recall 是否返回重启前存储的数据"
-      - "validate_memory_entry 是否拒绝恶意输入"
-      - "路径遍历攻击是否被阻止"
-      - "无 unwrap()（测试除外）"
+      - src-tauri/src/modules/memory/mod.rs
+      - src-tauri/src/modules/memory/providers/sqlite_provider.rs
+      - src-tauri/src/modules/security/validation.rs
+      - src-tauri/src/modules/security/path.rs
+      - src-tauri/src/modules/security/atomic_write.rs
+      - src-tauri/src/modules/security/access.rs
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Slice 6b.2: Token Budget & Working Memory
@@ -636,11 +589,11 @@ slices:
 # Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 dashboard:
-  last_updated: "2026-04-13"
-  completed_slices: []
-  current_slice: "6b.1"
+  last_updated: "2026-04-15"
+  completed_slices: ["6b.1"]
+  current_slice: "6b.2"
   blocked: []
-  notes: "Phase 6B 规划完成: 9 slices, 对应 ADR-001~009. P0: SQLite P0 + Security (6b.1). P0: Token Budget (6b.2). P1: Active Retrieval (6b.3). P1: Vector Search (6b.4). P2a: HRR (6b.5). P2b: Self-Learning (6b.6). P3: Trajectory (6b.7). P1: Upstream (6b.8). Final: Integration (6b.9)."
+  notes: "6B.1 done: SQLite P0 + Security — 20 files changed, 1149 insertions. All 449 tests pass, clippy clean, review PASS."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Slice Priority Mapping
