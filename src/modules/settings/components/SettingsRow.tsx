@@ -12,7 +12,7 @@ export function SettingsRow({ title, description, children, className }: Setting
   return (
     <div
       className={cn(
-        'flex flex-col gap-3.5 rounded-[18px] border border-black/5 bg-white/72 px-4 py-3.5 lg:flex-row lg:items-center lg:justify-between',
+        'flex flex-col gap-3.5 rounded-2xl border border-border/50 bg-surface-raised px-5 py-4 lg:flex-row lg:items-center lg:justify-between',
         className,
       )}
     >

@@ -4,6 +4,7 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Bot,
+  Cpu,
   ChevronDown,
   ChevronRight,
   Check,
@@ -12,6 +13,7 @@ import {
   File,
   Folder,
   FolderOpen,
+  GitBranch,
   Globe,
   GripVertical,
   House,
@@ -20,11 +22,10 @@ import {
   Copy,
   LoaderCircle,
   MoreHorizontal,
-  Mic,
   Plus,
   Search,
-  Send,
   Sparkles,
+  SlidersHorizontal,
   Square,
   Paperclip,
   AlertTriangle,
@@ -51,6 +52,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
@@ -123,18 +125,18 @@ const BOTTOM_EPSILON_PX = 120
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
 const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
 const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
-const PROJECT_RAIL_MIN_WIDTH = 296
-const PROJECT_RAIL_MAX_WIDTH = 620
+const PROJECT_RAIL_MIN_WIDTH = 140
+const PROJECT_RAIL_MAX_WIDTH = 300
 const PREVIEW_AUTOSAVE_DELAY_MS = 900
 const PROJECT_RAIL_NOTICE_DURATION_MS = 2800
 
 const SURFACE_CARD_TOKENS = {
-  radius: 'rounded-[14px]',
-  border: 'border border-black/8',
-  background: 'bg-[#f6f7f8]',
-  headerBackground: 'bg-[#f3f4f6]',
-  headerDivider: 'border-b border-black/8',
-  headerLabel: 'font-mono text-[10px] tracking-tight text-black/45',
+  radius: 'rounded-[6px]',
+  border: 'border border-border/50',
+  background: 'bg-surface',
+  headerBackground: 'bg-surface-raised',
+  headerDivider: 'border-b border-border/50',
+  headerLabel: 'font-mono text-[10px] tracking-tight text-muted-foreground/45',
 } as const
 
 function FontSansIcon({ className }: { className?: string }) {
@@ -252,12 +254,12 @@ export function ChatUI({
   const projectRailOpenBeforePreviewRef = React.useRef(true)
   const wasPreviewFocusModeRef = React.useRef(false)
   const [projectRailWidth, setProjectRailWidth] = React.useState(() => {
-    if (typeof window === 'undefined') return 338
+    if (typeof window === 'undefined') return 200
     const stored = Number(window.localStorage.getItem(PROJECT_RAIL_WIDTH_STORAGE_KEY))
     if (Number.isFinite(stored)) {
       return Math.min(PROJECT_RAIL_MAX_WIDTH, Math.max(PROJECT_RAIL_MIN_WIDTH, stored))
     }
-    return 338
+    return 200
   })
   const isProjectRailOpen = isProjectRailOpenProp
   const densityMode = densityModeProp
@@ -1107,18 +1109,18 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
         className="pointer-events-auto absolute inset-y-5 -left-3 flex w-6 cursor-col-resize items-center justify-center"
         onPointerDown={startResize}
       >
-        <div className="flex h-16 w-3 items-center justify-center rounded-full bg-white/82 shadow-[0_8px_20px_rgba(78,61,38,0.08)] backdrop-blur-sm">
-          <GripVertical className="h-4 w-4 text-[#cabdac]" />
+        <div className="flex h-16 w-3 items-center justify-center rounded-full bg-surface-raised/82 shadow-[0_8px_20px_rgba(78,61,38,0.08)] backdrop-blur-sm">
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
       </div>
       <div className="pointer-events-auto flex h-full flex-col justify-start">
         <div className="h-3 shrink-0" />
         <div className="min-h-0 flex-1 px-2 pb-2">
-          <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-[#e7ddd0] bg-[#fdfbf7] shadow-[0_16px_36px_rgba(96,75,47,0.06),inset_0_1px_0_rgba(255,255,255,0.92)]">
+          <div className="flex h-full min-h-0 flex-col rounded-[18px] border border-border bg-surface shadow-xs">
             <div className="flex items-start justify-between gap-3 px-4 pt-4">
               <div className="min-w-0 flex-1 pr-2">
                 <div
-                  className="truncate text-[18px] font-medium tracking-[-0.03em] text-[#bb8363]"
+                  className="truncate text-[18px] font-medium tracking-[-0.03em] text-foreground"
                   style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}
                 >
                   {title}
@@ -1128,14 +1130,14 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
                 <button
                   type="button"
                   onClick={onOpenFolder}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-[11px] border border-[#e6d8c7] bg-[#f7f1e8] px-2.25 text-[10px] font-medium text-[#ad9a88] transition-all duration-200 hover:border-[#d9c8b3] hover:bg-[#f9f4ed] hover:text-[#927b67]"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.25 text-[10px] font-medium text-muted-foreground transition-all duration-200 hover:border-border hover:bg-accent hover:text-foreground"
                 >
                   <Folder className="h-3.25 w-3.25 stroke-[1.85]" />
                   <span>打开文件夹</span>
                 </button>
                 <button
                   type="button"
-                  className="inline-flex h-7 items-center gap-1.5 rounded-[11px] border border-[#e6d8c7] bg-[#f7f1e8] px-2.25 text-[10px] font-medium text-[#ad9a88] transition-all duration-200 hover:border-[#d9c8b3] hover:bg-[#f9f4ed] hover:text-[#927b67]"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.25 text-[10px] font-medium text-muted-foreground transition-all duration-200 hover:border-border hover:bg-accent hover:text-foreground"
                 >
                   <Sparkles className="h-3.25 w-3.25" />
                   <span>项目技能 · 2</span>
@@ -1143,16 +1145,16 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
               </div>
             </div>
 
-            <div className="mt-2 flex items-center justify-between border-b border-[#ece3d7] px-4 pb-3">
+            <div className="mt-2 flex items-center justify-between border-b border-border/60 px-4 pb-3">
               <div className="flex items-center gap-2">
-                <div className="text-[11px] font-semibold tracking-[-0.01em] text-[#a89a8b]">技能</div>
-                <div className="inline-flex min-w-7 items-center justify-center rounded-full bg-[#efebe4] px-2 py-0.5 text-[10px] text-[#a79a8d]">
+                <div className="text-[11px] font-semibold tracking-[-0.01em] text-muted-foreground">技能</div>
+                <div className="inline-flex min-w-7 items-center justify-center rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
                   {entries.length}
                 </div>
               </div>
               <button
                 type="button"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#b7aa9c] transition-colors hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 <ChevronRight className="h-3.5 w-3.5" />
               </button>
@@ -1161,25 +1163,25 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
             <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-3">
               <div className="flex items-center justify-between gap-3 px-0.5">
                 {breadcrumbs.length > 1 ? (
-                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden rounded-[10px] bg-[#f7f1e8] px-2.5 py-1 text-[10.5px] text-[#bf9a82]">
+                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden rounded-[6px] bg-surface-raised px-2.5 py-1 text-[10.5px] text-muted-foreground">
                     <>
                       <button
                         type="button"
                         onClick={onNavigateUp}
-                        className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-[#d2b5a0] transition-colors hover:bg-[#efe6da] hover:text-[#a88469]"
+                        className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <ChevronRight className="h-3 w-3 rotate-180" />
                       </button>
                       <div className="flex min-w-0 items-center overflow-hidden">
                         {breadcrumbs.map((crumb, index) => (
                           <React.Fragment key={crumb.path}>
-                            {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-[#d7c0ae]" /> : null}
+                            {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" /> : null}
                             <button
                               type="button"
                               onClick={() => onJumpToBreadcrumb(crumb.path)}
                               className={cn(
-                                'min-w-0 shrink truncate rounded px-0.5 py-0.5 transition-colors hover:text-[#9e7558]',
-                                index === breadcrumbs.length - 1 ? 'font-medium text-[#bb8a6b]' : 'text-[#c7a893]'
+                                'min-w-0 shrink truncate rounded px-0.5 py-0.5 transition-colors hover:text-foreground',
+                                index === breadcrumbs.length - 1 ? 'font-medium text-foreground' : 'text-muted-foreground'
                               )}
                             >
                               {crumb.label}
@@ -1195,7 +1197,7 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
                 <button
                   type="button"
                   onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-1 text-[11px] text-[#b2a598] transition-colors duration-150 hover:bg-[#f2ebdf] hover:text-[#8e7f71]"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-1 text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
                 >
                   {sortMode === 'recent' ? (
                     <Clock3 className="h-3.25 w-3.25" />
@@ -1208,21 +1210,21 @@ const ProjectFilesRail = React.memo(function ProjectFilesRail({
 
               <div className="mt-2 min-h-0 flex-1 overflow-hidden bg-transparent">
                 {previewError ? (
-                  <div className="mb-2 rounded-[10px] border border-[#eedfd2] bg-[#fbf3ea] px-3 py-2 text-[11px] text-[#b08c72]">
+                  <div className="mb-2 rounded-[6px] border border-border bg-muted px-3 py-2 text-[11px] text-muted-foreground">
                     {previewError}
                   </div>
                 ) : null}
                 {isLoading ? (
-                  <div className="flex items-center gap-2 px-1 py-3 text-[11.5px] text-[#b4aa9f]">
+                  <div className="flex items-center gap-2 px-1 py-3 text-[11.5px] text-muted-foreground">
                     <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                     <span>正在整理当前项目文件…</span>
                   </div>
                 ) : entries.length === 0 ? (
-                  <div className="px-1 py-5 text-center text-[11.5px] text-[#b6ab9d]">
+                  <div className="px-1 py-5 text-center text-[11.5px] text-muted-foreground">
                     当前目录里还没有可显示的文件。
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-y-auto px-0 py-0">
+                  <div className="h-full min-h-0 overflow-y-auto px-0 py-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     <div className="space-y-0 pb-1">
                       {entries.map((entry) => (
                         <ProjectRailTreeNode
@@ -1261,8 +1263,8 @@ function ProjectRailGroup({
   return (
     <section className="mb-2">
       <div className="mb-1.5 flex items-center justify-between px-1">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-[#c4b8aa]">{title}</div>
-        <div className="text-[10px] text-[#d0c5b8]">{count}</div>
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground/50">{title}</div>
+        <div className="text-[10px] text-muted-foreground/40">{count}</div>
       </div>
       <div className="space-y-0.5">{children}</div>
     </section>
@@ -1294,22 +1296,22 @@ function ProjectRailFilePreview({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-[#ece3d7] px-1 pb-2.5">
+      <div className="flex items-center justify-between border-b border-border/60 px-1 pb-2.5">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1 rounded-full bg-[#f2ece2] px-2.5 py-1 text-[11px] text-[#8f8070] transition-colors hover:bg-[#ece4d8]"
+          className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/80"
         >
           <ChevronRight className="h-3 w-3 rotate-180" />
           <span>返回目录</span>
         </button>
-        <div className="min-w-0 truncate pl-3 text-[11px] text-[#b8ac9d]">{preview.name}</div>
+        <div className="min-w-0 truncate pl-3 text-[11px] text-muted-foreground">{preview.name}</div>
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => onOpenExternally(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
         >
           <ArrowUpRight className="h-3.5 w-3.5" />
           <span>在外部打开</span>
@@ -1317,7 +1319,7 @@ function ProjectRailFilePreview({
         <button
           type="button"
           onClick={() => onQuoteIntoChat(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
         >
           <Quote className="h-3.5 w-3.5" />
           <span>在聊天中引用</span>
@@ -1331,27 +1333,27 @@ function ProjectRailFilePreview({
             event.dataTransfer.setData('text/plain', payload)
             event.dataTransfer.effectAllowed = 'copy'
           }}
-          className="inline-flex items-center gap-1.5 rounded-[11px] border border-[#e8dfd3] bg-white/84 px-2.5 py-1.5 text-[11px] text-[#8f8070] transition-all duration-150 hover:-translate-y-0.5 hover:bg-white"
+          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
         >
           <ScanSearch className="h-3.5 w-3.5" />
           <span>拖入上下文</span>
         </button>
       </div>
-      <div className="mt-3 min-h-0 overflow-auto rounded-[18px] border border-[#e8dfd3] bg-[#fffdf8]/88">
+      <div className="mt-3 min-h-0 overflow-auto rounded-[6px] border border-border bg-surface/88">
         {preview.kind === 'image' && dataUrl ? (
           <div className="flex min-h-full items-start justify-center p-4">
-            <img src={dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-[14px] object-contain shadow-[0_10px_24px_rgba(47,36,22,0.08)]" />
+            <img src={dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-[6px] object-contain shadow-xs" />
           </div>
         ) : preview.kind === 'pdf' && dataUrl ? (
-          <iframe title={preview.name} src={dataUrl} className="h-full min-h-[520px] w-full rounded-[18px]" />
+          <iframe title={preview.name} src={dataUrl} className="h-full min-h-[520px] w-full rounded-[6px]" />
         ) : preview.kind === 'markdown' ? (
-          <div className="px-4 py-4 text-[12px] leading-5.5 text-black/70">
+          <div className="px-4 py-4 text-[12px] leading-5.5 text-foreground/70">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {preview.content ?? ''}
             </ReactMarkdown>
           </div>
         ) : (
-          <div className="px-4 py-4 text-[11px] leading-5.5 text-black/68">
+          <div className="px-4 py-4 text-[11px] leading-5.5 text-foreground/68">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
               {codeFence}
             </ReactMarkdown>
@@ -1421,33 +1423,33 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
           event.dataTransfer.effectAllowed = 'copy'
         }}
         className={cn(
-          'group flex w-full cursor-pointer items-center gap-2 rounded-[11px] px-0.5 py-1 text-left text-[#34312d] transition-all duration-150 hover:bg-[#f6f1e9]',
-          isSelected && 'bg-[#f4efe7]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#dfd0bb]'
+          'group flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-0.5 py-1 text-left text-foreground/80 transition-all duration-150 hover:bg-muted',
+          isSelected && 'bg-accent',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
         )}
         style={{ paddingLeft: `${2 + level * 12}px` }}
       >
-        <div className="flex h-4 w-4 shrink-0 items-center justify-center text-[#ccbba8]">
+        <div className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/60">
           {isFolder ? (
-            <span className="inline-flex h-4 w-4 items-center justify-center text-[#ccbba8]">
+            <span className="inline-flex h-4 w-4 items-center justify-center text-muted-foreground/60">
               <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
             </span>
           ) : (
             <span className="h-3.5 w-3.5" />
           )}
         </div>
-        <div className="flex h-5 w-5 shrink-0 items-center justify-center text-[#c88766] transition-transform duration-150 group-hover:-translate-y-0.5">
+        <div className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-150 group-hover:-translate-y-0.5">
           <Icon className="h-[15px] w-[15px] stroke-[1.65]" />
         </div>
-        <div className="min-w-0 flex-1 truncate text-[12px] font-[380] tracking-[-0.01em] text-[#46413b] [font-feature-settings:'ss01'_1,'cv01'_1]">
+        <div className="min-w-0 flex-1 truncate text-[12px] font-[380] tracking-[-0.01em] text-foreground/75 [font-feature-settings:'ss01'_1,'cv01'_1]">
           {entry.name}
         </div>
         {isLoading ? (
-          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#c5b9aa]" />
+          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/60" />
         ) : isFolder ? (
-          <div className="text-[9.5px] uppercase tracking-[0.16em] text-[#d0c5b8]">{children.length > 0 ? '' : ''}</div>
+          <div className="text-[9.5px] uppercase tracking-[0.16em] text-muted-foreground/40">{children.length > 0 ? '' : ''}</div>
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#d0c5b8] opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
         )}
       </div>
 
@@ -1469,7 +1471,7 @@ const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
                 />
               ))
             ) : !isLoading ? (
-              <div className="px-2 py-1 text-[10px] italic text-[#c3b6a8]" style={{ paddingLeft: `${16 + level * 12}px` }}>
+              <div className="px-2 py-1 text-[10px] italic text-muted-foreground/50" style={{ paddingLeft: `${16 + level * 12}px` }}>
                 这个文件夹目前是空的
               </div>
             ) : null}
@@ -1721,29 +1723,32 @@ const ComposerDock = React.memo(function ComposerDock({
                 key={item.id}
                 type="button"
                 onClick={() => onRemoveDropItem(item.id)}
-                className="group inline-flex max-w-full items-center gap-2 rounded-[16px] border border-[#e7d9c8] bg-[#fffdf9] px-3 py-2 text-left text-[#54473b] shadow-[0_4px_10px_rgba(97,75,45,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#dbc7b3] hover:bg-white"
+                className="group inline-flex max-w-full items-center gap-2 rounded-[6px] border border-border/50 bg-surface-raised px-3 py-2 text-left text-foreground/60 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:bg-surface"
                 title={item.path}
               >
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[#8e7b69]">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60">
                   {item.kind === 'file' ? <Paperclip className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
                 </span>
                 <span className="truncate text-[12.5px] font-medium tracking-[-0.015em]">{item.name}</span>
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[#c0b1a0] transition-colors group-hover:text-[#8f7c69]">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">
                   <X className="h-3.5 w-3.5" />
                 </span>
               </button>
             ))}
           </div>
         ) : null}
+
+        {/* ── Composer box ── */}
         <div
           className={cn(
-            'rounded-[20px] border border-black/5 bg-white/42 px-4 py-2 backdrop-blur-xl transition-[box-shadow,border-color,transform,background-color,opacity] duration-300 ease-out',
+            'flex flex-col rounded-2xl border border-input bg-card px-4 py-3 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
             isComposerFocused
-              ? 'translate-y-[-2px] scale-[1.005] border-slate-300/35 bg-white/56 shadow-[0_0_0_1px_rgba(148,163,184,0.14),0_0_0_6px_rgba(148,163,184,0.055),0_10px_24px_rgba(15,23,42,0.03),0_0_24px_rgba(255,255,255,0.42)]'
-              : 'translate-y-0 scale-100 shadow-[0_4px_10px_rgba(15,23,42,0.012)]'
+              ? '-translate-y-0.5 shadow-[0_14px_56px_rgba(68,185,130,0.22),0_0_0_1px_rgba(68,185,130,0.32),0_0_48px_rgba(68,185,130,0.16)]'
+              : 'translate-y-0 shadow-token-sm'
           )}
         >
-          <div className="flex min-h-[92px] flex-col">
+          {/* Textarea (align top) */}
+          <div className="flex-1 px-0 pt-2 pb-1">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1779,144 +1784,189 @@ const ComposerDock = React.memo(function ComposerDock({
               rows={1}
               onFocus={() => setIsComposerFocused(true)}
               onBlur={() => setIsComposerFocused(false)}
-              className={cn(
-                'min-h-[70px] resize-none border-0 bg-transparent px-0 py-0.5 pl-3 text-[14px] leading-6 shadow-none focus-visible:ring-0',
-                isDropTarget && 'rounded-[16px] bg-[#f8f2ea]/82 outline outline-1 outline-[#e6d7c3]'
-              )}
+              className="min-h-[46px] max-h-[180px] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[13px] leading-6 shadow-none focus-visible:ring-0 placeholder:text-muted-foreground"
+              placeholder="输入消息…"
             />
-            {isDropTarget ? (
-              <div className="pointer-events-none absolute inset-x-4 top-3 rounded-[16px] border border-dashed border-[#ddccb7] bg-[#fffaf4]/88 px-4 py-3 text-[12px] text-[#9d846d] backdrop-blur-sm">
-                文件会作为附件发送，文件夹会作为引用附加到消息里。
-              </div>
-            ) : null}
+          </div>
 
-            <div className="mt-1.5 flex flex-col gap-1.5">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                <div className="flex min-w-0 items-center gap-2 overflow-visible">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 rounded-md bg-transparent p-0 text-black/42 shadow-none hover:bg-black/[0.03] hover:text-black/70"
-                    aria-label="添加附件"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
+          {/* Bottom bar: + (left) | Send (right) */}
+          <div className="flex items-center justify-between px-0.5 pb-1 pt-1">
+            {/* Attach button — small, no bg, hover shows rounded square */}
+            <button
+              type="button"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-raised hover:text-jade transition-all duration-150"
+              aria-label="添加附件"
+              disabled={isLoading}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
 
-                  <CompactMenu
-                    label={modelLabelFor(selectedModel)}
-                    className="min-w-[118px]"
-                    contentClassName="w-[148px]"
-                    triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
-                  >
-                    {modelItems.map((item) => (
-                      <MenuItemButton
-                        key={item.value}
-                        onClick={() => setSelectedModel(item.value)}
-                        active={selectedModel === item.value}
-                      >
-                        {item.label}
-                      </MenuItemButton>
-                    ))}
-                  </CompactMenu>
+            {/* Send / Stop button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (isLoading && onStop) {
+                  onStop()
+                } else if (!isLoading) {
+                  onSubmit()
+                }
+              }}
+              disabled={!isLoading && !input.trim()}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[12px] font-medium transition-all duration-150',
+                isLoading
+                  ? 'bg-destructive text-primary-foreground hover:opacity-90 active:scale-95'
+                  : input.trim()
+                    ? 'bg-jade text-primary-foreground hover:opacity-90 active:scale-95'
+                    : 'bg-muted text-muted-foreground cursor-not-allowed'
+              )}
+              aria-label={isLoading ? '停止生成' : '发送消息'}
+            >
+              {isLoading ? (
+                <Square className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <>
+                  <span className="h-3.5 w-3.5">
+                    <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M9.5 3.5L5 8l4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </span>
+                  发送
+                </>
+              )}
+            </button>
+          </div>
 
-                  <CompactMenu
-                    label={strengthLabelFor(selectedStrength)}
-                    className="min-w-[60px]"
-                    contentClassName="w-[92px]"
-                    triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
-                  >
-                    {strengthItems.map((item) => (
-                      <MenuItemButton
-                        key={item.value}
-                        onClick={() => setSelectedStrength(item.value)}
-                        active={selectedStrength === item.value}
-                      >
-                        {item.label}
-                      </MenuItemButton>
-                    ))}
-                  </CompactMenu>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-full text-black/42 hover:bg-black/[0.03] hover:text-black/70"
-                  >
-                    <Mic className="h-4 w-4" />
-                  </Button>
-
-                  <Button
-                    onClick={() => {
-                      if (isLoading && onStop) {
-                        onStop()
-                      } else if (!isLoading) {
-                        onSubmit()
-                      }
-                    }}
-                    disabled={!isLoading && !input.trim()}
-                    size="icon"
-                    className={cn('h-9 w-9 rounded-full shadow-none transition-colors', isLoading ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-black text-white hover:bg-black/90 disabled:bg-black/40')}
-                    title={isLoading ? '停止生成' : '发送消息'}
-                  >
-                    {isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                <div className="flex min-w-0 items-center gap-2 overflow-visible">
-                  <CompactMenu
-                    label="本地"
-                    className="min-w-[66px]"
-                    contentClassName="w-[92px]"
-                    triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
-                  >
-                    <MenuItemButton active>本地</MenuItemButton>
-                    <MenuItemButton>云端</MenuItemButton>
-                  </CompactMenu>
-
-                  <CompactMenu
-                    label={permissionModeLabelFor(permissionMode)}
-                    className="min-w-[96px]"
-                    contentClassName="w-[120px]"
-                    triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
-                  >
-                    {permissionModeItems.map((item) => (
-                      <MenuItemButton
-                        key={item.value}
-                        active={permissionMode === item.value}
-                        onClick={() => setPermissionMode(item.value)}
-                      >
-                        {item.label}
-                      </MenuItemButton>
-                    ))}
-                  </CompactMenu>
-
-                  <CompactMenu
-                    label={branchLabel}
-                    className="min-w-[136px] max-w-[242px]"
-                    contentClassName="w-[176px]"
-                    triggerIcon={<ChevronDown className="h-3 w-3 opacity-55" />}
-                  >
-                    <MenuItemButton active>{branchLabel}</MenuItemButton>
-                    <MenuItemButton>切换分支</MenuItemButton>
-                    <MenuItemButton>复制分支名</MenuItemButton>
-                  </CompactMenu>
-                </div>
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 rounded-full text-black/42 hover:bg-black/[0.03] hover:text-black/70"
-                >
-                  <Sparkles className="h-4 w-4" />
-                </Button>
-              </div>
+          {/* Drop target overlay */}
+          {isDropTarget && (
+            <div className="pointer-events-none absolute inset-x-4 top-3 rounded-xl border border-dashed border-border bg-surface/88 px-4 py-3 text-[12px] text-muted-foreground backdrop-blur-sm">
+              文件会作为附件发送，文件夹会作为引用附加到消息里。
             </div>
+          )}
+        </div>
+
+        {/* ── Meta bar (Paico: model | language | access | branch | settings) ── */}
+        <div className="mt-2 flex items-center justify-between px-1">
+          {/* Left: model + strength */}
+          <div className="flex items-center gap-3">
+            {/* Model selector */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
+                  disabled={isLoading}
+                >
+                  <Cpu className="h-[11px] w-[11px]" />
+                  {modelLabelFor(selectedModel)}
+                  <ChevronDown className="h-[10px] w-[10px]" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent sideOffset={6} align="start" className="w-[148px]">
+                {modelItems.map((item) => (
+                  <MenuItemButton
+                    key={item.value}
+                    onClick={() => setSelectedModel(item.value)}
+                    active={selectedModel === item.value}
+                  >
+                    {item.label}
+                  </MenuItemButton>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className="h-3 w-px bg-border" />
+
+            {/* Strength selector */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
+                  disabled={isLoading}
+                >
+                  <Globe className="h-[11px] w-[11px]" />
+                  {strengthLabelFor(selectedStrength)}
+                  <ChevronDown className="h-[10px] w-[10px]" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent sideOffset={6} align="start" className="w-[92px]">
+                {strengthItems.map((item) => (
+                  <MenuItemButton
+                    key={item.value}
+                    onClick={() => setSelectedStrength(item.value)}
+                    active={selectedStrength === item.value}
+                  >
+                    {item.label}
+                  </MenuItemButton>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Right: permission + branch + settings */}
+          <div className="flex items-center gap-3">
+            {/* Permission mode dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
+                  disabled={isLoading}
+                >
+                  {permissionModeLabelFor(permissionMode)}
+                  <ChevronDown className="h-[10px] w-[10px]" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent sideOffset={6} align="end" className="w-[148px]">
+                {permissionModeItems.map((item) => (
+                  <MenuItemButton
+                    key={item.value}
+                    active={permissionMode === item.value}
+                    onClick={() => setPermissionMode(item.value)}
+                  >
+                    {item.label}
+                  </MenuItemButton>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className="h-3 w-px bg-border" />
+
+            {/* Branch selector */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
+                >
+                  <GitBranch className="h-[11px] w-[11px]" />
+                  <span className="max-w-[120px] truncate">{branchLabel}</span>
+                  <ChevronDown className="h-[10px] w-[10px]" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent sideOffset={6} align="end" className="w-[176px]">
+                <MenuItemButton active>{branchLabel}</MenuItemButton>
+                <DropdownMenuSeparator />
+                <MenuItemButton onClick={() => {
+                  // switch branch action placeholder
+                }}>切换分支</MenuItemButton>
+                <MenuItemButton onClick={() => {
+                  // copy branch name action placeholder
+                }}>复制分支名</MenuItemButton>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <div className="h-3 w-px bg-border" />
+
+            {/* Settings button */}
+            <button
+              type="button"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-100"
+              aria-label="设置"
+            >
+              <SlidersHorizontal className="h-3 w-3" />
+            </button>
           </div>
         </div>
       </div>
@@ -1957,26 +2007,26 @@ function ToolCallMessage({
         onPointerEnter={() => setIsHovered(true)}
         onPointerLeave={() => setIsHovered(false)}
       >
-        <div className={cn('absolute bottom-0 left-[5px] top-0 w-px bg-black/14', status === 'error' && 'bg-rose-200/80')} />
+        <div className={cn('absolute bottom-0 left-[5px] top-0 w-px bg-border/40', status === 'error' && 'bg-rose-200/80')} />
 
         <div className="flex items-start gap-1.5">
-          <div className={cn('mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-black/30', status === 'error' && 'bg-rose-400')} />
+          <div className={cn('mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30', status === 'error' && 'bg-rose-400')} />
 
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
             className={cn(
               'group flex min-w-0 flex-1 items-center gap-2 rounded-none px-0 py-[2px] text-left transition-colors duration-150',
-              status === 'error' ? 'hover:text-rose-600/90' : 'hover:text-black/70'
+              status === 'error' ? 'hover:text-rose-600/90' : 'hover:text-foreground/70'
             )}
             aria-label={expanded ? '折叠工具调用' : '展开工具调用'}
           >
-            <div className="flex size-4 shrink-0 items-center justify-center text-black/34">
+            <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/35">
               <ToolGlyph className="h-3.5 w-3.5" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className={cn('flex items-center gap-1.5 text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-black/50')}>
+              <div className={cn('flex items-center gap-1.5 text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-muted-foreground/50')}>
                 <span className="truncate">{title}</span>
                 <ToolStatusGlyph status={status} />
               </div>
@@ -1984,8 +2034,8 @@ function ToolCallMessage({
 
             <ChevronDown
               className={cn(
-                'h-3.5 w-3.5 shrink-0 text-black/28 transition-all duration-150',
-                expanded ? 'rotate-180 text-black/42' : isHovered ? 'text-black/42' : 'text-black/24'
+                'h-3.5 w-3.5 shrink-0 text-muted-foreground/30 transition-all duration-150',
+                expanded ? 'rotate-180 text-muted-foreground/50' : isHovered ? 'text-muted-foreground/50' : 'text-muted-foreground/25'
               )}
             />
           </button>
@@ -1996,7 +2046,7 @@ function ToolCallMessage({
               type="button"
               variant="ghost"
               size="icon"
-              className="size-[18px] shrink-0 rounded-full border-0 bg-transparent text-black/14 opacity-0 shadow-none transition-opacity duration-150 group-hover:opacity-100 hover:bg-transparent hover:text-black/38"
+              className="size-[18px] shrink-0 rounded-full border-0 bg-transparent text-muted-foreground/15 opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:bg-transparent hover:text-muted-foreground/40"
               aria-label="工具调用菜单"
               onClick={(event) => event.stopPropagation()}
             >
@@ -2041,7 +2091,7 @@ function ToolCallMessage({
         </div>
 
         <CollapsibleContent className="overflow-hidden">
-          <div className="ml-[10px] border-l-[1.5px] border-black/10 pl-3 pt-1">
+          <div className="ml-[10px] border-l-[1.5px] border-border/40 pl-3 pt-1">
             {showNoKeyBanner && (
               <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11.5px] leading-5 text-amber-700">
                 <span className="mt-0.5 shrink-0">⚠️</span>
@@ -2061,16 +2111,16 @@ function ToolCallMessage({
                   <div
                     key={`${line}-${index}`}
                     className={cn(
-                      'flex min-w-0 items-center gap-1.5 text-[11.5px] leading-5 text-black/36',
-                      index === 0 && 'px-0.5 py-0.5 text-black/42'
+                      'flex min-w-0 items-center gap-1.5 text-[11.5px] leading-5 text-muted-foreground/36',
+                      index === 0 && 'px-0.5 py-0.5 text-muted-foreground/42'
                     )}
                   >
                     {index === 0 ? (
-                      <div className="flex size-4 shrink-0 items-center justify-center text-black/28">
+                      <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/28">
                         <ToolGlyph className="h-3.5 w-3.5" />
                       </div>
                     ) : (
-                      <span className="mt-[1px] h-1 w-1 shrink-0 rounded-full bg-black/18" />
+                      <span className="mt-[1px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/20" />
                     )}
                     <span className="min-w-0 truncate">
                       {index === 0 ? renderInlineToolSummary(line) : <span className="font-mono">{line}</span>}
@@ -2099,18 +2149,18 @@ function SlashCommandSuggestions({
 }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-[178px] z-30 flex justify-center px-10">
-      <div className="pointer-events-auto w-full max-w-[740px] rounded-xl border border-black/8 bg-white/95 shadow-[0_8px_24px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+      <div className="pointer-events-auto w-full max-w-[740px] rounded-xl border border-border bg-surface-raised shadow-lg backdrop-blur-sm">
         {suggestions.map((cmd, i) => (
           <button
             key={cmd}
             type="button"
             className={cn(
               'flex w-full items-center rounded-lg px-4 py-2.5 text-left text-[13px] font-mono transition-colors',
-              i === selectedIndex ? 'bg-black/[0.06] text-black/90' : 'text-black/60 hover:bg-black/[0.03]'
+              i === selectedIndex ? 'bg-accent text-foreground' : 'text-foreground/60 hover:bg-muted'
             )}
             onClick={() => onSelect(cmd)}
           >
-            <span className="text-blue-500">/</span>
+            <span className="text-primary">/</span>
             <span className="flex-1 truncate">{cmd.slice(1)}</span>
             {i === selectedIndex && (
               <span className="ml-2 text-[10px] text-muted-foreground">Tab to complete</span>
@@ -2161,8 +2211,8 @@ const ChatMessage = React.memo(function ChatMessage({
         <div className={cn('flex flex-col items-end gap-1', densityMode === 'compact' ? 'max-w-[min(620px,78%)]' : 'max-w-[min(680px,78%)]')}>
           <div
             className={cn(
-              'rounded-[16px] bg-[#eef0f2] px-4 text-black/80 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
-              densityMode === 'compact' ? 'py-2 text-[12px] leading-5.5' : 'py-3 text-[13px] leading-6'
+              'rounded-lg bg-secondary px-3 text-foreground/80 shadow-xs',
+              densityMode === 'compact' ? 'py-1.5 text-[12px] leading-5.5' : 'py-2 text-[13px] leading-6'
             )}
           >
             <div className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', fontMode === 'serif' ? 'font-serif' : 'font-sans')}>
@@ -2411,7 +2461,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
 
           return (
             <code
-              className="rounded-[4px] bg-[#ececef] px-1.5 py-0.5 font-mono text-[12px] font-normal text-black/62"
+              className="rounded-[3px] bg-muted px-1.5 py-0.5 font-mono text-[12px] font-normal text-muted-foreground"
               {...props}
             >
               {children}
@@ -2460,7 +2510,7 @@ function SkillsSlashReport({
   return (
     <div className={cn('my-2.5 space-y-3.5', densityMode === 'compact' ? 'text-[12px]' : 'text-[13px]')}>
       <div className="flex items-center gap-2 text-black/78">
-        <div className="flex size-7 items-center justify-center rounded-[10px] bg-black/[0.035] text-black/42">
+        <div className="flex size-7 items-center justify-center rounded-[6px] bg-black/[0.035] text-black/42">
           <Sparkles className="size-4" />
         </div>
         <div className="flex items-baseline gap-2">
@@ -3361,7 +3411,7 @@ function renderInlineToolSummary(line: string) {
             {separatorNeeded ? <span className="shrink-0 text-black/24">·</span> : null}
             <span className="inline-flex min-w-0 items-center gap-1">
               {label ? <span className="shrink-0 text-black/34">{label}</span> : null}
-              <span className="min-w-0 truncate rounded-[5px] bg-black/[0.04] px-1.5 py-[1px] font-mono italic text-black/48">
+              <span className="min-w-0 truncate rounded-[3px] bg-black/[0.04] px-1.5 py-[1px] font-mono italic text-black/48">
                 {value}
               </span>
             </span>
@@ -3523,7 +3573,7 @@ function RecoveryCard({
   const reasonLabel = summarizeDegradedReason(degradedReason)
 
   return (
-    <div className="relative w-full overflow-hidden rounded-[13px] border border-emerald-200/70 bg-emerald-50/55 px-3 py-2.5">
+    <div className="relative w-full overflow-hidden rounded-[6px] border border-emerald-200/70 bg-emerald-50/55 px-3 py-2.5">
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-emerald-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
         <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10">
@@ -3587,7 +3637,7 @@ function ErrorCard({
   const { title, suggestion, isConnection, kindLabel } = classifyError(error, taskOutcome)
 
   return (
-    <div className="relative w-full overflow-hidden rounded-[13px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5">
+    <div className="relative w-full overflow-hidden rounded-[6px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5">
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-rose-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
         <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/8">
@@ -3883,41 +3933,6 @@ function summarizeThinkingText(thinking: string): string {
   return truncateText(firstLine.replace(/\s+/g, ' '), 44)
 }
 
-function CompactMenu({
-  label,
-  className,
-  contentClassName,
-  triggerIcon,
-  children,
-}: {
-  label: string
-  className?: string
-  contentClassName?: string
-  triggerIcon?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          className={cn(
-            'h-7 justify-between rounded-md border-0 bg-transparent px-1.5 text-[12px] font-medium text-black/72 shadow-none outline-none ring-0 ring-offset-0 hover:bg-black/[0.03] hover:text-black/88 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-black/[0.03] data-[state=open]:text-black/88',
-            className
-          )}
-        >
-          <span className="truncate">{label}</span>
-          <span className="ml-1 shrink-0 text-black/45">{triggerIcon}</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent sideOffset={6} align="start" className={contentClassName ?? 'w-[176px]'}>
-        {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function MenuItemButton({
   children,
   active = false,
@@ -3930,7 +3945,7 @@ function MenuItemButton({
   return (
     <DropdownMenuItem
       className={cn(
-        'h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium',
+        'h-8 rounded-[6px] px-2.5 text-[12.5px] font-medium',
         active ? 'bg-black/[0.045] text-black/90' : 'text-black/82'
       )}
       onSelect={() => onClick?.()}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Brain, Download, AlertTriangle, Check } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import {
@@ -28,8 +29,8 @@ export function MemorySettingsPage() {
   const [trajectoryCount, setTrajectoryCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   const totalPercentage = slots.reduce((sum, s) => sum + s.value, 0)
   const isValid = totalPercentage === 100
@@ -68,12 +69,11 @@ export function MemorySettingsPage() {
 
   const handleSave = async () => {
     if (!isValid) {
-      setError('百分比总和必须为 100%')
+      toast.warning('配置无效', { description: '百分比总和必须为 100%' })
       return
     }
     setSaving(true)
     setError(null)
-    setSuccessMsg(null)
     try {
       const config: MemoryConfigInput = {
         total_tokens: totalTokens,
@@ -83,9 +83,10 @@ export function MemorySettingsPage() {
         working_pct: slots[3].value,
       }
       await setMemoryConfig(config)
-      setSuccessMsg('配置已保存')
+      toast.success('配置已保存')
     } catch (e) {
       setError(String(e))
+      toast.error('保存失败', { description: String(e) })
     } finally {
       setSaving(false)
     }
@@ -93,12 +94,15 @@ export function MemorySettingsPage() {
 
   const handleExport = async () => {
     setError(null)
-    setSuccessMsg(null)
+    setExporting(true)
     try {
       const msg = await exportTrajectories()
-      setSuccessMsg(msg)
+      toast.success('轨迹导出成功', { description: msg })
     } catch (e) {
       setError(String(e))
+      toast.error('导出失败', { description: String(e) })
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -213,27 +217,30 @@ export function MemorySettingsPage() {
         <div className="px-5 py-5">
           <button
             type="button"
+            disabled={exporting}
             onClick={handleExport}
-            className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-white/60 px-4 text-sm font-medium transition hover:bg-white/80"
+            className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-white/60 px-4 text-sm font-medium transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Download className="h-4 w-4" />
-            导出轨迹
+            {exporting ? (
+              <>
+                <Download className="h-4 w-4 animate-spin" />
+                导出中...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4" />
+                导出轨迹
+              </>
+            )}
           </button>
         </div>
       </SettingsSurface>
 
-      {/* Status messages */}
+      {/* Error message */}
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
           <AlertTriangle className="h-3.5 w-3.5" />
           {error}
-        </div>
-      )}
-
-      {successMsg && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-700">
-          <Check className="h-3.5 w-3.5" />
-          {successMsg}
         </div>
       )}
     </div>

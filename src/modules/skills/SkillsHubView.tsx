@@ -233,7 +233,7 @@ export function SkillsHubView({
                         <article
                           key={`${skill.source}:${skill.identifier}`}
                           className={cn(
-                            'rounded-[16px] border border-black/8 bg-white/90 p-4 transition-shadow',
+                            'rounded-[6px] border border-black/8 bg-white/90 p-4 transition-shadow',
                             'hover:shadow-md cursor-pointer',
                             isInstalled && 'opacity-70'
                           )}
@@ -342,7 +342,7 @@ function SkillDetailModal({
       onClick={onClose}
     >
       <div
-        className="w-[min(90vw,600px)] rounded-[24px] border border-black/10 bg-white p-6 shadow-xl"
+        className="w-[min(90vw,600px)] rounded-[6px] border border-black/10 bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between">

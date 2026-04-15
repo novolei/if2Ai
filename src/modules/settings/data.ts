@@ -35,7 +35,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
   {
     id: 'connections',
     label: '连接应用',
-    description: '配置外部应用与服务连接。',
+    description: '接入外部社交渠道与消息平台。',
     icon: Link2,
   },
   {

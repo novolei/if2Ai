@@ -1,18 +1,12 @@
-
-/* postcss-unknown-at-rules: @theme @custom-variant @apply */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
-/* ══════════════════════════════════════════════════════════════════
-   Paico @theme inline — maps CSS variables to Tailwind color tokens
-   ══════════════════════════════════════════════════════════════════ */
 @theme inline {
   --font-sans: var(--fontSans);
   --font-serif: var(--fontSerif);
-  --font-mono: var(--fontMono);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -32,7 +26,6 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -61,11 +54,6 @@
   --color-jade: var(--jade);
   --color-jade-light: var(--jade-light);
   --color-jade-dim: var(--jade-dim);
-  --color-brand-orange: var(--brand-orange);
-  --color-brand-orange-light: var(--brand-orange-light);
-  --color-brand-orange-dark: var(--brand-orange-dark);
-  --color-brand-orange-glow: var(--brand-orange-glow);
-  --color-brand-orange-blend: var(--brand-orange-blend);
   --color-teal: var(--teal);
   --color-teal-light: var(--teal-light);
   --color-celadon: var(--celadon);
@@ -100,8 +88,7 @@
 :root {
   /* ── Typography ──────────────────────────────────────────────── */
   --fontSans: "Inter", "PingFang SC", "Helvetica Neue", sans-serif;
-  --fontSerif: "Songti SC", "Noto Serif SC", Georgia, serif;
-  --fontMono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  --fontSerif: "Noto Serif SC", "Georgia", serif;
 
   /* font-size scale (px → rem @16px base) */
   --text-xs:   0.6875rem;   /* 11px */
@@ -146,22 +133,24 @@
   --space-16: 4rem;      /* 64px */
 
   /* ── Border Radius ───────────────────────────────────────────── */
-  --radius:     0.5rem;                         /*  8px — base */
-  --radius-xs:  0.1875rem;                      /*  3px */
-  --radius-sm:  0.25rem;                        /*  4px */
-  --radius-md:  0.375rem;                       /*  6px */
-  --radius-lg:  0.5rem;                         /*  8px */
-  --radius-xl:  0.75rem;                        /* 12px */
-  --radius-2xl: 1rem;                           /* 16px */
+  --radius:     0.625rem;                       /* 10px — base */
+  --radius-xs:  0.25rem;                        /*  4px */
+  --radius-sm:  0.375rem;                       /*  6px */
+  --radius-md:  0.5rem;                         /*  8px */
+  --radius-lg:  0.75rem;                        /* 12px */
+  --radius-xl:  1rem;                           /* 16px */
+  --radius-2xl: 1.5rem;                         /* 24px */
   --radius-full:9999px;                         /* pill */
 
   /* ── Shadow System ───────────────────────────────────────────── */
+  /* shadow-custom: general card shadow (light) */
   --shadow-x:      0px;
   --shadow-y:      2px;
   --shadow-blur:   16px;
   --shadow-spread: 0px;
   --shadow-color:  oklch(62% 0.06 195 / 0.07);
 
+  /* named shadow tokens */
   --shadow-xs:    0 1px  4px 0   oklch(62% 0.06 195 / 0.05);
   --shadow-sm:    0 2px  8px 0   oklch(62% 0.06 195 / 0.07);
   --shadow-md:    0 4px 16px 0   oklch(62% 0.06 195 / 0.09);
@@ -170,308 +159,143 @@
   --shadow-ring:  0 0  0 3px     oklch(72% 0.09 195 / 0.22);
 
   /* ── Core Background & Surface ───────────────────────────────── */
-  --background:       oklch(96.5% 0.008 195);
-  --foreground:       oklch(24%   0.012 200);
-  --card:             oklch(98%   0.006 195);
+  /*
+   * 色调基础：玉石青 (Jade) = oklch(72% 0.08 195)
+   * 背景走向：极浅灰绿 → 近白带青意
+   * 风格：雾感 · 低饱和 · 微暖
+   */
+  --background:       oklch(96.5% 0.008 195);  /* 主背景：雾白青 */
+  --foreground:       oklch(24%   0.012 200);  /* 主文字：深墨青 */
+  --card:             oklch(98%   0.006 195);  /* 卡片：近白 */
   --card-foreground:  oklch(24%   0.012 200);
-  --popover:          oklch(98.5% 0.005 195);
+  --popover:          oklch(98.5% 0.005 195);  /* 弹层：纯净白青 */
   --popover-foreground: oklch(24% 0.012 200);
 
   /* ── Primary（玉石青核心色）────────────────────────────────── */
-  --primary:            oklch(46%  0.08  195);
-  --primary-foreground: oklch(98%  0.005 195);
+  --primary:            oklch(46%  0.08  195);  /* 深玉青，可用于按钮/强调 */
+  --primary-foreground: oklch(98%  0.005 195);  /* 主色上的文字：近白 */
 
   /* ── Secondary（柔和雾色）───────────────────────────────────── */
-  --secondary:            oklch(93%  0.012 195);
-  --secondary-foreground: oklch(36%  0.04  200);
+  --secondary:            oklch(93%  0.012 195);  /* 浅雾青 */
+  --secondary-foreground: oklch(36%  0.04  200);  /* 深石青 */
 
   /* ── Muted（极低对比背景）──────────────────────────────────── */
-  --muted:            oklch(94%  0.008 195);
-  --muted-foreground: oklch(58%  0.02  200);
+  --muted:            oklch(94%  0.008 195);   /* 哑光浅底 */
+  --muted-foreground: oklch(58%  0.02  200);   /* 中灰青，辅助文字 */
 
   /* ── Accent（玉石青轻强调）─────────────────────────────────── */
-  --accent:            oklch(91%  0.016 195);
-  --accent-foreground: oklch(32%  0.06  195);
+  --accent:            oklch(91%  0.016 195);  /* 轻强调面 */
+  --accent-foreground: oklch(32%  0.06  195);  /* 强调文字 */
 
   /* ── Destructive（温暖低饱和红）────────────────────────────── */
-  --destructive:       oklch(54%  0.14  18);
-  --destructive-foreground: oklch(98%  0.005 195);
+  --destructive:       oklch(54%  0.14  18);   /* 柔和砖红 */
 
   /* ── Border & Input ─────────────────────────────────────────── */
-  --border: oklch(88%  0.014 195);
-  --input:  oklch(91%  0.010 195);
-  --ring:   oklch(64%  0.08  195);
+  --border: oklch(88%  0.014 195);   /* 边框：浅玉青线 */
+  --input:  oklch(91%  0.010 195);   /* 输入框边框 */
+  --ring:   oklch(64%  0.08  195);   /* 焦点环：玉石青 */
 
-  /* ── Jade Brand Palette ─────────────────────────────────────── */
-  --jade:          oklch(67.5%  0.12  162);
-  --jade-light:    oklch(84%  0.06  195);
-  --jade-dim:      oklch(36%  0.07  195);
-  /* ── Brand Orange (If2Ai identity) ──────────────────────────── */
-  --brand-orange:       #ff7f32;
-  --brand-orange-light: #ff8d47;
-  --brand-orange-dark:  #f25717;
-  --brand-orange-glow:  #ffb26e;
-  --brand-orange-blend: #ff6a1f;
+  /* ── Jade Brand Palette（品牌色延展）────────────────────────── */
+  --jade:          oklch(56%  0.10  195);   /* 玉石青核心 */
+  --jade-light:    oklch(84%  0.06  195);   /* 玉石青浅 */
+  --jade-dim:      oklch(36%  0.07  195);   /* 玉石青深 */
+  --teal:          oklch(62%  0.09  198);   /* 偏蓝青绿 */
+  --teal-light:    oklch(90%  0.04  198);   /* 浅蓝青 */
+  --celadon:       oklch(76%  0.07  170);   /* 青瓷绿 */
+  --celadon-light: oklch(93%  0.04  170);   /* 浅青瓷 */
+  --mist:          oklch(91%  0.012 195);   /* 雾色（近白青）*/
+  --mist-dark:     oklch(82%  0.020 195);   /* 深雾 */
 
-  /* ── Teal secondary brand ──────────────────────────────────── */
-  --teal:          oklch(62%  0.09  198);
-  --teal-light:    oklch(90%  0.04  198);
-  --celadon:       oklch(76%  0.07  170);
-  --celadon-light: oklch(93%  0.04  170);
-  --mist:          oklch(91%  0.012 195);
-  --mist-dark:     oklch(82%  0.020 195);
-
-  /* ── Warm Neutrals ──────────────────────────────────────────── */
-  --sand:      oklch(88%  0.018 80);
-  --sand-warm: oklch(93%  0.014 75);
-  --stone:     oklch(64%  0.012 195);
-  --ink:       oklch(20%  0.012 200);
+  /* ── Warm Neutrals（温暖中性，提供温度感）───────────────────── */
+  --sand:      oklch(88%  0.018 80);    /* 暖沙色 */
+  --sand-warm: oklch(93%  0.014 75);    /* 浅暖沙 */
+  --stone:     oklch(64%  0.012 195);   /* 石青灰 */
+  --ink:       oklch(20%  0.012 200);   /* 墨青，深色文字 */
 
   /* ── Surface Layers ─────────────────────────────────────────── */
-  --surface:         oklch(97%   0.007 195);
-  --surface-raised:  oklch(99%   0.004 195);
-  --surface-overlay: oklch(98.5% 0.004 195 / 0.92);
+  --surface:         oklch(97%   0.007 195);  /* 基础面 */
+  --surface-raised:  oklch(99%   0.004 195);  /* 抬起面（模态/卡片） */
+  --surface-overlay: oklch(98.5% 0.004 195 / 0.92);  /* 遮罩/毛玻璃 */
 
-  /* ── Status Colors ──────────────────────────────────────────── */
+  /* ── Status Colors（状态色：低饱和、情绪准确）───────────────── */
+  /* active / 进行中 — 玉石青本色 */
   --status-active:    oklch(50%  0.09  195);
   --status-active-bg: oklch(92%  0.04  195);
+
+  /* pending / 待处理 — 柔和沙金 */
   --status-pending:    oklch(62%  0.10  78);
   --status-pending-bg: oklch(94%  0.04  78);
+
+  /* warning / 警告 — 低饱和琥珀 */
   --status-warning:    oklch(60%  0.12  55);
   --status-warning-bg: oklch(95%  0.05  55);
+
+  /* success / 成功 — 柔和青绿 */
   --status-success:    oklch(55%  0.10  160);
   --status-success-bg: oklch(93%  0.04  160);
+
+  /* error / 错误 — 温暖砖红 */
   --status-error:    oklch(52%  0.13  18);
   --status-error-bg: oklch(95%  0.05  18);
+
+  /* neutral / 中性 — 石青灰 */
   --status-neutral:    oklch(58%  0.015 195);
   --status-neutral-bg: oklch(92%  0.010 195);
 
   /* ── Chart Palette ───────────────────────────────────────────── */
-  --chart-1: oklch(56%  0.10  195);
-  --chart-2: oklch(62%  0.09  160);
-  --chart-3: oklch(62%  0.10  78);
-  --chart-4: oklch(60%  0.08  240);
-  --chart-5: oklch(56%  0.08  30);
+  --chart-1: oklch(56%  0.10  195);   /* jade */
+  --chart-2: oklch(62%  0.09  160);   /* sage */
+  --chart-3: oklch(62%  0.10  78);    /* sand gold */
+  --chart-4: oklch(60%  0.08  240);   /* slate blue */
+  --chart-5: oklch(56%  0.08  30);    /* warm terracotta */
 
   /* ── Sidebar ─────────────────────────────────────────────────── */
-  --sidebar:                    oklch(97.5% 0.005 195);
-  --sidebar-foreground:         oklch(30%   0.018 200);
-  --sidebar-primary:            oklch(46%   0.08  195);
-  --sidebar-primary-foreground: oklch(98%   0.006 195);
-  --sidebar-accent:             oklch(93%   0.010 195);
+  /*
+   * 色调策略：极低饱和冷灰青，色相贴近 195（品牌青）
+   * 明度 97.5% → 视觉近似 #F8F9F9，带极浅青意与整体系统融合
+   * 前景 ↓ 明度 微升色度；accent 降 2~3% 明度；border 再降 3%
+   */
+  --sidebar:                    oklch(97.5% 0.005 195);  /* 近 #F8F9F9 冷灰白，极浅青意 */
+  --sidebar-foreground:         oklch(30%   0.018 200);  /* 深墨青，主文字 */
+  --sidebar-primary:            oklch(46%   0.08  195);  /* 玉石青，与全局 primary 统一 */
+  --sidebar-primary-foreground: oklch(98%   0.006 195);  /* 近白青 */
+  --sidebar-accent:             oklch(93%   0.010 195);  /* hover/active 浅青灰 */
   --sidebar-accent-foreground:  oklch(30%   0.018 200);
-  --sidebar-border:             oklch(89%   0.010 195);
-  --sidebar-ring:               oklch(60%   0.08  195);
+  --sidebar-border:             oklch(89%   0.010 195);  /* 分割线：浅青灰线 */
+  --sidebar-ring:               oklch(60%   0.08  195);  /* 焦点环沿用玉石青 */
 
   /* ── Inspector（右侧面板专属）─────────────────────────────── */
-  --inspector:                  oklch(94%   0.012 75);
-  --inspector-border:           oklch(87%   0.016 75);
+  /*
+   * 暖沙米白：oklch(94% 0.012 75) — 用户指定色
+   * 与左侧冷白青形成「冷↔暖」温度对比，赋予视觉分层深度
+   */
+  --inspector:                  oklch(94%   0.012 75);   /* 暖沙米白，微黄调 */
+  --inspector-border:           oklch(87%   0.016 75);   /* inspector 分割线：暖沙线 */
 }
 
 /* ══════════════════════════════════════════════════════════════════
    BASE STYLES
    ══════════════════════════════════════════════════════════════════ */
 @layer base {
-  html {
-    height: 100%;
-    color-scheme: light;
-    background: var(--background);
-  }
-
   * {
-    box-sizing: border-box;
-    border-color: var(--border);
     @apply border-border outline-ring/50;
   }
-
   body {
-    height: 100%;
-    overflow: hidden;
-    background: var(--background);
-    color: var(--foreground);
+    @apply bg-background text-foreground;
     font-family: var(--fontSans);
     font-size: var(--text-base);
     line-height: var(--lh-normal);
-    text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-
-  #app {
-    height: 100%;
-  }
-
-  body.font-serif-mode {
-    font-family: var(--fontSerif);
-  }
-
   h1, h2, h3 {
     font-family: var(--fontSerif);
     line-height: var(--lh-tight);
     letter-spacing: var(--ls-tight);
   }
-
   h4, h5, h6 {
     font-family: var(--fontSans);
     line-height: var(--lh-snug);
-  }
-
-  .window-drag {
-    -webkit-app-region: drag;
-    user-select: none;
-  }
-
-  .window-no-drag {
-    -webkit-app-region: no-drag;
-    user-select: auto;
-  }
-
-  ::selection {
-    background: color-mix(in srgb, var(--primary) 22%, transparent);
-    color: var(--foreground);
-  }
-
-  /* ── If2Ai loading animations (preserved) ──────────────────────── */
-  @keyframes fadeInUp {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes shimmer {
-    0% {
-      background-position: 0% 50%;
-    }
-    100% {
-      background-position: 200% 50%;
-    }
-  }
-
-  @keyframes loadingCaretBlink {
-    0%,
-    45% {
-      opacity: 1;
-    }
-    46%,
-    100% {
-      opacity: 0;
-    }
-  }
-
-  @keyframes loadingGlitchBase {
-    0%,
-    91%,
-    100% {
-      transform: translate3d(0, 0, 0);
-      filter: none;
-    }
-    92% {
-      transform: translate3d(-0.008em, 0, 0);
-      filter: saturate(1.03);
-    }
-    94% {
-      transform: translate3d(0.012em, 0, 0);
-      filter: brightness(1.02);
-    }
-    96% {
-      transform: translate3d(-0.006em, 0.006em, 0);
-    }
-  }
-
-  @keyframes loadingGlitchShiftA {
-    0%,
-    91%,
-    100% {
-      opacity: 0;
-      transform: translate3d(0, 0, 0);
-      clip-path: inset(0 0 0 0);
-    }
-    92% {
-      opacity: 0.18;
-      transform: translate3d(0.012em, -0.006em, 0);
-      clip-path: inset(18% 0 54% 0);
-    }
-    95% {
-      opacity: 0.1;
-      transform: translate3d(-0.01em, 0.006em, 0);
-      clip-path: inset(60% 0 10% 0);
-    }
-  }
-
-  @keyframes loadingGlitchShiftB {
-    0%,
-    90%,
-    100% {
-      opacity: 0;
-      transform: translate3d(0, 0, 0);
-      clip-path: inset(0 0 0 0);
-    }
-    93% {
-      opacity: 0.14;
-      transform: translate3d(-0.014em, 0.008em, 0);
-      clip-path: inset(28% 0 42% 0);
-    }
-    96% {
-      opacity: 0.08;
-      transform: translate3d(0.01em, -0.006em, 0);
-      clip-path: inset(70% 0 5% 0);
-    }
-  }
-
-  @keyframes loadingTitleGlow {
-    0%,
-    100% {
-      filter: brightness(1) saturate(1);
-      text-shadow:
-        0 0 0 rgba(255, 127, 50, 0),
-        0 10px 18px rgba(255, 110, 36, 0.14);
-    }
-    50% {
-      filter: brightness(1.03) saturate(1.02);
-      text-shadow:
-        0 0 18px rgba(255, 127, 50, 0.18),
-        0 12px 22px rgba(255, 110, 36, 0.18);
-    }
-  }
-
-  .loading-caret {
-    animation: loadingCaretBlink 1.02s steps(1, end) infinite;
-  }
-
-  .loading-glitch-base {
-    animation: loadingGlitchBase 4.6s linear infinite;
-  }
-
-  .loading-glitch-layer {
-    pointer-events: none;
-    mix-blend-mode: screen;
-  }
-
-  .loading-glitch-layer-a {
-    animation: loadingGlitchShiftA 4.6s linear infinite;
-  }
-
-  .loading-glitch-layer-b {
-    animation: loadingGlitchShiftB 4.6s linear infinite;
-  }
-
-  .loading-title-main {
-    animation: loadingTitleGlow 3.2s ease-in-out infinite;
-  }
-
-  .loading-title-wordmark {
-    font-family:
-      "SF Pro Rounded",
-      "Avenir Next Rounded",
-      "Arial Rounded MT Bold",
-      "Nunito",
-      var(--fontSans);
-    font-feature-settings: "ss01" 1, "cv11" 1;
-    letter-spacing: -0.07em;
   }
 }
 

@@ -17,7 +17,7 @@ export function SectionWorkspace({
 
   return (
     <div className="flex h-full min-h-0 items-center justify-center px-8">
-      <div className="w-full max-w-2xl rounded-[28px] border border-black/5 bg-white/44 px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)] backdrop-blur-[2px]">
+      <div className="w-full max-w-2xl rounded-[6px] border border-black/5 bg-white/44 px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)] backdrop-blur-[2px]">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-black/5">
           <Sparkles className="h-7 w-7 text-black/60" />
         </div>

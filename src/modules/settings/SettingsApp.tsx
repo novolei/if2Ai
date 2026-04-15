@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import {
   approveSkillProposal,
   focusMainWindowAndPrefillPrompt,
@@ -41,7 +42,6 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [skillsError, setSkillsError] = useState<string | null>(null)
-  const [reviewMessage, setReviewMessage] = useState<string | null>(null)
 
   const refreshSkills = async () => {
     setSkillsLoading(true)
@@ -60,18 +60,21 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
     if (!window.confirm(`确认${action}技能「${skill.name}」吗？`)) return
     try {
       await setSkillEnabled(skill.path, enabled)
+      toast.success(`已${enabled ? '启用' : '禁用'}「${skill.name}」`)
       await refreshSkills()
     } catch (error) {
-      setSkillsError(String(error))
+      toast.error(`操作失败：${skill.name}`, { description: String(error) })
     }
   }
 
   const handleReviewSkill = async (skill: SkillInfo) => {
     try {
-      setReviewMessage(await reviewSkillDraft(skill.path))
+      toast.loading(`正在 Review「${skill.name}」…`, { id: `review-${skill.path}` })
+      const msg = await reviewSkillDraft(skill.path)
+      toast.success(`「${skill.name}」Review 完成`, { description: msg })
       await refreshSkills()
     } catch (error) {
-      setSkillsError(String(error))
+      toast.error(`Review 失败：${skill.name}`, { description: String(error) })
     }
   }
 
@@ -82,13 +85,15 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         if (skill.review_status === 'draft') {
           await reviewSkillDraft(skill.path)
         }
-        setReviewMessage(await approveSkillProposal(skill.path))
+        const msg = await approveSkillProposal(skill.path)
+        toast.success(`「${skill.name}」已批准`, { description: msg })
       } else {
-        setReviewMessage(await rollbackSkillProposal(skill.path))
+        const msg = await rollbackSkillProposal(skill.path)
+        toast.info(`「${skill.name}」已回滚`, { description: msg })
       }
       await refreshSkills()
     } catch (error) {
-      setSkillsError(String(error))
+      toast.error(`操作失败：${skill.name}`, { description: String(error) })
     }
   }
 
@@ -97,8 +102,9 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
       '跟我一起用/skill-creator 创建一个技能，并且加入我的技能文档/列表 ~/.qclaw/skills 里。现在，你先问我技能应该做什么吧。'
     try {
       await focusMainWindowAndPrefillPrompt(prompt)
+      toast.success('已跳转到主窗口', { description: '开始创建技能对话' })
     } catch (error) {
-      setSkillsError(String(error))
+      toast.error('跳转失败', { description: String(error) })
     }
   }
 
@@ -161,7 +167,6 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
             skills={skills}
             loading={skillsLoading}
             error={skillsError}
-            reviewMessage={reviewMessage}
             onRefresh={() => void refreshSkills()}
             onToggleSkill={(skill, enabled) => void handleSkillToggle(skill, enabled)}
             onStartConversationCreate={() => void handleStartConversationCreate()}

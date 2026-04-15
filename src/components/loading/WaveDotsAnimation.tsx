@@ -15,10 +15,10 @@ type WaveDotsAnimationProps = {
 
 type Direction = 'up' | 'down'
 
-const DEFAULT_TOP_START = '#ff2f92'
-const DEFAULT_TOP_END = '#ffb36b'
-const DEFAULT_BOTTOM_START = '#ff4d67'
-const DEFAULT_BOTTOM_END = '#ffcc8f'
+const DEFAULT_TOP_START = '#44B982'
+const DEFAULT_TOP_END = '#f25717'
+const DEFAULT_BOTTOM_START = '#f25717'
+const DEFAULT_BOTTOM_END = '#44B982'
 
 export function WaveDotsAnimation({
   amplitude = 48,

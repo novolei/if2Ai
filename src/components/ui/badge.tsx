@@ -14,6 +14,13 @@ const badgeVariants = cva(
         destructive:
           "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
         outline: "text-foreground",
+        // Paico status color variants
+        "status-active": "border-transparent bg-[var(--status-active-bg)] text-[var(--status-active)]",
+        "status-pending": "border-transparent bg-[var(--status-pending-bg)] text-[var(--status-pending)]",
+        "status-warning": "border-transparent bg-[var(--status-warning-bg)] text-[var(--status-warning)]",
+        "status-success": "border-transparent bg-[var(--status-success-bg)] text-[var(--status-success)]",
+        "status-error": "border-transparent bg-[var(--status-error-bg)] text-[var(--status-error)]",
+        "status-neutral": "border-transparent bg-[var(--status-neutral-bg)] text-[var(--status-neutral)]",
       },
     },
     defaultVariants: {

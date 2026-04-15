@@ -47,7 +47,7 @@ export function ArtifactEditor({ content, language, onChange }: ArtifactEditorPr
         EditorView.theme({
           '&': {
             height: '100%',
-            backgroundColor: 'transparent',
+            backgroundColor: '#FAF9F6',
             color: 'rgba(28, 25, 23, 0.82)',
             fontSize: '13px',
           },
@@ -62,17 +62,17 @@ export function ArtifactEditor({ content, language, onChange }: ArtifactEditorPr
           },
           '.cm-gutters': {
             backgroundColor: 'transparent',
-            borderRight: '1px solid rgba(207, 196, 181, 0.55)',
-            color: 'rgba(160, 145, 126, 0.82)',
+            borderRight: '1px solid rgba(226, 220, 212, 0.6)',
+            color: 'rgba(140, 130, 118, 0.7)',
           },
           '.cm-activeLine, .cm-activeLineGutter': {
-            backgroundColor: 'rgba(244, 237, 227, 0.9)',
+            backgroundColor: 'rgba(235, 231, 225, 0.8)',
           },
           '.cm-selectionBackground': {
-            backgroundColor: 'rgba(223, 170, 123, 0.18) !important',
+            backgroundColor: 'rgba(134, 185, 171, 0.18) !important',
           },
           '.cm-cursor': {
-            borderLeftColor: 'rgba(110, 86, 63, 0.82)',
+            borderLeftColor: 'rgba(134, 185, 171, 0.9)',
           },
           '&.cm-focused': {
             outline: 'none',

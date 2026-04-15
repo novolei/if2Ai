@@ -13,7 +13,7 @@ export function SettingsSidebar({ activeSection, onSectionChange }: SettingsSide
     <aside className="flex w-[304px] shrink-0 flex-col border-r border-black/5 bg-[#eef0f1]/56 px-3 py-5 select-none backdrop-blur-[2px]">
       <div className="mb-4 px-1">
         <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-[14px] bg-black/5 text-black/70">
+          <div className="flex size-8 items-center justify-center rounded-2xl bg-black/5 text-black/70">
             <Settings className="h-4 w-4" />
           </div>
           <div>

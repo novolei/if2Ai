@@ -1,23 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Code2,
   MessageSquare,
   MoreHorizontal,
   Play,
-  SlidersHorizontal,
   Sparkles,
   SquareTerminal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import DsButton from '@/components/ds/Button'
 import { cn } from '@/lib/utils'
 import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
@@ -25,20 +17,10 @@ import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { SidebarTop } from './SidebarTop'
 
-const modelItems = [
-  { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-  { value: 'gpt-5.4', label: 'GPT-5.4' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-]
-
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
 const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
 type DensityMode = 'comfortable' | 'compact'
 type FontMode = 'sans' | 'serif'
-
-function formatModelName(model: string): string {
-  return model.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 function HeaderViewStyleControls({
   fontMode,
@@ -307,14 +289,13 @@ export function ChatWorkspace({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Button
+                <DsButton
                   variant="ghost"
-                  size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground"
+                  size="sm"
+                  Icon={Play}
+                  className="window-no-drag rounded-full"
                   data-window-no-drag="true"
-                >
-                  <Play className="h-4 w-4" />
-                </Button>
+                />
                 <div className="window-no-drag" data-window-no-drag="true">
                   <HeaderViewStyleControls
                     fontMode={fontMode}
@@ -323,44 +304,6 @@ export function ChatWorkspace({
                     onDensityModeChange={setDensityMode}
                   />
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
-                      data-window-no-drag="true"
-                    >
-                      <Code2 className="mr-2 h-4 w-4 text-blue-500" />
-                      {formatModelName(selectedModel)}
-                      <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent sideOffset={6} align="end" className="w-[148px]">
-                    {modelItems.map((item) => (
-                      <DropdownMenuItem
-                        key={item.value}
-                        className={cn(
-                          'h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium',
-                          selectedModel === item.value
-                            ? 'bg-black/[0.045] text-black/90'
-                            : 'text-black/82'
-                        )}
-                        onSelect={() => onModelChange(item.value)}
-                      >
-                        {item.label}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button
-                  variant="outline"
-                  className="window-no-drag h-9 rounded-full border-black/10 bg-white px-3 text-[13px] shadow-none"
-                  data-window-no-drag="true"
-                >
-                  <SlidersHorizontal className="mr-2 h-4 w-4" />
-                  提交
-                  <ChevronDown className="ml-2 h-3.5 w-3.5 opacity-70" />
-                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -409,7 +352,7 @@ export function ChatWorkspace({
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="mx-auto flex w-full max-w-[920px] flex-1 items-center justify-center px-6 py-8">
-                    <div className="max-w-xl rounded-[28px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)]">
+                    <div className="max-w-xl rounded-[6px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)]">
                       <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/5">
                         <Sparkles className="h-7 w-7 text-black/60" />
                       </div>

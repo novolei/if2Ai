@@ -36,6 +36,7 @@ import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message, SessionTitleState } from '@/modules/chat/types'
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
+import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 import { Button } from '@/components/ui/button'
@@ -80,15 +81,16 @@ function App() {
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [leftPaneWidth, setLeftPaneWidth] = useState(304)
+  const [leftPaneWidth, setLeftPaneWidth] = useState(240)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
+  const [showSplash, setShowSplash] = useState(true)
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
   const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
-  const [isRightRailOpen, setIsRightRailOpen] = useState(true)
+  const [isRightRailOpen, setIsRightRailOpen] = useState(false)
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === 'undefined') return 'dangerFullAccess'
     const stored = localStorage.getItem('permissionMode')
@@ -456,6 +458,8 @@ function App() {
         const project = projectList.find((item) => item.id === lastProjectId)
         handleSelectSession(lastProjectId, lastSessionId, project)
       }
+    }).finally(() => {
+      setTimeout(() => setShowSplash(false), 800)
     })
   }, [])
 
@@ -1745,7 +1749,25 @@ function App() {
   }
 
   const toggleLeftPane = () => {
-    setIsLeftPaneCollapsed((value) => !value)
+    setIsLeftPaneCollapsed((value) => {
+      const next = !value
+      if (!next) {
+        // Opening left pane → close right rail
+        setIsRightRailOpen(false)
+      }
+      return next
+    })
+  }
+
+  const toggleRightRail = () => {
+    setIsRightRailOpen((value) => {
+      const next = !value
+      if (next) {
+        // Opening right rail → close left pane
+        setIsLeftPaneCollapsed(true)
+      }
+      return next
+    })
   }
 
   const handlePreviewFocusChange = (active: boolean) => {
@@ -1775,7 +1797,11 @@ function App() {
   }
 
   return (
-    <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
+    <>
+      {showSplash ? (
+        <If2AiLoadingScreen projectName="UClaw" stageLabel="Initializing agent workspace" />
+      ) : (
+      <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
       <GlobalNavbar
         activeSection={activeSection}
         onSelectSection={setActiveSection}
@@ -1826,7 +1852,7 @@ function App() {
               onPermissionModeChange={setPermissionMode}
               todos={todos}
               isRightRailOpen={isRightRailOpen}
-              onToggleRightRail={() => setIsRightRailOpen((value) => !value)}
+              onToggleRightRail={toggleRightRail}
               onRightRailOpenChange={setIsRightRailOpen}
               leftPaneWidth={leftPaneWidth}
               isLeftPaneCollapsed={isLeftPaneCollapsed}
@@ -1907,6 +1933,8 @@ function App() {
         </DialogContent>
       </Dialog>
     </div>
+      )}
+    </>
   )
 }
 

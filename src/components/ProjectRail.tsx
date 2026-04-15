@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   ArrowDownUp,
   Archive,
@@ -25,6 +25,26 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+
+/**
+ * Unified icon wrapper for ProjectRail.
+ * All lucide icons pass through here to enforce:
+ *   - strokeWidth={1.5} (lighter, less heavy than default 2)
+ *   - h-4 w-4 (consistent size)
+ *   - default text-muted-foreground/60 with hover lift via className
+ *
+ * Override color via `className` on the wrapper's parent or inline.
+ */
+function RailIcon({
+  icon: Icon,
+  className,
+}: {
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
+  className?: string
+}) {
+  return <Icon className={cn('h-3.5 w-3.5 shrink-0', className)} strokeWidth={1.5} />
+}
+
 import type { ProjectMeta, SessionMeta } from '@/lib/tauri'
 
 export interface ProjectRailProps {
@@ -112,27 +132,27 @@ export function ProjectRail({
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
         <div className="shrink-0 px-3.5 py-3">
           <div className="flex flex-col gap-1">
-            <div className="h-9 rounded-2xl bg-black/5" />
-            <div className="h-9 rounded-2xl bg-black/5" />
-            <div className="h-9 rounded-2xl bg-black/5" />
-            <div className="h-9 rounded-2xl bg-black/5" />
+            <div className="h-9 rounded-2xl bg-muted" />
+            <div className="h-9 rounded-2xl bg-muted" />
+            <div className="h-9 rounded-2xl bg-muted" />
+            <div className="h-9 rounded-2xl bg-muted" />
           </div>
         </div>
-        <div className="shrink-0 border-t border-black/5 px-3.5 py-2.5">
+        <div className="shrink-0 border-t border-[var(--border)]/50 px-3.5 py-2.5">
           <div className="flex items-center justify-between">
-            <div className="h-3.5 w-10 rounded-full bg-black/5" />
+            <div className="h-3.5 w-10 rounded-full bg-muted" />
             <div className="flex gap-1">
-              <div className="size-7 rounded-full bg-black/5" />
-              <div className="size-7 rounded-full bg-black/5" />
-              <div className="size-7 rounded-full bg-black/5" />
+              <div className="size-7 rounded-full bg-muted" />
+              <div className="size-7 rounded-full bg-muted" />
+              <div className="size-7 rounded-full bg-muted" />
             </div>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-4">
           <div className="flex flex-col gap-3">
-            <div className="h-11 rounded-2xl bg-black/5" />
-            <div className="h-11 rounded-2xl bg-black/5" />
-            <div className="h-11 rounded-2xl bg-black/5" />
+            <div className="h-11 rounded-2xl bg-muted" />
+            <div className="h-11 rounded-2xl bg-muted" />
+            <div className="h-11 rounded-2xl bg-muted" />
           </div>
         </div>
       </div>
@@ -141,7 +161,7 @@ export function ProjectRail({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden select-none">
-      <div className="shrink-0 px-3 py-1.5">
+      <div className="shrink-0 px-3 py-1">
         <div className="flex flex-col gap-0.5">
           <RailNavItem
             icon={PencilLine}
@@ -166,30 +186,30 @@ export function ProjectRail({
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-black/5 px-3 py-1.5">
+      <div className="shrink-0 border-t border-border/40 px-3 py-1">
         <div className="flex items-center justify-between">
-          <div className="text-[12px] font-medium tracking-tight text-black/35">线程</div>
-          <div className="flex items-center gap-1 text-black/35">
+          <div className="text-[10.5px] font-medium uppercase tracking-widest text-muted-foreground/35">线程</div>
+          <div className="flex items-center gap-0.5 text-muted-foreground/30">
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-black/40 hover:bg-black/[0.03] hover:text-black/70"
+              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
             >
-              <ArrowDownUp className="size-4" />
+              <ArrowDownUp className="size-3.5" strokeWidth={1.5} />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-black/40 hover:bg-black/[0.03] hover:text-black/70"
+              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
             >
-              <Settings2 className="size-4" />
+              <Settings2 className="size-3.5" strokeWidth={1.5} />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-black/40 hover:bg-black/[0.03] hover:text-black/70"
+              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
             >
-              <FolderPlus className="size-4" />
+              <FolderPlus className="size-3.5" strokeWidth={1.5} />
             </Button>
           </div>
         </div>
@@ -198,7 +218,7 @@ export function ProjectRail({
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-2.5">
         <div className="flex flex-col gap-1">
           {projects.length === 0 ? (
-            <div className="pl-2 text-[13px] text-black/30">暂无项目</div>
+          <div className="px-2 py-6 text-center text-[12px] text-muted-foreground/30">暂无项目</div>
           ) : (
             projects.map((project) => (
               <ProjectGroup
@@ -237,7 +257,7 @@ function RailNavItem({
   label,
   onClick,
 }: {
-  icon: ComponentType<{ className?: string }>
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
   label: string
   onClick?: () => void
 }) {
@@ -245,9 +265,9 @@ function RailNavItem({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-7.5 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[12.5px] font-medium tracking-tight text-black/80 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
+      className="flex h-8 cursor-pointer items-center gap-2 rounded-xl px-2 text-left text-[13px] font-medium tracking-tight text-primary transition-colors hover:bg-primary/10 hover:text-primary"
     >
-      <Icon className="size-4 shrink-0 text-black/70" />
+      <RailIcon icon={Icon} className="text-primary/70" />
       <span>{label}</span>
     </button>
   )
@@ -268,11 +288,11 @@ function RecentItem({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-7.5 cursor-pointer items-center gap-2.5 rounded-2xl px-2 text-left text-[12.5px] font-medium tracking-tight text-black/78 transition-colors hover:bg-black/[0.03] active:bg-black/[0.05]"
+      className="flex h-7 cursor-pointer items-center gap-1.5 rounded-xl px-0.5 text-left text-[12px] text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
     >
-      <Pin className={cn('size-3.5 shrink-0 rotate-45 text-black/35', pinned && 'text-black/40')} />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      <span className="shrink-0 text-[12px] font-medium text-black/35">{age}</span>
+      <Pin className={cn('size-3 shrink-0 rotate-45 text-muted-foreground/35', pinned && 'text-muted-foreground/60')} strokeWidth={1.5} />
+      <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground/40">{age}</span>
     </button>
   )
 }
@@ -354,20 +374,21 @@ function ProjectGroup({
 
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="group/project relative rounded-[12px] px-0.5 py-0.5 transition-colors hover:bg-black/[0.03] select-none">
+      <div className="group/project relative rounded-xl px-0.5 py-0.5 select-none">
         {isEditing ? (
-          <div className="flex items-center gap-2 rounded-[10px] bg-black/[0.04] px-2.5 py-1 pr-2">
-            <button type="button" onClick={toggleProject} className="flex shrink-0 items-center gap-2 text-black/72">
+          <div className="flex items-center gap-2 rounded-xl bg-accent/60 px-2.5 py-1.5 pr-2">
+            <button type="button" onClick={toggleProject} className="flex shrink-0 items-center gap-2 text-foreground/70">
               <ChevronDown
                 className={cn(
-                  'size-3.5 shrink-0 text-black/30 transition-transform',
+                  'size-3 shrink-0 text-muted-foreground/50 transition-transform',
                   !isExpanded && '-rotate-90'
                 )}
+                strokeWidth={1.5}
               />
               {isExpanded ? (
-                <FolderOpen className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+                <FolderOpen className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70')} strokeWidth={1.5} />
               ) : (
-                <Folder className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+                <Folder className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70')} strokeWidth={1.5} />
               )}
             </button>
             <Input
@@ -385,7 +406,7 @@ function ProjectGroup({
                   cancelInlineRename()
                 }
               }}
-              className="h-7 flex-1 rounded-xl border-black/10 bg-white/90 px-2.5 text-[12.5px] shadow-none focus-visible:ring-0"
+              className="h-7 flex-1 rounded-xl border border-border bg-surface px-2.5 text-[12.5px] shadow-none focus-visible:ring-0"
             />
           </div>
         ) : (
@@ -393,20 +414,24 @@ function ProjectGroup({
             type="button"
             onClick={toggleProject}
             className={cn(
-              'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-[10px] px-2.5 py-[5px] pr-12 text-left text-[12.5px] font-medium tracking-tight transition-colors',
-              isActiveProject ? 'bg-black/[0.04] text-black/90' : 'text-black/72 hover:text-black/90'
+              'relative flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] tracking-tight transition-colors',
+              isActiveProject
+                ? 'bg-sidebar-accent text-foreground font-semibold'
+                : 'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground font-medium'
             )}
           >
             <ChevronDown
               className={cn(
-                'size-3.5 shrink-0 text-black/30 transition-transform',
-                !isExpanded && '-rotate-90'
+                'size-3.5 shrink-0 text-muted-foreground/50 transition-transform',
+                !isExpanded && '-rotate-90',
+                isActiveProject && 'text-foreground/60'
               )}
+              strokeWidth={1.5}
             />
             {isExpanded ? (
-              <FolderOpen className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+              <FolderOpen className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70', isActiveProject && 'text-foreground/70')} strokeWidth={1.5} />
             ) : (
-              <Folder className={cn('size-4 shrink-0 text-black/45', hasActiveSession && 'text-black/60')} />
+              <Folder className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70', isActiveProject && 'text-foreground/70')} strokeWidth={1.5} />
             )}
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
           </button>
@@ -417,13 +442,13 @@ function ProjectGroup({
             type="button"
             variant="ghost"
             size="icon"
-            className="pointer-events-auto size-[26px] rounded-full p-0 text-black/25 opacity-90 transition-colors hover:text-black/70 cursor-pointer"
+            className="pointer-events-auto size-[26px] rounded-full p-0 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
             onClick={(event) => {
               event.stopPropagation()
               beginInlineRename()
             }}
           >
-            <PencilLine className="size-4" />
+            <PencilLine className="size-3.5" strokeWidth={1.5} />
           </Button>
           <ProjectMenu
             project={project}
@@ -437,9 +462,9 @@ function ProjectGroup({
 
       <div className={cn('flex flex-col gap-0.5', !isExpanded && 'hidden')}>
         {sessions.length === 0 ? (
-          <div className="pl-5 text-[12.5px] text-black/25">无线程</div>
+          <div className="px-2 py-3 text-[11px] text-muted-foreground/20">无线程</div>
         ) : (
-          <div className="flex flex-col gap-0.5 pl-5">
+          <div className="flex flex-col gap-0.5 pl-1.5">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -447,7 +472,6 @@ function ProjectGroup({
                 sessionId={session.id}
                 title={session.title}
                 age={formatRelativeAge(session.updated_at, nowMs)}
-                messageCount={session.message_count}
                 isPinned={session.pinned}
                 isRunning={runningSessionIds.includes(session.id)}
                 isActive={activeSessionId === session.id}
@@ -460,7 +484,7 @@ function ProjectGroup({
         )}
       </div>
 
-      <Separator className="bg-black/5" />
+      <Separator className="my-1 bg-border/20" />
     </div>
   )
 }
@@ -470,7 +494,6 @@ function SessionRow({
   sessionId,
   title,
   age,
-  messageCount,
   isPinned,
   isRunning,
   isActive,
@@ -482,7 +505,6 @@ function SessionRow({
   sessionId: string
   title: string
   age: string
-  messageCount: number
   isPinned: boolean
   isRunning: boolean
   isActive?: boolean
@@ -502,15 +524,15 @@ function SessionRow({
         }
       }}
       className={cn(
-        'group/session grid h-[28px] w-full cursor-pointer grid-cols-[18px_minmax(0,1fr)_5.75rem] items-center gap-2 rounded-[10px] px-2.5 text-[12px] font-medium tracking-tight transition-colors',
+        'group/session relative grid h-7 w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-1.5 text-[12px] transition-colors',
         isActive
-          ? 'bg-emerald-50 text-emerald-700 shadow-[0_0_0_1px_rgba(16,185,129,0.06)]'
-          : 'text-black/78 hover:bg-black/[0.03] hover:text-black/90'
+          ? 'bg-primary/12 text-primary font-medium'
+          : 'text-sidebar-foreground/55 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground font-normal'
       )}
     >
       <button
         type="button"
-        className="relative flex size-[18px] items-center justify-center text-black/34 transition-colors hover:text-black/60"
+        className="relative flex size-[18px] items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground"
         aria-label={isPinned ? '取消置顶' : '置顶'}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -523,26 +545,29 @@ function SessionRow({
             'absolute size-3.5 transition-all',
             isPinned ? 'opacity-0 scale-75' : 'opacity-100 scale-100 group-hover/session:opacity-0'
           )}
+          strokeWidth={1.5}
         />
         <Pin
           className={cn(
             'absolute size-3.5 rotate-45 transition-all',
             isPinned
-              ? 'opacity-100 scale-100 text-black/55'
-              : 'opacity-0 scale-75 text-black/55 group-hover/session:opacity-100 group-hover/session:scale-100'
+              ? 'opacity-100 scale-100 text-muted-foreground/60'
+              : 'opacity-0 scale-75 text-muted-foreground/60 group-hover/session:opacity-100 group-hover/session:scale-100'
           )}
+          strokeWidth={1.5}
         />
       </button>
 
       <span className="min-w-0 truncate">{title}</span>
 
       <div className="relative flex h-full min-w-0 items-center justify-end">
-        <span className="flex shrink-0 items-center justify-end gap-1.5 pr-1 text-right text-[11.5px] font-medium text-black/36 transition-opacity duration-150 group-hover/session:opacity-0">
+        <span className="flex shrink-0 items-center justify-end gap-1 pr-0.5 text-right text-[10px] font-normal text-muted-foreground/30 transition-opacity duration-150 group-hover/session:opacity-0">
           {isRunning ? (
-            <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)] animate-pulse" />
+            <span className="inline-flex size-2 items-center justify-center">
+              <span className="absolute size-1.5 rounded-full bg-primary/20 animate-pulse" />
+              <span className="relative size-1 rounded-full bg-primary animate-pulse" />
+            </span>
           ) : null}
-          <span>{messageCount}</span>
-          <span className="text-black/18">·</span>
           <span>{age}</span>
         </span>
 
@@ -552,35 +577,35 @@ function SessionRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-0 top-1/2 size-7 -translate-y-1/2 rounded-full p-0 text-black/25 opacity-0 transition-colors hover:text-black/70 group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
+              className="absolute right-0 top-1/2 size-7 -translate-y-1/2 rounded-full p-0 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
-              <MoreHorizontal className="size-4" />
+              <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
             sideOffset={6}
-            className="w-[156px] rounded-[18px] border border-black/8 bg-white/96 p-1 text-[12.5px] shadow-[0_10px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl"
+            className="w-[156px] rounded-lg border border-border/10 bg-popover/96 p-1 text-[12.5px] shadow-token-lg backdrop-blur-xl"
           >
             <DropdownMenuItem
-              className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
+              className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
               onSelect={() => {
                 void onTogglePinSession(projectId, sessionId, isPinned)
               }}
             >
-              <Pin className="size-4 shrink-0 rotate-45 text-black/55" />
+              <Pin className="size-3.5 shrink-0 rotate-45 text-muted-foreground/60" strokeWidth={1.5} />
               <span>{isPinned ? '取消置顶' : '置顶'}</span>
             </DropdownMenuItem>
-            <DropdownMenuSeparator className="my-1 bg-black/6" />
+            <DropdownMenuSeparator className="my-1 bg-border/10" />
             <DropdownMenuItem
-              className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-red-600 transition-colors hover:bg-red-50 focus:bg-red-50 focus:text-red-700"
+              className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-destructive transition-colors hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
               onSelect={() => {
                 onDeleteSession(projectId, sessionId)
               }}
             >
-              <Trash2 className="size-4 shrink-0 text-red-500" />
+              <Trash2 className="size-3.5 shrink-0 text-destructive" />
               <span>移除</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -610,64 +635,64 @@ function ProjectMenu({
           type="button"
           variant="ghost"
           size="icon"
-          className="pointer-events-auto size-7 rounded-full p-0 text-black/25 opacity-90 transition-colors hover:text-black/70 cursor-pointer"
+          className="pointer-events-auto size-7 rounded-full p-0 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <MoreHorizontal className="size-4" />
+          <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-[184px] rounded-[18px] border border-black/8 bg-white/96 p-1 text-[12.5px] shadow-[0_10px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl"
+        className="w-[184px] rounded-lg border border-border/10 bg-popover/96 p-1 text-[12.5px] shadow-token-lg backdrop-blur-xl"
       >
         <DropdownMenuItem
-          className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
+          className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
           onSelect={() => {
             void Promise.resolve(onOpenInFinder(project.id)).catch((error) => {
               console.error('Failed to open project in Finder:', error)
             })
           }}
         >
-          <FolderOpen className="size-4 shrink-0 text-black/55" />
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
           <span>Open in Finder</span>
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
+          className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
           onSelect={() => {
             void Promise.resolve(onCreatePermanentWorktree(project.id)).catch((error) => {
               console.error('Failed to create permanent worktree:', error)
             })
           }}
         >
-          <FolderPlus className="size-4 shrink-0 text-black/55" />
+          <FolderPlus className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
           <span>创建永久工作树</span>
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
+          className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
           onSelect={() => {
             onRenameProject()
           }}
         >
-          <PencilLine className="size-4 shrink-0 text-black/55" />
+          <PencilLine className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
           <span>编辑名称</span>
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-black/82 transition-colors hover:bg-black/[0.045] focus:bg-black/[0.045] focus:text-black/90"
+          className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
           onSelect={() => {
           }}
         >
-          <Archive className="size-4 shrink-0 text-black/55" />
+          <Archive className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
           <span>Archive threads</span>
         </DropdownMenuItem>
-        <DropdownMenuSeparator className="my-1.5 bg-black/6" />
+        <DropdownMenuSeparator className="my-1.5 bg-border/10" />
         <DropdownMenuItem
-          className="h-8 rounded-[12px] px-2.5 text-[12.5px] font-medium text-red-600 transition-colors hover:bg-red-50 focus:bg-red-50 focus:text-red-700"
+          className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-destructive transition-colors hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
           onSelect={() => {
             onDeleteProject(project.id)
           }}
         >
-          <Trash2 className="size-4 shrink-0 text-red-500" />
+          <Trash2 className="size-3.5 shrink-0 text-destructive" />
           <span>移除</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -687,9 +712,9 @@ function formatRelativeAge(value: string, nowMs: number) {
   const month = 30 * day
 
   if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))} 分钟前`
-  if (diff < day) return `${Math.max(1, Math.floor(diff / hour))} 小时前`
-  if (diff < week) return `${Math.max(1, Math.floor(diff / day))} 天前`
-  if (diff < month) return `${Math.max(1, Math.floor(diff / week))} 周前`
-  return `${Math.max(1, Math.floor(diff / month))} 个月前`
+  if (diff < hour) return `${Math.max(1, Math.floor(diff / minute))}分`
+  if (diff < day) return `${Math.max(1, Math.floor(diff / hour))}时`
+  if (diff < week) return `${Math.max(1, Math.floor(diff / day))}天`
+  if (diff < month) return `${Math.max(1, Math.floor(diff / week))}周`
+  return `${Math.max(1, Math.floor(diff / month))}月`
 }

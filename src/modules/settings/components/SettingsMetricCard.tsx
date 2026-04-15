@@ -13,7 +13,7 @@ export function SettingsMetricCard({ icon: Icon, label, value, detail, className
   return (
     <div
       className={cn(
-        'rounded-[20px] border border-black/5 bg-white/72 p-[18px] shadow-[0_8px_22px_rgba(15,23,42,0.04)]',
+        'group relative rounded-2xl border border-border/50 bg-surface-raised px-5 py-4 shadow-token-xs transition-all hover:shadow-token-sm hover:border-primary/20',
         className,
       )}
     >
@@ -22,7 +22,7 @@ export function SettingsMetricCard({ icon: Icon, label, value, detail, className
           <div className="text-[12px] text-muted-foreground">{label}</div>
           <div className="text-[24px] font-semibold tracking-tight">{value}</div>
         </div>
-        <div className="flex size-10 items-center justify-center rounded-[14px] bg-black/5 text-black/70">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
           <Icon className="h-5 w-5" />
         </div>
       </div>

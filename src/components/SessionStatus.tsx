@@ -14,23 +14,23 @@ const statusConfig = {
   idle: {
     label: '待机',
     icon: CircleDotDashed,
-    className: 'text-muted-foreground bg-muted/50',
+    className: 'text-[var(--status-neutral)] bg-[var(--status-neutral-bg)]',
   },
   running: {
     label: '执行中',
     icon: Loader2,
-    className: 'text-blue-600 bg-blue-500/10',
+    className: 'text-[var(--status-active)] bg-[var(--status-active-bg)]',
     animate: true,
   },
   working: {
     label: '思考中',
     icon: CircleCheckBig,
-    className: 'text-emerald-600 bg-emerald-500/10',
+    className: 'text-[var(--status-success)] bg-[var(--status-success-bg)]',
   },
   error: {
     label: '异常',
     icon: CircleAlert,
-    className: 'text-destructive bg-destructive/10',
+    className: 'text-[var(--status-error)] bg-[var(--status-error-bg)]',
   },
 } as const
 

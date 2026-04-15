@@ -26,7 +26,7 @@ export function GlobalNavbar({
         <img
           src={appIconSrc}
           alt="If2Ai"
-          className="size-12 rounded-[16px] bg-white/85 object-cover ring-1 ring-black/10 shadow-[0_2px_6px_rgba(0,0,0,0.16)]"
+          className="size-12 rounded-[6px] bg-white/85 object-cover ring-1 ring-black/10 shadow-[0_2px_6px_rgba(0,0,0,0.16)]"
         />
         <div className="flex flex-col gap-3.5">
           <NavTooltipButton
@@ -63,7 +63,7 @@ export function GlobalNavbar({
           type="button"
           variant="ghost"
           size="icon"
-          className="window-no-drag size-11 rounded-[14px] text-black/48 hover:bg-black/[0.03] hover:text-black/74"
+          className="window-no-drag size-11 rounded-[6px] text-black/48 hover:bg-black/[0.03] hover:text-black/74"
           data-window-no-drag="true"
           aria-label="更新"
         >
