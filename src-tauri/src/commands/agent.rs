@@ -21,6 +21,7 @@ use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
 use crate::modules::learning::trajectory::TrajectoryManager;
+use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{
@@ -965,6 +966,19 @@ pub async fn run_agent_turn(
                 std::slice::from_ref(&system_prompt_text),
             )
             .await;
+
+            // LearningModule: record turn outcome for self-model learning
+            if let Ok(mut learning) = LearningModule::new(state.memory_provider.clone()).await {
+                learning
+                    .self_model_mut()
+                    .record_turn(/* success= */ true, /* response_time_ms= */ 0.0);
+                tracing::info!(
+                    "[run_agent_turn] LearningModule: turn recorded, {} capabilities tracked",
+                    learning.self_model().capabilities.len()
+                );
+            } else {
+                tracing::warn!("[run_agent_turn] LearningModule: failed to initialize, skipping self-model update");
+            }
 
             // Verify system prompt integrity: detect if prompt was modified during session
             // The prompt captured at start is compared against the current text.

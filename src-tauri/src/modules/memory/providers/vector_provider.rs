@@ -4,9 +4,9 @@
 //! vector storage (LanceDB) to provide semantic memory search.
 //!
 //! # `#![allow(dead_code)]` justification
-//! This module is infrastructure for the vector memory pipeline.
-//! It will be wired into the agent loop (Phase 6E+) and the
-//! hybrid search flow.
+//! VectorMemoryProvider and its helpers are not yet called from the agent loop.
+//! They provide the full MemoryProvider trait impl (store/recall/delete/purge/export)
+//! and will be wired when HybridMemoryProvider is activated (Phase 6bw.7+).
 
 #![allow(dead_code)]
 
