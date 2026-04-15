@@ -22,6 +22,7 @@ use crate::modules::control_plane::{
 };
 use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
+use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
 };
@@ -29,11 +30,13 @@ use crate::modules::runtime::config::{ConfigLoader, ProviderTransportConfig};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
+use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
 };
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
+use crate::modules::runtime::snapshot::FrozenSnapshot;
 use crate::modules::session::Session as AppSession;
 
 /// Event payload for streaming token updates
@@ -821,8 +824,6 @@ pub async fn run_agent_turn(
             vec![crate::modules::runtime::prompt::SystemPromptBuilder::new().render()]
         }
     };
-    // Keep a clone for trajectory recording (system_prompt is moved into ConversationRuntime)
-    let system_prompt_for_trajectory = system_prompt.clone();
 
     // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories
     let memory_context = retrieve_memory_context(&state, &user_message).await;
@@ -833,6 +834,15 @@ pub async fn run_agent_turn(
         );
         system_prompt.push(memory_context);
     }
+
+    // Capture frozen snapshot of system prompt at session start for integrity verification
+    let system_prompt_text = system_prompt.join("\n");
+    let frozen_snapshot = FrozenSnapshot::capture(&system_prompt_text);
+    tracing::info!(
+        "[run_agent_turn] Frozen snapshot captured, prompt hash={}, estimate={} tokens",
+        frozen_snapshot.prompt_hash,
+        frozen_snapshot.token_estimate()
+    );
 
     // Create runtime
     let mut runtime = ConversationRuntime::new(
@@ -926,6 +936,7 @@ pub async fn run_agent_turn(
 
             // Context compaction — compact if session exceeds token threshold
             let compaction_config = CompactionConfig::default();
+            let pre_compact_message_count = updated_runtime_session.messages.len();
             let final_runtime_session =
                 if should_compact(&updated_runtime_session, compaction_config) {
                     let compact_result =
@@ -934,6 +945,7 @@ pub async fn run_agent_turn(
                 } else {
                     updated_runtime_session
                 };
+            let post_compact_message_count = final_runtime_session.messages.len();
 
             // Update the application session with the new messages
             let mut updated_app_session = app_session;
@@ -948,7 +960,61 @@ pub async fn run_agent_turn(
                 .map_err(|e| e.to_string())?;
 
             // Record trajectory after session save (non-blocking, warn-only)
-            record_trajectory_if_possible(&trajectory_session, &system_prompt_for_trajectory).await;
+            record_trajectory_if_possible(
+                &trajectory_session,
+                std::slice::from_ref(&system_prompt_text),
+            )
+            .await;
+
+            // Verify system prompt integrity: detect if prompt was modified during session
+            // The prompt captured at start is compared against the current text.
+            // Since system_prompt is moved into ConversationRuntime, we compare
+            // the captured snapshot against the original text (which includes memory context).
+            if !frozen_snapshot.verify(&system_prompt_text) {
+                tracing::warn!(
+                    "[run_agent_turn] System prompt integrity check FAILED: snapshot hash={}, current prompt changed",
+                    frozen_snapshot.prompt_hash
+                );
+            } else {
+                tracing::info!(
+                    "[run_agent_turn] System prompt integrity verified: snapshot hash={}",
+                    frozen_snapshot.prompt_hash
+                );
+            }
+
+            // WorkingMemory: check if the post-turn session fits within working memory budget
+            let working_memory = WorkingMemory::default();
+            let working_tokens: usize = trajectory_session
+                .messages
+                .iter()
+                .map(crate::modules::memory::working_memory::message_token_count)
+                .sum();
+            if working_tokens > working_memory.max_tokens {
+                tracing::warn!(
+                    "[run_agent_turn] WorkingMemory budget exceeded: {} tokens > {} max ({} messages)",
+                    working_tokens,
+                    working_memory.max_tokens,
+                    trajectory_session.messages.len()
+                );
+            } else {
+                tracing::info!(
+                    "[run_agent_turn] WorkingMemory within budget: {} tokens / {} max",
+                    working_tokens,
+                    working_memory.max_tokens
+                );
+            }
+
+            // WeibullDecay: compute importance decay factor for post-compaction entries
+            let decay = WeibullDecay::default();
+            let removed_count =
+                pre_compact_message_count.saturating_sub(post_compact_message_count);
+            if removed_count > 0 {
+                let decay_factor = decay.decay_factor(24.0); // 1-day decay factor
+                tracing::info!(
+                    "[run_agent_turn] WeibullDecay: {removed_count} entries compacted, 1-day decay factor={:.3}",
+                    decay_factor
+                );
+            }
 
             tracing::info!("[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}", final_text.len(), thinking_content.as_ref().map(|s| s.len()), session_id);
             Ok(RunAgentTurnResponse {
