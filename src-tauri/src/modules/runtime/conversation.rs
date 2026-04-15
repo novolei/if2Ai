@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 
+use super::budget::ContextBudget;
 use super::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
@@ -136,7 +137,7 @@ pub struct ConversationRuntime<C, T> {
     permission_policy: PermissionPolicy,
     system_prompt: Vec<String>,
     max_iterations: usize,
-    max_token_budget: Option<usize>,
+    context_budget: Option<ContextBudget>,
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
 }
@@ -181,7 +182,7 @@ where
             permission_policy,
             system_prompt,
             max_iterations: usize::MAX,
-            max_token_budget: None,
+            context_budget: None,
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(&feature_config),
         }
@@ -193,9 +194,25 @@ where
         self
     }
 
+    /// Set the context budget for token allocation.
+    ///
+    /// Default: 4000 tokens, split 10/20/30/40% across
+    /// System/Episodic/Semantic/Working slots.
+    #[must_use]
+    pub fn with_context_budget(mut self, budget: ContextBudget) -> Self {
+        self.context_budget = Some(budget);
+        self
+    }
+
+    /// Deprecated: use [`Self::with_context_budget`] instead.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use with_context_budget for per-slot budget tracking"
+    )]
     #[must_use]
     pub fn with_max_token_budget(mut self, max_token_budget: usize) -> Self {
-        self.max_token_budget = Some(max_token_budget);
+        // Create a simple budget with the given total and default percentages
+        self.context_budget = Some(ContextBudget::with_total(max_token_budget));
         self
     }
 
@@ -236,12 +253,18 @@ where
                 return Err(RuntimeError::MaxIterationsExceeded);
             }
 
-            if let Some(budget) = self.max_token_budget {
+            // ContextBudget check — validates total token usage against configured budget
+            // System 10%, Episodic 20%, Semantic 30%, Working 40%
+            if let Some(ref budget) = self.context_budget {
                 let estimated_tokens = estimate_session_tokens(&self.session);
-                if estimated_tokens > budget {
+                if estimated_tokens > budget.total {
                     return Err(RuntimeError::SessionError(format!(
-                        "token budget exceeded: estimated {} tokens exceeds budget of {}",
-                        estimated_tokens, budget
+                        "context budget exceeded: estimated {estimated_tokens} tokens exceeds total budget of {} (system={}, episodic={}, semantic={}, working={})",
+                        budget.total,
+                        budget.system_tokens(),
+                        budget.episodic_tokens(),
+                        budget.semantic_tokens(),
+                        budget.working_tokens(),
                     )));
                 }
             }

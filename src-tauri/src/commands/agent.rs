@@ -775,7 +775,8 @@ pub async fn run_agent_turn(
         tool_executor,
         permission_policy,
         system_prompt,
-    );
+    )
+    .with_context_budget(state.context_budget.clone());
 
     tracing::info!(
         "[run_agent_turn] Runtime created, calling run_turn with message: {}",
