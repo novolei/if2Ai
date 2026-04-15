@@ -1,0 +1,556 @@
+# Phase 6BW: Memory Control Plane Wiring
+# ─────────────────────────────────────────────────────────────────────────────
+# 将 Phase 6B 所有"孤岛"模块接入生产管线
+# 背景: Phase 6B (9 slices, 573 tests) 全部完成，但只有 SQLite P0 被接入
+# 问题: 12+ 模块为 dead code，前端零 UI，测试覆盖率虚高
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6bw"
+  phase_status: draft
+  title: "Memory Wiring — 孤岛模块接入 + 前端 UI + 测试修复"
+  owner: "@executor"
+  depends_on_phase: "6b"
+  design_docs:
+    - docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md
+  backlog_docs:
+    - docs/design-docs/postCLI/ADR/backlog/ADR-012-Phase6B-Wiring-BACKLOG.md
+  human_checkpoints:
+    - after_slice: "6bw.4"    # 核心后端 Wiring 完成后人工 review
+    - after_slice: "6bw.7"    # 前端 UI 完成后人工 review
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.1: AppState 扩展 — Memory Infrastructure 字段 (P0)
+  # 对应 Gap: G10 (default_memory_provider 硬编码)
+  # 对应 TASK: TASK-012-01
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.1"
+    title: "AppState 扩展 — memory_provider, context_budget, trajectory_manager, learning_module"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-01"
+    impl_targets:
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    baseline_ref: "src-tauri/src/commands/mod.rs (AppState struct — 无 memory 相关字段)"
+
+    current_state: |
+      AppState 只包含 session_manager, tool_registry, project_manager, permission 相关字段。
+      memory_provider 在 main.rs 中创建但不传入 AppState。
+      无 context_budget、无 trajectory_manager、无 learning_module。
+
+    must_implement: |
+      # AppState 扩展 (TASK-012-01)
+      - 添加 memory_provider: SharedMemoryProvider 字段
+      - 添加 context_budget: ContextBudget 字段
+      - 添加 trajectory_manager: Option<Arc<TrajectoryManager>> 字段
+      - 添加 learning_module: Option<Arc<Mutex<LearningModule>>> 字段
+      - 添加 active_retrieval_manager: Option<Arc<ActiveRetrievalManager>> 字段
+      - 更新 AppState::new() 签名
+
+      # main.rs 初始化 (TASK-012-01)
+      - 创建 ContextBudget::default()
+      - 创建 TrajectoryManager::new(if2ai_dir.join("trajectories"))
+      - 创建 LearningModule::new(memory, trajectory)
+      - 创建 ActiveRetrievalManager::with_defaults()
+      - 将所有新字段传入 AppState::new()
+      - 所有 Option<> 字段 graceful fallback
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/mod.rs"
+        grep: "pub memory_provider: SharedMemoryProvider"
+        label: "AppState 有 memory_provider 字段"
+      - type: symbol
+        file: "src-tauri/src/main.rs"
+        grep: "context_budget"
+        label: "main.rs 初始化 context_budget"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "AppState::new() 是否接受所有新字段"
+      - "Option<> 字段是否在创建失败时 graceful fallback"
+      - "main.rs 是否在 register_builtin_tools 中 clone memory_provider"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.2: ContextBudget 接入 Agent Loop (P0)
+  # 对应 Gap: G4 (ContextBudget 不在 agent loop 中检查)
+  # 对应 TASK: TASK-012-02
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.2"
+    title: "ContextBudget 接入 — 替代 max_token_budget 简单检查"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-02"
+    impl_targets:
+      - src-tauri/src/modules/runtime/conversation.rs
+      - src-tauri/src/commands/agent.rs
+
+    baseline_ref: "src-tauri/src/modules/runtime/conversation.rs (max_token_budget: Option<usize> — 简单预算检查)"
+
+    current_state: |
+      ConversationRuntime 使用 max_token_budget: Option<usize> 简单检查。
+      不区分 System/Episodic/Semantic/Working 槽位。
+      不符合 10/20/30/40% 分配策略。
+
+    must_implement: |
+      # ContextBudget 接入 (TASK-012-02)
+      - 替换 max_token_budget 为 context_budget: Option<ContextBudget>
+      - run_turn() 中使用 budget.validate_slots() 检查每个槽位
+      - system 10%, episodic 20%, semantic 30%, working 40%
+      - 从 AppState 读取 context_budget 传入 runtime
+      - with_max_token_budget() 标记 deprecated
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend runtime::budget"
+        label: "ContextBudget 测试通过"
+      - type: symbol
+        file: "src-tauri/src/modules/runtime/conversation.rs"
+        grep: "context_budget"
+        label: "ConversationRuntime 使用 context_budget"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "ContextBudget 默认值是否为 4000 tokens, 10/20/30/40%"
+      - "每个槽位是否独立检查"
+      - "超过预算时的行为是否正确"
+      - "现有测试是否仍然通过"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.3: ActiveRetrievalManager 接入 Pre-LLM-Call (P0)
+  # 对应 Gap: G1 (ActiveRetrievalManager 为 dead code)
+  # 对应 TASK: TASK-012-03
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.3"
+    title: "ActiveRetrievalManager 接入 — Pre-LLM-Call 上下文注入"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-03"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/memory/retrieval.rs
+
+    baseline_ref: "src-tauri/src/commands/agent.rs (run_agent_turn — 无主动检索)"
+
+    current_state: |
+      LLM 调用前无记忆检索。
+      ActiveRetrievalManager 已实现但为 dead code。
+      QueryIntent 分类和 RRF Fusion 已实现但未被调用。
+
+    must_implement: |
+      # ActiveRetrievalManager 接入 (TASK-012-03)
+      - 在 run_agent_turn 中创建 runtime 之前:
+        a. QueryIntent::classify(&user_message)
+        b. arm.pre_llm_call(memory, &user_message, intent)
+        c. 将检索结果注入 system_prompt
+      - 添加 format_relevant_context() 辅助函数
+      - 配置开关 enabled: bool 控制是否启用
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::intent"
+        label: "QueryIntent 分类测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::retrieval"
+        label: "RRF Fusion 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "pre_llm_call 是否在 LLM 调用前执行"
+      - "检索结果是否注入 system prompt"
+      - "配置开关是否可禁用主动检索"
+      - "5 种 Intent 权重是否正确"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.4: TrajectoryManager 接入 Session Lifecycle (P0)
+  # 对应 Gap: G3 (TrajectoryManager 无 record 调用方)
+  # 对应 TASK: TASK-012-06
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.4"
+    title: "TrajectoryManager 接入 — Session 结束后 record"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-06"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+
+    baseline_ref: "src-tauri/src/commands/agent.rs (save_session 后无 trajectory 记录)"
+
+    current_state: |
+      TrajectoryManager 已实现但只有 Tauri 导出命令调用。
+      agent turn 完成后不记录轨迹。
+      轨迹文件从未被写入。
+
+    must_implement: |
+      # TrajectoryManager 接入 (TASK-012-06)
+      - 在 save_session 之后:
+        a. Trajectory::from_session(&session, system_prompt, model_id)
+        b. tm.record(&trajectory)
+      - 错误处理: warn 日志，不阻塞主流程
+      - 隐私控制: min_session_length=3 过滤短 session
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning::trajectory"
+        label: "Trajectory 测试通过"
+      - type: symbol
+        file: "src-tauri/src/commands/agent.rs"
+        grep: "trajectory_manager"
+        label: "agent.rs 使用 trajectory_manager"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "record 是否在 save_session 之后调用"
+      - "失败是否只 warn 不阻塞"
+      - "min_session_length 是否生效"
+      - "文件是否按日期轮转"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.5: WorkingMemory + FrozenSnapshot + WeibullDecay 接入 (P1)
+  # 对应 Gap: G5, G8, G9 (WorkingMemory/FrozenSnapshot/WeibullDecay 未接入)
+  # 对应 TASK: TASK-012-05, TASK-012-08, TASK-012-09
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.5"
+    title: "WorkingMemory + FrozenSnapshot + WeibullDecay 三线接入"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-05; TASK-012-08; TASK-012-09"
+    impl_targets:
+      - src-tauri/src/modules/runtime/conversation.rs
+      - src-tauri/src/commands/agent.rs
+
+    baseline_ref: "src-tauri/src/modules/runtime/conversation.rs (Vec<ConversationMessage> 直接用作上下文)"
+
+    current_state: |
+      - WorkingMemory 已实现但不被 agent loop 使用
+      - FrozenSnapshot 已实现但不被捕获
+      - WeibullDecay 已实现但不被 compaction 触发
+
+    must_implement: |
+      # WorkingMemory 接入 (TASK-012-05)
+      - 在 run_turn() 中获取 ApiRequest 前:
+        wm.get_context(&self.session.messages) 替代直接使用
+      - max_turns=8, max_tokens=1600 默认值
+
+      # FrozenSnapshot 接入 (TASK-012-08)
+      - 在创建 runtime 之前: FrozenSnapshot::capture(&system_prompt)
+      - turn 完成后: snapshot.verify(&current_prompt)
+
+      # WeibullDecay 接入 (TASK-012-09)
+      - 在 compaction 之后:
+        a. 计算 removed_count
+        b. WeibullDecay::default().calculate(removed_count)
+        c. memory_provider.apply_importance_decay()
+      - lambda=7d, k=1.2 参数
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::working_memory"
+        label: "WorkingMemory 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend runtime::snapshot"
+        label: "FrozenSnapshot 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend runtime::episodic_compaction"
+        label: "WeibullDecay 测试通过"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "WorkingMemory 是否替代 Vec 作为上下文窗口"
+      - "FrozenSnapshot 是否在 session init 时捕获"
+      - "WeibullDecay 是否在 compaction 后触发"
+      - "失败是否不阻塞主流程"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.6: LearningModule 接入 + dead_code 清理 (P1)
+  # 对应 Gap: G2 (LearningModule 无调用方), G1 (Vector/HRR dead code)
+  # 对应 TASK: TASK-012-07, TASK-012-04, TASK-012-10
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.6"
+    title: "LearningModule 接入 + Vector/HRR dead_code 清理 + 测试修复"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-07; TASK-012-04; TASK-012-10"
+    impl_targets:
+      - src-tauri/src/modules/learning/mod.rs
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/memory/providers/vector_provider.rs
+      - src-tauri/src/modules/memory/hrr/integration.rs
+      - src-tauri/src/modules/memory/embedding/fastembed.rs
+
+    baseline_ref: "src-tauri/src/modules/learning/mod.rs (LearningModule 无 init 函数)"
+
+    current_state: |
+      - LearningModule 已实现但无调用方
+      - VectorMemoryProvider/FastEmbedProvider/HolographicStore 全是 dead code
+      - HRR integration tests 标记 #[ignore]
+      - FastEmbed tests 标记 #[ignore]
+
+    must_implement: |
+      # LearningModule 接入 (TASK-012-07)
+      - 添加 init_learning() 函数
+      - 在 agent turn 完成后:
+        a. learning.record_turn(session, tokens, iterations)
+        b. 每 N 个 turn 触发 reflection
+        c. learning.update_self_model(reflections)
+
+      # dead_code 清理 (TASK-012-04)
+      - 移除 vector_provider.rs 的 #![allow(dead_code)]
+      - 替换为函数级 #[allow(dead_code)]
+      - 添加 MockEmbedder 用于测试
+
+      # HRR 测试修复 (TASK-012-10)
+      - 移除 #[ignore] 标记
+      - 添加 mock embedding provider
+      - 使用确定性向量替代模型下载
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: test
+        cmd: "cargo test --package if2ai-backend learning"
+        label: "LearningModule 测试通过"
+      - type: test
+        cmd: "cargo test --package if2ai-backend memory::hrr"
+        label: "HRR 测试通过（不再 ignore）"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "LearningModule 是否在 turn 完成后调用"
+      - "Reflection 是否周期性触发"
+      - "vector_provider.rs 是否不再有模块级 dead_code"
+      - "HRR tests 是否不再 #[ignore]"
+      - "Mock embedder 是否生成确定性向量"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.7: Provider 升级 — Vector 优先 + Hybrid 配置化 (P2)
+  # 对应 Gap: G1 (Vector/Hybrid 未接入), G10 (硬编码 SQLite)
+  # 对应 TASK: TASK-012-11, TASK-012-12
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.7"
+    title: "Provider 升级 — Vector 优先回退 SQLite + HybridMemoryProvider 配置化"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-11; TASK-012-12"
+    impl_targets:
+      - src-tauri/src/main.rs
+      - src-tauri/src/modules/memory/hrr/integration.rs
+
+    baseline_ref: "src-tauri/src/main.rs (create_memory_provider — 只创建 SqliteMemoryProvider)"
+
+    current_state: |
+      create_memory_provider() 只创建 SqliteMemoryProvider。
+      VectorMemoryProvider 和 HybridMemoryProvider 从不被使用。
+      无 HRR 配置开关。
+
+    must_implement: |
+      # Vector 优先 (TASK-012-11)
+      - create_memory_provider() 先尝试 VectorMemoryProvider
+      - 30 秒超时保护回退 SQLite
+      - 日志记录回退原因
+
+      # Hybrid 配置化 (TASK-012-12)
+      - 添加 HybridMemoryConfig 结构
+      - hrr_enabled: bool (默认 false)
+      - 在 main.rs 中根据配置选择 provider
+
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/main.rs"
+        grep: "VectorMemoryProvider"
+        label: "main.rs 尝试 VectorMemoryProvider"
+      - type: symbol
+        file: "src-tauri/src/main.rs"
+        grep: "hrr_enabled"
+        label: "main.rs 有 HRR 配置开关"
+      - type: compile
+        cmd: "cargo clippy --workspace --all-targets -- -D warnings"
+    review_checklist:
+      - "VectorMemoryProvider 是否优先尝试"
+      - "超时回退是否生效"
+      - "HRR 是否默认禁用"
+      - "离线环境是否 SQLite 可用"
+      - "无 unwrap()（测试除外）"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.8: 前端 Memory Browser UI (P3)
+  # 对应 Gap: G7 (Memory UI 完全不存在)
+  # 对应 TASK: TASK-012-13
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.8"
+    title: "前端 Memory Browser — 查看/搜索/删除记忆"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-13"
+    impl_targets:
+      - src/components/memory/MemoryBrowser.tsx
+      - src/components/memory/MemoryCard.tsx
+      - src/components/memory/MemoryCategoryNav.tsx
+      - src/App.tsx
+
+    baseline_ref: "src/ 目录中无 memory 相关组件"
+
+    current_state: |
+      前端 src/ 目录中搜索 "memory"/"trajectory"/"recall" 零匹配。
+      无任何 Memory UI 组件。
+
+    must_implement: |
+      # MemoryBrowser (TASK-012-13)
+      - 记忆列表（分页）
+      - 搜索框（调用 memory_recall）
+      - 删除按钮（调用 memory_forget）
+      - 分类标签导航（Core/Daily/Conversation/Custom）
+
+      # MemoryCard (TASK-012-13)
+      - 显示 key, content, category, created_at
+      - 显示 importance (0.0-1.0) 进度条
+      - 显示 trust_score (-1.0~1.0) 颜色渐变
+      - 显示 access_count
+
+      # 路由集成
+      - 在 App.tsx 中添加 /memory 路由
+      - UI 风格: 暖色调纸张感（参考 UI UX Design.md）
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/memory/MemoryBrowser.tsx"
+        grep: "MemoryBrowser"
+        label: "MemoryBrowser 组件存在"
+      - type: symbol
+        file: "src/App.tsx"
+        grep: "memory"
+        label: "App.tsx 有 memory 路由"
+    review_checklist:
+      - "是否可查看/搜索/删除记忆"
+      - "分类筛选是否生效"
+      - "trust_score 是否颜色渐变"
+      - "UI 风格是否匹配设计文档"
+      - "TypeScript 编译是否通过"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Slice 6bw.9: 前端 Settings — Token Budget + Trajectory Export (P3)
+  # 对应 Gap: G8 (Trajectory 导出无 UI), G9 (无 Settings UI)
+  # 对应 TASK: TASK-012-14, TASK-012-15
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - id: "6bw.9"
+    title: "前端 Settings — Token Budget 配置 + Trajectory 导出"
+    status: pending
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-012-Phase6B-Wiring.md"
+    backlog_ref: "TASK-012-14; TASK-012-15"
+    impl_targets:
+      - src/components/settings/MemorySettings.tsx
+      - src-tauri/src/commands/settings.rs
+
+    baseline_ref: "前端无 Memory Settings UI"
+
+    current_state: |
+      无 Token Budget 配置界面。
+      无 Trajectory 导出按钮。
+      无 Memory 相关配置 Tauri commands。
+
+    must_implement: |
+      # MemorySettings 组件 (TASK-012-14, TASK-012-15)
+      - Total tokens 输入框（默认 4000）
+      - 四个槽位百分比滑块（System/Episodic/Semantic/Working）
+      - 百分比总和必须 = 100%
+      - "Export Trajectories" 按钮
+      - 显示轨迹数量
+
+      # Tauri Commands (TASK-012-14)
+      - get_memory_config(): 读取配置
+      - set_memory_config(config): 保存配置
+
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/components/settings/MemorySettings.tsx"
+        grep: "MemorySettings"
+        label: "MemorySettings 组件存在"
+      - type: symbol
+        file: "src-tauri/src/commands/settings.rs"
+        grep: "get_memory_config"
+        label: "配置读取命令存在"
+    review_checklist:
+      - "百分比滑块总和是否 100%"
+      - "配置是否持久化"
+      - "Trajectory 导出按钮是否工作"
+      - "TypeScript 编译是否通过"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+dashboard:
+  last_updated: "2026-04-15"
+  completed_slices: []
+  current_slice: "6bw.1"
+  blocked: []
+  notes: "Phase 6BW 创建: 将 Phase 6B 所有孤岛模块接入生产管线。9 slices: AppState 扩展, ContextBudget, ActiveRetrieval, Trajectory, WorkingMemory+Snapshot+Decay, LearningModule+dead_code 清理, Provider 升级, Memory Browser UI, Settings UI."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Wiring 关系矩阵
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# 6bw.1 (AppState)
+#   └─→ 被 6bw.2, 6bw.3, 6bw.4, 6bw.5, 6bw.6, 6bw.7 消费
+#
+# 6bw.2 (ContextBudget)
+#   └─→ 被 6bw.5 (compaction) 消费
+#
+# 6bw.3 (ActiveRetrieval)
+#   └─→ 独立，无下游依赖
+#
+# 6bw.4 (Trajectory)
+#   └─→ 被 6bw.6 (LearningModule) 消费
+#
+# 6bw.5 (WorkingMemory + Snapshot + Decay)
+#   └─→ 被 6bw.6 (LearningModule record_turn) 消费
+#
+# 6bw.6 (LearningModule + dead_code 清理)
+#   └─→ 无下游依赖
+#
+# 6bw.7 (Provider 升级)
+#   └─→ 无下游依赖，可并行于 6bw.1 之后执行
+#
+# 6bw.8 (Memory Browser UI)
+#   └─→ 依赖 6bw.1 (memory_provider 在 AppState 中)
+#
+# 6bw.9 (Settings UI)
+#   └─→ 依赖 6bw.8 (Settings 页面结构)
+#
+# 执行顺序: 6bw.1 → 6bw.2 → 6bw.3 → 6bw.4 → 6bw.5 → 6bw.6 → 6bw.7
+#           6bw.8 (在 6bw.1 之后可并行)
+#           6bw.9 (在 6bw.8 之后)
