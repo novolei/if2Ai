@@ -11,12 +11,15 @@
 
 pub mod reflection;
 pub mod self_model;
+pub mod trajectory;
 pub mod trust_tracker;
 
 #[allow(unused_imports)]
 pub use reflection::{Reflection, ReflectionEngine};
 #[allow(unused_imports)]
 pub use self_model::{Capability, LearnedPattern, PerformanceMetrics, SelfModel};
+#[allow(unused_imports)]
+pub use trajectory::{Trajectory, TrajectoryCompressor, TrajectoryManager, TrajectoryPrivacy};
 #[allow(unused_imports)]
 pub use trust_tracker::{TrustFeedback, TrustTracker};
 

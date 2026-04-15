@@ -321,7 +321,9 @@ mod tests {
             .collect();
         // Both "read_file -> bash" (4x) and "bash -> read_file" (3x) exceed threshold
         assert_eq!(seq_reflections.len(), 2);
-        assert!(seq_reflections.iter().any(|r| r.pattern.contains("read_file") && r.pattern.contains("bash")));
+        assert!(seq_reflections
+            .iter()
+            .any(|r| r.pattern.contains("read_file") && r.pattern.contains("bash")));
     }
 
     #[tokio::test]
