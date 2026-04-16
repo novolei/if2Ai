@@ -8,14 +8,15 @@
  * This component wires together:
  * - useOnboarding hook for state and operations
  * - OnboardingLayout for 70/30 split
- * - StepHeader, StepNavigation, InfoPanel for shared UI chrome
+ * - Step-specific page components
  */
 
-import { OnboardingLayout } from './components/OnboardingLayout';
+import { WelcomeStep } from './steps/WelcomeStep';
+import { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 import { StepHeader } from './components/StepHeader';
-import { StepNavigation } from './components/StepNavigation';
 import { StepProgress } from './components/StepProgress';
 import { InfoPanel } from './components/InfoPanel';
+import { OnboardingLayout } from './components/OnboardingLayout';
 import { useOnboarding } from './hooks/useOnboarding';
 
 /** Step title mapping for the left panel header. */
@@ -82,39 +83,16 @@ const PANEL_BULLETS: Record<number, string[]> = {
   ],
 };
 
-/** Placeholder content for steps not yet implemented (6g.10-6g.14). */
-function StepPlaceholder({ step }: { step: number }) {
-  return (
-    <div className="flex flex-col items-center justify-center flex-1 px-8">
-      <p className="text-token-base text-muted-foreground mb-2">
-        Step {step}: {STEP_TITLES[step] ?? 'if2AI Onboarding'}
-      </p>
-      <p className="text-token-sm text-muted-foreground/60">
-        Detailed step page coming soon...
-      </p>
-    </div>
-  );
-}
-
-export function OnboardingApp() {
-  const {
-    appState,
-    currentStep,
-    nextStep,
-    prevStep,
-  } = useOnboarding();
-
-  // If the app is already in Ready state, don't render onboarding.
-  // The parent router should handle this, but guard here too.
-  if (appState.type === 'Ready') {
-    return null;
-  }
-
-  const step = currentStep || 1;
-  const canGoNext = step >= 1 && step <= 6;
-  const canGoPrev = step > 1;
-  const nextLabel = step === 6 ? 'Activate' : 'Next';
-
+/** Placeholder content for steps not yet implemented (6g.11-6g.14). */
+function StepPlaceholder({
+  step,
+  onNext,
+  onPrev,
+}: {
+  step: number;
+  onNext: () => void;
+  onPrev: () => void;
+}) {
   return (
     <OnboardingLayout
       rightPanel={
@@ -129,23 +107,64 @@ export function OnboardingApp() {
         </InfoPanel>
       }
     >
-      {/* Left panel content */}
-      <StepHeader currentStep={step} title={STEP_TITLES[step] ?? 'if2AI Onboarding'} />
-
-      {/* Step-specific content (flex-1 fills available space) */}
-      <div className="flex-1 overflow-y-auto">
-        <StepPlaceholder step={step} />
-      </div>
-
-      {/* Bottom navigation */}
-      <StepNavigation
+      <StepHeader
         currentStep={step}
-        onNext={nextStep}
-        onPrev={prevStep}
-        canGoNext={canGoNext}
-        canGoPrev={canGoPrev}
-        nextLabel={nextLabel}
+        title={STEP_TITLES[step] ?? 'if2AI Onboarding'}
       />
+      <div className="flex-1 flex flex-col items-center justify-center px-8">
+        <p className="text-token-base text-muted-foreground mb-2">
+          Step {step}: {STEP_TITLES[step] ?? 'if2AI Onboarding'}
+        </p>
+        <p className="text-token-sm text-muted-foreground/60">
+          Detailed step page coming soon...
+        </p>
+      </div>
+      <div className="flex items-center justify-between px-8 py-5 border-t border-border">
+        <button
+          type="button"
+          disabled={step <= 1}
+          onClick={onPrev}
+          className="px-4 py-2 rounded-md text-token-sm font-medium text-muted-foreground hover:text-foreground disabled:text-muted-foreground/40 disabled:cursor-not-allowed"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          className="px-6 py-2.5 rounded-md text-token-sm font-semibold text-white bg-brand-orange hover:bg-brand-orange-dark disabled:bg-brand-orange/50 disabled:text-white/60 disabled:cursor-not-allowed"
+        >
+          Next
+        </button>
+      </div>
     </OnboardingLayout>
   );
+}
+
+export function OnboardingApp() {
+  const {
+    appState,
+    currentStep,
+    nextStep,
+    prevStep,
+    confirmSecurity,
+  } = useOnboarding();
+
+  // If the app is already in Ready state, don't render onboarding.
+  if (appState.type === 'Ready') {
+    return null;
+  }
+
+  const step = currentStep || 1;
+
+  // Render the appropriate step page
+  switch (step) {
+    case 1:
+      return <WelcomeStep onNext={nextStep} />;
+    case 3:
+      return <SecurityConfirmStep onConfirm={confirmSecurity} onPrev={prevStep} />;
+    default:
+      return (
+        <StepPlaceholder step={step} onNext={nextStep} onPrev={prevStep} />
+      );
+  }
 }
