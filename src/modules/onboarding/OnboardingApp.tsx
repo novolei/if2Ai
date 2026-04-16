@@ -16,6 +16,7 @@ import { SystemCheckStep } from './steps/SystemCheckStep';
 import { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 import { ProviderSetupStep } from './steps/ProviderSetupStep';
 import { ChannelSetupStep } from './steps/ChannelSetupStep';
+import { ActivationStep } from './steps/ActivationStep';
 import { StepHeader } from './components/StepHeader';
 import { StepProgress } from './components/StepProgress';
 import { InfoPanel } from './components/InfoPanel';
@@ -171,6 +172,8 @@ export function OnboardingApp() {
       return <ProviderSetupStep onNext={nextStep} onPrev={prevStep} />;
     case 5:
       return <ChannelSetupStep onNext={nextStep} onPrev={prevStep} />;
+    case 6:
+      return <ActivationStep onNext={nextStep} onPrev={prevStep} />;
     default:
       return (
         <StepPlaceholder step={step} onNext={nextStep} onPrev={prevStep} />

@@ -61,6 +61,8 @@ export { DownloadProgress } from './components/DownloadProgress';
 export { ProviderCard } from './components/ProviderCard';
 export { ModelSelector } from './components/ModelSelector';
 export { ChannelCard } from './components/ChannelCard';
+export { ActivationChecklist } from './components/ActivationChecklist';
+export { SecurityBadge } from './components/SecurityBadge';
 
 // Step pages
 export { WelcomeStep } from './steps/WelcomeStep';
@@ -68,3 +70,4 @@ export { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 export { SystemCheckStep } from './steps/SystemCheckStep';
 export { ProviderSetupStep } from './steps/ProviderSetupStep';
 export { ChannelSetupStep } from './steps/ChannelSetupStep';
+export { ActivationStep } from './steps/ActivationStep';
