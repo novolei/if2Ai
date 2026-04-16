@@ -17,7 +17,7 @@ import { StepHeader } from '../components/StepHeader';
 import { StepNavigation } from '../components/StepNavigation';
 import { ChannelCard } from '../components/ChannelCard';
 import { useOnboarding } from '../hooks/useOnboarding';
-import type { Channel, ChannelConfig, TestResult } from '../types';
+import type { Channel, ChannelConfig } from '../types';
 
 interface ChannelSetupStepProps {
   onNext: () => void;
@@ -65,11 +65,15 @@ export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [localConnectedIds, setLocalConnectedIds] = useState<Set<string>>(new Set());
 
   const selectedChannel = channels.find((c) => c.id === selectedId);
 
   // Track which channels are connected (from configuredChannels or local test results)
-  const connectedIds = new Set(configuredChannels.map((c) => c.channel_id));
+  const connectedIds = new Set([
+    ...configuredChannels.map((c) => c.channel_id),
+    ...localConnectedIds,
+  ]);
 
   // Reset form when selection changes
   useEffect(() => {
@@ -108,7 +112,7 @@ export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
       await configureChannel(config);
       await testChannel(config);
       setTestPassed(true);
-      connectedIds.add(selectedId ?? '');
+      setLocalConnectedIds((prev) => new Set(prev).add(selectedId ?? ''));
     } catch (err) {
       setTestError(err instanceof Error ? err.message : '连接测试失败');
     } finally {

@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { Loader2, Check, X, Search } from 'lucide-react';
+import { Loader2, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InfoPanel, InfoCard } from '../components/InfoPanel';
 import { OnboardingLayout } from '../components/OnboardingLayout';
@@ -17,7 +17,7 @@ import { StepNavigation } from '../components/StepNavigation';
 import { ProviderCard } from '../components/ProviderCard';
 import { ModelSelector } from '../components/ModelSelector';
 import { useOnboarding } from '../hooks/useOnboarding';
-import type { Provider, ProviderConfig, Model } from '../types';
+import type { Provider, ProviderConfig } from '../types';
 
 interface ProviderSetupStepProps {
   onNext: () => void;
@@ -59,12 +59,9 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
   const {
     providers: backendProviders,
-    selectedProvider,
     availableModels,
     selectedModel,
-    providerTestResult,
     testProvider,
-    configureProvider,
     selectModel,
   } = useOnboarding();
 
@@ -81,9 +78,9 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
   const [testError, setTestError] = useState<string | null>(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
 
-  const selectedProvider = providers.find((p) => p.id === selectedId);
-  const isLocalProvider = selectedProvider?.is_local ?? false;
-  const needsApiKey = selectedProvider?.status.status === 'ApiKeyRequired';
+  const selectedProv = providers.find((p) => p.id === selectedId);
+  const isLocalProvider = selectedProv?.is_local ?? false;
+  const needsApiKey = selectedProv?.status.status === 'ApiKeyRequired';
 
   // Reset form when selection changes
   useEffect(() => {
@@ -116,7 +113,7 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
         provider_id: selectedId ?? '',
         api_key: apiKey || null,
         base_url: baseUrl || null,
-        display_name: selectedProvider?.name ?? '',
+        display_name: selectedProv?.name ?? '',
       };
       await testProvider(config);
       setTestPassed(true);
@@ -125,7 +122,7 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
     } finally {
       setIsTesting(false);
     }
-  }, [selectedId, selectedProvider, apiKey, baseUrl, needsApiKey, testProvider]);
+  }, [selectedId, selectedProv, apiKey, baseUrl, needsApiKey, testProvider]);
 
   const handleSelectModel = useCallback(
     async (modelId: string) => {
@@ -150,18 +147,18 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
           ]}
         >
           {/* Selected provider details */}
-          {selectedProvider && (
+          {selectedProv && (
             <div className="mt-4">
               <InfoCard className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-white">
                     <span className="text-token-sm font-bold text-brand-orange">
-                      {selectedProvider.name[0]}
+                      {selectedProv.name[0]}
                     </span>
                   </div>
                   <div className="min-w-0">
                     <span className="text-token-sm font-semibold text-white">
-                      {selectedProvider.name}
+                      {selectedProv.name}
                     </span>
                     {testPassed && (
                       <div className="flex items-center gap-1">
@@ -215,10 +212,10 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
         </div>
 
         {/* Config form for selected provider */}
-        {showForm && selectedProvider && (
+        {showForm && selectedProv && (
           <div className="rounded-lg border border-border bg-muted/20 px-4 py-4">
             <h3 className="text-token-sm font-semibold text-foreground mb-3">
-              配置 {selectedProvider.name}
+              配置 {selectedProv.name}
             </h3>
 
             <div className="flex flex-col gap-3">
@@ -287,7 +284,7 @@ export function ProviderSetupStep({ onNext, onPrev }: ProviderSetupStepProps) {
               {/* Error message */}
               {testError && (
                 <div className="flex items-center gap-2 text-token-xs text-status-error">
-                  <X className="h-3.5 w-3.5 flex-shrink-0" />
+                  <X className="h-3.5 w-3.5 shrink-0" />
                   <span>{testError}</span>
                   <button
                     type="button"

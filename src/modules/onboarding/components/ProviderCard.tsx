@@ -5,9 +5,9 @@
  * Used in a grid layout showing all 14 built-in providers.
  */
 
-import { Check, KeyRound, AlertCircle } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Provider, ProviderStatus } from '../../types';
+import type { Provider, ProviderStatus } from '../types';
 
 interface ProviderCardProps {
   provider: Provider;

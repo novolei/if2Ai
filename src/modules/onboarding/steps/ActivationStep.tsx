@@ -8,7 +8,7 @@
  * Design reference: docs/references/onboarding-steps/Activation.png
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Loader2, Check, Shield, Zap, Globe, Brain } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InfoPanel, InfoCard } from '../components/InfoPanel';
@@ -28,7 +28,6 @@ interface ActivationStepProps {
 export function ActivationStep({ onNext, onPrev }: ActivationStepProps) {
   const {
     activationChecklist,
-    activationResult,
     wakeAgent,
     systemReport,
   } = useOnboarding();

@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Model } from '../../types';
+import type { Model } from '../types';
 
 interface ModelSelectorProps {
   models: Model[];

@@ -6,7 +6,7 @@
  * left panel to show the configuration summary.
  */
 
-import { Check, X, Loader2 } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ActivationChecklist } from '../types';
 

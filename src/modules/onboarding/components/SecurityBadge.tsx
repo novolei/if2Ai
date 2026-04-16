@@ -5,7 +5,7 @@
  * configuration. Used in the right panel of ActivationStep.
  */
 
-import { Shield, Lock, Eye } from 'lucide-react';
+import { Shield } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SecurityBadgeProps {

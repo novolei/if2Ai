@@ -693,7 +693,7 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/main.rs"
-        grep: "onboarding_state|Onboarding"
+        grep: "OnboardingFlow"
         label: "Onboarding 启动检查存在"
       - type: symbol
         file: "src-tauri/src/commands/mod.rs"

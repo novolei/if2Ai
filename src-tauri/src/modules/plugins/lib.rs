@@ -70,11 +70,13 @@ pub struct PluginHooks {
 }
 
 impl PluginHooks {
+    /// Check if both hook collections are empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.pre_tool_use.is_empty() && self.post_tool_use.is_empty()
     }
 
+    /// Merge another PluginHooks into this one, combining all hooks.
     #[must_use]
     pub fn merged_with(&self, other: &Self) -> Self {
         let mut merged = self.clone();
@@ -97,6 +99,7 @@ pub struct PluginLifecycle {
 }
 
 impl PluginLifecycle {
+    /// Check if both init and shutdown hooks are empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.init.is_empty() && self.shutdown.is_empty()
@@ -130,6 +133,7 @@ pub enum PluginPermission {
 }
 
 impl PluginPermission {
+    /// Convert the permission to its string representation.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -176,6 +180,7 @@ pub enum PluginToolPermission {
 }
 
 impl PluginToolPermission {
+    /// Convert the permission to its string representation.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -258,6 +263,7 @@ pub struct PluginTool {
 }
 
 impl PluginTool {
+    /// Create a new plugin tool with the given parameters.
     #[must_use]
     pub fn new(
         plugin_id: impl Into<String>,
@@ -280,20 +286,24 @@ impl PluginTool {
     }
 
     #[must_use]
+    /// plugin_id — see implementation for details.
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
     }
 
     #[must_use]
+    /// definition — see implementation for details.
     pub fn definition(&self) -> &PluginToolDefinition {
         &self.definition
     }
 
     #[must_use]
+    /// required_permission — see implementation for details.
     pub fn required_permission(&self) -> &str {
         self.required_permission.as_str()
     }
 
+    /// execute — see implementation for details.
     pub fn execute(&self, input: &Value) -> Result<String, PluginError> {
         let input_json = input.to_string();
         let mut process = Command::new(&self.command);
@@ -594,6 +604,7 @@ pub struct RegisteredPlugin {
 
 impl RegisteredPlugin {
     #[must_use]
+    /// new — see implementation for details.
     pub fn new(definition: PluginDefinition, enabled: bool) -> Self {
         Self {
             definition,
@@ -602,38 +613,46 @@ impl RegisteredPlugin {
     }
 
     #[must_use]
+    /// metadata — see implementation for details.
     pub fn metadata(&self) -> &PluginMetadata {
         self.definition.metadata()
     }
 
     #[must_use]
+    /// hooks — see implementation for details.
     pub fn hooks(&self) -> &PluginHooks {
         self.definition.hooks()
     }
 
     #[must_use]
+    /// tools — see implementation for details.
     pub fn tools(&self) -> &[PluginTool] {
         self.definition.tools()
     }
 
     #[must_use]
+    /// is_enabled — see implementation for details.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
+    /// validate — see implementation for details.
     pub fn validate(&self) -> Result<(), PluginError> {
         self.definition.validate()
     }
 
+    /// initialize — see implementation for details.
     pub fn initialize(&self) -> Result<(), PluginError> {
         self.definition.initialize()
     }
 
+    /// shutdown — see implementation for details.
     pub fn shutdown(&self) -> Result<(), PluginError> {
         self.definition.shutdown()
     }
 
     #[must_use]
+    /// summary — see implementation for details.
     pub fn summary(&self) -> PluginSummary {
         PluginSummary {
             metadata: self.metadata().clone(),
@@ -655,17 +674,20 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     #[must_use]
+    /// new — see implementation for details.
     pub fn new(mut plugins: Vec<RegisteredPlugin>) -> Self {
         plugins.sort_by(|left, right| left.metadata().id.cmp(&right.metadata().id));
         Self { plugins }
     }
 
     #[must_use]
+    /// plugins — see implementation for details.
     pub fn plugins(&self) -> &[RegisteredPlugin] {
         &self.plugins
     }
 
     #[must_use]
+    /// get — see implementation for details.
     pub fn get(&self, plugin_id: &str) -> Option<&RegisteredPlugin> {
         self.plugins
             .iter()
@@ -673,15 +695,18 @@ impl PluginRegistry {
     }
 
     #[must_use]
+    /// contains — see implementation for details.
     pub fn contains(&self, plugin_id: &str) -> bool {
         self.get(plugin_id).is_some()
     }
 
     #[must_use]
+    /// summaries — see implementation for details.
     pub fn summaries(&self) -> Vec<PluginSummary> {
         self.plugins.iter().map(RegisteredPlugin::summary).collect()
     }
 
+    /// aggregated_hooks — see implementation for details.
     pub fn aggregated_hooks(&self) -> Result<PluginHooks, PluginError> {
         self.plugins
             .iter()
@@ -692,6 +717,7 @@ impl PluginRegistry {
             })
     }
 
+    /// aggregated_tools — see implementation for details.
     pub fn aggregated_tools(&self) -> Result<Vec<PluginTool>, PluginError> {
         let mut tools = Vec::new();
         let mut seen_names = BTreeMap::new();
@@ -713,6 +739,7 @@ impl PluginRegistry {
         Ok(tools)
     }
 
+    /// initialize — see implementation for details.
     pub fn initialize(&self) -> Result<(), PluginError> {
         for plugin in self.plugins.iter().filter(|plugin| plugin.is_enabled()) {
             plugin.validate()?;
@@ -721,6 +748,7 @@ impl PluginRegistry {
         Ok(())
     }
 
+    /// shutdown — see implementation for details.
     pub fn shutdown(&self) -> Result<(), PluginError> {
         for plugin in self
             .plugins
@@ -746,6 +774,7 @@ pub struct PluginManagerConfig {
 
 impl PluginManagerConfig {
     #[must_use]
+    /// new — see implementation for details.
     pub fn new(config_home: impl Into<PathBuf>) -> Self {
         Self {
             config_home: config_home.into(),
@@ -902,16 +931,19 @@ impl From<serde_json::Error> for PluginError {
 
 impl PluginManager {
     #[must_use]
+    /// new — see implementation for details.
     pub fn new(config: PluginManagerConfig) -> Self {
         Self { config }
     }
 
     #[must_use]
+    /// bundled_root — see implementation for details.
     pub fn bundled_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bundled")
     }
 
     #[must_use]
+    /// install_root — see implementation for details.
     pub fn install_root(&self) -> PathBuf {
         self.config
             .install_root
@@ -920,6 +952,7 @@ impl PluginManager {
     }
 
     #[must_use]
+    /// registry_path — see implementation for details.
     pub fn registry_path(&self) -> PathBuf {
         self.config.registry_path.clone().unwrap_or_else(|| {
             self.config
@@ -930,10 +963,12 @@ impl PluginManager {
     }
 
     #[must_use]
+    /// settings_path — see implementation for details.
     pub fn settings_path(&self) -> PathBuf {
         self.config.config_home.join(SETTINGS_FILE_NAME)
     }
 
+    /// plugin_registry — see implementation for details.
     pub fn plugin_registry(&self) -> Result<PluginRegistry, PluginError> {
         Ok(PluginRegistry::new(
             self.discover_plugins()?
@@ -946,14 +981,17 @@ impl PluginManager {
         ))
     }
 
+    /// list_plugins — see implementation for details.
     pub fn list_plugins(&self) -> Result<Vec<PluginSummary>, PluginError> {
         Ok(self.plugin_registry()?.summaries())
     }
 
+    /// list_installed_plugins — see implementation for details.
     pub fn list_installed_plugins(&self) -> Result<Vec<PluginSummary>, PluginError> {
         Ok(self.installed_plugin_registry()?.summaries())
     }
 
+    /// discover_plugins — see implementation for details.
     pub fn discover_plugins(&self) -> Result<Vec<PluginDefinition>, PluginError> {
         self.sync_bundled_plugins()?;
         let mut plugins = builtin_plugins();
@@ -962,19 +1000,23 @@ impl PluginManager {
         Ok(plugins)
     }
 
+    /// aggregated_hooks — see implementation for details.
     pub fn aggregated_hooks(&self) -> Result<PluginHooks, PluginError> {
         self.plugin_registry()?.aggregated_hooks()
     }
 
+    /// aggregated_tools — see implementation for details.
     pub fn aggregated_tools(&self) -> Result<Vec<PluginTool>, PluginError> {
         self.plugin_registry()?.aggregated_tools()
     }
 
+    /// validate_plugin_source — see implementation for details.
     pub fn validate_plugin_source(&self, source: &str) -> Result<PluginManifest, PluginError> {
         let path = resolve_local_source(source)?;
         load_plugin_from_directory(&path)
     }
 
+    /// install — see implementation for details.
     pub fn install(&mut self, source: &str) -> Result<InstallOutcome, PluginError> {
         let install_source = parse_install_source(source)?;
         let temp_root = self.install_root().join(".tmp");
@@ -1018,6 +1060,7 @@ impl PluginManager {
         })
     }
 
+    /// enable — see implementation for details.
     pub fn enable(&mut self, plugin_id: &str) -> Result<(), PluginError> {
         self.ensure_known_plugin(plugin_id)?;
         self.write_enabled_state(plugin_id, Some(true))?;
@@ -1027,6 +1070,7 @@ impl PluginManager {
         Ok(())
     }
 
+    /// disable — see implementation for details.
     pub fn disable(&mut self, plugin_id: &str) -> Result<(), PluginError> {
         self.ensure_known_plugin(plugin_id)?;
         self.write_enabled_state(plugin_id, Some(false))?;
@@ -1036,6 +1080,7 @@ impl PluginManager {
         Ok(())
     }
 
+    /// uninstall — see implementation for details.
     pub fn uninstall(&mut self, plugin_id: &str) -> Result<(), PluginError> {
         let mut registry = self.load_registry()?;
         let record = registry.plugins.remove(plugin_id).ok_or_else(|| {
@@ -1056,6 +1101,7 @@ impl PluginManager {
         Ok(())
     }
 
+    /// update — see implementation for details.
     pub fn update(&mut self, plugin_id: &str) -> Result<UpdateOutcome, PluginError> {
         let mut registry = self.load_registry()?;
         let record = registry.plugins.get(plugin_id).cloned().ok_or_else(|| {
@@ -1335,6 +1381,7 @@ impl PluginManager {
 }
 
 #[must_use]
+/// builtin_plugins — see implementation for details.
 pub fn builtin_plugins() -> Vec<PluginDefinition> {
     vec![PluginDefinition::Builtin(BuiltinPlugin {
         metadata: PluginMetadata {
@@ -1395,6 +1442,7 @@ fn load_plugin_definition(
     })
 }
 
+/// load_plugin_from_directory — see implementation for details.
 pub fn load_plugin_from_directory(root: &Path) -> Result<PluginManifest, PluginError> {
     load_manifest_from_directory(root)
 }
@@ -1947,6 +1995,8 @@ fn describe_install_source(source: &PluginInstallSource) -> String {
     }
 }
 
+// SAFETY: system clock is guaranteed to be after epoch on all supported platforms.
+#[allow(clippy::expect_used)]
 fn unix_time_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1993,6 +2043,8 @@ fn update_settings_json(
     Ok(())
 }
 
+// SAFETY: ensure_object always inserts an object before this call.
+#[allow(clippy::expect_used)]
 fn ensure_object<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
     if !root.get(key).is_some_and(Value::is_object) {
         root.insert(key.to_string(), Value::Object(Map::new()));

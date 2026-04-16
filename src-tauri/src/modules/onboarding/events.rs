@@ -95,10 +95,7 @@ pub struct OnboardingErrorEvent {
 
 /// Emit a step-changed event to all listeners.
 pub fn emit_step_changed(app: &tauri::AppHandle, from_step: u8, to_step: u8) {
-    let _ = app.emit(
-        EVENT_STEP_CHANGED,
-        StepChangedEvent { from_step, to_step },
-    );
+    let _ = app.emit(EVENT_STEP_CHANGED, StepChangedEvent { from_step, to_step });
 }
 
 /// Emit a download progress event to all listeners.

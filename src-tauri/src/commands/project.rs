@@ -267,6 +267,7 @@ pub async fn read_file_preview(
     .map_err(|err| err.to_string())?
 }
 
+/// Write file contents to the specified path.
 #[tauri::command]
 #[allow(dead_code)]
 pub async fn write_file_contents(path: String, content: String) -> Result<(), String> {

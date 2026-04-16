@@ -40,7 +40,6 @@ export type {
   // Test
   TestResult,
   // Activation
-  ActivationChecklist,
   ActivationResult,
   // Config
   AppConfig,

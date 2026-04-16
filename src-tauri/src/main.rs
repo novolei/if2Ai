@@ -286,16 +286,21 @@ fn main() {
     );
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
+    // Initialize onboarding flow (Phase 6G)
+    // OnboardingFlow is a stateless driver; state is loaded lazily via Tauri commands.
+    let onboarding_flow = modules::onboarding::flow::OnboardingFlow;
+
     // Initialize context budget (default: 4000 tokens, 10/20/30/40%)
     let context_budget = modules::runtime::budget::ContextBudget::default();
 
-    // Create app state — now includes memory infrastructure
+    // Create app state — now includes memory infrastructure and onboarding flow
     let app_state = AppState::new(
         session_manager,
         tool_registry,
         project_manager,
         memory_provider,
         context_budget,
+        onboarding_flow,
     );
 
     tauri::Builder::default()
@@ -453,21 +458,22 @@ fn main() {
 
             // Hide window on close button instead of exiting
             // SAFETY: get_webview_window returns Some in setup, and run() error is unrecoverable
-            #[allow(clippy::expect_used)]
-            let window = app.get_webview_window("main").expect("main window must exist");
-            let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
-            let _ = window.set_background_color(Some(Color(0xf6, 0xf7, 0xf8, 0xff)));
-            let window_clone = window.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window_clone.hide();
-                }
-            });
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title_bar_style(TitleBarStyle::Overlay);
+                let _ = window.set_background_color(Some(Color(0xf6, 0xf7, 0xf8, 0xff)));
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                    }
+                });
+            }
 
             Ok(())
         })
         // SAFETY: run() error is unrecoverable for a desktop app
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .map_err(|e| tracing::error!("Tauri application exited with error: {e}"))
+        .ok();
 }

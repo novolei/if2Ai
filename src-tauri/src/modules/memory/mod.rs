@@ -52,6 +52,7 @@ pub enum MemoryCategory {
 }
 
 impl MemoryCategory {
+    /// Convert the category to its string representation.
     pub fn as_str(&self) -> &str {
         match self {
             MemoryCategory::Core => "core",
@@ -126,6 +127,7 @@ pub struct InMemoryMemoryProvider {
 
 #[allow(deprecated)]
 impl InMemoryMemoryProvider {
+    /// Create a new in-memory memory provider.
     pub fn new() -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),

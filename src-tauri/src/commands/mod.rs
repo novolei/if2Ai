@@ -45,6 +45,12 @@ pub struct AppState {
     /// Wired into agent loop in slice 6bw.2.
     #[allow(dead_code)]
     pub context_budget: ContextBudget,
+
+    // ── Onboarding & Configuration Platform (Phase 6G) ──
+    /// Onboarding flow state machine for first-time setup.
+    /// Used to enforce step ordering and prevent Settings access during onboarding.
+    #[allow(dead_code)]
+    pub onboarding_flow: Arc<crate::modules::onboarding::flow::OnboardingFlow>,
 }
 
 impl AppState {
@@ -56,6 +62,7 @@ impl AppState {
         project_manager: ProjectManager,
         memory_provider: SharedMemoryProvider,
         context_budget: ContextBudget,
+        onboarding_flow: crate::modules::onboarding::flow::OnboardingFlow,
     ) -> Self {
         Self {
             session_manager: Arc::new(session_manager),
@@ -66,6 +73,7 @@ impl AppState {
             stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
             memory_provider,
             context_budget,
+            onboarding_flow: Arc::new(onboarding_flow),
         }
     }
 }
