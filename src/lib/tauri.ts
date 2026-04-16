@@ -920,3 +920,8 @@ export async function exportTrajectories(): Promise<string> {
 export async function configResetOnboarding(): Promise<void> {
   return invoke<void>('config_reset_onboarding')
 }
+
+/** Get the current app onboarding state. */
+export async function onboarding_get_state(): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('onboarding_get_state')
+}

@@ -5,6 +5,7 @@ import {
   listenToStream,
   listenToPermissionRequests,
   respondPermission,
+  onboarding_get_state,
   listProjects,
   listProjectSessions,
   createPermanentWorktree,
@@ -35,6 +36,7 @@ import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspac
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message, SessionTitleState } from '@/modules/chat/types'
+import { OnboardingApp } from '@/modules/onboarding/OnboardingApp'
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
 import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
@@ -71,6 +73,26 @@ const GENERIC_USER_PROMPTS = [
 
 function App() {
   const appWindow = getCurrentWindow()
+  const [showOnboarding, setShowOnboarding] = useState(false)
+
+  // Check onboarding state on mount
+  useEffect(() => {
+    onboarding_get_state()
+      .then((raw) => {
+        const obj = raw as Record<string, unknown>
+        const isOnboarding = 'FirstLaunch' in obj || 'Onboarding' in obj
+        setShowOnboarding(isOnboarding)
+      })
+      .catch(() => {
+        // On error, default to main app
+        setShowOnboarding(false)
+      })
+  }, [])
+
+  if (showOnboarding) {
+    return <OnboardingApp />
+  }
+
   const [activeSection, setActiveSection] = useState<AppSection>(() => {
     if (typeof window === 'undefined') return 'chat'
     const stored = localStorage.getItem('lastActiveSection')
