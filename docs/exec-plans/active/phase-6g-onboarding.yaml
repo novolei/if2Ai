@@ -131,7 +131,7 @@ slices:
 
   - id: "6g.3"
     title: "P0: SystemCheckService + Model Download"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-03"
     impl_targets:
@@ -213,8 +213,16 @@ slices:
         label: "14 个 provider 注册表存在"
       - type: symbol
         file: "src-tauri/src/modules/provider/test.rs"
-        grep: "test_provider_connection|provider_config_invalid|provider_auth_error"
-        label: "连接测试 + 错误码存在"
+        grep: "test_provider_connection"
+        label: "连接测试存在"
+      - type: symbol
+        file: "src-tauri/src/modules/provider/test.rs"
+        grep: "provider_config_invalid"
+        label: "错误码 provider_config_invalid 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/provider/test.rs"
+        grep: "provider_auth_error"
+        label: "错误码 provider_auth_error 存在"
     review_checklist:
       - "Ollama 是否使用 /api/tags 而非 /models"
       - "Anthropic 是否使用内置 registry 而非 HTTP 请求"
@@ -692,7 +700,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2"]
-  current_slice: "6g.3"
+  completed_slices: ["6g.1", "6g.2", "6g.3"]
+  current_slice: "6g.4"
   blocked: []
-  notes: "Phase 6G: 2/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | Next: 6g.3 SystemCheckService + Model Download. M1(6g.1-6g.2) 基础设施完成 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"
+  notes: "Phase 6G: 3/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheckService+ModelDownload ✅ | Next: 6g.4 ProviderService+Registry+Test. M2(6g.3-6g.5) 后端模块可并行 → 6g.3 complete, 6g.4 and 6g.5 can proceed in parallel."

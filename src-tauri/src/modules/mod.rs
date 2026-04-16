@@ -20,6 +20,7 @@ pub mod memory;
 pub mod onboarding;
 pub mod plugins;
 pub mod projects;
+pub mod provider;
 pub mod runtime;
 pub mod scheduler;
 pub mod security;
