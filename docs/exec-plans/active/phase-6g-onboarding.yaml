@@ -288,7 +288,7 @@ slices:
 
   - id: "6g.6"
     title: "P1: Channel Test Service (5 Platform Connection Tests)"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-06"
     impl_targets:
@@ -736,7 +736,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5"]
-  current_slice: "6g.6"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6"]
+  current_slice: "6g.7"
   blocked: []
-  notes: "Phase 6G: 5/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | 6g.5 ChannelAdapter+Manager+Registry ✅ | Next: 6g.6 Channel Test Service. M2(6g.3-6g.5) complete."
+  notes: "Phase 6G: 6/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | 6g.5 ChannelAdapter+Manager+Registry ✅ | 6g.6 Channel Test Service ✅ | Next: 6g.7 Tauri Commands (26 commands). M2(6g.3-6g.5) + M3(6g.6) complete."
