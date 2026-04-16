@@ -26,14 +26,19 @@ import type {
   UseOnboardingReturn,
 } from '../types';
 
-/** Map backend AppState enum to frontend state. */
+/** Map backend AppState enum to frontend state.
+ * Backend serializes with rename_all="snake_case":
+ *   FirstLaunch → { state: "first_launch" }
+ *   Ready → { state: "ready" }
+ *   Onboarding { step } → { state: "onboarding", step: N }
+ */
 function parseAppState(raw: unknown): AppState {
   const obj = raw as Record<string, unknown>;
-  if ('FirstLaunch' in obj) return { type: 'FirstLaunch' };
-  if ('Ready' in obj) return { type: 'Ready' };
-  if ('Onboarding' in obj) {
-    const stepObj = obj['Onboarding'] as Record<string, unknown>;
-    return { type: 'Onboarding', step: (stepObj.step as number) ?? 1 };
+  const stateTag = obj['state'] as string | undefined;
+  if (stateTag === 'first_launch') return { type: 'FirstLaunch' };
+  if (stateTag === 'ready') return { type: 'Ready' };
+  if (stateTag === 'onboarding') {
+    return { type: 'Onboarding', step: (obj.step as number) ?? 1 };
   }
   return { type: 'FirstLaunch' };
 }

@@ -80,7 +80,11 @@ function App() {
     onboarding_get_state()
       .then((raw) => {
         const obj = raw as Record<string, unknown>
-        const isOnboarding = 'FirstLaunch' in obj || 'Onboarding' in obj
+        // Backend serializes with rename_all="snake_case":
+        //   FirstLaunch → { state: "first_launch" }
+        //   Onboarding → { state: "onboarding", step: N }
+        const tag = obj['state'] as string | undefined
+        const isOnboarding = tag === 'first_launch' || tag === 'onboarding'
         setShowOnboarding(isOnboarding)
       })
       .catch(() => {
