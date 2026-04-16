@@ -231,7 +231,7 @@ slices:
 
   - id: "6g.5"
     title: "P0: ChannelAdapter Trait + ChannelManager + Registry"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-04"
     impl_targets:
@@ -716,7 +716,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4"]
-  current_slice: "6g.5"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5"]
+  current_slice: "6g.6"
   blocked: []
-  notes: "Phase 6G: 4/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | Next: 6g.5 ChannelAdapter+Manager+Registry. M2(6g.3-6g.5) — 6g.3 and 6g.4 complete, 6g.5 can proceed."
+  notes: "Phase 6G: 5/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | 6g.5 ChannelAdapter+Manager+Registry ✅ | Next: 6g.6 Channel Test Service. M2(6g.3-6g.5) complete."
