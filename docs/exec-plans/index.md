@@ -22,6 +22,7 @@
 | [已完成]       | Phase 6D     | Skills 控制平面 — Bundled/Review/Distribution/Authoring          | `docs/exec-plans/active/phase-6d-skills-control-plane.yaml`      | SKILL-CP-P0-CORE~SKILL-CP-P3-AGENT-AUTHORING                                             |
 | 草案           | Phase 6E     | Agent Loop Harness — 运行时观测与控制框架                          | `docs/exec-plans/active/phase-6e-agent-loop-harness.yaml`         | TASK-011-01~TASK-011-07 (EventBus, Telemetry, AgentLoop Integration, Recorder, IPC, harness-cli, Tests) |
 | 草案           | Phase 6F     | Skill Control Plane v2 — Hermes Alignment                          | `docs/exec-plans/active/phase-6f-skill-control-plane-v2.yaml`     | 6F.1~6F.10 (SkillsGuard, SkillManager, Hub Sources, Hub State, Sync, Commands, Config, UI, Tests) |
+| 草案           | Phase 6G     | Onboarding & Configuration Platform                                | `docs/exec-plans/active/phase-6g-onboarding.yaml`                 | TASK-014-01~TASK-014-18 (18 tasks, 17 slices) |
 | **统一执行序列** | —           | Phase 6B + 6E + 6F 完整执行计划                                    | `docs/exec-plans/active/phase-6b+6e-unified-execution-sequence.md` | 26 个 slice，最优并行顺序                                                |
 
 > **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F17, F25, UI-1~UI-8, N1, N3-N12）。  

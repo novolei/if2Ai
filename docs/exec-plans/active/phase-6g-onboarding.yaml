@@ -1,0 +1,670 @@
+# Phase 6G: Onboarding & Configuration Platform
+# ─────────────────────────────────────────────────────────────────────────────
+# 目标: 实现完整的 6 步 Onboarding 系统（前后端一体），包括状态机、配置持久化、
+#       系统检测、Provider/Channel 配置测试、Agent 激活、UI 6 个 Step 页面。
+# 优先级: P0 核心后端 → P1 前后端集成 → P2 UI 细节完善
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6g"
+  phase_status: draft
+  title: "Onboarding & Configuration Platform — 6-Step State Machine + Full UI"
+  owner: "@executor"
+  depends_on_phase: "6bw"
+  design_docs:
+    - docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md
+  backlog_refs:
+    - "TASK-014-01 ~ TASK-014-18"
+  execution_policy:
+    human_checkpoint_required: false
+    mandatory_code_reviewer_per_slice: true
+
+slices:
+  # ── MILESTONE 1: Infrastructure (Backend Core) ──
+
+  - id: "6g.1"
+    title: "P0: Onboarding State Machine + Persistence Store"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-01"
+    impl_targets:
+      - src-tauri/src/modules/onboarding/mod.rs
+      - src-tauri/src/modules/onboarding/state.rs
+      - src-tauri/src/modules/onboarding/flow.rs
+      - src-tauri/src/modules/onboarding/store.rs
+    baseline_ref: "src-tauri/src/modules/onboarding/ 目录不存在"
+    current_state: |
+      Onboarding 模块完全不存在，需要从零创建。现有代码无状态机或 state.json 读写。
+    must_implement:
+      - "AppState / OnboardingStep / OnboardingState 类型定义 + Serialize/Deserialize"
+      - "OnboardingStep::as_index() / from_index() 方法"
+      - "OnboardingFlow::next_step() / prev_step() 状态转移逻辑"
+      - "OnboardingStore::load() / save() 读写 ~/.if2ai/state.json"
+      - "draft_configs + last_failure 中断恢复字段"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/state.rs"
+        grep: "OnboardingState"
+        label: "OnboardingState 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/state.rs"
+        grep: "AppOnboardingState"
+        label: "AppOnboardingState 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/state.rs"
+        grep: "OnboardingStep"
+        label: "OnboardingStep 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/flow.rs"
+        grep: "next_step"
+        label: "next_step 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/flow.rs"
+        grep: "prev_step"
+        label: "prev_step 存在"
+      - type: test
+        cmd: "RUST_TEST_THREADS=1 cargo test -p if2ai-backend modules::onboarding"
+        expect: "all tests pass"
+    review_checklist:
+      - "next_step 是否检查前置条件（不可越级）"
+      - "prev_step 是否边界安全（step 1 不可再回退）"
+      - "state.json 序列化格式与 ADR 第 6.2 节一致"
+
+  - id: "6g.2"
+    title: "P0: ConfigService 双模式持久化 + Bridge"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-02"
+    impl_targets:
+      - src-tauri/src/modules/config/mod.rs
+      - src-tauri/src/modules/config/types.rs
+      - src-tauri/src/modules/config/service.rs
+      - src-tauri/src/modules/config/store.rs
+      - src-tauri/src/modules/config/bridge.rs
+      - src-tauri/src/modules/config/triple_files.rs
+    baseline_ref: "ConfigService trait 在 ADR 中定义但未实现；现有代码无 ~/.if2ai/config.json 读写"
+    current_state: |
+      现有配置读取在 runtime/config.rs 中（Claw settings），Onboarding 需要独立的 ConfigService。
+    must_implement:
+      - "AppConfig / ProviderConfig / ChannelConfig / ModelSelection 类型"
+      - "ConfigService::save_config() 写 Layer 1 (config.json) + Layer 2 (三文件) + Bridge (~/.claude/settings.json)"
+      - "ConfigService::load_config() 读 Layer 1（带 version 字段）"
+      - "ConfigService::validate_config() 校验完整性"
+      - "ConfigService::reset_onboarding() 清空数据"
+      - "bridge_to_claw_settings() 桥接 ANTHROPIC_API_KEY / OPENAI_API_KEY / model"
+      - "providers.yaml + auth.json + models.json 同步写入"
+      - "文件权限 0600，并发保护 tokio::sync::Mutex"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/config/service.rs"
+        grep: "ConfigService|save_config|load_config|reset_onboarding"
+        label: "ConfigService trait 实现存在"
+      - type: symbol
+        file: "src-tauri/src/modules/config/bridge.rs"
+        grep: "bridge_to_claw_settings"
+        label: "桥接逻辑存在"
+      - type: test
+        cmd: "RUST_TEST_THREADS=1 cargo test -p if2ai-backend modules::config"
+        expect: "all tests pass"
+    review_checklist:
+      - "三写同步是否原子（任一失败不回滚）"
+      - "桥接是否不覆盖已有 ~/.claude/settings.json 中无关字段"
+      - "version 字段是否存在于 config.json"
+
+  # ── MILESTONE 2: Backend Modules (Parallel) ──
+
+  - id: "6g.3"
+    title: "P0: SystemCheckService + Model Download"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-03"
+    impl_targets:
+      - src-tauri/src/modules/system_check/mod.rs
+      - src-tauri/src/modules/system_check/types.rs
+      - src-tauri/src/modules/system_check/env.rs
+      - src-tauri/src/modules/system_check/model_download.rs
+    depends_on: []
+    baseline_ref: "系统检测模块不存在"
+    current_state: |
+      无 CPU/GPU/Node.js 检测代码，无 Embedded 模型下载逻辑。
+    must_implement:
+      - "SystemReport / CpuInfo / GpuInfo / NodeJsInfo / EmbeddedModelStatus / CheckStatus 类型"
+      - "detect_cpu() / detect_gpu() / detect_nodejs() / run_full_check()"
+      - "download_embedded_model(progress_callback) 使用 tokio + reqwest"
+      - "embedded_model_exists() / get_download_progress()"
+      - "下载进度通过 AtomicU64 存储"
+      - "模型存储路径 ~/.if2ai/models/embedded-rs/"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/env.rs"
+        grep: "detect_cpu|detect_gpu|detect_nodejs|run_full_check"
+        label: "检测函数存在"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/model_download.rs"
+        grep: "download_embedded_model|embedded_model_exists"
+        label: "下载函数存在"
+    review_checklist:
+      - "下载是否可中断（CancellationToken）"
+      - "Node.js 缺失是否不阻断流程"
+      - "进度回调是否 thread-safe"
+
+  - id: "6g.4"
+    title: "P0: ProviderService + Registry + Test"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-05"
+    impl_targets:
+      - src-tauri/src/modules/provider/mod.rs
+      - src-tauri/src/modules/provider/types.rs
+      - src-tauri/src/modules/provider/registry.rs
+      - src-tauri/src/modules/provider/test.rs
+      - src-tauri/src/modules/provider/service.rs
+    depends_on: []
+    baseline_ref: "Provider 注册表和测试服务不存在（但现有 ClawApiClient / OpenAiCompatClient 可复用）"
+    current_state: |
+      现有 ClawApiClient 和 OpenAiCompatClient 可复用，但缺少 Onboarding 层级的 ProviderService 封装。
+    must_implement:
+      - "Provider / ProviderCategory / ProviderStatus / Model / ModelModality 类型"
+      - "builtin_providers() 注册表（14 个 provider）"
+      - "list_models(provider_id, base_url, api_key) — 三种协议: Ollama /api/tags, Anthropic registry, OpenAI /models"
+      - "test_provider_connection(config) → TestResult — 复用 ClawApiClient / OpenAiCompatClient"
+      - "configure_provider() / select_model() — 调用 ConfigService 保存"
+      - "错误码: provider_config_invalid, provider_auth_error, provider_timeout, provider_network_error, provider_upstream_unavailable"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/provider/registry.rs"
+        grep: "builtin_providers"
+        label: "14 个 provider 注册表存在"
+      - type: symbol
+        file: "src-tauri/src/modules/provider/test.rs"
+        grep: "test_provider_connection|provider_config_invalid|provider_auth_error"
+        label: "连接测试 + 错误码存在"
+    review_checklist:
+      - "Ollama 是否使用 /api/tags 而非 /models"
+      - "Anthropic 是否使用内置 registry 而非 HTTP 请求"
+      - "MODEL_REGISTRY resolve_model_alias 是否被调用"
+      - "是否复用现有 ClawApiClient / OpenAiCompatClient"
+
+  - id: "6g.5"
+    title: "P0: ChannelAdapter Trait + ChannelManager + Registry"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-04"
+    impl_targets:
+      - src-tauri/src/modules/channel/mod.rs
+      - src-tauri/src/modules/channel/adapter.rs
+      - src-tauri/src/modules/channel/manager.rs
+      - src-tauri/src/modules/channel/types.rs
+      - src-tauri/src/modules/channel/registry.rs
+    depends_on: []
+    baseline_ref: "Channel 模块不存在（但 UClaw 参考代码中有完整实现可对照）"
+    current_state: |
+      无 ChannelAdapter trait、ChannelManager、或 channel 注册表。
+    must_implement:
+      - "ChannelAdapter trait + ConnectMode (Polling/Webhook)"
+      - "ChannelEnvelope / SenderInfo / PlatformConfig 类型"
+      - "ChannelManager { adapters: DashMap, tasks: DashMap } — start/stop polling"
+      - "Channel / ChannelCategory / ChannelConfigRedacted / ChannelRouting 类型"
+      - "builtin_channels() 注册表（13 个渠道）"
+      - "ChannelConfig::redact() → ChannelConfigRedacted 脱敏转换"
+      - "default_routing() 默认值"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/adapter.rs"
+        grep: "ChannelAdapter|ConnectMode|ChannelEnvelope"
+        label: "ChannelAdapter trait 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/manager.rs"
+        grep: "ChannelManager|start_platform_polling|stop_platform"
+        label: "ChannelManager 存在"
+    review_checklist:
+      - "ChannelConfigRedacted 是否不泄露 token"
+      - "ChannelManager 的 start/stop 是否使用 CancellationToken"
+      - "13 个 channel 是否全部在注册表中"
+
+  # ── MILESTONE 3: Channel Test + Tauri Commands (Parallel) ──
+
+  - id: "6g.6"
+    title: "P1: Channel Test Service (5 Platform Connection Tests)"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-06"
+    impl_targets:
+      - src-tauri/src/modules/channel/test.rs
+    depends_on: ["6g.5"]
+    baseline_ref: "Channel 连接测试不存在（UClaw 有 5 平台实现可对照）"
+    current_state: |
+      channel/test.rs 不存在。
+    must_implement:
+      - "test_channel_connection(config) → Result<TestResult>"
+      - "Telegram: GET /bot{token}/getMe"
+      - "Feishu: POST /auth/v3/tenant_access_token/internal"
+      - "QQ: POST /app/getAppAccessToken + GET /users/@me"
+      - "WhatsApp: GET graph.facebook.com/v17.0/{phone_id}"
+      - "MS Teams: POST login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+      - "超时 8-10 秒，凭据脱敏日志"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_channel_connection|test_telegram|test_feishu|test_qq|test_whatsapp|test_msteams"
+        label: "5 平台测试函数存在"
+    review_checklist:
+      - "是否参考 UClaw channels.rs:test_platform 实现"
+      - "超时是否正确设置"
+      - "凭据是否在日志中脱敏"
+
+  - id: "6g.7"
+    title: "P0: Tauri Commands (全部 26 commands)"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-07"
+    impl_targets:
+      - src-tauri/src/commands/onboarding.rs
+      - src-tauri/src/commands/system_check.rs
+      - src-tauri/src/commands/provider.rs
+      - src-tauri/src/commands/channel.rs
+      - src-tauri/src/commands/activation.rs
+      - src-tauri/src/commands/config.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+    depends_on: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6"]
+    baseline_ref: "Onboarding 相关 Tauri commands 不存在"
+    current_state: |
+      commands/ 目录下无 onboarding/system_check/provider/channel/activation 相关文件（Settings 已有的 memory config commands 不受影响）。
+    must_implement:
+      - "onboarding.rs: get_state, next_step, prev_step, complete, security_confirm (5 commands)"
+      - "system_check.rs: run, download_model, progress (3 commands)"
+      - "provider.rs: list, configure, test, list_models(base_url+api_key), select_model, test_model (6 commands)"
+      - "channel.rs: list, configure, test, list_configured(脱敏版) (4 commands)"
+      - "activation.rs: validate, start, test_message, complete (4 commands)"
+      - "config.rs: load, save, validate, reset_onboarding (4 commands)"
+      - "commands/mod.rs 导出所有命令"
+      - "main.rs invoke_handler! 注册所有命令"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/commands/onboarding.rs"
+        grep: "onboarding_get_state|onboarding_next_step|onboarding_prev_step|onboarding_complete|security_confirm"
+        label: "5 个 onboarding commands 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/provider.rs"
+        grep: "provider_list_models"
+        label: "provider_list_models 包含 base_url + api_key 参数"
+      - type: symbol
+        file: "src-tauri/src/commands/channel.rs"
+        grep: "ChannelConfigRedacted"
+        label: "list_configured 返回脱敏版"
+    review_checklist:
+      - "所有 command 函数签名是否与 ADR 第 5 + 18.3 + 18.9 节一致"
+      - "provider_list_models 是否包含 base_url + api_key 参数"
+      - "activation 是否拆分为 4 个 commands（非单一 wake_agent）"
+      - "channel_list_configured 是否返回脱敏版"
+      - "所有命令是否注册到 invoke_handler"
+
+  # ── MILESTONE 4: Frontend Root + Events (Parallel with Backend) ──
+
+  - id: "6g.8"
+    title: "P1: Frontend Root Component + Layout + Hook"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-09"
+    impl_targets:
+      - src/modules/onboarding/mod.tsx
+      - src/modules/onboarding/OnboardingApp.tsx
+      - src/modules/onboarding/types.ts
+      - src/modules/onboarding/hooks/useOnboarding.ts
+      - src/modules/onboarding/components/OnboardingLayout.tsx
+      - src/modules/onboarding/components/StepHeader.tsx
+      - src/modules/onboarding/components/StepNavigation.tsx
+      - src/modules/onboarding/components/InfoPanel.tsx
+      - src/modules/onboarding/components/StepProgress.tsx
+    depends_on: []
+    baseline_ref: "前端 onboarding 模块不存在"
+    current_state: |
+      src/modules/onboarding/ 目录不存在。
+    must_implement:
+      - "AppState / OnboardingState / UseOnboardingReturn TypeScript 类型"
+      - "OnboardingApp 根组件（根据后端 AppState 渲染 step）"
+      - "useOnboarding Hook（Tauri invoke + Event 监听 + 本地状态管理）"
+      - "OnboardingLayout 左右分栏（70% / 30% 橙色渐变 #CC4400 → #993300）"
+      - "StepHeader / StepNavigation / InfoPanel / StepProgress 组件"
+      - "Design Token 使用 Paico，禁止硬编码"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/OnboardingApp.tsx"
+        grep: "OnboardingApp"
+        label: "根组件存在"
+      - type: symbol
+        file: "src/modules/onboarding/hooks/useOnboarding.ts"
+        grep: "useOnboarding"
+        label: "Hook 存在"
+    review_checklist:
+      - "左右分栏比例是否为 70/30"
+      - "右侧面板橙色是否为 #CC4400（WCAG AA 合规）"
+      - "是否使用 Paico design token"
+
+  - id: "6g.9"
+    title: "P1: Tauri Event 推送机制"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-08"
+    impl_targets:
+      - src-tauri/src/modules/onboarding/events.rs
+      - src/modules/onboarding/types.ts
+    depends_on: ["6g.1", "6g.3"]
+    baseline_ref: "Onboarding Event 推送不存在"
+    current_state: |
+      无 onboarding 相关 Tauri 事件定义。
+    must_implement:
+      - "事件常量: step_changed, download_progress, test_completed, onboarding_error"
+      - "emit_all() 调用: next/prev step, download progress (500ms), test done, error"
+      - "前端 TypeScript OnboardingEvents 接口"
+      - "降级轮询兼容层（每 500ms embedded_model_progress）"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/events.rs"
+        grep: "onboarding://step_changed|onboarding://download_progress"
+        label: "事件常量存在"
+    review_checklist:
+      - "事件负载格式是否与 ADR 第 18.6 节一致"
+      - "降级轮询层是否仍可用"
+
+  # ── MILESTONE 5: Step Pages (Sequential UI Build) ──
+
+  - id: "6g.10"
+    title: "P1: Step 1 Welcome + Step 3 SecurityConfirm"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-10, TASK-014-12"
+    impl_targets:
+      - src/modules/onboarding/steps/WelcomeStep.tsx
+      - src/modules/onboarding/steps/SecurityConfirmStep.tsx
+      - src/modules/onboarding/components/FeatureCard.tsx
+      - src/modules/onboarding/components/RiskItem.tsx
+    depends_on: ["6g.8"]
+    baseline_ref: "Step 页面组件不存在"
+    current_state: |
+      steps/ 目录不存在。
+    must_implement:
+      - "WelcomeStep: 1/6 进度, 标题, 4 特性卡片, CTA, 右侧 WELCOME 面板"
+      - "SecurityConfirmStep: 3/6 进度, 8 条风险说明, 勾选开关, 右侧安全摘要"
+      - "FeatureCard / RiskItem 复用组件"
+      - "Welcome CTA → onboarding_next_step()"
+      - "SecurityConfirm 全部勾选 → security_confirm() → next_step()"
+      - "风险说明中的 ~/.openclaw/ 替换为 ~/.if2ai/"
+      - "严格对照 Welcome.png / SecurityConfirm.png"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/steps/WelcomeStep.tsx"
+        grep: "WelcomeStep"
+        label: "Welcome 页面存在"
+      - type: symbol
+        file: "src/modules/onboarding/steps/SecurityConfirmStep.tsx"
+        grep: "SecurityConfirmStep"
+        label: "SecurityConfirm 页面存在"
+    review_checklist:
+      - "Welcome UI 是否与设计稿一致"
+      - "SecurityConfirm 是否 8 条说明全部可勾选"
+      - "未勾选时按钮是否禁用"
+      - "品牌名是否使用 if2AI（非 UClaw）"
+
+  - id: "6g.11"
+    title: "P1: Step 2 SystemCheck"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-11"
+    impl_targets:
+      - src/modules/onboarding/steps/SystemCheckStep.tsx
+      - src/modules/onboarding/components/CheckItem.tsx
+      - src/modules/onboarding/components/DownloadProgress.tsx
+    depends_on: ["6g.8", "6g.7", "6g.9"]
+    baseline_ref: "系统预检页面不存在"
+    current_state: |
+      无 SystemCheckStep 组件。
+    must_implement:
+      - "2/6 进度 + 进度条"
+      - "自动调用 system_check_run() 检测"
+      - "Embedded 模型下载卡片 + DownloadProgress 组件"
+      - "CPU/GPU/Node.js 检测项列表（CheckItem 组件）"
+      - "Loading: 每行 '检测中...' + 旋转圆点"
+      - "Error: 行内红色 ✗ + 原因 + 解决链接"
+      - "全部通过 → 启用'预检完成'按钮"
+      - "严格对照 SystemCheck.png"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/steps/SystemCheckStep.tsx"
+        grep: "SystemCheckStep"
+        label: "SystemCheck 页面存在"
+    review_checklist:
+      - "检测项是否实时更新（Event 或轮询）"
+      - "下载进度是否正确绑定"
+      - "未全部通过时按钮是否禁用"
+
+  - id: "6g.12"
+    title: "P1: Step 4 ProviderSetup"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-13"
+    impl_targets:
+      - src/modules/onboarding/steps/ProviderSetupStep.tsx
+      - src/modules/onboarding/components/ProviderCard.tsx
+      - src/modules/onboarding/components/ModelSelector.tsx
+    depends_on: ["6g.8", "6g.7", "6g.9"]
+    baseline_ref: "Provider 配置页面不存在"
+    current_state: |
+      无 ProviderSetup 页面组件。
+    must_implement:
+      - "4/6 进度"
+      - "Provider 卡片网格（4 列，14 个 provider）"
+      - "每个卡片: Logo + 名称 + 状态标签"
+      - "点击卡片 → 配置表单 → '测试连接' → 成功 → 模型选择器"
+      - "Loading: 按钮 spinner + disabled"
+      - "Error: 按钮下方红色 inline text + 重试按钮"
+      - "右侧面板: 已选 Provider 详情 + 模型列表（可搜索）"
+      - "严格对照 ProviderSetup.png"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/steps/ProviderSetupStep.tsx"
+        grep: "ProviderSetupStep"
+        label: "ProviderSetup 页面存在"
+    review_checklist:
+      - "14 个 Provider 卡片是否全部渲染"
+      - "Logo 加载失败是否显示文字 fallback"
+      - "连接测试是否真实执行（非 mock）"
+      - "品牌名是否使用 if2AI"
+
+  - id: "6g.13"
+    title: "P1: Step 5 ChannelSetup"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-14"
+    impl_targets:
+      - src/modules/onboarding/steps/ChannelSetupStep.tsx
+      - src/modules/onboarding/components/ChannelCard.tsx
+    depends_on: ["6g.8", "6g.7", "6g.9"]
+    baseline_ref: "Channel 配置页面不存在"
+    current_state: |
+      无 ChannelSetup 页面组件。
+    must_implement:
+      - "5/6 进度"
+      - "常用渠道 (3 列) + 其他渠道 (4 列)"
+      - "点击卡片 → 配置表单 → '保存并测试'"
+      - "Loading: 卡片右上角 spinner"
+      - "Error: 卡片边框变红 + 具体错误信息"
+      - "至少配置一个渠道 → 启用'完成部署'按钮"
+      - "严格对照 ChannelSetup.png"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/steps/ChannelSetupStep.tsx"
+        grep: "ChannelSetupStep"
+        label: "ChannelSetup 页面存在"
+    review_checklist:
+      - "13 个 Channel 卡片是否全部渲染"
+      - "5 平台测试是否真实执行"
+      - "配置后是否正确写入 default_routing"
+      - "品牌名是否使用 if2AI"
+
+  - id: "6g.14"
+    title: "P1: Step 6 Activation"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-15"
+    impl_targets:
+      - src/modules/onboarding/steps/ActivationStep.tsx
+      - src/modules/onboarding/components/ActivationChecklist.tsx
+      - src/modules/onboarding/components/SecurityBadge.tsx
+    depends_on: ["6g.8", "6g.7", "6g.9"]
+    baseline_ref: "激活页面不存在"
+    current_state: |
+      无 Activation 页面组件。
+    must_implement:
+      - "6/6 进度（全部绿色）"
+      - "配置汇总清单（系统/安全/Provider/Channel）"
+      - "大按钮 '+ 唤醒 if2AI Agent'"
+      - "右侧面板: 完成状态卡片"
+      - "唤醒流程: validate → start → test_message → complete"
+      - "Loading: 全屏 overlay + 旋转动画"
+      - "Error: overlay 内错误详情 + 重试按钮"
+      - "成功: 完成动画 → 跳转到主界面"
+      - "严格对照 Activation.png"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/steps/ActivationStep.tsx"
+        grep: "ActivationStep"
+        label: "Activation 页面存在"
+    review_checklist:
+      - "唤醒流程是否 4 步全部执行"
+      - "成功后是否跳转到主界面"
+      - "品牌名是否使用 if2AI"
+
+  # ── MILESTONE 6: App Integration + Polish ──
+
+  - id: "6g.15"
+    title: "P1: App Startup Integration + Onboarding Entry"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-16"
+    impl_targets:
+      - src-tauri/src/main.rs
+      - src-tauri/src/commands/mod.rs
+    depends_on: ["6g.7", "6g.8"]
+    baseline_ref: "Tauri 启动流程未集成 Onboarding 状态检查"
+    current_state: |
+      main.rs 的 setup 函数不包含 Onboarding 状态检查。
+    must_implement:
+      - "setup() 中读取 onboarding_state → 决定进入 Onboarding 或 Ready"
+      - "AppState 结构添加 onboarding_flow: Arc<OnboardingFlow>"
+      - "Onboarding 期间禁止打开 Settings 面板"
+      - "Onboarding 期间禁止进入主界面"
+      - "前端根据 AppState 类型渲染 OnboardingApp 或 Main App"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src-tauri/src/main.rs"
+        grep: "onboarding_state|Onboarding"
+        label: "Onboarding 启动检查存在"
+      - type: symbol
+        file: "src-tauri/src/commands/mod.rs"
+        grep: "onboarding_flow"
+        label: "AppState 包含 onboarding_flow"
+    review_checklist:
+      - "首次启动是否自动进入 Onboarding"
+      - "已完成 Onboarding 后是否进入主界面"
+      - "Onboarding 期间 Settings 是否被禁止"
+
+  - id: "6g.16"
+    title: "P1: Reset Onboarding + Compatibility Verification"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-17"
+    impl_targets:
+      - src/modules/settings/SettingsApp.tsx
+      - src-tauri/src/commands/config.rs
+    depends_on: ["6g.7", "6g.15"]
+    baseline_ref: "Settings 中无重置 Onboarding 入口"
+    current_state: |
+      Settings '关于我们' 页面无重置按钮。
+    must_implement:
+      - "Settings '关于我们' 页面添加 '重置 Onboarding' 按钮"
+      - "调用 config_reset_onboarding() → 删除 state.json + 清空 config"
+      - "5 个兼容性验证场景（ADR 第 15.4 节）"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: compile
+        cmd: "cargo check -p if2ai-backend"
+      - type: symbol
+        file: "src/modules/settings/SettingsApp.tsx"
+        grep: "reset.*onboarding|重置.*Onboarding"
+        label: "重置按钮存在"
+    review_checklist:
+      - "重置后是否重新进入 Onboarding Step 1"
+      - "5 个兼容性场景是否全部通过"
+      - "memory_config.json 和 trajectories 是否不受影响"
+
+  - id: "6g.17"
+    title: "P2: Global UI Components + Dark Mode + Accessibility"
+    status: draft
+    design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
+    backlog_ref: "TASK-014-18"
+    impl_targets:
+      - src/modules/onboarding/components/FeatureCard.tsx
+      - src/modules/onboarding/components/CheckItem.tsx
+      - src/modules/onboarding/components/DownloadProgress.tsx
+      - src/modules/onboarding/components/RiskItem.tsx
+    depends_on: ["6g.10", "6g.11", "6g.12", "6g.13", "6g.14"]
+    baseline_ref: "全局组件和 Dark Mode 适配不存在"
+    current_state: |
+      通用 UI 组件尚未完全提取为独立组件，Dark Mode 未适配。
+    must_implement:
+      - "FeatureCard / CheckItem / DownloadProgress / RiskItem 复用组件"
+      - "Dark Mode 适配: 左侧 #1A1A1A / 右侧 #CC4400→#882200 / 文字 #E0E0E0"
+      - "微交互: 卡片 hover/active/disabled/focused, 按钮 hover/active, 圆点 hover"
+      - "可访问性: 状态图标 (✓✗⏳), Tab 导航, ARIA labels"
+      - "CSS prefers-reduced-motion 降级"
+    acceptance:
+      - type: compile
+        cmd: "npx tsc --noEmit"
+      - type: symbol
+        file: "src/modules/onboarding/components/FeatureCard.tsx"
+        grep: "FeatureCard"
+        label: "FeatureCard 组件存在"
+    review_checklist:
+      - "Dark Mode 下所有元素是否可读"
+      - "状态标记是否使用图标而非仅颜色"
+      - "焦点环是否 2px outline"
+
+dashboard:
+  last_updated: "2026-04-16"
+  completed_slices: []
+  current_slice: "6g.1"
+  blocked: []
+  notes: "Phase 6G 草案: 17 个 slices，覆盖 Onboarding 全流程。M1(6g.1-6g.2) 基础设施 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"

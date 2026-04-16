@@ -16,6 +16,7 @@ pub mod commands;
 pub mod control_plane;
 pub mod learning;
 pub mod memory;
+pub mod onboarding;
 pub mod plugins;
 pub mod projects;
 pub mod runtime;
@@ -35,6 +36,8 @@ pub use control_plane::*;
 pub use learning::*;
 #[allow(unused_imports)]
 pub use memory::*;
+#[allow(unused_imports)]
+pub use onboarding::*;
 #[allow(unused_imports)]
 pub use plugins::*;
 #[allow(unused_imports)]
