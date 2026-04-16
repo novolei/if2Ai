@@ -16,6 +16,7 @@
 pub mod adapter;
 pub mod manager;
 pub mod registry;
+pub mod test;
 pub mod types;
 
 // Re-export commonly used types

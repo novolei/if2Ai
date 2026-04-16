@@ -310,8 +310,28 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/channel/test.rs"
-        grep: "test_channel_connection|test_telegram|test_feishu|test_qq|test_whatsapp|test_msteams"
-        label: "5 平台测试函数存在"
+        grep: "test_channel_connection"
+        label: "test_channel_connection 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_telegram"
+        label: "test_telegram 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_feishu"
+        label: "test_feishu 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_qq"
+        label: "test_qq 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_whatsapp"
+        label: "test_whatsapp 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/test.rs"
+        grep: "test_msteams"
+        label: "test_msteams 存在"
     review_checklist:
       - "是否参考 UClaw channels.rs:test_platform 实现"
       - "超时是否正确设置"
