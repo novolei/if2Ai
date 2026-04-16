@@ -25,6 +25,7 @@ pub mod scheduler;
 pub mod security;
 pub mod session;
 pub mod skills;
+pub mod system_check;
 pub mod tools;
 
 #[allow(unused_imports)]

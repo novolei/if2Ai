@@ -155,12 +155,28 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/system_check/env.rs"
-        grep: "detect_cpu|detect_gpu|detect_nodejs|run_full_check"
-        label: "检测函数存在"
+        grep: "detect_cpu"
+        label: "detect_cpu 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/env.rs"
+        grep: "detect_gpu"
+        label: "detect_gpu 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/env.rs"
+        grep: "detect_nodejs"
+        label: "detect_nodejs 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/env.rs"
+        grep: "run_full_check"
+        label: "run_full_check 存在"
       - type: symbol
         file: "src-tauri/src/modules/system_check/model_download.rs"
-        grep: "download_embedded_model|embedded_model_exists"
-        label: "下载函数存在"
+        grep: "download_embedded_model"
+        label: "download_embedded_model 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/system_check/model_download.rs"
+        grep: "embedded_model_exists"
+        label: "embedded_model_exists 存在"
     review_checklist:
       - "下载是否可中断（CancellationToken）"
       - "Node.js 缺失是否不阻断流程"
