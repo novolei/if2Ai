@@ -13,6 +13,7 @@
 
 pub mod api;
 pub mod commands;
+pub mod config;
 pub mod control_plane;
 pub mod learning;
 pub mod memory;
@@ -30,6 +31,11 @@ pub mod tools;
 pub use api::*;
 #[allow(unused_imports)]
 pub use commands::*;
+#[allow(unused_imports)]
+pub use config::{
+    AppConfig, ChannelConfig, ChannelConfigRedacted, ChannelRouting, ConfigService, ModelSelection,
+    ProviderConfig, CONFIG_VERSION,
+};
 #[allow(unused_imports)]
 pub use control_plane::*;
 #[allow(unused_imports)]

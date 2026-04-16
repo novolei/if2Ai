@@ -39,6 +39,7 @@ arrow-schema = "54"
 arrow-cast = "54"
 half = "2"
 futures = "0.3"
+serde_yaml = "0.9"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

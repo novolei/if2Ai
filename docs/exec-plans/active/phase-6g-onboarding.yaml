@@ -24,7 +24,7 @@ slices:
 
   - id: "6g.1"
     title: "P0: Onboarding State Machine + Persistence Store"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-01"
     impl_targets:
@@ -101,8 +101,20 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/config/service.rs"
-        grep: "ConfigService|save_config|load_config|reset_onboarding"
-        label: "ConfigService trait 实现存在"
+        grep: "ConfigService"
+        label: "ConfigService struct 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/config/service.rs"
+        grep: "save_config"
+        label: "save_config 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/config/service.rs"
+        grep: "load_config"
+        label: "load_config 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/config/service.rs"
+        grep: "reset_onboarding"
+        label: "reset_onboarding 存在"
       - type: symbol
         file: "src-tauri/src/modules/config/bridge.rs"
         grep: "bridge_to_claw_settings"
@@ -664,7 +676,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: []
-  current_slice: "6g.1"
+  completed_slices: ["6g.1"]
+  current_slice: "6g.2"
   blocked: []
-  notes: "Phase 6G 草案: 17 个 slices，覆盖 Onboarding 全流程。M1(6g.1-6g.2) 基础设施 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"
+  notes: "Phase 6G: 1/17 slices done. 6g.1 State Machine ✅ | Next: 6g.2 ConfigService dual-mode persistence. M1(6g.1-6g.2) 基础设施 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"
