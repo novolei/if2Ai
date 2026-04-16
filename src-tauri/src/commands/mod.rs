@@ -82,6 +82,14 @@ pub mod tools;
 pub mod web_search;
 pub mod window;
 
+// Onboarding & Configuration Platform (Phase 6G)
+pub mod activation;
+pub mod channel;
+pub mod config;
+pub mod onboarding;
+pub mod provider;
+pub mod system_check;
+
 #[allow(unused_imports)]
 pub use agent::{
     respond_permission, run_agent_turn, start_agent_stream, stop_agent_stream, RunAgentTurnResponse,
@@ -128,3 +136,26 @@ pub use web_search::{
 pub use window::{
     close_settings_window, focus_main_window_and_prefill_prompt, open_settings_window,
 };
+
+// Onboarding commands (Phase 6G)
+#[allow(unused_imports)]
+pub use activation::{
+    activation_complete, activation_start, activation_test_message, activation_validate,
+    ActivationChecklist, ActivationResult,
+};
+#[allow(unused_imports)]
+pub use channel::{channel_configure, channel_list, channel_list_configured, channel_test};
+#[allow(unused_imports)]
+pub use config::{config_load, config_reset_onboarding, config_save, config_validate};
+#[allow(unused_imports)]
+pub use onboarding::{
+    onboarding_complete, onboarding_get_state, onboarding_next_step, onboarding_prev_step,
+    security_confirm,
+};
+#[allow(unused_imports)]
+pub use provider::{
+    model_select, model_test, provider_configure, provider_list, provider_list_models,
+    provider_test,
+};
+#[allow(unused_imports)]
+pub use system_check::{embedded_model_download, embedded_model_progress, system_check_run};

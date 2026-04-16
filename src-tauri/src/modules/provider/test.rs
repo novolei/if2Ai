@@ -51,11 +51,25 @@ pub async fn test_provider_connection(
         "ollama" => test_ollama(base_url).await,
         "anthropic" => {
             // validate_config guarantees api_key is Some for non-ollama
-            let key = api_key.expect("api_key validated above");
+            let Some(key) = api_key else {
+                return TestResult {
+                    success: false,
+                    message: "API key is required for Anthropic".to_string(),
+                    latency_ms: None,
+                    details: Some(error_codes::PROVIDER_CONFIG_INVALID.to_string()),
+                };
+            };
             test_anthropic(base_url, key).await
         }
         _ => {
-            let key = api_key.expect("api_key validated above");
+            let Some(key) = api_key else {
+                return TestResult {
+                    success: false,
+                    message: "API key is required".to_string(),
+                    latency_ms: None,
+                    details: Some(error_codes::PROVIDER_CONFIG_INVALID.to_string()),
+                };
+            };
             test_openai_compat(base_url, key).await
         }
     };
@@ -262,6 +276,46 @@ fn handle_http_error(status: reqwest::StatusCode, label: &str) -> Result<String,
         code: code.to_string(),
         message: format!("{label} returned {status}"),
     })
+}
+
+/// Test a specific model by sending a test request.
+///
+/// This verifies that the given model is available on the configured provider.
+pub async fn test_model(
+    provider: &crate::modules::config::ProviderConfig,
+    model_id: &str,
+) -> Result<TestResult, String> {
+    let base_url = provider.base_url.as_deref().unwrap_or_default();
+    if base_url.is_empty() {
+        return Ok(TestResult {
+            success: false,
+            message: "No base URL configured for provider".to_string(),
+            latency_ms: None,
+            details: Some(error_codes::PROVIDER_CONFIG_INVALID.to_string()),
+        });
+    }
+
+    let start = Instant::now();
+    let result =
+        test_provider_connection(&provider.provider_id, base_url, provider.api_key.as_deref())
+            .await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    if result.success {
+        Ok(TestResult {
+            success: true,
+            message: format!("Model '{}' is available", model_id),
+            latency_ms: Some(latency_ms),
+            details: None,
+        })
+    } else {
+        Ok(TestResult {
+            success: false,
+            message: format!("Model '{}' unavailable: {}", model_id, result.message),
+            latency_ms: Some(latency_ms),
+            details: result.details,
+        })
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
