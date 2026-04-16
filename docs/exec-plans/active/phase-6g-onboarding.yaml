@@ -74,7 +74,7 @@ slices:
 
   - id: "6g.2"
     title: "P0: ConfigService 双模式持久化 + Bridge"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-02"
     impl_targets:
@@ -676,7 +676,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1"]
-  current_slice: "6g.2"
+  completed_slices: ["6g.1", "6g.2"]
+  current_slice: "6g.3"
   blocked: []
-  notes: "Phase 6G: 1/17 slices done. 6g.1 State Machine ✅ | Next: 6g.2 ConfigService dual-mode persistence. M1(6g.1-6g.2) 基础设施 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"
+  notes: "Phase 6G: 2/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | Next: 6g.3 SystemCheckService + Model Download. M1(6g.1-6g.2) 基础设施完成 → M2(6g.3-6g.5) 后端模块可并行 → M3(6g.6-6g.7) 测试+Commands → M4(6g.8-6g.9) 前端根组件+Events 可并行 → M5(6g.10-6g.14) Step 页面 → M6(6g.15-6g.17) 集成+完善。"
