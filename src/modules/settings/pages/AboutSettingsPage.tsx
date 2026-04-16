@@ -1,8 +1,10 @@
-import { Shield, Globe, Sparkles, ExternalLink, Rocket } from 'lucide-react'
+import { Shield, Globe, Sparkles, ExternalLink, Rocket, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AgentOrb } from '@/components/AgentOrb'
 import { SettingsSurface } from '../components/SettingsSurface'
 import type { SettingsPageProps } from '../types'
+import { configResetOnboarding } from '@/lib/tauri'
+import { toast } from 'sonner'
 
 interface FeatureCardProps {
   icon: typeof Shield
@@ -74,6 +76,35 @@ export function AboutSettingsPage({}: SettingsPageProps) {
             当前版本
           </div>
           <div className="font-mono text-[12px] font-medium tabular-nums">v0.1.0</div>
+        </div>
+      </SettingsSurface>
+
+      {/* Reset Onboarding */}
+      <SettingsSurface className="px-5 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[12px] font-medium">重置 Onboarding</div>
+            <div className="text-[11px] text-muted-foreground">
+              清除配置并重新进入引导流程
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 rounded-lg text-[11px]"
+            onClick={async () => {
+              if (!window.confirm('确定要重置 Onboarding 吗？所有配置将被清除。')) return
+              try {
+                await configResetOnboarding()
+                toast.success('Onboarding 已重置', { description: '重新启动应用以进入引导流程' })
+              } catch (error) {
+                toast.error('重置失败', { description: String(error) })
+              }
+            }}
+          >
+            <RotateCcw className="mr-1.5 h-3 w-3" />
+            重置
+          </Button>
         </div>
       </SettingsSurface>
     </div>

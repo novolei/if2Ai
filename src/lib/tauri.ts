@@ -915,3 +915,8 @@ export async function setMemoryConfig(
 export async function exportTrajectories(): Promise<string> {
   return invoke<string>('export_trajectories')
 }
+
+/** Reset onboarding state and return to Step 1. */
+export async function configResetOnboarding(): Promise<void> {
+  return invoke<void>('config_reset_onboarding')
+}

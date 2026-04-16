@@ -672,7 +672,7 @@ slices:
 
   - id: "6g.15"
     title: "P1: App Startup Integration + Onboarding Entry"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-16"
     impl_targets:
@@ -726,8 +726,8 @@ slices:
       - type: compile
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
-        file: "src/modules/settings/SettingsApp.tsx"
-        grep: "reset.*onboarding|重置.*Onboarding"
+        file: "src/modules/settings/pages/AboutSettingsPage.tsx"
+        grep: "configResetOnboarding"
         label: "重置按钮存在"
     review_checklist:
       - "重置后是否重新进入 Onboarding Step 1"
@@ -768,7 +768,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7", "6g.8", "6g.9", "6g.10", "6g.11", "6g.12", "6g.13", "6g.14"]
-  current_slice: "6g.15"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7", "6g.8", "6g.9", "6g.10", "6g.11", "6g.12", "6g.13", "6g.14", "6g.15"]
+  current_slice: "6g.16"
   blocked: []
-  notes: "Phase 6G: 14/17 slices done. All 6 step pages implemented (6g.10-6g.14) ✅. Backend core (6g.1-6g.7) ✅ Frontend root+layout+hook (6g.8) ✅ Tauri Events (6g.9) ✅ | Next: 6g.15 App Startup Integration."
+  notes: "Phase 6G: 15/17 slices done. App startup integration complete (6g.15) ✅ — OnboardingFlow wired into AppState, main.rs setup, review gate fixes. Next: 6g.16 Reset Onboarding + Compatibility Verification."
