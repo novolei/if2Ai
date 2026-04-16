@@ -3,6 +3,9 @@
  *
  * Used in SystemCheckStep to display CPU, GPU, and Node.js detection results.
  * Supports four states: Pending, Running, Pass, and Fail.
+ *
+ * Accessibility: role="status" with aria-label, status icons for all states,
+ * focus-visible ring, prefers-reduced-motion support.
  */
 
 import { Check, X, Loader2, AlertCircle } from 'lucide-react';
@@ -41,8 +44,11 @@ export function CheckItem({ label, detail, status, className }: CheckItemProps) 
 
   return (
     <div
+      role="status"
+      aria-label={`${label}: ${statusLabel(status)}`}
+      tabIndex={0}
       className={cn(
-        'flex items-start gap-3 rounded-lg px-4 py-3 transition-colors',
+        'flex items-start gap-3 rounded-lg px-4 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange',
         isPass && 'bg-status-success-bg/30',
         isFail && 'bg-status-error-bg/30',
         isRunning && 'bg-muted/30',
@@ -53,16 +59,17 @@ export function CheckItem({ label, detail, status, className }: CheckItemProps) 
       {/* Status icon */}
       <div
         className={cn(
-          'flex-shrink-0 mt-0.5 flex h-6 w-6 items-center justify-center rounded-full',
+          'shrink-0 mt-0.5 flex h-6 w-6 items-center justify-center rounded-full',
           isPass && 'bg-status-success text-white',
           isFail && 'bg-status-error text-white',
           isRunning && 'bg-muted text-brand-orange',
           isPending && 'bg-muted/50 text-muted-foreground/40',
         )}
+        aria-hidden="true"
       >
         {isPass && <Check className="h-3.5 w-3.5" />}
         {isFail && <X className="h-3.5 w-3.5" />}
-        {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        {isRunning && <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
         {isPending && <AlertCircle className="h-3.5 w-3.5" />}
       </div>
 
@@ -86,7 +93,7 @@ export function CheckItem({ label, detail, status, className }: CheckItemProps) 
       {/* Status text */}
       <span
         className={cn(
-          'text-token-xs flex-shrink-0',
+          'text-token-xs shrink-0',
           isPass && 'text-status-success',
           isFail && 'text-status-error',
           isRunning && 'text-brand-orange',

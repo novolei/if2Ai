@@ -706,7 +706,7 @@ slices:
 
   - id: "6g.16"
     title: "P1: Reset Onboarding + Compatibility Verification"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-17"
     impl_targets:
@@ -768,7 +768,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7", "6g.8", "6g.9", "6g.10", "6g.11", "6g.12", "6g.13", "6g.14", "6g.15"]
-  current_slice: "6g.16"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7", "6g.8", "6g.9", "6g.10", "6g.11", "6g.12", "6g.13", "6g.14", "6g.15", "6g.16"]
+  current_slice: "6g.17"
   blocked: []
-  notes: "Phase 6G: 15/17 slices done. App startup integration complete (6g.15) ✅ — OnboardingFlow wired into AppState, main.rs setup, review gate fixes. Next: 6g.16 Reset Onboarding + Compatibility Verification."
+  notes: "Phase 6G: 16/17 slices done. Reset Onboarding button added (6g.16) ✅. One final slice remaining: 6g.17 Dark Mode + Accessibility."

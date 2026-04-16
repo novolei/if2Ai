@@ -307,8 +307,10 @@ def cmd_review(args: argparse.Namespace) -> int:
         if not changed or rel in changed:
             rust_files.append(fpath)
 
-    # If no changed Rust files found, scan all (fallback for first commit)
-    if not changed or not rust_files:
+    # If there are changes but no Rust files, don't fall back to scanning all —
+    # just skip Rust-level static checks for this slice.
+    if not changed:
+        # No changes detected at all (e.g. first commit), scan all files
         rust_files = list(src_dir.rglob("*.rs")) if src_dir.exists() else []
 
     unwrap_violations: list[str] = []

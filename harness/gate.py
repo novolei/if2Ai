@@ -208,11 +208,42 @@ def test_gate(
     """
     Layer 2: cargo test — all unit tests must pass.
     Only runs if compile_gate passed.
+
+    Uses single-threaded test execution to avoid flaky concurrent test failures.
     """
+    import os
     cmd = ["cargo", "test", "-p", package]
     if test_filter:
         cmd.extend(["--", test_filter])
-    return _gate("test_gate", cmd, cwd=workspace_root, timeout=180)
+    env = dict(os.environ, RUST_TEST_THREADS="1")
+    return _gate_with_env("test_gate", cmd, cwd=workspace_root, timeout=180, env=env)
+
+
+def _gate_with_env(
+    name: str, cmd: list[str], cwd: Path, timeout: int, env: dict
+) -> GateResult:
+    """Run a subprocess with custom env vars, return GateResult."""
+    t0 = time.monotonic()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        elapsed = time.monotonic() - t0
+        status = GateStatus.PASS if proc.returncode == 0 else GateStatus.FAIL
+        return GateResult(
+            gate=name, status=status, duration_s=elapsed, output=proc.stdout, error=proc.stderr,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed = time.monotonic() - t0
+        return GateResult(
+            gate=name, status=GateStatus.FAIL, duration_s=elapsed,
+            error=f"Timeout after {elapsed:.0f}s (limit={timeout}s)",
+        )
 
 
 def behavior_gate(

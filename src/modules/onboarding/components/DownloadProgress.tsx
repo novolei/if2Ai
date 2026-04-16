@@ -3,6 +3,9 @@
  *
  * Displays the current download state with a progress bar,
  * file size info, and status indicator.
+ *
+ * Accessibility: aria-live="polite" for progress updates,
+ * role="progressbar" with aria-valuenow, prefers-reduced-motion support.
  */
 
 import { Check, Loader2, AlertTriangle } from 'lucide-react';
@@ -46,8 +49,11 @@ export function DownloadProgress({
 
   return (
     <div
+      role="region"
+      aria-live="polite"
+      aria-label="Embedded model download progress"
       className={cn(
-        'rounded-lg border px-4 py-3.5',
+        'rounded-lg border px-4 py-3.5 transition-colors',
         hasError
           ? 'border-status-error/30 bg-status-error-bg/20'
           : isComplete
@@ -71,10 +77,11 @@ export function DownloadProgress({
                   ? 'bg-brand-orange/20 text-brand-orange'
                   : 'bg-muted text-muted-foreground/40',
           )}
+          aria-hidden="true"
         >
           {hasError && <AlertTriangle className="h-3.5 w-3.5" />}
           {isComplete && <Check className="h-3.5 w-3.5" />}
-          {isDownloading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {isDownloading && <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
           {!isDownloading && !isComplete && !hasError && (
             <span className="text-token-xs font-bold">i</span>
           )}
@@ -100,10 +107,14 @@ export function DownloadProgress({
       </div>
 
       {/* Progress bar */}
-      <div className="h-2 rounded-full bg-muted overflow-hidden mb-2">
+      <div className="h-2 rounded-full bg-muted overflow-hidden mb-2" aria-hidden="true">
         <div
+          role="progressbar"
+          aria-valuenow={Math.round(clampedPercent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
           className={cn(
-            'h-full rounded-full transition-all duration-300',
+            'h-full rounded-full transition-all duration-300 motion-reduce:transition-none',
             hasError && 'bg-status-error',
             isComplete && 'bg-status-success',
             isDownloading && !hasError && 'bg-brand-orange',
@@ -136,7 +147,7 @@ export function DownloadProgress({
 
       {/* Error message */}
       {hasError && (
-        <p className="text-token-xs text-status-error mt-2">
+        <p className="text-token-xs text-status-error mt-2" role="alert">
           {error}
         </p>
       )}
