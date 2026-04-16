@@ -339,7 +339,7 @@ slices:
 
   - id: "6g.7"
     title: "P0: Tauri Commands (全部 26 commands)"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-07"
     impl_targets:
@@ -369,8 +369,24 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/commands/onboarding.rs"
-        grep: "onboarding_get_state|onboarding_next_step|onboarding_prev_step|onboarding_complete|security_confirm"
-        label: "5 个 onboarding commands 存在"
+        grep: "onboarding_get_state"
+        label: "onboarding_get_state 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/onboarding.rs"
+        grep: "onboarding_next_step"
+        label: "onboarding_next_step 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/onboarding.rs"
+        grep: "onboarding_prev_step"
+        label: "onboarding_prev_step 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/onboarding.rs"
+        grep: "onboarding_complete"
+        label: "onboarding_complete 存在"
+      - type: symbol
+        file: "src-tauri/src/commands/onboarding.rs"
+        grep: "security_confirm"
+        label: "security_confirm 存在"
       - type: symbol
         file: "src-tauri/src/commands/provider.rs"
         grep: "provider_list_models"
@@ -736,7 +752,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6"]
-  current_slice: "6g.7"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7"]
+  current_slice: "6g.8"
   blocked: []
-  notes: "Phase 6G: 6/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | 6g.5 ChannelAdapter+Manager+Registry ✅ | 6g.6 Channel Test Service ✅ | Next: 6g.7 Tauri Commands (26 commands). M2(6g.3-6g.5) + M3(6g.6) complete."
+  notes: "Phase 6G: 7/17 slices done. Backend core complete (6g.1-6g.7) — State Machine ✅ ConfigService ✅ SystemCheck ✅ Provider ✅ Channel ✅ Channel Test ✅ Tauri Commands (26) ✅ | Next: 6g.8 Frontend Root Component + Layout + Hook."
