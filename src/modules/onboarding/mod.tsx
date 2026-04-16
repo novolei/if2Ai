@@ -60,9 +60,11 @@ export { CheckItem } from './components/CheckItem';
 export { DownloadProgress } from './components/DownloadProgress';
 export { ProviderCard } from './components/ProviderCard';
 export { ModelSelector } from './components/ModelSelector';
+export { ChannelCard } from './components/ChannelCard';
 
 // Step pages
 export { WelcomeStep } from './steps/WelcomeStep';
 export { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 export { SystemCheckStep } from './steps/SystemCheckStep';
 export { ProviderSetupStep } from './steps/ProviderSetupStep';
+export { ChannelSetupStep } from './steps/ChannelSetupStep';
