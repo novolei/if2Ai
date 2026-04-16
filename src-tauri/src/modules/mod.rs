@@ -1,3 +1,4 @@
+#![allow(ambiguous_glob_reexports)]
 //! Core modules - integrated from /rust/crates
 //!
 //! This module aggregates all the core systems:
@@ -12,6 +13,7 @@
 //! - scheduler: Cron job scheduling
 
 pub mod api;
+pub mod channel;
 pub mod commands;
 pub mod config;
 pub mod control_plane;
@@ -31,6 +33,8 @@ pub mod tools;
 
 #[allow(unused_imports)]
 pub use api::*;
+#[allow(unused_imports)]
+pub use channel::*;
 #[allow(unused_imports)]
 pub use commands::*;
 #[allow(unused_imports)]

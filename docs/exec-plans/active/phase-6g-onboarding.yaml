@@ -184,7 +184,7 @@ slices:
 
   - id: "6g.4"
     title: "P0: ProviderService + Registry + Test"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-05"
     impl_targets:
@@ -257,12 +257,28 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/channel/adapter.rs"
-        grep: "ChannelAdapter|ConnectMode|ChannelEnvelope"
+        grep: "ChannelAdapter"
         label: "ChannelAdapter trait 存在"
       - type: symbol
+        file: "src-tauri/src/modules/channel/adapter.rs"
+        grep: "ConnectMode"
+        label: "ConnectMode 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/adapter.rs"
+        grep: "ChannelEnvelope"
+        label: "ChannelEnvelope 存在"
+      - type: symbol
         file: "src-tauri/src/modules/channel/manager.rs"
-        grep: "ChannelManager|start_platform_polling|stop_platform"
+        grep: "ChannelManager"
         label: "ChannelManager 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/manager.rs"
+        grep: "start_platform_polling"
+        label: "start_platform_polling 存在"
+      - type: symbol
+        file: "src-tauri/src/modules/channel/manager.rs"
+        grep: "stop_platform"
+        label: "stop_platform 存在"
     review_checklist:
       - "ChannelConfigRedacted 是否不泄露 token"
       - "ChannelManager 的 start/stop 是否使用 CancellationToken"
@@ -700,7 +716,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3"]
-  current_slice: "6g.4"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4"]
+  current_slice: "6g.5"
   blocked: []
-  notes: "Phase 6G: 3/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheckService+ModelDownload ✅ | Next: 6g.4 ProviderService+Registry+Test. M2(6g.3-6g.5) 后端模块可并行 → 6g.3 complete, 6g.4 and 6g.5 can proceed in parallel."
+  notes: "Phase 6G: 4/17 slices done. 6g.1 State Machine ✅ | 6g.2 ConfigService ✅ | 6g.3 SystemCheck ✅ | 6g.4 ProviderService+Registry ✅ | Next: 6g.5 ChannelAdapter+Manager+Registry. M2(6g.3-6g.5) — 6g.3 and 6g.4 complete, 6g.5 can proceed."
