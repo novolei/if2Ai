@@ -9,11 +9,13 @@
 //! - `state`: Core types (`OnboardingStep`, `OnboardingState`, `AppOnboardingState`, `OnboardingFailure`)
 //! - `store`: Persistence layer (`~/.if2ai/state.json` read/write)
 //! - `flow`: State machine transitions (`next_step`, `prev_step`, `complete`)
+//! - `events`: Tauri event constants and emit helpers (ADR-014 Section 18.6)
 
 // Allow dead_code: types defined here will be consumed by Tauri commands
 // in slice 6g.7 (Onboarding Commands). See ADR-014 Section 5.
 #![allow(dead_code)]
 
+pub mod events;
 pub mod flow;
 pub mod state;
 pub mod store;

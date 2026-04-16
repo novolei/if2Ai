@@ -468,8 +468,24 @@ slices:
         cmd: "cargo check -p if2ai-backend"
       - type: symbol
         file: "src-tauri/src/modules/onboarding/events.rs"
-        grep: "onboarding://step_changed|onboarding://download_progress"
-        label: "事件常量存在"
+        grep: "EVENT_STEP_CHANGED"
+        label: "step_changed 事件常量存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/events.rs"
+        grep: "EVENT_DOWNLOAD_PROGRESS"
+        label: "download_progress 事件常量存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/events.rs"
+        grep: "EVENT_TEST_COMPLETED"
+        label: "test_completed 事件常量存在"
+      - type: symbol
+        file: "src-tauri/src/modules/onboarding/events.rs"
+        grep: "EVENT_ERROR"
+        label: "error 事件常量存在"
+      - type: symbol
+        file: "src/modules/onboarding/types.ts"
+        grep: "OnboardingEvents"
+        label: "前端 OnboardingEvents 接口存在"
     review_checklist:
       - "事件负载格式是否与 ADR 第 18.6 节一致"
       - "降级轮询层是否仍可用"

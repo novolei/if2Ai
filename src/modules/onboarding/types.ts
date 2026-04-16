@@ -219,3 +219,32 @@ export interface UseOnboardingReturn {
   testChannel: (config: ChannelConfig) => Promise<void>;
   wakeAgent: () => Promise<void>;
 }
+
+// ── Tauri Event Payloads (ADR-014 Section 18.6) ──────────────────────────────
+
+/** Event payloads pushed from backend to frontend. */
+export interface OnboardingEvents {
+  'onboarding://step_changed': {
+    from_step: number;
+    to_step: number;
+  };
+  'onboarding://download_progress': {
+    model_name: string;
+    downloaded_bytes: number;
+    total_bytes: number;
+    percent: number;
+  };
+  'onboarding://test_completed': {
+    test_type: 'provider' | 'channel' | 'model';
+    target_id: string;
+    success: boolean;
+    latency_ms?: number;
+    error?: string;
+  };
+  'onboarding://error': {
+    step: number;
+    code: string;
+    message: string;
+    retriable: boolean;
+  };
+}
