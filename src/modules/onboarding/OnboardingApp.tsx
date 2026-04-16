@@ -12,6 +12,7 @@
  */
 
 import { WelcomeStep } from './steps/WelcomeStep';
+import { SystemCheckStep } from './steps/SystemCheckStep';
 import { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 import { StepHeader } from './components/StepHeader';
 import { StepProgress } from './components/StepProgress';
@@ -160,6 +161,8 @@ export function OnboardingApp() {
   switch (step) {
     case 1:
       return <WelcomeStep onNext={nextStep} />;
+    case 2:
+      return <SystemCheckStep onNext={nextStep} onPrev={prevStep} />;
     case 3:
       return <SecurityConfirmStep onConfirm={confirmSecurity} onPrev={prevStep} />;
     default:

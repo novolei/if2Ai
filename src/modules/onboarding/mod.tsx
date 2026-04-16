@@ -56,7 +56,10 @@ export { StepProgress } from './components/StepProgress';
 export { InfoPanel, InfoCard } from './components/InfoPanel';
 export { FeatureCard } from './components/FeatureCard';
 export { RiskItem } from './components/RiskItem';
+export { CheckItem } from './components/CheckItem';
+export { DownloadProgress } from './components/DownloadProgress';
 
 // Step pages
 export { WelcomeStep } from './steps/WelcomeStep';
 export { SecurityConfirmStep } from './steps/SecurityConfirmStep';
+export { SystemCheckStep } from './steps/SystemCheckStep';
