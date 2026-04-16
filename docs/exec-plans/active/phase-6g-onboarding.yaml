@@ -406,7 +406,7 @@ slices:
 
   - id: "6g.8"
     title: "P1: Frontend Root Component + Layout + Hook"
-    status: draft
+    status: done
     design_ref: "docs/design-docs/postCLI/ADR/ADR-014-if2AI-Onboarding.md"
     backlog_ref: "TASK-014-09"
     impl_targets:
@@ -752,7 +752,7 @@ slices:
 
 dashboard:
   last_updated: "2026-04-16"
-  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7"]
-  current_slice: "6g.8"
+  completed_slices: ["6g.1", "6g.2", "6g.3", "6g.4", "6g.5", "6g.6", "6g.7", "6g.8"]
+  current_slice: "6g.9"
   blocked: []
-  notes: "Phase 6G: 7/17 slices done. Backend core complete (6g.1-6g.7) — State Machine ✅ ConfigService ✅ SystemCheck ✅ Provider ✅ Channel ✅ Channel Test ✅ Tauri Commands (26) ✅ | Next: 6g.8 Frontend Root Component + Layout + Hook."
+  notes: "Phase 6G: 8/17 slices done. Backend core complete (6g.1-6g.7). Frontend root + layout + hook complete (6g.8 — 9 files, 1070 lines). Next: 6g.9 Tauri Event Push."
