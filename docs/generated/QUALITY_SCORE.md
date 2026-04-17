@@ -203,3 +203,4 @@
 | 2026-04-15 | Phase 6B Slice 6b.9 完成：Integration Test Suite (phase6b_integration.yaml 21 test cases, 573 workspace tests pass) |
 | 2026-04-15 | **Phase 6B ALL COMPLETE** (9/9 slices, 573 tests pass, 0 clippy warnings) |
 | 2026-04-17 | Phase 7B Slice 7B.5 完成：Tauri Event 桥接 + browser IPC commands (BrowserStatusEvent, emit_browser_status, get_browser_sessions, close_browser_session, get_chrome_status; 706 tests pass, REVIEW_PASS 10/10) |
+| 2026-04-17 | Phase 7B Slice 7B.6 完成：BrowserCard 前端浮动卡片 + Store (useSyncExternalStore singleton store, Tauri event listener with active-flag race fix, Globe badge in header, 706 tests pass, REVIEW_PASS) |
