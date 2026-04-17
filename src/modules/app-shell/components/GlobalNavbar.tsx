@@ -1,6 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { ArrowUpCircle, Brain, MessageSquare, Settings } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import type { AppSection } from '../types'
 import { NavTooltipButton } from './NavTooltipButton'
 
@@ -23,11 +22,34 @@ export function GlobalNavbar({
       onMouseDown={onStartWindowDrag}
     >
       <div className="window-no-drag flex flex-col items-center gap-5" data-window-no-drag="true">
-        <img
-          src={appIconSrc}
-          alt="If2Ai"
-          className="size-12 rounded-[6px] bg-white/85 object-cover ring-1 ring-black/10 shadow-[0_2px_6px_rgba(0,0,0,0.16)]"
-        />
+        {/* Logo container — multi-layer shadow for depth + inset highlight */}
+        <div
+          className="relative size-12 overflow-hidden rounded-[13px]"
+          style={{
+            boxShadow: [
+              '0 1px 0 0.5px rgba(255,255,255,0.55)',   /* top edge highlight — glass rim */
+              '0 0 0 0.5px rgba(0,0,0,0.12)',            /* hairline border */
+              '0 2px 4px rgba(0,0,0,0.18)',              /* contact shadow */
+              '0 6px 16px rgba(0,0,0,0.18)',             /* mid diffuse */
+              '0 14px 28px rgba(0,0,0,0.12)',            /* long ambient */
+            ].join(','),
+          }}
+        >
+          <img
+            src={appIconSrc}
+            alt="If2Ai"
+            className="size-full object-cover"
+            draggable={false}
+          />
+          {/* Inset gloss — top-left to center, simulates convex surface */}
+          <div
+            className="pointer-events-none absolute inset-0 rounded-[13px]"
+            style={{
+              background:
+                'linear-gradient(145deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 38%, transparent 60%)',
+            }}
+          />
+        </div>
         <div className="flex flex-col gap-3.5">
           <NavTooltipButton
             icon={MessageSquare}
@@ -59,27 +81,18 @@ export function GlobalNavbar({
       </div>
 
       <div className="mt-auto flex flex-col items-center gap-2 pb-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="window-no-drag size-11 rounded-[6px] text-black/48 hover:bg-black/[0.03] hover:text-black/74"
-          data-window-no-drag="true"
-          aria-label="更新"
-        >
-          <ArrowUpCircle className="h-5 w-5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
+        <NavTooltipButton
+          icon={ArrowUpCircle}
+          label="检查更新"
+          ghost
+          onClick={() => {}}
+        />
+        <NavTooltipButton
+          icon={Settings}
+          label="设置"
+          ghost
           onClick={onOpenSettings}
-          className="window-no-drag size-11 rounded-2xl text-black/52 hover:bg-black/[0.03] hover:text-black/80"
-          data-window-no-drag="true"
-          aria-label="设置"
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
+        />
       </div>
     </aside>
   )

@@ -3,20 +3,21 @@ import {
   ArrowDownUp,
   Archive,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  EyeOff,
   Folder,
   FolderOpen,
   FolderPlus,
-  MessageSquare,
   MoreHorizontal,
   PencilLine,
   Pin,
   Search,
-  Settings2,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { GlobalSearch } from '@/components/GlobalSearch'
 
 /**
  * Unified icon wrapper for ProjectRail.
@@ -58,6 +60,8 @@ export interface ProjectRailProps {
   onDeleteProject: (id: string) => void
   onRenameProject: (id: string, newName: string) => void
   onDeleteSession: (projectId: string, sessionId: string) => void
+  /** User-initiated session rename; triggers the 'manual' stage to permanently block auto-rename. */
+  onRenameSession: (sessionId: string, newTitle: string) => void
   onTogglePinSession: (projectId: string, sessionId: string, pinned: boolean) => void | Promise<unknown>
   onOpenInFinder: (projectId: string) => void | Promise<unknown>
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
@@ -79,10 +83,11 @@ export function ProjectRail({
   activeSessionId,
   onSelectProject,
   onSelectSession,
-  onNewChat,
+  onNewChat: _onNewChat,
   onDeleteProject,
   onRenameProject,
   onDeleteSession,
+  onRenameSession,
   onTogglePinSession,
   onOpenInFinder,
   onCreatePermanentWorktree,
@@ -94,6 +99,24 @@ export function ProjectRail({
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [projectDraftName, setProjectDraftName] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // 'recent' = order by last-session updated_at; 'alpha' = A-Z by project name
+  const [sortOrder, setSortOrder] = useState<'recent' | 'alpha'>('recent')
+  // When true, projects that have zero sessions are hidden
+  const [hideEmpty, setHideEmpty] = useState(false)
+  // Global search modal
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  // ⌘K / Ctrl+K opens the search modal from anywhere in the app
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000)
@@ -114,6 +137,34 @@ export function ProjectRail({
 
     return items.slice().sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
   }, [projectSessions, projects])
+
+  const sortedProjects = useMemo(() => {
+    let list = hideEmpty
+      ? projects.filter((p) => (projectSessions[p.id] ?? []).length > 0)
+      : projects
+    if (sortOrder === 'alpha') {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    } else {
+      // 'recent': sort by the most-recently-updated session in each project
+      list = [...list].sort((a, b) => {
+        const latestA = (projectSessions[a.id] ?? []).reduce(
+          (t, s) => Math.max(t, +new Date(s.updated_at)), 0
+        )
+        const latestB = (projectSessions[b.id] ?? []).reduce(
+          (t, s) => Math.max(t, +new Date(s.updated_at)), 0
+        )
+        return latestB - latestA
+      })
+    }
+    return list
+  }, [projects, projectSessions, sortOrder, hideEmpty])
+
+  /** Expand or collapse every project at once. */
+  const collapseAll = () =>
+    setExpandedProjects(Object.fromEntries(projects.map((p) => [p.id, false])))
+  const expandAll = () =>
+    setExpandedProjects(Object.fromEntries(projects.map((p) => [p.id, true])))
+  const allCollapsed = projects.every((p) => expandedProjects[p.id] === false)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0, behavior: 'auto' })
@@ -161,66 +212,123 @@ export function ProjectRail({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden select-none">
-      <div className="shrink-0 px-3 py-1">
-        <div className="flex flex-col gap-0.5">
-          <RailNavItem
-            icon={PencilLine}
-            label="新线程"
-            onClick={() => {
-              const targetProjectId = activeProjectId ?? projects[0]?.id
-              if (targetProjectId) onNewChat(targetProjectId)
-            }}
-          />
-          <RailNavItem icon={Search} label="Search" />
-        </div>
-        <div className="mt-1 flex flex-col gap-0.5">
-          {pinnedSessions.map((item) => (
-            <RecentItem
-              key={item.sessionId}
-              title={item.title}
-              age={formatRelativeAge(item.updatedAt, nowMs)}
-              onClick={() => onSelectSession(item.projectId, item.sessionId)}
-              pinned
-            />
-          ))}
-        </div>
+      {/* ── Top nav actions ─────────────────────────────────── */}
+      <div className="shrink-0 px-3 pt-2 pb-1">
+        <RailNavItem
+          icon={Search}
+          label="搜索"
+          onClick={() => setSearchOpen(true)}
+          hint="⌘K"
+        />
       </div>
 
-      <div className="shrink-0 border-t border-border/40 px-3 py-1">
+      {/* ── Pinned sessions (only rendered when non-empty) ─── */}
+      {pinnedSessions.length > 0 && (
+        <div className="shrink-0 border-t border-black/[0.06] px-3 pt-2 pb-1.5">
+          {/* Section label — same style as "线程" below */}
+          <div className="mb-1 flex items-center gap-1.5 px-1">
+            <Pin className="size-2.5 shrink-0 rotate-45 text-muted-foreground/35" strokeWidth={2} />
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/35">
+              置顶
+            </span>
+          </div>
+          <div className="flex flex-col">
+            {pinnedSessions.map((item) => (
+              <PinnedItem
+                key={item.sessionId}
+                title={item.title}
+                age={formatRelativeAge(item.updatedAt, nowMs)}
+                isActive={activeSessionId === item.sessionId}
+                onClick={() => onSelectSession(item.projectId, item.sessionId)}
+                onUnpin={() => void onTogglePinSession(item.projectId, item.sessionId, true)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Threads section label + toolbar ─────────────────── */}
+      <div className="shrink-0 border-t border-black/[0.06] px-3 py-1.5">
         <div className="flex items-center justify-between">
-          <div className="text-[10.5px] font-medium uppercase tracking-widest text-muted-foreground/35">线程</div>
-          <div className="flex items-center gap-0.5 text-muted-foreground/30">
+          <div className="px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/35">线程</div>
+          <div className="flex items-center gap-0">
+
+            {/* Sort toggle: recent ↔ alpha */}
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              title={sortOrder === 'recent' ? '当前：最近活跃，点击切换为字母排序' : '当前：字母排序，点击切换为最近活跃'}
+              onClick={() => setSortOrder((o) => o === 'recent' ? 'alpha' : 'recent')}
+              className={cn(
+                'size-6 cursor-pointer rounded p-0 transition-colors hover:bg-sidebar-accent hover:text-foreground',
+                sortOrder === 'alpha'
+                  ? 'text-primary/70'
+                  : 'text-muted-foreground/40'
+              )}
             >
-              <ArrowDownUp className="size-3.5" strokeWidth={1.5} />
+              <ArrowDownUp className="size-3" strokeWidth={1.5} />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
-            >
-              <Settings2 className="size-3.5" strokeWidth={1.5} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 cursor-pointer rounded-full p-0 text-muted-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-foreground"
-            >
-              <FolderPlus className="size-3.5" strokeWidth={1.5} />
-            </Button>
+
+            {/* Display settings dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="显示选项"
+                  className={cn(
+                    'size-6 cursor-pointer rounded p-0 transition-colors hover:bg-sidebar-accent hover:text-foreground',
+                    hideEmpty ? 'text-primary/70' : 'text-muted-foreground/40'
+                  )}
+                >
+                  <SlidersHorizontal className="size-3" strokeWidth={1.5} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={8}
+                className="w-[172px] rounded-lg border border-border/10 bg-popover/96 p-1 text-[12px] shadow-token-lg backdrop-blur-xl"
+              >
+                <DropdownMenuItem
+                  className="h-8 rounded-lg px-2.5 font-medium text-foreground/80 transition-colors hover:bg-accent focus:bg-accent"
+                  onSelect={() => (allCollapsed ? expandAll() : collapseAll())}
+                >
+                  {allCollapsed ? (
+                    <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
+                  ) : (
+                    <ChevronsDownUp className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
+                  )}
+                  <span>{allCollapsed ? '展开全部' : '收起全部'}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="my-1 bg-border/10" />
+                <DropdownMenuItem
+                  className={cn(
+                    'h-8 rounded-lg px-2.5 font-medium transition-colors hover:bg-accent focus:bg-accent',
+                    hideEmpty ? 'text-primary' : 'text-foreground/80'
+                  )}
+                  onSelect={() => setHideEmpty((v) => !v)}
+                >
+                  <EyeOff className={cn('size-3.5 shrink-0', hideEmpty ? 'text-primary/70' : 'text-muted-foreground/60')} strokeWidth={1.5} />
+                  <span>隐藏空项目</span>
+                  {hideEmpty && (
+                    <span className="ml-auto text-[10px] text-primary/60">✓</span>
+                  )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
           </div>
         </div>
       </div>
 
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-2.5">
-        <div className="flex flex-col gap-1">
-          {projects.length === 0 ? (
-          <div className="px-2 py-6 text-center text-[12px] text-muted-foreground/30">暂无项目</div>
+        <div className="flex flex-col gap-0">
+          {sortedProjects.length === 0 ? (
+          <div className="px-2 py-6 text-center text-[12px] text-muted-foreground/30">
+            {hideEmpty ? '所有项目均为空' : '暂无项目'}
+          </div>
           ) : (
-            projects.map((project) => (
+            sortedProjects.map((project) => (
               <ProjectGroup
                 key={project.id}
                 project={project}
@@ -229,11 +337,12 @@ export function ProjectRail({
                 activeSessionId={activeSessionId}
                 expandedProjects={expandedProjects}
                 setExpandedProjects={setExpandedProjects}
-                onSelectProject={onSelectProject}
                 onSelectSession={onSelectSession}
+                onSelectProject={onSelectProject}
                 onDeleteProject={onDeleteProject}
                 onRenameProject={onRenameProject}
                 onDeleteSession={onDeleteSession}
+                onRenameSession={onRenameSession}
                 onTogglePinSession={onTogglePinSession}
                 onOpenInFinder={onOpenInFinder}
                 onCreatePermanentWorktree={onCreatePermanentWorktree}
@@ -248,6 +357,17 @@ export function ProjectRail({
           )}
         </div>
       </div>
+
+      {/* ── Global search modal ──────────────────────────── */}
+      <GlobalSearch
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        projects={projects}
+        projectSessions={projectSessions}
+        activeProjectId={activeProjectId}
+        onSelectSession={onSelectSession}
+        onSelectProject={onSelectProject}
+      />
     </div>
   )
 }
@@ -256,43 +376,116 @@ function RailNavItem({
   icon: Icon,
   label,
   onClick,
+  hint,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
   label: string
   onClick?: () => void
+  hint?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex h-8 cursor-pointer items-center gap-2 rounded-xl px-2 text-left text-[13px] font-medium tracking-tight text-primary transition-colors hover:bg-primary/10 hover:text-primary"
+      className="group flex h-8 w-full cursor-pointer items-center gap-2 rounded-xl px-2 text-left text-[13px] font-medium tracking-tight text-primary transition-colors hover:bg-primary/10 hover:text-primary"
     >
       <RailIcon icon={Icon} className="text-primary/70" />
-      <span>{label}</span>
+      <span className="flex-1">{label}</span>
+      {hint && (
+        <span className="rounded bg-primary/8 px-1.5 py-0.5 font-mono text-[10px] text-primary/35 opacity-0 transition-opacity group-hover:opacity-100">
+          {hint}
+        </span>
+      )}
     </button>
   )
 }
 
-function RecentItem({
+/** Pinned session row — visually consistent with SessionRow but with a pin accent. */
+function PinnedItem({
   title,
   age,
-  pinned = false,
+  isActive,
   onClick,
+  onUnpin,
 }: {
   title: string
   age: string
-  pinned?: boolean
+  isActive: boolean
   onClick: () => void
+  onUnpin: () => void
 }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() }
+      }}
+      className={cn(
+        'group/pinned relative flex h-[26px] w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 text-[11.5px] transition-colors',
+        isActive
+          ? 'bg-primary/10 text-primary font-medium'
+          : 'text-foreground/45 hover:bg-black/[0.04] hover:text-foreground/65 font-normal'
+      )}
+    >
+      {/* Pin indicator — amber accent */}
+      <Pin
+        className={cn(
+          'size-2.5 shrink-0 rotate-45 transition-colors',
+          isActive ? 'text-primary/60' : 'text-amber-400/60'
+        )}
+        strokeWidth={2}
+      />
+
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+
+      {/* Trailing area: age fades out on hover, unpin button fades in */}
+      <div className="relative flex h-full shrink-0 items-center">
+        <span className="text-[10px] text-muted-foreground/30 transition-opacity duration-100 group-hover/pinned:opacity-0">
+          {age}
+        </span>
+        <button
+          type="button"
+          aria-label="取消置顶"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onUnpin() }}
+          className={cn(
+            'absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded',
+            'opacity-0 transition-all duration-100 group-hover/pinned:opacity-100',
+            'text-muted-foreground/40 hover:bg-black/[0.06] hover:text-foreground/70',
+            'cursor-pointer'
+          )}
+        >
+          <Pin className="size-2.5 rotate-45" strokeWidth={2} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** A compact "+ 新聊天" row that sits at the bottom of each project's session list. */
+function NewChatRow({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex h-7 cursor-pointer items-center gap-1.5 rounded-xl px-0.5 text-left text-[12px] text-sidebar-foreground/55 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      className={cn(
+        'group flex h-[24px] w-full cursor-pointer items-center gap-1.5 rounded-sm pl-3 pr-2',
+        'text-[11px] font-medium text-muted-foreground/30',
+        'transition-colors hover:bg-jade/[0.07] hover:text-jade/70',
+      )}
     >
-      <Pin className={cn('size-3 shrink-0 rotate-45 text-muted-foreground/35', pinned && 'text-muted-foreground/60')} strokeWidth={1.5} />
-      <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-      <span className="shrink-0 text-[10px] text-muted-foreground/40">{age}</span>
+      <svg
+        className="size-2.5 shrink-0 transition-transform group-hover:rotate-90"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        viewBox="0 0 10 10"
+      >
+        <path strokeLinecap="round" d="M5 1v8M1 5h8" />
+      </svg>
+      <span>新聊天</span>
     </button>
   )
 }
@@ -304,11 +497,12 @@ function ProjectGroup({
   activeSessionId,
   expandedProjects,
   setExpandedProjects,
-  onSelectProject,
   onSelectSession,
+  onSelectProject,
   onDeleteProject,
   onRenameProject,
   onDeleteSession,
+  onRenameSession,
   onTogglePinSession,
   onOpenInFinder,
   onCreatePermanentWorktree,
@@ -325,11 +519,13 @@ function ProjectGroup({
   activeSessionId: string | null
   expandedProjects: Record<string, boolean>
   setExpandedProjects: Dispatch<SetStateAction<Record<string, boolean>>>
-  onSelectProject: (id: string) => void
   onSelectSession: (projectId: string, sessionId: string) => void
+  /** Navigate to Home with this project pre-selected; session created only on first send. */
+  onSelectProject: (projectId: string) => void
   onDeleteProject: (id: string) => void
   onRenameProject: (id: string, newName: string) => void
   onDeleteSession: (projectId: string, sessionId: string) => void
+  onRenameSession: (sessionId: string, newTitle: string) => void
   onTogglePinSession: (projectId: string, sessionId: string, pinned: boolean) => void | Promise<unknown>
   onOpenInFinder: (projectId: string) => void | Promise<unknown>
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>
@@ -350,7 +546,8 @@ function ProjectGroup({
       ...prev,
       [project.id]: !isExpanded,
     }))
-    onSelectProject(project.id)
+    // Intentionally NOT calling onSelectProject here —
+    // clicking the project row only expands/collapses the session list.
   }
 
   const beginInlineRename = () => {
@@ -373,24 +570,25 @@ function ProjectGroup({
   }
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="group/project relative rounded-xl px-0.5 py-0.5 select-none">
+    // mt-2.5 between groups creates breathing room; first:mt-0 removes top gap for first item
+    <div className="mt-1.5 flex flex-col first:mt-0.5">
+
+      {/* ── Project header ────────────────────────────────────────────── */}
+      <div className="group/project relative select-none">
         {isEditing ? (
-          <div className="flex items-center gap-2 rounded-xl bg-accent/60 px-2.5 py-1.5 pr-2">
-            <button type="button" onClick={toggleProject} className="flex shrink-0 items-center gap-2 text-foreground/70">
-              <ChevronDown
-                className={cn(
-                  'size-3 shrink-0 text-muted-foreground/50 transition-transform',
-                  !isExpanded && '-rotate-90'
-                )}
-                strokeWidth={1.5}
-              />
-              {isExpanded ? (
-                <FolderOpen className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70')} strokeWidth={1.5} />
-              ) : (
-                <Folder className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70')} strokeWidth={1.5} />
+          <div className="flex items-center gap-1.5 rounded-md bg-black/[0.04] px-2 py-[5px] pr-1.5">
+            <ChevronDown
+              className={cn(
+                'size-2.5 shrink-0 text-foreground/30 transition-transform',
+                !isExpanded && '-rotate-90'
               )}
-            </button>
+              strokeWidth={2.5}
+            />
+            {isExpanded ? (
+              <FolderOpen className="size-3 shrink-0 text-foreground/40" strokeWidth={1.5} />
+            ) : (
+              <Folder className="size-3 shrink-0 text-foreground/40" strokeWidth={1.5} />
+            )}
             <Input
               autoFocus
               value={projectDraftName}
@@ -406,7 +604,7 @@ function ProjectGroup({
                   cancelInlineRename()
                 }
               }}
-              className="h-7 flex-1 rounded-xl border border-border bg-surface px-2.5 text-[12.5px] shadow-none focus-visible:ring-0"
+              className="h-5 flex-1 rounded border-0 bg-transparent px-0 text-[11.5px] font-semibold shadow-none focus-visible:ring-0"
             />
           </div>
         ) : (
@@ -414,41 +612,77 @@ function ProjectGroup({
             type="button"
             onClick={toggleProject}
             className={cn(
-              'relative flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] tracking-tight transition-colors',
-              isActiveProject
-                ? 'bg-sidebar-accent text-foreground font-semibold'
-                : 'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground font-medium'
+              'relative flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-[5px] text-left tracking-tight transition-colors',
+              hasActiveSession
+                ? 'text-foreground/70 hover:bg-black/[0.04]'
+                : 'text-foreground/38 hover:bg-black/[0.03] hover:text-foreground/55'
             )}
           >
+            {/* Tiny chevron — strong contrast vs session row */}
             <ChevronDown
               className={cn(
-                'size-3.5 shrink-0 text-muted-foreground/50 transition-transform',
-                !isExpanded && '-rotate-90',
-                isActiveProject && 'text-foreground/60'
+                'size-2.5 shrink-0 transition-transform duration-150',
+                hasActiveSession ? 'text-foreground/40' : 'text-foreground/25',
+                !isExpanded && '-rotate-90'
               )}
-              strokeWidth={1.5}
+              strokeWidth={2.5}
             />
             {isExpanded ? (
-              <FolderOpen className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70', isActiveProject && 'text-foreground/70')} strokeWidth={1.5} />
+              <FolderOpen
+                className={cn('size-3 shrink-0', hasActiveSession ? 'text-foreground/50' : 'text-foreground/28')}
+                strokeWidth={1.5}
+              />
             ) : (
-              <Folder className={cn('size-3.5 shrink-0 text-muted-foreground/60', hasActiveSession && 'text-foreground/70', isActiveProject && 'text-foreground/70')} strokeWidth={1.5} />
+              <Folder
+                className={cn('size-3 shrink-0', hasActiveSession ? 'text-foreground/50' : 'text-foreground/28')}
+                strokeWidth={1.5}
+              />
             )}
-            <span className="min-w-0 flex-1 truncate">{project.name}</span>
+            {/* Project name: semibold + slightly larger than sessions */}
+            <span className={cn(
+              'min-w-0 flex-1 truncate text-[12px] font-semibold',
+              hasActiveSession ? 'text-foreground/70' : 'text-foreground/40'
+            )}>
+              {project.name}
+            </span>
           </button>
         )}
 
-        <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+        {/* Hover actions — new chat + pencil + context menu */}
+        <div className="pointer-events-none absolute inset-y-0 right-0.5 flex items-center gap-0 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+          {/* + New chat shortcut */}
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="pointer-events-auto size-[26px] rounded-full p-0 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+            title="新聊天"
+            className="pointer-events-auto size-6 rounded-md p-0 text-muted-foreground/35 transition-colors hover:bg-jade/10 hover:text-jade cursor-pointer"
+            onClick={(event) => {
+              event.stopPropagation()
+              onSelectProject(project.id)
+            }}
+          >
+            <svg
+              className="size-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              viewBox="0 0 12 12"
+            >
+              <path strokeLinecap="round" d="M6 2v8M2 6h8" />
+            </svg>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="pointer-events-auto size-6 rounded-md p-0 text-muted-foreground/35 transition-colors hover:text-foreground cursor-pointer"
             onClick={(event) => {
               event.stopPropagation()
               beginInlineRename()
             }}
           >
-            <PencilLine className="size-3.5" strokeWidth={1.5} />
+            <PencilLine className="size-3" strokeWidth={1.5} />
           </Button>
           <ProjectMenu
             project={project}
@@ -460,11 +694,19 @@ function ProjectGroup({
         </div>
       </div>
 
-      <div className={cn('flex flex-col gap-0.5', !isExpanded && 'hidden')}>
+      {/* ── Session list: indented + left tree-line ────────────────────── */}
+      <div className={cn(!isExpanded && 'hidden')}>
         {sessions.length === 0 ? (
-          <div className="px-2 py-3 text-[11px] text-muted-foreground/20">无线程</div>
+          // Empty state: show "no sessions" + a prominent new-chat row
+          <div className="ml-[18px] border-l border-black/[0.06]">
+            <div className="pb-0.5 pl-3 pt-0.5 text-[10.5px] text-muted-foreground/25">
+              无线程
+            </div>
+            <NewChatRow onClick={() => onSelectProject(project.id)} />
+          </div>
         ) : (
-          <div className="flex flex-col gap-0.5 pl-1.5">
+          // ml positions the line under the folder icon; border-l draws the connector
+          <div className="ml-[18px] flex flex-col border-l border-black/[0.07] py-0.5">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -478,13 +720,14 @@ function ProjectGroup({
                 onSelectSession={onSelectSession}
                 onTogglePinSession={onTogglePinSession}
                 onDeleteSession={onDeleteSession}
+                onRenameSession={onRenameSession}
               />
             ))}
+            {/* "New chat" shortcut at the bottom of every session list */}
+            <NewChatRow onClick={() => onSelectProject(project.id)} />
           </div>
         )}
       </div>
-
-      <Separator className="my-1 bg-border/20" />
     </div>
   )
 }
@@ -500,6 +743,7 @@ function SessionRow({
   onSelectSession,
   onTogglePinSession,
   onDeleteSession,
+  onRenameSession,
 }: {
   projectId: string
   sessionId: string
@@ -511,7 +755,55 @@ function SessionRow({
   onSelectSession: (projectId: string, sessionId: string) => void
   onTogglePinSession: (projectId: string, sessionId: string, pinned: boolean) => void | Promise<unknown>
   onDeleteSession: (projectId: string, sessionId: string) => void
+  onRenameSession: (sessionId: string, newTitle: string) => void
 }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [draftTitle, setDraftTitle] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const beginEdit = () => {
+    setDraftTitle(title)
+    setIsEditing(true)
+  }
+
+  const commitEdit = () => {
+    const trimmed = draftTitle.trim()
+    if (trimmed && trimmed !== title) {
+      onRenameSession(sessionId, trimmed)
+    }
+    setIsEditing(false)
+  }
+
+  const cancelEdit = () => {
+    setIsEditing(false)
+  }
+
+  // Auto-focus input when edit mode starts
+  useEffect(() => {
+    if (isEditing) {
+      // Delay to let the DOM render the input first
+      requestAnimationFrame(() => inputRef.current?.select())
+    }
+  }, [isEditing])
+
+  if (isEditing) {
+    return (
+      <div className="flex h-[26px] items-center gap-1.5 rounded-sm bg-black/[0.05] pl-3 pr-1.5">
+        <Input
+          ref={inputRef}
+          value={draftTitle}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitEdit() }
+            if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
+          }}
+          className="h-4 flex-1 rounded border-0 bg-transparent px-0 text-[11.5px] shadow-none focus-visible:ring-0"
+        />
+      </div>
+    )
+  }
+
   return (
     <div
       role="button"
@@ -524,47 +816,29 @@ function SessionRow({
         }
       }}
       className={cn(
-        'group/session relative grid h-7 w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-1.5 text-[12px] transition-colors',
+        // Simplified layout: no icon column — title + trailing age/menu only
+        'group/session relative flex h-[26px] w-full cursor-pointer items-center rounded-sm pl-3 pr-1 text-[11.5px] transition-colors',
         isActive
-          ? 'bg-primary/12 text-primary font-medium'
-          : 'text-sidebar-foreground/55 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground font-normal'
+          ? 'bg-primary/10 text-primary font-medium'
+          : 'text-foreground/40 hover:bg-black/[0.04] hover:text-foreground/65 font-normal'
       )}
     >
-      <button
-        type="button"
-        className="relative flex size-[18px] items-center justify-center text-muted-foreground/55 transition-colors hover:text-foreground"
-        aria-label={isPinned ? '取消置顶' : '置顶'}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation()
-          void onTogglePinSession(projectId, sessionId, isPinned)
-        }}
-      >
-        <MessageSquare
-          className={cn(
-            'absolute size-3.5 transition-all',
-            isPinned ? 'opacity-0 scale-75' : 'opacity-100 scale-100 group-hover/session:opacity-0'
-          )}
-          strokeWidth={1.5}
-        />
-        <Pin
-          className={cn(
-            'absolute size-3.5 rotate-45 transition-all',
-            isPinned
-              ? 'opacity-100 scale-100 text-muted-foreground/60'
-              : 'opacity-0 scale-75 text-muted-foreground/60 group-hover/session:opacity-100 group-hover/session:scale-100'
-          )}
-          strokeWidth={1.5}
-        />
-      </button>
+      {/* Pinned dot — subtle indicator, no full icon column */}
+      {isPinned && (
+        <span className="mr-1.5 size-1 shrink-0 rounded-full bg-current opacity-50" />
+      )}
 
-      <span className="min-w-0 truncate">{title}</span>
+      <span className="min-w-0 flex-1 truncate">{title}</span>
 
-      <div className="relative flex h-full min-w-0 items-center justify-end">
-        <span className="flex shrink-0 items-center justify-end gap-1 pr-0.5 text-right text-[10px] font-normal text-muted-foreground/30 transition-opacity duration-150 group-hover/session:opacity-0">
+      {/* Trailing: age fades out on hover, menu fades in */}
+      <div className="relative flex h-full shrink-0 items-center">
+        <span className={cn(
+          'flex items-center gap-1 text-[10px] text-muted-foreground/30 transition-opacity duration-100',
+          'group-hover/session:opacity-0'
+        )}>
           {isRunning ? (
-            <span className="inline-flex size-2 items-center justify-center">
-              <span className="absolute size-1.5 rounded-full bg-primary/20 animate-pulse" />
+            <span className="inline-flex size-1.5 items-center justify-center">
+              <span className="absolute size-1.5 rounded-full bg-primary/30 animate-pulse" />
               <span className="relative size-1 rounded-full bg-primary animate-pulse" />
             </span>
           ) : null}
@@ -577,11 +851,11 @@ function SessionRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-0 top-1/2 size-7 -translate-y-1/2 rounded-full p-0 text-muted-foreground/50 opacity-0 transition-colors hover:text-foreground group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
+              className="absolute right-0 top-1/2 size-6 -translate-y-1/2 rounded p-0 text-muted-foreground/40 opacity-0 transition-all hover:text-foreground group-hover/session:opacity-100 focus-visible:opacity-100 cursor-pointer"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
-              <MoreHorizontal className="size-3.5" strokeWidth={1.5} />
+              <MoreHorizontal className="size-3" strokeWidth={1.5} />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -597,6 +871,13 @@ function SessionRow({
             >
               <Pin className="size-3.5 shrink-0 rotate-45 text-muted-foreground/60" strokeWidth={1.5} />
               <span>{isPinned ? '取消置顶' : '置顶'}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-foreground/82 transition-colors hover:bg-accent focus:bg-accent focus:text-foreground/90"
+              onSelect={beginEdit}
+            >
+              <PencilLine className="size-3.5 shrink-0 text-muted-foreground/60" strokeWidth={1.5} />
+              <span>重命名</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator className="my-1 bg-border/10" />
             <DropdownMenuItem

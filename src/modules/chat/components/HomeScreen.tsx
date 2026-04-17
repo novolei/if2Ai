@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
-  ChevronUp,
   FolderGit2,
   FolderOpen,
   GitBranch,
   Laptop,
   Mic,
-  MessageSquare,
   Plus,
   PlusCircle,
   ArrowUp,
@@ -298,8 +296,8 @@ export function HomeScreen({
         </div>
 
         {/* ── Project context bar ── */}
-        <div className="flex w-full items-center gap-2" ref={dropdownRef}>
-          {/* Project pill (triggers dropdown) */}
+        <div className="flex w-full flex-wrap items-center gap-1.5" ref={dropdownRef}>
+          {/* Project pill */}
           <div className="relative">
             <button
               type="button"
@@ -308,42 +306,38 @@ export function HomeScreen({
                 setProjectSearch('')
               }}
               className={cn(
-                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-all',
+                'group flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-all',
                 projectDropdownOpen
                   ? 'border-black/20 bg-white text-black/80 shadow-sm'
                   : 'border-black/[0.08] bg-black/[0.03] text-black/55 hover:border-black/14 hover:bg-black/[0.05]'
               )}
             >
-              <FolderOpen className="h-[13px] w-[13px]" />
-              {projectName}
-              {projectDropdownOpen ? (
-                <ChevronUp className="h-3 w-3" />
-              ) : (
-                <ChevronDown className="h-3 w-3" />
-              )}
+              <FolderOpen className={cn('h-[13px] w-[13px]', projectDropdownOpen ? 'text-black/70' : 'text-black/35')} />
+              <span>{projectName}</span>
+              <ChevronDown className={cn('h-2.5 w-2.5 transition-transform', projectDropdownOpen && 'rotate-180')} />
             </button>
 
             {/* Project dropdown */}
             {projectDropdownOpen && (
-              <div className="absolute left-0 top-[calc(100%+6px)] z-50 w-[280px] overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-[0_8px_32px_rgba(0,0,0,0.12)]">
+              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[280px] overflow-hidden rounded-2xl border border-black/[0.07] bg-white/96 shadow-[0_12px_40px_rgba(0,0,0,0.13),0_0_0_0.5px_rgba(0,0,0,0.05)] backdrop-blur-xl">
                 {/* Search */}
-                <div className="flex items-center gap-2 border-b border-black/[0.06] px-3 py-2">
-                  <Search className="h-3.5 w-3.5 shrink-0 text-black/30" />
+                <div className="flex items-center gap-2 border-b border-black/[0.06] px-3.5 py-2.5">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-black/25" />
                   <input
                     type="text"
                     value={projectSearch}
                     onChange={(e) => setProjectSearch(e.target.value)}
-                    placeholder="搜索项目"
-                    className="flex-1 bg-transparent text-[13px] text-black/80 placeholder:text-black/30 focus:outline-none"
+                    placeholder="搜索项目…"
+                    className="flex-1 bg-transparent text-[13px] text-black/80 placeholder:text-black/28 focus:outline-none"
                     autoFocus
                   />
                   {projectSearch && (
                     <button
                       type="button"
                       onClick={() => setProjectSearch('')}
-                      className="text-black/30 hover:text-black/55"
+                      className="flex size-4 items-center justify-center rounded-full bg-black/8 text-black/35 hover:text-black/60"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-2.5 w-2.5" />
                     </button>
                   )}
                 </div>
@@ -351,7 +345,7 @@ export function HomeScreen({
                 {/* Project list */}
                 <div className="max-h-[240px] overflow-y-auto py-1">
                   {filteredProjects.length === 0 ? (
-                    <div className="px-4 py-3 text-[12px] text-black/35">无匹配项目</div>
+                    <div className="px-4 py-4 text-center text-[12px] text-black/30">无匹配项目</div>
                   ) : (
                     filteredProjects.map((project) => (
                       <button
@@ -370,20 +364,11 @@ export function HomeScreen({
                         <FolderGit2
                           className={cn(
                             'h-4 w-4 shrink-0',
-                            selectedProjectId === project.id
-                              ? 'text-black/70'
-                              : 'text-black/35'
+                            selectedProjectId === project.id ? 'text-black/70' : 'text-black/35'
                           )}
                         />
                         <div className="min-w-0 flex-1">
-                          <div
-                            className={cn(
-                              'truncate text-[13px]',
-                              selectedProjectId === project.id
-                                ? 'font-semibold text-black/88'
-                                : 'text-black/70'
-                            )}
-                          >
+                          <div className={cn('truncate text-[13px]', selectedProjectId === project.id ? 'font-semibold text-black/88' : 'text-black/70')}>
                             {project.name}
                           </div>
                           <div className="truncate text-[11px] text-black/35">
@@ -398,7 +383,7 @@ export function HomeScreen({
                   )}
                 </div>
 
-                {/* Footer actions */}
+                {/* Footer */}
                 <div className="border-t border-black/[0.06] py-1">
                   <button
                     type="button"
@@ -417,20 +402,6 @@ export function HomeScreen({
                     <PlusCircle className="h-4 w-4 shrink-0 text-black/40" />
                     <span className="text-[13px] text-black/65">
                       {isPickingFolder ? '选择文件夹中…' : '添加新项目'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onHomeProjectSelect(null)
-                      setProjectDropdownOpen(false)
-                    }}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-black/[0.04]"
-                  >
-                    <FolderOpen className="h-4 w-4 shrink-0 text-black/30" />
-                    <span className="text-[13px] text-black/45">
-                      Don&apos;t work in a project
                     </span>
                   </button>
                 </div>
@@ -454,32 +425,49 @@ export function HomeScreen({
             className="flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[12px] font-medium text-black/55 transition-colors hover:border-black/14 hover:bg-black/[0.05]"
           >
             <GitBranch className="h-[13px] w-[13px]" />
-            {branchLabel}
+            <span className="max-w-[140px] truncate">{branchLabel}</span>
             <ChevronDown className="h-3 w-3" />
           </button>
         </div>
 
         {/* ── Recent sessions ── */}
         {recentSessions.length > 0 && (
-          <div className="w-full space-y-1">
-            {recentSessions.slice(0, 3).map((session) => (
-              <button
-                key={session.sessionId}
-                type="button"
-                onClick={() => onSelectSession(session.projectId, session.sessionId)}
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-colors hover:bg-black/[0.04] active:bg-black/[0.06]"
-              >
-                <MessageSquare className="h-[15px] w-[15px] shrink-0 text-black/30" />
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-black/60">
+          <div className="w-full">
+            {/* Section label */}
+            <div className="mb-1 flex items-center justify-between px-1">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-black/22">
+                最近对话
+              </span>
+            </div>
+
+            {/* Session rows */}
+            <div className="flex flex-col">
+              {recentSessions.slice(0, 3).map((session, idx) => (
+                <button
+                  key={session.sessionId}
+                  type="button"
+                  onClick={() => onSelectSession(session.projectId, session.sessionId)}
+                  className={cn(
+                    'group flex w-full items-center gap-3 px-3 py-2.5 text-left transition-all',
+                    'rounded-xl hover:bg-black/[0.035] active:bg-black/[0.055]',
+                    idx === 0 && 'mt-0'
+                  )}
+                >
+                  {/* Subtle dot indicator */}
+                  <div className="size-[5px] shrink-0 rounded-full bg-black/[0.12] transition-colors group-hover:bg-primary/40" />
+
+                  {/* Title */}
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-black/55 transition-colors group-hover:text-black/78">
                     {session.title}
                   </span>
-                </div>
-                <span className="shrink-0 text-[11px] text-black/25">
-                  {session.projectName}
-                </span>
-              </button>
-            ))}
+
+                  {/* Project badge */}
+                  <span className="shrink-0 rounded-full border border-black/[0.06] bg-black/[0.03] px-2 py-[2px] text-[10.5px] text-black/35 transition-colors group-hover:border-black/[0.09] group-hover:text-black/50">
+                    {session.projectName}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

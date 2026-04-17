@@ -81,6 +81,8 @@ export interface ChatWorkspaceProps {
   onDeleteProject: (id: string) => void
   onRenameProject: (id: string, newName: string) => void
   onDeleteSession: (projectId: string, sessionId: string) => void
+  /** User-initiated session rename; sets stage to 'manual' to block future auto-renames. */
+  onRenameSession: (sessionId: string, newTitle: string) => void
   onTogglePinSession: (projectId: string, sessionId: string, pinned: boolean) => void | Promise<unknown>
   onOpenInFinder: (projectId: string) => void | Promise<unknown>
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>

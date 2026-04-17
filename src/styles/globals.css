@@ -177,9 +177,9 @@
   --popover:          oklch(98.5% 0.005 195);
   --popover-foreground: oklch(24% 0.012 200);
 
-  /* ── Primary（玉石青核心色）────────────────────────────────── */
-  --primary:            oklch(46%  0.08  195);
-  --primary-foreground: oklch(98%  0.005 195);
+  /* ── Primary（Jade 玉绿 — If2Ai 品牌主色）────────────────── */
+  --primary:            oklch(58%  0.13  162);
+  --primary-foreground: oklch(98%  0.005 160);
 
   /* ── Secondary（柔和雾色）───────────────────────────────────── */
   --secondary:            oklch(93%  0.012 195);
@@ -200,7 +200,7 @@
   /* ── Border & Input ─────────────────────────────────────────── */
   --border: oklch(88%  0.014 195);
   --input:  oklch(91%  0.010 195);
-  --ring:   oklch(64%  0.08  195);
+  --ring:   oklch(68%  0.11  162);
 
   /* ── Jade Brand Palette ─────────────────────────────────────── */
   --jade:          oklch(67.5%  0.12  162);
@@ -256,8 +256,8 @@
   /* ── Sidebar ─────────────────────────────────────────────────── */
   --sidebar:                    oklch(97.5% 0.005 195);
   --sidebar-foreground:         oklch(30%   0.018 200);
-  --sidebar-primary:            oklch(46%   0.08  195);
-  --sidebar-primary-foreground: oklch(98%   0.006 195);
+  --sidebar-primary:            oklch(58%   0.13  162);
+  --sidebar-primary-foreground: oklch(98%   0.005 160);
   --sidebar-accent:             oklch(93%   0.010 195);
   --sidebar-accent-foreground:  oklch(30%   0.018 200);
   --sidebar-border:             oklch(89%   0.010 195);

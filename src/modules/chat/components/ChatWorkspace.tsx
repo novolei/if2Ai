@@ -109,6 +109,7 @@ export function ChatWorkspace({
   onDeleteProject,
   onRenameProject,
   onDeleteSession,
+  onRenameSession,
   onTogglePinSession,
   onOpenInFinder,
   onCreatePermanentWorktree,
@@ -214,6 +215,7 @@ export function ChatWorkspace({
                   onDeleteProject={onDeleteProject}
                   onRenameProject={onRenameProject}
                   onDeleteSession={onDeleteSession}
+                  onRenameSession={onRenameSession}
                   onTogglePinSession={onTogglePinSession}
                   onOpenInFinder={onOpenInFinder}
                   onCreatePermanentWorktree={onCreatePermanentWorktree}

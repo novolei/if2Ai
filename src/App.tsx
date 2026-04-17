@@ -33,6 +33,7 @@ import {
   type SessionMeta,
   type StreamTokenPayload,
 } from '@/lib/tauri'
+import { Toaster, toast } from 'sonner'
 import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
@@ -204,6 +205,9 @@ function App() {
   })
   const [sessionTodos, setSessionTodos] = useState<Record<string, TodoItem[]>>({})
   const [sessionTitleStates, setSessionTitleStates] = useState<Record<string, SessionTitleState>>({})
+  // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
+  const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({})
+  useEffect(() => { sessionTitleStatesRef.current = sessionTitleStates }, [sessionTitleStates])
   const setRecoveryStateForCursor = (sessionId: string, resumeCursor: string, isRecovering: boolean) => {
     setConversations((prev) => {
       const currentConv = prev[sessionId]
@@ -346,9 +350,11 @@ function App() {
     return cleaned
   }
 
-  const formatSessionTitle = (raw: string): string => {
+  // P3: accept the owning conversation so [resume_cursor] falls back to its title,
+  // not the currently-visible activeConv (which may differ mid-rename).
+  const formatSessionTitle = (raw: string, conv?: Conversation): string => {
     if (raw.includes('[resume_cursor]')) {
-      return activeConv?.title ?? '继续当前任务'
+      return conv?.title ?? activeConv?.title ?? '继续当前任务'
     }
     const cleaned = normalizeSessionTitleSource(raw)
 
@@ -383,22 +389,22 @@ function App() {
   const getMeaningfulUserMessages = (messages: Message[]): Message[] =>
     messages.filter((message) => message.role === 'user' && isMeaningfulUserMessage(message.content))
 
-  const getInitialSessionTitleCandidate = (messages: Message[]): string | null => {
+  const getInitialSessionTitleCandidate = (messages: Message[], conv?: Conversation): string | null => {
     const meaningfulMessages = getMeaningfulUserMessages(messages)
     const seedMessage =
-      meaningfulMessages.find((message) => formatSessionTitle(message.content) !== PLACEHOLDER_SESSION_TITLE)
+      meaningfulMessages.find((message) => formatSessionTitle(message.content, conv) !== PLACEHOLDER_SESSION_TITLE)
       ?? meaningfulMessages[0]
     if (!seedMessage) return null
-    const nextTitle = formatSessionTitle(seedMessage.content)
+    const nextTitle = formatSessionTitle(seedMessage.content, conv)
     return nextTitle === PLACEHOLDER_SESSION_TITLE ? null : nextTitle
   }
 
-  const getCorrectionTitleCandidate = (messages: Message[], currentTitle: string): string | null => {
+  const getCorrectionTitleCandidate = (messages: Message[], currentTitle: string, conv?: Conversation): string | null => {
     const userMessages = getMeaningfulUserMessages(messages)
     if (userMessages.length < 2) return null
     const recentCandidates = userMessages
       .slice(-2)
-      .map((message) => formatSessionTitle(message.content))
+      .map((message) => formatSessionTitle(message.content, conv))
       .filter((candidate) => candidate && candidate !== PLACEHOLDER_SESSION_TITLE)
     if (recentCandidates.length === 0) return null
     const [previousCandidate, latestCandidate] = recentCandidates
@@ -433,12 +439,19 @@ function App() {
   ) => {
     const titleState =
       sessionTitleStates[sessionId] ?? getInitialSessionTitleState(conversation.title, conversation.messages)
+
+    // P0: manual stage = user-initiated rename; never auto-override
+    if (titleState.stage === 'manual' || titleState.stage === 'locked') return
+
     const meaningfulUserMessages = getMeaningfulUserMessages(conversation.messages)
     const meaningfulTurnCount = meaningfulUserMessages.length
 
-    if (titleState.stage === 'manual' || titleState.stage === 'locked') return
-
     if (meaningfulTurnCount === 0) return
+
+    // P2: wait until AI has responded at least once before setting any title,
+    // so the session title reflects real context rather than just the first user prompt.
+    const hasAiReply = conversation.messages.some((m) => m.role === 'assistant')
+    if (!hasAiReply) return
 
     if (meaningfulTurnCount > MAX_AUTO_TITLE_TURNS) {
       setSessionTitleStates((prev) => ({
@@ -453,7 +466,8 @@ function App() {
     }
 
     const currentTitle = conversation.title || PLACEHOLDER_SESSION_TITLE
-    const initialCandidate = getInitialSessionTitleCandidate(conversation.messages)
+    // P3: pass the owning conversation so [resume_cursor] resolves correctly
+    const initialCandidate = getInitialSessionTitleCandidate(conversation.messages, conversation)
     if (
       titleState.stage === 'placeholder' &&
       initialCandidate &&
@@ -474,7 +488,7 @@ function App() {
       titleState.stage === 'provisional' &&
       titleState.autoRenameCount < MAX_AUTO_RENAME_COUNT
     ) {
-      const correctionCandidate = getCorrectionTitleCandidate(conversation.messages, currentTitle)
+      const correctionCandidate = getCorrectionTitleCandidate(conversation.messages, currentTitle, conversation)
       if (correctionCandidate) {
         syncSessionTitle(projectId, sessionId, correctionCandidate)
         setSessionTitleStates((prev) => ({
@@ -503,6 +517,9 @@ function App() {
     const nextTitle = title.trim()
     if (!nextTitle) return
 
+    // Capture previous title for rollback before the optimistic update
+    const previousTitle = conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE
+
     setConversations((prev) => {
       const conversation = prev[sessionId]
       if (!conversation || conversation.title === nextTitle) return prev
@@ -527,8 +544,25 @@ function App() {
       return changed ? { ...prev, [projectId]: nextSessions } : prev
     })
 
+    // P1: rollback optimistic update and show error toast on persistence failure
     void renameSession(sessionId, nextTitle).catch((err) => {
       console.error('Failed to rename session:', err)
+      toast.error('重命名失败，已恢复原名称', { duration: 3000 })
+      setConversations((prev) => {
+        const conversation = prev[sessionId]
+        if (!conversation || conversation.title !== nextTitle) return prev
+        return { ...prev, [sessionId]: { ...conversation, title: previousTitle } }
+      })
+      setProjectSessions((prev) => {
+        const sessions = prev[projectId]
+        if (!sessions) return prev
+        return {
+          ...prev,
+          [projectId]: sessions.map((s) =>
+            s.id === sessionId && s.title === nextTitle ? { ...s, title: previousTitle } : s
+          ),
+        }
+      })
     })
   }
 
@@ -592,10 +626,32 @@ function App() {
     sessionLoadingRef.current = sessionLoading
   }, [sessionLoading])
 
+  // P1: compute stable counters so the rename effect only fires when truly necessary,
+  // not on every streaming token that updates message content.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const activeMeaningfulUserMsgCount = useMemo(
+    () =>
+      activeConv
+        ? activeConv.messages.filter(
+            (m) => m.role === 'user' && isMeaningfulUserMessage(m.content)
+          ).length
+        : 0,
+    // isMeaningfulUserMessage is a stable pure function defined in the same render scope
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeConv?.messages]
+  )
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const activeAiReplyCount = useMemo(
+    () => activeConv?.messages.filter((m) => m.role === 'assistant').length ?? 0,
+    [activeConv?.messages]
+  )
+
+  // Only re-run when meaningful counters change — avoids firing on every streaming update
   useEffect(() => {
     if (!activeConv || !activeSessionId) return
     maybeAutoRenameSession(activeConv.projectId, activeSessionId, activeConv)
-  }, [activeConv, activeSessionId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, activeMeaningfulUserMsgCount, activeAiReplyCount])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -652,9 +708,30 @@ function App() {
     }
   }
 
+  // P0: monotonic merge — keep in-memory title when our local state is provisional/locked/manual,
+  // preventing a stale backend response from overwriting an optimistic title update.
   const refreshProjectSessions = async (projectId: string) => {
     const sessions = await listProjectSessions(projectId)
-    setProjectSessions((prev) => ({ ...prev, [projectId]: sessions }))
+    setProjectSessions((prev) => {
+      const existing = prev[projectId] ?? []
+      const titleStates = sessionTitleStatesRef.current
+      const merged = sessions.map((s) => {
+        const inMem = existing.find((e) => e.id === s.id)
+        if (!inMem) return s
+        const ts = titleStates[s.id]
+        // Keep the in-memory title when we've already set it and the backend may not have caught up
+        if (
+          ts &&
+          (ts.stage === 'provisional' || ts.stage === 'locked' || ts.stage === 'manual') &&
+          inMem.title &&
+          inMem.title !== PLACEHOLDER_SESSION_TITLE
+        ) {
+          return { ...s, title: inMem.title }
+        }
+        return s
+      })
+      return { ...prev, [projectId]: merged }
+    })
   }
 
   const handleSelectProject = async (projectId: string) => {
@@ -1005,6 +1082,21 @@ function App() {
     } catch (err) {
       console.error('Failed to delete session:', err)
     }
+  }
+
+  // P0: user-initiated rename — marks stage as 'manual' so auto-rename never overrides again
+  const handleRenameSession = (sessionId: string, newTitle: string) => {
+    const conv = conversations[sessionId]
+    if (!conv) return
+    // Lock the stage first so any in-flight auto-rename is a no-op once it checks the stage
+    setSessionTitleStates((prev) => ({
+      ...prev,
+      [sessionId]: {
+        stage: 'manual',
+        autoRenameCount: MAX_AUTO_RENAME_COUNT,
+      },
+    }))
+    syncSessionTitle(conv.projectId, sessionId, newTitle)
   }
 
   const handleTogglePinSession = async (projectId: string, sessionId: string, pinned: boolean) => {
@@ -2050,7 +2142,6 @@ function App() {
           <div className="absolute inset-0 bg-[#f6f7f8]" />
           <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(246,247,248,0)_0%,rgba(246,247,248,0.12)_46%,rgba(246,247,248,0.76)_100%)]" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.76)_18%,rgba(255,255,255,0)_52%),radial-gradient(circle_at_50%_100%,rgba(242,244,246,0.94)_0%,rgba(242,244,246,0.62)_34%,rgba(242,244,246,0.18)_68%,rgba(242,244,246,0)_100%)]" />
-          <div className="absolute inset-0 opacity-[0.61] [background-image:radial-gradient(rgba(169,179,189,0.46)_1px,transparent_1px)] [background-size:16px_16px] [mask-image:linear-gradient(to_bottom,transparent_0%,transparent_16%,black_50%,black_100%)]" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.5),transparent_28%),radial-gradient(circle_at_86%_90%,rgba(242,244,246,0.34),transparent_30%)]" />
         </div>
 
@@ -2079,6 +2170,7 @@ function App() {
               onDeleteProject={handleDeleteProject}
               onRenameProject={handleRenameProject}
               onDeleteSession={handleDeleteSession}
+              onRenameSession={handleRenameSession}
               onTogglePinSession={handleTogglePinSession}
               onOpenInFinder={openProjectInFinder}
               onCreatePermanentWorktree={createPermanentWorktree}
@@ -2174,6 +2266,7 @@ function App() {
       </Dialog>
     </div>
       )}
+      <Toaster position="bottom-right" richColors closeButton />
     </>
   )
 }
