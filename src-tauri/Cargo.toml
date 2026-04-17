@@ -44,5 +44,9 @@ serde_yaml = "0.9"
 sysinfo = "0.33"
 chromiumoxide = { version = "0.9", default-features = true }
 
+[[bin]]
+name = "harness-cli"
+path = "src/bin/harness_cli.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -4,6 +4,9 @@
 
 use std::sync::Arc;
 
+use crate::modules::learning::trajectory::TrajectoryManager;
+use crate::modules::learning::LearningModule;
+use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::projects::ProjectManager;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
@@ -38,48 +41,94 @@ pub struct AppState {
 
     // ── Memory & Learning Infrastructure (Phase 6BW) ──
     /// Shared memory provider (SQLite / Vector / Hybrid).
-    /// Wired into agent loop in slices 6bw.2-6bw.7.
-    #[allow(dead_code)]
     pub memory_provider: SharedMemoryProvider,
     /// Context budget configuration (default: 4000 tokens, 10/20/30/40%).
-    /// Wired into agent loop in slice 6bw.2.
-    #[allow(dead_code)]
     pub context_budget: ContextBudget,
+    /// Trajectory manager for ShareGPT JSONL persistence across turns.
+    /// `None` when the trajectories directory cannot be initialised (graceful fallback).
+    pub trajectory_manager: Option<Arc<TrajectoryManager>>,
+    /// Learning module: self-model + reflection engine + trust tracker.
+    /// Shared across turns so `SelfModel` state accumulates over time.
+    /// `None` when initialisation fails (graceful fallback).
+    pub learning_module: Option<Arc<tokio::sync::Mutex<LearningModule>>>,
+    /// Active retrieval manager: classifies intent and fuses multi-layer memories.
+    /// Shared so config is not re-created per turn.
+    /// Always `Some` with default config; wrapped in `Option` for consistency.
+    pub active_retrieval_manager: Option<Arc<ActiveRetrievalManager>>,
 
     // ── Onboarding & Configuration Platform (Phase 6G) ──
     /// Onboarding flow state machine for first-time setup.
-    /// Used to enforce step ordering and prevent Settings access during onboarding.
+    /// Wired into onboarding commands in Phase 6G; not yet read by other code paths.
     #[allow(dead_code)]
     pub onboarding_flow: Arc<crate::modules::onboarding::flow::OnboardingFlow>,
+
+    // ── Agent Loop Harness (Phase 6E) ──
+    /// Harness state: event bus + telemetry collector + session recorder.
+    /// `None` when harness is disabled (default production mode).
+    /// `Some(...)` when developer/eval recording mode is active.
+    pub harness: Option<Arc<crate::modules::harness::HarnessState>>,
+}
+
+/// Constructor arguments for [`AppState`].
+///
+/// Bundled into a struct so that `AppState::new` does not exceed the
+/// clippy `too_many_arguments` limit (7).
+pub struct AppStateConfig {
+    /// Session manager for conversation persistence.
+    pub session_manager: SessionManager,
+    /// Tool registry for available tools.
+    pub tool_registry: ToolRegistry,
+    /// Project manager for multi-project support.
+    pub project_manager: ProjectManager,
+    /// Shared memory provider (SQLite / Vector / Hybrid).
+    pub memory_provider: SharedMemoryProvider,
+    /// Context budget configuration (default: 4000 tokens, 10/20/30/40%).
+    pub context_budget: ContextBudget,
+    /// Onboarding flow state machine for first-time setup (Phase 6G).
+    pub onboarding_flow: crate::modules::onboarding::flow::OnboardingFlow,
+    /// Trajectory manager for ShareGPT JSONL persistence across turns.
+    /// `None` when the trajectories directory cannot be initialised (graceful fallback).
+    pub trajectory_manager: Option<Arc<TrajectoryManager>>,
+    /// Learning module: self-model + reflection engine + trust tracker.
+    /// Shared across turns so `SelfModel` state accumulates over time.
+    /// `None` when initialisation fails (graceful fallback).
+    pub learning_module: Option<Arc<tokio::sync::Mutex<LearningModule>>>,
+    /// Active retrieval manager: classifies intent and fuses multi-layer memories.
+    /// Shared so config is not re-created per turn.
+    pub active_retrieval_manager: Option<Arc<ActiveRetrievalManager>>,
+    /// Harness state for agent loop observability.
+    /// `None` disables all harness overhead (default production mode).
+    pub harness: Option<Arc<crate::modules::harness::HarnessState>>,
 }
 
 impl AppState {
-    /// Create a new AppState with the given managers.
+    /// Create a new `AppState` from the given configuration.
+    ///
+    /// The three memory/learning fields are `Option` so the app starts gracefully
+    /// even when their backing stores or init routines are unavailable.
     #[must_use]
-    pub fn new(
-        session_manager: SessionManager,
-        tool_registry: ToolRegistry,
-        project_manager: ProjectManager,
-        memory_provider: SharedMemoryProvider,
-        context_budget: ContextBudget,
-        onboarding_flow: crate::modules::onboarding::flow::OnboardingFlow,
-    ) -> Self {
+    pub fn new(cfg: AppStateConfig) -> Self {
         Self {
-            session_manager: Arc::new(session_manager),
-            tool_registry: Arc::new(tool_registry),
-            project_manager: Arc::new(project_manager),
+            session_manager: Arc::new(cfg.session_manager),
+            tool_registry: Arc::new(cfg.tool_registry),
+            project_manager: Arc::new(cfg.project_manager),
             permission_senders: Arc::new(Mutex::new(HashMap::new())),
             permission_overrides: Arc::new(Mutex::new(HashMap::new())),
             stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
-            memory_provider,
-            context_budget,
-            onboarding_flow: Arc::new(onboarding_flow),
+            memory_provider: cfg.memory_provider,
+            context_budget: cfg.context_budget,
+            trajectory_manager: cfg.trajectory_manager,
+            learning_module: cfg.learning_module,
+            active_retrieval_manager: cfg.active_retrieval_manager,
+            onboarding_flow: Arc::new(cfg.onboarding_flow),
+            harness: cfg.harness,
         }
     }
 }
 
 pub mod agent;
 pub mod browser;
+pub mod harness;
 pub mod memory;
 pub mod project;
 pub mod session;
@@ -106,6 +155,11 @@ pub use agent::{
 #[allow(unused_imports)]
 pub use browser::{
     close_browser_session, get_browser_sessions, get_chrome_status, ChromeStatusPayload,
+};
+#[allow(unused_imports)]
+pub use harness::{
+    get_all_session_telemetry, get_harness_status, get_session_telemetry, start_harness_recording,
+    stop_harness_recording, HarnessStatusResponse, HarnessTelemetryResponse,
 };
 #[allow(unused_imports)]
 pub use memory::{memory_delete, memory_export, memory_purge, memory_recall, MemoryEntryDto};

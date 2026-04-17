@@ -37,12 +37,16 @@ use commands::{
     export_trajectories,
     fetch_skills_market_audits,
     focus_main_window_and_prefill_prompt,
+    // Harness Control IPC (Phase 6E)
+    get_all_session_telemetry,
     get_browser_sessions,
     get_chrome_status,
+    get_harness_status,
     get_memory_config,
     get_model_config,
     get_project,
     get_session,
+    get_session_telemetry,
     get_tool_definitions,
     get_web_search_config,
     hub_audit,
@@ -111,7 +115,9 @@ use commands::{
     set_model_config,
     set_session_pinned,
     start_agent_stream,
+    start_harness_recording,
     stop_agent_stream,
+    stop_harness_recording,
     suggest_slash_commands,
     system_check_run,
     upsert_web_search_provider,
@@ -315,15 +321,89 @@ fn main() {
     // Initialize context budget (default: 4000 tokens, 10/20/30/40%)
     let context_budget = modules::runtime::budget::ContextBudget::default();
 
-    // Create app state — now includes memory infrastructure and onboarding flow
-    let app_state = AppState::new(
+    // ── Phase 6BW: Persistent memory/learning infrastructure ──
+
+    // TrajectoryManager: persist sessions as ShareGPT JSONL for future RL.
+    let trajectories_dir = if2ai_dir.join("trajectories");
+    let trajectory_manager =
+        match modules::learning::trajectory::TrajectoryManager::new(trajectories_dir.clone()) {
+            Ok(tm) => {
+                tracing::info!(
+                    "[init] TrajectoryManager initialised at {:?}",
+                    trajectories_dir
+                );
+                Some(std::sync::Arc::new(tm))
+            }
+            Err(e) => {
+                tracing::warn!(
+                "[init] TrajectoryManager failed to initialise: {e}; trajectory recording disabled"
+            );
+                None
+            }
+        };
+
+    // LearningModule: self-model + reflection engine.
+    // `LearningModule::new` is async; spin up a temp single-threaded runtime.
+    let learning_module: Option<
+        std::sync::Arc<tokio::sync::Mutex<modules::learning::LearningModule>>,
+    > = {
+        let mp = memory_provider.clone();
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => match rt.block_on(modules::learning::LearningModule::new(mp)) {
+                Ok(lm) => {
+                    tracing::info!("[init] LearningModule initialised");
+                    Some(std::sync::Arc::new(tokio::sync::Mutex::new(lm)))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[init] LearningModule failed to initialise: {e}; self-learning disabled"
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "[init] Could not create tokio runtime for LearningModule init: {e}"
+                );
+                None
+            }
+        }
+    };
+
+    // ActiveRetrievalManager: shared per-app instance (avoids re-creating config each turn).
+    let active_retrieval_manager = Some(std::sync::Arc::new(
+        modules::memory::retrieval::ActiveRetrievalManager::with_defaults(),
+    ));
+
+    // ── Phase 6E: Agent Loop Harness ──
+    // Harness is disabled by default in production. Enable via the
+    // IF2AI_HARNESS_ENABLED=1 environment variable or the IPC commands.
+    let harness = if std::env::var("IF2AI_HARNESS_ENABLED").as_deref() == Ok("1") {
+        let trace_dir = if2ai_dir.join("traces");
+        tracing::info!("[init] Harness enabled; traces → {:?}", trace_dir);
+        Some(std::sync::Arc::new(modules::harness::HarnessState::new(
+            trace_dir,
+        )))
+    } else {
+        None
+    };
+
+    // Create app state — includes memory infrastructure, learning, and onboarding flow
+    let app_state = AppState::new(commands::AppStateConfig {
         session_manager,
         tool_registry,
         project_manager,
         memory_provider,
         context_budget,
         onboarding_flow,
-    );
+        trajectory_manager,
+        learning_module,
+        active_retrieval_manager,
+        harness,
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -452,6 +532,12 @@ fn main() {
             config_save,
             config_validate,
             config_reset_onboarding,
+            // Harness Control IPC (Phase 6E)
+            get_harness_status,
+            start_harness_recording,
+            stop_harness_recording,
+            get_session_telemetry,
+            get_all_session_telemetry,
         ])
         .setup(|app| {
             // Inject AppHandle into BrowserRegistry so the browser tool can emit

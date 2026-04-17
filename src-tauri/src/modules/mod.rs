@@ -19,6 +19,7 @@ pub mod channel;
 pub mod commands;
 pub mod config;
 pub mod control_plane;
+pub mod harness;
 pub mod learning;
 pub mod memory;
 pub mod onboarding;
