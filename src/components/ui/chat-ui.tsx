@@ -123,6 +123,8 @@ type ComposerDropItem = {
   name: string
   path: string
   kind: 'file' | 'folder'
+  /** True when added via @-mention typing (vs drag-drop). Changes chip visual. */
+  isMention?: boolean
 }
 
 const BOTTOM_EPSILON_PX = 120
@@ -309,6 +311,22 @@ export function ChatUI({
     rawInput: string
   } | null>(null)
 
+  const [atOverlay, setAtOverlay] = React.useState<{
+    visible: boolean
+    selectedIndex: number
+    entries: DirectoryEntryPreview[]
+    query: string
+    /** Position of the @ character in the textarea (−1 = already cleaned) */
+    atPos: number
+    /** Currently browsed directory path; null = workdir root */
+    browsePath: string | null
+    /** Navigation history stack for back navigation */
+    breadcrumbs: Array<{ name: string; path: string | null }>
+    /** When true the overlay is detached from the textarea (@token already removed) */
+    pinned: boolean
+  } | null>(null)
+  const atTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Use prop-provided model if provided, otherwise fall back to local state
   const modelValue = onModelChangeProp !== undefined ? selectedModelProp : selectedModel
   const handleModelChange: React.Dispatch<React.SetStateAction<string>> = onModelChangeProp ?? setSelectedModel
@@ -321,6 +339,9 @@ export function ChatUI({
     return () => {
       if (slashTimerRef.current) {
         clearTimeout(slashTimerRef.current)
+      }
+      if (atTimerRef.current) {
+        clearTimeout(atTimerRef.current)
       }
       if (scrollRafRef.current !== null) {
         window.cancelAnimationFrame(scrollRafRef.current)
@@ -627,7 +648,62 @@ export function ChatUI({
   }, [isLoading, updateBottomState])
 
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Handle slash command overlay navigation
+    // Never intercept keystrokes while an IME composition session is active.
+    // Without this guard, pressing Enter to confirm a Chinese/Japanese/Korean
+    // character would also trigger submit, overlay selection, etc.
+    if (e.nativeEvent.isComposing) return
+
+    // ── @-mention overlay navigation ────────────────────────────────────────
+    if (atOverlay?.visible) {
+      const currentEntry = atOverlay.entries[atOverlay.selectedIndex]
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setAtOverlay((prev) =>
+          prev ? { ...prev, selectedIndex: (prev.selectedIndex + 1) % prev.entries.length } : null
+        )
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setAtOverlay((prev) =>
+          prev
+            ? { ...prev, selectedIndex: (prev.selectedIndex - 1 + prev.entries.length) % prev.entries.length }
+            : null
+        )
+        return
+      }
+      // → or Enter on a folder: navigate in
+      if (e.key === 'ArrowRight' || (e.key === 'Enter' && currentEntry?.kind === 'folder')) {
+        e.preventDefault()
+        if (currentEntry?.kind === 'folder') {
+          void navigateIntoFolder(currentEntry)
+        }
+        return
+      }
+      // ← navigate up (in browse mode); or Backspace when in browse mode with empty native query
+      if (e.key === 'ArrowLeft' || (e.key === 'Backspace' && atOverlay.pinned && atOverlay.query === '')) {
+        if (e.key === 'ArrowLeft') e.preventDefault()
+        if (atOverlay.pinned) {
+          void navigateUpFolder()
+          return
+        }
+      }
+      // Tab always selects; Enter selects files (folders handled above)
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        if (currentEntry) {
+          handleAtSelect(currentEntry, { atPos: atOverlay.atPos, query: atOverlay.query })
+        }
+        return
+      }
+      if (e.key === 'Escape') {
+        setAtOverlay(null)
+        return
+      }
+    }
+
+    // ── Slash command overlay navigation ────────────────────────────────────
     if (slashOverlay?.visible) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -648,9 +724,6 @@ export function ChatUI({
       if (e.key === 'Tab' || e.key === 'Enter') {
         e.preventDefault()
         const selected = slashOverlay.suggestions[slashOverlay.selectedIndex]
-        // If the user has already typed past the slash command (i.e. there is
-        // instruction text after the command), Enter should submit rather than
-        // autocomplete. Tab always autocompletes.
         const hasInstructionText = draftInput.trim().includes(' ')
         if (e.key === 'Enter' && hasInstructionText) {
           setSlashOverlay(null)
@@ -748,6 +821,115 @@ export function ChatUI({
   const handleRemoveComposerDropItem = React.useCallback((id: string) => {
     setComposerDropItems((current) => current.filter((item) => item.id !== id))
   }, [])
+
+  /** Called when the user picks a file/folder from the @-mention overlay. */
+  const handleAtSelect = React.useCallback((entry: DirectoryEntryPreview, overlay: { atPos: number; query: string }) => {
+    // Strip the @query token from the textarea only when still anchored (atPos >= 0)
+    if (overlay.atPos >= 0) {
+      setDraftInput((prev) => {
+        const before = prev.slice(0, overlay.atPos)
+        const after = prev.slice(overlay.atPos + 1 + overlay.query.length)
+        return before + after
+      })
+    }
+    setAtOverlay(null)
+    // Add as a mention chip in the drop-items area
+    handleComposerDropItem({
+      id: `mention:${entry.path}`,
+      path: entry.path,
+      name: entry.name,
+      kind: entry.kind,
+      isMention: true,
+    })
+  }, [handleComposerDropItem])
+
+  /** Navigate into a subfolder in the @-mention overlay. Detaches overlay from textarea. */
+  const navigateIntoFolder = React.useCallback(async (entry: DirectoryEntryPreview) => {
+    setAtOverlay((prev) => {
+      // Immediately clean up @query from textarea before going async
+      if (prev && prev.atPos >= 0) {
+        setDraftInput((draft) => {
+          const before = draft.slice(0, prev.atPos)
+          const after = draft.slice(prev.atPos + 1 + prev.query.length)
+          return before + after
+        })
+      }
+      return prev
+    })
+
+    try {
+      const rawEntries = await listDirectoryPreview(entry.path, 64)
+      const sorted = rawEntries
+        .sort((a, b) => {
+          if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        })
+        .slice(0, 10)
+
+      setAtOverlay((prev) => {
+        if (!prev) return null
+        const parentLabel = prev.browsePath
+          ? prev.browsePath.split('/').filter(Boolean).pop() ?? '…'
+          : '~'
+        return {
+          ...prev,
+          entries: sorted,
+          selectedIndex: 0,
+          browsePath: entry.path,
+          breadcrumbs: [...prev.breadcrumbs, { name: parentLabel, path: prev.browsePath }],
+          pinned: true,
+          atPos: -1,
+          query: '',
+        }
+      })
+    } catch {
+      // ignore – keep current overlay state
+    }
+  }, [])
+
+  /** Navigate up one level in the @-mention overlay. */
+  const navigateUpFolder = React.useCallback(async () => {
+    setAtOverlay((prev) => {
+      if (!prev) return null
+      if (prev.breadcrumbs.length === 0) return null // already at root → close
+      return prev // keep state while we fetch; update async below
+    })
+
+    if (!atOverlay) return
+    const crumbs = atOverlay.breadcrumbs
+    if (crumbs.length === 0) { setAtOverlay(null); return }
+
+    const parent = crumbs[crumbs.length - 1]
+    const parentPath = parent.path ?? defaultWorkdir
+    if (!parentPath) { setAtOverlay(null); return }
+
+    try {
+      const rawEntries = await listDirectoryPreview(parentPath, 64)
+      const sorted = rawEntries
+        .sort((a, b) => {
+          if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        })
+        .slice(0, 10)
+
+      setAtOverlay((prev) => {
+        if (!prev) return null
+        const newCrumbs = prev.breadcrumbs.slice(0, -1)
+        return {
+          ...prev,
+          entries: sorted,
+          selectedIndex: 0,
+          browsePath: parent.path,
+          breadcrumbs: newCrumbs,
+          pinned: newCrumbs.length > 0,
+          atPos: -1,
+          query: '',
+        }
+      })
+    } catch {
+      setAtOverlay(null)
+    }
+  }, [atOverlay, defaultWorkdir])
 
   const loadProjectRailChildren = React.useCallback(async (path: string, options?: { silent?: boolean }) => {
     setProjectRailLoadingPaths((current) => current.includes(path) ? current : [...current, path])
@@ -950,7 +1132,19 @@ export function ChatUI({
             textareaRef={textareaRef}
             handleKeyDown={handleKeyDown}
             setSlashOverlay={setSlashOverlay}
+            slashOverlayState={slashOverlay}
+            onSlashSelect={(selected) => {
+              setDraftInput(selected)
+              setSlashOverlay(null)
+            }}
             slashTimerRef={slashTimerRef}
+            atOverlayState={atOverlay}
+            setAtOverlay={setAtOverlay}
+            onAtSelect={handleAtSelect}
+            onNavigateIntoFolder={navigateIntoFolder}
+            onNavigateUpFolder={navigateUpFolder}
+            atTimerRef={atTimerRef}
+            defaultWorkdir={defaultWorkdir}
             dropItems={composerDropItems}
             onRemoveDropItem={handleRemoveComposerDropItem}
             onFileReferenceDrop={handleComposerDropItem}
@@ -1049,16 +1243,6 @@ export function ChatUI({
         }}
       />
 
-      {slashOverlay?.visible && (
-        <SlashCommandSuggestions
-          suggestions={slashOverlay.suggestions}
-          selectedIndex={slashOverlay.selectedIndex}
-          onSelect={(selected) => {
-            setDraftInput(selected)
-            setSlashOverlay(null)
-          }}
-        />
-      )}
     </div>
   )
 }
@@ -1679,7 +1863,16 @@ const ComposerDock = React.memo(function ComposerDock({
   textareaRef,
   handleKeyDown,
   setSlashOverlay,
+  slashOverlayState,
+  onSlashSelect,
   slashTimerRef,
+  atOverlayState,
+  setAtOverlay,
+  onAtSelect,
+  onNavigateIntoFolder,
+  onNavigateUpFolder,
+  atTimerRef,
+  defaultWorkdir,
   dropItems,
   onRemoveDropItem,
   onFileReferenceDrop,
@@ -1715,7 +1908,48 @@ const ComposerDock = React.memo(function ComposerDock({
       rawInput: string
     } | null>
   >
+  /** Current slash overlay state (read) – used to render inline suggestions */
+  slashOverlayState?: {
+    visible: boolean
+    selectedIndex: number
+    suggestions: string[]
+    rawInput: string
+  } | null
+  /** Called when the user selects a slash suggestion */
+  onSlashSelect?: (value: string) => void
   slashTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>
+  /** Current @-mention overlay state */
+  atOverlayState?: {
+    visible: boolean
+    selectedIndex: number
+    entries: DirectoryEntryPreview[]
+    query: string
+    atPos: number
+    browsePath: string | null
+    breadcrumbs: Array<{ name: string; path: string | null }>
+    pinned: boolean
+  } | null
+  setAtOverlay: React.Dispatch<
+    React.SetStateAction<{
+      visible: boolean
+      selectedIndex: number
+      entries: DirectoryEntryPreview[]
+      query: string
+      atPos: number
+      browsePath: string | null
+      breadcrumbs: Array<{ name: string; path: string | null }>
+      pinned: boolean
+    } | null>
+  >
+  /** Called when the user picks an @-mention file/folder */
+  onAtSelect?: (entry: DirectoryEntryPreview, overlay: { atPos: number; query: string }) => void
+  /** Called when the user navigates into a folder in the @-mention overlay */
+  onNavigateIntoFolder?: (entry: DirectoryEntryPreview) => Promise<void>
+  /** Called when the user presses back in the @-mention overlay */
+  onNavigateUpFolder?: () => Promise<void>
+  atTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>
+  /** Working directory used for @-mention file lookups */
+  defaultWorkdir?: string
   dropItems: ComposerDropItem[]
   onRemoveDropItem: (id: string) => void
   onFileReferenceDrop: (item: ComposerDropItem) => void
@@ -1725,43 +1959,99 @@ const ComposerDock = React.memo(function ComposerDock({
   onProjectPillClick?: () => void
 }) {
   const [isDropTarget, setIsDropTarget] = React.useState(false)
+
+  // ── IME composition guard ────────────────────────────────────────────────
+  // On macOS/Electron, pressing Enter to confirm an IME candidate fires
+  // `keydown` *before* `compositionend`, and `isComposing` is already `false`
+  // at that moment, so `e.nativeEvent.isComposing` alone is insufficient.
+  // We track composition state with a ref and delay clearing it by one tick so
+  // that the confirming Enter keydown is still intercepted.
+  const isComposingRef = React.useRef(false)
+  const guardedHandleKeyDown = React.useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (isComposingRef.current) return
+      void handleKeyDown(e)
+    },
+    [handleKeyDown]
+  )
   const handleInputWithSlashDetect = (value: string) => {
+    // Clear pending timers
     if (slashTimerRef.current) {
       clearTimeout(slashTimerRef.current)
       slashTimerRef.current = null
     }
+    if (atTimerRef.current) {
+      clearTimeout(atTimerRef.current)
+      atTimerRef.current = null
+    }
 
     onInputChange(value)
 
+    // ── Slash command detection ──────────────────────────────────────────────
     if (value.startsWith('/')) {
       const cmdPart = value.split(/\s+/)[0]
-      // Once the user has typed a space after the command (i.e. started writing
-      // an instruction), dismiss the autocomplete overlay — it is no longer
-      // needed and would interfere with Enter-to-submit.
+      // Dismiss once the user has typed a space (started the instruction body).
       if (value.includes(' ')) {
         setSlashOverlay(null)
-        return
-      }
-      slashTimerRef.current = setTimeout(async () => {
-        try {
-          const { suggestSlashCommands } = await import('@/lib/tauri')
-          const suggestions = await suggestSlashCommands(cmdPart, 8)
-          if (suggestions.length > 0) {
-            setSlashOverlay({
-              visible: true,
-              selectedIndex: 0,
-              suggestions,
-              rawInput: cmdPart,
-            })
-          } else {
+      } else {
+        slashTimerRef.current = setTimeout(async () => {
+          try {
+            const { suggestSlashCommands } = await import('@/lib/tauri')
+            const suggestions = await suggestSlashCommands(cmdPart, 8)
+            if (suggestions.length > 0) {
+              setSlashOverlay({ visible: true, selectedIndex: 0, suggestions, rawInput: cmdPart })
+            } else {
+              setSlashOverlay(null)
+            }
+          } catch {
             setSlashOverlay(null)
           }
-        } catch {
-          setSlashOverlay(null)
-        }
-      }, 50)
+        }, 50)
+      }
     } else {
       setSlashOverlay(null)
+    }
+
+    // ── @-mention detection ──────────────────────────────────────────────────
+    // When in pinned browse mode the overlay is independent of the textarea.
+    if (atOverlayState?.pinned) return
+
+    // Find the last @ that is followed by non-space text at the end of the value.
+    const atIndex = value.lastIndexOf('@')
+    if (atIndex >= 0 && defaultWorkdir) {
+      // Ignore when @ is immediately preceded by a word character (letter / digit / . / - / +)
+      // — that pattern indicates an e-mail address (e.g. user@example.com), not a file mention.
+      const charBefore = atIndex > 0 ? value[atIndex - 1] : ''
+      if (/[\w.\-+]/.test(charBefore)) {
+        setAtOverlay(null)
+        return
+      }
+
+      const textAfterAt = value.slice(atIndex + 1)
+      // Only activate when no space follows the @ (i.e. the user is still typing the query)
+      if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+        const query = textAfterAt
+        atTimerRef.current = setTimeout(async () => {
+          try {
+            const entries = await listDirectoryPreview(defaultWorkdir, 48)
+            const filtered = query
+              ? entries.filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
+              : entries
+            const limited = filtered.slice(0, 8)
+            if (limited.length > 0) {
+              setAtOverlay({ visible: true, selectedIndex: 0, entries: limited, query, atPos: atIndex, browsePath: null, breadcrumbs: [], pinned: false })
+            } else {
+              setAtOverlay(null)
+            }
+          } catch {
+            setAtOverlay(null)
+          }
+        }, 60)
+      } else {
+        setAtOverlay(null)
+      }
+    } else {
+      setAtOverlay(null)
     }
   }
   return (
@@ -1769,37 +2059,96 @@ const ComposerDock = React.memo(function ComposerDock({
       className="relative z-10 shrink-0 px-10 pb-2.5 pt-0 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
       style={{ paddingRight: `${40 + contentRightInset}px` }}
     >
-      <div className="mx-auto flex w-full flex-col transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${contentMaxWidth}px` }}>
+      <div className="relative mx-auto flex w-full flex-col transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${contentMaxWidth}px` }}>
+        {/* Slash command overlay – anchored to composer top edge */}
+        {slashOverlayState?.visible && onSlashSelect && (
+          <SlashCommandSuggestions
+            suggestions={slashOverlayState.suggestions}
+            selectedIndex={slashOverlayState.selectedIndex}
+            rawInput={slashOverlayState.rawInput}
+            onSelect={onSlashSelect}
+          />
+        )}
+
+        {/* @-mention file overlay – anchored to composer top edge */}
+        {atOverlayState?.visible && onAtSelect && (
+          <AtFileSuggestions
+            entries={atOverlayState.entries}
+            selectedIndex={atOverlayState.selectedIndex}
+            query={atOverlayState.query}
+            browsePath={atOverlayState.browsePath}
+            breadcrumbs={atOverlayState.breadcrumbs}
+            onSelect={(entry) => onAtSelect(entry, { atPos: atOverlayState.atPos, query: atOverlayState.query })}
+            onNavigateInto={onNavigateIntoFolder}
+            onNavigateUp={onNavigateUpFolder}
+          />
+        )}
+
         {dropItems.length > 0 ? (
-          <div className="mb-3 flex flex-wrap gap-2 px-1">
-            {dropItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onRemoveDropItem(item.id)}
-                className="group inline-flex max-w-full items-center gap-2 rounded-[6px] border border-border/50 bg-surface-raised px-3 py-2 text-left text-foreground/60 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:bg-surface"
-                title={item.path}
-              >
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60">
-                  {item.kind === 'file' ? <Paperclip className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
-                </span>
-                <span className="truncate text-[12.5px] font-medium tracking-[-0.015em]">{item.name}</span>
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">
-                  <X className="h-3.5 w-3.5" />
-                </span>
-              </button>
-            ))}
+          <div className="mb-3 flex flex-wrap gap-1.5 px-1">
+            {dropItems.map((item) => {
+              if (item.isMention) {
+                const isFolder = item.kind === 'folder'
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onRemoveDropItem(item.id)}
+                    className="group inline-flex max-w-full items-center gap-1.5 rounded-lg border border-jade/20 bg-jade/[0.07] px-2.5 py-1 text-left text-jade/80 transition-all duration-200 hover:border-jade/30 hover:bg-jade/[0.12] active:scale-[0.97]"
+                    title={item.path}
+                  >
+                    {isFolder ? (
+                      /* Folder badge — slightly deeper tint + folder icon */
+                      <span className="flex size-[18px] shrink-0 items-center justify-center rounded-[4px] bg-jade/[0.18] text-jade">
+                        <Folder className="size-2.5" />
+                      </span>
+                    ) : (
+                      /* File badge — @ symbol */
+                      <span className="flex size-[18px] shrink-0 items-center justify-center rounded-[4px] bg-jade/[0.14] text-[10px] font-bold text-jade">
+                        @
+                      </span>
+                    )}
+                    <span className="truncate text-[12px] font-semibold tracking-tight">
+                      {item.name}{isFolder ? <span className="opacity-40">/</span> : null}
+                    </span>
+                    <span className="flex size-[14px] shrink-0 items-center justify-center rounded-full opacity-40 transition-opacity group-hover:opacity-70">
+                      <X className="h-2.5 w-2.5" />
+                    </span>
+                  </button>
+                )
+              }
+              // Regular drag-drop chip: neutral
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onRemoveDropItem(item.id)}
+                  className="group inline-flex max-w-full items-center gap-2 rounded-[6px] border border-border/50 bg-surface-raised px-3 py-2 text-left text-foreground/60 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:bg-surface"
+                  title={item.path}
+                >
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/60">
+                    {item.kind === 'file' ? <Paperclip className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
+                  </span>
+                  <span className="truncate text-[12.5px] font-medium tracking-[-0.015em]">{item.name}</span>
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </span>
+                </button>
+              )
+            })}
           </div>
         ) : null}
 
         {/* ── Composer box ── */}
         <div
-          className={cn(
-            'flex flex-col rounded-2xl border border-input bg-card px-4 pt-2 pb-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-            isComposerFocused
-              ? '-translate-y-0.5 shadow-[0_14px_56px_rgba(68,185,130,0.22),0_0_0_1px_rgba(68,185,130,0.32),0_0_48px_rgba(68,185,130,0.16)]'
-              : 'translate-y-0 shadow-[0_2px_16px_rgba(0,0,0,0.07),0_0_0_0.5px_rgba(0,0,0,0.04)]'
-          )}
+          className="flex flex-col rounded-2xl bg-card px-4 pt-2 pb-0 transition-all duration-200"
+          style={{
+            border: `1px solid ${isComposerFocused ? 'rgba(0,0,0,0.13)' : 'rgba(0,0,0,0.08)'}`,
+            boxShadow: isComposerFocused
+              ? '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)'
+              : '0 2px 16px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.04)',
+            transform: isComposerFocused ? 'translateY(-1px)' : 'translateY(0)',
+          }}
         >
           {/* Textarea (align top) */}
           <div className="flex-1 px-0 pt-1 pb-0.5">
@@ -1807,7 +2156,14 @@ const ComposerDock = React.memo(function ComposerDock({
               ref={textareaRef}
               value={input}
               onChange={(e) => handleInputWithSlashDetect(e.target.value)}
-              onKeyDown={handleKeyDown}
+              onCompositionStart={() => { isComposingRef.current = true }}
+              onCompositionEnd={() => {
+                // Defer by one tick: the Enter that triggered compositionend fires
+                // its keydown *before* this event on macOS, so delaying ensures the
+                // guard is still active when that keydown is processed.
+                setTimeout(() => { isComposingRef.current = false }, 0)
+              }}
+              onKeyDown={guardedHandleKeyDown}
               onDragOver={(event) => {
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'copy'
@@ -2169,31 +2525,240 @@ function SlashCommandSuggestions({
   suggestions,
   selectedIndex,
   onSelect,
+  rawInput,
 }: {
   suggestions: string[]
   selectedIndex: number
   onSelect: (value: string) => void
+  rawInput?: string
 }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-[178px] z-30 flex justify-center px-10">
-      <div className="pointer-events-auto w-full max-w-[740px] rounded-xl border border-border bg-surface-raised shadow-lg backdrop-blur-sm">
-        {suggestions.map((cmd, i) => (
-          <button
-            key={cmd}
-            type="button"
-            className={cn(
-              'flex w-full items-center rounded-lg px-4 py-2.5 text-left text-[13px] font-mono transition-colors',
-              i === selectedIndex ? 'bg-accent text-foreground' : 'text-foreground/60 hover:bg-muted'
+    <div className="absolute inset-x-0 bottom-full z-50 mb-2.5 pointer-events-none">
+      <div
+        className="pointer-events-auto w-full overflow-hidden rounded-2xl"
+        style={{
+          background: 'rgba(255,255,255,0.97)',
+          backdropFilter: 'blur(24px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+          border: '1px solid rgba(0,0,0,0.09)',
+          boxShadow:
+            '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)',
+        }}
+      >
+        {/* Header bar */}
+        <div className="flex items-center justify-between border-b border-black/[0.055] px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-jade/10 text-[11px] font-bold text-jade">
+              /
+            </div>
+            <span className="font-mono text-[13px] font-semibold tracking-tight text-jade">
+              {rawInput ?? '/'}
+            </span>
+          </div>
+          <span className="text-[10.5px] font-medium tracking-wide text-black/28">Tab 补全</span>
+        </div>
+
+        {/* Suggestion rows */}
+        <div className="py-1">
+          {suggestions.map((cmd, i) => (
+            <button
+              key={cmd}
+              type="button"
+              className={cn(
+                'flex w-full cursor-pointer items-center gap-3 px-4 py-[7px] text-left transition-colors',
+                i === selectedIndex
+                  ? 'bg-jade/[0.07] text-jade'
+                  : 'text-foreground/55 hover:bg-black/[0.025] hover:text-foreground/80'
+              )}
+              onClick={() => onSelect(cmd)}
+            >
+              {/* Icon badge */}
+              <div
+                className={cn(
+                  'flex size-[22px] shrink-0 items-center justify-center rounded-[6px] text-[11px] font-bold transition-colors',
+                  i === selectedIndex ? 'bg-jade/[0.14] text-jade' : 'bg-black/[0.05] text-black/32'
+                )}
+              >
+                /
+              </div>
+
+              {/* Command name */}
+              <span className="flex-1 truncate font-mono text-[12.5px] font-medium">
+                {cmd.slice(1)}
+              </span>
+
+              {/* Enter hint for selected */}
+              {i === selectedIndex && (
+                <kbd className="shrink-0 rounded-md border border-black/[0.08] bg-black/[0.04] px-1.5 py-[2px] font-sans text-[10px] font-medium text-black/35">
+                  ↵
+                </kbd>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** File/folder picker overlay triggered by typing @query in the composer.
+ *  Supports nested folder navigation: Enter/→ enters a folder, ←/back button goes up. */
+function AtFileSuggestions({
+  entries,
+  selectedIndex,
+  onSelect,
+  onNavigateInto,
+  onNavigateUp,
+  query,
+  browsePath,
+  breadcrumbs,
+}: {
+  entries: DirectoryEntryPreview[]
+  selectedIndex: number
+  onSelect: (entry: DirectoryEntryPreview) => void
+  onNavigateInto?: (entry: DirectoryEntryPreview) => void
+  onNavigateUp?: () => void
+  query?: string
+  browsePath?: string | null
+  breadcrumbs?: Array<{ name: string; path: string | null }>
+}) {
+  const isInSubfolder = Boolean(browsePath)
+  const currentDirName = browsePath ? browsePath.split('/').filter(Boolean).pop() ?? browsePath : null
+
+  return (
+    <div className="absolute inset-x-0 bottom-full z-50 mb-2.5 pointer-events-none">
+      <div
+        className="pointer-events-auto w-full overflow-hidden rounded-2xl"
+        style={{
+          background: 'rgba(255,255,255,0.97)',
+          backdropFilter: 'blur(24px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+          border: '1px solid rgba(0,0,0,0.09)',
+          boxShadow:
+            '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)',
+        }}
+      >
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 border-b border-black/[0.055] px-3 py-2">
+          {/* Back button (shown when inside a subfolder) */}
+          {isInSubfolder && onNavigateUp && (
+            <button
+              type="button"
+              onClick={() => onNavigateUp()}
+              className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/60"
+              title="返回上层 (←)"
+            >
+              <ChevronRight className="size-3.5 rotate-180" />
+            </button>
+          )}
+
+          {/* @ badge */}
+          <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-jade/10 text-[11px] font-bold text-jade">
+            @
+          </div>
+
+          {/* Breadcrumb path */}
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            {isInSubfolder && breadcrumbs && breadcrumbs.length > 0 ? (
+              <>
+                {/* Ancestors (truncated to last 2) */}
+                {breadcrumbs.slice(-2).map((crumb, idx, arr) => (
+                  <React.Fragment key={crumb.name + idx}>
+                    <span className="shrink-0 text-[11px] font-medium text-black/28">{crumb.name}</span>
+                    {idx < arr.length - 1 || currentDirName ? (
+                      <ChevronRight className="size-2.5 shrink-0 text-black/20" />
+                    ) : null}
+                  </React.Fragment>
+                ))}
+                {/* Current directory — highlighted */}
+                <span className="truncate text-[12px] font-semibold tracking-tight text-jade">
+                  {currentDirName}
+                </span>
+              </>
+            ) : (
+              /* Root level: show @query */
+              <span className="truncate font-mono text-[13px] font-semibold tracking-tight text-jade">
+                {query ? `@${query}` : '@'}
+              </span>
             )}
-            onClick={() => onSelect(cmd)}
-          >
-            <span className="text-primary">/</span>
-            <span className="flex-1 truncate">{cmd.slice(1)}</span>
-            {i === selectedIndex && (
-              <span className="ml-2 text-[10px] text-muted-foreground">Tab to complete</span>
-            )}
-          </button>
-        ))}
+          </div>
+
+          {/* Hint */}
+          <span className="ml-auto shrink-0 text-[10px] font-medium text-black/22">
+            {isInSubfolder ? '← 返回  ↵ 选中  → 进入' : '↑↓ 选择  ↵/→ 进入  Tab 选中'}
+          </span>
+        </div>
+
+        {/* ── Entry rows ─────────────────────────────────────────────────── */}
+        <div className="py-1">
+          {entries.map((entry, i) => {
+            const isFolder = entry.kind === 'folder'
+            const isSelected = i === selectedIndex
+            return (
+              <button
+                key={entry.path}
+                type="button"
+                className={cn(
+                  'flex w-full cursor-pointer items-center gap-3 px-3 py-[7px] text-left transition-colors',
+                  isSelected
+                    ? 'bg-jade/[0.07] text-jade'
+                    : 'text-foreground/55 hover:bg-black/[0.025] hover:text-foreground/80'
+                )}
+                onClick={() => {
+                  if (isFolder && onNavigateInto) {
+                    onNavigateInto(entry)
+                  } else {
+                    onSelect(entry)
+                  }
+                }}
+              >
+                {/* Kind badge */}
+                <div
+                  className={cn(
+                    'flex size-[22px] shrink-0 items-center justify-center rounded-[6px] transition-colors',
+                    isSelected
+                      ? isFolder
+                        ? 'bg-jade/[0.14] text-jade'
+                        : 'bg-jade/[0.10] text-jade'
+                      : isFolder
+                        ? 'bg-black/[0.05] text-black/40'
+                        : 'bg-black/[0.04] text-black/32'
+                  )}
+                >
+                  {isFolder ? <Folder className="size-3" /> : <FileText className="size-3" />}
+                </div>
+
+                {/* Name */}
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-tight">
+                  {entry.name}
+                </span>
+
+                {/* Right side: chevron for folders (navigable), or ↵ for files */}
+                {isFolder ? (
+                  <ChevronRight
+                    className={cn(
+                      'size-3 shrink-0 transition-colors',
+                      isSelected ? 'text-jade/60' : 'text-black/20'
+                    )}
+                  />
+                ) : isSelected ? (
+                  <kbd className="shrink-0 rounded-md border border-black/[0.08] bg-black/[0.04] px-1.5 py-[2px] font-sans text-[10px] font-medium text-black/35">
+                    ↵
+                  </kbd>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* ── Footer hint (browse mode only) ─────────────────────────────── */}
+        {isInSubfolder && (
+          <div className="border-t border-black/[0.04] px-4 py-1.5">
+            <span className="text-[10px] text-black/25">
+              Tab 选中当前目录作为引用
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

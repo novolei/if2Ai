@@ -87,6 +87,7 @@ export function HomeScreen({
   const [permissionDropdownOpen, setPermissionDropdownOpen] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
   const [isPickingFolder, setIsPickingFolder] = useState(false)
+  const [composerFocused, setComposerFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const modelDropdownRef = useRef<HTMLDivElement>(null)
@@ -165,7 +166,16 @@ export function HomeScreen({
         </h1>
 
         {/* ── Composer card ── */}
-        <div className="w-full rounded-2xl border border-black/[0.08] bg-white shadow-[0_2px_16px_rgba(0,0,0,0.07),0_0_0_0.5px_rgba(0,0,0,0.04)]">
+        <div
+          className="w-full rounded-2xl border bg-white transition-all duration-200"
+          style={{
+            borderColor: composerFocused ? 'rgba(0,0,0,0.13)' : 'rgba(0,0,0,0.08)',
+            boxShadow: composerFocused
+              ? '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)'
+              : '0 2px 16px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.04)',
+            transform: composerFocused ? 'translateY(-1px)' : 'translateY(0)',
+          }}
+        >
           {/* Textarea */}
           <div className="px-4 pt-4 pb-2">
             <textarea
@@ -173,6 +183,8 @@ export function HomeScreen({
               value={localInput}
               onChange={(e) => setLocalInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onFocus={() => setComposerFocused(true)}
+              onBlur={() => setComposerFocused(false)}
               placeholder="向 AI 提问，@ 添加文件，/ 输入命令，$ 使用技能"
               className="w-full resize-none bg-transparent text-[14px] text-black/88 placeholder:text-black/28 focus:outline-none"
               rows={2}
