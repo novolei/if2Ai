@@ -35,6 +35,10 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 ///
 /// Blocks `file://`, `javascript:`, and RFC-1918 / cloud-metadata addresses
 /// to prevent server-side request forgery via the AI's browser tool.
+///
+/// Uses `std::net::Ipv6Addr` for IPv6 range checks to avoid prefix-string
+/// false-negatives (e.g. `fd12::1` is ULA but does not start with `"fd00:"`).
+/// URLs that fail to parse are rejected rather than silently allowed.
 fn check_url_safety(url: &str) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
 
@@ -53,60 +57,82 @@ fn check_url_safety(url: &str) -> Result<(), String> {
         ));
     }
 
-    // Block RFC-1918 ranges, cloud metadata endpoints, and IPv6 private segments.
-    let blocked_hosts = [
-        // IPv4 loopback
-        "localhost",
-        "127.",
-        "0.0.0.0",
-        // IPv6 loopback (url crate normalises [::1] to "::1")
-        "::1",
-        // IPv4-mapped IPv6 loopback / private ranges
-        "::ffff:127.",
-        "::ffff:10.",
-        "::ffff:172.16.",
-        "::ffff:192.168.",
-        // IPv6 link-local (fe80::/10)
-        "fe80:",
-        // IPv6 Unique Local Address (fc00::/7 covers fc00:: and fd00::)
-        "fc00:",
-        "fd00:",
-        // IPv4 RFC-1918
-        "10.",
-        "172.16.",
-        "172.17.",
-        "172.18.",
-        "172.19.",
-        "172.20.",
-        "172.21.",
-        "172.22.",
-        "172.23.",
-        "172.24.",
-        "172.25.",
-        "172.26.",
-        "172.27.",
-        "172.28.",
-        "172.29.",
-        "172.30.",
-        "172.31.",
-        "192.168.",
-        "169.254.",          // link-local / AWS IMDS
-        "metadata.google",   // GCP metadata server
-        "metadata.azure",    // Azure IMDS
-    ];
+    // Parse to extract the host; reject unparseable URLs rather than silently
+    // allowing them (e.g. Zone-ID URLs like http://[fe80::1%25eth0]/).
+    let parsed = url::Url::parse(url)
+        .map_err(|e| format!("Malformed URL (rejected for safety): {e}"))?;
 
-    if let Ok(parsed) = url::Url::parse(url) {
-        if let Some(host) = parsed.host_str() {
-            let host_lower = host.to_ascii_lowercase();
-            for blocked in &blocked_hosts {
-                if host_lower.starts_with(blocked) || host_lower == blocked.trim_end_matches('.') {
-                    return Err(format!("URL targets a blocked host: {host}"));
-                }
-            }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL has no host (rejected for safety)".to_owned())?;
+    let host_lower = host.to_ascii_lowercase();
+
+    // ── IPv6 address check via structured parsing ──────────────────────────
+    // Covers full RFC ranges without relying on prefix-string matching, which
+    // misses addresses like fd12::1 (ULA but doesn't start with "fd00:").
+    if let Ok(ipv6) = host_lower.parse::<std::net::Ipv6Addr>() {
+        let segments = ipv6.segments();
+        let first_byte = (segments[0] >> 8) as u8;
+
+        // Loopback ::1
+        if ipv6.is_loopback() {
+            return Err(format!("URL targets blocked IPv6 loopback: {host}"));
+        }
+        // Link-local fe80::/10 — first 10 bits are 1111111010
+        if (segments[0] & 0xffc0) == 0xfe80 {
+            return Err(format!("URL targets blocked IPv6 link-local: {host}"));
+        }
+        // Unique Local Address fc00::/7 — first byte is 0xfc or 0xfd
+        if first_byte == 0xfc || first_byte == 0xfd {
+            return Err(format!("URL targets blocked IPv6 ULA address: {host}"));
+        }
+        // IPv4-mapped ::ffff:0:0/96 — handle via the IPv4 check below
+        if let Some(ipv4) = ipv6.to_ipv4() {
+            return check_ipv4_safety(ipv4, host);
+        }
+
+        // Reject all other private / documentation / unspecified ranges.
+        if ipv6.is_unspecified() {
+            return Err(format!("URL targets blocked IPv6 unspecified: {host}"));
+        }
+    }
+
+    // ── IPv4 address check ─────────────────────────────────────────────────
+    if let Ok(ipv4) = host_lower.parse::<std::net::Ipv4Addr>() {
+        return check_ipv4_safety(ipv4, host);
+    }
+
+    // ── Hostname deny-list ─────────────────────────────────────────────────
+    let blocked_hostnames = [
+        "localhost",
+        "metadata.google.internal", // GCP metadata server
+        "metadata.azure.internal",  // Azure IMDS
+    ];
+    for blocked in &blocked_hostnames {
+        if host_lower == *blocked {
+            return Err(format!("URL targets a blocked hostname: {host}"));
         }
     }
 
     Ok(())
+}
+
+/// Check a parsed IPv4 address against RFC-1918 and other blocked ranges.
+fn check_ipv4_safety(ipv4: std::net::Ipv4Addr, host: &str) -> Result<(), String> {
+    if ipv4.is_loopback()
+        || ipv4.is_private()
+        || ipv4.is_link_local()
+        || ipv4.is_unspecified()
+        || ipv4.is_broadcast()
+        || ipv4.is_documentation()
+        // Cloud metadata (169.254.169.254 is link-local; already covered above,
+        // but also check the full metadata.* prefix just in case).
+        || ipv4.octets()[0..2] == [169, 254]
+    {
+        Err(format!("URL targets a blocked IPv4 address: {host}"))
+    } else {
+        Ok(())
+    }
 }
 
 // ── Tool entry factory ────────────────────────────────────────────────────────
