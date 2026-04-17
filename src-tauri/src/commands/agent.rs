@@ -24,7 +24,6 @@ use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
 use crate::modules::learning::trajectory::TrajectoryManager;
-use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{
@@ -689,20 +688,26 @@ fn extract_skill_proposal_name(text: &str) -> Option<String> {
 
 /// Retrieve relevant memories and format them as context for the LLM.
 ///
-/// Classifies the user message intent, queries the memory provider,
-/// and returns a formatted context string. Returns empty string on any error
-/// to avoid blocking the main flow.
+/// Uses the `AppState`-level `ActiveRetrievalManager` when available to avoid
+/// re-allocating config on every turn. Falls back to a temporary manager when
+/// the AppState field is `None`.
+///
+/// Returns an empty string on any error to avoid blocking the main flow.
 async fn retrieve_memory_context(state: &AppState, user_message: &str) -> String {
-    let manager = ActiveRetrievalManager::with_defaults();
-    match manager
-        .retrieve_as_context(user_message, &*state.memory_provider)
-        .await
-    {
+    let result = if let Some(mgr) = &state.active_retrieval_manager {
+        mgr.retrieve_as_context(user_message, &*state.memory_provider)
+            .await
+    } else {
+        ActiveRetrievalManager::with_defaults()
+            .retrieve_as_context(user_message, &*state.memory_provider)
+            .await
+    };
+
+    match result {
         Ok(context) => context,
         Err(e) => {
             tracing::warn!(
-                "[retrieve_memory_context] Retrieval failed, proceeding without memory context: {}",
-                e
+                "[retrieve_memory_context] Retrieval failed, proceeding without memory context: {e}"
             );
             String::new()
         }
@@ -711,10 +716,30 @@ async fn retrieve_memory_context(state: &AppState, user_message: &str) -> String
 
 /// Record the conversation as a trajectory for future RL training.
 ///
-/// Converts the session to ShareGPT format and appends to the daily JSONL file.
+/// Uses the `AppState`-level `TrajectoryManager` when available to avoid
+/// re-creating the manager (and re-scanning the directory) on every turn.
+/// Falls back to constructing a one-off manager if the state-level one is
+/// absent (e.g. during tests or early startup).
+///
 /// Errors are logged as warnings and never block the main flow.
 /// Short sessions (<3 turns) are silently skipped per privacy defaults.
-async fn record_trajectory_if_possible(session: &RuntimeSession, system_prompt: &[String]) {
+async fn record_trajectory_if_possible(
+    session: &RuntimeSession,
+    system_prompt: &[String],
+    tm: Option<&std::sync::Arc<TrajectoryManager>>,
+) {
+    let system_text = system_prompt.join("\n");
+
+    // Prefer the shared AppState manager.
+    if let Some(manager) = tm {
+        match manager.record(session, &system_text, "if2ai-default").await {
+            Ok(id) => tracing::info!("[record_trajectory] Recorded trajectory {id}"),
+            Err(e) => tracing::debug!("[record_trajectory] Skipping trajectory record: {e}"),
+        }
+        return;
+    }
+
+    // Fallback: create a temporary manager.
     let trajectories_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".if2ai")
@@ -728,14 +753,9 @@ async fn record_trajectory_if_possible(session: &RuntimeSession, system_prompt: 
         }
     };
 
-    let system_text = system_prompt.join("\n");
     match manager.record(session, &system_text, "if2ai-default").await {
-        Ok(id) => {
-            tracing::info!("[record_trajectory] Recorded trajectory {id}");
-        }
-        Err(e) => {
-            tracing::debug!("[record_trajectory] Skipping trajectory record: {e}");
-        }
+        Ok(id) => tracing::info!("[record_trajectory] Recorded trajectory {id}"),
+        Err(e) => tracing::debug!("[record_trajectory] Skipping trajectory record: {e}"),
     }
 }
 
@@ -850,7 +870,9 @@ pub async fn run_agent_turn(
         frozen_snapshot.token_estimate()
     );
 
-    // Create runtime
+    // Create runtime with working-memory sliding window (C1 integration).
+    // Each LLM call will only see the most recent turns within the token budget,
+    // while full history is preserved in session for compaction / trajectory.
     let mut runtime = ConversationRuntime::new(
         runtime_session,
         api_client,
@@ -858,7 +880,8 @@ pub async fn run_agent_turn(
         permission_policy,
         system_prompt,
     )
-    .with_context_budget(state.context_budget.clone());
+    .with_context_budget(state.context_budget.clone())
+    .with_working_memory(WorkingMemory::default());
 
     tracing::info!(
         "[run_agent_turn] Runtime created, calling run_turn with message: {}",
@@ -965,24 +988,30 @@ pub async fn run_agent_turn(
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // Record trajectory after session save (non-blocking, warn-only)
+            // Record trajectory after session save (non-blocking, warn-only).
+            // Pass the AppState-level TrajectoryManager to avoid per-turn re-init.
             record_trajectory_if_possible(
                 &trajectory_session,
                 std::slice::from_ref(&system_prompt_text),
+                state.trajectory_manager.as_ref(),
             )
             .await;
 
-            // LearningModule: record turn outcome for self-model learning
-            if let Ok(mut learning) = LearningModule::new(state.memory_provider.clone()).await {
-                learning
-                    .self_model_mut()
+            // LearningModule: record turn outcome using shared AppState instance.
+            // Using AppState-level module avoids per-turn re-init and lets SelfModel
+            // accumulate knowledge across turns.
+            if let Some(lm_arc) = &state.learning_module {
+                let mut lm = lm_arc.lock().await;
+                lm.self_model_mut()
                     .record_turn(/* success= */ true, /* response_time_ms= */ 0.0);
                 tracing::info!(
                     "[run_agent_turn] LearningModule: turn recorded, {} capabilities tracked",
-                    learning.self_model().capabilities.len()
+                    lm.self_model().capabilities.len()
                 );
             } else {
-                tracing::warn!("[run_agent_turn] LearningModule: failed to initialize, skipping self-model update");
+                tracing::debug!(
+                    "[run_agent_turn] LearningModule: not initialised, skipping self-model update"
+                );
             }
 
             // Verify system prompt integrity: detect if prompt was modified during session
@@ -1023,14 +1052,42 @@ pub async fn run_agent_turn(
                 );
             }
 
-            // WeibullDecay: compute importance decay factor for post-compaction entries
-            let decay = WeibullDecay::default();
+            // WeibullDecay: apply importance decay to memory entries post-turn (C5).
+            // Uses the default 7-day scale (lambda=168h, k=1.2) so that entries
+            // that haven't been accessed recently gradually fade in importance.
+            let decay_default = WeibullDecay::default();
+            match state
+                .memory_provider
+                .apply_importance_decay(decay_default.lambda, decay_default.k)
+                .await
+            {
+                Ok(updated) if updated > 0 => {
+                    tracing::info!(
+                        "[run_agent_turn] WeibullDecay: applied to {updated} memory entries \
+                         (lambda={:.0}h, k={:.2})",
+                        decay_default.lambda,
+                        decay_default.k
+                    );
+                }
+                Ok(_) => {
+                    tracing::debug!(
+                        "[run_agent_turn] WeibullDecay: no entries updated (no-op or empty store)"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[run_agent_turn] WeibullDecay: apply_importance_decay failed: {e}"
+                    );
+                }
+            }
+
+            // Log compaction-related decay factor for observability.
             let removed_count =
                 pre_compact_message_count.saturating_sub(post_compact_message_count);
             if removed_count > 0 {
-                let decay_factor = decay.decay_factor(24.0); // 1-day decay factor
+                let decay_factor = decay_default.decay_factor(24.0); // 1-day decay factor
                 tracing::info!(
-                    "[run_agent_turn] WeibullDecay: {removed_count} entries compacted, 1-day decay factor={:.3}",
+                    "[run_agent_turn] WeibullDecay: {removed_count} msgs compacted, 1-day factor={:.3}",
                     decay_factor
                 );
             }

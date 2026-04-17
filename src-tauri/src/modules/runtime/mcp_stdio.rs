@@ -1343,6 +1343,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires external Python MCP server script; run with --ignored in integration environments"]
     fn lists_tools_calls_tool_and_reads_resources_over_jsonrpc() {
         let runtime = Builder::new_current_thread()
             .enable_all()

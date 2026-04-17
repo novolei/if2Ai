@@ -847,6 +847,13 @@ mod tests {
 
     #[test]
     fn resolve_skill_path_blocks_quarantine_source() {
+        // Hold the global bundled-dir lock to prevent concurrent tests that call
+        // set_bundled_skills_dir() from racing with this test's BUNDLED_SKILLS_DIR read.
+        let _guard = bundled_dir_lock()
+            .lock()
+            .expect("bundled dir lock poisoned");
+        clear_bundled_skills_dir_for_test();
+
         let root = std::env::temp_dir().join(format!("if2ai-skill-quarantine-{}", Uuid::new_v4()));
         let quarantine_skill = root.join(".if2ai/skills-quarantine/demo/SKILL.md");
         fs::create_dir_all(
@@ -868,6 +875,13 @@ mod tests {
 
     #[test]
     fn resolve_skill_path_requires_reviewed_manifest() {
+        // Hold the global bundled-dir lock to prevent concurrent tests that call
+        // set_bundled_skills_dir() from racing with this test's BUNDLED_SKILLS_DIR read.
+        let _guard = bundled_dir_lock()
+            .lock()
+            .expect("bundled dir lock poisoned");
+        clear_bundled_skills_dir_for_test();
+
         let root = std::env::temp_dir().join(format!("if2ai-skill-review-{}", Uuid::new_v4()));
         let skill_dir = root.join(".if2ai/skills/demo");
         fs::create_dir_all(&skill_dir).expect("create skill directory");

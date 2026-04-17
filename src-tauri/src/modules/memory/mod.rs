@@ -109,6 +109,29 @@ pub trait MemoryProvider: Send + Sync {
 
     /// Export entries, optionally filtered by category
     async fn export(&self, category: Option<&str>) -> Result<Vec<MemoryEntry>, MemoryError>;
+
+    /// Apply Weibull importance decay to all stored entries.
+    ///
+    /// Each entry's `importance` is multiplied by the Weibull survival factor
+    /// `exp(-(age_hours / lambda)^k)`, where age is measured from `created_at`.
+    /// Entries are updated in-place in the backing store.
+    ///
+    /// The default implementation is a no-op so that providers that do not yet
+    /// support importance write-back remain unaffected. Override this method in
+    /// concrete providers to enable real decay.
+    ///
+    /// # Parameters
+    /// - `lambda_hours`: Weibull scale (hours). Default in `WeibullDecay` is 168 (7 days).
+    /// - `k`: Weibull shape. Default is 1.2.
+    async fn apply_importance_decay(
+        &self,
+        lambda_hours: f32,
+        k: f32,
+    ) -> Result<usize, MemoryError> {
+        // Silence "unused variable" warnings for the default no-op.
+        let _ = (lambda_hours, k);
+        Ok(0)
+    }
 }
 
 /// In-memory implementation of MemoryProvider

@@ -295,6 +295,23 @@ impl MemoryProvider for VectorMemoryProvider {
 
         Ok(all_results.iter().map(scored_to_entry).collect())
     }
+
+    /// Apply Weibull importance decay.
+    ///
+    /// LanceDB does not expose a direct importance update path at this stage.
+    /// This is a tracked gap (H3/Phase 6bw); until the SQLite dual-write is in
+    /// place, decay is a no-op for the vector provider and returns 0.
+    async fn apply_importance_decay(
+        &self,
+        lambda_hours: f32,
+        k: f32,
+    ) -> Result<usize, MemoryError> {
+        let _ = (lambda_hours, k);
+        tracing::debug!(
+            "[VectorMemoryProvider] apply_importance_decay: no-op until SQLite dual-write is implemented (H3)"
+        );
+        Ok(0)
+    }
 }
 
 /// RRF fusion across multiple result lists
