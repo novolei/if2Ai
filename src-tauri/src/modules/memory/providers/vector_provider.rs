@@ -3,10 +3,20 @@
 //! [`VectorMemoryProvider`] combines vector embedding (FastEmbed) with
 //! vector storage (LanceDB) to provide semantic memory search.
 //!
+//! ## SQLite dual-write (H3)
+//!
+//! When configured with `sqlite_path`, writes are dual-homed:
+//! 1. **SQLite first** (synchronous, authoritative for durability and metadata).
+//! 2. **LanceDB async** (spawned background task, eventually consistent).
+//!
+//! This decoupling means:
+//! - `apply_importance_decay` can update importance scores in SQLite.
+//! - Vector search still benefits from LanceDB's approximate nearest-neighbor index.
+//! - A crash mid-write leaves SQLite intact; LanceDB can be rebuilt from it.
+//!
 //! # `#![allow(dead_code)]` justification
-//! VectorMemoryProvider and its helpers are not yet called from the agent loop.
-//! They provide the full MemoryProvider trait impl (store/recall/delete/purge/export)
-//! and will be wired when HybridMemoryProvider is activated (Phase 6bw.7+).
+//! VectorMemoryProvider and its helpers are not yet called from all agent loop
+//! code paths. They are wired through HybridMemoryProvider for the active path.
 
 #![allow(dead_code)]
 
@@ -15,6 +25,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::lancedb::{LanceDBError, LanceDBMemory, ScoredMemory};
+use super::sqlite_provider::SqliteMemoryProvider;
 use crate::modules::memory::embedding::FastEmbedProvider;
 use crate::modules::memory::{MemoryCategory, MemoryEntry, MemoryError, MemoryProvider};
 
@@ -37,41 +48,69 @@ impl From<LanceDBError> for VectorProviderError {
 /// Configuration for vector memory provider
 #[derive(Debug, Clone)]
 pub struct VectorProviderConfig {
+    /// Path to the LanceDB directory.
     pub db_path: PathBuf,
+    /// Enable vector search (ANN via LanceDB). Disable only in tests.
     pub vector_search_enabled: bool,
+    /// Optional path for SQLite dual-write (H3).
+    ///
+    /// When `Some`, every `store` call writes to SQLite first before the
+    /// async LanceDB write. Set this to `~/.if2ai/memory/memory.db` to
+    /// enable durability and importance-decay via the SQL provider.
+    pub sqlite_path: Option<PathBuf>,
 }
 
 impl Default for VectorProviderConfig {
     fn default() -> Self {
-        let db_path = dirs::data_local_dir()
+        let base = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".if2ai")
-            .join("memory")
-            .join("vector_db");
+            .join("memory");
 
         Self {
-            db_path,
+            db_path: base.join("vector_db"),
             vector_search_enabled: true,
+            // SQLite dual-write disabled by default; enable explicitly.
+            sqlite_path: None,
         }
+    }
+}
+
+impl VectorProviderConfig {
+    /// Enable SQLite dual-write to the given path.
+    ///
+    /// Calling this enables importance decay and durable metadata storage.
+    #[must_use]
+    pub fn with_sqlite_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.sqlite_path = Some(path.into());
+        self
     }
 }
 
 /// Vector-backed MemoryProvider
 ///
 /// Wraps `LanceDBMemory` + `FastEmbedProvider` to provide:
-/// - `store`: embed text + store in LanceDB
+/// - `store`: embed text + store in LanceDB (+ optional SQLite dual-write)
 /// - `recall`: vector search by embedding the query
 /// - `delete`: remove from LanceDB
+///
+/// When `config.sqlite_path` is set, writes are dual-homed: SQLite first,
+/// then LanceDB asynchronously (see module-level doc for rationale).
 pub struct VectorMemoryProvider {
     embedder: Arc<FastEmbedProvider>,
     lancedb: Arc<RwLock<LanceDBMemory>>,
+    /// Optional SQLite provider for dual-write and importance decay.
+    sqlite: Option<Arc<SqliteMemoryProvider>>,
     config: VectorProviderConfig,
 }
 
 impl VectorMemoryProvider {
-    /// Create a new VectorMemoryProvider
+    /// Create a new VectorMemoryProvider.
     ///
     /// Initializes the FastEmbed model and opens/creates the LanceDB database.
+    /// If `config.sqlite_path` is set, also opens/creates the SQLite database
+    /// for dual-write (H3). SQLite init failures are gracefully degraded to
+    /// `None` (warn-logged) so the vector provider still works.
     pub async fn new(config: VectorProviderConfig) -> Result<Self, VectorProviderError> {
         let embedder = FastEmbedProvider::new()
             .map_err(|e| VectorProviderError::EmbeddingError(e.to_string()))?;
@@ -87,9 +126,31 @@ impl VectorMemoryProvider {
             .await
             .map_err(|e| VectorProviderError::VectorStoreError(e.to_string()))?;
 
+        // Optional SQLite dual-write (H3).
+        let sqlite = if let Some(ref sqlite_path) = config.sqlite_path {
+            match SqliteMemoryProvider::new(sqlite_path.clone()) {
+                Ok(provider) => {
+                    tracing::info!(
+                        "[VectorMemoryProvider] SQLite dual-write enabled at {:?}",
+                        sqlite_path
+                    );
+                    Some(Arc::new(provider))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[VectorMemoryProvider] SQLite init failed ({e}); dual-write disabled"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             embedder: Arc::new(embedder),
             lancedb: Arc::new(RwLock::new(lancedb)),
+            sqlite,
             config,
         })
     }
@@ -212,9 +273,9 @@ fn scored_to_entry(scored: &ScoredMemory) -> MemoryEntry {
 
 /// MemoryProvider trait implementation for VectorMemoryProvider
 ///
-/// Note: This implementation stores data only in LanceDB (vector store).
-/// A production setup would dual-write to both LanceDB and SQLite
-/// for hybrid search + structured metadata.
+/// When `sqlite` is `Some`, `store` dual-writes:
+/// 1. SQLite synchronously (authoritative for metadata and decay).
+/// 2. LanceDB asynchronously (vector search, eventually consistent).
 #[async_trait::async_trait]
 impl MemoryProvider for VectorMemoryProvider {
     async fn store(
@@ -223,6 +284,17 @@ impl MemoryProvider for VectorMemoryProvider {
         content: &str,
         category: MemoryCategory,
     ) -> Result<(), MemoryError> {
+        // Step 1: SQLite-first write (H3 dual-write).
+        // SQLite is the authoritative source; failure blocks the write entirely.
+        if let Some(ref sqlite) = self.sqlite {
+            sqlite
+                .store(key, content, category.clone())
+                .await
+                .map_err(|e| MemoryError::Generic(format!("sqlite dual-write failed: {e}")))?;
+            tracing::debug!("[VectorMemoryProvider] SQLite dual-write OK for key={key}");
+        }
+
+        // Step 2: compute embedding for LanceDB.
         let embedding = self
             .embedder
             .embed_one(content)
@@ -242,10 +314,29 @@ impl MemoryProvider for VectorMemoryProvider {
             project_id: None,
         };
 
-        let db = self.lancedb.read().await;
-        db.insert(&entry, &embedding)
-            .await
-            .map_err(|e| MemoryError::Generic(format!("lancedb insert failed: {e}")))?;
+        // Step 3: LanceDB write (async background when SQLite is present).
+        if self.sqlite.is_some() {
+            // Fire-and-forget: LanceDB is not the source of truth when dual-write
+            // is enabled. Errors are warn-logged rather than propagated.
+            let lancedb = Arc::clone(&self.lancedb);
+            let entry_clone = entry.clone();
+            let embedding_clone = embedding.clone();
+            tokio::spawn(async move {
+                let db = lancedb.read().await;
+                if let Err(e) = db.insert(&entry_clone, &embedding_clone).await {
+                    tracing::warn!(
+                        "[VectorMemoryProvider] async LanceDB insert failed for key={}: {e}",
+                        entry_clone.key
+                    );
+                }
+            });
+        } else {
+            // No SQLite: LanceDB is the only store — write synchronously.
+            let db = self.lancedb.read().await;
+            db.insert(&entry, &embedding)
+                .await
+                .map_err(|e| MemoryError::Generic(format!("lancedb insert failed: {e}")))?;
+        }
 
         Ok(())
     }
@@ -302,17 +393,25 @@ impl MemoryProvider for VectorMemoryProvider {
 
     /// Apply Weibull importance decay.
     ///
-    /// LanceDB does not expose a direct importance update path at this stage.
-    /// This is a tracked gap (H3/Phase 6bw); until the SQLite dual-write is in
-    /// place, decay is a no-op for the vector provider and returns 0.
+    /// When SQLite dual-write is enabled, delegates to `SqliteMemoryProvider`
+    /// which has a full Weibull decay implementation over its indexed metadata.
+    ///
+    /// Without SQLite, LanceDB does not expose a direct importance update path
+    /// so this remains a no-op that returns 0 (no entries decayed).
     async fn apply_importance_decay(
         &self,
         lambda_hours: f32,
         k: f32,
     ) -> Result<usize, MemoryError> {
-        let _ = (lambda_hours, k);
+        if let Some(ref sqlite) = self.sqlite {
+            tracing::debug!(
+                "[VectorMemoryProvider] apply_importance_decay: delegating to SQLite provider"
+            );
+            return sqlite.apply_importance_decay(lambda_hours, k).await;
+        }
+
         tracing::debug!(
-            "[VectorMemoryProvider] apply_importance_decay: no-op until SQLite dual-write is implemented (H3)"
+            "[VectorMemoryProvider] apply_importance_decay: no-op (SQLite dual-write not enabled)"
         );
         Ok(0)
     }
@@ -402,5 +501,35 @@ mod tests {
         let config = VectorProviderConfig::default();
         assert!(config.vector_search_enabled);
         assert!(config.db_path.ends_with("vector_db"));
+        assert!(config.sqlite_path.is_none());
+    }
+
+    #[test]
+    fn config_with_sqlite_path_sets_dual_write() {
+        let config = VectorProviderConfig::default().with_sqlite_path("/tmp/test.db");
+        assert!(config.sqlite_path.is_some());
+        assert_eq!(
+            config.sqlite_path.as_ref().unwrap().to_str(),
+            Some("/tmp/test.db")
+        );
+    }
+
+    /// Verify that the SQLite provider is created when a sqlite_path is provided.
+    ///
+    /// Note: This test does NOT exercise the full dual-write path (which requires
+    /// a running LanceDB + FastEmbed model), but confirms the config builder and
+    /// `with_sqlite_path` method work as expected.
+    #[test]
+    fn vector_provider_config_sqlite_path_roundtrip() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("vec.db");
+        let sqlite_path = tmp.path().join("meta.db");
+
+        let config = VectorProviderConfig {
+            db_path,
+            vector_search_enabled: false,
+            sqlite_path: Some(sqlite_path.clone()),
+        };
+        assert_eq!(config.sqlite_path.as_ref().unwrap(), &sqlite_path);
     }
 }

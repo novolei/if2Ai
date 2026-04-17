@@ -184,6 +184,7 @@ fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
             let config = modules::memory::VectorProviderConfig {
                 db_path,
                 vector_search_enabled: true,
+                sqlite_path: None,
             };
 
             modules::memory::VectorMemoryProvider::new(config).await
