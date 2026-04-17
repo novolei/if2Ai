@@ -233,8 +233,8 @@ export function ModelSettingsPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* ── LLM roles ── */}
-      <SettingsSurface className="px-5 py-4">
+      {/* ── LLM roles ── overflow-visible so dropdowns aren't clipped by card border-radius */}
+      <SettingsSurface className="overflow-visible px-5 py-4">
         <SectionLabel>LLM 模型角色</SectionLabel>
         <p className="mb-3 text-[11.5px] text-muted-foreground">
           为不同场景设置不同的模型，实现性能与成本的最佳平衡。

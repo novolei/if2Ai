@@ -43,11 +43,11 @@ import {
   Star,
   XCircle,
 } from 'lucide-react'
-import { SettingsSurface } from '../components/SettingsSurface'
+
 
 type SkillCategoryId = 'all' | 'recent' | 'docs' | 'search' | 'coding' | 'web' | 'collab' | 'media'
 type SkillSourceFilter = 'all' | 'builtin' | 'user'
-type SkillsTab = 'installed' | 'market'
+type SkillsTab = 'installed' | 'market' | 'proposals'
 type MarketSource = 'skills-sh' | 'github'
 
 interface SkillsSettingsPageProps {
@@ -383,12 +383,46 @@ export function SkillsSettingsPage({
       {error && <ErrorBanner text={`技能加载失败：${error}`} />}
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SkillsTab)}>
-        <TabsList className="h-8 rounded-xl border border-black/[0.07] bg-black/[0.03] p-0.5">
-          <TabsTrigger value="installed" className="rounded-[10px] px-4 text-[12.5px]">
+        <TabsList className="h-auto gap-0 rounded-2xl border border-black/[0.07] bg-black/[0.025] p-1" style={{ boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.04)' }}>
+          <TabsTrigger
+            value="installed"
+            className="rounded-xl px-4 py-1.5 text-[12.5px] font-medium data-[state=active]:bg-white data-[state=active]:shadow-sm"
+          >
             我的技能
+            <span className={cn(
+              'ml-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold',
+              activeTab === 'installed' ? 'bg-jade/10 text-jade' : 'bg-black/[0.05] text-black/35',
+            )}>
+              {skills.length}
+            </span>
           </TabsTrigger>
-          <TabsTrigger value="market" className="rounded-[10px] px-4 text-[12.5px]">
-            Skills Market
+
+          <TabsTrigger
+            value="market"
+            className="rounded-xl px-4 py-1.5 text-[12.5px] font-medium data-[state=active]:bg-white data-[state=active]:shadow-sm"
+          >
+            技能市场
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="proposals"
+            className="rounded-xl px-4 py-1.5 text-[12.5px] font-medium data-[state=active]:bg-white data-[state=active]:shadow-sm"
+          >
+            <span className="flex items-center gap-1.5">
+              Agent 提案
+              {(() => {
+                const count = skills.filter(
+                  (s) =>
+                    (s.review_status === 'draft' || s.review_status === 'quarantine') &&
+                    (s.source === 'workspace' || s.source === 'user'),
+                ).length
+                return count > 0 ? (
+                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9.5px] font-bold text-white">
+                    {count}
+                  </span>
+                ) : null
+              })()}
+            </span>
           </TabsTrigger>
         </TabsList>
 
@@ -492,14 +526,6 @@ export function SkillsSettingsPage({
           </div>
 
           {loading && <InfoBanner text="正在加载技能列表..." tone="neutral" />}
-
-          {/* Agent Proposal Banner */}
-          {!loading && <AgentProposalBanner
-            skills={skills}
-            onReview={onReviewSkill}
-            onApprove={onApproveSkill}
-            onRollback={onRollbackSkill}
-          />}
 
           {/* Skill cards */}
           {!loading && (
@@ -814,6 +840,17 @@ export function SkillsSettingsPage({
             </div>
           )}
         </TabsContent>
+
+        {/* ── Proposals Tab ── */}
+        <TabsContent value="proposals" className="space-y-3">
+          <ProposalsTab
+            skills={skills}
+            loading={loading}
+            onReview={onReviewSkill}
+            onApprove={onApproveSkill}
+            onRollback={onRollbackSkill}
+          />
+        </TabsContent>
       </Tabs>
 
       {/* GitHub Import Dialog */}
@@ -943,105 +980,146 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-// ─── Agent Proposal Banner ────────────────────────────────────────────────────
+// ─── Proposals Tab ────────────────────────────────────────────────────────────
 
 /**
- * Displays a highlighted review queue when the Agent has drafted new skills
- * that need human approval before activation.
- *
- * Shown only when at least one skill is in `draft` or `quarantine` status
- * and originates from the `workspace` source (agent-created proposals).
+ * Full-page tab showing Agent-created skills pending human review and approval.
  */
-function AgentProposalBanner({
+function ProposalsTab({
   skills,
+  loading,
   onReview,
   onApprove,
   onRollback,
 }: {
   skills: SkillInfo[]
+  loading: boolean
   onReview: (skill: SkillInfo) => void
   onApprove: (skill: SkillInfo) => void
   onRollback: (skill: SkillInfo) => void
 }) {
   const proposals = skills.filter(
     (s) =>
-      (s.review_status === 'draft' || s.review_status === 'quarantine') &&
-      (s.source === 'workspace' || s.source === 'user')
+      (s.review_status === 'draft' || s.review_status === 'quarantine' || s.review_status === 'review_passed') &&
+      (s.source === 'workspace' || s.source === 'user'),
   )
 
-  if (proposals.length === 0) return null
+  if (loading) {
+    return <InfoBanner text="正在加载技能列表..." tone="neutral" />
+  }
+
+  if (proposals.length === 0) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-black/[0.07] bg-white py-12 text-center"
+        style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}
+      >
+        <div className="flex size-12 items-center justify-center rounded-2xl bg-jade/10">
+          <BotMessageSquare className="h-5 w-5 text-jade" />
+        </div>
+        <div>
+          <div className="text-[13.5px] font-semibold text-foreground/70">暂无待审批提案</div>
+          <p className="mt-1 text-[11.5px] text-muted-foreground">
+            当 Agent 创建新技能后，会在此处等待你的 Review 和批准
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <SettingsSurface className="border-amber-200 bg-amber-50">
-      <div className="flex items-start gap-3 p-4">
-        <BotMessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-amber-900">
-            Agent 提案待审批（{proposals.length} 个）
-          </p>
-          <p className="mt-0.5 text-xs text-amber-700">
-            以下技能由 AI Agent 自动创建，需要你 Review 并批准后才可激活使用。
-          </p>
-          <ul className="mt-3 space-y-2">
-            {proposals.map((skill) => (
-              <li
-                key={skill.path}
-                className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-white/70 px-3 py-2"
-              >
+    <>
+      {/* Header info */}
+      <div className="flex items-center justify-between rounded-2xl border border-amber-200/80 bg-amber-50 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-100">
+            <BotMessageSquare className="h-4 w-4 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-[12.5px] font-semibold text-amber-900">
+              {proposals.length} 个提案待审批
+            </p>
+            <p className="text-[11px] text-amber-700">
+              以下技能由 AI Agent 自动创建，需要 Review 并批准后才可激活使用
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Proposal cards */}
+      <div className="flex flex-col gap-2">
+        {proposals.map((skill) => {
+          const canReview = skill.review_status === 'draft' || skill.review_status === 'quarantine'
+          const canApprove = skill.review_status === 'draft' || skill.review_status === 'review_passed'
+          const canRollback = skill.review_status === 'active' || skill.review_status === 'review_passed' || skill.review_status === 'quarantine'
+
+          return (
+            <div
+              key={skill.path}
+              className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white"
+              style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}
+            >
+              {/* Card header */}
+              <div className="flex items-start justify-between gap-3 px-5 py-4">
                 <div className="min-w-0 flex-1">
-                  <span className="truncate text-sm font-medium text-amber-900">{skill.name}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13.5px] font-semibold tracking-tight">{skill.name}</span>
+                    <StatusPill status={skill.review_status} />
+                  </div>
                   {skill.description && (
-                    <p className="mt-0.5 truncate text-xs text-amber-700/80">{skill.description}</p>
+                    <p className="mt-0.5 text-[11.5px] text-muted-foreground line-clamp-2">
+                      {skill.description}
+                    </p>
                   )}
-                  <div className="mt-1 flex gap-1.5">
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 uppercase tracking-wide">
-                      {skill.review_status}
-                    </span>
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="rounded-lg border border-black/[0.07] bg-black/[0.025] px-2 py-0.5 text-[10px] font-medium text-foreground/50">
                       {skill.source}
+                    </span>
+                    <span className="truncate rounded-lg border border-black/[0.06] bg-black/[0.016] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {skill.path}
                     </span>
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-1.5">
-                  {skill.review_status === 'draft' && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 rounded-full border-amber-300 px-2.5 text-xs text-amber-800 hover:bg-amber-100"
-                      onClick={() => onReview(skill)}
-                    >
-                      Review
-                    </Button>
-                  )}
-                  {(skill.review_status === 'draft' || skill.review_status === 'review_passed') && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 rounded-full border-green-300 px-2.5 text-xs text-green-800 hover:bg-green-50"
-                      onClick={() => onApprove(skill)}
-                    >
-                      <CheckCircle2 className="mr-1 h-3 w-3" />
-                      批准
-                    </Button>
-                  )}
-                  <Button
+              </div>
+
+              {/* Action bar */}
+              <div className="flex items-center gap-2 border-t border-black/[0.05] bg-black/[0.016] px-5 py-2.5">
+                {canReview && (
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 rounded-full px-2 text-xs text-red-600 hover:bg-red-50"
+                    onClick={() => onReview(skill)}
+                    className="h-7 rounded-xl border border-black/[0.09] bg-white px-3 text-[11.5px] font-medium text-foreground/70 transition-colors hover:bg-black/[0.03]"
+                  >
+                    Review
+                  </button>
+                )}
+                {canApprove && (
+                  <button
+                    type="button"
+                    onClick={() => onApprove(skill)}
+                    className="flex h-7 items-center gap-1.5 rounded-xl bg-jade px-3 text-[11.5px] font-semibold text-white transition-colors hover:bg-jade/90"
+                  >
+                    <CheckCircle2 className="h-3 w-3" />
+                    批准激活
+                  </button>
+                )}
+                <div className="flex-1" />
+                {canRollback && (
+                  <button
+                    type="button"
                     onClick={() => onRollback(skill)}
+                    className="flex h-7 items-center gap-1.5 rounded-xl border border-red-200/70 bg-red-50 px-3 text-[11.5px] font-medium text-red-600 transition-colors hover:bg-red-100"
                   >
                     <XCircle className="h-3 w-3" />
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+                    回滚
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
-    </SettingsSurface>
+    </>
   )
 }
 
