@@ -6,20 +6,38 @@ import type { SettingsPageProps } from '../types'
 import { configResetOnboarding } from '@/lib/tauri'
 import { toast } from 'sonner'
 
+const btnOutline =
+  'window-no-drag h-7 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]'
+
+const btnPrimary =
+  'window-no-drag h-7 rounded-xl bg-jade px-3 text-[11.5px] font-medium text-white shadow-none hover:bg-jade/90'
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+      {children}
+    </div>
+  )
+}
+
 interface FeatureCardProps {
   icon: typeof Shield
   title: string
   text: string
+  accent: string
 }
 
-function FeatureCard({ icon: Icon, title, text }: FeatureCardProps) {
+function FeatureCard({ icon: Icon, title, text, accent }: FeatureCardProps) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-border/50 bg-white/60 px-4 py-3">
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-        <Icon className="h-4 w-4" />
+    <div className="flex flex-col gap-2 rounded-xl border border-black/[0.06] bg-black/[0.016] px-4 py-3">
+      <div
+        className="flex size-8 items-center justify-center rounded-xl"
+        style={{ background: `${accent}14` }}
+      >
+        <Icon className="h-4 w-4" style={{ color: accent }} />
       </div>
       <div>
-        <div className="text-[12px] font-semibold tracking-tight">{title}</div>
+        <div className="text-[12.5px] font-semibold tracking-tight">{title}</div>
         <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{text}</p>
       </div>
     </div>
@@ -29,29 +47,29 @@ function FeatureCard({ icon: Icon, title, text }: FeatureCardProps) {
 export function AboutSettingsPage({}: SettingsPageProps) {
   return (
     <div className="flex flex-col gap-3">
-      {/* Hero */}
+      {/* ── Hero ── */}
       <SettingsSurface className="px-6 py-6">
-        <div className="flex flex-col items-center gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-col items-center gap-3">
-            <AgentOrb status="idle" size="hero" showLabel label="If2Ai" />
-            <div className="space-y-1 text-center">
-              <div className="text-[20px] font-semibold tracking-tight">If2Ai</div>
-              <div className="text-[12px] text-muted-foreground">桌面 AI 智能体工作台</div>
+        <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <AgentOrb status="idle" size="hero" />
+            <div className="space-y-0.5">
+              <div className="text-[19px] font-bold tracking-tight">If2Ai</div>
+              <div className="text-[11.5px] text-muted-foreground">桌面 AI 智能体工作台</div>
+              <div className="font-mono text-[10px] text-black/25">v0.1.0</div>
             </div>
           </div>
 
-          <div className="flex flex-col items-center gap-3 lg:items-start">
-            <p className="text-[12px] leading-5 text-muted-foreground max-w-sm text-center lg:text-left">
-              基于 Tauri + Rust + React 的桌面智能体工作台，强调项目分组、
-              会话流式输出、可观测性和本地化执行体验。
+          <div className="flex flex-col gap-2.5 sm:items-end">
+            <p className="max-w-[280px] text-[12px] leading-5 text-muted-foreground sm:text-right">
+              基于 Tauri + Rust + React 的桌面智能体工作台，强调项目分组、会话流式输出、可观测性和本地化执行体验。
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" className={compactButtonClass}>
-                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+            <div className="flex gap-2">
+              <Button variant="outline" className={btnOutline}>
+                <ExternalLink className="mr-1.5 h-3 w-3" />
                 查看文档
               </Button>
-              <Button className={compactButtonPrimary}>
-                <Rocket className="mr-1.5 h-3.5 w-3.5" />
+              <Button className={btnPrimary}>
+                <Rocket className="mr-1.5 h-3 w-3" />
                 检查更新
               </Button>
             </div>
@@ -59,39 +77,43 @@ export function AboutSettingsPage({}: SettingsPageProps) {
         </div>
       </SettingsSurface>
 
-      {/* Features */}
+      {/* ── Design principles ── */}
       <SettingsSurface className="px-5 py-4">
-        <div className="text-[13px] font-semibold tracking-tight">设计原则</div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <FeatureCard icon={Sparkles} title="Agent 优先" text="层次克制、信息密度清晰" />
-          <FeatureCard icon={Globe} title="跨平台" text="macOS / Windows / Linux 统一桌面壳" />
-          <FeatureCard icon={Shield} title="可扩展" text="未来接入插件、工具面板与评估系统" />
+        <SectionLabel>设计原则</SectionLabel>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <FeatureCard
+            icon={Sparkles}
+            title="Agent 优先"
+            text="层次克制、信息密度清晰"
+            accent="var(--jade)"
+          />
+          <FeatureCard
+            icon={Globe}
+            title="跨平台"
+            text="macOS / Windows / Linux 统一桌面壳"
+            accent="#3b82f6"
+          />
+          <FeatureCard
+            icon={Shield}
+            title="可扩展"
+            text="未来接入插件、工具面板与评估系统"
+            accent="#8b5cf6"
+          />
         </div>
       </SettingsSurface>
 
-      {/* Version info */}
-      <SettingsSurface className="px-5 py-3">
-        <div className="flex items-center justify-between">
-          <div className="text-[12px] text-muted-foreground">
-            当前版本
-          </div>
-          <div className="font-mono text-[12px] font-medium tabular-nums">v0.1.0</div>
-        </div>
-      </SettingsSurface>
-
-      {/* Reset Onboarding */}
-      <SettingsSurface className="px-5 py-3">
+      {/* ── Danger zone ── */}
+      <SettingsSurface className="px-5 py-3.5">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-[12px] font-medium">重置 Onboarding</div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[12.5px] font-medium">重置 Onboarding</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
               清除配置并重新进入引导流程
             </div>
           </div>
           <Button
             variant="outline"
-            size="sm"
-            className="h-7 rounded-lg text-[11px]"
+            className={btnOutline}
             onClick={async () => {
               if (!window.confirm('确定要重置 Onboarding 吗？所有配置将被清除。')) return
               try {
@@ -110,9 +132,3 @@ export function AboutSettingsPage({}: SettingsPageProps) {
     </div>
   )
 }
-
-const compactButtonClass =
-  'window-no-drag h-8 rounded-xl border border-border/60 bg-white/60 px-3.5 text-[12px] shadow-none hover:bg-white/80'
-
-const compactButtonPrimary =
-  'window-no-drag h-8 rounded-xl bg-primary px-3.5 text-[12px] text-primary-foreground shadow-none hover:bg-primary/90'

@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils'
 import { SettingsSurface } from '../components/SettingsSurface'
 import type { SettingsPageProps } from '../types'
 
@@ -15,7 +16,6 @@ interface Channel {
 }
 
 const CHANNELS: Channel[] = [
-  // High priority
   {
     id: 'feishu',
     name: '飞书 / Lark',
@@ -56,7 +56,6 @@ const CHANNELS: Channel[] = [
     status: 'disconnected',
     priority: 'high',
   },
-  // Low priority (other channels)
   {
     id: 'discord',
     name: 'Discord',
@@ -134,76 +133,53 @@ const CHANNELS: Channel[] = [
 const highPriority = CHANNELS.filter((c) => c.priority === 'high')
 const lowPriority = CHANNELS.filter((c) => c.priority === 'low')
 
-function StatusBadge({ status }: { status: ChannelStatus }) {
-  const styles: Record<ChannelStatus, { bg: string; text: string; dot: string; label: string }> = {
-    connected: {
-      bg: 'bg-emerald-50',
-      text: 'text-emerald-700',
-      dot: 'bg-emerald-500',
-      label: '已连接',
-    },
-    disconnected: {
-      bg: 'bg-muted',
-      text: 'text-muted-foreground',
-      dot: 'bg-muted-foreground/40',
-      label: '未连接',
-    },
-    pending: {
-      bg: 'bg-amber-50',
-      text: 'text-amber-700',
-      dot: 'bg-amber-500',
-      label: '待配置',
-    },
+function StatusDot({ status }: { status: ChannelStatus }) {
+  const cls: Record<ChannelStatus, string> = {
+    connected: 'bg-emerald-500',
+    disconnected: 'bg-black/15',
+    pending: 'bg-amber-400',
   }
-  const s = styles[status]
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium tracking-wide ${s.bg} ${s.text}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {s.label}
-    </span>
-  )
+  return <span className={cn('inline-block h-1.5 w-1.5 rounded-full', cls[status])} />
 }
 
-function ChannelCard({
-  channel,
-  onConfigure,
-}: {
-  channel: Channel
-  onConfigure: (id: string) => void
-}) {
+function ChannelCard({ channel, onConfigure }: { channel: Channel; onConfigure: (id: string) => void }) {
   const isConnected = channel.status === 'connected'
 
   return (
-    <div className="group relative flex items-center justify-between rounded-xl border border-border/50 bg-surface-raised px-4 py-3.5 shadow-token-xs transition-all hover:shadow-token-sm hover:border-primary/20">
-      <div className="flex items-center gap-3.5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted text-lg">
+    <div className="group flex items-center justify-between rounded-xl border border-black/[0.06] bg-black/[0.016] px-3.5 py-3 transition-colors hover:bg-black/[0.03]">
+      <div className="flex items-center gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-white text-base shadow-sm border border-black/[0.07]">
           {channel.icon}
         </div>
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold tracking-tight">{channel.name}</span>
-            <StatusBadge status={channel.status} />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[12.5px] font-semibold tracking-tight">{channel.name}</span>
+            <StatusDot status={channel.status} />
           </div>
-          <p className="mt-0.5 truncate text-[11px] leading-4 text-muted-foreground">
-            {channel.description}
-          </p>
+          <p className="mt-0.5 truncate text-[10.5px] text-muted-foreground">{channel.description}</p>
         </div>
       </div>
 
       <button
         type="button"
         onClick={() => onConfigure(channel.id)}
-        className={`window-no-drag shrink-0 rounded-lg px-4 py-1.5 text-[12px] font-medium transition
-          ${
-            isConnected
-              ? 'border border-border bg-white/60 text-foreground hover:bg-white'
-              : 'bg-primary text-primary-foreground hover:bg-primary/90'
-          }`}
+        className={cn(
+          'window-no-drag ml-3 shrink-0 rounded-xl px-3 py-1 text-[11.5px] font-semibold transition-colors',
+          isConnected
+            ? 'border border-black/[0.09] bg-white text-foreground/70 hover:bg-black/[0.03]'
+            : 'bg-jade text-white hover:bg-jade/90',
+        )}
       >
         {isConnected ? '管理' : '接入'}
       </button>
+    </div>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+      {children}
     </div>
   )
 }
@@ -213,51 +189,38 @@ function ChannelCard({
 export function ConnectionsSettingsPage({}: SettingsPageProps) {
   const handleConfigure = (id: string) => {
     console.log(`[Connections] Configure channel: ${id}`)
-    // TODO: open channel config modal or navigate to channel detail
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       {/* Priority channels */}
-      <div>
-        <div className="mb-3 flex items-center gap-2">
-          <div className="h-px flex-1 bg-border/50" />
-          <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            优先选项
-          </span>
-          <div className="h-px flex-1 bg-border/50" />
-        </div>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+      <SettingsSurface className="px-5 py-4">
+        <SectionLabel>优先推荐</SectionLabel>
+        <div className="flex flex-col gap-2">
           {highPriority.map((ch) => (
             <ChannelCard key={ch.id} channel={ch} onConfigure={handleConfigure} />
           ))}
         </div>
-      </div>
+      </SettingsSurface>
 
       {/* Other channels */}
-      <div>
-        <div className="mb-3 flex items-center gap-2">
-          <div className="h-px flex-1 bg-border/50" />
-          <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-            其他渠道
-          </span>
-          <div className="h-px flex-1 bg-border/50" />
-        </div>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+      <SettingsSurface className="px-5 py-4">
+        <SectionLabel>其他渠道</SectionLabel>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {lowPriority.map((ch) => (
             <ChannelCard key={ch.id} channel={ch} onConfigure={handleConfigure} />
           ))}
         </div>
-      </div>
+      </SettingsSurface>
 
-      {/* Info card */}
-      <SettingsSurface className="px-5 py-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
+      {/* Info */}
+      <SettingsSurface className="px-5 py-3.5">
+        <div className="flex items-start gap-2.5">
+          <div className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-jade/10 text-[9px] font-bold text-jade">
             i
           </div>
-          <p className="text-[12px] leading-5 text-muted-foreground">
-            所有连接能力都会优先保持在本地工作区内，后续可以再逐步接入更细的权限控制和审计记录。
+          <p className="text-[11.5px] leading-5 text-muted-foreground">
+            所有连接能力都会优先保持在本地工作区内，后续可以逐步接入更细的权限控制和审计记录。
           </p>
         </div>
       </SettingsSurface>

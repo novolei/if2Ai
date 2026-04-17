@@ -1,5 +1,4 @@
 import type { ComponentType } from 'react'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface SettingsSidebarItemProps {
@@ -16,26 +15,25 @@ export function SettingsSidebarItem({
   onClick,
 }: SettingsSidebarItemProps) {
   return (
-    <Button
+    <button
       type="button"
-      variant="ghost"
       onClick={onClick}
       className={cn(
-        'window-no-drag mb-1 flex h-12 w-full items-center justify-start gap-3 rounded-2xl px-4 text-left font-normal transition-colors',
+        'window-no-drag flex h-9 w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition-colors',
         active
-          ? 'bg-surface-raised text-foreground shadow-token-xs'
-          : 'text-foreground/80 hover:bg-accent hover:text-foreground',
+          ? 'bg-jade/[0.09] text-jade'
+          : 'text-foreground/55 hover:bg-black/[0.04] hover:text-foreground/80',
       )}
     >
-      <div
+      <Icon
         className={cn(
-          'flex size-9 items-center justify-center rounded-2xl transition-colors',
-          active ? 'bg-muted text-foreground' : 'bg-muted/50 text-muted-foreground',
+          'h-[15px] w-[15px] shrink-0 transition-colors',
+          active ? 'text-jade' : 'text-foreground/35',
         )}
-      >
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0 truncate text-[15px] font-medium tracking-tight">{label}</div>
-    </Button>
+      />
+      <span className={cn('text-[13px] tracking-tight', active ? 'font-semibold' : 'font-medium')}>
+        {label}
+      </span>
+    </button>
   )
 }

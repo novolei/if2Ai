@@ -13,20 +13,24 @@ export function SettingsMetricCard({ icon: Icon, label, value, detail, className
   return (
     <div
       className={cn(
-        'group relative rounded-2xl border border-border/50 bg-surface-raised px-5 py-4 shadow-token-xs transition-all hover:shadow-token-sm hover:border-primary/20',
+        'group relative overflow-hidden rounded-2xl border border-black/[0.07] bg-white px-5 py-4 transition-all',
         className,
       )}
+      style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.03)' }}
     >
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="text-[12px] text-muted-foreground">{label}</div>
-          <div className="text-[24px] font-semibold tracking-tight">{value}</div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">{label}</div>
+          <div className="text-[26px] font-semibold leading-none tracking-tight tabular-nums">{value}</div>
         </div>
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
-          <Icon className="h-5 w-5" />
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-jade/10 text-jade transition-colors group-hover:bg-jade/15">
+          <Icon className="h-4 w-4" />
         </div>
       </div>
-      {detail ? <div className="mt-2.5 text-[12px] leading-5 text-muted-foreground">{detail}</div> : null}
+      {detail ? (
+        <div className="mt-2.5 text-[11.5px] leading-4 text-muted-foreground">{detail}</div>
+      ) : null}
+      <div className="pointer-events-none absolute bottom-0 right-0 h-16 w-16 rounded-full bg-jade/[0.06] blur-2xl" />
     </div>
   )
 }

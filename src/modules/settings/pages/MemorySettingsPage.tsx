@@ -108,52 +108,52 @@ export function MemorySettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+      <div className="flex items-center justify-center py-16 text-[12px] text-muted-foreground">
         加载中...
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Token Budget */}
-      <SettingsSurface>
-        <div className="flex items-center gap-3 border-b border-border/50 bg-black/[0.02] px-5 py-4">
-          <Brain className="h-5 w-5 text-violet-600" />
-          <div>
-            <div className="text-sm font-semibold">Token 预算</div>
-            <div className="text-xs text-muted-foreground">
-              配置 Agent 上下文的 Token 分配比例
-            </div>
+    <div className="flex flex-col gap-3">
+      {/* ── Token Budget ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-violet-500/[0.1]">
+            <Brain className="h-3.5 w-3.5 text-violet-600" />
+          </div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+            Token 预算
           </div>
         </div>
+        <p className="mb-4 text-[11.5px] text-muted-foreground">
+          配置 Agent 上下文的 Token 分配比例
+        </p>
 
-        <div className="space-y-5 px-5 py-5">
-          {/* Total tokens */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              总 Token 数
-            </label>
-            <input
-              type="number"
-              value={totalTokens}
-              min={1000}
-              max={128000}
-              step={500}
-              onChange={(e) => setTotalTokens(Math.max(1000, Number(e.target.value) || 1000))}
-              className="h-10 w-40 rounded-lg border border-border/70 bg-white/60 px-3 text-sm font-mono outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-400"
-            />
-          </div>
+        {/* Total tokens */}
+        <div className="mb-4 flex items-center gap-3">
+          <label className="text-[12px] font-medium text-foreground/70 shrink-0">总 Token 数</label>
+          <input
+            type="number"
+            value={totalTokens}
+            min={1000}
+            max={128000}
+            step={500}
+            onChange={(e) => setTotalTokens(Math.max(1000, Number(e.target.value) || 1000))}
+            className="h-8 w-36 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 font-mono text-[12px] outline-none transition-all focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15"
+          />
+        </div>
 
-          {/* Percentage sliders */}
+        {/* Percentage sliders */}
+        <div className="flex flex-col gap-4">
           {slots.map((slot, idx) => (
-            <div key={slot.description} className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-semibold ${slot.color}`}>{slot.label}</span>
-                  <span className="text-xs text-muted-foreground">{slot.description}</span>
+            <div key={slot.description}>
+              <div className="mb-1.5 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-[12px] font-semibold ${slot.color}`}>{slot.label}</span>
+                  <span className="text-[11px] text-muted-foreground">{slot.description}</span>
                 </div>
-                <span className={`text-sm font-bold tabular-nums ${slot.color}`}>
+                <span className={`font-mono text-[13px] font-bold tabular-nums ${slot.color}`}>
                   {slot.value}%
                 </span>
               </div>
@@ -167,79 +167,61 @@ export function MemorySettingsPage() {
               />
             </div>
           ))}
+        </div>
 
-          {/* Total percentage indicator */}
-          <div className="flex items-center justify-between rounded-lg bg-black/[0.03] px-4 py-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              百分比合计
+        {/* Total indicator + save */}
+        <div className="mt-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 rounded-xl border border-black/[0.06] bg-black/[0.02] px-3 py-1.5">
+            {isValid ? (
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+            )}
+            <span className={`font-mono text-[12px] font-bold tabular-nums ${isValid ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {totalPercentage}%
             </span>
-            <div className="flex items-center gap-1.5">
-              {!isValid && (
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-              )}
-              {isValid && (
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-              )}
-              <span
-                className={`text-sm font-bold tabular-nums ${
-                  isValid ? 'text-emerald-600' : 'text-amber-600'
-                }`}
-              >
-                {totalPercentage}%
-              </span>
-            </div>
+            <span className="text-[11px] text-muted-foreground">合计</span>
           </div>
 
-          {/* Save button */}
           <button
             type="button"
             disabled={saving || !isValid}
             onClick={handleSave}
-            className="h-9 rounded-lg bg-violet-600 px-4 text-sm font-medium text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-8 rounded-xl bg-jade px-4 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {saving ? '保存中...' : '保存配置'}
+            {saving ? '保存中…' : '保存配置'}
           </button>
         </div>
       </SettingsSurface>
 
-      {/* Trajectory Export */}
-      <SettingsSurface>
-        <div className="flex items-center gap-3 border-b border-border/50 bg-black/[0.02] px-5 py-4">
-          <Download className="h-5 w-5 text-emerald-600" />
-          <div className="flex-1">
-            <div className="text-sm font-semibold">轨迹导出</div>
-            <div className="text-xs text-muted-foreground">
-              导出 Agent 运行轨迹记录，当前有 {trajectoryCount} 条轨迹
+      {/* ── Trajectory Export ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-1 flex items-center justify-between">
+          <div>
+            <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30 mb-1">
+              轨迹导出
             </div>
+            <p className="text-[11.5px] text-muted-foreground">
+              导出 Agent 运行轨迹记录，当前有{' '}
+              <span className="font-semibold text-foreground/70">{trajectoryCount}</span> 条
+            </p>
           </div>
-        </div>
-
-        <div className="px-5 py-5">
           <button
             type="button"
             disabled={exporting}
             onClick={handleExport}
-            className="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-white/60 px-4 text-sm font-medium transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-8 items-center gap-1.5 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3.5 text-[12px] font-medium transition-colors hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {exporting ? (
-              <>
-                <Download className="h-4 w-4 animate-spin" />
-                导出中...
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4" />
-                导出轨迹
-              </>
-            )}
+            <Download className={`h-3.5 w-3.5 ${exporting ? 'animate-spin' : ''}`} />
+            {exporting ? '导出中…' : '导出轨迹'}
           </button>
         </div>
       </SettingsSurface>
 
-      {/* Error message */}
+      {/* ── Error ── */}
       {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
-          <AlertTriangle className="h-3.5 w-3.5" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-[11.5px] text-red-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {error}
         </div>
       )}

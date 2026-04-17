@@ -1,4 +1,4 @@
-import { Settings } from 'lucide-react'
+import { Sparkles, X } from 'lucide-react'
 import { SETTINGS_SECTIONS } from '../data'
 import type { SettingsSectionId } from '../types'
 import { SettingsSidebarItem } from './SettingsSidebarItem'
@@ -6,24 +6,41 @@ import { SettingsSidebarItem } from './SettingsSidebarItem'
 interface SettingsSidebarProps {
   activeSection: SettingsSectionId
   onSectionChange: (section: SettingsSectionId) => void
+  onClose: () => void
 }
 
-export function SettingsSidebar({ activeSection, onSectionChange }: SettingsSidebarProps) {
+export function SettingsSidebar({ activeSection, onSectionChange, onClose }: SettingsSidebarProps) {
   return (
-    <aside className="flex w-[304px] shrink-0 flex-col border-r border-black/5 bg-[#eef0f1]/56 px-3 py-5 select-none backdrop-blur-[2px]">
-      <div className="mb-4 px-1">
-        <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-2xl bg-black/5 text-black/70">
-            <Settings className="h-4 w-4" />
+    <aside className="flex w-[200px] shrink-0 flex-col border-r border-black/[0.07] bg-[#f0f1f2] px-3 py-3 select-none">
+      {/* ── Logo + close ── */}
+      <div className="window-drag mb-4 flex items-center justify-between px-1 pt-1">
+        <div className="flex items-center gap-2">
+          <div
+            className="flex size-6 items-center justify-center rounded-[7px] bg-jade"
+            style={{ boxShadow: '0 1.5px 4px color-mix(in oklch, var(--jade) 40%, transparent)' }}
+          >
+            <Sparkles className="size-3 text-white" strokeWidth={1.8} />
           </div>
           <div>
-            <div className="text-[22px] font-semibold tracking-tight text-foreground">设置</div>
-            <div className="text-[12px] leading-5 text-muted-foreground">统一管理 If2Ai 的外观、权限和连接能力。</div>
+            <div className="text-[12.5px] font-bold tracking-tight text-foreground/80">If2Ai</div>
+            <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-black/25">
+              设置
+            </div>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="window-no-drag flex size-6 items-center justify-center rounded-lg text-black/30 transition-colors hover:bg-black/[0.07] hover:text-black/60"
+          aria-label="关闭设置"
+        >
+          <X className="size-3.5" />
+        </button>
       </div>
 
-      <nav className="flex-1">
+      {/* ── Nav ── */}
+      <nav className="flex flex-1 flex-col gap-0.5">
         {SETTINGS_SECTIONS.map((section) => (
           <SettingsSidebarItem
             key={section.id}

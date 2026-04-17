@@ -383,45 +383,47 @@ export function SkillsSettingsPage({
       {error && <ErrorBanner text={`技能加载失败：${error}`} />}
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SkillsTab)}>
-        <TabsList className="h-9 rounded-full bg-black/[0.04] p-1">
-          <TabsTrigger value="installed" className="rounded-full px-4 py-1 text-[13px]">
+        <TabsList className="h-8 rounded-xl border border-black/[0.07] bg-black/[0.03] p-0.5">
+          <TabsTrigger value="installed" className="rounded-[10px] px-4 text-[12.5px]">
             我的技能
           </TabsTrigger>
-          <TabsTrigger value="market" className="rounded-full px-4 py-1 text-[13px]">
+          <TabsTrigger value="market" className="rounded-[10px] px-4 text-[12.5px]">
             Skills Market
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="installed" className="space-y-4">
           {/* Search + Add */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-black/25" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="搜索已经安装的技能"
-                className="h-10 w-full rounded-[999px] border border-black/10 bg-white/84 pl-10 pr-3 text-[13px] outline-none ring-offset-background transition focus:ring-1 focus:ring-ring"
+                className="h-9 w-full rounded-xl border border-black/[0.09] bg-black/[0.025] pl-9 pr-3 text-[12.5px] outline-none transition-all placeholder:text-muted-foreground/40 focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15"
               />
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" className="h-10 rounded-[999px] border border-black/12 bg-white/84 px-4 text-[13px]">
-                  <Plus className="mr-1 h-4 w-4" />
+                <Button type="button" variant="outline" className="h-9 rounded-xl border-black/[0.09] bg-black/[0.025] px-3.5 text-[12.5px] font-medium shadow-none hover:bg-black/[0.05]">
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
                   添加技能
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[280px] rounded-[6px] p-3" align="end">
+              <DropdownMenuContent className="w-[260px] rounded-2xl border-black/[0.09] p-2" align="end" style={{ boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
                 <button
                   type="button"
                   onClick={onStartConversationCreate}
-                  className="w-full rounded-[6px] bg-black/[0.04] px-4 py-3 text-left transition hover:bg-black/[0.06]"
+                  className="w-full rounded-xl bg-black/[0.03] px-3.5 py-2.5 text-left transition hover:bg-black/[0.05]"
                 >
                   <div className="flex items-center gap-3">
-                    <BotMessageSquare className="h-5 w-5 text-black/75" />
+                    <div className="flex size-8 items-center justify-center rounded-xl bg-jade/10">
+                      <BotMessageSquare className="h-4 w-4 text-jade" />
+                    </div>
                     <div>
-                      <div className="text-[17px] font-medium">通过对话创建</div>
-                      <div className="text-[13px] text-muted-foreground">描述你的需求，AI 帮你生成</div>
+                      <div className="text-[13px] font-semibold">通过对话创建</div>
+                      <div className="text-[11.5px] text-muted-foreground">描述你的需求，AI 帮你生成</div>
                     </div>
                   </div>
                 </button>
@@ -432,13 +434,15 @@ export function SkillsSettingsPage({
                     setGithubImportName('')
                     setGithubDialogOpen(true)
                   }}
-                  className="mt-1 w-full rounded-[6px] px-4 py-3 text-left transition hover:bg-black/[0.04]"
+                  className="mt-1 w-full rounded-xl px-3.5 py-2.5 text-left transition hover:bg-black/[0.04]"
                 >
                   <div className="flex items-center gap-3">
-                    <Globe className="h-5 w-5 text-black/85" />
+                    <div className="flex size-8 items-center justify-center rounded-xl bg-black/[0.04]">
+                      <Globe className="h-4 w-4 text-black/60" />
+                    </div>
                     <div>
-                      <div className="text-[17px] font-medium">从 GitHub 导入</div>
-                      <div className="text-[13px] text-muted-foreground">粘贴一个仓库连接以开始</div>
+                      <div className="text-[13px] font-semibold">从 GitHub 导入</div>
+                      <div className="text-[11.5px] text-muted-foreground">粘贴一个仓库链接以开始</div>
                     </div>
                   </div>
                 </button>
@@ -447,8 +451,8 @@ export function SkillsSettingsPage({
           </div>
 
           {/* Category tabs + Source filter */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-1">
               {CATEGORY_TABS.map((tab) => {
                 const active = tab.id === activeCategory
                 return (
@@ -457,21 +461,25 @@ export function SkillsSettingsPage({
                     type="button"
                     onClick={() => setActiveCategory(tab.id)}
                     className={cn(
-                      'rounded-full px-3 py-1.5 text-[13px] transition',
-                      active ? 'bg-black/90 text-white' : 'bg-black/[0.04] text-foreground hover:bg-black/[0.08]'
+                      'rounded-xl px-2.5 py-1 text-[12px] font-medium transition-colors',
+                      active
+                        ? 'bg-jade/10 text-jade'
+                        : 'text-foreground/55 hover:bg-black/[0.04] hover:text-foreground/80',
                     )}
                   >
                     {tab.label}
-                    <span className="ml-1.5 text-[12px] opacity-80">{categoryCounter[tab.id]}</span>
+                    <span className={cn('ml-1 text-[11px]', active ? 'text-jade/60' : 'text-black/25')}>
+                      {categoryCounter[tab.id]}
+                    </span>
                   </button>
                 )
               })}
             </div>
 
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-1.5">
+              <Filter className="h-3.5 w-3.5 text-black/25" />
               <Select value={sourceFilter} onValueChange={(value) => setSourceFilter(value as SkillSourceFilter)}>
-                <SelectTrigger className="w-[158px] rounded-[999px]">
+                <SelectTrigger className="h-7 rounded-xl border-black/[0.09] bg-black/[0.025] text-[12px] w-[140px]">
                   <SelectValue placeholder="全部来源" />
                 </SelectTrigger>
                 <SelectContent>
@@ -576,13 +584,13 @@ export function SkillsSettingsPage({
 
           {/* Empty state */}
           {!loading && filteredSkills.length === 0 && (
-            <div className="rounded-xl border border-border/50 bg-black/[0.02] p-8 text-center">
-              <div className="text-sm font-medium">没有匹配的技能</div>
-              <p className="mt-1 text-xs text-muted-foreground">试试清空关键词，或者切换来源和分类筛选。</p>
+            <div className="rounded-2xl border border-black/[0.07] bg-white p-8 text-center" style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
+              <div className="text-[13px] font-semibold text-foreground/70">没有匹配的技能</div>
+              <p className="mt-1 text-[11.5px] text-muted-foreground">试试清空关键词，或者切换来源和分类筛选。</p>
               <Button
                 type="button"
                 variant="outline"
-                className="mt-3 h-8 rounded-full px-3 text-xs"
+                className="mt-3 h-7 rounded-xl border-black/[0.09] px-3 text-[11.5px] font-medium"
                 onClick={() => {
                   setQuery('')
                   setActiveCategory('all')
@@ -599,19 +607,19 @@ export function SkillsSettingsPage({
           {/* Market header */}
           <div className="flex items-center justify-between">
             <div>
-              <h4 className="text-[15px] font-semibold tracking-tight">Skills Market</h4>
-              <p className="text-[12px] text-muted-foreground">
+              <div className="text-[14px] font-semibold tracking-tight">Skills Market</div>
+              <p className="mt-0.5 text-[11.5px] text-muted-foreground">
                 发现并一键安装社区技能，安装后经安全扫描写入隔离区。
               </p>
             </div>
             <div className="flex items-center gap-2">
               {marketSource === 'skills-sh' && (
-                <Button type="button" variant="outline" onClick={() => void refreshMarketFromAudits(true)} className="h-8 rounded-full px-3 text-xs">
+                <Button type="button" variant="outline" onClick={() => void refreshMarketFromAudits(true)} className="h-7 rounded-xl border-black/[0.09] px-2.5 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]">
                   刷新
                 </Button>
               )}
               {marketSource === 'github' && (
-                <Button type="button" variant="outline" onClick={() => void loadGithubSkills(githubSearchQuery)} className="h-8 rounded-full px-3 text-xs">
+                <Button type="button" variant="outline" onClick={() => void loadGithubSkills(githubSearchQuery)} className="h-7 rounded-xl border-black/[0.09] px-2.5 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]">
                   刷新
                 </Button>
               )}
@@ -619,20 +627,20 @@ export function SkillsSettingsPage({
           </div>
 
           {/* Source selector */}
-          <div className="flex gap-1 rounded-full border border-black/10 bg-black/[0.03] p-1 w-fit">
+          <div className="flex w-fit gap-0.5 rounded-xl border border-black/[0.07] bg-black/[0.025] p-0.5">
             {([
-              { id: 'skills-sh' as MarketSource, label: 'skills.sh', hint: '社区审计数据' },
-              { id: 'github' as MarketSource, label: 'GitHub 精选', hint: '官方 DEFAULT_TAPS' },
+              { id: 'skills-sh' as MarketSource, label: 'skills.sh' },
+              { id: 'github' as MarketSource, label: 'GitHub 精选' },
             ] as const).map((src) => (
               <button
                 key={src.id}
                 type="button"
                 onClick={() => setMarketSource(src.id)}
                 className={cn(
-                  'rounded-full px-4 py-1 text-xs font-medium transition-all',
+                  'rounded-[10px] px-3.5 py-1 text-[12px] font-medium transition-all',
                   marketSource === src.id
-                    ? 'bg-white shadow-sm text-black'
-                    : 'text-black/50 hover:text-black/70'
+                    ? 'bg-white text-foreground shadow-sm'
+                    : 'text-black/45 hover:text-black/65',
                 )}
               >
                 {src.label}
@@ -643,9 +651,9 @@ export function SkillsSettingsPage({
           {/* skills.sh panel */}
           {marketSource === 'skills-sh' && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-black/25" />
                   <input
                     value={marketQuery}
                     onChange={(event) => {
@@ -653,11 +661,11 @@ export function SkillsSettingsPage({
                       setMarketPage(1)
                     }}
                     placeholder="搜索技能（例如：azure, git, creator）"
-                    className="h-9 w-full rounded-[999px] border border-black/10 bg-white/84 pl-10 pr-3 text-[13px] outline-none ring-offset-background transition focus:ring-1 focus:ring-ring"
+                    className="h-8 w-full rounded-xl border border-black/[0.09] bg-black/[0.025] pl-9 pr-3 text-[12.5px] outline-none transition-all placeholder:text-muted-foreground/40 focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15"
                   />
                 </div>
-                <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white/84 px-3 py-1">
-                  <span className="text-xs text-muted-foreground">仅看已安装</span>
+                <div className="flex items-center gap-2 rounded-xl border border-black/[0.07] bg-black/[0.025] px-3 py-1.5">
+                  <span className="text-[11.5px] text-muted-foreground">仅看已安装</span>
                   <Switch checked={marketOnlyInstalled} onCheckedChange={setMarketOnlyInstalled} aria-label="only-installed" />
                 </div>
               </div>
@@ -1150,17 +1158,21 @@ function containsAny(text: string, keywords: string[]): boolean {
 }
 
 function ErrorBanner({ text }: { text: string }) {
-  return <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-600">{text}</div>
+  return (
+    <div className="flex items-start gap-2 rounded-xl border border-red-200/70 bg-red-50 px-3.5 py-2.5 text-[11.5px] text-red-600">
+      <span>{text}</span>
+    </div>
+  )
 }
 
 function InfoBanner({ text, tone }: { text: string; tone: 'success' | 'neutral' }) {
   return (
     <div
       className={cn(
-        'rounded-xl px-3 py-2 text-[12px]',
+        'rounded-xl px-3.5 py-2.5 text-[11.5px]',
         tone === 'success'
-          ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border border-black/10 bg-black/[0.02] text-muted-foreground'
+          ? 'border border-emerald-200/70 bg-emerald-50 text-emerald-700'
+          : 'border border-black/[0.07] bg-black/[0.02] text-muted-foreground',
       )}
     >
       {text}
@@ -1170,10 +1182,13 @@ function InfoBanner({ text, tone }: { text: string; tone: 'success' | 'neutral' 
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-surface-raised p-3 shadow-token-xs">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-xl font-semibold leading-7">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{hint}</div>
+    <div
+      className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white px-4 py-3"
+      style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.05)' }}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-black/30">{label}</div>
+      <div className="mt-1 text-[22px] font-semibold leading-none tabular-nums">{value}</div>
+      <div className="mt-1.5 text-[10.5px] text-muted-foreground">{hint}</div>
     </div>
   )
 }
