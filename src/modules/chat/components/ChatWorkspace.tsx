@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
+  Globe,
   MessageSquare,
   MoreHorizontal,
   Play,
@@ -16,6 +17,8 @@ import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
 import { HomeScreen } from './HomeScreen'
 import { SidebarTop } from './SidebarTop'
+import { BrowserCard } from '@/components/browser/BrowserCard'
+import { useBrowserStore } from '@/stores/browser-slice'
 
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
 const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
@@ -133,6 +136,12 @@ export function ChatWorkspace({
   onPreviewFocusChange,
   runningSessionIds,
 }: ChatWorkspaceProps) {
+  // Browser store — used to show the globe badge in the header when the AI's
+  // browser is actively running for the current session.
+  const { browserBySession } = useBrowserStore()
+  const isBrowserRunning =
+    activeSessionId != null && (browserBySession[activeSessionId]?.running ?? false)
+
   const [densityMode, setDensityMode] = useState<DensityMode>(() => {
     if (typeof window === 'undefined') return 'comfortable'
     try {
@@ -291,6 +300,16 @@ export function ChatWorkspace({
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {/* Globe badge — visible while the AI's browser is running */}
+                {isBrowserRunning && (
+                  <div
+                    className="flex h-7 items-center gap-1.5 rounded-full bg-jade/12 px-2.5 text-[11px] font-medium text-jade"
+                    title="AI 浏览器运行中"
+                  >
+                    <Globe className="h-3 w-3" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-jade" />
+                  </div>
+                )}
                 <DsButton
                   variant="ghost"
                   size="sm"
@@ -323,7 +342,9 @@ export function ChatWorkspace({
 
             <div className="min-h-0 flex-1 overflow-hidden">
               {activeSessionId ? (
-                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+                  {/* BrowserCard — floats over the chat area when AI browser is active */}
+                  <BrowserCard sessionId={activeSessionId} />
                   <div className="min-h-0 flex-1">
                     <ChatUI
                       sessionTitle={activeTitle}

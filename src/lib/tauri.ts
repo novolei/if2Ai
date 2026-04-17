@@ -941,3 +941,57 @@ export async function configResetOnboarding(): Promise<void> {
 export async function onboarding_get_state(): Promise<Record<string, unknown>> {
   return invoke<Record<string, unknown>>('onboarding_get_state')
 }
+
+// ─── Browser Control (Phase 7B) ──────────────────────────────────────────────
+
+/** Payload of the `"browser-status"` Tauri event emitted after each browser action. */
+export interface BrowserStatusEvent {
+  session_id: string
+  running: boolean
+  url: string | null
+  /** Base-64 JPEG thumbnail of the current viewport, or null when unavailable. */
+  thumbnail: string | null
+}
+
+/** Snapshot of a single active browser session returned by `get_browser_sessions`. */
+export interface BrowserSessionEntry {
+  session_id: string
+  running: boolean
+  url: string | null
+}
+
+/** Response from `get_chrome_status` — reports whether Chrome is installed. */
+export interface ChromeStatusPayload {
+  found: boolean
+  path: string | null
+}
+
+/** List all currently active AI-controlled browser sessions. */
+export async function getBrowserSessions(): Promise<BrowserSessionEntry[]> {
+  return invoke<BrowserSessionEntry[]>('get_browser_sessions')
+}
+
+/**
+ * Close the browser session for `sessionId`.
+ * The AI's browser process is terminated and the session is removed from the registry.
+ */
+export async function closeBrowserSession(sessionId: string): Promise<void> {
+  return invoke<void>('close_browser_session', { sessionId })
+}
+
+/** Check whether a Chrome or Chromium binary is available on this machine. */
+export async function getChromeStatus(): Promise<ChromeStatusPayload> {
+  return invoke<ChromeStatusPayload>('get_chrome_status')
+}
+
+/**
+ * Subscribe to `"browser-status"` Tauri events.
+ * Returns an unlisten function — call it on component unmount to avoid memory leaks.
+ */
+export async function listenToBrowserStatus(
+  handler: (payload: BrowserStatusEvent) => void
+): Promise<UnlistenFn> {
+  return listen<BrowserStatusEvent>('browser-status', (event) =>
+    handler(event.payload)
+  )
+}
