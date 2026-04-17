@@ -49,8 +49,8 @@ pub struct NavigateResult {
 /// One log entry per browser action, accumulated during a session.
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionLogEntry {
-    /// ISO-8601 timestamp.
-    pub ts: String,
+    /// Strongly-typed UTC timestamp; serde serialises to ISO-8601 string.
+    pub ts: chrono::DateTime<Utc>,
     /// Action name (e.g., "navigate", "click").
     pub action: String,
     /// Key parameters (url, ref, text preview, etc.).
@@ -74,7 +74,8 @@ pub struct BrowserSession {
     /// Cached current URL; updated after every navigation/interaction.
     pub current_url: Option<String>,
     /// Full log of every action taken in this session.
-    pub action_log: Vec<ActionLogEntry>,
+    /// Access via [`BrowserRegistry::take_action_log`] rather than directly.
+    pub(crate) action_log: Vec<ActionLogEntry>,
 }
 
 impl BrowserSession {
@@ -127,7 +128,7 @@ impl BrowserSession {
 
     fn log(&mut self, action: &str, params: serde_json::Value, result: &str) {
         self.action_log.push(ActionLogEntry {
-            ts: Utc::now().to_rfc3339(),
+            ts: Utc::now(),
             action: action.to_owned(),
             params,
             result: result.to_owned(),
@@ -402,12 +403,15 @@ impl BrowserSession {
         ref_num: u32,
         value: &str,
     ) -> Result<String, BrowserError> {
-        let escaped = value.replace('"', "\\\"");
+        // Use serde_json for complete JSON-string escaping (handles `\`, `"`,
+        // newlines, and all other control characters).
+        let escaped_json = serde_json::to_string(value)
+            .unwrap_or_else(|_| "\"\"".to_owned());
         let js = format!(
             r#"(function(){{
                 var el = document.querySelector('[data-if2ai-ref="{ref_num}"]');
                 if (!el) return {{ ok: false }};
-                el.value = "{escaped}";
+                el.value = {escaped_json};
                 el.dispatchEvent(new Event('change', {{ bubbles: true }}));
                 return {{ ok: true }};
             }})()"#
@@ -447,6 +451,10 @@ impl BrowserSession {
     }
 
     /// Wait up to `timeout_ms` for page navigation. Returns a fresh AXTree snapshot.
+    ///
+    /// The `_state` parameter (`"load"`, `"domcontentloaded"`, `"networkidle"`)
+    /// is reserved for future differentiated wait logic; the current
+    /// implementation always delegates to `wait_for_navigation`.
     pub async fn wait(&mut self, timeout_ms: u64, _state: &str) -> Result<String, BrowserError> {
         let _ = tokio::time::timeout(
             Duration::from_millis(timeout_ms),
@@ -471,7 +479,14 @@ impl BrowserSession {
         let serialised = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_owned());
 
         if serialised.len() > 30_000 {
-            Ok(format!("{}\n[output truncated]", &serialised[..30_000]))
+            // Find a safe character boundary to avoid slicing in the middle of
+            // a multi-byte UTF-8 sequence (e.g., Chinese characters / emoji).
+            let cut = serialised
+                .char_indices()
+                .nth(30_000)
+                .map(|(i, _)| i)
+                .unwrap_or(serialised.len());
+            Ok(format!("{}\n[output truncated]", &serialised[..cut]))
         } else {
             Ok(serialised)
         }

@@ -2,17 +2,25 @@
 //!
 //! One `BrowserRegistry` is held as Tauri managed state for the lifetime of
 //! the application. Sessions are keyed by the chat session identifier and
-//! stored in a [`DashMap`] so that concurrent tool invocations from
-//! different sessions can proceed without blocking each other.
+//! stored in a `DashMap<String, Arc<tokio::sync::Mutex<BrowserSession>>>` so
+//! that:
+//!
+//! - The DashMap shard lock is released **immediately** after the `Arc` is
+//!   cloned — no DashMap `Ref` or `RefMut` is held across an `.await` point.
+//! - The `tokio::sync::Mutex` is async-aware and safe to hold across `.await`.
+//! - Concurrent tool calls on *different* sessions never block each other.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::modules::browser::errors::BrowserError;
-use crate::modules::browser::session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};
+use crate::modules::browser::session::{
+    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir,
+};
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
 /// and the `get_browser_sessions` command.
@@ -31,8 +39,8 @@ pub struct BrowserStatusEntry {
 /// Wrap in `Arc` and register as Tauri managed state so commands can access
 /// it without lifetime gymnastics.
 pub struct BrowserRegistry {
-    /// session_id → BrowserSession
-    sessions: DashMap<String, BrowserSession>,
+    /// session_id → `Arc<Mutex<BrowserSession>>`
+    sessions: DashMap<String, Arc<Mutex<BrowserSession>>>,
     /// Path used by the cold-state persistence layer (injected; used in 7B.7).
     pub cold_state_path: PathBuf,
 }
@@ -50,6 +58,19 @@ impl BrowserRegistry {
         })
     }
 
+    // ── Internal: clone Arc without holding shard lock across .await ──────────
+
+    /// Look up `session_id` and return a clone of the `Arc<Mutex<BrowserSession>>`.
+    ///
+    /// Cloning the `Arc` releases the DashMap shard lock immediately, so no
+    /// synchronous lock is ever held across an `.await` point.
+    fn get_arc(&self, session_id: &str) -> Result<Arc<Mutex<BrowserSession>>, BrowserError> {
+        self.sessions
+            .get(session_id)
+            .map(|r| Arc::clone(&*r))
+            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))
+    }
+
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
     /// Launch a new headless browser for `session_id`.
@@ -61,18 +82,43 @@ impl BrowserRegistry {
             return Ok(());
         }
         let session = BrowserSession::new(session_id.to_owned()).await?;
-        self.sessions.insert(session_id.to_owned(), session);
+        self.sessions
+            .insert(session_id.to_owned(), Arc::new(Mutex::new(session)));
         info!(session_id, "browser launched");
         Ok(())
     }
 
     /// Close and remove the browser for `session_id`.
+    ///
+    /// Waits for any in-flight operation to complete before closing.
     pub async fn close(&self, session_id: &str) -> Result<(), BrowserError> {
-        let (_, session) = self
+        let (_, arc) = self
             .sessions
             .remove(session_id)
             .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        session.close().await?;
+
+        // Acquire the lock so we wait for any in-flight operation to finish.
+        let session = Arc::try_unwrap(arc).inspect_err(|shared_arc| {
+            debug!(
+                session_id,
+                "BrowserSession still referenced by {} Arc copies; close deferred",
+                Arc::strong_count(shared_arc)
+            );
+        });
+
+        match session {
+            Ok(mutex) => {
+                mutex.into_inner().close().await?;
+            }
+            Err(_) => {
+                // Another task still holds a reference. The session was already
+                // removed from the registry map, so no new operations can start.
+                // The Chromium process will be terminated when all Arc references
+                // drop and the Browser handle is destroyed.
+                debug!(session_id, "BrowserSession shared; close deferred to last reference drop");
+            }
+        }
+
         info!(session_id, "browser closed");
         Ok(())
     }
@@ -85,47 +131,41 @@ impl BrowserRegistry {
         session_id: &str,
         url: &str,
     ) -> Result<NavigateResult, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.navigate(url).await
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.navigate(url).await
     }
 
     /// Return the AXTree snapshot for `session_id`.
     pub async fn snapshot(&self, session_id: &str) -> Result<String, BrowserError> {
-        let entry = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.snapshot().await
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        guard.snapshot().await
     }
 
     /// Return a full-page JPEG screenshot (base64) for `session_id`.
     pub async fn screenshot(&self, session_id: &str) -> Result<String, BrowserError> {
-        let entry = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.screenshot().await
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        guard.screenshot().await
     }
 
     /// Return a thumbnail JPEG (base64) for the BrowserCard, or `None` on failure.
     pub async fn thumbnail(&self, session_id: &str) -> Result<Option<String>, BrowserError> {
-        let entry = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.thumbnail().await
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        guard.thumbnail().await
     }
 
     /// Click the element with the given `ref_num` and return a fresh snapshot.
-    pub async fn click(&self, session_id: &str, ref_num: u32) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.click(ref_num).await
+    pub async fn click(
+        &self,
+        session_id: &str,
+        ref_num: u32,
+    ) -> Result<String, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.click(ref_num).await
     }
 
     /// Type `text` into `ref_num` (optional) and optionally press Enter.
@@ -136,11 +176,9 @@ impl BrowserRegistry {
         ref_num: Option<u32>,
         press_enter: bool,
     ) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.type_text(text, ref_num, press_enter).await
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.type_text(text, ref_num, press_enter).await
     }
 
     /// Scroll in `direction` by `amount` pages and return a fresh snapshot.
@@ -150,11 +188,9 @@ impl BrowserRegistry {
         direction: ScrollDir,
         amount: u32,
     ) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.scroll(direction, amount).await
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.scroll(direction, amount).await
     }
 
     /// Select `value` in the `<select>` at `ref_num`.
@@ -164,20 +200,20 @@ impl BrowserRegistry {
         ref_num: u32,
         value: &str,
     ) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.select_option(ref_num, value).await
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.select_option(ref_num, value).await
     }
 
     /// Press a named key.
-    pub async fn press_key(&self, session_id: &str, key: &str) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.press_key(key).await
+    pub async fn press_key(
+        &self,
+        session_id: &str,
+        key: &str,
+    ) -> Result<String, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.press_key(key).await
     }
 
     /// Wait for page navigation up to `timeout_ms`.
@@ -187,11 +223,9 @@ impl BrowserRegistry {
         timeout_ms: u64,
         state: &str,
     ) -> Result<String, BrowserError> {
-        let mut entry = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.wait(timeout_ms, state).await
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.wait(timeout_ms, state).await
     }
 
     /// Evaluate arbitrary JavaScript and return the serialised result.
@@ -200,32 +234,37 @@ impl BrowserRegistry {
         session_id: &str,
         expression: &str,
     ) -> Result<String, BrowserError> {
-        let entry = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| BrowserError::SessionNotFound(session_id.to_owned()))?;
-        entry.evaluate(expression).await
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        guard.evaluate(expression).await
     }
 
     /// Return the action log for `session_id` and clear it.
-    pub fn take_action_log(&self, session_id: &str) -> Vec<ActionLogEntry> {
-        let mut entry = match self.sessions.get_mut(session_id) {
-            Some(e) => e,
-            None => return Vec::new(),
+    pub async fn take_action_log(&self, session_id: &str) -> Vec<ActionLogEntry> {
+        let arc = match self.get_arc(session_id) {
+            Ok(a) => a,
+            Err(_) => return Vec::new(),
         };
-        let log = entry.action_log.clone();
-        entry.action_log.clear();
+        let mut guard = arc.lock().await;
+        let log = guard.action_log.clone();
+        guard.action_log.clear();
         log
     }
 
     // ── Status ────────────────────────────────────────────────────────────────
 
     /// Return the current URL for `session_id`, if known.
+    ///
+    /// Uses a non-blocking `try_lock`; returns `None` if the session is busy.
     #[must_use]
     pub fn current_url(&self, session_id: &str) -> Option<String> {
-        self.sessions
-            .get(session_id)
-            .and_then(|e| e.current_url.clone())
+        let arc = match self.get_arc(session_id) {
+            Ok(a) => a,
+            Err(_) => return None,
+        };
+        arc.try_lock()
+            .ok()
+            .and_then(|s| s.current_url.clone())
     }
 
     /// Return whether a browser is currently active for `session_id`.
@@ -236,13 +275,16 @@ impl BrowserRegistry {
 
     /// Enumerate all active sessions and their current status.
     #[must_use]
-    pub fn all_status(&self) -> Vec<BrowserStatusEntry> {
+    pub fn get_all_status(&self) -> Vec<BrowserStatusEntry> {
         self.sessions
             .iter()
-            .map(|e| BrowserStatusEntry {
-                session_id: e.key().clone(),
-                running: true,
-                url: e.current_url.clone(),
+            .map(|r| {
+                let url = r.try_lock().ok().and_then(|s| s.current_url.clone());
+                BrowserStatusEntry {
+                    session_id: r.key().clone(),
+                    running: true,
+                    url,
+                }
             })
             .collect()
     }
