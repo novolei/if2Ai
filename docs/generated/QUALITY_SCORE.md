@@ -202,3 +202,4 @@
 | 2026-04-15 | Phase 6B Slice 6b.8 完成：Upstream Compatibility (claw-cli export strips extended fields, UPSTREAM-RELATIONSHIP.md, compact.rs provenance) |
 | 2026-04-15 | Phase 6B Slice 6b.9 完成：Integration Test Suite (phase6b_integration.yaml 21 test cases, 573 workspace tests pass) |
 | 2026-04-15 | **Phase 6B ALL COMPLETE** (9/9 slices, 573 tests pass, 0 clippy warnings) |
+| 2026-04-17 | Phase 7B Slice 7B.5 完成：Tauri Event 桥接 + browser IPC commands (BrowserStatusEvent, emit_browser_status, get_browser_sessions, close_browser_session, get_chrome_status; 706 tests pass, REVIEW_PASS 10/10) |

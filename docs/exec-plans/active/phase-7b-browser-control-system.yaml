@@ -19,8 +19,9 @@ meta:
 
 dashboard:
   last_updated: '2026-04-17'
-  completed_slices: ['7B.1', '7B.2', '7B.3', '7B.4']
-  current_slice: '7B.5'
+  notes: 'Slice 7B.5 完成：Tauri 事件桥接 + 3个 IPC commands 注册。已 HUMAN_CHECKPOINT — 等待人工验证后继续 7B.6'
+  completed_slices: ['7B.1', '7B.2', '7B.3', '7B.4', '7B.5']
+  current_slice: '7B.6'
   blocked: []
   notes: >
     Phase 7B 初始化。目标：实现 12 项 browser 能力 Gap（Critical + High 优先级）。
@@ -222,7 +223,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7B.5"
     name: "Tauri Event 桥接 + browser IPC 命令"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/browser-control-system.md §3.1.4
     estimated_days: 1.5
