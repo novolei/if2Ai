@@ -242,6 +242,10 @@ impl MemoryProvider for SqliteMemoryProvider {
             //   a) belong to the requested session_id, OR
             //   b) are globally scoped (session_id IS NULL) — legacy/shared entries
             // This ensures forward-compatibility: unscoped entries remain visible to all sessions.
+            //
+            // TODO(fix-mcp-policy P1): also filter by project_id when scope.project_id is Some.
+            // Currently project_id is always None from from_tool_context() so this is safe,
+            // but project-level isolation will be needed once project_id flows through the stack.
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
@@ -736,5 +740,79 @@ mod tests {
             before_a.importance,
             after_a.importance
         );
+    }
+
+    /// Test that a store_scoped entry is visible to recall_scoped with the same session,
+    /// and invisible to recall_scoped with a different session.
+    ///
+    /// This is the core P0 isolation property of the Memory Control Plane.
+    #[tokio::test]
+    async fn store_scoped_entry_is_visible_only_within_same_session() {
+        use crate::modules::memory::scope::MemoryScopeResolver;
+
+        let (provider, _temp) = create_test_provider();
+
+        let scope_a = MemoryScopeResolver::resolve(Some("session-a"), None, None);
+        let scope_b = MemoryScopeResolver::resolve(Some("session-b"), None, None);
+
+        // Store entry scoped to session-a.
+        provider
+            .store_scoped(
+                "secret_key",
+                "session-a secret",
+                MemoryCategory::Core,
+                &scope_a,
+            )
+            .await
+            .unwrap();
+
+        // session-a can recall the entry.
+        let results_a = provider
+            .recall_scoped("secret_key", None, 10, &scope_a)
+            .await
+            .unwrap();
+        assert_eq!(results_a.len(), 1, "session-a should see its own entry");
+        assert_eq!(results_a[0].content, "session-a secret");
+
+        // session-b cannot see session-a's entry.
+        let results_b = provider
+            .recall_scoped("secret_key", None, 10, &scope_b)
+            .await
+            .unwrap();
+        assert!(
+            results_b.is_empty(),
+            "session-b must not see session-a's scoped entry; got: {:?}",
+            results_b
+        );
+    }
+
+    /// Test that an unscoped (global) entry stored via store() is visible to
+    /// recall_scoped with any session — backward-compat requirement.
+    #[tokio::test]
+    async fn global_entry_visible_to_all_sessions() {
+        use crate::modules::memory::scope::MemoryScopeResolver;
+
+        let (provider, _temp) = create_test_provider();
+
+        let scope_any = MemoryScopeResolver::resolve(Some("session-x"), None, None);
+
+        // Store a global (unscoped) entry via the legacy store() method.
+        provider
+            .store("global_key", "global fact", MemoryCategory::Core)
+            .await
+            .unwrap();
+
+        // Any session can see global entries because recall_scoped includes
+        // WHERE (session_id = ?1 OR session_id IS NULL).
+        let results = provider
+            .recall_scoped("global_key", None, 10, &scope_any)
+            .await
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "global entry should be visible to all sessions"
+        );
+        assert_eq!(results[0].content, "global fact");
     }
 }
