@@ -995,3 +995,12 @@ export async function listenToBrowserStatus(
     handler(event.payload)
   )
 }
+
+/**
+ * Open (or focus) the BrowserViewer window for `sessionId`.
+ * The window renders an independent web view of the URL the AI is currently
+ * visiting — note it does NOT share the chromiumoxide session state.
+ */
+export async function openBrowserViewerWindow(sessionId: string): Promise<void> {
+  return invoke<void>('open_browser_viewer_window', { sessionId })
+}

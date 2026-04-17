@@ -14,11 +14,12 @@
  */
 
 import { useEffect } from 'react'
-import { Globe, Square } from 'lucide-react'
+import { Expand, Globe, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   closeBrowserSession,
   listenToBrowserStatus,
+  openBrowserViewerWindow,
 } from '@/lib/tauri'
 import {
   useBrowserStore,
@@ -117,6 +118,12 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
     })()
   }
 
+  const handleOpenViewer = (): void => {
+    void openBrowserViewerWindow(sessionId).catch((err: unknown) => {
+      console.error('[BrowserCard] Failed to open viewer window:', err)
+    })
+  }
+
   return (
     <div
       className={cn(
@@ -163,6 +170,22 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
             {hostname}
           </span>
         </div>
+
+        {/* Open viewer window */}
+        <button
+          type="button"
+          onClick={handleOpenViewer}
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+            'text-muted-foreground transition-colors duration-150',
+            'hover:bg-black/8 hover:text-foreground',
+            'active:scale-90',
+          )}
+          aria-label="查看浏览器"
+          title="查看浏览器"
+        >
+          <Expand className="h-3 w-3" />
+        </button>
 
         {/* Emergency stop */}
         <button

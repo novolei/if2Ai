@@ -147,7 +147,8 @@ pub use web_search::{
 };
 #[allow(unused_imports)]
 pub use window::{
-    close_settings_window, focus_main_window_and_prefill_prompt, open_settings_window,
+    close_settings_window, focus_main_window_and_prefill_prompt, open_browser_viewer_window,
+    open_settings_window,
 };
 
 // Onboarding commands (Phase 6G)

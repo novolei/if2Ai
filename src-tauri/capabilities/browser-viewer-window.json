@@ -1,0 +1,16 @@
+{
+    "identifier": "browser-viewer-window",
+    "description": "Permissions for the AI Browser Viewer window (Phase 7B)",
+    "windows": [
+        "browser-viewer-*"
+    ],
+    "permissions": [
+        "core:default",
+        "core:event:default",
+        "core:event:allow-emit",
+        "core:event:allow-listen",
+        "core:window:default",
+        "core:window:allow-start-dragging",
+        "dialog:default"
+    ]
+}

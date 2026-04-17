@@ -4,6 +4,7 @@ import './styles/globals.css'
 import App from './App'
 import { SettingsApp } from './components/settings/SettingsApp'
 import { If2AiLoadingScreen } from './components/loading/If2AiLoadingScreen'
+import { BrowserViewerPage } from './modules/browser-viewer/BrowserViewerPage'
 import { closeSettingsWindow } from '@/lib/tauri'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
@@ -24,6 +25,11 @@ const Root = () => {
   if (windowType === 'settings') {
     return <SettingsApp onClose={closeSettingsWindow} />
   }
+
+  if (windowType === 'browser-viewer') {
+    return <BrowserViewerPage />
+  }
+
   return <App />
 }
 
