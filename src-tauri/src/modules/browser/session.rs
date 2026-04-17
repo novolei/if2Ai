@@ -97,8 +97,22 @@ impl BrowserSession {
             "launching headless browser"
         );
 
+        // no_sandbox() passes --no-sandbox and --disable-setuid-sandbox to Chrome.
+        // This is REQUIRED when Chrome is launched as a child process of another
+        // application (e.g. a Tauri app) on macOS and Linux: without it, Chrome's
+        // internal sandbox layer conflicts with the host OS process-level security
+        // policy and the process exits before writing its DevTools WebSocket URL,
+        // which chromiumoxide surfaces as "CDP error: Browser process exit".
         let config = BrowserConfig::builder()
             .chrome_executable(chrome_path)
+            .no_sandbox()
+            // Prevent GPU-initialisation crash in headless environments.
+            .arg("--disable-gpu")
+            // Skip first-run wizard and default-browser check for faster startup.
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            // Prevent /dev/shm exhaustion on Linux (harmless on macOS).
+            .arg("--disable-dev-shm-usage")
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
@@ -405,8 +419,7 @@ impl BrowserSession {
     ) -> Result<String, BrowserError> {
         // Use serde_json for complete JSON-string escaping (handles `\`, `"`,
         // newlines, and all other control characters).
-        let escaped_json = serde_json::to_string(value)
-            .unwrap_or_else(|_| "\"\"".to_owned());
+        let escaped_json = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned());
         let js = format!(
             r#"(function(){{
                 var el = document.querySelector('[data-if2ai-ref="{ref_num}"]');

@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::modules::browser::{BrowserRegistry, ScrollDir};
+use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
 // ── SSRF / URL safety ─────────────────────────────────────────────────────────
@@ -59,8 +59,8 @@ fn check_url_safety(url: &str) -> Result<(), String> {
 
     // Parse to extract the host; reject unparseable URLs rather than silently
     // allowing them (e.g. Zone-ID URLs like http://[fe80::1%25eth0]/).
-    let parsed = url::Url::parse(url)
-        .map_err(|e| format!("Malformed URL (rejected for safety): {e}"))?;
+    let parsed =
+        url::Url::parse(url).map_err(|e| format!("Malformed URL (rejected for safety): {e}"))?;
 
     let host = parsed
         .host_str()
@@ -257,10 +257,25 @@ async fn execute_browser_action(
         }
 
         "navigate" => {
-            let url = args
-                .get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::Handler("'url' field is required for 'navigate'".into()))?;
+            let raw_url = args.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                ToolError::Handler("'url' field is required for 'navigate'".into())
+            })?;
+
+            // Normalize scheme-less URLs (e.g. "google.com" → "https://google.com")
+            // so the LLM does not need to include the scheme explicitly.
+            // Dangerous scheme prefixes are still caught by check_url_safety below.
+            let normalized;
+            let url: &str = if !raw_url.starts_with("http://")
+                && !raw_url.starts_with("https://")
+                && !raw_url.starts_with("file://")
+                && !raw_url.starts_with("javascript:")
+                && !raw_url.starts_with("data:")
+            {
+                normalized = format!("https://{raw_url}");
+                &normalized
+            } else {
+                raw_url
+            };
 
             check_url_safety(url)
                 .map_err(|e| ToolError::Handler(format!("URL safety check failed: {e}")))?;
@@ -272,15 +287,25 @@ async fn execute_browser_action(
                     .map_err(|e| ToolError::Handler(e.to_string()))?;
             }
 
-            let result = registry
-                .navigate(&session_id, url)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-
-            Ok(format!(
-                "Navigated to: {}\nTitle: {}\n\n{}",
-                result.url, result.title, result.snapshot
-            ))
+            match registry.navigate(&session_id, url).await {
+                Ok(result) => Ok(format!(
+                    "Navigated to: {}\nTitle: {}\n\n{}",
+                    result.url, result.title, result.snapshot
+                )),
+                Err(BrowserError::Cdp(_)) | Err(BrowserError::Snapshot(_)) => {
+                    // The browser process may have exited mid-operation.
+                    // Remove the stale session entry so the next navigate call
+                    // can auto-launch a fresh browser instead of failing again.
+                    let _ = registry.close(&session_id).await;
+                    Err(ToolError::Handler(
+                        "Browser process exited unexpectedly. \
+                         The session has been reset — call 'navigate' again \
+                         and a fresh browser will start automatically."
+                            .to_owned(),
+                    ))
+                }
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "snapshot" => {
@@ -307,7 +332,9 @@ async fn execute_browser_action(
                 .get("ref")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32)
-                .ok_or_else(|| ToolError::Handler("'ref' field (integer) is required for 'click'".into()))?;
+                .ok_or_else(|| {
+                    ToolError::Handler("'ref' field (integer) is required for 'click'".into())
+                })?;
 
             let snapshot = registry
                 .click(&session_id, ref_num)
@@ -322,10 +349,7 @@ async fn execute_browser_action(
                 .get("text")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| ToolError::Handler("'text' field is required for 'type'".into()))?;
-            let ref_num = args
-                .get("ref")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32);
+            let ref_num = args.get("ref").and_then(|v| v.as_u64()).map(|v| v as u32);
             let press_enter = args
                 .get("press_enter")
                 .and_then(|v| v.as_bool())
@@ -367,11 +391,12 @@ async fn execute_browser_action(
                 .get("ref")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32)
-                .ok_or_else(|| ToolError::Handler("'ref' field (integer) is required for 'select'".into()))?;
-            let value = args
-                .get("value")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ToolError::Handler("'value' field is required for 'select'".into()))?;
+                .ok_or_else(|| {
+                    ToolError::Handler("'ref' field (integer) is required for 'select'".into())
+                })?;
+            let value = args.get("value").and_then(|v| v.as_str()).ok_or_else(|| {
+                ToolError::Handler("'value' field is required for 'select'".into())
+            })?;
 
             let snapshot = registry
                 .select_option(&session_id, ref_num, value)
