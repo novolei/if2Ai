@@ -1329,6 +1329,23 @@ pub async fn start_agent_stream(
         }
     };
 
+    // Pre-LLM memory retrieval: fetch relevant memories to inject into system prompt
+    // (mirrors the same call in run_agent_turn)
+    let stream_memory_context = retrieve_memory_context(&state, &normalized_user_message).await;
+    if !stream_memory_context.is_empty() {
+        tracing::info!(
+            "[start_agent_stream] Injecting {} chars of memory context",
+            stream_memory_context.len()
+        );
+    }
+
+    // Build the full system prompt including memory context.
+    let system_prompt_with_memory = if stream_memory_context.is_empty() {
+        system_prompt.clone()
+    } else {
+        format!("{}\n{}", system_prompt, stream_memory_context)
+    };
+
     // Clone everything needed for the background task
     let session_manager = state.session_manager.clone();
     let app_session_clone = app_session.clone();
@@ -1338,11 +1355,15 @@ pub async fn start_agent_stream(
     let provider_client_for_stream = provider_client.clone();
     let messages_for_stream = all_messages.clone();
     let tool_defs_for_stream = tool_defs.clone();
-    let system_prompt_for_stream = system_prompt.clone();
+    let system_prompt_for_stream = system_prompt_with_memory;
     let permission_mode_for_stream = permission_mode.clone();
     let execution_context_for_task = execution_context.clone();
     let permission_senders = state.permission_senders.clone();
     let permission_overrides = state.permission_overrides.clone();
+    // Clones for post-turn learning (trajectory + self-model)
+    let trajectory_manager_for_stream = state.trajectory_manager.clone();
+    let learning_module_for_stream = state.learning_module.clone();
+    let memory_provider_for_stream = state.memory_provider.clone();
 
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
@@ -2385,6 +2406,75 @@ pub async fn start_agent_stream(
 
         if let Err(e) = session_manager.save_session(&updated_app_session).await {
             tracing::error!("[start_agent_stream] Failed to save session: {}", e);
+        }
+
+        // ── Post-turn streaming parity (mirrors run_agent_turn) ──
+
+        // Build a runtime session snapshot for trajectory recording.
+        let trajectory_runtime_session = RuntimeSession {
+            version: 1,
+            messages: updated_app_session.messages.clone(),
+        };
+
+        // Trajectory recording.
+        record_trajectory_if_possible(
+            &trajectory_runtime_session,
+            std::slice::from_ref(&system_prompt_for_stream),
+            trajectory_manager_for_stream.as_ref(),
+        )
+        .await;
+
+        // LearningModule: record turn + reflection trigger.
+        if let Some(lm_arc) = &learning_module_for_stream {
+            let mut lm = lm_arc.lock().await;
+            lm.self_model_mut().record_turn(
+                /* success= */ !stream_failed,
+                /* response_time_ms= */ 0.0,
+            );
+
+            let turn_count = lm.self_model().performance.total_turns;
+            tracing::info!(
+                "[start_agent_stream] LearningModule: turn {} recorded",
+                turn_count
+            );
+
+            const STREAM_REFLECT_INTERVAL: u64 = 5;
+            if turn_count > 0 && turn_count % STREAM_REFLECT_INTERVAL == 0 {
+                match lm
+                    .reflection_engine
+                    .analyze_session(&trajectory_runtime_session)
+                    .await
+                {
+                    Ok(reflections) => {
+                        let count: usize = reflections.len();
+                        lm.self_model.update_from_reflections(&reflections);
+                        tracing::info!(
+                            "[start_agent_stream] Reflection: {} insights at turn {}",
+                            count,
+                            turn_count
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[start_agent_stream] Reflection failed at turn {turn_count}: {e}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // WeibullDecay importance decay (non-blocking, warn-only on error).
+        {
+            use crate::modules::runtime::episodic_compaction::WeibullDecay;
+            let decay_default = WeibullDecay::default();
+            if let Err(e) = memory_provider_for_stream
+                .apply_importance_decay(decay_default.lambda, decay_default.k)
+                .await
+            {
+                tracing::warn!(
+                    "[start_agent_stream] WeibullDecay: apply_importance_decay failed: {e}"
+                );
+            }
         }
 
         // Emit stream_complete exactly once, and only after the full
