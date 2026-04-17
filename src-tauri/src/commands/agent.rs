@@ -23,6 +23,7 @@ use crate::modules::api::{
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
+use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::memory::working_memory::WorkingMemory;
@@ -1004,10 +1005,40 @@ pub async fn run_agent_turn(
                 let mut lm = lm_arc.lock().await;
                 lm.self_model_mut()
                     .record_turn(/* success= */ true, /* response_time_ms= */ 0.0);
+
+                let turn_count = lm.self_model().performance.total_turns;
                 tracing::info!(
-                    "[run_agent_turn] LearningModule: turn recorded, {} capabilities tracked",
-                    lm.self_model().capabilities.len()
+                    "[run_agent_turn] LearningModule: turn {} recorded, {} patterns tracked",
+                    turn_count,
+                    lm.self_model().learned_patterns.len(),
                 );
+
+                // Reflection trigger — every REFLECT_INTERVAL turns, analyze the session
+                // and update the self-model with new learned patterns.
+                // This is async and non-blocking: errors are warn-logged, not propagated.
+                const REFLECT_INTERVAL: u64 = 5;
+                if turn_count > 0 && turn_count % REFLECT_INTERVAL == 0 {
+                    match lm
+                        .reflection_engine
+                        .analyze_session(&trajectory_session)
+                        .await
+                    {
+                        Ok(reflections) => {
+                            let count: usize = reflections.len();
+                            lm.self_model.update_from_reflections(&reflections);
+                            tracing::info!(
+                                "[run_agent_turn] Reflection: {} insights at turn {}",
+                                count,
+                                turn_count
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[run_agent_turn] Reflection failed at turn {turn_count}: {e}"
+                            );
+                        }
+                    }
+                }
             } else {
                 tracing::debug!(
                     "[run_agent_turn] LearningModule: not initialised, skipping self-model update"

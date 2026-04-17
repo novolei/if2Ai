@@ -81,6 +81,43 @@ impl SelfModel {
         }
         self.performance.successful_turns as f64 / self.performance.total_turns as f64
     }
+
+    /// Apply a batch of reflection insights to this self-model.
+    ///
+    /// Each `Reflection` is converted to a `LearnedPattern` (using `pattern` as trigger
+    /// and `insight` as action) and appended to `learned_patterns`. Duplicates are merged
+    /// by calling `update()` on the existing pattern rather than inserting a second copy.
+    ///
+    /// Called from the agent post-turn sequence every `N` turns (default: 5) via
+    /// `crate::commands::agent::run_agent_turn`.
+    pub fn update_from_reflections(&mut self, reflections: &[super::reflection::Reflection]) {
+        for reflection in reflections {
+            // Check if a pattern with the same trigger already exists.
+            if let Some(existing) = self
+                .learned_patterns
+                .iter_mut()
+                .find(|p| p.trigger == reflection.pattern)
+            {
+                // Merge: update success rate based on confidence as proxy for success.
+                let success = reflection.confidence >= 0.5;
+                existing.update(success);
+            } else {
+                // Insert new pattern derived from this reflection.
+                let pattern = LearnedPattern {
+                    id: format!("reflection-{}", self.learned_patterns.len()),
+                    trigger: reflection.pattern.clone(),
+                    action: reflection.insight.clone(),
+                    success_rate: reflection.confidence,
+                    sample_count: 1,
+                    last_applied: Utc::now(),
+                };
+                self.learned_patterns.push(pattern);
+            }
+        }
+        if !reflections.is_empty() {
+            self.updated_at = Utc::now();
+        }
+    }
 }
 
 /// A specific capability the agent has
