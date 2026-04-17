@@ -26,6 +26,8 @@ pub mod event_bus;
 pub mod session_recorder;
 pub mod telemetry;
 
+// Re-exported for callers that import directly from `crate::modules::harness`
+// rather than via the full `crate::modules::harness::event_bus` path.
 #[allow(unused_imports)]
 pub use event_bus::{AgentEvent, EventBus};
 pub use session_recorder::SessionRecorder;
