@@ -205,6 +205,8 @@ fn scored_to_entry(scored: &ScoredMemory) -> MemoryEntry {
         importance: 0.5,
         access_count: 0,
         trust_score: 0.0,
+        session_id: None,
+        project_id: None,
     }
 }
 
@@ -236,6 +238,8 @@ impl MemoryProvider for VectorMemoryProvider {
             importance: 0.5,
             access_count: 0,
             trust_score: 0.0,
+            session_id: None,
+            project_id: None,
         };
 
         let db = self.lancedb.read().await;

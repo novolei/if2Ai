@@ -1,9 +1,11 @@
 //! Memory Recall tool - retrieves memories matching a query
 //!
-//! Provides memory retrieval with optional category filtering.
+//! Provides memory retrieval with optional category filtering, scoped to the
+//! current session when a `session_id` is present in the tool context.
 
 use std::sync::Arc;
 
+use crate::modules::memory::scope::MemoryScopeResolver;
 use crate::modules::memory::{MemoryEntry, SharedMemoryProvider};
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
@@ -16,8 +18,8 @@ const DEFAULT_LIMIT: usize = 10;
 #[allow(dead_code)]
 #[must_use]
 pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _context: SharedToolContext| {
+    let handler: ToolHandler =
+        Arc::new(move |args: serde_json::Value, context: SharedToolContext| {
             let memory = memory.clone();
             Box::pin(async move {
                 let query = args
@@ -34,8 +36,16 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     .map(|v| v as usize)
                     .unwrap_or(DEFAULT_LIMIT);
 
+                // Resolve scope from the tool execution context.  When a session_id
+                // is present, recall is filtered to session-scoped + global entries.
+                let scope = context
+                    .lock()
+                    .ok()
+                    .map(|ctx| MemoryScopeResolver::from_tool_context(&ctx))
+                    .unwrap_or_else(crate::modules::memory::scope::MemoryExecutionScope::global);
+
                 let results = memory
-                    .recall(&query, category, limit)
+                    .recall_scoped(&query, category, limit, &scope)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to recall memory: {}", e)))?;
 
@@ -48,8 +58,7 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
 
                 Ok(output.join("\n"))
             })
-        },
-    );
+        });
 
     ToolEntry {
         name: "memory_recall".to_string(),

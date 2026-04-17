@@ -8,6 +8,7 @@ use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryCategory, MemoryEntry, MemoryError, MemoryProvider};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
 
@@ -31,7 +32,7 @@ impl SqliteMemoryProvider {
         let conn = Connection::open(&db_path)
             .map_err(|e| MemoryError::Generic(format!("Failed to open database: {e}")))?;
 
-        // Initialize schema
+        // Initialize base schema
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_entries (
                 key TEXT PRIMARY KEY,
@@ -47,6 +48,11 @@ impl SqliteMemoryProvider {
         )
         .map_err(|e| MemoryError::Generic(format!("Failed to create schema: {e}")))?;
 
+        // Scope isolation columns — added in Memory Control Plane V1.
+        // ALTER TABLE is idempotent: errors from duplicate-column additions are silently ignored.
+        let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN session_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN project_id TEXT", []);
+
         // Create indexes (idempotent)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_category ON memory_entries(category)",
@@ -60,12 +66,23 @@ impl SqliteMemoryProvider {
         )
         .map_err(|e| MemoryError::Generic(format!("Failed to create index: {e}")))?;
 
+        // Index for scope-based queries
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_session_id ON memory_entries(session_id)",
+            [],
+        );
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
 
-    /// Parse a database row into a MemoryEntry
+    /// Parse a database row into a MemoryEntry.
+    ///
+    /// Expected column order:
+    ///   0=key, 1=content, 2=category, 3=created_at, 4=updated_at,
+    ///   5=importance, 6=access_count, 7=trust_score,
+    ///   8=session_id, 9=project_id
     fn row_to_entry(row: &rusqlite::Row<'_>) -> Result<MemoryEntry, rusqlite::Error> {
         let key: String = row.get(0)?;
         let content: String = row.get(1)?;
@@ -75,6 +92,9 @@ impl SqliteMemoryProvider {
         let importance: f64 = row.get(5).unwrap_or(0.5);
         let access_count: i64 = row.get(6).unwrap_or(0);
         let trust_score: f64 = row.get(7).unwrap_or(0.0);
+        // Columns 8 and 9 are optional scope fields added in Memory Control Plane V1.
+        let session_id: Option<String> = row.get(8).unwrap_or(None);
+        let project_id: Option<String> = row.get(9).unwrap_or(None);
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -105,6 +125,8 @@ impl SqliteMemoryProvider {
             importance,
             access_count: access_count as u64,
             trust_score,
+            session_id,
+            project_id,
         })
     }
 }
@@ -134,9 +156,11 @@ impl MemoryProvider for SqliteMemoryProvider {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            // session_id/project_id are NULL for unscoped store() — use store_scoped() for isolation.
             c.execute(
-                "INSERT INTO memory_entries (key, content, category, created_at, updated_at, importance, access_count, trust_score)
-                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0)
+                "INSERT INTO memory_entries
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, NULL, NULL)
                  ON CONFLICT(key) DO UPDATE SET
                      content = excluded.content,
                      category = excluded.category,
@@ -155,6 +179,131 @@ impl MemoryProvider for SqliteMemoryProvider {
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
     }
 
+    async fn store_scoped(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let content = content.to_string();
+        let category_str = category.as_str().to_string();
+        let session_id = scope.session_id.clone();
+        let project_id = scope.project_id.clone();
+
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            c.execute(
+                "INSERT INTO memory_entries
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, $5, $6)
+                 ON CONFLICT(key) DO UPDATE SET
+                     content = excluded.content,
+                     category = excluded.category,
+                     updated_at = excluded.updated_at,
+                     session_id = excluded.session_id,
+                     project_id = excluded.project_id",
+                params![
+                    key,
+                    content,
+                    category_str,
+                    chrono::Utc::now().to_rfc3339(),
+                    session_id,
+                    project_id,
+                ],
+            )
+            .map_err(|e| MemoryError::Generic(format!("Failed to store scoped entry: {e}")))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    async fn recall_scoped(
+        &self,
+        query: &str,
+        category: Option<&str>,
+        limit: usize,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        let query_str = query.to_string();
+        let category_str = category.map(String::from);
+        let session_id = scope.session_id.clone();
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+
+            // Returns entries that:
+            //   a) belong to the requested session_id, OR
+            //   b) are globally scoped (session_id IS NULL) — legacy/shared entries
+            // This ensures forward-compatibility: unscoped entries remain visible to all sessions.
+            let mut stmt = match &category_str {
+                Some(_) => c.prepare(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE (session_id = ?1 OR session_id IS NULL)
+                       AND category = ?2
+                     ORDER BY updated_at DESC
+                     LIMIT ?3",
+                )?,
+                None => c.prepare(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE (session_id = ?1 OR session_id IS NULL)
+                     ORDER BY updated_at DESC
+                     LIMIT ?2",
+                )?,
+            };
+
+            let mut all_entries: Vec<MemoryEntry> = Vec::new();
+            if let Some(ref cat) = category_str {
+                for row in stmt
+                    .query_map(
+                        params![session_id, cat, limit as i64],
+                        SqliteMemoryProvider::row_to_entry,
+                    )?
+                    .flatten()
+                {
+                    all_entries.push(row);
+                }
+            } else {
+                for row in stmt
+                    .query_map(
+                        params![session_id, limit as i64],
+                        SqliteMemoryProvider::row_to_entry,
+                    )?
+                    .flatten()
+                {
+                    all_entries.push(row);
+                }
+            }
+
+            let results = if query_str.is_empty() {
+                all_entries
+            } else {
+                let query_lower = query_str.to_lowercase();
+                all_entries
+                    .into_iter()
+                    .filter(|e| {
+                        e.key.to_lowercase().contains(&query_lower)
+                            || e.content.to_lowercase().contains(&query_lower)
+                    })
+                    .collect()
+            };
+
+            Ok(results)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
     async fn recall(
         &self,
         query: &str,
@@ -166,18 +315,22 @@ impl MemoryProvider for SqliteMemoryProvider {
         let conn = self.conn.clone();
 
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
 
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance, access_count, trust_score
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
                      FROM memory_entries
                      WHERE category = ?1
                      ORDER BY updated_at DESC
                      LIMIT ?2",
                 )?,
                 None => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance, access_count, trust_score
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
                      FROM memory_entries
                      ORDER BY updated_at DESC
                      LIMIT ?1",
@@ -271,16 +424,20 @@ impl MemoryProvider for SqliteMemoryProvider {
         let conn = self.conn.clone();
 
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
 
             // Declare stmt outside the if-let block so its borrow ends before the block closes.
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance, access_count, trust_score
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
                      FROM memory_entries WHERE category = ?1 ORDER BY updated_at DESC",
                 )?,
                 None => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance, access_count, trust_score
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
                      FROM memory_entries ORDER BY updated_at DESC",
                 )?,
             };
@@ -330,11 +487,12 @@ impl MemoryProvider for SqliteMemoryProvider {
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let decay = WeibullDecay::new(lambda_hours, k);
 
-            // Fetch all entries.
+            // Fetch all entries (including new scope columns for row_to_entry compatibility).
             let mut stmt = c
                 .prepare(
                     "SELECT key, content, category, created_at, updated_at, \
-                     importance, access_count, trust_score FROM memory_entries",
+                     importance, access_count, trust_score, session_id, project_id \
+                     FROM memory_entries",
                 )
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
 

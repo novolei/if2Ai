@@ -1,9 +1,11 @@
 //! Memory Store tool - stores a fact in long-term memory
 //!
-//! Provides persistent memory storage across sessions.
+//! Provides persistent memory storage across sessions, scoped to the current session
+//! when a `session_id` is available in the tool context.
 
 use std::sync::Arc;
 
+use crate::modules::memory::scope::MemoryScopeResolver;
 use crate::modules::memory::{MemoryCategory, SharedMemoryProvider};
 use crate::modules::tools::context::SharedToolContext;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
@@ -12,8 +14,8 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 #[allow(dead_code)]
 #[must_use]
 pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _context: SharedToolContext| {
+    let handler: ToolHandler =
+        Arc::new(move |args: serde_json::Value, context: SharedToolContext| {
             let memory = memory.clone();
             Box::pin(async move {
                 let key = args
@@ -43,15 +45,22 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     })
                     .unwrap_or(MemoryCategory::Conversation);
 
+                // Resolve scope from the tool execution context.  When a session_id
+                // is present, the entry is tagged so recall_scoped() can filter by session.
+                let scope = context
+                    .lock()
+                    .ok()
+                    .map(|ctx| MemoryScopeResolver::from_tool_context(&ctx))
+                    .unwrap_or_else(crate::modules::memory::scope::MemoryExecutionScope::global);
+
                 memory
-                    .store(&key, &content, category)
+                    .store_scoped(&key, &content, category, &scope)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to store memory: {}", e)))?;
 
                 Ok(format!("Stored memory: {}", key))
             })
-        },
-    );
+        });
 
     ToolEntry {
         name: "memory_store".to_string(),

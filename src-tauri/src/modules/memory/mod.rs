@@ -15,9 +15,13 @@ pub mod hrr;
 pub mod intent;
 mod providers;
 pub mod retrieval;
+pub mod scope;
 pub mod working_memory;
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
+// MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
+// directly from scope:: by callers (tools), so only re-export the type needed for signatures.
+pub use scope::MemoryExecutionScope;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -40,6 +44,15 @@ pub struct MemoryEntry {
     pub access_count: u64,
     /// Trust score (-1.0 to 1.0), adjusted by feedback
     pub trust_score: f64,
+    /// Optional session identifier for scope isolation.
+    ///
+    /// When `Some`, this entry is only visible to callers with matching session scope.
+    /// `None` means the entry is globally visible (pre-scope legacy entries).
+    pub session_id: Option<String>,
+    /// Optional project identifier for scope isolation.
+    ///
+    /// When `Some`, this entry is only visible to callers with matching project scope.
+    pub project_id: Option<String>,
 }
 
 /// Memory category for organizing memory entries
@@ -110,6 +123,45 @@ pub trait MemoryProvider: Send + Sync {
     /// Export entries, optionally filtered by category
     async fn export(&self, category: Option<&str>) -> Result<Vec<MemoryEntry>, MemoryError>;
 
+    /// Store a memory entry bound to a specific execution scope.
+    ///
+    /// When `scope.session_id` or `scope.project_id` is `Some`, the entry is tagged
+    /// with those identifiers so that future `recall_scoped` calls can filter by scope.
+    ///
+    /// The default implementation ignores scope and delegates to `store()` for
+    /// backward-compatible providers. Override in concrete implementations to persist
+    /// scope metadata.
+    async fn store_scoped(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        let _ = scope; // scope is ignored by the default no-op delegation
+        self.store(key, content, category).await
+    }
+
+    /// Recall memory entries within a specific execution scope.
+    ///
+    /// When the scope has a non-`None` `session_id` or `project_id`, results are
+    /// filtered to entries that either match the scope or were stored without scope
+    /// (global entries). Global entries are always visible to all scopes.
+    ///
+    /// The default implementation ignores scope and delegates to `recall()` for
+    /// backward-compatible providers. Override in concrete implementations to apply
+    /// actual scope filtering.
+    async fn recall_scoped(
+        &self,
+        query: &str,
+        category: Option<&str>,
+        limit: usize,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        let _ = scope; // scope is ignored by the default no-op delegation
+        self.recall(query, category, limit).await
+    }
+
     /// Apply Weibull importance decay to all stored entries.
     ///
     /// Each entry's `importance` is multiplied by the Weibull survival factor
@@ -177,6 +229,8 @@ impl MemoryProvider for InMemoryMemoryProvider {
             importance: 0.5,
             access_count: 0,
             trust_score: 0.0,
+            session_id: None,
+            project_id: None,
         };
         let mut entries = self.entries.write().await;
         entries.insert(key.to_string(), entry);

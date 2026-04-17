@@ -368,6 +368,8 @@ mod tests {
             importance: 0.5,
             access_count: 0,
             trust_score: 0.0,
+            session_id: None,
+            project_id: None,
         }
     }
 
