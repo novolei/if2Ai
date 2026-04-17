@@ -20,6 +20,11 @@
 
 pub mod chrome_finder;
 pub mod errors;
+pub mod registry;
+pub mod session;
+pub mod snapshot;
 
 pub use chrome_finder::{find_chrome_binary, ChromeStatus};
 pub use errors::BrowserError;
+pub use registry::{BrowserRegistry, BrowserStatusEntry};
+pub use session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};

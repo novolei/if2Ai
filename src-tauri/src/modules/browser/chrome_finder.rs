@@ -11,17 +11,13 @@ fn candidates() -> Vec<PathBuf> {
     let mut paths = vec![
         PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
-        PathBuf::from(
-            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-        ),
+        PathBuf::from("/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"),
         PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
     ];
     // User-level install: only add when home dir is available, avoiding a
     // misleading empty PathBuf in the candidates list.
     if let Some(home) = dirs::home_dir() {
-        paths.push(
-            home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        );
+        paths.push(home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"));
     }
     paths
 }
