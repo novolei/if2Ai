@@ -53,12 +53,25 @@ fn check_url_safety(url: &str) -> Result<(), String> {
         ));
     }
 
-    // Block RFC-1918 ranges and cloud metadata endpoints.
+    // Block RFC-1918 ranges, cloud metadata endpoints, and IPv6 private segments.
     let blocked_hosts = [
+        // IPv4 loopback
         "localhost",
         "127.",
         "0.0.0.0",
+        // IPv6 loopback (url crate normalises [::1] to "::1")
         "::1",
+        // IPv4-mapped IPv6 loopback / private ranges
+        "::ffff:127.",
+        "::ffff:10.",
+        "::ffff:172.16.",
+        "::ffff:192.168.",
+        // IPv6 link-local (fe80::/10)
+        "fe80:",
+        // IPv6 Unique Local Address (fc00::/7 covers fc00:: and fd00::)
+        "fc00:",
+        "fd00:",
+        // IPv4 RFC-1918
         "10.",
         "172.16.",
         "172.17.",
@@ -77,9 +90,9 @@ fn check_url_safety(url: &str) -> Result<(), String> {
         "172.30.",
         "172.31.",
         "192.168.",
-        "169.254.",          // AWS metadata / link-local
-        "metadata.google",   // GCP metadata
-        "metadata.azure",    // Azure metadata
+        "169.254.",          // link-local / AWS IMDS
+        "metadata.google",   // GCP metadata server
+        "metadata.azure",    // Azure IMDS
     ];
 
     if let Ok(parsed) = url::Url::parse(url) {
@@ -113,7 +126,8 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
         toolset: "browser".to_owned(),
         description: concat!(
             "Control an interactive headless web browser. ",
-            "Use 'start' first, then 'navigate' to load a URL. ",
+            "Use 'navigate' to load a URL (auto-starts browser if needed). ",
+            "For other actions, start explicitly with action='start' first. ",
             "Interact with elements using their [N] ref numbers from 'snapshot'. ",
             "Actions: start | stop | navigate | snapshot | screenshot | ",
             "click | type | scroll | select | key | wait | evaluate"

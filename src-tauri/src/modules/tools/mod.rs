@@ -22,8 +22,10 @@ use crate::modules::scheduler::SharedScheduler;
 
 /// Register all builtin tools to the given registry.
 ///
-/// This function is called during application startup to register
-/// the default builtin tools: bash, read_file, json_parse.
+/// Called during application startup. Registers the complete set of
+/// built-in tools including: bash, file operations, web search/fetch,
+/// browser automation, memory, scheduler/cron, skills management, and
+/// utility tools (json_parse, todo_write, sleep, config, etc.).
 pub fn register_builtin_tools(
     registry: &ToolRegistry,
     memory: SharedMemoryProvider,
