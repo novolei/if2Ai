@@ -6,6 +6,7 @@ export type SettingsSectionId =
   | 'skills'
   | 'web-search'
   | 'memory'
+  | 'model'
   | 'connections'
   | 'remote'
   | 'about'

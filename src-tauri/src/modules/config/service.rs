@@ -2,10 +2,9 @@
 //!
 //! Implements the trait-based config service defined in ADR-014 Section 4.2.
 //!
-//! `ConfigService::save_config()` performs a **triple-write**:
+//! `ConfigService::save_config()` performs a **dual-write**:
 //! 1. Layer 1: `~/.if2ai/config.json` (shortcut format)
 //! 2. Layer 2: `~/.if2ai/providers.yaml` + `auth.json` + `models.json` (runtime format)
-//! 3. Bridge: `~/.claude/settings.json` (compatibility layer)
 //!
 //! Concurrency is protected by `tokio::sync::Mutex` — only one write
 //! operation can run at a time within the same process.
@@ -14,14 +13,14 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::modules::config::bridge::{bridge_to_claw_settings, read_claw_settings_env};
 use crate::modules::config::store::{
     auth_json_path, channels_config_path, config_json_path, delete_file, models_json_path,
-    providers_yaml_path, read_json, write_json, ConfigStoreError,
+    providers_yaml_path, read_json, read_yaml, write_json, ConfigStoreError,
 };
 use crate::modules::config::triple_files::sync_to_triple_files;
 use crate::modules::config::types::{
-    AppConfig, ChannelConfig, ChannelRouting, ModelSelection, ProviderConfig,
+    AppConfig, AuthEntry, AuthJson, ChannelConfig, ChannelRouting, ModelSelection, ProviderConfig,
+    ProviderYamlEntry, ProvidersYaml,
 };
 use crate::modules::onboarding::store::{delete_state, load_state, save_state};
 
@@ -65,22 +64,15 @@ impl ConfigService {
                 Ok(config)
             }
             None => {
-                // No config.json yet — build from onboarding state + bridge prefill
+                // No config.json yet — build from onboarding state
                 let onboarding = load_state().await.map_err(|e| {
                     ConfigStoreError::Io(
                         std::io::Error::other(format!("{e}")),
                         "load onboarding state".to_string(),
                     )
                 })?;
-
-                // Try to pre-fill from bridge settings (Claude Code compat)
-                let bridge = read_claw_settings_env().await.ok().flatten();
-
                 let config = AppConfig {
                     onboarding,
-                    active_provider: bridge
-                        .as_ref()
-                        .and_then(|b| extract_provider_from_bridge(b.clone())),
                     ..AppConfig::new()
                 };
 
@@ -91,10 +83,9 @@ impl ConfigService {
 
     /// Save the full application configuration.
     ///
-    /// Performs the triple-write:
+    /// Performs the dual-write:
     /// 1. Layer 1: `config.json`
     /// 2. Layer 2: `providers.yaml` + `auth.json` + `models.json`
-    /// 3. Bridge: `~/.claude/settings.json`
     ///
     /// All writes are protected by a mutex to prevent concurrent corruption.
     pub async fn save_config(&self, config: &AppConfig) -> Result<(), ConfigStoreError> {
@@ -105,14 +96,6 @@ impl ConfigService {
 
         // Step 2: Sync to Layer 2 (triple files)
         sync_to_triple_files(config).await?;
-
-        // Step 3: Bridge to ~/.claude/settings.json
-        bridge_to_claw_settings(config).await.map_err(|e| {
-            ConfigStoreError::Io(
-                std::io::Error::other(format!("{e}")),
-                "bridge to claw settings".to_string(),
-            )
-        })?;
 
         // Also save onboarding state to state.json
         save_state(&config.onboarding).await.map_err(|e| {
@@ -127,36 +110,45 @@ impl ConfigService {
 
     /// Save a provider configuration to Layer 2 files.
     ///
-    /// Updates providers.yaml and auth.json with the given provider.
-    /// Does NOT update Layer 1 config.json.
+    /// Updates providers.yaml and auth.json with the given provider,
+    /// merging with existing entries instead of replacing the entire file.
     pub async fn save_provider(&self, provider: &ProviderConfig) -> Result<(), ConfigStoreError> {
         let _guard = self.write_lock.lock().await;
-        let triple = crate::modules::config::types::ProvidersYaml {
-            providers: [(
-                provider.provider_id.clone(),
-                crate::modules::config::types::ProviderYamlEntry {
-                    api_key: provider.api_key.clone(),
-                    base_url: provider.base_url.clone(),
-                    api: Some("openai-completions".to_string()),
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-        crate::modules::config::store::write_yaml(&triple, &providers_yaml_path()).await?;
 
+        // Read existing providers.yaml, merge in new provider
+        let mut existing = read_yaml::<ProvidersYaml>(&providers_yaml_path())
+            .await?
+            .unwrap_or_else(|| ProvidersYaml {
+                providers: std::collections::HashMap::new(),
+            });
+        let api_type = crate::modules::config::triple_files::detect_api_type(
+            &provider.provider_id,
+            &provider.base_url,
+        );
+        existing.providers.insert(
+            provider.provider_id.clone(),
+            ProviderYamlEntry {
+                api_key: provider.api_key.clone(),
+                base_url: provider.base_url.clone(),
+                api: Some(api_type),
+            },
+        );
+        crate::modules::config::store::write_yaml(&existing, &providers_yaml_path()).await?;
+
+        // Read existing auth.json, merge in new API key if present
         if provider.api_key.is_some() {
-            let auth = crate::modules::config::types::AuthJson {
-                providers: [(
-                    provider.provider_id.clone(),
-                    crate::modules::config::types::AuthEntry {
-                        api_key: provider.api_key.clone(),
-                    },
-                )]
-                .into_iter()
-                .collect(),
-            };
-            write_json(&auth, &auth_json_path()).await?;
+            let mut existing_auth = read_json::<AuthJson>(&auth_json_path())
+                .await?
+                .unwrap_or_else(|| AuthJson {
+                    providers: std::collections::HashMap::new(),
+                });
+            existing_auth.providers.insert(
+                provider.provider_id.clone(),
+                AuthEntry {
+                    api_key: provider.api_key.clone(),
+                },
+            );
+            write_json(&existing_auth, &auth_json_path()).await?;
         }
 
         Ok(())
@@ -185,6 +177,38 @@ impl ConfigService {
         };
         write_json(&models_json, &models_json_path()).await?;
         Ok(())
+    }
+
+    /// Read a provider configuration from Layer 2 files.
+    ///
+    /// Reads providers.yaml for base_url + api type,
+    /// and auth.json for the API key.
+    /// Returns `None` if the provider is not found in providers.yaml.
+    pub async fn load_provider(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<ProviderConfig>, ConfigStoreError> {
+        let yaml = read_yaml::<ProvidersYaml>(&providers_yaml_path()).await?;
+        let Some(yaml) = yaml else { return Ok(None) };
+        let Some(entry) = yaml.providers.get(provider_id) else {
+            return Ok(None);
+        };
+
+        // Read API key from auth.json (overrides providers.yaml)
+        let auth = read_json::<AuthJson>(&auth_json_path()).await?;
+        let api_key = auth
+            .as_ref()
+            .and_then(|a| a.providers.get(provider_id))
+            .and_then(|e| e.api_key.clone())
+            .or_else(|| entry.api_key.clone());
+
+        Ok(Some(ProviderConfig {
+            provider_id: provider_id.to_string(),
+            display_name: provider_id.to_string(),
+            api_key,
+            base_url: entry.base_url.clone(),
+            auth_variant: None,
+        }))
     }
 
     /// Save a channel configuration.
@@ -262,7 +286,6 @@ impl ConfigService {
     /// - `~/.if2ai/memory_config.json`
     /// - `~/.if2ai/trajectories/`
     /// - `~/.if2ai/models/embedded-rs/`
-    /// - `~/.claude/settings.json` (bridge file, owned by user)
     pub async fn reset_onboarding(&self) -> Result<(), ConfigStoreError> {
         let _guard = self.write_lock.lock().await;
 
@@ -310,6 +333,7 @@ fn migrate_config(mut config: AppConfig) -> AppConfig {
 // ── Bridge helpers ──────────────────────────────────────────────────────────
 
 /// Extract a `ProviderConfig` from bridge settings (if present).
+#[cfg(test)]
 fn extract_provider_from_bridge(
     bridge: crate::modules::config::bridge::ClawSettings,
 ) -> Option<ProviderConfig> {
@@ -344,6 +368,7 @@ fn extract_provider_from_bridge(
         display_name: provider_id.to_string(),
         api_key,
         base_url,
+        auth_variant: None,
     })
 }
 
@@ -367,6 +392,8 @@ mod tests {
             version: 0,
             active_provider: None,
             active_model: None,
+            selected_models: vec![],
+            role_models: vec![],
             channels: vec![],
             routing: None,
             onboarding,
@@ -384,6 +411,8 @@ mod tests {
             version: 1,
             active_provider: None,
             active_model: None,
+            selected_models: vec![],
+            role_models: vec![],
             channels: vec![],
             routing: None,
             onboarding,

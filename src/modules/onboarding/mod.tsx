@@ -21,7 +21,7 @@ export type {
   CheckStatus,
   CpuInfo,
   GpuInfo,
-  NodeJsInfo,
+  MemoryInfo,
   EmbeddedModelStatus,
   SystemReport,
   // Provider

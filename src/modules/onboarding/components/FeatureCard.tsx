@@ -41,7 +41,7 @@ export function FeatureCard({ icon, title, description, className }: FeatureCard
 
       {/* Text content */}
       <div className="flex flex-col gap-0.5">
-        <h3 className="text-token-sm font-semibold text-foreground">{title}</h3>
+        <h3 className="text-token-sm font-semibold text-foreground font-sans">{title}</h3>
         <p className="text-token-xs text-muted-foreground leading-relaxed">
           {description}
         </p>

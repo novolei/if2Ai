@@ -1,12 +1,9 @@
 //! Provider Tauri commands — list, configure, test, and select providers.
 //!
-//! Provides 6 commands:
-//! - `provider_list`: Returns all builtin providers
-//! - `provider_configure`: Save provider configuration
-//! - `provider_test`: Test provider connection
-//! - `provider_list_models`: List models from a provider (supports base_url + api_key)
-//! - `model_select`: Select an active model
-//! - `model_test`: Test a specific model
+//! Provides commands for:
+//! - Provider listing, configuration, and testing
+//! - Model selection and listing
+//! - Role-based model configuration (chat, utility, etc.)
 
 use crate::modules::config::{ConfigService, ProviderConfig};
 use crate::modules::provider::registry::builtin_providers;
@@ -60,10 +57,53 @@ pub async fn model_select(provider_id: String, model_id: String) -> Result<(), S
     let selection = crate::modules::config::ModelSelection {
         provider_id,
         model_id,
+        auth_variant: None,
     };
     svc.save_model(&selection)
         .await
         .map_err(|e| format!("Failed to save model selection: {e}"))
+}
+
+/// Configure a provider with multiple model selections.
+/// The first model is set as the default (active_model).
+#[tauri::command]
+pub async fn provider_configure_with_models(
+    provider_config: ProviderConfig,
+    model_ids: Vec<String>,
+) -> Result<(), String> {
+    crate::modules::provider::service::configure_provider_with_models(&provider_config, &model_ids)
+        .await
+}
+
+/// Get previously configured model IDs for a given provider.
+#[tauri::command]
+pub async fn provider_get_configured_models(provider_id: String) -> Result<Vec<String>, String> {
+    crate::modules::provider::service::get_configured_models(&provider_id).await
+}
+
+/// Get the saved provider configuration from Layer 2 files.
+/// Returns the stored base_url and api_key for the given provider_id.
+#[tauri::command]
+pub async fn provider_get_config(provider_id: String) -> Result<Option<ProviderConfig>, String> {
+    let svc = ConfigService::new();
+    svc.load_provider(&provider_id)
+        .await
+        .map_err(|e| format!("Failed to load provider config: {e}"))
+}
+
+/// List all provider IDs that have been configured.
+#[tauri::command]
+pub async fn provider_list_configured() -> Vec<String> {
+    crate::modules::provider::service::list_configured_providers().await
+}
+
+/// Get all configured models grouped by provider.
+/// Returns a list of [provider_id, [model_id, ...]] pairs.
+#[tauri::command]
+pub async fn provider_get_all_configured_models() -> Vec<(String, Vec<String>)> {
+    crate::modules::provider::service::get_all_configured_models()
+        .await
+        .unwrap_or_default()
 }
 
 /// Test a specific model by sending a test prompt.
@@ -85,4 +125,47 @@ fn default_base_url(provider_id: &str) -> String {
         "ollama" => "http://localhost:11434".to_string(),
         _ => "".to_string(),
     }
+}
+
+// ── Multi-model management commands (Slice 2) ──────────────────────────────
+
+/// List all available models grouped by provider.
+///
+/// Combines configured models from `~/.if2ai/models.json` with
+/// builtin provider names for display.
+#[tauri::command]
+pub async fn model_list_available(
+) -> Vec<crate::modules::config::model_resolver::AvailableModelGroup> {
+    crate::modules::config::model_resolver::ModelResolver::list_available_models().await
+}
+
+/// Get the current active model selection.
+#[tauri::command]
+pub async fn model_get_active() -> Result<Option<crate::modules::config::ModelSelection>, String> {
+    crate::modules::config::model_resolver::ModelResolver::get_active_model().await
+}
+
+/// Set the active model (per-session selection).
+#[tauri::command]
+pub async fn model_set_active(provider_id: String, model_id: String) -> Result<(), String> {
+    crate::modules::config::model_resolver::ModelResolver::set_active_model(&provider_id, &model_id)
+        .await
+}
+
+/// Get role-based model assignments (chat, utility, summarizer, etc.).
+#[tauri::command]
+pub async fn model_get_role_config() -> Result<Vec<crate::modules::config::ModelRoleConfig>, String>
+{
+    crate::modules::config::model_resolver::ModelResolver::get_role_config().await
+}
+
+/// Set a role's model assignment.
+///
+/// # Arguments
+///
+/// * `role` - Role name: "chat", "utility", "utility_large", "summarizer", "compiler"
+/// * `model_ref` - Model reference in "provider_id/model_id" format
+#[tauri::command]
+pub async fn model_set_role_config(role: String, model_ref: String) -> Result<(), String> {
+    crate::modules::config::model_resolver::ModelResolver::set_role_config(&role, &model_ref).await
 }

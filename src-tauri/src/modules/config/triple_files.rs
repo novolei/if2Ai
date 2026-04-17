@@ -14,7 +14,8 @@ use crate::modules::config::store::{
     auth_json_path, models_json_path, providers_yaml_path, write_json, write_yaml, ConfigStoreError,
 };
 use crate::modules::config::types::{
-    AppConfig, AuthEntry, AuthJson, ModelEntry, ModelsJson, ProviderYamlEntry, ProvidersYaml,
+    AppConfig, AuthEntry, AuthJson, ModelEntry, ModelsJson, ModelsProviderEntry, ProviderConfig,
+    ProviderYamlEntry, ProvidersYaml,
 };
 
 /// Synchronize `AppConfig` to the three Layer 2 files.
@@ -36,14 +37,21 @@ pub async fn sync_to_triple_files(config: &AppConfig) -> Result<(), ConfigStoreE
 
 /// Build providers.yaml from AppConfig.
 ///
-/// Includes all configured providers with their base_url and api type.
-fn build_providers_yaml(config: &AppConfig) -> ProvidersYaml {
+/// Writes ALL entries from `configured_providers` (the cumulative list), so that
+/// switching the active provider never erases a previously configured provider's
+/// connection info from `providers.yaml`.
+///
+/// Falls back to `active_provider` for backward compatibility with configs that
+/// were written before `configured_providers` was introduced.
+pub(crate) fn build_providers_yaml(config: &AppConfig) -> ProvidersYaml {
     let mut providers = HashMap::new();
 
-    if let Some(ref provider) = config.active_provider {
+    // Primary source: configured_providers (accumulates all ever-configured providers)
+    for provider in &config.configured_providers {
+        let key = provider_key(&provider.provider_id, provider.auth_variant.as_deref());
         let api_type = detect_api_type(&provider.provider_id, &provider.base_url);
         providers.insert(
-            provider.provider_id.clone(),
+            key,
             ProviderYamlEntry {
                 api_key: provider.api_key.clone(),
                 base_url: provider.base_url.clone(),
@@ -52,19 +60,36 @@ fn build_providers_yaml(config: &AppConfig) -> ProvidersYaml {
         );
     }
 
+    // Fallback: ensure active_provider is always present (covers old configs without
+    // configured_providers, and the case where configured_providers is empty).
+    if let Some(ref provider) = config.active_provider {
+        let key = provider_key(&provider.provider_id, provider.auth_variant.as_deref());
+        providers.entry(key).or_insert_with(|| {
+            let api_type = detect_api_type(&provider.provider_id, &provider.base_url);
+            ProviderYamlEntry {
+                api_key: provider.api_key.clone(),
+                base_url: provider.base_url.clone(),
+                api: Some(api_type),
+            }
+        });
+    }
+
     ProvidersYaml { providers }
 }
 
 /// Build auth.json from AppConfig.
 ///
-/// Contains only API keys, keyed by provider_id.
-fn build_auth_json(config: &AppConfig) -> AuthJson {
+/// Contains API keys for all configured providers, keyed by `{provider_id}::{auth_variant}`
+/// when auth_variant is present, or just `provider_id` otherwise.
+pub(crate) fn build_auth_json(config: &AppConfig) -> AuthJson {
     let mut providers = HashMap::new();
 
+    // Collect API keys from active_provider
     if let Some(ref provider) = config.active_provider {
         if provider.api_key.is_some() {
+            let key = provider_key(&provider.provider_id, provider.auth_variant.as_deref());
             providers.insert(
-                provider.provider_id.clone(),
+                key,
                 AuthEntry {
                     api_key: provider.api_key.clone(),
                 },
@@ -78,14 +103,58 @@ fn build_auth_json(config: &AppConfig) -> AuthJson {
 /// Build models.json from AppConfig.
 ///
 /// Compatible with pi-coding-agent ModelsConfigSchema.
-fn build_models_json(config: &AppConfig) -> ModelsJson {
+/// Syncs ALL selected_models (not just active_provider) to ensure
+/// every configured model is available at runtime.
+///
+/// Connection details (base_url, api_key) are resolved via the priority chain:
+/// 1. `configured_providers` — cumulative store of all ever-configured providers
+/// 2. `active_provider` — fallback for configs that predate `configured_providers`
+pub(crate) fn build_models_json(config: &AppConfig) -> ModelsJson {
     let mut providers = HashMap::new();
 
+    // Helper: look up a provider's connection details from the cumulative store first,
+    // then fall back to active_provider for backward compatibility.
+    let find_provider = |pid: &str, av: Option<&str>| -> Option<&ProviderConfig> {
+        config.find_configured_provider(pid, av).or_else(|| {
+            config
+                .active_provider
+                .as_ref()
+                .filter(|p| p.provider_id == pid && p.auth_variant.as_deref() == av)
+        })
+    };
+
+    // 1. Sync all selected_models
+    for selection in &config.selected_models {
+        let key = provider_key(&selection.provider_id, selection.auth_variant.as_deref());
+        let provider = find_provider(&selection.provider_id, selection.auth_variant.as_deref());
+
+        let entry = providers.entry(key).or_insert_with(|| {
+            let api_type = detect_api_type(
+                &selection.provider_id,
+                &provider.and_then(|p| p.base_url.clone()),
+            );
+            ModelsProviderEntry {
+                base_url: provider.and_then(|p| p.base_url.clone()),
+                api: Some(api_type),
+                api_key: provider.and_then(|p| p.api_key.clone()),
+                models: vec![],
+            }
+        });
+
+        entry.models.push(ModelEntry {
+            id: selection.model_id.clone(),
+            name: selection.model_id.clone(),
+            input: vec!["text".to_string()],
+            context_window: None,
+        });
+    }
+
+    // 2. Also include active_provider/active_model if not already covered
     if let (Some(provider), Some(model)) = (&config.active_provider, &config.active_model) {
-        let api_type = detect_api_type(&provider.provider_id, &provider.base_url);
-        providers.insert(
-            provider.provider_id.clone(),
-            crate::modules::config::types::ModelsProviderEntry {
+        let key = provider_key(&provider.provider_id, provider.auth_variant.as_deref());
+        if let std::collections::hash_map::Entry::Vacant(e) = providers.entry(key) {
+            let api_type = detect_api_type(&provider.provider_id, &provider.base_url);
+            e.insert(ModelsProviderEntry {
                 base_url: provider.base_url.clone(),
                 api: Some(api_type),
                 api_key: provider.api_key.clone(),
@@ -95,15 +164,27 @@ fn build_models_json(config: &AppConfig) -> ModelsJson {
                     input: vec!["text".to_string()],
                     context_window: None,
                 }],
-            },
-        );
+            });
+        }
     }
 
     ModelsJson { providers }
 }
 
+/// Generate a unique key for a provider, accounting for auth variants.
+///
+/// When auth_variant is present, returns `"{provider_id}::{auth_variant}"`
+/// to distinguish same-provider different-auth configs.
+/// Otherwise returns just `provider_id` for backward compatibility.
+fn provider_key(provider_id: &str, auth_variant: Option<&str>) -> String {
+    match auth_variant {
+        Some(variant) => format!("{provider_id}::{variant}"),
+        None => provider_id.to_string(),
+    }
+}
+
 /// Detect the API type string for providers.yaml.
-fn detect_api_type(provider_id: &str, base_url: &Option<String>) -> String {
+pub(crate) fn detect_api_type(provider_id: &str, base_url: &Option<String>) -> String {
     match provider_id {
         "ollama" => "openai-completions".to_string(),
         "openai" | "openrouter" | "xai" | "google" | "zai" | "moonshot" | "qwen" | "minimax"
@@ -143,11 +224,15 @@ mod tests {
                 display_name: "Ollama (Local)".to_string(),
                 api_key: None,
                 base_url: Some("http://localhost:11434".to_string()),
+                auth_variant: None,
             }),
             active_model: Some(ModelSelection {
                 provider_id: "ollama".to_string(),
                 model_id: "qwen3:4b".to_string(),
+                auth_variant: None,
             }),
+            selected_models: vec![],
+            role_models: vec![],
             channels: vec![],
             routing: None,
             onboarding,
@@ -224,5 +309,66 @@ mod tests {
     #[test]
     fn test_detect_api_type_default() {
         assert_eq!(detect_api_type("unknown", &None), "openai-completions");
+    }
+
+    #[test]
+    fn test_build_models_json_syncs_all_selected_models() {
+        let mut onboarding = OnboardingState::new();
+        onboarding.current_step = 4;
+
+        let config = AppConfig {
+            version: 1,
+            active_provider: Some(ProviderConfig {
+                provider_id: "openai".to_string(),
+                display_name: "OpenAI".to_string(),
+                api_key: Some("sk-test".to_string()),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                auth_variant: None,
+            }),
+            active_model: Some(ModelSelection {
+                provider_id: "openai".to_string(),
+                model_id: "gpt-4".to_string(),
+                auth_variant: None,
+            }),
+            selected_models: vec![
+                ModelSelection {
+                    provider_id: "openai".to_string(),
+                    model_id: "gpt-4".to_string(),
+                    auth_variant: None,
+                },
+                ModelSelection {
+                    provider_id: "openai".to_string(),
+                    model_id: "gpt-4o".to_string(),
+                    auth_variant: None,
+                },
+                ModelSelection {
+                    provider_id: "ollama".to_string(),
+                    model_id: "qwen3:4b".to_string(),
+                    auth_variant: None,
+                },
+            ],
+            role_models: vec![],
+            channels: vec![],
+            routing: None,
+            onboarding,
+            security_confirmed: false,
+        };
+
+        let models = build_models_json(&config);
+        // Should have 2 provider entries
+        assert_eq!(models.providers.len(), 2);
+        // OpenAI should have 2 models
+        let openai = models.providers.get("openai").unwrap();
+        assert_eq!(openai.models.len(), 2);
+        // Ollama should have 1 model (without active_provider config, uses active_provider as fallback)
+        let ollama = models.providers.get("ollama").unwrap();
+        assert_eq!(ollama.models.len(), 1);
+    }
+
+    #[test]
+    fn test_provider_key_with_auth_variant() {
+        assert_eq!(provider_key("moonshot", None), "moonshot");
+        assert_eq!(provider_key("moonshot", Some("cn")), "moonshot::cn");
+        assert_eq!(provider_key("moonshot", Some("code")), "moonshot::code");
     }
 }

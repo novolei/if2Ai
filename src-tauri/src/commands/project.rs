@@ -125,6 +125,66 @@ pub async fn open_project_in_finder(state: State<'_, AppState>, id: String) -> R
     .map_err(|err| err.to_string())?
 }
 
+/// Ensure `~/Documents/workaround` exists and is registered as a project.
+///
+/// Returns `(workdir_path, project_id)` — the caller can set this as the
+/// default project in the frontend.  If the directory already exists this
+/// is a no-op (idempotent).  The project is created only if no project with
+/// the same `workdir` already exists.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn ensure_default_workdir(
+    state: State<'_, AppState>,
+) -> Result<(String, String), String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let workaround_dir = home.join("Documents").join("workaround");
+
+    if !workaround_dir.exists() {
+        tokio::fs::create_dir_all(&workaround_dir)
+            .await
+            .map_err(|e| format!("Failed to create workaround dir: {e}"))?;
+    }
+
+    let workdir_str = workaround_dir.to_string_lossy().to_string();
+
+    // Find an existing project that points to this workdir
+    let all = state
+        .project_manager
+        .list_projects()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(existing) = all.iter().find(|p| p.workdir == workaround_dir) {
+        return Ok((workdir_str, existing.id.clone()));
+    }
+
+    // Create the default "Workaround" project
+    let project = state
+        .project_manager
+        .create_project("Workaround".to_string(), workaround_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok((workdir_str, project.id))
+}
+
+/// Open a macOS folder-picker dialog and return the selected path.
+///
+/// Returns `None` if the user cancels the dialog.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn pick_folder_dialog(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let app_handle = app.clone();
+    let result =
+        tokio::task::spawn_blocking(move || app_handle.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| format!("spawn_blocking error: {e}"))?;
+
+    Ok(result.map(|p| p.to_string()))
+}
+
 /// Open an arbitrary directory path in the system file manager.
 #[tauri::command]
 #[allow(dead_code)]

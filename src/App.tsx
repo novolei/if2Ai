@@ -20,6 +20,8 @@ import {
   openProjectInFinder,
   openSettingsWindow,
   listenToChatPrefill,
+  pickFolderDialog,
+  ensureDefaultWorkdir,
   invoke,
   executeSlashCommand,
   suggestSlashCommands,
@@ -35,7 +37,7 @@ import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
-import type { Conversation, Message, SessionTitleState } from '@/modules/chat/types'
+import type { Conversation, Message, RecentSession, SessionTitleState } from '@/modules/chat/types'
 import { OnboardingApp } from '@/modules/onboarding/OnboardingApp'
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
 import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
@@ -73,29 +75,105 @@ const GENERIC_USER_PROMPTS = [
 
 function App() {
   const appWindow = getCurrentWindow()
+  const [showSplash, setShowSplash] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
-  // Check onboarding state on mount
+  // Single coordinated startup: check onboarding during splash, then decide route
   useEffect(() => {
-    onboarding_get_state()
-      .then((raw) => {
-        const obj = raw as Record<string, unknown>
-        // Backend serializes with rename_all="snake_case":
-        //   FirstLaunch → { state: "first_launch" }
-        //   Onboarding → { state: "onboarding", step: N }
-        const tag = obj['state'] as string | undefined
-        const isOnboarding = tag === 'first_launch' || tag === 'onboarding'
-        setShowOnboarding(isOnboarding)
-      })
-      .catch(() => {
-        // On error, default to main app
-        setShowOnboarding(false)
-      })
-  }, [])
+    let cancelled = false
 
-  if (showOnboarding) {
-    return <OnboardingApp />
-  }
+    const boot = async () => {
+      // Run onboarding check with timeout to avoid blocking indefinitely
+      const onboardingCheck = (async () => {
+        try {
+          const raw = await Promise.race([
+            onboarding_get_state(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('onboarding_get_state timeout')), 3000)
+            ),
+          ])
+          const obj = raw as Record<string, unknown>
+          const tag = obj['state'] as string | undefined
+          return tag === 'first_launch' || tag === 'onboarding'
+        } catch (err) {
+          console.warn('[boot] onboarding check failed, defaulting to no onboarding:', err)
+          return false
+        }
+      })()
+
+      // Enforce minimum splash duration (800ms)
+      const splashTimer = new Promise<void>((resolve) => {
+        setTimeout(resolve, 800)
+      })
+
+      const [isOnboarding] = await Promise.all([onboardingCheck, splashTimer])
+
+      if (cancelled) return
+
+      setShowOnboarding(isOnboarding)
+
+      if (!isOnboarding) {
+        // Not onboarding — load main app data before dismissing splash
+        try {
+          // Ensure the default workaround project exists, and get its id
+          let defaultProjectId: string | null = null
+          try {
+            const [, projId] = await ensureDefaultWorkdir()
+            defaultProjectId = projId
+          } catch {
+            // Non-fatal — continue without default project
+          }
+
+          const projectList = await listProjects()
+          setProjects(projectList)
+
+          const sessionsMap: Record<string, SessionMeta[]> = {}
+          for (const project of projectList) {
+            sessionsMap[project.id] = await listProjectSessions(project.id)
+          }
+          setProjectSessions(sessionsMap)
+
+          // Always start on the Home screen — show the default project selected
+          // (no session restored on launch, per design decision)
+          if (defaultProjectId) {
+            const project = projectList.find((item) => item.id === defaultProjectId)
+            if (project) {
+              setActiveProjectId(defaultProjectId)
+              setCurrentProject({
+                id: project.id,
+                name: project.name,
+                workdir: project.workdir,
+                created_at: project.created_at,
+                updated_at: '',
+              })
+            }
+          }
+          // activeSessionId stays null → HomeScreen is shown
+
+          // Load the real active model from config
+          try {
+            const activeModel = await invoke<{ provider_id: string; model_id: string } | null>('model_get_active')
+            if (activeModel) {
+              setSelectedModel(`${activeModel.provider_id}/${activeModel.model_id}`)
+            }
+          } catch {
+            // Fallback: leave empty so chat-ui shows first available model from list
+          }
+        } catch (err) {
+          console.error('Failed to load projects during boot:', err)
+        }
+      }
+
+      if (cancelled) return
+      setShowSplash(false)
+    }
+
+    void boot()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const [activeSection, setActiveSection] = useState<AppSection>(() => {
     if (typeof window === 'undefined') return 'chat'
@@ -109,13 +187,12 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [leftPaneWidth, setLeftPaneWidth] = useState(240)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
-  const [showSplash, setShowSplash] = useState(true)
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
   const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('gpt-5.4-mini')
+  const [selectedModel, setSelectedModel] = useState('')
   const [isRightRailOpen, setIsRightRailOpen] = useState(false)
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === 'undefined') return 'dangerFullAccess'
@@ -456,6 +533,25 @@ function App() {
   }
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null
+
+  // Build the last-3 sessions list for the HomeScreen suggestion row
+  const recentSessions = useMemo((): RecentSession[] => {
+    const all: RecentSession[] = []
+    for (const [projectId, sessions] of Object.entries(projectSessions)) {
+      const project = projects.find((p) => p.id === projectId)
+      for (const s of sessions) {
+        all.push({
+          sessionId: s.id,
+          projectId,
+          projectName: project?.name ?? projectId,
+          title: s.title,
+          updatedAt: s.updated_at,
+        })
+      }
+    }
+    all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    return all.slice(0, 3)
+  }, [projectSessions, projects])
   const isActiveSessionLoading = activeSessionId ? Boolean(sessionLoading[activeSessionId]) : false
   const activeTitle = activeConv?.title ?? '新对话'
   const todos = activeSessionId ? sessionTodos[activeSessionId] ?? [] : []
@@ -476,18 +572,6 @@ function App() {
     .filter(([, running]) => running)
     .map(([sessionId]) => sessionId)
 
-  useEffect(() => {
-    loadProjects().then((projectList) => {
-      const lastProjectId = localStorage.getItem('lastActiveProjectId')
-      const lastSessionId = localStorage.getItem('lastActiveSessionId')
-      if (lastProjectId && lastSessionId) {
-        const project = projectList.find((item) => item.id === lastProjectId)
-        handleSelectSession(lastProjectId, lastSessionId, project)
-      }
-    }).finally(() => {
-      setTimeout(() => setShowSplash(false), 800)
-    })
-  }, [])
 
   useEffect(() => {
     if (activeProjectId && activeSessionId) {
@@ -818,6 +902,57 @@ function App() {
     }
   }
 
+  /// 点击「新线程」—— 清空当前 session，显示「开始构建」界面
+  const handleNewThread = () => {
+    setActiveSessionId(null)
+    setActiveProjectId(null)
+    setCurrentProject(null)
+  }
+
+  /// Home 页面切换所选项目（不立即创建 session）
+  const handleHomeProjectSelect = (projectId: string | null) => {
+    setActiveProjectId(projectId)
+    setActiveSessionId(null)
+    if (!projectId) {
+      setCurrentProject(null)
+      return
+    }
+    const project = projects.find((p) => p.id === projectId)
+    if (project) {
+      setCurrentProject({
+        id: project.id,
+        name: project.name,
+        workdir: project.workdir,
+        created_at: project.created_at,
+        updated_at: '',
+      })
+    }
+  }
+
+  /// Home 页面发送第一条消息 → 先创建 session 再发送
+  const handleSendMessage = (text: string) => {
+    void sendMessage(text)
+  }
+
+  /// 在 Home 页面点击「添加新项目」→ 打开文件夹选择器 → 创建项目 → 选中并留在 Home
+  const handlePickFolderAndCreateProject = async () => {
+    try {
+      const folderPath = await pickFolderDialog()
+      if (!folderPath) return // user cancelled
+
+      const folderName = folderPath.split('/').filter(Boolean).pop() ?? '新项目'
+      const newProject = await createProject(folderName, folderPath)
+
+      // Refresh project list so the new project appears in the dropdown
+      await loadProjects()
+
+      // Select the new project on the Home screen — no session created yet
+      handleHomeProjectSelect(newProject.id)
+    } catch (err) {
+      console.error('[handlePickFolderAndCreateProject] Failed:', err)
+    }
+  }
+
   const handleDeleteProject = async (projectId: string) => {
     try {
       await deleteProject(projectId)
@@ -964,9 +1099,11 @@ function App() {
   ) => {
     const messageText = (overrideText ?? input).trim()
     let targetSessionId = options?.sessionIdOverride ?? activeSessionId
+    let freshProjectId: string | undefined
     if (!targetSessionId && !options?.sessionIdOverride) {
       const fallbackProjectId = activeProjectId ?? projects[0]?.id ?? null
       if (fallbackProjectId) {
+        freshProjectId = fallbackProjectId
         targetSessionId = await handleNewChat(fallbackProjectId)
       }
     }
@@ -977,7 +1114,20 @@ function App() {
       setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }))
     }
 
-    const conv = conversations[sessionId]
+    // When handleNewChat just created this session the React state hasn't
+    // re-rendered yet, so conversations[sessionId] is still undefined.
+    // Construct a synthetic conv for new sessions rather than bailing out.
+    const conv =
+      conversations[sessionId] ??
+      (freshProjectId
+        ? {
+            id: sessionId,
+            projectId: freshProjectId,
+            title: PLACEHOLDER_SESSION_TITLE,
+            messages: [],
+            updatedAt: new Date(),
+          }
+        : null)
     if (!conv) return
 
     if (!options?.isInternalResume) {
@@ -1822,10 +1972,69 @@ function App() {
     }
   }
 
+  const loadMainAppData = async () => {
+    try {
+      // Ensure default Playground project exists
+      let defaultProjectId: string | null = null
+      try {
+        const [, projId] = await ensureDefaultWorkdir()
+        defaultProjectId = projId
+      } catch {
+        // Non-fatal
+      }
+
+      const projectList = await listProjects()
+      setProjects(projectList)
+
+      const sessionsMap: Record<string, SessionMeta[]> = {}
+      for (const project of projectList) {
+        sessionsMap[project.id] = await listProjectSessions(project.id)
+      }
+      setProjectSessions(sessionsMap)
+
+      // Start on Home screen with default project pre-selected
+      if (defaultProjectId) {
+        const project = projectList.find((p) => p.id === defaultProjectId)
+        if (project) {
+          setActiveProjectId(defaultProjectId)
+          setCurrentProject({
+            id: project.id,
+            name: project.name,
+            workdir: project.workdir,
+            created_at: project.created_at,
+            updated_at: '',
+          })
+        }
+      }
+      setActiveSessionId(null)
+
+      // Sync active model after onboarding completes
+      try {
+        const activeModel = await invoke<{ provider_id: string; model_id: string } | null>('model_get_active')
+        if (activeModel) {
+          setSelectedModel(`${activeModel.provider_id}/${activeModel.model_id}`)
+        }
+      } catch {
+        // Ignore — user can select model manually
+      }
+    } catch (err) {
+      console.error('[onboarding→main] Failed to load projects:', err)
+    }
+  }
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false)
+    void loadMainAppData()
+  }
+
+  if (showOnboarding) {
+    return <OnboardingApp onWindowDrag={startWindowDrag} onComplete={handleOnboardingComplete} />
+  }
+
   return (
     <>
       {showSplash ? (
-        <If2AiLoadingScreen projectName="UClaw" stageLabel="Initializing agent workspace" />
+        <If2AiLoadingScreen projectName="UClaw" stageLabel="Initializing agent workspace" onWindowDrag={startWindowDrag} />
       ) : (
       <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
       <GlobalNavbar
@@ -1862,6 +2071,11 @@ function App() {
               onSelectProject={handleSelectProject}
               onSelectSession={handleSelectSession}
               onNewChat={handleNewChat}
+              onNewThread={handleNewThread}
+              onHomeProjectSelect={handleHomeProjectSelect}
+              onPickFolderAndCreateProject={handlePickFolderAndCreateProject}
+              onSendMessage={handleSendMessage}
+              recentSessions={recentSessions}
               onDeleteProject={handleDeleteProject}
               onRenameProject={handleRenameProject}
               onDeleteSession={handleDeleteSession}

@@ -11,6 +11,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod client;
 pub mod registry;
 pub mod service;
 pub mod test;

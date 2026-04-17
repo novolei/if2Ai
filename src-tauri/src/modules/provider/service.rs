@@ -9,11 +9,10 @@
 //! - `configure_provider()`: Saves provider config via ConfigService
 //! - `select_model()`: Saves model selection via ConfigService
 
-use reqwest::Client;
-
 use crate::modules::api::providers::resolve_model_alias;
 use crate::modules::config::{ConfigService, ProviderConfig};
 
+use super::client::PROVIDER_HTTP_CLIENT;
 use super::registry::builtin_providers;
 use super::types::{Model, ModelModality, Provider};
 
@@ -49,13 +48,10 @@ pub async fn list_models(
 
 /// Fetch models from a local Ollama instance via `/api/tags`.
 async fn list_ollama_models(base_url: &str) -> Result<Vec<Model>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
-    let response = client
+    // Ollama's /api/tags is on the native API root, not under /v1
+    let base = base_url.trim_end_matches('/').trim_end_matches("/v1");
+    let url = format!("{base}/api/tags");
+    let response = PROVIDER_HTTP_CLIENT
         .get(&url)
         .send()
         .await
@@ -133,13 +129,8 @@ async fn list_openai_compat_models(
     base_url: &str,
     api_key: Option<&str>,
 ) -> Result<Vec<Model>, String> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let mut request = client.get(&url);
+    let mut request = PROVIDER_HTTP_CLIENT.get(&url);
 
     if let Some(key) = api_key {
         request = request.bearer_auth(key);
@@ -194,10 +185,141 @@ pub async fn configure_provider(provider_config: &ProviderConfig) -> Result<(), 
                 .await
                 .map_err(|e| format!("Failed to load config: {e}"))?;
             config.active_provider = Some(provider_config.clone());
+            config.upsert_configured_provider(provider_config.clone());
             config
         })
         .await
         .map_err(|e| format!("Failed to save provider: {e}"))
+}
+
+/// Configure a provider with multiple model selections.
+/// The first model is set as the default (active_model).
+///
+/// # Arguments
+///
+/// * `provider_config` - Provider configuration to save
+/// * `model_ids` - List of selected model IDs (first one becomes default)
+pub async fn configure_provider_with_models(
+    provider_config: &ProviderConfig,
+    model_ids: &[String],
+) -> Result<(), String> {
+    use crate::modules::config::ModelSelection;
+    use std::collections::HashSet;
+
+    let service = ConfigService::new();
+    service
+        .save_config(&{
+            let mut config = service
+                .load_config()
+                .await
+                .map_err(|e| format!("Failed to load config: {e}"))?;
+
+            // Incrementally merge models:
+            // 1. Keep ALL existing models (including from the same provider with different auth)
+            let existing = config.selected_models.clone();
+
+            // 2. Build a set of existing keys for dedup
+            let mut seen: HashSet<String> = existing
+                .iter()
+                .map(|m| format!("{}::{}", m.provider_id, m.model_id))
+                .collect();
+
+            // 3. Append only new model_ids that aren't already present
+            let new_models: Vec<ModelSelection> = model_ids
+                .iter()
+                .filter(|id| {
+                    let key = format!("{}::{}", provider_config.provider_id, id);
+                    if seen.contains(&key) {
+                        false
+                    } else {
+                        seen.insert(key);
+                        true
+                    }
+                })
+                .map(|id| ModelSelection {
+                    provider_id: provider_config.provider_id.clone(),
+                    model_id: id.clone(),
+                    auth_variant: provider_config.auth_variant.clone(),
+                })
+                .collect();
+
+            let mut merged = existing;
+            merged.extend(new_models);
+            config.selected_models = merged;
+
+            config.active_provider = Some(provider_config.clone());
+
+            // Persist the full provider config (base_url, api_key) so that
+            // sync_to_triple_files can produce correct models.json entries even
+            // when the user later switches to a different active provider.
+            config.upsert_configured_provider(provider_config.clone());
+
+            // First model becomes the default
+            if let Some(first) = model_ids.first() {
+                config.active_model = Some(ModelSelection {
+                    provider_id: provider_config.provider_id.clone(),
+                    model_id: first.clone(),
+                    auth_variant: provider_config.auth_variant.clone(),
+                });
+            }
+            config
+        })
+        .await
+        .map_err(|e| format!("Failed to save provider config: {e}"))
+}
+
+/// Get previously configured models for a given provider.
+pub async fn get_configured_models(provider_id: &str) -> Result<Vec<String>, String> {
+    let service = ConfigService::new();
+    let config = service
+        .load_config()
+        .await
+        .map_err(|e| format!("Failed to load config: {e}"))?;
+    Ok(config
+        .selected_models
+        .iter()
+        .filter(|m| m.provider_id == provider_id)
+        .map(|m| m.model_id.clone())
+        .collect())
+}
+
+/// Get all configured models grouped by provider.
+/// Used for the unified model pool display.
+pub async fn get_all_configured_models() -> Result<Vec<(String, Vec<String>)>, String> {
+    let service = ConfigService::new();
+    let config = service
+        .load_config()
+        .await
+        .map_err(|e| format!("Failed to load config: {e}"))?;
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for m in &config.selected_models {
+        groups
+            .entry(m.provider_id.clone())
+            .or_default()
+            .push(m.model_id.clone());
+    }
+    Ok(groups.into_iter().collect())
+}
+
+/// List all provider IDs that have been configured.
+/// Checks both `active_provider` and `selected_models` for completeness.
+#[must_use]
+pub async fn list_configured_providers() -> Vec<String> {
+    let service = ConfigService::new();
+    let Ok(config) = service.load_config().await else {
+        return vec![];
+    };
+    let mut ids = std::collections::HashSet::new();
+    if let Some(ref p) = config.active_provider {
+        if p.is_complete() {
+            ids.insert(p.provider_id.clone());
+        }
+    }
+    for m in &config.selected_models {
+        ids.insert(m.provider_id.clone());
+    }
+    ids.into_iter().collect()
 }
 
 /// Select a model by saving the selection via `ConfigService`.
@@ -219,6 +341,7 @@ pub async fn select_model(provider_id: &str, model_id: &str) -> Result<(), Strin
             config.active_model = Some(ModelSelection {
                 provider_id: provider_id.to_string(),
                 model_id: model_id.to_string(),
+                auth_variant: None,
             });
             config
         })
@@ -236,7 +359,7 @@ mod tests {
     #[test]
     fn test_list_providers_returns_all() {
         let providers = list_providers();
-        assert_eq!(providers.len(), 14);
+        assert_eq!(providers.len(), 16);
     }
 
     #[test]

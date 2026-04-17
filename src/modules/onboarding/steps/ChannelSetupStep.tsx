@@ -8,13 +8,14 @@
  * Design reference: docs/references/onboarding-steps/ChannelSetup.png
  */
 
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useState, useCallback, useEffect } from 'react';
 import { Loader2, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InfoPanel, InfoCard } from '../components/InfoPanel';
 import { OnboardingLayout } from '../components/OnboardingLayout';
-import { StepHeader } from '../components/StepHeader';
 import { StepNavigation } from '../components/StepNavigation';
+import { StepProgressBar } from '../components/StepProgressBar';
 import { ChannelCard } from '../components/ChannelCard';
 import { useOnboarding } from '../hooks/useOnboarding';
 import type { Channel, ChannelConfig } from '../types';
@@ -22,6 +23,7 @@ import type { Channel, ChannelConfig } from '../types';
 interface ChannelSetupStepProps {
   onNext: () => void;
   onPrev: () => void;
+  onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
 /** Built-in channel list with display metadata. */
@@ -43,7 +45,7 @@ const BUILTIN_CHANNELS: Channel[] = [
   { id: 'matrix', name: 'Matrix (glgnt)', category: 'Desktop', icon: '⬡', logo_path: 'src/assets/ChannelLogos/channel_logo_matrix.png', requires_token: true, requires_secret: false, requires_webhook: false, node_version_required: null },
 ];
 
-export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
+export function ChannelSetupStep({ onNext, onPrev, onWindowDrag }: ChannelSetupStepProps) {
   const {
     channels: backendChannels,
     configuredChannels,
@@ -154,8 +156,19 @@ export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
           )}
         </InfoPanel>
       }
+      onWindowDrag={onWindowDrag}
     >
-      <StepHeader currentStep={5} title="接入社交渠道" />
+      <StepProgressBar currentStep={5} />
+
+      {/* Inline step badge + heading */}
+      <div className="flex items-center gap-3 px-8 pb-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-orange text-token-md font-bold text-white shrink-0">
+          5
+        </div>
+        <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
+          接入社交渠道
+        </h1>
+      </div>
 
       {/* Left content area */}
       <div className="flex-1 overflow-y-auto px-8 pb-4">
@@ -206,7 +219,7 @@ export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
         {/* Config form for selected channel */}
         {showForm && selectedChannel && (
           <div className="mt-4 rounded-lg border border-border bg-muted/20 px-4 py-4">
-            <h3 className="text-token-sm font-semibold text-foreground mb-3">
+            <h3 className="text-token-sm font-semibold text-foreground mb-3 font-sans">
               配置 {selectedChannel.name}
             </h3>
 
@@ -314,9 +327,11 @@ export function ChannelSetupStep({ onNext, onPrev }: ChannelSetupStepProps) {
         currentStep={5}
         onNext={onNext}
         onPrev={onPrev}
+        onSkip={onNext}
         canGoNext={hasAnyConfigured}
         canGoPrev
         nextLabel="完成部署 →"
+        skipLabel="暂时跳过"
       />
     </OnboardingLayout>
   );

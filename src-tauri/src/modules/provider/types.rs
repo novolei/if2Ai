@@ -4,6 +4,7 @@
 //! - `Provider`: Provider registry entry (14 builtin providers)
 //! - `ProviderCategory`: Domestic/International/Local/Custom
 //! - `ProviderStatus`: Available/ApiKeyRequired/Unavailable
+//! - `ProviderSubChoice`: Authentication sub-choice for providers with multiple endpoints
 //! - `Model`: Model metadata (context window, modality, etc.)
 //! - `ModelModality`: Text/Vision/Multimodal
 //! - `TestResult`: Connection test outcome
@@ -51,6 +52,32 @@ pub enum ProviderStatus {
     ApiKeyRequired,
     /// Provider is currently unavailable.
     Unavailable { reason: String },
+}
+
+// ── Provider Sub-Choice ────────────────────────────────────────────────────
+
+/// A sub-choice for providers that have multiple authentication/endpoint options.
+/// Used by providers like Ollama (local vs remote) or Z.AI (different regions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSubChoice {
+    /// Sub-choice identifier, e.g. "ollama-default", "ollama-remote"
+    pub id: String,
+    /// Display label, e.g. "Ollama 本地（推荐）"
+    pub label: String,
+    /// Description text for the sub-choice
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Credential input label, e.g. "无需 API Key"
+    pub credential_label: String,
+    /// Credential input placeholder, e.g. "（留空即可）"
+    pub credential_placeholder: String,
+    /// Documentation URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
+    /// Default base URL for this sub-choice
+    pub base_url: String,
+    /// API protocol type (e.g. "openai-completions")
+    pub api: String,
 }
 
 // ── Model Modality ──────────────────────────────────────────────────────────
@@ -102,6 +129,10 @@ pub struct Provider {
     /// Icon/asset identifier for logo lookup
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_path: Option<String>,
+    /// Sub-choice options for providers with multiple endpoints/auth modes.
+    /// E.g. Ollama has "本地" and "远程" sub-choices.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_choices: Option<Vec<ProviderSubChoice>>,
 }
 
 impl Provider {
@@ -198,6 +229,7 @@ mod tests {
             supports_models: false,
             is_local: false,
             logo_path: None,
+            sub_choices: None,
         };
         assert!(available.is_available());
 
@@ -211,6 +243,7 @@ mod tests {
             supports_models: false,
             is_local: false,
             logo_path: None,
+            sub_choices: None,
         };
         assert!(!unavailable.is_available());
     }

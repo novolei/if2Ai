@@ -2,6 +2,15 @@ import type { PermissionMode, Project, ProjectMeta, SessionMeta } from '@/lib/ta
 import type { Dispatch, SetStateAction } from 'react'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 
+/** A recent session entry shown in the Home screen suggestion list. */
+export interface RecentSession {
+  sessionId: string
+  projectId: string
+  projectName: string
+  title: string
+  updatedAt: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -62,6 +71,13 @@ export interface ChatWorkspaceProps {
   onSelectProject: (id: string) => void
   onSelectSession: (projectId: string, sessionId: string, projectOverride?: ProjectMeta) => Promise<void>
   onNewChat: (projectId: string) => void
+  onNewThread: () => void
+  /** Select a project for the Home screen without creating a session. */
+  onHomeProjectSelect: (projectId: string | null) => void
+  onPickFolderAndCreateProject: () => Promise<void>
+  /** Send the first message (called from HomeScreen composer). */
+  onSendMessage: (text: string) => void
+  recentSessions: RecentSession[]
   onDeleteProject: (id: string) => void
   onRenameProject: (id: string, newName: string) => void
   onDeleteSession: (projectId: string, sessionId: string) => void

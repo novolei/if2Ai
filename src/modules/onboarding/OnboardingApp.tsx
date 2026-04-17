@@ -11,13 +11,14 @@
  * - Step-specific page components
  */
 
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect } from 'react';
 import { WelcomeStep } from './steps/WelcomeStep';
 import { SystemCheckStep } from './steps/SystemCheckStep';
 import { SecurityConfirmStep } from './steps/SecurityConfirmStep';
 import { ProviderSetupStep } from './steps/ProviderSetupStep';
 import { ChannelSetupStep } from './steps/ChannelSetupStep';
 import { ActivationStep } from './steps/ActivationStep';
-import { StepHeader } from './components/StepHeader';
 import { StepProgress } from './components/StepProgress';
 import { InfoPanel } from './components/InfoPanel';
 import { OnboardingLayout } from './components/OnboardingLayout';
@@ -92,10 +93,12 @@ function StepPlaceholder({
   step,
   onNext,
   onPrev,
+  onWindowDrag,
 }: {
   step: number;
   onNext: () => void;
   onPrev: () => void;
+  onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void;
 }) {
   return (
     <OnboardingLayout
@@ -110,11 +113,17 @@ function StepPlaceholder({
           </div>
         </InfoPanel>
       }
+      onWindowDrag={onWindowDrag}
     >
-      <StepHeader
-        currentStep={step}
-        title={STEP_TITLES[step] ?? 'if2AI Onboarding'}
-      />
+      {/* Inline step badge + heading */}
+      <div className="flex items-center gap-3 px-8 pb-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-orange text-token-md font-bold text-white shrink-0">
+          {step}
+        </div>
+        <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
+          {STEP_TITLES[step] ?? 'if2AI Onboarding'}
+        </h1>
+      </div>
       <div className="flex-1 flex flex-col items-center justify-center px-8">
         <p className="text-token-base text-muted-foreground mb-2">
           Step {step}: {STEP_TITLES[step] ?? 'if2AI Onboarding'}
@@ -144,14 +153,29 @@ function StepPlaceholder({
   );
 }
 
-export function OnboardingApp() {
+export function OnboardingApp({
+  onWindowDrag,
+  onComplete,
+}: {
+  onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void;
+  onComplete?: () => void;
+} = {}) {
   const {
     appState,
     currentStep,
     nextStep,
     prevStep,
     confirmSecurity,
+    loadAppState,
   } = useOnboarding();
+
+  // When the backend transitions to Ready, notify the parent so it can
+  // swap out the onboarding UI for the main app without a page reload.
+  useEffect(() => {
+    if (appState.type === 'Ready') {
+      onComplete?.();
+    }
+  }, [appState, onComplete]);
 
   // If the app is already in Ready state, don't render onboarding.
   if (appState.type === 'Ready') {
@@ -163,20 +187,25 @@ export function OnboardingApp() {
   // Render the appropriate step page
   switch (step) {
     case 1:
-      return <WelcomeStep onNext={nextStep} />;
+      return <WelcomeStep onNext={nextStep} onWindowDrag={onWindowDrag} />;
     case 2:
-      return <SystemCheckStep onNext={nextStep} onPrev={prevStep} />;
+      return <SystemCheckStep onNext={nextStep} onPrev={prevStep} onWindowDrag={onWindowDrag} />;
     case 3:
-      return <SecurityConfirmStep onConfirm={confirmSecurity} onPrev={prevStep} />;
+      return <SecurityConfirmStep onConfirm={confirmSecurity} onPrev={prevStep} onWindowDrag={onWindowDrag} />;
     case 4:
-      return <ProviderSetupStep onNext={nextStep} onPrev={prevStep} />;
+      return <ProviderSetupStep onNext={nextStep} onPrev={prevStep} onWindowDrag={onWindowDrag} />;
     case 5:
-      return <ChannelSetupStep onNext={nextStep} onPrev={prevStep} />;
+      return <ChannelSetupStep onNext={nextStep} onPrev={prevStep} onWindowDrag={onWindowDrag} />;
     case 6:
-      return <ActivationStep onNext={nextStep} onPrev={prevStep} />;
+      // Step 6: activation_complete is called inside ActivationStep.
+      // onNext refreshes OnboardingApp's own appState from the backend —
+      // once it becomes Ready, the useEffect above fires onComplete().
+      // We intentionally do NOT call onboarding_next_step here (it would
+      // error because onboarding_completed is already true).
+      return <ActivationStep onNext={loadAppState} onPrev={prevStep} onWindowDrag={onWindowDrag} />;
     default:
       return (
-        <StepPlaceholder step={step} onNext={nextStep} onPrev={prevStep} />
+        <StepPlaceholder step={step} onNext={nextStep} onPrev={prevStep} onWindowDrag={onWindowDrag} />
       );
   }
 }

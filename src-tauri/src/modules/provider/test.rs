@@ -15,10 +15,9 @@
 //! - `provider_network_error`: DNS failure, connection refused, etc.
 //! - `provider_upstream_unavailable`: Provider returned 503/502
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use reqwest::Client;
-
+use super::client::PROVIDER_HTTP_CLIENT;
 use super::types::{error_codes, TestResult};
 
 /// Timeout for provider connection tests (seconds).
@@ -123,16 +122,10 @@ fn validate_config(provider_id: &str, base_url: &str, api_key: Option<&str>) -> 
 
 /// Test Ollama connection via `/api/tags`.
 async fn test_ollama(base_url: &str) -> Result<String, TestError> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| TestError {
-            code: error_codes::PROVIDER_NETWORK_ERROR.to_string(),
-            message: format!("Failed to create HTTP client: {e}"),
-        })?;
-
-    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
-    let response = client.get(&url).send().await.map_err(|e| {
+    // Ollama's /api/tags is on the native API root, not under /v1
+    let base = base_url.trim_end_matches('/').trim_end_matches("/v1");
+    let url = format!("{base}/api/tags");
+    let response = PROVIDER_HTTP_CLIENT.get(&url).send().await.map_err(|e| {
         if e.is_timeout() {
             TestError {
                 code: error_codes::PROVIDER_TIMEOUT.to_string(),
@@ -161,15 +154,7 @@ async fn test_ollama(base_url: &str) -> Result<String, TestError> {
 
 /// Test Anthropic connection via `/v1/messages` with a minimal request.
 async fn test_anthropic(base_url: &str, api_key: &str) -> Result<String, TestError> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| TestError {
-            code: error_codes::PROVIDER_NETWORK_ERROR.to_string(),
-            message: format!("Failed to create HTTP client: {e}"),
-        })?;
-
-    let base = base_url.trim_end_matches('/');
+    let base = api_root(base_url);
     let url = format!("{base}/v1/messages");
 
     // Minimal valid request to test auth
@@ -179,7 +164,7 @@ async fn test_anthropic(base_url: &str, api_key: &str) -> Result<String, TestErr
         "messages": [{"role": "user", "content": "Hi"}]
     });
 
-    let response = client
+    let response = PROVIDER_HTTP_CLIENT
         .post(&url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -216,17 +201,9 @@ async fn test_anthropic(base_url: &str, api_key: &str) -> Result<String, TestErr
 
 /// Test OpenAI-compatible provider via `/models` endpoint.
 async fn test_openai_compat(base_url: &str, api_key: &str) -> Result<String, TestError> {
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| TestError {
-            code: error_codes::PROVIDER_NETWORK_ERROR.to_string(),
-            message: format!("Failed to create HTTP client: {e}"),
-        })?;
+    let url = format!("{}/v1/models", api_root(base_url));
 
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
-
-    let response = client
+    let response = PROVIDER_HTTP_CLIENT
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .send()
@@ -316,6 +293,154 @@ pub async fn test_model(
             details: result.details,
         })
     }
+}
+
+/// Send a greeting message to the chat model and return the response text.
+///
+/// Used during onboarding activation to verify the model is fully operational
+/// and give the user a meaningful first interaction.
+///
+/// Returns `None` if no chat model is configured (not an error — just skip
+/// the ceremony response). Returns `Err` only for unexpected failures.
+pub async fn send_greeting() -> Result<Option<String>, String> {
+    let resolved =
+        match crate::modules::config::model_resolver::ModelResolver::resolve_role_model("chat")
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("[activation] No chat model configured for greeting: {e}");
+                return Ok(None); // Not an error — user just hasn't set a chat model yet
+            }
+        };
+
+    let greeting = "你好！我是 if2AI 的新用户，刚刚完成初始化配置。请简单介绍一下你自己吧！";
+
+    tracing::info!(
+        "[activation] Sending greeting to {}/{} via {} at {}",
+        resolved.provider_id,
+        resolved.model_id,
+        resolved.api,
+        resolved.base_url
+    );
+
+    // Create a dedicated client with longer timeout for chat responses
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+    let result = match resolved.api.as_str() {
+        "anthropic-messages" => send_greeting_anthropic(&client, &resolved, greeting).await,
+        // openai-completions (default)
+        _ => send_greeting_openai_compat(&client, &resolved, greeting).await,
+    };
+
+    match result {
+        Ok(text) => {
+            tracing::info!("[activation] Greeting received ({} chars)", text.len());
+            Ok(Some(text))
+        }
+        Err(e) => {
+            tracing::error!("[activation] Greeting failed: {e}");
+            Err(e)
+        }
+    }
+}
+
+/// Strip any trailing `/v1` from a base URL before appending an API path.
+///
+/// Providers often store base_url as `https://api.example.com/v1`, but all
+/// endpoint constructors below add `/v1/<path>` themselves — so we normalise
+/// here to avoid the double-`/v1/v1/…` 404.
+fn api_root(base_url: &str) -> &str {
+    base_url.trim_end_matches('/').trim_end_matches("/v1")
+}
+
+async fn send_greeting_anthropic(
+    client: &reqwest::Client,
+    resolved: &crate::modules::config::model_resolver::ResolvedModel,
+    greeting: &str,
+) -> Result<String, String> {
+    let url = format!("{}/v1/messages", api_root(&resolved.base_url));
+    let body = serde_json::json!({
+        "model": resolved.model_id,
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": greeting}]
+    });
+
+    let response = client
+        .post(&url)
+        .header("x-api-key", resolved.api_key.as_deref().unwrap_or(""))
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("请求发送失败: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("模型返回错误 ({}): {}", status, text));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {e}"))?;
+
+    json["content"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|block| block["text"].as_str())
+        .map(|t| t.to_string())
+        .ok_or_else(|| "模型未返回有效回复".to_string())
+}
+
+async fn send_greeting_openai_compat(
+    client: &reqwest::Client,
+    resolved: &crate::modules::config::model_resolver::ResolvedModel,
+    greeting: &str,
+) -> Result<String, String> {
+    let url = format!("{}/v1/chat/completions", api_root(&resolved.base_url));
+    let body = serde_json::json!({
+        "model": resolved.model_id,
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": greeting}]
+    });
+
+    let mut request = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .json(&body);
+
+    if let Some(ref key) = resolved.api_key {
+        request = request.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("请求发送失败: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("模型返回错误 ({}): {}", status, text));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {e}"))?;
+
+    json["choices"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|choice| choice["message"]["content"].as_str())
+        .map(|t| t.to_string())
+        .ok_or_else(|| "模型未返回有效回复".to_string())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

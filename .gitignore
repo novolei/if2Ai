@@ -39,3 +39,12 @@ dist-tauri/
 
 # Harness reports
 .harness-reports/
+
+# ML model caches — large binary files, never commit
+src-tauri/.fastembed_cache/
+
+# Python bytecode cache
+harness/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo

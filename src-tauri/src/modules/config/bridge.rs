@@ -6,8 +6,22 @@
 //! can continue to read their expected format.
 //!
 //! The bridge is **non-destructive**: it reads the existing settings.json,
-//! updates only the fields it owns (env.ANTHROPIC_API_KEY, env.OPENAI_API_KEY, model),
+//! updates only the fields it owns (env.ANTHROPIC_AUTH_TOKEN, env.OPENAI_AUTH_TOKEN, model),
 //! and writes back — preserving all other fields (MCP, hooks, permissions, etc.).
+//!
+//! ## Env Key Mapping
+//!
+//! The bridge uses `*_AUTH_TOKEN` keys (not `*_API_KEY`) because
+//! `load_llm_settings()` in `commands/agent.rs` reads `ANTHROPIC_AUTH_TOKEN`.
+//!
+//! | Provider | Auth Key | Base URL Key |
+//! |----------|----------|-------------|
+//! | anthropic | ANTHROPIC_AUTH_TOKEN | ANTHROPIC_BASE_URL |
+//! | openai/openrouter | OPENAI_AUTH_TOKEN | OPENAI_BASE_URL |
+//! | xai/grok | XAI_AUTH_TOKEN | XAI_BASE_URL |
+//! | google | GOOGLE_API_KEY | GOOGLE_BASE_URL |
+//! | zai | ZAI_API_KEY | ZAI_BASE_URL |
+//! | default | ANTHROPIC_AUTH_TOKEN | ANTHROPIC_BASE_URL |
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,15 +56,16 @@ pub async fn bridge_to_claw_settings(config: &AppConfig) -> Result<(), BridgeErr
         None => return Ok(()), // No model to bridge
     };
 
-    // Determine which env keys to use based on provider type
+    // Determine which env keys to use based on provider type.
+    // Uses *_AUTH_TOKEN keys to match what load_llm_settings() reads.
     let (api_key_env, base_url_env) = match provider.provider_id.as_str() {
-        "openai" | "openrouter" => ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-        "anthropic" => ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+        "openai" | "openrouter" => ("OPENAI_AUTH_TOKEN", "OPENAI_BASE_URL"),
+        "anthropic" => ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
         "zai" => ("ZAI_API_KEY", "ZAI_BASE_URL"),
         "google" => ("GOOGLE_API_KEY", "GOOGLE_BASE_URL"),
-        "xai" | "grok" => ("XAI_API_KEY", "XAI_BASE_URL"),
+        "xai" | "grok" => ("XAI_AUTH_TOKEN", "XAI_BASE_URL"),
         // Default: use Anthropic-compatible keys (ClawApi convention)
-        _ => ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+        _ => ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
     };
 
     // Read existing settings (preserve everything)
@@ -180,26 +195,28 @@ mod tests {
                 display_name: "OpenAI".to_string(),
                 api_key: Some("sk-test-key".to_string()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
+                auth_variant: None,
             }),
             active_model: Some(ModelSelection {
                 provider_id: "openai".to_string(),
                 model_id: "gpt-4".to_string(),
+                auth_variant: None,
             }),
+            selected_models: vec![],
+            role_models: vec![],
             channels: vec![],
             routing: None,
             onboarding: onboarding_state,
             security_confirmed: true,
         };
 
-        // Verify that openai maps to OPENAI_* keys
-        // (We can't test the actual file write without HOME override,
-        // but we can verify the mapping logic by checking the provider_id match)
+        // Verify that openai maps to OPENAI_AUTH_TOKEN key
         let provider = config.active_provider.as_ref().unwrap();
         let (api_key_env, base_url_env) = match provider.provider_id.as_str() {
-            "openai" | "openrouter" => ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-            _ => ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+            "openai" | "openrouter" => ("OPENAI_AUTH_TOKEN", "OPENAI_BASE_URL"),
+            _ => ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
         };
-        assert_eq!(api_key_env, "OPENAI_API_KEY");
+        assert_eq!(api_key_env, "OPENAI_AUTH_TOKEN");
         assert_eq!(base_url_env, "OPENAI_BASE_URL");
     }
 

@@ -1,0 +1,32 @@
+{
+  "routes": [
+    {
+      "path": "/",
+      "src": "src/pages/ChatWorkspace.tsx"
+    },
+    {
+      "path": "/token-system",
+      "src": "src/pages/TokenSystem.tsx"
+    },
+    {
+      "path": "/component-system",
+      "src": "src/pages/ComponentSystem.tsx"
+    },
+    {
+      "path": "*",
+      "src": "src/pages/NotFound.tsx"
+    }
+  ],
+  "components": [
+    {
+      "name": "Sidebar",
+      "src": "src/components/Sidebar.tsx",
+      "route": "/preview/sidebar"
+    },
+    {
+      "name": "Topbar",
+      "src": "src/components/Topbar.tsx",
+      "route": "/preview/topbar"
+    }
+  ]
+}

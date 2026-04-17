@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
   MessageSquare,
   MoreHorizontal,
   Play,
-  Sparkles,
   SquareTerminal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -15,6 +14,7 @@ import { ChatUI } from '@/components/ui/chat-ui'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { ProjectRail } from '@/components/ProjectRail'
 import type { ChatWorkspaceProps } from '../types'
+import { HomeScreen } from './HomeScreen'
 import { SidebarTop } from './SidebarTop'
 
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
@@ -101,6 +101,11 @@ export function ChatWorkspace({
   onSelectProject,
   onSelectSession,
   onNewChat,
+  onNewThread,
+  onHomeProjectSelect,
+  onPickFolderAndCreateProject,
+  onSendMessage,
+  recentSessions,
   onDeleteProject,
   onRenameProject,
   onDeleteSession,
@@ -145,12 +150,7 @@ export function ChatWorkspace({
       return 'sans'
     }
   })
-  const openNewChat = useMemo(() => {
-    return () => {
-      const targetProjectId = activeProjectId ?? projects[0]?.id
-      if (targetProjectId) onNewChat(targetProjectId)
-    }
-  }, [activeProjectId, onNewChat, projects])
+
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -178,7 +178,7 @@ export function ChatWorkspace({
             className="absolute inset-y-0 left-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px]"
             style={{ width: leftPaneWidth }}
           >
-            <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
+            <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewThread={onNewThread} />
             <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
               左侧栏加载异常
             </div>
@@ -194,7 +194,7 @@ export function ChatWorkspace({
           aria-hidden={isLeftPaneCollapsed}
         >
           <div className="flex h-full min-h-0 min-w-0 flex-col">
-            <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewChat={openNewChat} />
+            <SidebarTop onStartWindowDrag={onStartWindowDrag} onNewThread={onNewThread} />
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
               <ErrorBoundary
                 fallback={
@@ -350,45 +350,23 @@ export function ChatWorkspace({
                   </div>
                 </div>
               ) : (
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="mx-auto flex w-full max-w-[920px] flex-1 items-center justify-center px-6 py-8">
-                    <div className="max-w-xl rounded-[6px] border border-black/5 bg-white px-8 py-10 text-center shadow-[0_20px_60px_rgba(0,0,0,0.04)]">
-                      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/5">
-                        <Sparkles className="h-7 w-7 text-black/60" />
-                      </div>
-                      <div className="space-y-3">
-                        <h2 className="text-[22px] font-semibold tracking-tight">选择一个项目，开始新的线程</h2>
-                        <p className="text-[13px] leading-6 text-muted-foreground">
-                          左侧已经整理好项目与会话，右侧会像 Codex 一样展示变更摘要、思考过程和最终正文。
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <ChatUI
-                    sessionTitle={activeTitle}
-                    projectLabel={currentProject?.name ?? 'if2Ai'}
-                    defaultWorkdir={currentProject?.workdir}
-                    branchLabel={branchLabel}
-                    messages={[]}
-                    input={input}
-                    onInputChange={onInputChange}
-                    onSubmit={onSubmit}
-                    onResumeFromCursor={onResumeFromCursor}
-                    onStop={onStop}
-                    isLoading={isLoading}
-                    selectedModel={selectedModel}
-                    onModelChange={onModelChange}
-                    permissionMode={permissionMode}
-                    onPermissionModeChange={onPermissionModeChange}
-                    todos={[]}
-                    isProjectRailOpen={isRightRailOpen}
-                    onProjectRailOpenChange={onRightRailOpenChange}
-                    isLeftPaneCollapsed={isLeftPaneCollapsed}
-                    densityMode={densityMode}
-                    fontMode={fontMode}
-                    onPreviewFocusChange={onPreviewFocusChange}
-                  />
-                </div>
+                <HomeScreen
+                  projects={projects}
+                  recentSessions={recentSessions}
+                  selectedProjectId={activeProjectId}
+                  selectedModel={selectedModel}
+                  onModelChange={onModelChange}
+                  permissionMode={permissionMode}
+                  onPermissionModeChange={onPermissionModeChange}
+                  onSendMessage={onSendMessage}
+                  onSelectSession={(projectId, sessionId) => {
+                    void onSelectSession(projectId, sessionId)
+                  }}
+                  onHomeProjectSelect={onHomeProjectSelect}
+                  onPickFolderAndCreateProject={onPickFolderAndCreateProject}
+                  isLoading={isLoading}
+                  branchLabel={branchLabel}
+                />
               )}
             </div>
           </div>

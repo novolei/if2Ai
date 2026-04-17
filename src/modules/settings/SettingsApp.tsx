@@ -19,6 +19,7 @@ import { AboutSettingsPage } from './pages/AboutSettingsPage'
 import { SkillsSettingsPage } from './pages/SkillsSettingsPage'
 import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 import { MemorySettingsPage } from './pages/MemorySettingsPage'
+import { ModelSettingsPage } from './pages/ModelSettingsPage'
 
 interface SettingsAppProps {
   onClose: () => void
@@ -179,6 +180,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <WebSearchSettingsPage />
       case 'memory':
         return <MemorySettingsPage />
+      case 'model':
+        return <ModelSettingsPage />
       case 'connections':
         return <ConnectionsSettingsPage state={state} actions={actions} />
       case 'remote':

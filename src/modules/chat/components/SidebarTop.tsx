@@ -3,10 +3,10 @@ import { Button } from '@/components/ui/button'
 
 export function SidebarTop({
   onStartWindowDrag,
-  onNewChat,
+  onNewThread,
 }: {
   onStartWindowDrag: (event: ReactMouseEvent<HTMLElement>) => void
-  onNewChat: () => void
+  onNewThread: () => void
 }) {
   return (
     <div
@@ -21,7 +21,7 @@ export function SidebarTop({
         <Button
           className="window-no-drag h-10 rounded-full bg-emerald-500 px-5 text-[13px] font-semibold text-white shadow-none hover:bg-emerald-500/90"
           data-window-no-drag="true"
-          onClick={onNewChat}
+          onClick={onNewThread}
           type="button"
         >
           新线程

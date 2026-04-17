@@ -323,6 +323,22 @@ export async function openDirectoryPath(path: string): Promise<void> {
   return await invoke<void>('open_directory_path', { path });
 }
 
+/**
+ * 打开 macOS 文件夹选择器，返回用户选中的路径。
+ * 用户取消时返回 null。
+ */
+export async function pickFolderDialog(): Promise<string | null> {
+  return await invoke<string | null>('pick_folder_dialog');
+}
+
+/**
+ * 确保 ~/Documents/workaround 目录存在，并注册为默认 "Playground" 项目。
+ * 返回 [workdir_path, project_id]。
+ */
+export async function ensureDefaultWorkdir(): Promise<[string, string]> {
+  return await invoke<[string, string]>('ensure_default_workdir');
+}
+
 export async function listDirectoryPreview(
   path: string,
   limit = 32

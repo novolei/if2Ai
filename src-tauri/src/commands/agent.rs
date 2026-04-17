@@ -16,7 +16,10 @@ use crate::commands::stream_outcome::{ConversationTruth, ExecutionTruth, TaskOut
 use crate::commands::AppState;
 use crate::modules::api::providers::claw_provider::AuthSource;
 use crate::modules::api::providers::claw_provider::ClawApiClient;
-use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest, ToolDefinition};
+use crate::modules::api::providers::openai_compat::{OpenAiCompatClient, OpenAiCompatConfig};
+use crate::modules::api::{
+    InputContentBlock, InputMessage, MessageRequest, ProviderClient, ToolDefinition,
+};
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
@@ -99,47 +102,9 @@ pub struct RunAgentTurnResponse {
     pub thinking: Option<String>,
 }
 
-/// Load LLM settings from ~/.claude/settings.json
-fn load_llm_settings() -> Result<(String, String, String), String> {
-    let settings_path = PathBuf::from(
-        std::env::var("HOME").map_err(|_| "Failed to get HOME directory".to_string())?,
-    )
-    .join(".claude/settings.json");
-
-    let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("Failed to read config file ~/.claude/settings.json: {}", e))?;
-
-    let json: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("Config file format error: {}", e))?;
-
-    let env = json.get("env").ok_or("Config file missing 'env' field")?;
-
-    let base_url = env
-        .get("ANTHROPIC_BASE_URL")
-        .and_then(|v| v.as_str())
-        .ok_or("Config file missing ANTHROPIC_BASE_URL")?
-        .to_string();
-
-    let auth_token = env
-        .get("ANTHROPIC_AUTH_TOKEN")
-        .and_then(|v| v.as_str())
-        .ok_or("Config file missing ANTHROPIC_AUTH_TOKEN")?
-        .to_string();
-
-    let model = env
-        .get("ANTHROPIC_MODEL")
-        .and_then(|v| v.as_str())
-        .ok_or("Config file missing ANTHROPIC_MODEL")?
-        .to_string();
-
-    if auth_token.is_empty() {
-        return Err("ANTHROPIC_AUTH_TOKEN is empty. Please check your config.".to_string());
-    }
-
-    Ok((base_url, auth_token, model))
-}
-
-/// Create a ClawApiClient using settings from ~/.claude/settings.json
+/// Create a runtime provider client from if2AI local configuration.
+///
+/// This path intentionally does not read `~/.claude/settings.json`.
 fn load_provider_transport_policy(workdir: &PathBuf) -> ProviderTransportConfig {
     match ConfigLoader::default_for(workdir).load() {
         Ok(config) => config.control_plane().provider_transport().clone(),
@@ -154,15 +119,50 @@ fn load_provider_transport_policy(workdir: &PathBuf) -> ProviderTransportConfig 
     }
 }
 
-fn create_claw_client_from_settings(workdir: &PathBuf) -> Result<(ClawApiClient, String), String> {
-    let (base_url, auth_token, model) = load_llm_settings()?;
+async fn create_runtime_provider_client_from_config(
+    workdir: &PathBuf,
+) -> Result<(ProviderClient, String, Duration), String> {
+    let resolved =
+        crate::modules::config::model_resolver::ModelResolver::resolve_role_model("chat")
+            .await
+            .map_err(|e| format!("Failed to resolve configured chat model: {e}"))?;
 
-    let auth = AuthSource::BearerToken(auth_token);
-    let mut client = ClawApiClient::from_auth(auth).with_base_url(base_url);
     let policy = load_provider_transport_policy(workdir);
-    client = client.with_transport_policy(&policy);
+    let request_timeout = Duration::from_millis(policy.overall_timeout_ms());
 
-    Ok((client, model))
+    let provider_client = match resolved.api.as_str() {
+        "anthropic-messages" => {
+            // Anthropic always requires an API key
+            let api_key = resolved.api_key.filter(|k| !k.is_empty()).ok_or_else(|| {
+                "Anthropic provider is missing API key. Please complete provider setup first."
+                    .to_string()
+            })?;
+            let client = ClawApiClient::from_auth(AuthSource::ApiKey(api_key))
+                .with_base_url(resolved.base_url)
+                .with_transport_policy(&policy);
+            ProviderClient::ClawApi(client)
+        }
+        "openai-completions" => {
+            // OpenAI-compatible providers: api_key may be empty for local providers
+            // (e.g. Ollama) — pass an empty string and let the client omit the header.
+            let api_key = resolved.api_key.unwrap_or_default();
+            let client = OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai())
+                .with_base_url(resolved.base_url)
+                .with_retry_policy(
+                    policy.max_retries(),
+                    Duration::from_millis(policy.initial_backoff_ms()),
+                    Duration::from_millis(policy.max_backoff_ms()),
+                );
+            ProviderClient::OpenAi(client)
+        }
+        other => {
+            return Err(format!(
+                "Configured chat model protocol '{other}' is not supported."
+            ));
+        }
+    };
+
+    Ok((provider_client, resolved.model_id, request_timeout))
 }
 
 fn flush_assistant_timeline_segment(
@@ -275,20 +275,23 @@ fn load_control_plane_switches(workdir: &std::path::Path) -> ControlPlaneRuntime
 ///
 /// This implements the `ApiClient` trait and makes real LLM API calls.
 struct RealApiClient {
-    provider: ClawApiClient,
+    provider: ProviderClient,
     model: String,
+    request_timeout: Duration,
     tool_registry: Arc<crate::modules::tools::ToolRegistry>,
 }
 
 impl RealApiClient {
     fn new(
-        provider: ClawApiClient,
+        provider: ProviderClient,
         model: String,
+        request_timeout: Duration,
         tool_registry: Arc<crate::modules::tools::ToolRegistry>,
     ) -> Self {
         Self {
             provider,
             model,
+            request_timeout,
             tool_registry,
         }
     }
@@ -302,7 +305,7 @@ impl ApiClient for RealApiClient {
             let handle = tokio::runtime::Handle::current();
             handle.block_on(async move {
                 let api_future = self.call_api(request);
-                timeout(self.provider.overall_timeout(), api_future).await
+                timeout(self.request_timeout, api_future).await
             })
         });
 
@@ -418,7 +421,6 @@ impl RealApiClient {
             stream: false,
         };
 
-        // Call the provider's async send_message method
         self.provider.send_message(&api_request).await
     }
 }
@@ -782,21 +784,24 @@ pub async fn run_agent_turn(
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
 
-    // Create real API client using settings from ~/.claude/settings.json
-    let (claw_client, model) = match create_claw_client_from_settings(&execution_context.workdir) {
-        Ok((client, model)) => {
-            tracing::info!("[run_agent_turn] API client created, model: {}", model);
-            (client, model)
-        }
-        Err(e) => {
-            tracing::error!("[run_agent_turn] Failed to create API client: {}", e);
-            return Err(format!(
-                "Failed to connect to AI service: {}. Please check ~/.claude/settings.json configuration.",
-                e
-            ));
-        }
-    };
-    let api_client = RealApiClient::new(claw_client, model, state.tool_registry.clone());
+    // Create real API client from if2AI local configuration
+    let (provider_client, model, request_timeout) =
+        match create_runtime_provider_client_from_config(&execution_context.workdir).await {
+            Ok((client, model, timeout)) => {
+                tracing::info!("[run_agent_turn] API client created, model: {}", model);
+                (client, model, timeout)
+            }
+            Err(e) => {
+                tracing::error!("[run_agent_turn] Failed to create API client: {}", e);
+                return Err(format!("Failed to connect to AI service: {e}"));
+            }
+        };
+    let api_client = RealApiClient::new(
+        provider_client,
+        model,
+        request_timeout,
+        state.tool_registry.clone(),
+    );
 
     // Create permission policy from parameter (defaults to DangerFullAccess)
     let permission_policy = build_permission_policy(mode);
@@ -1149,11 +1154,13 @@ pub async fn start_agent_stream(
     log_context_fingerprint("start_agent_stream", &execution_context);
 
     // Create API client
-    let (claw_client, model) = create_claw_client_from_settings(&execution_context.workdir)
-        .map_err(|e| {
-            tracing::error!("[start_agent_stream] Failed to create API client: {}", e);
-            e
-        })?;
+    let (provider_client, model, _request_timeout) =
+        create_runtime_provider_client_from_config(&execution_context.workdir)
+            .await
+            .map_err(|e| {
+                tracing::error!("[start_agent_stream] Failed to create API client: {}", e);
+                e
+            })?;
 
     let inbound_resume_cursor = extract_resume_cursor_marker(&user_message);
     if let Some(cursor_value) = inbound_resume_cursor.as_deref() {
@@ -1240,6 +1247,7 @@ pub async fn start_agent_stream(
     let user_message_clone = normalized_user_message.clone();
     let tool_registry_clone = state.tool_registry.clone();
     let model_for_stream = model.clone();
+    let provider_client_for_stream = provider_client.clone();
     let messages_for_stream = all_messages.clone();
     let tool_defs_for_stream = tool_defs.clone();
     let system_prompt_for_stream = system_prompt.clone();
@@ -1490,7 +1498,10 @@ pub async fn start_agent_stream(
                 stream: true,
             };
 
-            let mut stream = match claw_client.stream_message(&iter_api_request).await {
+            let mut stream = match provider_client_for_stream
+                .stream_message(&iter_api_request)
+                .await
+            {
                 Ok(s) => s,
                 Err(e) => {
                     let stream_error_reason = format_stream_error_reason(&e);

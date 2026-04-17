@@ -2,7 +2,7 @@
 //!
 //! Defines the core types for the system pre-check flow (Step 2):
 //! - `CheckStatus`: Result of a single check (Pass/Fail/Running/Pending)
-//! - `CpuInfo` / `GpuInfo` / `NodeJsInfo`: System component info
+//! - `MemoryInfo`: System RAM info
 //! - `EmbeddedModelStatus`: Embedded model download status
 //! - `SystemReport`: Full system check report
 
@@ -70,17 +70,16 @@ pub struct GpuInfo {
     pub status: CheckStatus,
 }
 
-// ── NodeJsInfo ──────────────────────────────────────────────────────────────
+// ── MemoryInfo ──────────────────────────────────────────────────────────────
 
-/// Node.js detection result.
+/// System memory (RAM) detection result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeJsInfo {
-    /// Whether Node.js is installed
-    pub installed: bool,
-    /// Node.js version, if detected (e.g. "18.17.0")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// Check status — Node.js missing is a non-blocking warning, not a failure
+pub struct MemoryInfo {
+    /// Total RAM in MB
+    pub total_mb: u64,
+    /// Available (free) RAM in MB
+    pub available_mb: u64,
+    /// Check status — memory info is always Pass (info only)
     pub status: CheckStatus,
 }
 
@@ -112,8 +111,8 @@ pub struct SystemReport {
     pub cpu: CpuInfo,
     /// GPU detection result
     pub gpu: GpuInfo,
-    /// Node.js detection result
-    pub nodejs: NodeJsInfo,
+    /// System memory info
+    pub memory: MemoryInfo,
     /// Embedded model status
     pub embedded_model: EmbeddedModelStatus,
     /// Overall status — Pass only if all critical checks pass
@@ -123,13 +122,11 @@ pub struct SystemReport {
 impl SystemReport {
     /// Returns `true` if all critical checks have passed.
     ///
-    /// Note: Node.js missing is non-blocking, so it doesn't affect
-    /// the overall pass status.
+    /// Note: Memory info is always Pass (info only), so it doesn't affect
+    /// the overall pass status. Only embedded_model.download matters.
     #[must_use]
     pub fn all_passed(&self) -> bool {
-        self.cpu.status.is_pass()
-            && self.gpu.status.is_pass()
-            && self.embedded_model.status.is_pass()
+        self.embedded_model.downloaded
     }
 }
 
@@ -177,12 +174,10 @@ mod tests {
                 name: None,
                 status: CheckStatus::Pass,
             },
-            nodejs: NodeJsInfo {
-                installed: false,
-                version: None,
-                status: CheckStatus::Fail {
-                    reason: "Node.js 未安装".to_string(),
-                },
+            memory: MemoryInfo {
+                total_mb: 8192,
+                available_mb: 4096,
+                status: CheckStatus::Pass,
             },
             embedded_model: EmbeddedModelStatus {
                 downloaded: true,
@@ -212,9 +207,9 @@ mod tests {
                 name: None,
                 status: CheckStatus::Pass,
             },
-            nodejs: NodeJsInfo {
-                installed: true,
-                version: Some("18.0.0".to_string()),
+            memory: MemoryInfo {
+                total_mb: 8192,
+                available_mb: 4096,
                 status: CheckStatus::Pass,
             },
             embedded_model: EmbeddedModelStatus {
@@ -228,7 +223,8 @@ mod tests {
             },
         };
 
-        assert!(!report.all_passed());
+        // all_passed() only checks model download (CPU/GPU/Memory are info-only)
+        assert!(report.all_passed());
     }
 
     #[test]

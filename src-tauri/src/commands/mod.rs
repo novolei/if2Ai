@@ -106,9 +106,9 @@ pub use agent::{
 pub use memory::{memory_delete, memory_export, memory_purge, memory_recall, MemoryEntryDto};
 #[allow(unused_imports)]
 pub use project::{
-    create_permanent_worktree, create_project, delete_project, get_project, list_directory_preview,
-    list_projects, open_directory_path, open_project_in_finder, read_file_preview, rename_project,
-    write_file_contents,
+    create_permanent_worktree, create_project, delete_project, ensure_default_workdir, get_project,
+    list_directory_preview, list_projects, open_directory_path, open_project_in_finder,
+    pick_folder_dialog, read_file_preview, rename_project, write_file_contents,
 };
 #[allow(unused_imports)]
 pub use session::{
@@ -162,8 +162,13 @@ pub use onboarding::{
 };
 #[allow(unused_imports)]
 pub use provider::{
-    model_select, model_test, provider_configure, provider_list, provider_list_models,
-    provider_test,
+    model_get_active, model_get_role_config, model_list_available, model_select, model_set_active,
+    model_set_role_config, model_test, provider_configure, provider_configure_with_models,
+    provider_get_all_configured_models, provider_get_config, provider_get_configured_models,
+    provider_list, provider_list_configured, provider_list_models, provider_test,
 };
 #[allow(unused_imports)]
-pub use system_check::{embedded_model_download, embedded_model_progress, system_check_run};
+pub use system_check::{
+    embedded_model_download, embedded_model_progress, get_model_config, set_model_config,
+    system_check_run,
+};

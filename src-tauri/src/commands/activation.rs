@@ -28,6 +28,9 @@ pub struct ActivationResult {
     pub success: bool,
     pub session_id: Option<String>,
     pub message: String,
+    /// First response from the configured LLM — displayed during ceremony.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_response: Option<String>,
 }
 
 /// Validate that all activation preconditions are met.
@@ -48,6 +51,9 @@ pub async fn activation_validate() -> Result<ActivationChecklist, String> {
 }
 
 /// Start the agent for the first time.
+///
+/// Sends a real greeting to the configured chat model, receives the response,
+/// and returns it for the onboarding ceremony display.
 #[tauri::command]
 pub async fn activation_start() -> Result<ActivationResult, String> {
     // Verify preconditions
@@ -58,12 +64,29 @@ pub async fn activation_start() -> Result<ActivationResult, String> {
         return Err("No provider configured. Please complete Step 4 first.".to_string());
     }
 
-    // In a real implementation, this would start the agent session.
-    // For now, return success since the agent infrastructure is in place.
+    // Send a real greeting to the configured chat model with a 30s timeout.
+    // Greeting failure is non-fatal — activation succeeds regardless.
+    let ai_response = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        crate::modules::provider::test::send_greeting(),
+    )
+    .await
+    .map_err(|_| {
+        tracing::warn!("[activation] Greeting timed out after 30s");
+    })
+    .ok()
+    .and_then(|r| r.ok())
+    .flatten();
+
+    if ai_response.is_none() {
+        tracing::info!("[activation] No greeting response — proceeding without ceremony message");
+    }
+
     Ok(ActivationResult {
         success: true,
-        session_id: Some("activation-test".to_string()),
-        message: "if2AI Agent started successfully".to_string(),
+        session_id: Some("activation".to_string()),
+        message: "if2AI Agent 已启动".to_string(),
+        ai_response,
     })
 }
 

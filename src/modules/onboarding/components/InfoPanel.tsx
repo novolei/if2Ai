@@ -4,11 +4,12 @@
  * Displays step-specific guidance, status cards, and summaries
  * on the orange gradient background (30% right panel).
  *
- * Uses white/warm text for WCAG AA compliance against dark orange.
+ * Uses the shared RightPanelHeader component for consistent branding.
  */
 
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { RightPanelHeader } from './RightPanelHeader';
 
 interface InfoPanelProps {
   /** Step label, e.g. "STEP 1: WELCOME" */
@@ -17,6 +18,8 @@ interface InfoPanelProps {
   title: string;
   /** Guidance bullet points */
   bullets?: string[];
+  /** Optional show "设置中" badge (defaults to true) */
+  showBadge?: boolean;
   /** Optional custom content (cards, lists, etc.) */
   children?: ReactNode;
   className?: string;
@@ -26,46 +29,30 @@ export function InfoPanel({
   stepLabel,
   title,
   bullets,
+  showBadge,
   children,
   className,
 }: InfoPanelProps) {
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-4 px-6 py-6 text-white',
-        className,
-      )}
-    >
-      {/* Step label */}
-      <span
-        className="text-token-xs font-semibold tracking-widest uppercase"
-        style={{ color: 'rgba(255,255,255,0.6)' }}
-      >
-        {stepLabel}
-      </span>
+    <div className={cn('flex flex-col flex-1', className)}>
+      {/* Shared header */}
+      <RightPanelHeader
+        stepLabel={stepLabel}
+        title={title}
+        bullets={bullets}
+        showBadge={showBadge}
+      />
 
-      {/* Title */}
-      <h2 className="text-token-xl font-semibold leading-tight">
-        {title}
-      </h2>
-
-      {/* Bullet points */}
-      {bullets && bullets.length > 0 && (
-        <ul className="flex flex-col gap-2">
-          {bullets.map((bullet, i) => (
-            <li
-              key={i}
-              className="text-token-sm leading-relaxed"
-              style={{ color: 'rgba(255,255,255,0.85)' }}
-            >
-              {bullet}
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* Divider */}
+      <div
+        className="mx-6 h-px shrink-0"
+        style={{ background: 'rgba(255,255,255,0.1)' }}
+      />
 
       {/* Custom content (cards, lists, etc.) */}
-      {children}
+      {children && (
+        <div className="flex-1 overflow-y-auto px-6 py-4">{children}</div>
+      )}
     </div>
   );
 }

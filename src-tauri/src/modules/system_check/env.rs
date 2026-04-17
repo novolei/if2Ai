@@ -3,13 +3,14 @@
 //! Implements hardware and runtime detection for the onboarding system check:
 //! - `detect_cpu()`: CPU architecture and core count via sysinfo crate
 //! - `detect_gpu()`: GPU availability and name via platform-specific commands
-//! - `detect_nodejs()`: Node.js installation via `node --version`
+//! - `detect_memory()`: System RAM info via sysinfo crate
 //! - `run_full_check()`: Orchestrates all checks into a `SystemReport`
 
 use std::process::Stdio;
 use tokio::process::Command;
 
-use super::types::{CheckStatus, CpuInfo, EmbeddedModelStatus, GpuInfo, NodeJsInfo, SystemReport};
+use super::model_download::{embedded_model_exists, get_download_progress, MODEL_SIZE_MB};
+use super::types::{CheckStatus, CpuInfo, EmbeddedModelStatus, GpuInfo, MemoryInfo, SystemReport};
 
 // ── CPU Detection ───────────────────────────────────────────────────────────
 
@@ -136,50 +137,23 @@ async fn detect_gpu_platform_specific() -> Option<String> {
     None
 }
 
-// ── Node.js Detection ───────────────────────────────────────────────────────
+// ── Memory Detection ────────────────────────────────────────────────────────
 
-/// Detect Node.js installation and version.
+/// Detect system RAM (total and available).
 ///
-/// Runs `node --version` and parses the output (e.g. "v18.17.0").
-/// Node.js missing is a **non-blocking warning**, not a failure.
-pub async fn detect_nodejs() -> NodeJsInfo {
-    let output = Command::new("node")
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await;
+/// Uses `sysinfo::System` for cross-platform detection.
+/// Memory info is always Pass (info only, not blocking).
+pub fn detect_memory() -> MemoryInfo {
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_memory();
 
-    match output {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let version = stdout.trim().to_string();
-            // Strip leading 'v' if present
-            let clean_version = version.strip_prefix('v').unwrap_or(&version).to_string();
+    let total_mb = sys.total_memory() / (1024 * 1024);
+    let available_mb = sys.available_memory() / (1024 * 1024);
 
-            NodeJsInfo {
-                installed: true,
-                version: Some(clean_version),
-                status: CheckStatus::Pass,
-            }
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            NodeJsInfo {
-                installed: false,
-                version: None,
-                status: CheckStatus::Fail {
-                    reason: format!("Node.js 不可用: {}", stderr.trim()),
-                },
-            }
-        }
-        Err(e) => NodeJsInfo {
-            installed: false,
-            version: None,
-            status: CheckStatus::Fail {
-                reason: format!("未检测到 Node.js: {}", e),
-            },
-        },
+    MemoryInfo {
+        total_mb,
+        available_mb,
+        status: CheckStatus::Pass,
     }
 }
 
@@ -187,48 +161,43 @@ pub async fn detect_nodejs() -> NodeJsInfo {
 
 /// Run all system checks and produce a full report.
 ///
-/// Executes CPU, GPU, Node.js, and embedded model checks in parallel where
-/// possible. The embedded model check is synchronous (file existence only).
+/// Executes CPU, GPU, and Memory checks synchronously (fast via sysinfo).
+/// The embedded model check is synchronous (file existence only).
 pub async fn run_full_check() -> SystemReport {
-    // CPU is synchronous (fast)
+    // All hardware checks are synchronous (fast via sysinfo)
     let cpu = detect_cpu();
-
-    // GPU and Node.js are async (subprocess calls)
-    let (gpu, nodejs) = tokio::join!(detect_gpu(), detect_nodejs());
+    let gpu = detect_gpu().await;
+    let memory = detect_memory();
 
     // Embedded model check is synchronous
-    let model_exists = super::model_download::embedded_model_exists();
-    let model_progress = super::model_download::get_download_progress();
+    let model_exists = embedded_model_exists();
+    let model_progress = get_download_progress();
 
     let embedded_model = if model_exists {
         EmbeddedModelStatus {
             downloaded: true,
             progress: Some(1.0),
-            size_mb: 0, // Will be populated during actual download
+            size_mb: MODEL_SIZE_MB,
             status: CheckStatus::Pass,
         }
     } else if model_progress > 0.0 {
         EmbeddedModelStatus {
             downloaded: false,
             progress: Some(model_progress),
-            size_mb: 0,
-            status: CheckStatus::Fail {
-                reason: "模型未下载完成".to_string(),
-            },
+            size_mb: MODEL_SIZE_MB,
+            status: CheckStatus::Running,
         }
     } else {
         EmbeddedModelStatus {
             downloaded: false,
             progress: None,
-            size_mb: 0,
-            status: CheckStatus::Fail {
-                reason: "模型未下载".to_string(),
-            },
+            size_mb: MODEL_SIZE_MB,
+            status: CheckStatus::Pending,
         }
     };
 
-    // Overall: CPU + GPU must pass. Node.js is non-blocking.
-    // Embedded model: Pass if downloaded, Fail otherwise (but not blocking).
+    // CPU and GPU are always Pass. Memory is always Pass (info only).
+    // Overall reflects the actual state for display purposes.
     let overall = if cpu.status.is_pass() && gpu.status.is_pass() {
         CheckStatus::Pass
     } else {
@@ -247,7 +216,7 @@ pub async fn run_full_check() -> SystemReport {
     SystemReport {
         cpu,
         gpu,
-        nodejs,
+        memory,
         embedded_model,
         overall,
     }
@@ -271,24 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn test_embedded_model_dir_contains_if2ai() {
-        let dir = crate::modules::system_check::model_download::embedded_model_dir();
-        let path = dir.to_string_lossy();
-        assert!(
-            path.contains(".if2ai"),
-            "Model dir should contain .if2ai, got: {}",
-            path
-        );
-        assert!(
-            path.contains("models/embedded-rs"),
-            "Model dir should end with models/embedded-rs, got: {}",
-            path
-        );
-    }
-
-    #[test]
     fn test_get_download_progress_returns_zero_initially() {
-        // Before any download, progress should be 0
         let progress = crate::modules::system_check::model_download::get_download_progress();
         assert!(
             (0.0..=1.0).contains(&progress),

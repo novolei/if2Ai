@@ -79,7 +79,7 @@ export function useOnboarding(): UseOnboardingReturn {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [configuredChannels, setConfiguredChannels] = useState<ChannelConfigRedacted[]>([]);
   const [channelTestResult, setChannelTestResult] = useState<Record<string, TestResult>>({});
-  const [activationChecklist, _setActivationChecklist] = useState<ActivationChecklist | null>(null);
+  const [activationChecklist, setActivationChecklist] = useState<ActivationChecklist | null>(null);
   const [activationResult, setActivationResult] = useState<ActivationResult | null>(null);
 
   // Prevent duplicate event listener registration
@@ -163,11 +163,58 @@ export function useOnboarding(): UseOnboardingReturn {
 
   const confirmSecurity = useCallback(async () => {
     await invoke('security_confirm');
-    await nextStep();
-  }, [nextStep]);
+    await loadAppState();
+  }, [loadAppState]);
 
   const configureProvider = useCallback(async (config: ProviderConfig) => {
     await invoke('provider_configure', { config: providerConfigToTauri(config) });
+  }, []);
+
+  const configureProviderWithModels = useCallback(async (config: ProviderConfig, modelIds: string[]) => {
+    await invoke('provider_configure_with_models', {
+      providerConfig: providerConfigToTauri(config),
+      modelIds,
+    });
+  }, []);
+
+  const getConfiguredModels = useCallback(async (providerId: string): Promise<string[]> => {
+    try {
+      return await invoke<string[]>('provider_get_configured_models', { providerId });
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const getConfiguredProviders = useCallback(async (): Promise<string[]> => {
+    try {
+      return await invoke<string[]>('provider_list_configured');
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const getProviderConfig = useCallback(async (providerId: string): Promise<ProviderConfig | null> => {
+    try {
+      const raw = await invoke<Record<string, unknown> | null>('provider_get_config', { providerId });
+      if (!raw) return null;
+      return {
+        provider_id: raw.provider_id as string,
+        display_name: (raw.display_name as string) || providerId,
+        api_key: (raw.api_key as string) ?? null,
+        base_url: (raw.base_url as string) ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const getAllConfiguredModels = useCallback(async (): Promise<Map<string, string[]>> => {
+    try {
+      const raw: Array<[string, string[]]> = await invoke('provider_get_all_configured_models');
+      return new Map(raw);
+    } catch {
+      return new Map();
+    }
   }, []);
 
   const testProvider = useCallback(async (config: ProviderConfig) => {
@@ -175,6 +222,9 @@ export function useOnboarding(): UseOnboardingReturn {
       config: providerConfigToTauri(config),
     });
     setProviderTestResult(result);
+    if (!result.success) {
+      throw new Error(result.message);
+    }
   }, []);
 
   const selectModel = useCallback(async (modelId: string) => {
@@ -201,6 +251,25 @@ export function useOnboarding(): UseOnboardingReturn {
     setModelTestResult(result);
   }, [selectedProvider]);
 
+  const loadModels = useCallback(
+    async (providerId: string, baseUrl: string, apiKey: string | null): Promise<Model[]> => {
+      try {
+        const models = await invoke<Model[]>('provider_list_models', {
+          providerId,
+          baseUrl,
+          apiKey,
+        });
+        _setAvailableModels(models);
+        return models;
+      } catch (err) {
+        console.error('[onboarding] Failed to load models:', err);
+        _setAvailableModels([]);
+        return [];
+      }
+    },
+    [],
+  );
+
   const configureChannel = useCallback(async (config: ChannelConfig) => {
     await invoke('channel_configure', { config: channelConfigToTauri(config) });
     await loadConfiguredChannels();
@@ -221,6 +290,15 @@ export function useOnboarding(): UseOnboardingReturn {
       await loadAppState();
     }
   }, [loadAppState]);
+
+  const loadActivationChecklist = useCallback(async () => {
+    try {
+      const checklist = await invoke<ActivationChecklist>('activation_validate');
+      setActivationChecklist(checklist);
+    } catch {
+      // Checklist not available yet — OK
+    }
+  }, []);
 
   // ── Initial Load ────────────────────────────────────────────────────────────
 
@@ -301,15 +379,23 @@ export function useOnboarding(): UseOnboardingReturn {
     channelTestResult,
     activationChecklist,
     activationResult,
+    loadActivationChecklist,
+    loadAppState,
     nextStep,
     prevStep,
     runSystemCheck,
     downloadEmbeddedModel,
     confirmSecurity,
     configureProvider,
+    configureProviderWithModels,
+    getConfiguredModels,
+    getConfiguredProviders,
+    getProviderConfig,
+    getAllConfiguredModels,
     testProvider,
     selectModel,
     testModel,
+    loadModels,
     configureChannel,
     testChannel,
     wakeAgent,

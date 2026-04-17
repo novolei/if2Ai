@@ -40,9 +40,9 @@ export interface GpuInfo {
   status: CheckStatus;
 }
 
-export interface NodeJsInfo {
-  installed: boolean;
-  version: string | null;
+export interface MemoryInfo {
+  total_mb: number;
+  available_mb: number;
   status: CheckStatus;
 }
 
@@ -56,7 +56,7 @@ export interface EmbeddedModelStatus {
 export interface SystemReport {
   cpu: CpuInfo;
   gpu: GpuInfo;
-  nodejs: NodeJsInfo;
+  memory: MemoryInfo;
   embedded_model: EmbeddedModelStatus;
   overall: CheckStatus;
 }
@@ -162,6 +162,8 @@ export interface ActivationResult {
   success: boolean;
   session_id: string | null;
   message: string;
+  /** First response from the configured LLM. */
+  ai_response?: string | null;
 }
 
 // ── AppConfig ────────────────────────────────────────────────────────────────
@@ -204,6 +206,8 @@ export interface UseOnboardingReturn {
   // Activation
   activationChecklist: ActivationChecklist | null;
   activationResult: ActivationResult | null;
+  loadActivationChecklist: () => Promise<void>;
+  loadAppState: () => Promise<void>;
 
   // Operations
   nextStep: () => Promise<void>;
@@ -212,9 +216,15 @@ export interface UseOnboardingReturn {
   downloadEmbeddedModel: () => Promise<void>;
   confirmSecurity: () => Promise<void>;
   configureProvider: (config: ProviderConfig) => Promise<void>;
+  configureProviderWithModels: (config: ProviderConfig, modelIds: string[]) => Promise<void>;
+  getConfiguredModels: (providerId: string) => Promise<string[]>;
+  getConfiguredProviders: () => Promise<string[]>;
+  getProviderConfig: (providerId: string) => Promise<ProviderConfig | null>;
+  getAllConfiguredModels: () => Promise<Map<string, string[]>>;
   testProvider: (config: ProviderConfig) => Promise<void>;
   selectModel: (modelId: string) => Promise<void>;
   testModel: (modelId: string) => Promise<void>;
+  loadModels: (providerId: string, baseUrl: string, apiKey: string | null) => Promise<Model[]>;
   configureChannel: (config: ChannelConfig) => Promise<void>;
   testChannel: (config: ChannelConfig) => Promise<void>;
   wakeAgent: () => Promise<void>;

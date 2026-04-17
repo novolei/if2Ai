@@ -9,6 +9,9 @@
 
 use std::collections::HashMap;
 
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::modules::onboarding::OnboardingState;
@@ -39,6 +42,10 @@ pub struct ProviderConfig {
     /// Base URL for the provider's API
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    /// Auth variant sub-key for same-provider different auth
+    /// (e.g. "cn" for Moonshot China, "code" for Moonshot Code)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_variant: Option<String>,
 }
 
 impl ProviderConfig {
@@ -67,6 +74,83 @@ pub struct ModelSelection {
     pub provider_id: String,
     /// Model identifier, e.g. "qwen3:4b", "claude-sonnet-4-6"
     pub model_id: String,
+    /// Auth variant for same-provider different auth configurations
+    /// (e.g. "moonshot-cn" vs "moonshot-code" share provider_id but differ in credentials)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_variant: Option<String>,
+}
+
+/// Model reference utility — parses and formats "provider_id/model_id" strings.
+///
+/// Reference: openhanako uses "provider/model" format for precise model
+/// identification across providers with overlapping model names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRef {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+impl ModelRef {
+    /// Parse "provider/model" format into a `ModelRef`.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        let (provider, model) = s.split_once('/')?;
+        if provider.is_empty() || model.is_empty() {
+            return None;
+        }
+        Some(Self {
+            provider_id: provider.to_string(),
+            model_id: model.to_string(),
+        })
+    }
+}
+
+impl fmt::Display for ModelRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.provider_id, self.model_id)
+    }
+}
+
+impl FromStr for ModelRef {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| {
+            format!("Invalid model reference '{s}'. Expected 'provider_id/model_id' format.")
+        })
+    }
+}
+
+// ── Model Role Config ───────────────────────────────────────────────────────
+
+/// Per-role model assignment — maps a usage scenario to a specific model.
+///
+/// Reference: openhanako execution-router roles (chat, utility, summarizer, compiler).
+/// Each role can use a different model, enabling cost/performance optimization
+/// (e.g. cheap model for summarization, capable model for complex reasoning).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRoleConfig {
+    /// Role identifier: "chat", "utility", "utility_large", "summarizer", "compiler"
+    pub role: String,
+    /// Model reference in "provider_id/model_id" format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<String>,
+}
+
+/// Available model role names.
+pub const MODEL_ROLES: &[&str] = &["chat", "utility", "utility_large", "summarizer", "compiler"];
+
+/// Human-readable label for a model role.
+#[must_use]
+pub fn model_role_label(role: &str) -> &'static str {
+    match role {
+        "chat" => "主对话模型",
+        "utility" => "轻工具模型（摘要/翻译）",
+        "utility_large" => "重工具模型（复杂推理）",
+        "summarizer" => "摘要模型（记忆编译）",
+        "compiler" => "编译模型（快速响应）",
+        _ => "未知角色",
+    }
 }
 
 // ── Channel ─────────────────────────────────────────────────────────────────
@@ -183,8 +267,8 @@ impl Default for ChannelRouting {
 /// Written to `~/.if2ai/config.json`. Contains the user's full
 /// onboarding configuration in a single flat JSON file.
 ///
-/// `ConfigService::save_config()` writes this AND syncs to Layer 2
-/// (triple files) AND bridges to `~/.claude/settings.json`.
+/// `ConfigService::save_config()` writes this and syncs to Layer 2
+/// triple files used by runtime resolution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Configuration format version for migration support.
@@ -192,9 +276,24 @@ pub struct AppConfig {
     /// Currently active provider (the one the user selected)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_provider: Option<ProviderConfig>,
-    /// Currently selected model
+    /// Currently selected default model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_model: Option<ModelSelection>,
+    /// All models selected for the active provider during onboarding.
+    /// The first entry is the default model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_models: Vec<ModelSelection>,
+    /// All configured providers with their full connection details.
+    ///
+    /// Unlike `active_provider` (which changes when user switches provider),
+    /// this list accumulates every provider the user has ever configured.
+    /// Used by `sync_to_triple_files` so that models from non-active providers
+    /// still resolve their `base_url` and `api_key` correctly in `models.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configured_providers: Vec<ProviderConfig>,
+    /// Per-role model assignments (chat, utility, summarizer, compiler)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_models: Vec<ModelRoleConfig>,
     /// All configured channels
     #[serde(default)]
     pub channels: Vec<ChannelConfig>,
@@ -216,11 +315,42 @@ impl AppConfig {
             version: CONFIG_VERSION,
             active_provider: None,
             active_model: None,
+            selected_models: Vec::new(),
+            configured_providers: Vec::new(),
+            role_models: Vec::new(),
             channels: Vec::new(),
             routing: None,
             onboarding: OnboardingState::new(),
             security_confirmed: false,
         }
+    }
+
+    /// Upsert a provider into `configured_providers`.
+    ///
+    /// If the provider already exists (matched by `provider_id` + `auth_variant`),
+    /// it is updated in-place. Otherwise it is appended.
+    pub fn upsert_configured_provider(&mut self, provider: ProviderConfig) {
+        let existing = self.configured_providers.iter_mut().find(|p| {
+            p.provider_id == provider.provider_id && p.auth_variant == provider.auth_variant
+        });
+        if let Some(entry) = existing {
+            *entry = provider;
+        } else {
+            self.configured_providers.push(provider);
+        }
+    }
+
+    /// Look up a provider in `configured_providers` by id (and optional auth_variant).
+    #[must_use]
+    pub fn find_configured_provider(
+        &self,
+        provider_id: &str,
+        auth_variant: Option<&str>,
+    ) -> Option<&ProviderConfig> {
+        self.configured_providers.iter().find(|p| {
+            p.provider_id == provider_id
+                && p.auth_variant.as_deref() == auth_variant
+        })
     }
 
     /// Validate the configuration and return a list of issues.

@@ -1,6 +1,8 @@
 import * as React from "react"
+import { invoke } from '@tauri-apps/api/core'
 import {
   ArrowDown,
+  ArrowUp,
   ArrowUpDown,
   ArrowUpRight,
   Bot,
@@ -15,6 +17,8 @@ import {
   FolderOpen,
   GitBranch,
   Globe,
+  Laptop,
+  Mic,
   GripVertical,
   House,
   Lock,
@@ -201,7 +205,7 @@ export function ChatUI({
   projectLabel = 'if2Ai',
   defaultWorkdir,
   branchLabel = 'feature/consolidate-codebase',
-  selectedModel: selectedModelProp = 'gpt-5.4-mini',
+  selectedModel: selectedModelProp = '',
   onModelChange: onModelChangeProp,
   permissionMode: permissionModeProp = 'dangerFullAccess',
   onPermissionModeChange: onPermissionModeChangeProp,
@@ -225,6 +229,40 @@ export function ChatUI({
   const scrollRafRef = React.useRef<number | null>(null)
   const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
+  // Dynamic model list state (Slice 4)
+  const [availableModelItems, setAvailableModelItems] = React.useState<
+    Array<{ value: string; label: string }>
+  >([])
+  React.useEffect(() => {
+    void (async () => {
+      try {
+        const groups = await invoke<Array<{
+          provider_id: string
+          provider_name: string
+          models: Array<{ model_id: string; name: string }>
+        }>>('model_list_available')
+        const items = groups
+          .filter((g) => g.models.length > 0)
+          .flatMap((g) =>
+            g.models.map((m) => ({
+              value: `${g.provider_id}/${m.model_id}`,
+              label: `${g.provider_name} / ${m.name}`,
+            }))
+          )
+        setAvailableModelItems(items)
+
+        // If the parent hasn't provided a real model yet, auto-select the first
+        // available one so the picker always shows a real model name.
+        if (!selectedModelProp && items.length > 0 && onModelChangeProp) {
+          const first = items[0]
+          onModelChangeProp(first.value)
+        }
+      } catch {
+        // Fallback: leave list empty, will use hardcoded below
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
@@ -898,6 +936,7 @@ export function ChatUI({
             isLoading={isLoading}
             selectedModel={modelValue}
             setSelectedModel={handleModelChange}
+            availableModelItems={availableModelItems}
             permissionMode={permissionModeValue}
             setPermissionMode={handlePermissionModeChange}
             selectedStrength={selectedStrength}
@@ -915,6 +954,12 @@ export function ChatUI({
             dropItems={composerDropItems}
             onRemoveDropItem={handleRemoveComposerDropItem}
             onFileReferenceDrop={handleComposerDropItem}
+            projectLabel={projectLabel}
+            workdirLabel={
+              defaultWorkdir
+                ? defaultWorkdir.split('/').filter(Boolean).pop()
+                : undefined
+            }
           />
         </div>
 
@@ -1620,6 +1665,7 @@ const ComposerDock = React.memo(function ComposerDock({
   isLoading,
   selectedModel,
   setSelectedModel,
+  availableModelItems,
   permissionMode,
   setPermissionMode,
   selectedStrength,
@@ -1637,6 +1683,9 @@ const ComposerDock = React.memo(function ComposerDock({
   dropItems,
   onRemoveDropItem,
   onFileReferenceDrop,
+  projectLabel,
+  workdirLabel,
+  onProjectPillClick,
 }: {
   input: string
   onInputChange: (value: string) => void
@@ -1645,6 +1694,7 @@ const ComposerDock = React.memo(function ComposerDock({
   isLoading?: boolean
   selectedModel: string
   setSelectedModel: React.Dispatch<React.SetStateAction<string>>
+  availableModelItems: Array<{ value: string; label: string }>
   permissionMode: PermissionMode
   setPermissionMode: React.Dispatch<React.SetStateAction<PermissionMode>>
   selectedStrength: string
@@ -1669,6 +1719,10 @@ const ComposerDock = React.memo(function ComposerDock({
   dropItems: ComposerDropItem[]
   onRemoveDropItem: (id: string) => void
   onFileReferenceDrop: (item: ComposerDropItem) => void
+  /** Project context metadata shown in the bottom context bar. */
+  projectLabel?: string
+  workdirLabel?: string
+  onProjectPillClick?: () => void
 }) {
   const [isDropTarget, setIsDropTarget] = React.useState(false)
   const handleInputWithSlashDetect = (value: string) => {
@@ -1741,14 +1795,14 @@ const ComposerDock = React.memo(function ComposerDock({
         {/* ── Composer box ── */}
         <div
           className={cn(
-            'flex flex-col rounded-2xl border border-input bg-card px-4 py-3 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            'flex flex-col rounded-2xl border border-input bg-card px-4 pt-2 pb-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
             isComposerFocused
               ? '-translate-y-0.5 shadow-[0_14px_56px_rgba(68,185,130,0.22),0_0_0_1px_rgba(68,185,130,0.32),0_0_48px_rgba(68,185,130,0.16)]'
-              : 'translate-y-0 shadow-token-sm'
+              : 'translate-y-0 shadow-[0_2px_16px_rgba(0,0,0,0.07),0_0_0_0.5px_rgba(0,0,0,0.04)]'
           )}
         >
           {/* Textarea (align top) */}
-          <div className="flex-1 px-0 pt-2 pb-1">
+          <div className="flex-1 px-0 pt-1 pb-0.5">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1784,57 +1838,129 @@ const ComposerDock = React.memo(function ComposerDock({
               rows={1}
               onFocus={() => setIsComposerFocused(true)}
               onBlur={() => setIsComposerFocused(false)}
-              className="min-h-[46px] max-h-[180px] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[13px] leading-6 shadow-none focus-visible:ring-0 placeholder:text-muted-foreground"
-              placeholder="输入消息…"
+              className="min-h-[46px] max-h-[180px] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[13px] leading-6 shadow-none focus-visible:ring-0 placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100"
+              placeholder="向 AI 提问，@ 添加文件，/ 输入命令，$ 使用技能"
             />
           </div>
 
-          {/* Bottom bar: + (left) | Send (right) */}
-          <div className="flex items-center justify-between px-0.5 pb-1 pt-1">
-            {/* Attach button — small, no bg, hover shows rounded square */}
-            <button
-              type="button"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-surface-raised hover:text-jade transition-all duration-150"
-              aria-label="添加附件"
-              disabled={isLoading}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+          {/* Bottom bar — mirrors Home composer: [+ | permission] … [model | | mic | send] */}
+          {/* -mx-4 px-4 lets the border-t bleed to the card edges while keeping content aligned */}
+          <div className="flex items-center justify-between border-t border-black/[0.06] -mx-4 px-4 pt-2 pb-2">
+            {/* Left: attach + permission */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                aria-label="添加附件"
+                disabled={isLoading}
+              >
+                <Plus className="h-[15px] w-[15px]" />
+              </button>
 
-            {/* Send / Stop button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (isLoading && onStop) {
-                  onStop()
-                } else if (!isLoading) {
-                  onSubmit()
-                }
-              }}
-              disabled={!isLoading && !input.trim()}
-              className={cn(
-                'flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[12px] font-medium transition-all duration-150',
-                isLoading
-                  ? 'bg-destructive text-primary-foreground hover:opacity-90 active:scale-95'
-                  : input.trim()
-                    ? 'bg-jade text-primary-foreground hover:opacity-90 active:scale-95'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed'
-              )}
-              aria-label={isLoading ? '停止生成' : '发送消息'}
-            >
-              {isLoading ? (
-                <Square className="h-3.5 w-3.5 fill-current" />
-              ) : (
-                <>
-                  <span className="h-3.5 w-3.5">
-                    <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M9.5 3.5L5 8l4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </span>
-                  发送
-                </>
-              )}
-            </button>
+              {/* Permission mode */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                    disabled={isLoading}
+                  >
+                    {permissionModeLabelFor(permissionMode)}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent sideOffset={6} align="start" className="w-[148px]">
+                  {permissionModeItems.map((item) => (
+                    <MenuItemButton
+                      key={item.value}
+                      active={permissionMode === item.value}
+                      onClick={() => setPermissionMode(item.value)}
+                    >
+                      {item.label}
+                    </MenuItemButton>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* Right: model | divider | mic | send */}
+            <div className="flex items-center gap-1.5">
+              {/* Model selector */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                    disabled={isLoading}
+                  >
+                    {availableModelItems.length > 0
+                      ? (availableModelItems.find((i) => i.value === selectedModel)?.label ??
+                         availableModelItems[0]?.label ??
+                         modelLabelFor(selectedModel))
+                      : (selectedModel ? modelLabelFor(selectedModel) : '选择模型')}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent sideOffset={6} align="end" className="w-[220px]">
+                  {(availableModelItems.length > 0 ? availableModelItems : modelItems).map((item) => (
+                    <MenuItemButton
+                      key={item.value}
+                      onClick={() => {
+                        setSelectedModel(item.value)
+                        if (availableModelItems.length > 0) {
+                          const parts = item.value.split('/')
+                          if (parts.length === 2) {
+                            void invoke('model_set_active', { providerId: parts[0], modelId: parts[1] })
+                          }
+                        }
+                      }}
+                      active={selectedModel === item.value}
+                    >
+                      {item.label}
+                    </MenuItemButton>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <div className="h-3.5 w-px bg-black/10" />
+
+              {/* Mic */}
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                aria-label="语音输入"
+              >
+                <Mic className="h-[14px] w-[14px]" />
+              </button>
+
+              {/* Send / Stop */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isLoading && onStop) {
+                    onStop()
+                  } else if (!isLoading) {
+                    onSubmit()
+                  }
+                }}
+                disabled={!isLoading && !input.trim()}
+                className={cn(
+                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all duration-150 active:scale-95',
+                  isLoading
+                    ? 'bg-destructive text-white hover:opacity-90'
+                    : input.trim()
+                      ? 'bg-black text-white hover:bg-black/80'
+                      : 'bg-black/10 text-black/30 cursor-not-allowed'
+                )}
+                aria-label={isLoading ? '停止生成' : '发送消息'}
+              >
+                {isLoading ? (
+                  <Square className="h-3 w-3 fill-current" />
+                ) : (
+                  <ArrowUp className="h-[14px] w-[14px]" />
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Drop target overlay */}
@@ -1845,130 +1971,31 @@ const ComposerDock = React.memo(function ComposerDock({
           )}
         </div>
 
-        {/* ── Meta bar (Paico: model | language | access | branch | settings) ── */}
-        <div className="mt-2 flex items-center justify-between px-1">
-          {/* Left: model + strength */}
-          <div className="flex items-center gap-3">
-            {/* Model selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
-                  disabled={isLoading}
-                >
-                  <Cpu className="h-[11px] w-[11px]" />
-                  {modelLabelFor(selectedModel)}
-                  <ChevronDown className="h-[10px] w-[10px]" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent sideOffset={6} align="start" className="w-[148px]">
-                {modelItems.map((item) => (
-                  <MenuItemButton
-                    key={item.value}
-                    onClick={() => setSelectedModel(item.value)}
-                    active={selectedModel === item.value}
-                  >
-                    {item.label}
-                  </MenuItemButton>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <div className="h-3 w-px bg-border" />
-
-            {/* Strength selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
-                  disabled={isLoading}
-                >
-                  <Globe className="h-[11px] w-[11px]" />
-                  {strengthLabelFor(selectedStrength)}
-                  <ChevronDown className="h-[10px] w-[10px]" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent sideOffset={6} align="start" className="w-[92px]">
-                {strengthItems.map((item) => (
-                  <MenuItemButton
-                    key={item.value}
-                    onClick={() => setSelectedStrength(item.value)}
-                    active={selectedStrength === item.value}
-                  >
-                    {item.label}
-                  </MenuItemButton>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+        {/* ── Project context bar (project | workdir | branch) ── */}
+        {(projectLabel || workdirLabel) && (
+          <div className="mt-1.5 flex items-center gap-2 px-1 pb-0.5">
+            {projectLabel && (
+              <button
+                type="button"
+                onClick={onProjectPillClick}
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-black/40 transition-colors hover:bg-black/[0.04] hover:text-black/60"
+              >
+                <FolderOpen className="h-[11px] w-[11px]" />
+                {projectLabel}
+              </button>
+            )}
+            {workdirLabel && (
+              <span className="flex items-center gap-1 text-[11px] text-black/30">
+                <Laptop className="h-[11px] w-[11px]" />
+                {workdirLabel}
+              </span>
+            )}
+            <span className="flex items-center gap-1 text-[11px] text-black/30">
+              <GitBranch className="h-[11px] w-[11px]" />
+              {branchLabel}
+            </span>
           </div>
-
-          {/* Right: permission + branch + settings */}
-          <div className="flex items-center gap-3">
-            {/* Permission mode dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
-                  disabled={isLoading}
-                >
-                  {permissionModeLabelFor(permissionMode)}
-                  <ChevronDown className="h-[10px] w-[10px]" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent sideOffset={6} align="end" className="w-[148px]">
-                {permissionModeItems.map((item) => (
-                  <MenuItemButton
-                    key={item.value}
-                    active={permissionMode === item.value}
-                    onClick={() => setPermissionMode(item.value)}
-                  >
-                    {item.label}
-                  </MenuItemButton>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <div className="h-3 w-px bg-border" />
-
-            {/* Branch selector */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors duration-150"
-                >
-                  <GitBranch className="h-[11px] w-[11px]" />
-                  <span className="max-w-[120px] truncate">{branchLabel}</span>
-                  <ChevronDown className="h-[10px] w-[10px]" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent sideOffset={6} align="end" className="w-[176px]">
-                <MenuItemButton active>{branchLabel}</MenuItemButton>
-                <DropdownMenuSeparator />
-                <MenuItemButton onClick={() => {
-                  // switch branch action placeholder
-                }}>切换分支</MenuItemButton>
-                <MenuItemButton onClick={() => {
-                  // copy branch name action placeholder
-                }}>复制分支名</MenuItemButton>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <div className="h-3 w-px bg-border" />
-
-            {/* Settings button */}
-            <button
-              type="button"
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-100"
-              aria-label="设置"
-            >
-              <SlidersHorizontal className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

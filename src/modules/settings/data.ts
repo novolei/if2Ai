@@ -1,4 +1,4 @@
-import { BarChart3, Brain, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
+import { BarChart3, Brain, Cpu, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
 import type { SettingsSectionMeta } from './types'
 
 export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
@@ -31,6 +31,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: '记忆配置',
     description: '管理记忆 Token 预算分配与轨迹导出。',
     icon: Brain,
+  },
+  {
+    id: 'model',
+    label: '模型配置',
+    description: '配置本地向量化模型与 LLM 服务商设置。',
+    icon: Cpu,
   },
   {
     id: 'connections',

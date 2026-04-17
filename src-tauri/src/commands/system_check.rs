@@ -1,19 +1,23 @@
 //! System check Tauri commands.
 //!
-//! Provides 3 commands:
-//! - `system_check_run`: Run full system detection (CPU/GPU/Node.js + embedded model)
+//! Provides commands:
+//! - `system_check_run`: Run full system detection (CPU/GPU/Memory + embedded model)
 //! - `embedded_model_download`: Download the embedded model
 //! - `embedded_model_progress`: Get download progress (0.0 to 1.0)
+//! - `get_model_config`: Get the embedded model name configuration
+//! - `set_model_config`: Set the embedded model name configuration
+
+use serde::{Deserialize, Serialize};
 
 use crate::modules::system_check::env::run_full_check;
 use crate::modules::system_check::model_download::{
-    download_embedded_model, get_download_progress,
+    download_embedded_model, get_download_progress, MODEL_NAME,
 };
 use crate::modules::system_check::types::SystemReport;
 
 /// Run a full system check.
 ///
-/// Detects CPU, GPU, Node.js, and checks embedded model status.
+/// Detects CPU, GPU, Memory, and checks embedded model status.
 #[tauri::command]
 pub async fn system_check_run() -> Result<SystemReport, String> {
     let report = run_full_check().await;
@@ -36,4 +40,45 @@ pub async fn embedded_model_download() -> Result<(), String> {
 #[tauri::command]
 pub fn embedded_model_progress() -> Result<f64, String> {
     Ok(get_download_progress())
+}
+
+// ── Model Configuration ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConfig {
+    pub embedded_model_name: String,
+}
+
+fn model_config_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&home)
+        .join(".if2ai")
+        .join("model_config.json")
+}
+
+/// Get the current embedded model name configuration.
+///
+/// Returns the default `MODEL_NAME` if no custom config exists.
+#[tauri::command]
+pub fn get_model_config() -> ModelConfig {
+    let path = model_config_path();
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        if let Ok(cfg) = serde_json::from_str::<ModelConfig>(&raw) {
+            return cfg;
+        }
+    }
+    ModelConfig {
+        embedded_model_name: MODEL_NAME.to_string(),
+    }
+}
+
+/// Save the embedded model name configuration.
+#[tauri::command]
+pub fn set_model_config(config: ModelConfig) -> Result<ModelConfig, String> {
+    let path = model_config_path();
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(config)
 }

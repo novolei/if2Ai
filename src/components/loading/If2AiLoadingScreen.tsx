@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { type MouseEvent as ReactMouseEvent, useEffect, useState } from 'react'
 import { WaveDotsAnimation } from './WaveDotsAnimation'
 
 type If2AiLoadingScreenProps = {
   projectName?: string
   stageLabel?: string
+  onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void
 }
 
 const appLogoSrc = `${new URL('../../../src-tauri/icons/icon-512.png', import.meta.url).href}?v=20260414d`
@@ -12,6 +13,7 @@ const APP_NAME = 'UClaw'
 export function If2AiLoadingScreen({
   projectName = APP_NAME,
   stageLabel = 'Initializing agent workspace',
+  onWindowDrag,
 }: If2AiLoadingScreenProps) {
   const [buildCode, setBuildCode] = useState('ZQ4L-N97J')
   const [typedLength, setTypedLength] = useState(0)
@@ -59,7 +61,10 @@ export function If2AiLoadingScreen({
   const titleLift = Math.sin(phase * 1.35) * 1.2
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-sand text-ink">
+    <div
+      className="relative flex min-h-screen cursor-default items-center justify-center overflow-hidden bg-sand text-ink"
+      onMouseDown={onWindowDrag}
+    >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_36%,rgba(255,255,255,0.66),transparent_26%),radial-gradient(circle_at_50%_50%,var(--brand-orange-light)/6,transparent_48%),linear-gradient(180deg,var(--sand-warm)_0%,var(--sand)_100%)]" />
       <StartupGrid phase={phase} />
       <div className="absolute inset-0 opacity-35">

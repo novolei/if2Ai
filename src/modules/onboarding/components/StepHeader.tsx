@@ -26,7 +26,7 @@ export function StepHeader({ currentStep, title, className }: StepHeaderProps) {
   const stepIndex = Math.max(1, Math.min(6, currentStep));
 
   return (
-    <div className={cn('flex flex-col gap-3 px-8 pt-6 pb-4', className)}>
+    <div className={cn('flex flex-col gap-3 px-8 pb-4', className)}>
       {/* Step number + progress dots */}
       <div className="flex items-center gap-3">
         <span className="text-token-sm font-medium text-muted-foreground">
@@ -54,7 +54,7 @@ export function StepHeader({ currentStep, title, className }: StepHeaderProps) {
       </div>
 
       {/* Step title */}
-      <h1 className="text-token-2xl font-semibold text-foreground">
+      <h1 className="text-token-2xl font-semibold text-foreground font-sans">
         {title}
       </h1>
     </div>
