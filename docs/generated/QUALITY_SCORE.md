@@ -204,3 +204,6 @@
 | 2026-04-15 | **Phase 6B ALL COMPLETE** (9/9 slices, 573 tests pass, 0 clippy warnings) |
 | 2026-04-17 | Phase 7B Slice 7B.5 完成：Tauri Event 桥接 + browser IPC commands (BrowserStatusEvent, emit_browser_status, get_browser_sessions, close_browser_session, get_chrome_status; 706 tests pass, REVIEW_PASS 10/10) |
 | 2026-04-17 | Phase 7B Slice 7B.6 完成：BrowserCard 前端浮动卡片 + Store (useSyncExternalStore singleton store, Tauri event listener with active-flag race fix, Globe badge in header, 706 tests pass, REVIEW_PASS) |
+| 2026-04-17 | Phase 7B Slice 7B.7 完成：Session 隔离 + 冷保存恢复 (ColdState JSON persist, incognito context, restore_cold_state; 712 tests pass, REVIEW_PASS) |
+| 2026-04-17 | Phase 7B Slice 7B.8 完成：BrowserViewer 独立窗口 (open_browser_viewer_window Tauri cmd, BrowserViewerPage iframe+thumbnail fallback, Expand button in BrowserCard; 712 tests pass, REVIEW_PASS) |
+| 2026-04-17 | **Phase 7B ALL COMPLETE** (8/8 slices, 712 tests pass, 0 clippy warnings; browser capability gap vs openhanako closed) |

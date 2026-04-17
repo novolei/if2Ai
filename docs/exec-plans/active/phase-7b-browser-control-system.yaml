@@ -19,10 +19,13 @@ meta:
 
 dashboard:
   last_updated: '2026-04-17'
-  completed_slices: ['7B.1', '7B.2', '7B.3', '7B.4', '7B.5', '7B.6']
-  current_slice: '7B.7'
+  completed_slices: ['7B.1', '7B.2', '7B.3', '7B.4', '7B.5', '7B.6', '7B.7', '7B.8']
+  current_slice: null
   blocked: []
   notes: >
+    Phase 7B ALL COMPLETE (8/8 slices). Browser capability gap vs openhanako closed:
+    chromiumoxide headless, DOM AXTree snapshot, BrowserCard UI, incognito isolation,
+    cold-state persistence, BrowserViewer window. 712 tests pass, 0 clippy warnings.
     Phase 7B 初始化。目标：实现 12 项 browser 能力 Gap（Critical + High 优先级）。
     技术路径：chromiumoxide v0.9 headless + DOM AXTree 快照 + BrowserCard UI。
     P0 slices: 7B.1 → 7B.5（Rust 后端全链路）
@@ -317,7 +320,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7B.7"
     name: "Session 隔离完善 + 冷保存/恢复"
-    status: pending
+    status: done
     priority: P1
     design_ref: docs/design-docs/postCLI/browser-control-system.md §7, §8
     estimated_days: 1.5
@@ -356,7 +359,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7B.8"
     name: "BrowserViewer 独立可见窗口 (P2 可选)"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/browser-control-system.md §10
     estimated_days: 2
