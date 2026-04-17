@@ -2814,10 +2814,14 @@ mod tests {
             workdir.clone(),
         )));
         let registry = Arc::new(ToolRegistry::new(context));
+        let test_browser_registry = crate::modules::browser::BrowserRegistry::new(
+            std::path::PathBuf::from("/tmp/browser-cold-state-test.json"),
+        );
         register_builtin_tools(
             &registry,
             memory::default_memory_provider().await,
             scheduler::default_scheduler(),
+            test_browser_registry,
         );
 
         let execution_context =

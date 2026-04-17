@@ -16,6 +16,7 @@ pub use registry::{ToolEntry, ToolError, ToolRegistry};
 #[allow(unused_imports)]
 pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 
+use crate::modules::browser::BrowserRegistry;
 use crate::modules::memory::SharedMemoryProvider;
 use crate::modules::scheduler::SharedScheduler;
 
@@ -27,7 +28,11 @@ pub fn register_builtin_tools(
     registry: &ToolRegistry,
     memory: SharedMemoryProvider,
     scheduler: SharedScheduler,
+    browser: Arc<BrowserRegistry>,
 ) {
+    if let Err(e) = registry.register(builtin::browser_tool_entry(browser)) {
+        eprintln!("Failed to register browser tool: {}", e);
+    }
     if let Err(e) = registry.register(builtin::bash::bash_tool_entry()) {
         eprintln!("Failed to register bash tool: {}", e);
     }

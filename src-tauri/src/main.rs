@@ -293,10 +293,14 @@ fn main() {
     ));
     let memory_provider = create_memory_provider();
     let scheduler_provider = modules::scheduler::default_scheduler();
+    let browser_registry = modules::browser::BrowserRegistry::new(
+        if2ai_dir.join("browser-cold-state.json"),
+    );
     modules::tools::register_builtin_tools(
         &tool_registry,
         memory_provider.clone(),
         scheduler_provider,
+        browser_registry.clone(),
     );
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 

@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod bash;
+pub mod browser_tool;
 pub mod config;
 pub mod content_search;
 pub mod cron_add;
@@ -46,6 +47,8 @@ pub mod web_search_config;
 pub use agent::agent_tool_entry;
 #[allow(unused_imports)]
 pub use bash::bash_tool_entry;
+#[allow(unused_imports)]
+pub use browser_tool::browser_tool_entry;
 #[allow(unused_imports)]
 pub use config::config_tool_entry;
 #[allow(unused_imports)]
