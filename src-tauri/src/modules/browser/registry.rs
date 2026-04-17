@@ -109,17 +109,16 @@ impl BrowserRegistry {
         match session {
             Ok(mutex) => {
                 mutex.into_inner().close().await?;
+                info!(session_id, "browser closed");
             }
             Err(_) => {
                 // Another task still holds a reference. The session was already
                 // removed from the registry map, so no new operations can start.
                 // The Chromium process will be terminated when all Arc references
                 // drop and the Browser handle is destroyed.
-                debug!(session_id, "BrowserSession shared; close deferred to last reference drop");
+                info!(session_id, "browser close deferred to last Arc drop");
             }
         }
-
-        info!(session_id, "browser closed");
         Ok(())
     }
 
