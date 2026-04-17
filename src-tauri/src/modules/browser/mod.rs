@@ -4,13 +4,12 @@
 //! Protocol). The public surface is:
 //!
 //! - [`chrome_finder`] — binary discovery
+//! - [`cold_state`] — URL persistence across app restarts
 //! - [`errors`] — shared error type
 //! - [`registry`] — multi-session registry
 //! - [`session`] — single-session lifecycle and actions
 //! - [`snapshot`] — DOM AXTree snapshot algorithm
 //! - [`events`] — Tauri event payloads and emission helpers
-//!
-//! Additional modules (cold_state) are added in slice 7B.7.
 //!
 //! # Dead-code suppression
 //!
@@ -22,6 +21,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod chrome_finder;
+pub mod cold_state;
 pub mod errors;
 pub mod events;
 pub mod registry;

@@ -116,14 +116,20 @@ impl BrowserSession {
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
-        let (browser, mut handler) = Browser::launch(config)
+        let (mut browser, mut handler) = Browser::launch(config)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
         // Handler implements Stream; it must be polled so CDP messages flow.
         let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
+        // Switch to an incognito (private) browsing context so each chat session
+        // gets fully isolated cookies, localStorage, and cache — no cross-session
+        // data leakage even if multiple sessions run concurrently.
         let page = browser
+            .start_incognito_context()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?
             .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;

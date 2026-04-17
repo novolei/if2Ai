@@ -17,6 +17,8 @@ use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
+use crate::modules::browser::cold_state::ColdState;
+
 use crate::modules::browser::errors::BrowserError;
 use crate::modules::browser::session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};
 
@@ -39,8 +41,10 @@ pub struct BrowserStatusEntry {
 pub struct BrowserRegistry {
     /// session_id → `Arc<Mutex<BrowserSession>>`
     sessions: DashMap<String, Arc<Mutex<BrowserSession>>>,
-    /// Path used by the cold-state persistence layer (injected; used in 7B.7).
-    pub cold_state_path: PathBuf,
+    /// Cold-state store: persists the last-visited URL per session across restarts.
+    cold_state: Mutex<ColdState>,
+    /// Path used by the cold-state persistence layer (kept for diagnostics).
+    pub(crate) cold_state_path: PathBuf,
     /// Tauri `AppHandle` injected in the `setup()` callback so the browser
     /// tool can emit `"browser-status"` events to the frontend BrowserCard.
     ///
@@ -49,14 +53,16 @@ pub struct BrowserRegistry {
 }
 
 impl BrowserRegistry {
-    /// Create a new empty registry.
+    /// Create a new empty registry and load cold state from `cold_state_path`.
     ///
-    /// `cold_state_path` is the JSON file used to persist session URLs across
-    /// app restarts; it is consumed by the cold-state module added in 7B.7.
+    /// If the cold-state file does not yet exist the registry starts empty;
+    /// the file is created on first [`navigate`](Self::navigate) call.
     #[must_use]
     pub fn new(cold_state_path: PathBuf) -> Arc<Self> {
+        let cold = ColdState::load(&cold_state_path);
         Arc::new(Self {
             sessions: DashMap::new(),
+            cold_state: Mutex::new(cold),
             cold_state_path,
             app_handle: OnceLock::new(),
         })
@@ -111,7 +117,13 @@ impl BrowserRegistry {
     /// Close and remove the browser for `session_id`.
     ///
     /// Waits for any in-flight operation to complete before closing.
+    /// Also removes the cold-state record so the session is not auto-restored
+    /// on the next app start.
     pub async fn close(&self, session_id: &str) -> Result<(), BrowserError> {
+        // Remove cold-state record before closing so a subsequent restore attempt
+        // does not reopen a session the user explicitly stopped.
+        self.cold_state.lock().await.remove(session_id);
+
         let (_, arc) = self
             .sessions
             .remove(session_id)
@@ -145,6 +157,9 @@ impl BrowserRegistry {
     // ── Delegated operations ──────────────────────────────────────────────────
 
     /// Navigate the browser for `session_id` to `url`.
+    ///
+    /// On success, persists the final URL in the cold-state file so the session
+    /// can be restored after an app restart.
     pub async fn navigate(
         &self,
         session_id: &str,
@@ -152,7 +167,10 @@ impl BrowserRegistry {
     ) -> Result<NavigateResult, BrowserError> {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
-        guard.navigate(url).await
+        let result = guard.navigate(url).await?;
+        // Persist the post-redirect URL so cold restore lands on the right page.
+        self.cold_state.lock().await.set(session_id, &result.url);
+        Ok(result)
     }
 
     /// Return the AXTree snapshot for `session_id`.
@@ -260,6 +278,34 @@ impl BrowserRegistry {
         let log = guard.action_log.clone();
         guard.action_log.clear();
         log
+    }
+
+    // ── Cold-state restore ────────────────────────────────────────────────────
+
+    /// Restore a previously-saved browser session from cold state.
+    ///
+    /// If `session_id` has a persisted URL (saved by a previous `navigate`
+    /// call), this method launches a new browser and navigates to that URL.
+    ///
+    /// Returns `Ok(true)` when a restore was performed, `Ok(false)` when there
+    /// is no cold-state record for the session.
+    pub async fn restore_cold_state(&self, session_id: &str) -> Result<bool, BrowserError> {
+        let saved_url = self
+            .cold_state
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| s.to_owned());
+
+        match saved_url {
+            Some(url) => {
+                self.launch(session_id).await?;
+                self.navigate(session_id, &url).await?;
+                info!(session_id, url = %url, "cold-state restore complete");
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     // ── Status ────────────────────────────────────────────────────────────────
