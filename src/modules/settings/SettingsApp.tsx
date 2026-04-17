@@ -68,14 +68,17 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
     }
   }
 
-  const handleReviewSkill = async (skill: SkillInfo) => {
+  const handleReviewSkill = async (skill: SkillInfo): Promise<string> => {
+    const toastId = `review-${skill.path}`
+    toast.loading(`正在 Review「${skill.name}」…`, { id: toastId })
     try {
-      toast.loading(`正在 Review「${skill.name}」…`, { id: `review-${skill.path}` })
       const msg = await reviewSkillDraft(skill.path)
-      toast.success(`「${skill.name}」Review 完成`, { description: msg })
+      toast.success(`「${skill.name}」Review 完成`, { id: toastId, description: msg })
       await refreshSkills()
+      return msg
     } catch (error) {
-      toast.error(`Review 失败：${skill.name}`, { description: String(error) })
+      toast.error(`Review 失败：${skill.name}`, { id: toastId, description: String(error) })
+      throw error
     }
   }
 
@@ -171,7 +174,7 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
             onRefresh={() => void refreshSkills()}
             onToggleSkill={(skill, enabled) => void handleSkillToggle(skill, enabled)}
             onStartConversationCreate={() => void handleStartConversationCreate()}
-            onReviewSkill={(skill) => void handleReviewSkill(skill)}
+            onReviewSkill={(skill) => handleReviewSkill(skill)}
             onApproveSkill={(skill) => void handleProposalAction(skill, 'approval')}
             onRollbackSkill={(skill) => void handleProposalAction(skill, 'rollback')}
           />

@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { Search } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { MemoryCard, type MemoryEntryDto } from './MemoryCard'
@@ -20,7 +21,12 @@ import { Button } from '@/components/ui/button'
 
 const PAGE_SIZE = 20
 
-export function MemoryBrowser() {
+interface MemoryBrowserProps {
+  /** Forward the App-level startWindowDrag handler so the header is draggable. */
+  onStartWindowDrag?: (e: ReactMouseEvent<HTMLElement>) => void
+}
+
+export function MemoryBrowser({ onStartWindowDrag }: MemoryBrowserProps) {
   const [entries, setEntries] = useState<MemoryEntryDto[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,8 +96,11 @@ export function MemoryBrowser() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#f6f7f8]">
-      {/* Header */}
-      <div className="shrink-0 border-b border-black/5 bg-white/60 px-4 py-3">
+      {/* Header — draggable via onStartWindowDrag when running in main window */}
+      <div
+        className="shrink-0 cursor-default select-none border-b border-black/5 bg-white/60 px-4 py-3"
+        onMouseDown={onStartWindowDrag}
+      >
         <div className="flex items-center justify-between">
           <h2 className="text-[15px] font-semibold">记忆浏览器</h2>
           {totalCount !== null && (

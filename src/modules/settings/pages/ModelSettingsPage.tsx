@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { CompactInput } from '../components/CompactInput'
-import { Brain, Cpu, MessageSquare, Wrench, FileText, Zap, ChevronDown, Check } from 'lucide-react'
+import {
+  Brain, Cpu, MessageSquare, Wrench, FileText, Zap,
+  ChevronDown, Check, AlertCircle, RefreshCw,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const DEFAULT_MODEL_NAME = 'intfloat/multilingual-e5-small'
@@ -23,28 +26,42 @@ interface AvailableModelGroup {
   models: { model_id: string; name: string; context_window?: number }[]
 }
 
-const ROLE_ICONS: Record<string, typeof MessageSquare> = {
-  chat: MessageSquare,
-  utility: Wrench,
-  utility_large: Zap,
-  summarizer: FileText,
-  compiler: Brain,
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  chat: '主对话模型',
-  utility: '轻工具模型',
-  utility_large: '重工具模型',
-  summarizer: '摘要模型',
-  compiler: '编译模型',
-}
-
-const ROLE_DESCS: Record<string, string> = {
-  chat: '用于主对话和复杂交互',
-  utility: '用于轻量工具调用、摘要和翻译',
-  utility_large: '用于复杂推理和多步任务',
-  summarizer: '用于记忆摘要和文本压缩',
-  compiler: '用于记忆编译和快速响应',
+const ROLE_META: Record<string, {
+  label: string
+  desc: string
+  icon: typeof MessageSquare
+  accentClass: string
+}> = {
+  chat: {
+    label: '主对话模型',
+    desc: '主对话 / 复杂交互',
+    icon: MessageSquare,
+    accentClass: 'bg-jade/[0.09] text-jade',
+  },
+  utility: {
+    label: '轻工具模型',
+    desc: '摘要 / 翻译 / 轻量调用',
+    icon: Wrench,
+    accentClass: 'bg-blue-500/[0.09] text-blue-600',
+  },
+  utility_large: {
+    label: '重工具模型',
+    desc: '复杂推理 / 多步任务',
+    icon: Zap,
+    accentClass: 'bg-violet-500/[0.09] text-violet-600',
+  },
+  summarizer: {
+    label: '摘要模型',
+    desc: '记忆摘要 / 文本压缩',
+    icon: FileText,
+    accentClass: 'bg-amber-500/[0.09] text-amber-600',
+  },
+  compiler: {
+    label: '编译模型',
+    desc: '记忆编译 / 快速响应',
+    icon: Brain,
+    accentClass: 'bg-rose-500/[0.09] text-rose-600',
+  },
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -55,52 +72,90 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-/**
- * Model dropdown with grouping. Styled consistently with the settings control system.
- */
+// ── Model Dropdown ────────────────────────────────────────────────────────────
+
+interface ModelDropdownProps {
+  value: string | null
+  onChange: (ref: string | null) => void
+  groups: AvailableModelGroup[]
+  isOpen: boolean
+  onOpen: () => void
+  onClose: () => void
+  containerRef: (el: HTMLDivElement | null) => void
+}
+
 function ModelDropdown({
   value,
   onChange,
   groups,
-}: {
-  value: string | null
-  onChange: (ref: string | null) => void
-  groups: AvailableModelGroup[]
-}) {
-  const [open, setOpen] = useState(false)
-  const selectedLabel = value ?? '未设置'
+  isOpen,
+  onOpen,
+  onClose,
+  containerRef,
+}: ModelDropdownProps) {
+  const selectedLabel = value ? value.split('/').slice(1).join('/') : '未设置'
+  const providerLabel = value ? value.split('/')[0] : null
+
+  const hasModels = groups.some((g) => g.models.length > 0)
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        className="flex h-7 w-full items-center justify-between rounded-xl border border-black/[0.09] bg-black/[0.025] px-2.5 text-[12px] font-medium transition-colors hover:bg-black/[0.04]"
+        onClick={() => (isOpen ? onClose() : onOpen())}
+        className={cn(
+          'flex h-8 w-full items-center justify-between gap-2 rounded-xl border px-2.5 text-[12px] font-medium transition-all',
+          isOpen
+            ? 'border-jade/30 bg-jade/[0.04] ring-[2px] ring-jade/15'
+            : 'border-black/[0.09] bg-black/[0.025] hover:bg-black/[0.04]',
+        )}
       >
-        <span className="truncate text-foreground/80">{selectedLabel}</span>
+        <div className="flex min-w-0 items-center gap-1.5 truncate">
+          {providerLabel && (
+            <span className="shrink-0 rounded-md bg-black/[0.06] px-1.5 py-0.5 text-[9.5px] font-semibold text-black/40">
+              {providerLabel}
+            </span>
+          )}
+          <span
+            className={cn(
+              'truncate',
+              value ? 'text-foreground/80' : 'text-muted-foreground/60',
+            )}
+          >
+            {selectedLabel}
+          </span>
+        </div>
         <ChevronDown
-          className={cn('h-3 w-3 shrink-0 text-black/30 transition-transform', open && 'rotate-180')}
+          className={cn(
+            'h-3 w-3 shrink-0 text-black/30 transition-transform duration-150',
+            isOpen && 'rotate-180',
+          )}
         />
       </button>
-      {open && (
-        <div className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-black/[0.09] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+
+      {isOpen && (
+        <div className="absolute left-0 z-[200] mt-1 max-h-60 w-full min-w-[200px] overflow-y-auto rounded-xl border border-black/[0.09] bg-white shadow-[0_8px_32px_rgba(0,0,0,0.14)]">
           {/* Clear option */}
           <button
             type="button"
-            onClick={() => { onChange(null); setOpen(false) }}
+            onClick={() => { onChange(null); onClose() }}
             className={cn(
               'flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors hover:bg-black/[0.03]',
-              !value ? 'text-foreground font-medium' : 'text-muted-foreground',
+              !value ? 'font-medium text-jade' : 'text-muted-foreground',
             )}
           >
-            {!value && <Check className="h-3 w-3 text-jade" />}
-            <span className={!value ? '' : 'ml-5'}>未设置（使用默认）</span>
+            {!value ? (
+              <Check className="h-3 w-3 shrink-0 text-jade" />
+            ) : (
+              <span className="h-3 w-3 shrink-0" />
+            )}
+            未设置（使用默认）
           </button>
+
           {/* Grouped models */}
           {groups.map((group) => (
             <div key={group.provider_id}>
-              <div className="border-t border-black/[0.05] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-widest text-black/25">
+              <div className="border-t border-black/[0.05] bg-black/[0.016] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-widest text-black/30">
                 {group.provider_name}
               </div>
               {group.models.map((model) => {
@@ -110,22 +165,24 @@ function ModelDropdown({
                   <button
                     key={ref}
                     type="button"
-                    onClick={() => { onChange(ref); setOpen(false) }}
+                    onClick={() => { onChange(ref); onClose() }}
                     className={cn(
                       'flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-black/[0.03]',
-                      selected ? 'text-jade font-medium' : '',
+                      selected && 'text-jade',
                     )}
                   >
-                    <div className="flex items-center gap-2 truncate">
+                    <div className="flex min-w-0 items-center gap-2">
                       {selected ? (
                         <Check className="h-3 w-3 shrink-0 text-jade" />
                       ) : (
-                        <span className="w-3 shrink-0" />
+                        <span className="h-3 w-3 shrink-0" />
                       )}
-                      <span className="truncate">{model.model_id}</span>
+                      <span className={cn('truncate', selected && 'font-medium')}>
+                        {model.model_id}
+                      </span>
                     </div>
                     {model.context_window && (
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                      <span className="shrink-0 rounded-md bg-black/[0.05] px-1.5 text-[9.5px] text-black/35">
                         {(model.context_window / 1000).toFixed(0)}K
                       </span>
                     )}
@@ -134,9 +191,16 @@ function ModelDropdown({
               })}
             </div>
           ))}
-          {(groups.length === 0 || groups.every((g) => g.models.length === 0)) && (
-            <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">
-              暂无已配置的模型，请先在 Onboarding 中配置 Provider
+
+          {!hasModels && (
+            <div className="flex flex-col items-center gap-1.5 px-3 py-4 text-center">
+              <AlertCircle className="h-4 w-4 text-black/20" />
+              <p className="text-[11.5px] text-muted-foreground">
+                暂无已配置的模型
+              </p>
+              <p className="text-[10.5px] text-muted-foreground/60">
+                请先在 Onboarding 中配置 Provider
+              </p>
             </div>
           )}
         </div>
@@ -145,13 +209,45 @@ function ModelDropdown({
   )
 }
 
+// ── Page ─────────────────────────────────────────────────────────────────────
+
 export function ModelSettingsPage() {
   const [modelName, setModelName] = useState(DEFAULT_MODEL_NAME)
   const [savingEmbedded, setSavingEmbedded] = useState(false)
   const [roleConfigs, setRoleConfigs] = useState<ModelRoleConfig[]>([])
   const [modelGroups, setModelGroups] = useState<AvailableModelGroup[]>([])
   const [savingRole, setSavingRole] = useState<string | null>(null)
+  const [loadingModels, setLoadingModels] = useState(true)
 
+  /** Which role's dropdown is open — null means all closed */
+  const [openRoleId, setOpenRoleId] = useState<string | null>(null)
+
+  /** Refs to each dropdown container div, keyed by role */
+  const dropdownRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  // ── Close on outside click or ESC ────────────────────────────────────────
+  useEffect(() => {
+    if (!openRoleId) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenRoleId(null)
+    }
+    const handleMouseDown = (e: MouseEvent) => {
+      const ref = dropdownRefs.current.get(openRoleId)
+      if (ref && !ref.contains(e.target as Node)) {
+        setOpenRoleId(null)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('mousedown', handleMouseDown)
+    }
+  }, [openRoleId])
+
+  // ── Data loading ──────────────────────────────────────────────────────────
   const loadEmbeddedConfig = useCallback(async () => {
     try {
       const config = await invoke<ModelConfig>('get_model_config')
@@ -182,11 +278,14 @@ export function ModelSettingsPage() {
   }, [])
 
   const loadModels = useCallback(async () => {
+    setLoadingModels(true)
     try {
       const groups = await invoke<AvailableModelGroup[]>('model_list_available')
       setModelGroups(groups)
     } catch {
       setModelGroups([])
+    } finally {
+      setLoadingModels(false)
     }
   }, [])
 
@@ -216,13 +315,13 @@ export function ModelSettingsPage() {
 
   const handleRoleChange = async (role: string, modelRef: string | null) => {
     setRoleConfigs((prev) =>
-      prev.map((r) => (r.role === role ? { ...r, model_ref: modelRef } : r))
+      prev.map((r) => (r.role === role ? { ...r, model_ref: modelRef } : r)),
     )
     if (!modelRef) return
     setSavingRole(role)
     try {
       await invoke('model_set_role_config', { role, modelRef })
-      toast.success(`已设置 ${ROLE_LABELS[role] || role}`)
+      toast.success(`已设置 ${ROLE_META[role]?.label ?? role}`)
     } catch (err) {
       toast.error('设置失败', { description: String(err) })
       void loadRoleConfigs()
@@ -231,41 +330,103 @@ export function ModelSettingsPage() {
     }
   }
 
+  const configuredCount = roleConfigs.filter((r) => r.model_ref !== null).length
+
   return (
     <div className="flex flex-col gap-3">
-      {/* ── LLM roles ── overflow-visible so dropdowns aren't clipped by card border-radius */}
+      {/* ── LLM Role Assignments ── */}
       <SettingsSurface className="overflow-visible px-5 py-4">
-        <SectionLabel>LLM 模型角色</SectionLabel>
-        <p className="mb-3 text-[11.5px] text-muted-foreground">
-          为不同场景设置不同的模型，实现性能与成本的最佳平衡。
-        </p>
-        <div className="flex flex-col gap-2">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <SectionLabel>LLM 模型角色</SectionLabel>
+            <p className="text-[11.5px] text-muted-foreground">
+              为不同场景分配最合适的模型，兼顾性能与成本
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Configured count badge */}
+            <span className={cn(
+              'rounded-xl px-2.5 py-1 text-[11px] font-semibold',
+              configuredCount === roleConfigs.length
+                ? 'bg-jade/10 text-jade'
+                : configuredCount > 0
+                  ? 'bg-amber-50 text-amber-600'
+                  : 'bg-black/[0.04] text-black/35',
+            )}>
+              {configuredCount}/{roleConfigs.length} 已配置
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadModels()}
+              className="flex h-7 w-7 items-center justify-center rounded-xl border border-black/[0.09] bg-black/[0.025] text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/60"
+              aria-label="刷新模型列表"
+            >
+              <RefreshCw className={cn('h-3 w-3', loadingModels && 'animate-spin')} />
+            </button>
+          </div>
+        </div>
+
+        {/* Role rows */}
+        <div className="flex flex-col divide-y divide-black/[0.05]">
           {roleConfigs.map(({ role, model_ref }) => {
-            const Icon = ROLE_ICONS[role] || Cpu
+            const meta = ROLE_META[role] ?? { label: role, desc: '', icon: Cpu, accentClass: 'bg-black/[0.06] text-black/40' }
+            const Icon = meta.icon
+            const isConfigured = model_ref !== null
+
             return (
               <div
                 key={role}
-                className="flex items-center gap-3 rounded-xl border border-black/[0.06] bg-black/[0.016] px-4 py-2.5"
+                className={cn(
+                  'flex items-center gap-3 py-3 transition-colors first:pt-0 last:pb-0',
+                )}
               >
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-jade/[0.08]">
-                  <Icon className="size-3.5 text-jade" />
+                {/* Status dot */}
+                <div
+                  className={cn(
+                    'mt-0.5 h-1.5 w-1.5 shrink-0 self-start rounded-full',
+                    isConfigured ? 'bg-jade' : 'bg-black/[0.15]',
+                  )}
+                />
+
+                {/* Icon */}
+                <div
+                  className={cn(
+                    'flex size-8 shrink-0 items-center justify-center rounded-xl',
+                    meta.accentClass,
+                  )}
+                >
+                  <Icon className="size-3.5" />
                 </div>
+
+                {/* Label + desc */}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[12.5px] font-semibold tracking-tight">
-                      {ROLE_LABELS[role] || role}
+                      {meta.label}
                     </span>
                     {savingRole === role && (
-                      <span className="text-[10.5px] text-muted-foreground">保存中…</span>
+                      <span className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
+                        <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                        保存中
+                      </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">{ROLE_DESCS[role]}</div>
+                  <div className="text-[11px] text-muted-foreground">{meta.desc}</div>
                 </div>
-                <div className="w-[180px] shrink-0">
+
+                {/* Dropdown */}
+                <div className="w-[200px] shrink-0">
                   <ModelDropdown
                     value={model_ref}
                     onChange={(ref) => void handleRoleChange(role, ref)}
                     groups={modelGroups}
+                    isOpen={openRoleId === role}
+                    onOpen={() => setOpenRoleId(role)}
+                    onClose={() => setOpenRoleId(null)}
+                    containerRef={(el) => {
+                      if (el) dropdownRefs.current.set(role, el)
+                      else dropdownRefs.current.delete(role)
+                    }}
                   />
                 </div>
               </div>
@@ -274,22 +435,22 @@ export function ModelSettingsPage() {
         </div>
       </SettingsSurface>
 
-      {/* ── Embedded model ── */}
+      {/* ── Embedded vectorization model ── */}
       <SettingsSurface className="px-5 py-4">
         <div className="mb-3 flex items-center gap-2.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-jade/[0.08]">
-            <Brain className="size-3.5 text-jade" />
+          <div className="flex size-8 items-center justify-center rounded-xl bg-violet-500/[0.09]">
+            <Brain className="size-4 text-violet-600" />
           </div>
           <div>
             <SectionLabel>向量化模型</SectionLabel>
           </div>
         </div>
-        <p className="mb-3 text-[11.5px] leading-5 text-muted-foreground">
+        <p className="mb-4 text-[11.5px] leading-5 text-muted-foreground">
           配置本地{' '}
-          <code className="rounded-md bg-black/[0.05] px-1 text-[11px] font-mono">
+          <code className="rounded-md bg-black/[0.05] px-1.5 py-0.5 text-[11px] font-mono">
             multilingual-e5-small
           </code>{' '}
-          向量化模型名称。
+          向量化模型名称。修改后需重启应用生效。
         </p>
         <div className="flex items-end gap-2.5">
           <div className="flex-1">
@@ -303,34 +464,29 @@ export function ModelSettingsPage() {
           <button
             type="button"
             onClick={handleSaveEmbedded}
-            disabled={savingEmbedded || modelName === DEFAULT_MODEL_NAME}
-            className="h-8 shrink-0 rounded-xl border border-black/[0.09] bg-jade px-4 text-[12px] font-medium text-white shadow-none transition-colors hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={savingEmbedded || modelName.trim() === DEFAULT_MODEL_NAME}
+            className="h-8 shrink-0 rounded-xl bg-jade px-4 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {savingEmbedded ? '保存中…' : '保存'}
           </button>
         </div>
       </SettingsSurface>
 
-      {/* ── Info ── */}
+      {/* ── Info card ── */}
       <SettingsSurface className="px-5 py-4">
-        <SectionLabel>关于向量化模型</SectionLabel>
-        <div className="flex flex-col gap-2 text-[11.5px] leading-5 text-muted-foreground">
+        <SectionLabel>说明</SectionLabel>
+        <div className="flex flex-col gap-2 text-[11.5px] leading-[1.6] text-muted-foreground">
           <p>
             if2AI 使用{' '}
-            <code className="rounded-md bg-black/[0.05] px-1 text-[11px] font-mono">fastembed-rs</code>{' '}
+            <code className="rounded bg-black/[0.05] px-1 text-[11px] font-mono">fastembed-rs</code>{' '}
             进行本地文本向量化，支持 100+ 语言（中/英/日/韩等）。
           </p>
           <p>
-            模型在首次运行时自动下载并缓存到{' '}
-            <code className="rounded-md bg-black/[0.05] px-1 text-[11px] font-mono">
+            模型首次运行时自动下载并缓存至{' '}
+            <code className="rounded bg-black/[0.05] px-1 text-[11px] font-mono">
               ~/.if2ai/models/fastembed/
             </code>
             ，之后离线可用。
-          </p>
-          <p>
-            修改模型名称后需重启应用以生效。请确保新名称与{' '}
-            <code className="rounded-md bg-black/[0.05] px-1 text-[11px] font-mono">fastembed</code>{' '}
-            支持的模型一致。
           </p>
         </div>
       </SettingsSurface>

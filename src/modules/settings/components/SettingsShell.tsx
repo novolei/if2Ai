@@ -1,8 +1,21 @@
 import type { ReactNode } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Toaster } from '@/components/ui/sonner'
 import { SETTINGS_SECTIONS } from '../data'
 import type { SettingsSectionId } from '../types'
 import { SettingsSidebar } from './SettingsSidebar'
+
+async function startDrag(e: React.MouseEvent<HTMLElement>) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement | null
+  if (target?.closest('[data-window-no-drag="true"]')) return
+  e.preventDefault()
+  try {
+    await getCurrentWindow().startDragging()
+  } catch {
+    // Not supported in all contexts.
+  }
+}
 
 interface SettingsShellProps {
   activeSection: SettingsSectionId
@@ -32,8 +45,11 @@ export function SettingsShell({
 
         {/* Content */}
         <main className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#f5f6f7] px-6 py-5 lg:px-8 lg:py-6">
-          {/* Page header */}
-          <div className="mb-5 flex items-center gap-3">
+          {/* Page header — also acts as a drag zone on the right side of the window */}
+          <div
+            className="mb-5 flex cursor-default items-center gap-3 select-none"
+            onMouseDown={(e) => void startDrag(e)}
+          >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-jade/10">
               <Icon className="h-4 w-4 text-jade" />
             </div>

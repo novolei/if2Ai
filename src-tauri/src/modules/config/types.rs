@@ -347,10 +347,9 @@ impl AppConfig {
         provider_id: &str,
         auth_variant: Option<&str>,
     ) -> Option<&ProviderConfig> {
-        self.configured_providers.iter().find(|p| {
-            p.provider_id == provider_id
-                && p.auth_variant.as_deref() == auth_variant
-        })
+        self.configured_providers
+            .iter()
+            .find(|p| p.provider_id == provider_id && p.auth_variant.as_deref() == auth_variant)
     }
 
     /// Validate the configuration and return a list of issues.

@@ -11,6 +11,7 @@
 //! - projects: Multi-project support
 //! - memory: Memory storage and retrieval
 //! - scheduler: Cron job scheduling
+//! - browser: Chrome/Chromium automation via CDP (chromiumoxide)
 
 pub mod api;
 pub mod browser;

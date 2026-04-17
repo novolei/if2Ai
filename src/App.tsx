@@ -688,6 +688,18 @@ function App() {
     }
   }, [])
 
+  // Cmd+, (macOS) / Ctrl+, (Win/Linux) — universal shortcut to open settings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault()
+        void openSettingsWindow()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
       setLoading(true)
@@ -2195,7 +2207,7 @@ function App() {
               runningSessionIds={runningSessionIds}
             />
           ) : activeSection === 'memory' ? (
-            <MemoryBrowser />
+            <MemoryBrowser onStartWindowDrag={startWindowDrag} />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
           )}

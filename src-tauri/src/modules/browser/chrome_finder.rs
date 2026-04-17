@@ -8,16 +8,22 @@ use std::path::PathBuf;
 /// Candidate paths to probe per platform.
 #[cfg(target_os = "macos")]
 fn candidates() -> Vec<PathBuf> {
-    vec![
+    let mut paths = vec![
         PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
-        PathBuf::from("/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"),
+        PathBuf::from(
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        ),
         PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
-        // User-level installs
-        dirs::home_dir()
-            .map(|h| h.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
-            .unwrap_or_default(),
-    ]
+    ];
+    // User-level install: only add when home dir is available, avoiding a
+    // misleading empty PathBuf in the candidates list.
+    if let Some(home) = dirs::home_dir() {
+        paths.push(
+            home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        );
+    }
+    paths
 }
 
 #[cfg(target_os = "linux")]

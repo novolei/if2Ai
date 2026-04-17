@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils'
 import {
   BotMessageSquare,
   CheckCircle2,
+  ChevronDown,
   Code2,
   FileText,
   Filter,
@@ -57,7 +58,7 @@ interface SkillsSettingsPageProps {
   onRefresh: () => void
   onToggleSkill: (skill: SkillInfo, enabled: boolean) => void
   onStartConversationCreate: () => void
-  onReviewSkill: (skill: SkillInfo) => void
+  onReviewSkill: (skill: SkillInfo) => Promise<string>
   onApproveSkill: (skill: SkillInfo) => void
   onRollbackSkill: (skill: SkillInfo) => void
 }
@@ -980,10 +981,65 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
+// ─── Pipeline Step Indicator ──────────────────────────────────────────────────
+
+type PipelineStage = 'draft' | 'reviewing' | 'review_passed' | 'quarantine' | 'active'
+
+const PIPELINE_STEPS: { id: PipelineStage; label: string }[] = [
+  { id: 'draft', label: '待 Review' },
+  { id: 'review_passed', label: 'Review 通过' },
+  { id: 'active', label: '已激活' },
+]
+
+function PipelineIndicator({ status }: { status: string }) {
+  const stageIdx = (s: string) => {
+    if (s === 'active') return 2
+    if (s === 'review_passed') return 1
+    return 0
+  }
+  const activeIdx = stageIdx(status)
+  const isQuarantine = status === 'quarantine'
+
+  return (
+    <div className="flex items-center gap-1">
+      {PIPELINE_STEPS.map((step, i) => {
+        const done = i < activeIdx
+        const current = i === activeIdx && !isQuarantine
+        const blocked = isQuarantine && i === 1
+        return (
+          <div key={step.id} className="flex items-center gap-1">
+            <div className="flex items-center gap-1">
+              <div
+                className={cn(
+                  'h-1.5 w-1.5 rounded-full transition-colors',
+                  done ? 'bg-jade' : current ? 'bg-jade' : blocked ? 'bg-amber-400' : 'bg-black/[0.12]',
+                )}
+              />
+              <span
+                className={cn(
+                  'text-[10px] font-medium',
+                  done ? 'text-jade/70' : current ? 'text-jade' : blocked ? 'text-amber-600' : 'text-black/25',
+                )}
+              >
+                {blocked ? '已隔离' : step.label}
+              </span>
+            </div>
+            {i < PIPELINE_STEPS.length - 1 && (
+              <div className={cn('mx-1 h-px w-3', done ? 'bg-jade/30' : 'bg-black/[0.08]')} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Proposals Tab ────────────────────────────────────────────────────────────
 
 /**
  * Full-page tab showing Agent-created skills pending human review and approval.
+ * Enforces the correct security gate: draft → review → review_passed → approve → active.
+ * A skill in 'draft' status CANNOT be approved without first running Review.
  */
 function ProposalsTab({
   skills,
@@ -994,15 +1050,38 @@ function ProposalsTab({
 }: {
   skills: SkillInfo[]
   loading: boolean
-  onReview: (skill: SkillInfo) => void
+  onReview: (skill: SkillInfo) => Promise<string>
   onApprove: (skill: SkillInfo) => void
   onRollback: (skill: SkillInfo) => void
 }) {
+  const [reviewResults, setReviewResults] = useState<Record<string, string>>({})
+  const [reviewing, setReviewing] = useState<Set<string>>(new Set())
+  const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+
   const proposals = skills.filter(
     (s) =>
-      (s.review_status === 'draft' || s.review_status === 'quarantine' || s.review_status === 'review_passed') &&
+      (s.review_status === 'draft' ||
+        s.review_status === 'quarantine' ||
+        s.review_status === 'review_passed') &&
       (s.source === 'workspace' || s.source === 'user'),
   )
+
+  const handleReview = async (skill: SkillInfo) => {
+    setReviewing((prev) => new Set([...prev, skill.path]))
+    try {
+      const result = await onReview(skill)
+      setReviewResults((prev) => ({ ...prev, [skill.path]: result }))
+      setExpandedResults((prev) => new Set([...prev, skill.path]))
+    } catch {
+      // error already toasted by parent handler
+    } finally {
+      setReviewing((prev) => {
+        const next = new Set(prev)
+        next.delete(skill.path)
+        return next
+      })
+    }
+  }
 
   if (loading) {
     return <InfoBanner text="正在加载技能列表..." tone="neutral" />
@@ -1011,7 +1090,7 @@ function ProposalsTab({
   if (proposals.length === 0) {
     return (
       <div
-        className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-black/[0.07] bg-white py-12 text-center"
+        className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-black/[0.07] bg-white py-14 text-center"
         style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}
       >
         <div className="flex size-12 items-center justify-center rounded-2xl bg-jade/10">
@@ -1019,80 +1098,203 @@ function ProposalsTab({
         </div>
         <div>
           <div className="text-[13.5px] font-semibold text-foreground/70">暂无待审批提案</div>
-          <p className="mt-1 text-[11.5px] text-muted-foreground">
-            当 Agent 创建新技能后，会在此处等待你的 Review 和批准
+          <p className="mt-1 max-w-[260px] text-[11.5px] leading-5 text-muted-foreground">
+            当 Agent 创建新技能后，会在此处等待你的安全 Review 和批准
           </p>
+        </div>
+        <div className="flex items-center gap-3 text-[10.5px] text-black/25">
+          <div className="flex items-center gap-1">
+            <div className="h-1.5 w-1.5 rounded-full bg-black/[0.12]" />
+            <span>待 Review</span>
+          </div>
+          <div className="h-px w-3 bg-black/[0.08]" />
+          <div className="flex items-center gap-1">
+            <div className="h-1.5 w-1.5 rounded-full bg-black/[0.12]" />
+            <span>Review 通过</span>
+          </div>
+          <div className="h-px w-3 bg-black/[0.08]" />
+          <div className="flex items-center gap-1">
+            <div className="h-1.5 w-1.5 rounded-full bg-black/[0.12]" />
+            <span>已激活</span>
+          </div>
         </div>
       </div>
     )
   }
 
+  const draftCount = proposals.filter((s) => s.review_status === 'draft').length
+  const passedCount = proposals.filter((s) => s.review_status === 'review_passed').length
+  const quarantineCount = proposals.filter((s) => s.review_status === 'quarantine').length
+
   return (
     <>
-      {/* Header info */}
-      <div className="flex items-center justify-between rounded-2xl border border-amber-200/80 bg-amber-50 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-100">
-            <BotMessageSquare className="h-4 w-4 text-amber-600" />
+      {/* Summary banner */}
+      <div className="flex items-start gap-3 rounded-2xl border border-amber-200/70 bg-amber-50 px-4 py-3.5">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-100">
+          <BotMessageSquare className="h-4 w-4 text-amber-600" />
+        </div>
+        <div className="flex-1">
+          <p className="text-[12.5px] font-semibold text-amber-900">
+            {proposals.length} 个 Agent 提案待处理
+          </p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-amber-700">
+            {draftCount > 0 && <span>{draftCount} 待 Review</span>}
+            {draftCount > 0 && (passedCount > 0 || quarantineCount > 0) && (
+              <span className="text-amber-300">·</span>
+            )}
+            {passedCount > 0 && <span>{passedCount} Review 通过可批准</span>}
+            {passedCount > 0 && quarantineCount > 0 && (
+              <span className="text-amber-300">·</span>
+            )}
+            {quarantineCount > 0 && <span className="text-amber-800">{quarantineCount} 已隔离需注意</span>}
           </div>
-          <div>
-            <p className="text-[12.5px] font-semibold text-amber-900">
-              {proposals.length} 个提案待审批
-            </p>
-            <p className="text-[11px] text-amber-700">
-              以下技能由 AI Agent 自动创建，需要 Review 并批准后才可激活使用
-            </p>
-          </div>
+        </div>
+        {/* Security note */}
+        <div className="flex items-center gap-1 rounded-lg bg-amber-100 px-2 py-1">
+          <ShieldAlert className="h-3 w-3 text-amber-600" />
+          <span className="text-[10px] font-semibold text-amber-700">需安全 Review</span>
         </div>
       </div>
 
       {/* Proposal cards */}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2.5">
         {proposals.map((skill) => {
-          const canReview = skill.review_status === 'draft' || skill.review_status === 'quarantine'
-          const canApprove = skill.review_status === 'draft' || skill.review_status === 'review_passed'
-          const canRollback = skill.review_status === 'active' || skill.review_status === 'review_passed' || skill.review_status === 'quarantine'
+          const isDraft = skill.review_status === 'draft'
+          const isQuarantine = skill.review_status === 'quarantine'
+          const isReviewPassed = skill.review_status === 'review_passed'
+          const isReviewing = reviewing.has(skill.path)
+          const reviewResult = reviewResults[skill.path]
+          const resultExpanded = expandedResults.has(skill.path)
+
+          // Architecture gate: 'draft' cannot be approved — must pass Review first
+          const canReview = isDraft || isQuarantine
+          const canApprove = isReviewPassed
+          const canDiscard = isDraft || isQuarantine || isReviewPassed
 
           return (
             <div
               key={skill.path}
-              className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white"
-              style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}
+              className="overflow-hidden rounded-2xl border bg-white"
+              style={{
+                borderColor: isQuarantine ? 'rgb(251 191 36 / 0.4)' : 'rgba(0,0,0,0.07)',
+                boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+              }}
             >
-              {/* Card header */}
-              <div className="flex items-start justify-between gap-3 px-5 py-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13.5px] font-semibold tracking-tight">{skill.name}</span>
-                    <StatusPill status={skill.review_status} />
+              {/* Quarantine accent strip */}
+              {isQuarantine && (
+                <div className="h-0.5 w-full bg-gradient-to-r from-amber-300 to-amber-400" />
+              )}
+              {/* Review passed accent strip */}
+              {isReviewPassed && (
+                <div className="h-0.5 w-full bg-gradient-to-r from-jade/40 to-jade/60" />
+              )}
+
+              {/* Card body */}
+              <div className="px-5 py-4">
+                {/* Top row: name + pipeline */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13.5px] font-semibold tracking-tight">{skill.name}</span>
+                      <StatusPill status={skill.review_status} />
+                    </div>
+                    {skill.description && (
+                      <p className="mt-0.5 text-[11.5px] leading-[1.5] text-muted-foreground line-clamp-2">
+                        {skill.description}
+                      </p>
+                    )}
                   </div>
-                  {skill.description && (
-                    <p className="mt-0.5 text-[11.5px] text-muted-foreground line-clamp-2">
-                      {skill.description}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <span className="rounded-lg border border-black/[0.07] bg-black/[0.025] px-2 py-0.5 text-[10px] font-medium text-foreground/50">
-                      {skill.source}
-                    </span>
-                    <span className="truncate rounded-lg border border-black/[0.06] bg-black/[0.016] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-                      {skill.path}
-                    </span>
-                  </div>
+                  <PipelineIndicator status={skill.review_status} />
                 </div>
+
+                {/* Metadata tags */}
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  <span className="rounded-lg border border-black/[0.07] bg-black/[0.025] px-2 py-0.5 text-[10px] font-medium text-foreground/50">
+                    {skill.source}
+                  </span>
+                  <span className="max-w-[280px] truncate rounded-lg border border-black/[0.06] bg-black/[0.016] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {skill.path}
+                  </span>
+                </div>
+
+                {/* Contextual hint for draft status */}
+                {isDraft && (
+                  <div className="mt-3 flex items-center gap-1.5 rounded-xl border border-black/[0.06] bg-black/[0.02] px-3 py-2">
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-black/30" />
+                    <span className="text-[11px] text-muted-foreground">
+                      需先运行 <span className="font-semibold text-foreground/60">安全 Review</span>，通过后才能批准激活
+                    </span>
+                  </div>
+                )}
+
+                {/* Quarantine warning */}
+                {isQuarantine && (
+                  <div className="mt-3 flex items-center gap-1.5 rounded-xl border border-amber-200/60 bg-amber-50 px-3 py-2">
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <span className="text-[11px] text-amber-700">
+                      Review 发现安全问题，已隔离。可重新 Review 或直接丢弃此提案。
+                    </span>
+                  </div>
+                )}
+
+                {/* Inline review result */}
+                {reviewResult && (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedResults((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(skill.path)) next.delete(skill.path)
+                          else next.add(skill.path)
+                          return next
+                        })
+                      }
+                      className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground/70"
+                    >
+                      <CheckCircle2 className="h-3 w-3 text-jade/70" />
+                      Review 报告
+                      <ChevronDown
+                        className={cn(
+                          'h-2.5 w-2.5 transition-transform',
+                          resultExpanded && 'rotate-180',
+                        )}
+                      />
+                    </button>
+                    {resultExpanded && (
+                      <pre className="mt-1.5 max-h-32 overflow-y-auto rounded-xl border border-black/[0.06] bg-black/[0.025] px-3 py-2.5 text-[10.5px] leading-[1.5] text-muted-foreground whitespace-pre-wrap font-mono">
+                        {reviewResult}
+                      </pre>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Action bar */}
               <div className="flex items-center gap-2 border-t border-black/[0.05] bg-black/[0.016] px-5 py-2.5">
+                {/* Review button (draft / quarantine) */}
                 {canReview && (
                   <button
                     type="button"
-                    onClick={() => onReview(skill)}
-                    className="h-7 rounded-xl border border-black/[0.09] bg-white px-3 text-[11.5px] font-medium text-foreground/70 transition-colors hover:bg-black/[0.03]"
+                    onClick={() => void handleReview(skill)}
+                    disabled={isReviewing}
+                    className="flex h-7 items-center gap-1.5 rounded-xl border border-black/[0.09] bg-white px-3 text-[11.5px] font-medium text-foreground/70 transition-colors hover:bg-black/[0.03] disabled:opacity-50"
                   >
-                    Review
+                    {isReviewing ? (
+                      <>
+                        <ShieldAlert className="h-3 w-3 animate-pulse text-jade" />
+                        Review 中…
+                      </>
+                    ) : (
+                      <>
+                        <ShieldAlert className="h-3 w-3" />
+                        {isQuarantine ? '重新 Review' : '运行 Review'}
+                      </>
+                    )}
                   </button>
                 )}
+
+                {/* Approve button — only review_passed */}
                 {canApprove && (
                   <button
                     type="button"
@@ -1103,15 +1305,18 @@ function ProposalsTab({
                     批准激活
                   </button>
                 )}
+
                 <div className="flex-1" />
-                {canRollback && (
+
+                {/* Discard / rollback */}
+                {canDiscard && (
                   <button
                     type="button"
                     onClick={() => onRollback(skill)}
                     className="flex h-7 items-center gap-1.5 rounded-xl border border-red-200/70 bg-red-50 px-3 text-[11.5px] font-medium text-red-600 transition-colors hover:bg-red-100"
                   >
                     <XCircle className="h-3 w-3" />
-                    回滚
+                    丢弃
                   </button>
                 )}
               </div>

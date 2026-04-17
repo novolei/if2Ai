@@ -19,8 +19,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-17'
-  completed_slices: []
-  current_slice: '7B.1'
+  completed_slices: ['7B.1']
+  current_slice: '7B.2'
   blocked: []
   notes: >
     Phase 7B 初始化。目标：实现 12 项 browser 能力 Gap（Critical + High 优先级）。
@@ -36,7 +36,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7B.1"
     name: "Cargo 依赖 + BrowserBackend 抽象层"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/browser-control-system.md §2.1
     estimated_days: 0.5

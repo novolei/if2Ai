@@ -2,7 +2,7 @@
 //!
 //! Provides commands for managing application windows.
 
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 
 /// Open the settings window.
 /// If the settings window already exists, focus it instead of creating a new one.
@@ -17,17 +17,21 @@ pub fn open_settings_window(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // Create new settings window
+    // Create new settings window.
+    // Uses Overlay title bar + hidden title so the custom SettingsSidebar header
+    // (with logo and close button) takes full control of dragging and chrome.
     let settings_window = WebviewWindowBuilder::new(
         &app,
         "settings",
         WebviewUrl::App("index.html?window=settings".into()),
     )
     .title("设置")
-    .inner_size(800.0, 600.0)
-    .min_inner_size(600.0, 400.0)
+    .inner_size(960.0, 740.0)
+    .min_inner_size(880.0, 680.0)
     .center()
     .resizable(true)
+    .title_bar_style(TitleBarStyle::Overlay)
+    .hidden_title(true)
     .build()
     .map_err(|e| e.to_string())?;
 

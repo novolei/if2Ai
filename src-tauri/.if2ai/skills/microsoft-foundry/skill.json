@@ -6,9 +6,9 @@
   "id": "microsoft-foundry",
   "minAppVersion": "0.1.0",
   "review": {
-    "lastReviewedAt": "",
-    "riskLevel": "medium",
-    "status": "draft"
+    "lastReviewedAt": "2026-04-17T10:57:10.875958+00:00",
+    "riskLevel": "low",
+    "status": "active"
   },
   "version": "0.1.0"
 }
