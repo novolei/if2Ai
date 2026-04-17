@@ -452,6 +452,16 @@ fn main() {
             config_reset_onboarding,
         ])
         .setup(|app| {
+            // Inject AppHandle into BrowserRegistry so the browser tool can emit
+            // "browser-status" Tauri events to the frontend BrowserCard.
+            {
+                let registry = app
+                    .state::<std::sync::Arc<modules::browser::BrowserRegistry>>()
+                    .inner()
+                    .clone();
+                registry.set_app_handle(app.handle().clone());
+            }
+
             let bundled_skills_dir = ["resources/bundled-skills", "bundled-skills"]
                 .iter()
                 .filter_map(|candidate| {

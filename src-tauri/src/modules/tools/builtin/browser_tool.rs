@@ -27,6 +27,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
+use crate::modules::browser::events::emit_browser_status;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
 // ── SSRF / URL safety ─────────────────────────────────────────────────────────
@@ -221,6 +222,18 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
 
 // ── Action dispatch ───────────────────────────────────────────────────────────
 
+/// Spawn a fire-and-forget task to emit a `"browser-status"` Tauri event.
+///
+/// The `AppHandle` is obtained from the registry; if it hasn't been injected
+/// yet (e.g. during unit tests) the call is silently a no-op.
+fn spawn_emit(registry: Arc<BrowserRegistry>, session_id: String) {
+    if let Some(app) = registry.app_handle().cloned() {
+        tokio::spawn(async move {
+            emit_browser_status(&app, &session_id, &registry).await;
+        });
+    }
+}
+
 async fn execute_browser_action(
     registry: Arc<BrowserRegistry>,
     args: Value,
@@ -245,6 +258,7 @@ async fn execute_browser_action(
                 .launch(&session_id)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok("Browser started. Use 'navigate' to load a URL.".to_owned())
         }
 
@@ -253,6 +267,7 @@ async fn execute_browser_action(
                 .close(&session_id)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok("Browser stopped.".to_owned())
         }
 
@@ -288,15 +303,20 @@ async fn execute_browser_action(
             }
 
             match registry.navigate(&session_id, url).await {
-                Ok(result) => Ok(format!(
-                    "Navigated to: {}\nTitle: {}\n\n{}",
-                    result.url, result.title, result.snapshot
-                )),
+                Ok(result) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(format!(
+                        "Navigated to: {}\nTitle: {}\n\n{}",
+                        result.url, result.title, result.snapshot
+                    ))
+                }
                 Err(BrowserError::Cdp(_)) | Err(BrowserError::Snapshot(_)) => {
                     // The browser process may have exited mid-operation.
                     // Remove the stale session entry so the next navigate call
                     // can auto-launch a fresh browser instead of failing again.
                     let _ = registry.close(&session_id).await;
+                    // Emit stopped status so BrowserCard disappears.
+                    spawn_emit(Arc::clone(&registry), session_id);
                     Err(ToolError::Handler(
                         "Browser process exited unexpectedly. \
                          The session has been reset — call 'navigate' again \
@@ -340,6 +360,7 @@ async fn execute_browser_action(
                 .click(&session_id, ref_num)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 
@@ -359,6 +380,7 @@ async fn execute_browser_action(
                 .type_text(&session_id, text, ref_num, press_enter)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 
@@ -382,6 +404,7 @@ async fn execute_browser_action(
                 .scroll(&session_id, direction, amount)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 
@@ -402,6 +425,7 @@ async fn execute_browser_action(
                 .select_option(&session_id, ref_num, value)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 
@@ -416,6 +440,7 @@ async fn execute_browser_action(
                 .press_key(&session_id, key)
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 
@@ -430,6 +455,7 @@ async fn execute_browser_action(
                 .wait(&session_id, timeout_ms, "load")
                 .await
                 .map_err(|e| ToolError::Handler(e.to_string()))?;
+            spawn_emit(Arc::clone(&registry), session_id);
             Ok(snapshot)
         }
 

@@ -11,16 +11,14 @@
 //! - Concurrent tool calls on *different* sessions never block each other.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::modules::browser::errors::BrowserError;
-use crate::modules::browser::session::{
-    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir,
-};
+use crate::modules::browser::session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
 /// and the `get_browser_sessions` command.
@@ -43,6 +41,11 @@ pub struct BrowserRegistry {
     sessions: DashMap<String, Arc<Mutex<BrowserSession>>>,
     /// Path used by the cold-state persistence layer (injected; used in 7B.7).
     pub cold_state_path: PathBuf,
+    /// Tauri `AppHandle` injected in the `setup()` callback so the browser
+    /// tool can emit `"browser-status"` events to the frontend BrowserCard.
+    ///
+    /// Set exactly once via [`Self::set_app_handle`]; `None` before setup.
+    app_handle: OnceLock<tauri::AppHandle>,
 }
 
 impl BrowserRegistry {
@@ -55,7 +58,24 @@ impl BrowserRegistry {
         Arc::new(Self {
             sessions: DashMap::new(),
             cold_state_path,
+            app_handle: OnceLock::new(),
         })
+    }
+
+    /// Inject the Tauri `AppHandle` so the browser tool can emit frontend events.
+    ///
+    /// Called once from `main.rs` `.setup()` after the app is built.
+    /// Subsequent calls are silently ignored (OnceLock semantics).
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        let _ = self.app_handle.set(handle);
+    }
+
+    /// Return a reference to the `AppHandle`, if it has been injected.
+    ///
+    /// Returns `None` before `setup()` completes (e.g. in unit tests).
+    #[must_use]
+    pub fn app_handle(&self) -> Option<&tauri::AppHandle> {
+        self.app_handle.get()
     }
 
     // ── Internal: clone Arc without holding shard lock across .await ──────────
@@ -157,11 +177,7 @@ impl BrowserRegistry {
     }
 
     /// Click the element with the given `ref_num` and return a fresh snapshot.
-    pub async fn click(
-        &self,
-        session_id: &str,
-        ref_num: u32,
-    ) -> Result<String, BrowserError> {
+    pub async fn click(&self, session_id: &str, ref_num: u32) -> Result<String, BrowserError> {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
         guard.click(ref_num).await
@@ -205,11 +221,7 @@ impl BrowserRegistry {
     }
 
     /// Press a named key.
-    pub async fn press_key(
-        &self,
-        session_id: &str,
-        key: &str,
-    ) -> Result<String, BrowserError> {
+    pub async fn press_key(&self, session_id: &str, key: &str) -> Result<String, BrowserError> {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
         guard.press_key(key).await
@@ -261,9 +273,7 @@ impl BrowserRegistry {
             Ok(a) => a,
             Err(_) => return None,
         };
-        arc.try_lock()
-            .ok()
-            .and_then(|s| s.current_url.clone())
+        arc.try_lock().ok().and_then(|s| s.current_url.clone())
     }
 
     /// Return whether a browser is currently active for `session_id`.
