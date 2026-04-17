@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::modules::memory::policy::{MemoryPolicyEngine, PolicyDecision};
 use crate::modules::memory::scope::MemoryScopeResolver;
 use crate::modules::memory::{MemoryCategory, SharedMemoryProvider};
 use crate::modules::tools::context::SharedToolContext;
@@ -52,6 +53,26 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     .ok()
                     .map(|ctx| MemoryScopeResolver::from_tool_context(&ctx))
                     .unwrap_or_else(crate::modules::memory::scope::MemoryExecutionScope::global);
+
+                // Evaluate write policy (shadow mode by default — logs decisions, never blocks).
+                let policy = MemoryPolicyEngine::default_shadow();
+                let policy_result = policy.evaluate_write(&key, &content, &category, &scope);
+                tracing::debug!(
+                    "[memory_store] policy decision={:?} reason={} key={}",
+                    policy_result.decision,
+                    policy_result.reason_code.label(),
+                    key,
+                );
+
+                // In enforce mode a Deny decision would return an error here;
+                // in shadow mode all writes proceed regardless of the policy decision.
+                if policy_result.decision == PolicyDecision::Deny {
+                    return Err(ToolError::Handler(format!(
+                        "memory write denied by policy: {} — {}",
+                        policy_result.reason_code.label(),
+                        policy_result.message
+                    )));
+                }
 
                 memory
                     .store_scoped(&key, &content, category, &scope)

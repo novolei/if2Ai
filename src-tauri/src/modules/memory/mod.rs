@@ -13,6 +13,7 @@ pub mod compat;
 pub mod embedding;
 pub mod hrr;
 pub mod intent;
+pub mod policy;
 mod providers;
 pub mod retrieval;
 pub mod scope;
