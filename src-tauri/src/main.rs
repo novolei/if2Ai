@@ -17,6 +17,8 @@ use commands::{
     channel_list,
     channel_list_configured,
     channel_test,
+    // Browser control commands (Phase 7B)
+    close_browser_session,
     close_settings_window,
     config_load,
     config_reset_onboarding,
@@ -35,6 +37,8 @@ use commands::{
     export_trajectories,
     fetch_skills_market_audits,
     focus_main_window_and_prefill_prompt,
+    get_browser_sessions,
+    get_chrome_status,
     get_memory_config,
     get_model_config,
     get_project,
@@ -293,9 +297,8 @@ fn main() {
     ));
     let memory_provider = create_memory_provider();
     let scheduler_provider = modules::scheduler::default_scheduler();
-    let browser_registry = modules::browser::BrowserRegistry::new(
-        if2ai_dir.join("browser-cold-state.json"),
-    );
+    let browser_registry =
+        modules::browser::BrowserRegistry::new(if2ai_dir.join("browser-cold-state.json"));
     modules::tools::register_builtin_tools(
         &tool_registry,
         memory_provider.clone(),
@@ -324,11 +327,18 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
+        // Browser registry as separate managed state so browser commands can
+        // access it without going through AppState.
+        .manage(browser_registry)
         .invoke_handler(tauri::generate_handler![
             run_agent_turn,
             start_agent_stream,
             stop_agent_stream,
             respond_permission,
+            // Browser control commands (Phase 7B)
+            get_browser_sessions,
+            close_browser_session,
+            get_chrome_status,
             list_sessions,
             delete_session,
             rename_session,

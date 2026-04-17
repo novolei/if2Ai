@@ -79,6 +79,7 @@ impl AppState {
 }
 
 pub mod agent;
+pub mod browser;
 pub mod memory;
 pub mod project;
 pub mod session;
@@ -101,6 +102,10 @@ pub mod system_check;
 #[allow(unused_imports)]
 pub use agent::{
     respond_permission, run_agent_turn, start_agent_stream, stop_agent_stream, RunAgentTurnResponse,
+};
+#[allow(unused_imports)]
+pub use browser::{
+    close_browser_session, get_browser_sessions, get_chrome_status, ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use memory::{memory_delete, memory_export, memory_purge, memory_recall, MemoryEntryDto};

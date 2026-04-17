@@ -5,26 +5,31 @@
 //!
 //! - [`chrome_finder`] — binary discovery
 //! - [`errors`] — shared error type
+//! - [`registry`] — multi-session registry
+//! - [`session`] — single-session lifecycle and actions
+//! - [`snapshot`] — DOM AXTree snapshot algorithm
+//! - [`events`] — Tauri event payloads and emission helpers
 //!
-//! Additional modules (session, registry, snapshot, events, cold_state) are
-//! added in subsequent slices (7B.2 – 7B.7).
+//! Additional modules (cold_state) are added in slice 7B.7.
 //!
 //! # Dead-code suppression
 //!
-//! The items in this module are wired into the command and tool layers in
-//! slices 7B.2–7B.5. Until then they appear unused to `rustc` when the binary
-//! is compiled; the `dead_code` allow avoids spurious warnings during the
-//! incremental build.
-// Items are consumed in slices 7B.2–7B.5; suppress unused warnings until wired.
+//! The `snapshot` and `session` internals are consumed via the tool layer; the
+//! `allow` below suppresses warnings for items not yet wired at the binary
+//! level. Remove once all slices are complete.
+// snapshot module items are consumed transitively via session; allow dead_code
+// until all slices are wired.
 #![allow(dead_code, unused_imports)]
 
 pub mod chrome_finder;
 pub mod errors;
+pub mod events;
 pub mod registry;
 pub mod session;
 pub mod snapshot;
 
 pub use chrome_finder::{find_chrome_binary, ChromeStatus};
 pub use errors::BrowserError;
+pub use events::{emit_browser_status, BrowserStatusEvent};
 pub use registry::{BrowserRegistry, BrowserStatusEntry};
 pub use session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};

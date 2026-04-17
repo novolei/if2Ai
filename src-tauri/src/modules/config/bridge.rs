@@ -208,6 +208,7 @@ mod tests {
             routing: None,
             onboarding: onboarding_state,
             security_confirmed: true,
+            configured_providers: vec![],
         };
 
         // Verify that openai maps to OPENAI_AUTH_TOKEN key

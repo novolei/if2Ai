@@ -9,6 +9,7 @@
 //! - modules/tools     (from /rust/crates/tools) - Tool system
 //! - modules/commands  (from /rust/crates/commands) - Command handling
 //! - modules/plugins   (from /rust/crates/plugins) - Plugin system
+//! - modules/browser   (Phase 7B) - AI-driven browser control (chromiumoxide)
 //!
 //! This is the single, unified codebase for all If2Ai development.
 

@@ -398,6 +398,7 @@ mod tests {
             routing: None,
             onboarding,
             security_confirmed: false,
+            configured_providers: vec![],
         };
 
         let migrated = migrate_config(config);
@@ -417,6 +418,7 @@ mod tests {
             routing: None,
             onboarding,
             security_confirmed: false,
+            configured_providers: vec![],
         };
 
         let migrated = migrate_config(config);

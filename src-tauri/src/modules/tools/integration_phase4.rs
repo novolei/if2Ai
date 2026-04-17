@@ -50,7 +50,10 @@ mod tests {
         // Register all tools
         let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
-        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler);
+        let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
+            "/tmp/browser-cold-state-phase4-test.json",
+        ));
+        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler, test_browser);
 
         // Verify all expected tools exist
         let defs = registry.get_definitions(None);
@@ -211,7 +214,10 @@ mod tests {
         let registry = ToolRegistry::new(context);
         let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
-        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler);
+        let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
+            "/tmp/browser-cold-state-phase4-test2.json",
+        ));
+        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler, test_browser);
 
         // Get registry via toolset registry
         let toolset_registry = crate::modules::tools::ToolSetRegistry::new();

@@ -237,6 +237,7 @@ mod tests {
             routing: None,
             onboarding,
             security_confirmed: false,
+            configured_providers: vec![],
         }
     }
 
@@ -352,6 +353,7 @@ mod tests {
             routing: None,
             onboarding,
             security_confirmed: false,
+            configured_providers: vec![],
         };
 
         let models = build_models_json(&config);
