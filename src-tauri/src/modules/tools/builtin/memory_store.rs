@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::policy::{MemoryPolicyEngine, PolicyDecision};
 use crate::modules::memory::scope::MemoryScopeResolver;
 use crate::modules::memory::{MemoryCategory, SharedMemoryProvider};
@@ -54,19 +55,33 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     .map(|ctx| MemoryScopeResolver::from_tool_context(&ctx))
                     .unwrap_or_else(crate::modules::memory::scope::MemoryExecutionScope::global);
 
+                let audit_ctx = AuditContext::from_scope(&scope);
+
+                // Emit: memory captured (agent has identified info to remember).
+                MemoryAuditEmitter::memory_captured(&audit_ctx, &key, category.as_str());
+
                 // Evaluate write policy (shadow mode by default — logs decisions, never blocks).
                 let policy = MemoryPolicyEngine::default_shadow();
                 let policy_result = policy.evaluate_write(&key, &content, &category, &scope);
-                tracing::debug!(
-                    "[memory_store] policy decision={:?} reason={} key={}",
-                    policy_result.decision,
-                    policy_result.reason_code.label(),
-                    key,
+
+                // Emit: write decision (allow / deny / prompt + reason_code).
+                MemoryAuditEmitter::memory_write_decision(
+                    &audit_ctx,
+                    &key,
+                    &policy_result.decision,
+                    &policy_result.reason_code,
+                    &policy_result.message,
                 );
 
-                // In enforce mode a Deny decision would return an error here;
-                // in shadow mode all writes proceed regardless of the policy decision.
+                // In enforce mode a Deny decision blocks the write.
+                // In shadow mode Deny is downgraded to Allow, so this branch only fires in Enforce.
                 if policy_result.decision == PolicyDecision::Deny {
+                    MemoryAuditEmitter::memory_rejected(
+                        &audit_ctx,
+                        &key,
+                        &policy_result.reason_code,
+                        &policy_result.message,
+                    );
                     return Err(ToolError::Handler(format!(
                         "memory write denied by policy: {} — {}",
                         policy_result.reason_code.label(),
@@ -75,9 +90,12 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                 }
 
                 memory
-                    .store_scoped(&key, &content, category, &scope)
+                    .store_scoped(&key, &content, category.clone(), &scope)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to store memory: {}", e)))?;
+
+                // Emit: memory successfully persisted.
+                MemoryAuditEmitter::memory_persisted(&audit_ctx, &key, category.as_str());
 
                 Ok(format!("Stored memory: {}", key))
             })

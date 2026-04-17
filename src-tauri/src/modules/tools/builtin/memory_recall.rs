@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::scope::MemoryScopeResolver;
 use crate::modules::memory::{MemoryEntry, SharedMemoryProvider};
 use crate::modules::tools::context::SharedToolContext;
@@ -48,6 +49,15 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     .recall_scoped(&query, category, limit, &scope)
                     .await
                     .map_err(|e| ToolError::Handler(format!("failed to recall memory: {}", e)))?;
+
+                // Emit audit event for observability and frontend evidence chain.
+                let audit_ctx = AuditContext::from_scope(&scope);
+                MemoryAuditEmitter::memory_recall_served(
+                    &audit_ctx,
+                    &query,
+                    category,
+                    results.len(),
+                );
 
                 let output: Vec<String> = results
                     .iter()
