@@ -1,0 +1,391 @@
+# Phase 7B: Browser Control System — openhanako Parity
+#
+# Design-ref: docs/design-docs/postCLI/browser-control-system.md
+# Goal: 实现与 openhanako 同等的交互式浏览器控制能力
+#       chromiumoxide headless + DOM AXTree 快照 + BrowserCard UI
+
+meta:
+  phase: 7B
+  name: Browser Control System — openhanako Parity
+  status: active
+  design_ref: docs/design-docs/postCLI/browser-control-system.md
+  created: 2026-04-17
+  total_slices: 8
+  human_checkpoints:
+    - after_slice: "7B.5"
+      reason: >
+        P0 核心功能（Rust 后端 + Tool + Event）完成，人工验证 AI 能成功操控浏览器后
+        再继续前端 UI 集成（7B.6）和后续优化 slices。
+
+dashboard:
+  last_updated: '2026-04-17'
+  completed_slices: []
+  current_slice: '7B.1'
+  blocked: []
+  notes: >
+    Phase 7B 初始化。目标：实现 12 项 browser 能力 Gap（Critical + High 优先级）。
+    技术路径：chromiumoxide v0.9 headless + DOM AXTree 快照 + BrowserCard UI。
+    P0 slices: 7B.1 → 7B.5（Rust 后端全链路）
+    P1 slices: 7B.6 → 7B.7（前端 UI + session 完善）
+    P2 slices: 7B.8（BrowserViewer 可见窗口，可选）
+
+slices:
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.1: Cargo 依赖 + BrowserBackend trait 抽象
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.1"
+    name: "Cargo 依赖 + BrowserBackend 抽象层"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §2.1
+    estimated_days: 0.5
+
+    current_state: |
+      src-tauri/Cargo.toml 无任何 Chromium/浏览器自动化依赖。
+      src-tauri/src/modules/ 目录下无 browser 模块。
+
+    must_implement:
+      - "Cargo.toml 添加: chromiumoxide = { version = \"0.9\", features = [\"tokio\"] }"
+      - "Cargo.toml 添加: chromiumoxide 依赖的 async-tungstenite, base64 ^0.22（注意版本与现有 base64 0.21 冲突处理）"
+      - "src-tauri/src/modules/browser/mod.rs — 模块声明，pub use 所有子模块"
+      - "src-tauri/src/modules/browser/errors.rs — BrowserError enum（NotRunning, NotFound, ChromeNotFound, Cdp, Timeout, SessionNotFound）"
+      - "src-tauri/src/modules/browser/chrome_finder.rs — find_chrome_binary() 按平台顺序查找 Chrome/Chromium 路径"
+      - "src-tauri/src/modules/mod.rs — 添加 pub mod browser"
+
+    impl_targets:
+      - src-tauri/Cargo.toml
+      - src-tauri/src/modules/browser/mod.rs
+      - src-tauri/src/modules/browser/errors.rs
+      - src-tauri/src/modules/browser/chrome_finder.rs
+      - src-tauri/src/modules/mod.rs
+
+    acceptance:
+      - "cargo build --workspace 通过（新依赖编译无误）"
+      - "chrome_finder::find_chrome_binary() 在 macOS 上能找到 /Applications/Google Chrome.app"
+      - "BrowserError 实现 std::error::Error + Display"
+      - "base64 版本冲突处理（统一到 0.22 或使用 features 解决）"
+
+    review_checklist:
+      - "chromiumoxide features 仅开启 tokio，不开启不需要的 features"
+      - "BrowserError 所有 variant 都有有意义的 Display 实现"
+      - "chrome_finder 覆盖 macOS / Linux / Windows 三平台"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.2: BrowserSession + BrowserRegistry 核心实现
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.2"
+    name: "BrowserSession + BrowserRegistry 核心"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §3.1.1, §3.1.2
+    estimated_days: 3
+    depends_on: ["7B.1"]
+
+    current_state: |
+      browser 模块已建立（7B.1），但无 BrowserSession / BrowserRegistry 实现。
+
+    must_implement:
+      - "BrowserSession struct { session_id, browser, _handler, page, current_url, action_log }"
+      - "ActionLogEntry struct { ts, action, params, result, url }"
+      - "BrowserSession::new(session_id, config_path) -> Result<Self> — 用 BrowserConfig::builder().with_head(false).build() 启动 headless Chrome"
+      - "BrowserSession::close(&mut self) -> Result<()>"
+      - "BrowserSession::navigate(&mut self, url) -> Result<NavigateResult> — 导航并等待 domcontentloaded"
+      - "BrowserSession::screenshot(&self) -> Result<String> — 全页 JPEG base64"
+      - "BrowserSession::thumbnail(&self) -> Result<String> — 小尺寸 JPEG base64 (scale 0.15)"
+      - "BrowserSession::click(&mut self, ref_num: u32) -> Result<String> — 通过 querySelector('[data-if2ai-ref=\"N\"]') 点击"
+      - "BrowserSession::type_text(&mut self, text, ref_num, press_enter) -> Result<String>"
+      - "BrowserSession::scroll(&mut self, direction: ScrollDir, amount: u32) -> Result<String>"
+      - "BrowserSession::select_option(&mut self, ref_num: u32, value: &str) -> Result<String>"
+      - "BrowserSession::press_key(&mut self, key: &str) -> Result<String>"
+      - "BrowserSession::wait(&mut self, timeout_ms: u64, state: &str) -> Result<String>"
+      - "BrowserSession::evaluate(&self, expr: &str) -> Result<String>"
+      - "NavigateResult struct { url: String, title: String, snapshot: String }"
+      - "ScrollDir enum { Up, Down }"
+      - "BrowserRegistry struct — DashMap<String, BrowserSession>"
+      - "BrowserRegistry::new(cold_state_path: PathBuf) -> Self"
+      - "BrowserRegistry 暴露与 BrowserSession 相同接口的委托方法，接收 session_id 参数"
+      - "BrowserRegistry 作为 Tauri managed state: Arc<BrowserRegistry>"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/browser/mod.rs
+
+    acceptance:
+      - "cargo test modules::browser"
+      - "集成测试：launch → navigate(https://example.com) → snapshot 返回含 [1] [2]... ref 的文本"
+      - "集成测试：click(1) 返回新 snapshot"
+      - "集成测试：screenshot() 返回非空 base64 字符串"
+      - "两个不同 session_id 的 BrowserSession 在 DashMap 中独立共存"
+
+    review_checklist:
+      - "BrowserSession 和 BrowserRegistry 所有公开函数有 doc 注释"
+      - "无 unwrap()/expect()（测试除外）"
+      - "chromiumoxide handler JoinHandle 正确 spawn（不 await，避免阻塞）"
+      - "close() 实现后 DashMap entry 被移除"
+      - "navigate() 后自动调用 snapshot() 并将快照写入 NavigateResult.snapshot"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.3: DOM AXTree 快照算法移植
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.3"
+    name: "DOM AXTree 快照算法 (snapshot.js 移植)"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §4
+    estimated_days: 2
+    depends_on: ["7B.2"]
+
+    current_state: |
+      BrowserSession 有 evaluate() 能力，但无 snapshot.js 脚本。
+      openhanako 的 SNAPSHOT_SCRIPT 在 desktop/main.cjs 第 997-1130 行，
+      已验证可工作的 DOM 遍历 + ref 注入 + 同构兄弟压缩算法。
+
+    must_implement:
+      - "src-tauri/src/modules/browser/snapshot.js — 完整移植 openhanako SNAPSHOT_SCRIPT，将 data-hana-ref 改为 data-if2ai-ref"
+      - "snapshot.js 返回格式: { text: string, currentUrl: string, title: string }"
+      - "snapshot.js 保留同构兄弟压缩逻辑（连续 >=3 个结构相同兄弟 compact 为单行）"
+      - "snapshot.js 字符上限 30k，头尾截断"
+      - "snapshot.rs — pub const SNAPSHOT_SCRIPT: &str = include_str!(\"snapshot.js\")"
+      - "BrowserSession::snapshot(&self) -> Result<String> — 调用 page.evaluate(SNAPSHOT_SCRIPT) 并解析返回的 JSON text 字段"
+      - "BrowserSession 中所有返回 snapshot 的方法（navigate, click, type_text, scroll, select_option, press_key, wait）使用 snapshot() 获取并在操作后刷新"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/snapshot.js
+      - src-tauri/src/modules/browser/snapshot.rs
+      - src-tauri/src/modules/browser/session.rs
+
+    acceptance:
+      - "cargo test browser::snapshot"
+      - "对 https://example.com 执行 snapshot()，返回文本包含 [1] 等 ref 编号"
+      - "可交互元素（链接、按钮、输入框）在快照中有对应 ref"
+      - "DOM 上确实被注入了 data-if2ai-ref 属性（可通过后续 querySelector 验证）"
+      - "连续列表项（>=3 个同构兄弟）被压缩为单行格式"
+      - "快照字符数不超过 30000"
+
+    review_checklist:
+      - "snapshot.js 中 data-hana-ref 全部替换为 data-if2ai-ref，无遗漏"
+      - "snapshot.rs 使用 include_str! 嵌入 JS，不在运行时读文件"
+      - "evaluate() 返回的 JSON 解析有正确错误处理，不 panic"
+      - "snapshot() 每次调用前先清除旧 data-if2ai-ref 属性"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.4: browser Tool Entry 注册
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.4"
+    name: "browser Tool Entry — LLM 可调用的统一工具"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §3.1.3
+    estimated_days: 2
+    depends_on: ["7B.3"]
+
+    current_state: |
+      tools/builtin/ 目录下无 browser.rs。
+      工具系统已完善（ToolEntry/ToolRegistry/ToolHandler 结构清晰）。
+      web_fetch.rs 和 web_search.rs 是参考实现。
+
+    must_implement:
+      - "src-tauri/src/modules/tools/builtin/browser.rs — pub fn entry(registry: Arc<BrowserRegistry>, app_handle: AppHandle) -> ToolEntry"
+      - "tool name: \"browser\", toolset: \"web\""
+      - "input_schema: action (enum), url?, ref? (u32), text?, direction? (up/down), amount? (u32), value?, key?, expression?, timeout? (u64), state?, press_enter? (bool)"
+      - "actions 实现: start | stop | navigate | snapshot | screenshot | click | type | scroll | select | key | wait | evaluate"
+      - "每个 action 执行后调用 emit_browser_status() 推送 Tauri Event（见 7B.5）"
+      - "screenshot action 返回 { content: [{type: image, mimeType: image/jpeg, data: base64}] } 格式（与 openhanako 对齐）"
+      - "stop action 返回 action_log 列表"
+      - "错误处理：BrowserError::ChromeNotFound 返回用户友好提示，建议安装 Chrome"
+      - "builtin/mod.rs 添加 pub mod browser 和对应 pub use"
+      - "browser tool 注册到 ToolRegistry（在 AppState 初始化时）"
+
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/browser.rs
+      - src-tauri/src/modules/tools/builtin/mod.rs
+
+    acceptance:
+      - "cargo test browser_tool"
+      - "AI 发出 tool_call {name: browser, action: start} 后浏览器启动"
+      - "AI 发出 tool_call {name: browser, action: navigate, url: https://example.com} 后返回含快照的文本"
+      - "AI 发出 tool_call {name: browser, action: screenshot} 后返回 image content block"
+      - "browser tool 出现在 list_tools 响应中"
+
+    review_checklist:
+      - "browser tool description 准确描述所有 action 及其参数"
+      - "每个 action case 处理 BrowserError::NotRunning（提示先调用 start）"
+      - "无 unwrap()"
+      - "所有公开函数有 doc 注释"
+      - "timeout_secs 设为 120（浏览器操作比普通工具慢）"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.5: Tauri Event 桥接 + browser 命令
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.5"
+    name: "Tauri Event 桥接 + browser IPC 命令"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §3.1.4
+    estimated_days: 1.5
+    depends_on: ["7B.4"]
+
+    current_state: |
+      commands/ 目录下无 browser.rs。
+      Tauri event 系统已在 agent.rs 中广泛使用（if2ai-stream-* 等事件）。
+
+    must_implement:
+      - "src-tauri/src/modules/browser/events.rs — BrowserStatusEvent { session_id, running, url, thumbnail: Option<String> }"
+      - "emit_browser_status(app: &AppHandle, session_id: &str, registry: &BrowserRegistry) — 取缩略图并 emit 'browser-status' event"
+      - "src-tauri/src/commands/browser.rs — 以下 Tauri command:"
+      - "  get_browser_sessions() -> Vec<BrowserStatusEntry> — 列出所有活跃 session 的状态"
+      - "  close_browser_session(session_id: String) -> Result<(), String> — 关闭指定 session 浏览器"
+      - "  get_chrome_status() -> ChromeStatusPayload { found: bool, path: Option<String> }"
+      - "src-tauri/src/lib.rs — 在 invoke_handler 注册 browser 命令"
+      - "capabilities/settings-window.json 或 capabilities/default.json 中开放 browser 相关权限（若需要）"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/events.rs
+      - src-tauri/src/commands/browser.rs
+      - src-tauri/src/lib.rs
+
+    acceptance:
+      - "cargo build --workspace 通过"
+      - "前端 listen('browser-status', handler) 在 AI 执行 browser tool 时收到 event"
+      - "event payload 包含 session_id, running, url, thumbnail"
+      - "invoke('get_chrome_status') 返回 { found: true, path: '...' }（macOS 有 Chrome）"
+
+    review_checklist:
+      - "BrowserStatusEvent 实现 Clone + serde::Serialize"
+      - "emit_browser_status 是 async fn，不阻塞 tool 执行"
+      - "thumbnail 捕获失败时 emit None，不中断整个操作"
+      - "browser commands 注册不遗漏"
+
+    # ── Human Checkpoint ──
+    # 完成 7B.5 后暂停，人工验证：
+    # 1. cargo test --workspace 全通过
+    # 2. 在 Dev 环境启动 app，让 AI 发送 browser tool call 验证完整链路
+    # 3. 确认前端能收到 browser-status event（通过 console.log 验证）
+    # 4. Review 后继续 7B.6
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.6: BrowserCard 前端组件 + Zustand Store
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.6"
+    name: "BrowserCard 前端浮动卡片 + Store"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §3.2
+    estimated_days: 2
+    depends_on: ["7B.5"]
+
+    current_state: |
+      src/stores/ 目录下无 browser-slice.ts。
+      src/components/ 目录下无 browser/ 子目录。
+      ChatWorkspace 或 App.tsx 未集成 BrowserCard。
+
+    must_implement:
+      - "src/stores/browser-slice.ts — BrowserEntry { running, url, thumbnail }"
+      - "BrowserSlice { browserBySession: Record<string, BrowserEntry>, setBrowserStatus(sessionId, partial), clearBrowserSession(sessionId) }"
+      - "src/components/browser/BrowserCard.tsx — 浮动卡片组件"
+      - "BrowserCard 监听 Tauri Event 'browser-status'（通过 @tauri-apps/api/event listen()）"
+      - "BrowserCard 显示：缩略图（base64 img）+ URL hostname + 运行状态指示 + 紧急停止按钮"
+      - "紧急停止按钮调用 invoke('close_browser_session', { sessionId })"
+      - "BrowserCard 仅在 running=true 时显示（running=false 时 return null）"
+      - "BrowserCard 集成到 ChatWorkspace.tsx 或 App.tsx 的合适位置（chat 区域顶部浮动）"
+      - "侧边栏添加后台运行指示器：当 browserRunning=true 时显示 globe icon badge"
+      - "src/lib/tauri.ts 添加 get_browser_sessions 和 close_browser_session 的 invoke wrapper"
+
+    impl_targets:
+      - src/stores/browser-slice.ts
+      - src/components/browser/BrowserCard.tsx
+      - src/lib/tauri.ts
+      - src/modules/chat/components/ChatWorkspace.tsx
+
+    acceptance:
+      - "AI 使用 browser tool 时，BrowserCard 在聊天区域顶部出现"
+      - "BrowserCard 显示实时截图缩略图（随操作更新）"
+      - "点击紧急停止按钮后 BrowserCard 消失，浏览器关闭"
+      - "切换不同 session 时 BrowserCard 状态正确切换"
+
+    review_checklist:
+      - "Tauri event listener 在组件 unmount 时 unlisten（防内存泄漏）"
+      - "缩略图 img 有 draggable={false}"
+      - "BrowserCard 使用 if2Ai 设计系统的颜色变量（不 hardcode hex）"
+      - "TypeScript 类型安全，无 any"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.7: Session 隔离完善 + 冷保存恢复
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.7"
+    name: "Session 隔离完善 + 冷保存/恢复"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §7, §8
+    estimated_days: 1.5
+    depends_on: ["7B.6"]
+
+    current_state: |
+      7B.2 实现了基础 BrowserRegistry，但 session 隔离和冷保存未完整实现。
+
+    must_implement:
+      - "src-tauri/src/modules/browser/cold_state.rs — ColdState { sessions: HashMap<String, String> }（session_id → url）"
+      - "ColdState::load(path) / save(path) / set(session_id, url) / remove(session_id)"
+      - "BrowserRegistry 集成 ColdState：navigate 时自动保存 URL，close 时移除"
+      - "BrowserRegistry::restore_cold_state(session_id) -> Result<bool> — 检查冷保存，有则 launch + navigate"
+      - "App 启动时（或 session 切换时）调用 restore_cold_state（可以 lazy 懒恢复，首次访问时触发）"
+      - "chromiumoxide incognito context 确认：使用 Browser::new_context() 为每个 session 创建独立 context，隔离 cookie/localStorage"
+      - "BrowserSession 持有 BrowserContext 引用（而非直接 Browser 引用），确保真正 session 隔离"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/cold_state.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/browser/session.rs
+
+    acceptance:
+      - "cargo test browser::cold_state"
+      - "session A 登录网站后，session B 访问同一网站不应有登录态（cookie 隔离）"
+      - "App 重启后，有冷保存记录的 session 打开浏览器时自动恢复到保存的 URL"
+      - "close_browser_session 后冷保存记录被删除"
+
+    review_checklist:
+      - "冷保存文件路径在 ~/.if2ai/user/ 下，不放到应用 bundle 目录"
+      - "ColdState 的 save/load 错误不 panic，记录 warn 日志"
+      - "incognito context 确实使用了 Browser::new_context()，不是直接 browser.new_page()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7B.8: BrowserViewer 独立可见窗口 (P2，可选)
+  # ─────────────────────────────────────────────────────────────
+  - id: "7B.8"
+    name: "BrowserViewer 独立可见窗口 (P2 可选)"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/browser-control-system.md §10
+    estimated_days: 2
+    depends_on: ["7B.7"]
+
+    current_state: |
+      暂无 BrowserViewer 窗口。
+      settings 窗口实现（window.rs）是参考模式。
+
+    must_implement:
+      - "src-tauri/src/commands/window.rs 添加 open_browser_viewer_window(app, session_id) -> Result<(), String>"
+      - "BrowserViewer 窗口：WebviewWindowBuilder 创建独立窗口，加载 index.html?window=browser-viewer"
+      - "窗口内嵌入 iframe 或 webview 导航到当前 browser session 的 URL（注：非共享 chromiumoxide session）"
+      - "窗口工具栏：关闭按钮 / 前进 / 后退 / 刷新 / 页面标题 / 紧急停止"
+      - "src/modules/browser-viewer/BrowserViewerPage.tsx — 窗口前端页面"
+      - "BrowserCard 上添加「查看浏览器」按钮，点击调用 open_browser_viewer_window"
+      - "capabilities 中为 browser-viewer 窗口配置适当权限"
+
+    impl_targets:
+      - src-tauri/src/commands/window.rs
+      - src/modules/browser-viewer/BrowserViewerPage.tsx
+      - src/components/browser/BrowserCard.tsx
+
+    acceptance:
+      - "点击 BrowserCard 上的「查看浏览器」按钮，弹出独立窗口"
+      - "窗口显示当前 AI 正在浏览的页面 URL 内容"
+      - "窗口关闭按钮正确关闭窗口（不影响后台 chromiumoxide session）"
+
+    review_checklist:
+      - "BrowserViewer 窗口不共享 chromiumoxide session 的实际状态（有隔离提示）"
+      - "窗口 label 唯一（'browser-viewer-{session_id}'）"
+      - "窗口已存在时聚焦而非重复创建（参考 settings 窗口模式）"

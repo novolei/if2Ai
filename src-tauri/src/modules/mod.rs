@@ -13,6 +13,7 @@
 //! - scheduler: Cron job scheduling
 
 pub mod api;
+pub mod browser;
 pub mod channel;
 pub mod commands;
 pub mod config;

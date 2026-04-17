@@ -1,0 +1,53 @@
+//! Browser module error types.
+
+use thiserror::Error;
+
+/// Errors that can occur during browser operations.
+#[derive(Debug, Error)]
+pub enum BrowserError {
+    /// No Chrome or Chromium binary found on this system.
+    #[error("Chrome/Chromium not found. Please install Google Chrome or Chromium and try again.")]
+    ChromeNotFound,
+
+    /// Browser session does not exist for the given session id.
+    #[error("No browser session found for session '{0}'. Call 'start' first.")]
+    SessionNotFound(String),
+
+    /// Browser is not running for this session.
+    #[error("Browser is not running for session '{0}'. Call 'start' first.")]
+    NotRunning(String),
+
+    /// Chrome DevTools Protocol error.
+    #[error("CDP error: {0}")]
+    Cdp(String),
+
+    /// Operation timed out.
+    #[error("Browser operation timed out after {0}ms")]
+    Timeout(u64),
+
+    /// DOM element with the given ref number was not found on the page.
+    #[error("Element with ref [{0}] not found. Take a fresh snapshot to get current refs.")]
+    RefNotFound(u32),
+
+    /// Snapshot script execution failed.
+    #[error("Snapshot failed: {0}")]
+    Snapshot(String),
+
+    /// Screenshot capture failed.
+    #[error("Screenshot failed: {0}")]
+    Screenshot(String),
+
+    /// JavaScript evaluation returned an unexpected type.
+    #[error("Evaluate error: {0}")]
+    Evaluate(String),
+
+    /// Cold-state persistence I/O error.
+    #[error("Cold state I/O error: {0}")]
+    ColdState(String),
+}
+
+impl From<chromiumoxide::error::CdpError> for BrowserError {
+    fn from(e: chromiumoxide::error::CdpError) -> Self {
+        Self::Cdp(e.to_string())
+    }
+}
