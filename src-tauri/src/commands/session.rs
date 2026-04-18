@@ -100,6 +100,28 @@ pub async fn set_session_pinned(
         .map_err(|e| e.to_string())
 }
 
+/// Toggle per-session memory on or off.
+///
+/// `enabled = false` silences the rolling summary / compile / fact-extract
+/// pipelines for this session even when the master memory switch is on,
+/// and stamps `memory_disabled_since = now`.  `enabled = true` re-enables
+/// memory and stamps `memory_reenabled_at = now`.  Both timestamps are
+/// later read by the compile pipeline (lands in 8B) to skip the silenced
+/// window when aggregating summaries.  Phase 8A.4 / v2 §Sprint 1 / T-A4.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn memory_session_set_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<Session, String> {
+    state
+        .session_manager
+        .set_session_memory_enabled(&id, enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Get a session with its messages (for restoring chat history).
 #[tauri::command]
 #[allow(dead_code)]

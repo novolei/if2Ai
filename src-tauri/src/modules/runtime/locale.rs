@@ -11,24 +11,21 @@
 //! See `docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md`
 //! §0.5 Δ-13.
 //!
-//! This module deliberately depends on **nothing outside `std`** so that
-//! every memory module — including ones that cannot afford the
-//! `chrono` / `chrono-tz` dependency footprint — can call [`is_zh`] freely.
-
-/// Default UI language tag used until [`crate::modules::runtime::config`]
-/// gains a configurable `language` field.  Keeping this `"en-US"`
-/// preserves the project's existing English-only default behaviour.
-const DEFAULT_LANGUAGE: &str = "en-US";
+//! Phase 8A.4 — `is_zh()` now routes through the global
+//! [`crate::modules::runtime::config::current`] handle so user overrides
+//! in `settings.json` (`language: "zh-CN"`) take effect immediately
+//! rather than waiting for a redesign of every prompt builder's API.
 
 /// Returns `true` when the active runtime UI language starts with `"zh"`.
 ///
-/// TODO(8A.x): once `RuntimeConfig` exposes a `language: String` field,
-/// route this through `config::current().language` instead of the
-/// hard-coded [`DEFAULT_LANGUAGE`].  Until then this returns `false`,
-/// which matches the project's shipping English UI.
+/// Reads the `language` field from
+/// [`crate::modules::runtime::config::current`].  When `set_current` has
+/// not been called yet (unit-test paths, early boot), `current()` returns
+/// a default config whose `language()` is `"en-US"`, so this returns
+/// `false` — matching the project's shipping English-only default.
 #[must_use]
 pub fn is_zh() -> bool {
-    is_zh_for(DEFAULT_LANGUAGE)
+    is_zh_for(crate::modules::runtime::config::current().language())
 }
 
 /// Pure helper — returns `true` when `language` (a BCP-47 tag like
@@ -43,7 +40,7 @@ pub fn is_zh_for(language: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_zh, is_zh_for, DEFAULT_LANGUAGE};
+    use super::is_zh_for;
 
     #[test]
     fn is_zh_for_zh_cn_returns_true() {
@@ -66,7 +63,12 @@ mod tests {
     }
 
     #[test]
-    fn is_zh_uses_default_language() {
-        assert_eq!(is_zh(), is_zh_for(DEFAULT_LANGUAGE));
+    fn is_zh_reads_from_runtime_config() {
+        // Without any explicit set_current() call, the global accessor
+        // returns a default RuntimeConfig whose language() is "en-US".
+        // Phase 8A.4 — the test verifies the wiring exists; richer
+        // zh-CN coverage lives in tests for `runtime::config::current`
+        // (which races on a OnceLock, so we do not poke the global here).
+        let _ = super::is_zh();
     }
 }

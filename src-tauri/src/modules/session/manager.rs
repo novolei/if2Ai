@@ -67,6 +67,24 @@ pub struct SessionMeta {
     /// Logical total message count for the session, including compacted history.
     #[serde(default)]
     pub message_count: usize,
+    /// Per-session memory toggle. `None` (default) = follow the master
+    /// switch in [`crate::modules::runtime::config::MemoryFeatureConfig`].
+    /// `Some(false)` silences memory writes for this session even when
+    /// the master switch is on.  Phase 8A.4 / v2 §Sprint 1 / T-A4.
+    #[serde(default)]
+    pub memory_enabled: Option<bool>,
+    /// Wall-clock UTC instant when memory was disabled for this session.
+    /// Compile pipelines use this with [`memory_reenabled_at`] to skip
+    /// summary windows the operator silenced — see v2 §Sprint 1 / T-A4
+    /// implementation note 3.
+    ///
+    /// [`memory_reenabled_at`]: SessionMeta::memory_reenabled_at
+    #[serde(default)]
+    pub memory_disabled_since: Option<DateTime<Utc>>,
+    /// Wall-clock UTC instant when memory was last re-enabled (paired
+    /// with [`SessionMeta::memory_disabled_since`]).
+    #[serde(default)]
+    pub memory_reenabled_at: Option<DateTime<Utc>>,
 }
 
 #[allow(dead_code)]
@@ -81,8 +99,32 @@ impl SessionMeta {
             updated_at: session.updated_at.clone(),
             pinned: session.pinned,
             message_count: session.logical_message_count(),
+            memory_enabled: session.memory_enabled,
+            memory_disabled_since: session.memory_disabled_since,
+            memory_reenabled_at: session.memory_reenabled_at,
         }
     }
+}
+
+/// Three-state truth table for per-session memory: master OFF → `false`;
+/// master ON + `session.memory_enabled = Some(false)` → `false`; master
+/// ON + `session.memory_enabled` is `None` or `Some(true)` → `true`.
+///
+/// Used by the background ticker (lands in 8B) to short-circuit rolling
+/// summary / compile / fact-extract jobs for sessions the operator
+/// silenced, without touching the storage layer.  Pure function — no
+/// I/O, no side effects, safe to call from any thread.  Phase 8A.4 /
+/// v2 §Sprint 1 / T-A4.
+///
+/// `allow(dead_code)`: ticker producer lands in 8B; the function is
+/// already covered by unit tests in this slice.
+#[must_use]
+#[allow(dead_code)]
+pub fn is_session_memory_on(session: &SessionMeta, master_on: bool) -> bool {
+    if !master_on {
+        return false;
+    }
+    session.memory_enabled.unwrap_or(true)
 }
 
 /// A conversation session with messages and metadata.
@@ -110,6 +152,17 @@ pub struct Session {
     /// have been compacted out of the persisted transcript.
     #[serde(default)]
     pub message_count: usize,
+    /// Per-session memory toggle (see [`SessionMeta::memory_enabled`]).
+    /// Persisted alongside the rest of the session JSON so the toggle
+    /// survives restarts.  Phase 8A.4 / v2 §Sprint 1 / T-A4.
+    #[serde(default)]
+    pub memory_enabled: Option<bool>,
+    /// Wall-clock UTC instant when memory was disabled for this session.
+    #[serde(default)]
+    pub memory_disabled_since: Option<DateTime<Utc>>,
+    /// Wall-clock UTC instant when memory was last re-enabled.
+    #[serde(default)]
+    pub memory_reenabled_at: Option<DateTime<Utc>>,
 }
 
 #[allow(dead_code)]
@@ -133,9 +186,17 @@ impl Session {
             token_count: 0,
             pinned: false,
             message_count: 0,
+            memory_enabled: None,
+            memory_disabled_since: None,
+            memory_reenabled_at: None,
         }
     }
 
+    /// Logical message count, accounting for messages compacted out of
+    /// the persisted transcript: returns `messages.len()` when no
+    /// `message_count` was previously recorded, otherwise the larger of
+    /// the two so a session whose history was truncated still reports
+    /// the original total.
     #[must_use]
     pub fn logical_message_count(&self) -> usize {
         if self.message_count == 0 {
@@ -527,6 +588,31 @@ impl SessionManager {
         Ok(session)
     }
 
+    /// Toggle per-session memory on or off and persist.
+    ///
+    /// Sets `session.memory_enabled = Some(enabled)` and stamps
+    /// `memory_disabled_since` (when `enabled=false`) or
+    /// `memory_reenabled_at` (when `enabled=true`) with the current UTC
+    /// wall-clock so compile pipelines can later filter out the silenced
+    /// window.  Phase 8A.4 / v2 §Sprint 1 / T-A4.
+    pub async fn set_session_memory_enabled(
+        &self,
+        session_id: &str,
+        enabled: bool,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        let now = Utc::now();
+        session.memory_enabled = Some(enabled);
+        if enabled {
+            session.memory_reenabled_at = Some(now);
+        } else {
+            session.memory_disabled_since = Some(now);
+        }
+        session.updated_at = format_time(SystemTime::now());
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
     /// Rename a session and persist the updated title.
     pub async fn rename_session(
         &self,
@@ -756,6 +842,115 @@ mod tests {
         assert!(manager.restore_session(&session.id).await.is_err());
 
         // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir).await;
+    }
+
+    fn make_meta(memory_enabled: Option<bool>) -> SessionMeta {
+        SessionMeta {
+            id: "s1".into(),
+            title: "t".into(),
+            created_at: "2024-01-01T00:00:00Z".into(),
+            updated_at: "2024-01-01T00:00:00Z".into(),
+            pinned: false,
+            message_count: 0,
+            memory_enabled,
+            memory_disabled_since: None,
+            memory_reenabled_at: None,
+        }
+    }
+
+    #[test]
+    fn is_session_memory_on_master_off_is_always_false() {
+        // Even an explicitly-enabled session must yield false when the
+        // master switch is off (operator-level kill-switch wins).
+        assert!(!is_session_memory_on(&make_meta(Some(true)), false));
+        assert!(!is_session_memory_on(&make_meta(None), false));
+        assert!(!is_session_memory_on(&make_meta(Some(false)), false));
+    }
+
+    #[test]
+    fn is_session_memory_on_master_on_session_default_is_true() {
+        // None means "follow master" → true when master is on.
+        assert!(is_session_memory_on(&make_meta(None), true));
+    }
+
+    #[test]
+    fn is_session_memory_on_master_on_session_disabled_is_false() {
+        assert!(!is_session_memory_on(&make_meta(Some(false)), true));
+    }
+
+    #[test]
+    fn is_session_memory_on_master_on_session_enabled_is_true() {
+        assert!(is_session_memory_on(&make_meta(Some(true)), true));
+    }
+
+    #[test]
+    fn session_meta_deserialises_legacy_json_without_memory_fields() {
+        // Pre-8A.4 sessions on disk lack the three memory_* keys; the
+        // #[serde(default)] guards must keep them at None instead of
+        // failing the round-trip (= silently corrupting the user's
+        // session list).
+        let legacy = r#"{
+            "id": "s1",
+            "title": "t",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+        let meta: SessionMeta = serde_json::from_str(legacy).expect("legacy meta deserialises");
+        assert_eq!(meta.memory_enabled, None);
+        assert!(meta.memory_disabled_since.is_none());
+        assert!(meta.memory_reenabled_at.is_none());
+        assert!(!meta.pinned);
+    }
+
+    #[test]
+    fn session_meta_round_trips_disabled_since_as_rfc3339() {
+        let when = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 4, 18, 12, 34, 56).unwrap();
+        let meta = SessionMeta {
+            id: "s1".into(),
+            title: "t".into(),
+            created_at: "2026-04-18T00:00:00Z".into(),
+            updated_at: "2026-04-18T00:00:00Z".into(),
+            pinned: false,
+            message_count: 0,
+            memory_enabled: Some(false),
+            memory_disabled_since: Some(when),
+            memory_reenabled_at: None,
+        };
+        let json = serde_json::to_string(&meta).expect("serialise");
+        // chrono serialises DateTime<Utc> as RFC3339 by default.
+        assert!(
+            json.contains("2026-04-18T12:34:56"),
+            "expected RFC3339 timestamp in {json}"
+        );
+        let back: SessionMeta = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(back.memory_enabled, Some(false));
+        assert_eq!(back.memory_disabled_since, Some(when));
+    }
+
+    #[tokio::test]
+    async fn set_session_memory_enabled_disables_and_stamps_disabled_since() {
+        let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
+
+        let session = manager.create_session("Test").await.expect("create");
+        let updated = manager
+            .set_session_memory_enabled(&session.id, false)
+            .await
+            .expect("disable");
+        assert_eq!(updated.memory_enabled, Some(false));
+        assert!(updated.memory_disabled_since.is_some());
+        assert!(updated.memory_reenabled_at.is_none());
+
+        // Re-enable: memory_enabled flips to Some(true) and reenabled_at is stamped.
+        let reenabled = manager
+            .set_session_memory_enabled(&session.id, true)
+            .await
+            .expect("enable");
+        assert_eq!(reenabled.memory_enabled, Some(true));
+        assert!(reenabled.memory_reenabled_at.is_some());
+
         let _ = fs::remove_dir_all(&temp_dir).await;
     }
 

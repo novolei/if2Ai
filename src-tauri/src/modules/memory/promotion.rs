@@ -26,12 +26,14 @@ use crate::modules::memory::{MemoryEntry, MemoryError, MemoryProvider};
 ///
 /// 60 s is loose enough to feel "near real-time" for the UI yet keeps the
 /// per-turn overhead negligible (one scan = one `export()` + a linear pass).
+#[allow(dead_code)] // consumer (commands::agent) lands in a separate prior-session change
 const BACKGROUND_SCAN_MIN_INTERVAL_SECS: i64 = 60;
 
 /// Last unix-second at which a background scan ran. We use a process-wide
 /// atomic instead of a per-engine field because [`MemoryPromotionEngine`] is
 /// stateless / re-created per call site, but the throttle should apply
 /// across all call sites.
+#[allow(dead_code)] // consumer (commands::agent) lands in a separate prior-session change
 static LAST_BACKGROUND_SCAN_AT: AtomicI64 = AtomicI64::new(0);
 
 /// Visible scope tier of an entry, used to decide promotion direction.
@@ -101,6 +103,7 @@ impl PromotionThresholds {
     /// `promotion` key — the same gracefully-degraded contract used by
     /// [`crate::modules::tools::builtin::memory_store`] for the policy
     /// enforce-mode flag.
+    #[allow(dead_code)] // consumer lands in commands::agent (prior-session change)
     pub fn load_from_disk() -> Self {
         let Ok(home) = std::env::var("HOME") else {
             return Self::default();
@@ -135,6 +138,7 @@ impl PromotionThresholds {
     /// Validate the threshold tuple — every access-count threshold must be
     /// `>= 1`, otherwise the promotion engine would treat brand-new
     /// (never-recalled) entries as immediate promotion candidates.
+    #[allow(dead_code)] // called by load_from_disk above + tests
     pub fn validate(self) -> Result<(), &'static str> {
         if self.session_to_project_access == 0 {
             return Err("sessionToProject.accessCount must be >= 1");
@@ -324,6 +328,7 @@ impl<'a> MemoryPromotionEngine<'a> {
     ///
     /// Returns `Ok(Some(n))` when a scan ran (`n` = candidate count, possibly 0)
     /// and `Ok(None)` when the call was suppressed by the throttle window.
+    #[allow(dead_code)] // consumer lands in commands::agent (prior-session change)
     pub async fn evaluate_and_audit(&self) -> Result<Option<usize>, MemoryError> {
         let now = chrono::Utc::now().timestamp();
         let last = LAST_BACKGROUND_SCAN_AT.load(Ordering::Relaxed);

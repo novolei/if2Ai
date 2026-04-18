@@ -83,6 +83,7 @@ use commands::{
     memory_promotion_candidates,
     memory_purge,
     memory_recall,
+    memory_session_set_enabled,
     model_get_active,
     model_get_role_config,
     model_list_available,
@@ -341,24 +342,30 @@ fn main() {
     // recall / policy mode the binary actually picked up from settings.json.
     // ConfigLoader is per-cwd, so we use the process cwd here purely for
     // logging — runtime callers re-load with their own scope.
+    //
+    // Phase 8A.4 — also install the loaded config as the process-global
+    // handle returned by `runtime::config::current()` so
+    // `runtime::logical_day::get_today` and `runtime::locale::is_zh` pick
+    // up user `timezone` / `language` overrides without an app restart.
     {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        match modules::runtime::config::ConfigLoader::default_for(&cwd).load() {
-            Ok(cfg) => {
-                let mem = cfg.memory();
-                tracing::info!(
-                    control_plane_v1_enabled = mem.control_plane_v1_enabled(),
-                    recall_mode = mem.recall_mode().as_str(),
-                    policy_enforce_mode = mem.policy_enforce_mode().as_str(),
-                    "[memory] feature flags loaded"
-                );
-            }
-            Err(e) => {
+        let cfg = modules::runtime::config::ConfigLoader::default_for(&cwd)
+            .load()
+            .unwrap_or_else(|e| {
                 tracing::warn!(
                     "[memory] failed to load runtime config for feature flags: {e}; using defaults"
                 );
-            }
-        }
+                modules::runtime::config::RuntimeConfig::empty()
+            });
+        let mem = cfg.memory();
+        tracing::info!(
+            control_plane_v1_enabled = mem.control_plane_v1_enabled(),
+            recall_mode = mem.recall_mode().as_str(),
+            policy_enforce_mode = mem.policy_enforce_mode().as_str(),
+            language = cfg.language(),
+            "[memory] feature flags loaded"
+        );
+        modules::runtime::config::set_current(cfg);
     }
 
     // Set up cleanup hooks
@@ -584,6 +591,8 @@ fn main() {
             memory_promotion_candidates,
             memory_promote,
             memory_demote,
+            // Per-session memory toggle (Phase 8A.4 / v2 §Sprint 1 / T-A4)
+            memory_session_set_enabled,
             // Skills Hub CLI commands
             hub_browse,
             hub_search,

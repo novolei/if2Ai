@@ -206,7 +206,7 @@ pub use project::{
 #[allow(unused_imports)]
 pub use session::{
     create_session, delete_session, get_session, list_project_sessions, list_sessions,
-    rename_session, set_session_pinned,
+    memory_session_set_enabled, rename_session, set_session_pinned,
 };
 #[allow(unused_imports)]
 pub use settings::{

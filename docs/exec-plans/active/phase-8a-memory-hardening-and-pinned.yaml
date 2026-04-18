@@ -33,20 +33,34 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3']
-  current_slice: '8A.4'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4']
+  current_slice: '8A.5'
   blocked: []
   notes: >
-    8A.3 完成（2026-04-18）：runtime/logical_day.rs (LogicalDay struct +
-    get_logical_day + logical_day_for_date + get_today + resolve_timezone)
-    + runtime/locale.rs (is_zh + is_zh_for) + Cargo.toml chrono-tz 0.10。
-    MemoryFeatureConfig 扩展 timezone: Option<String> + logical_day_cutoff_hour: u8
-    (default 4)，settings.json `memory.timezone` / `memory.logicalDayCutoffHour`
-    与 ~/.if2ai/memory_config.json snake_case 双路径解析。DST spring-forward
-    用 +1h 重试，fall-back 取 earliest，未知 tz tracing::warn! 回落 UTC，无 panic。
-    13 个 logical_day 单测 + 5 个 locale 单测 + 2 个 config 单测，全 PASS。
-    遗留：RuntimeConfig 暂无 language 字段，is_zh() 暂回退 "en-US" 默认（带 TODO）；
-    8A.4 后人工 review 整 Phase A，再放行 8A.5+。
+    Phase A 4 个 slice 全部完成（PII scrub + JobRunner + LogicalDay + 双开关），
+    已触发 human_checkpoint #1，等人工 review 后再开 Phase B。
+    8A.4 完成（2026-04-18）：SessionMeta + Session 增 memory_enabled
+    / memory_disabled_since / memory_reenabled_at（全 Option + #[serde(default)]
+    向后兼容）+ is_session_memory_on() 纯函数 + 三态真值表覆盖；
+    SessionManager::set_session_memory_enabled 按 enabled 分支打 disabled_since
+    或 reenabled_at；新 Tauri 命令 memory_session_set_enabled 三处注册
+    （main.rs invoke_handler! + capabilities default.json/gen 描述更新 +
+    src/lib/tauri.ts wrapper）。Bonus C1+C2：runtime::config::{current,
+    set_current} OnceLock + DEFAULT_CONFIG 双 OnceLock 模式（避免 get_or_init
+    永久蒙住真实配置）+ RuntimeConfig::language() accessor（读 merged
+    `language` top-level key，默认 "en-US"，不破坏 Eq derive）。8A.3 遗留
+    TODO 已解：locale::is_zh() / logical_day::get_today() 现在均路由到
+    config::current()，main.rs 启动时 ConfigLoader::load 之后立即调
+    set_current(cfg)，user `language` / `timezone` / `logicalDayCutoffHour`
+    覆盖第一次请求即生效。session/manager.rs 新增 7 个测试（4 是非表 +
+    legacy JSON 反序列化 + RFC3339 round-trip + set_session_memory_enabled
+    持久化）+ runtime/config.rs 新增 3 个测试（language 默认 / 读 settings
+    / current+set_current），全 825+ 单测 PASS。注：clippy 修了 promotion.rs
+    + audit.rs 4 个 dead_code 项（BACKGROUND_SCAN_MIN_INTERVAL_SECS、
+    LAST_BACKGROUND_SCAN_AT、PromotionThresholds::{load_from_disk,validate}、
+    MemoryPromotionEngine::evaluate_and_audit、memory_promotion_candidate）—
+    consumer 在 prior-session 的 commands::agent.rs 改动里，本 slice 加
+    #[allow(dead_code)] 标注 + 来源说明，待 prior-session 改动合入后可移除。
   legacy_notes: >
     Phase 8A 已激活（2026-04-18）。8A.2 已完成：JobRunner 模块
     (src-tauri/src/modules/memory/job_runner.rs) + jobs.db (job_attempts 表)
@@ -258,7 +272,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.4"
     title: "T-A4 — Master + per-session 双开关 + disabledSince"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

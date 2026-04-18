@@ -21,7 +21,7 @@ use std::str::FromStr;
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
-use crate::modules::runtime::config::MemoryFeatureConfig;
+use crate::modules::runtime::config;
 
 /// Default cutoff hour, mirroring `openhanako`'s `DAY_BOUNDARY_HOUR = 4`.
 pub const DEFAULT_CUTOFF_HOUR: u8 = 4;
@@ -129,14 +129,16 @@ pub fn logical_day_for_date(date: NaiveDate, cutoff_hour: u8, tz: Tz) -> Logical
     }
 }
 
-/// Convenience wrapper that reads the cutoff + timezone from
-/// [`MemoryFeatureConfig::default`] and computes the current logical
-/// day.  Once `RuntimeConfig` exposes a global accessor (TODO(8A.x):
-/// `runtime::config::current()`), route through that instead so user
-/// overrides take effect without an app restart.
+/// Convenience wrapper that reads the cutoff + timezone from the global
+/// [`config::current`] handle and computes the current logical day.
+///
+/// Phase 8A.4 — switched from `MemoryFeatureConfig::default()` to the
+/// global runtime config so user-set `memory.timezone` /
+/// `memory.logicalDayCutoffHour` overrides in `settings.json` take
+/// effect at the first request, not after restart.
 #[must_use]
 pub fn get_today() -> LogicalDay {
-    let memory = MemoryFeatureConfig::default();
+    let memory = config::current().memory();
     let tz = resolve_timezone(memory.timezone());
     get_logical_day(Utc::now(), memory.logical_day_cutoff_hour(), tz)
 }

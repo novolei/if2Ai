@@ -388,6 +388,24 @@ export async function setSessionPinned(id: string, pinned: boolean): Promise<voi
 }
 
 /**
+ * 切换 per-session memory 开关 (Phase 8A.4 / v2 §Sprint 1 / T-A4)
+ *
+ * `enabled = false` 会让该会话的 rolling summary / compile / fact 提取
+ * 在 ticker 中被 short-circuit, 同时打 `memory_disabled_since = now`;
+ * `enabled = true` 复位并打 `memory_reenabled_at = now`. 编译流水线
+ * (8B+) 会按这两个时间戳过滤掉静默窗口内的摘要.
+ *
+ * @param sessionId - 会话 ID
+ * @param enabled - true=开启 memory, false=关闭
+ */
+export async function memorySessionSetEnabled(
+  sessionId: string,
+  enabled: boolean
+): Promise<void> {
+  await invoke<void>('memory_session_set_enabled', { id: sessionId, enabled });
+}
+
+/**
  * 创建新项目
  *
  * @param name - 项目名称

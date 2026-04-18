@@ -369,6 +369,7 @@ impl MemoryAuditEmitter {
     /// scope tier names (`"session"` / `"project"` / `"global"`) — kept this
     /// way to avoid widening `MemoryEventPayload` for one more tag pair.
     /// `reason_message` carries the human-readable rationale.
+    #[allow(dead_code)] // consumer lands in commands::agent (prior-session change)
     pub fn memory_promotion_candidate(
         ctx: &AuditContext<'_>,
         key: &str,

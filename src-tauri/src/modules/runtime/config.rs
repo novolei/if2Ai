@@ -622,6 +622,73 @@ impl RuntimeConfig {
     pub fn memory(&self) -> &MemoryFeatureConfig {
         &self.feature_config.memory
     }
+
+    /// Active UI / prompt language as a BCP-47 tag (e.g. `"zh-CN"`,
+    /// `"en-US"`).  Read from the merged `language` top-level settings
+    /// key; defaults to `"en-US"` when no override is set.
+    ///
+    /// Phase 8A.4 — backs [`crate::modules::runtime::locale::is_zh`] so
+    /// every memory-prompt builder switches zh ↔ en from a single source
+    /// of truth, without each call site re-parsing settings.json.
+    #[must_use]
+    pub fn language(&self) -> &str {
+        self.merged
+            .get("language")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("en-US")
+    }
+}
+
+/// Process-global handle to the [`RuntimeConfig`] loaded at startup.
+///
+/// Installed exactly once via [`set_current`] from `main.rs::run` after
+/// [`ConfigLoader::load`].  Subsequent calls to [`current`] return the
+/// installed handle; calls before init return a lazily-allocated default
+/// (see [`DEFAULT_CONFIG`]) so library code can be tested in isolation.
+static CURRENT_CONFIG: std::sync::OnceLock<RuntimeConfig> = std::sync::OnceLock::new();
+
+/// Lazily-allocated default returned by [`current`] when [`set_current`]
+/// has not been called yet.  Distinct from [`CURRENT_CONFIG`] so the
+/// `OnceLock` slot remains writable: a one-shot `get_or_init` on
+/// `CURRENT_CONFIG` would install a default and permanently shadow the
+/// real config that `main.rs` installs a few lines later.
+static DEFAULT_CONFIG: std::sync::OnceLock<RuntimeConfig> = std::sync::OnceLock::new();
+
+/// Globally-accessible read-only handle to the [`RuntimeConfig`] loaded
+/// at startup.
+///
+/// Phase 8A.4 — backs [`crate::modules::runtime::logical_day::get_today`]
+/// and [`crate::modules::runtime::locale::is_zh`] so user overrides in
+/// `settings.json` (timezone / cutoff hour / language) take effect at
+/// the first request, not after restart.
+///
+/// # Behaviour before init
+/// Calling `current()` before [`set_current`] returns a default
+/// [`RuntimeConfig::empty`] and emits `tracing::warn!` exactly once.
+/// This keeps unit-test paths usable without booting the full app while
+/// still alerting operators when a real boot path forgets `set_current`.
+#[must_use]
+pub fn current() -> &'static RuntimeConfig {
+    if let Some(config) = CURRENT_CONFIG.get() {
+        return config;
+    }
+    DEFAULT_CONFIG.get_or_init(|| {
+        tracing::warn!(
+            "runtime::config::current() called before set_current(); returning default RuntimeConfig"
+        );
+        RuntimeConfig::empty()
+    })
+}
+
+/// Install the global [`RuntimeConfig`] returned by [`current`].
+///
+/// Idempotent: subsequent calls are silently ignored (the underlying
+/// [`std::sync::OnceLock`] only accepts the first value).  Call from
+/// `main.rs::run` immediately after [`ConfigLoader::load`].
+pub fn set_current(config: RuntimeConfig) {
+    if CURRENT_CONFIG.set(config).is_err() {
+        tracing::debug!("runtime::config::set_current() called more than once; ignored");
+    }
 }
 
 impl RuntimeFeatureConfig {
@@ -2238,6 +2305,70 @@ mod tests {
             .expect_err("config should reject");
         assert!(error.to_string().contains("memory.recallMode"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn runtime_config_language_default_is_en_us() {
+        // Empty config → no `language` key → default `"en-US"`.
+        let cfg = super::RuntimeConfig::empty();
+        assert_eq!(cfg.language(), "en-US");
+    }
+
+    #[test]
+    fn runtime_config_language_reads_top_level_key() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{"language":"zh-CN"}"#,
+        )
+        .expect("write language settings");
+        let loaded = super::ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert_eq!(loaded.language(), "zh-CN");
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn current_returns_default_when_unset_and_set_current_installs_value() {
+        // CURRENT_CONFIG is a process-global OnceLock; this test exercises
+        // both the pre-init default branch and the set-once branch.  Run
+        // serially (cargo's default within the same binary) so other
+        // tests do not race on the slot.
+        let before = super::current();
+        // Default config has empty merged map → language() falls back to "en-US".
+        assert_eq!(before.language(), "en-US");
+
+        let mut merged = std::collections::BTreeMap::new();
+        merged.insert(
+            "language".to_string(),
+            super::JsonValue::String("zh-CN".to_string()),
+        );
+        let configured = super::RuntimeConfig {
+            merged,
+            loaded_entries: Vec::new(),
+            feature_config: super::RuntimeFeatureConfig::default(),
+        };
+        super::set_current(configured);
+        let after = super::current();
+        assert_eq!(after.language(), "zh-CN");
+
+        // Idempotent: a 2nd set is silently ignored, value does not change.
+        let mut other_merged = std::collections::BTreeMap::new();
+        other_merged.insert(
+            "language".to_string(),
+            super::JsonValue::String("ja-JP".to_string()),
+        );
+        super::set_current(super::RuntimeConfig {
+            merged: other_merged,
+            loaded_entries: Vec::new(),
+            feature_config: super::RuntimeFeatureConfig::default(),
+        });
+        assert_eq!(super::current().language(), "zh-CN");
     }
 
     #[test]

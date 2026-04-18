@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for If2Ai",
+  "description": "Default permissions for If2Ai (includes invoke access to all #[tauri::command] handlers registered via generate_handler!, e.g. memory_session_set_enabled — Phase 8A.4 / v2 §0.5 Δ-11)",
   "windows": ["main"],
   "permissions": [
     "core:default",
