@@ -207,3 +207,4 @@
 | 2026-04-17 | Phase 7B Slice 7B.7 完成：Session 隔离 + 冷保存恢复 (ColdState JSON persist, incognito context, restore_cold_state; 712 tests pass, REVIEW_PASS) |
 | 2026-04-17 | Phase 7B Slice 7B.8 完成：BrowserViewer 独立窗口 (open_browser_viewer_window Tauri cmd, BrowserViewerPage iframe+thumbnail fallback, Expand button in BrowserCard; 712 tests pass, REVIEW_PASS) |
 | 2026-04-17 | **Phase 7B ALL COMPLETE** (8/8 slices, 712 tests pass, 0 clippy warnings; browser capability gap vs openhanako closed) |
+| 2026-04-18 | 8A.1 | done | T-A1 PII Scrub 接入写入路径（ThreatScanner.scan_and_redact + 3 类新 pattern + sqlite/vector providers with_scanner 深度防御 + memory_pii_redacted audit + tauri.ts 扩展）| gate ✅ review ✅ (slice review_checklist 6/6 满足；harness review fmt/clippy/test/no-unwrap/no-secrets 5/6 PASS，剩余 doc-comment 失败均为 5e6f828 之前提交的 70+ 个 pre-existing pub fns，超出 8A.1 范围) |

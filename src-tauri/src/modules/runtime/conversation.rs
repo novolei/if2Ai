@@ -157,6 +157,8 @@ where
     C: ApiClient,
     T: ToolExecutor,
 {
+    /// Construct a runtime with default feature config.  Equivalent to
+    /// [`Self::new_with_features`] with [`RuntimeFeatureConfig::default()`].
     #[must_use]
     pub fn new(
         session: Session,
@@ -175,6 +177,9 @@ where
         )
     }
 
+    /// Construct a runtime with an explicit feature-flag bundle (hooks /
+    /// plugins / sandbox).  Used by tests and the harness shim that need
+    /// to override the default feature config.
     #[must_use]
     pub fn new_with_features(
         session: Session,
@@ -199,6 +204,8 @@ where
         }
     }
 
+    /// Cap the number of agent loop iterations within a single turn.
+    /// Default is `usize::MAX` (no cap).
     #[must_use]
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
         self.max_iterations = max_iterations;
@@ -231,6 +238,9 @@ where
         since = "0.1.0",
         note = "Use with_context_budget for per-slot budget tracking"
     )]
+    /// Construct a default-allocation [`ContextBudget`] from a flat total
+    /// token cap.  Retained only for legacy callers; new code should call
+    /// [`Self::with_context_budget`] directly.
     #[must_use]
     pub fn with_max_token_budget(mut self, max_token_budget: usize) -> Self {
         // Create a simple budget with the given total and default percentages
@@ -256,6 +266,9 @@ where
         Ok(self.system_prompt.join("\n"))
     }
 
+    /// Drive one full turn of the agent loop: append the user message,
+    /// query the model, dispatch tool calls, and return a [`TurnSummary`].
+    /// Honours the optional [`PermissionPrompter`] for per-tool approvals.
     pub fn run_turn(
         &mut self,
         user_input: impl Into<String>,
@@ -395,26 +408,32 @@ where
         })
     }
 
+    /// Run synchronous compaction over the inner session and return the
+    /// trimmed result without mutating `self`.
     #[must_use]
     pub fn compact(&self, config: CompactionConfig) -> CompactionResult {
         compact_session(&self.session, config)
     }
 
+    /// Coarse running estimate of total session token usage.
     #[must_use]
     pub fn estimated_tokens(&self) -> usize {
         estimate_session_tokens(&self.session)
     }
 
+    /// Borrow the cumulative LLM usage counters tracked across turns.
     #[must_use]
     pub fn usage(&self) -> &UsageTracker {
         &self.usage_tracker
     }
 
+    /// Borrow the inner session (immutable view of the conversation history).
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
     }
 
+    /// Consume the runtime and return ownership of the inner session.
     #[must_use]
     pub fn into_session(self) -> Session {
         self.session
@@ -527,11 +546,14 @@ pub struct StaticToolExecutor {
 }
 
 impl StaticToolExecutor {
+    /// Build an empty executor with no registered handlers.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Register a handler closure under `tool_name`.  Builder-style:
+    /// returns `self` so multiple `register(...)` calls can be chained.
     #[must_use]
     pub fn register(
         mut self,
