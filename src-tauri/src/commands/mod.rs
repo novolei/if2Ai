@@ -19,6 +19,7 @@ use crate::modules::runtime::permissions::PermissionPromptDecision;
 // Memory and learning infrastructure
 use crate::modules::memory::security::ThreatScanner;
 use crate::modules::memory::JobRunner;
+use crate::modules::memory::PinnedStore;
 use crate::modules::memory::SessionSummaryStore;
 use crate::modules::memory::SharedMemoryProvider;
 use crate::modules::memory::UtilityLlm;
@@ -130,6 +131,16 @@ pub struct AppState {
     /// constructor.
     #[allow(dead_code)]
     pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
+
+    /// Phase 8A.9 — pinned-memory store (Phase F).  Backs the
+    /// `pin_memory` / `unpin_memory` tools (8A.10), the pinned section
+    /// of the system-prompt injector (8A.11), and the
+    /// PinnedMemoryEditor UI (8A.12).
+    ///
+    /// `allow(dead_code)`: first reader lands in 8A.10; held here from
+    /// 8A.9 so the next slice only needs to read `state.pinned_store`.
+    #[allow(dead_code)]
+    pub pinned_store: Arc<dyn PinnedStore>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -173,6 +184,8 @@ pub struct AppStateConfig {
     /// Shared rolling-summary orchestrator; see
     /// [`AppState::rolling_summarizer`].
     pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
+    /// Shared pinned-memory store; see [`AppState::pinned_store`].
+    pub pinned_store: Arc<dyn PinnedStore>,
 }
 
 impl AppState {
@@ -201,6 +214,7 @@ impl AppState {
             utility_llm: cfg.utility_llm,
             summary_store: cfg.summary_store,
             rolling_summarizer: cfg.rolling_summarizer,
+            pinned_store: cfg.pinned_store,
         }
     }
 }

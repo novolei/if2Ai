@@ -78,6 +78,22 @@ export interface MemoryEventPayload {
      * timeline item with the char delta and LLM latency.
      */
     | 'memory_summary_rolled'
+    /**
+     * Phase 8A.9 / T-F1 — `PinnedStore.add` either inserted a new
+     * pin or returned an existing one via dedup.  `extra` carries
+     * `{ scope, content_excerpt, total_pins }`; `memory_category`
+     * mirrors the scope label so the TelemetryDrawer can colour-chip
+     * "已固定 · global / project" without parsing `extra`.
+     */
+    | 'memory_pinned'
+    /**
+     * Phase 8A.9 / T-F1 — `PinnedStore.delete` removed one or more
+     * pinned items.  `extra` carries
+     * `{ scope, removed_count, keyword }` where `keyword` is either
+     * the deleted id or the search keyword that drove a future bulk
+     * unpin from the PinnedMemoryEditor UI (8A.12).
+     */
+    | 'memory_unpinned'
   trace_id?: string
   session_id?: string
   project_id?: string

@@ -33,10 +33,35 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8']
-  current_slice: '8A.9'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9']
+  current_slice: '8A.10'
   blocked: []
-  notes: >
+    notes: >
+    8A.9 完成（2026-04-18）：T-F1 PinnedStore 骨架 + SQLite/pinned.md
+    双写 + ulid 引入。新模块 src-tauri/src/modules/memory/pinned/ 完整
+    实现 PinnedStore trait（list / list_all_for_prompt / add / delete
+    / reorder）+ SqlitePinnedStore（pinned_items 表 + scope/project/
+    created_at 三索引 + tmp+rename 原子 sidecar）+ NullPinnedStore
+    fallback。add() 7 步流水线：length guard → PII scrub（
+    ThreatScanner.scan_and_redact，flagged 时 emit memory_pii_redacted）
+    → 大小写不敏感 + trim 去重 → 50/scope 限额 → INSERT with ULID
+    + serialised PinSource → sidecar rewrite → memory_pinned audit。
+    MemoryError 加 PinnedLimitExceeded(usize) + PinnedContentTooLong{got,
+    limit} 两个具体 variant（YAML acceptance 直接引用）。audit.rs
+    新增 memory_pinned + memory_unpinned 两个关联函数（extra payload
+    走 §0.5 Δ-3 + Δ-4 模式，不扩 fixed schema）。AppState +
+    AppStateConfig 新增 pinned_store: Arc<dyn PinnedStore>，main.rs::
+    run 复用 summary_db_path（memory.db 单库 + pinned_items 表与
+    session_summaries 表互斥），sidecar 落 <memory_root>/pinned.md
+    单根（multi-scope-root TODO 留 8B）。tauri.ts 追加 memory_pinned
+    + memory_unpinned 联合类型。15 个 store.rs 内联单测全 PASS（ULID
+    格式 / dedup / case-insensitive trim / 500 字 reject / 50 上限
+    reject / project↔global 隔离 / 双 project 隔离 / list_all_for_prompt
+    合并 / delete idempotent / reorder 改顺序 / PII scrub + 替换 /
+    sidecar 内容匹配 / 无 .tmp 残留 / NullStore 全 inert / Tool source
+    JSON round-trip）。Lint 0 warning，gate PASS（compile + 898 tests
+    + 4 security_integration），review 6/6 PASS。
+    -----
     8A.8 完成（2026-04-18）：T-B4 compact ↔ rolling 5 分钟协调闭环 +
     Bonus AppState.rolling_summarizer 注入。runtime/compact.rs 新增 async
     wrapper compact_session_with_persistence(session, cfg, summary_store,
@@ -600,7 +625,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.9"
     title: "T-F1 — PinnedStore 骨架（SQLite + pinned.md 双写）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

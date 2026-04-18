@@ -708,6 +708,113 @@ impl MemoryAuditEmitter {
         });
     }
 
+    /// Emit a `memory_pinned` event after [`crate::modules::memory::pinned::PinnedStore::add`]
+    /// successfully writes a [`crate::modules::memory::pinned::PinnedItem`]
+    /// (or returns an existing one via the dedup short-circuit).
+    ///
+    /// Variable metadata (`scope`, `content_excerpt`, `total_pins`) rides
+    /// under `extra` per v2 §0.5 Δ-3 + Δ-4 so the fixed
+    /// [`MemoryEventPayload`] schema stays stable.  The Telemetry Drawer
+    /// renders the event as a "已固定 · {scope}" timeline item.
+    ///
+    /// `allow(dead_code)`: the first producer is the SqlitePinnedStore in
+    /// 8A.9 itself; the bin target sees no caller until the pin_memory
+    /// tool wires it in 8A.10.
+    #[allow(dead_code)]
+    pub fn memory_pinned(
+        ctx: &AuditContext<'_>,
+        scope: &'static str,
+        content_excerpt: &str,
+        total_pins: usize,
+    ) {
+        tracing::info!(
+            event = "memory_pinned",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            pin_scope = scope,
+            total_pins = total_pins,
+        );
+        let extra = serde_json::json!({
+            "scope": scope,
+            "content_excerpt": content_excerpt,
+            "total_pins": total_pins,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_pinned",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: Some(scope),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(total_pins),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Emit a `memory_unpinned` event after [`crate::modules::memory::pinned::PinnedStore::delete`]
+    /// removes one or more pinned items.
+    ///
+    /// `removed_count` is the number of rows actually deleted (idempotent
+    /// callers may pass `0` when the id was already gone).  `keyword`
+    /// carries the originating intent (the deleted id, or the search
+    /// keyword that drove the bulk unpin from the future
+    /// PinnedMemoryEditor UI in 8A.12).
+    ///
+    /// `allow(dead_code)`: see [`Self::memory_pinned`].
+    #[allow(dead_code)]
+    pub fn memory_unpinned(
+        ctx: &AuditContext<'_>,
+        scope: &'static str,
+        removed_count: usize,
+        keyword: &str,
+    ) {
+        tracing::info!(
+            event = "memory_unpinned",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            pin_scope = scope,
+            removed_count = removed_count,
+            keyword = keyword,
+        );
+        let extra = serde_json::json!({
+            "scope": scope,
+            "removed_count": removed_count,
+            "keyword": keyword,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_unpinned",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: Some(scope),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: Some(keyword),
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(removed_count),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_cleared` event after the user triggers a global
     /// "wipe all memory" from Settings.  Carries the number of removed
     /// entries in `result_count` so the Telemetry Drawer can show "N

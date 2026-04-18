@@ -16,6 +16,7 @@ pub mod hrr;
 pub mod intent;
 pub mod job_runner;
 pub mod llm;
+pub mod pinned;
 pub mod policy;
 pub mod promotion;
 mod providers;
@@ -47,6 +48,15 @@ pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderCo
 pub use summary::{
     NullSessionSummaryStore, SessionSummaryRecord, SessionSummaryStore, SqliteSessionSummaryStore,
     SummarySource,
+};
+// Phase 8A.9 — pinned-memory subsystem (T-F1).  First production
+// consumer (pin_memory tool) lands in 8A.10; held on `AppState` from
+// this slice so subsequent slices only need to read
+// `state.pinned_store`.
+#[allow(unused_imports)]
+pub use pinned::{
+    NullPinnedStore, PinScope, PinSource, PinnedItem, PinnedStore, SqlitePinnedStore,
+    MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
 };
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
@@ -115,6 +125,16 @@ pub enum MemoryError {
     KeyNotFound(String),
     #[error("category not found: {0}")]
     CategoryNotFound(String),
+    /// Phase 8A.9 — emitted by [`pinned::store::PinnedStore::add`] when the
+    /// caller would exceed the per-scope pin cap (`MAX_PINS_PER_SCOPE`,
+    /// v2 §0.5 Δ-17).  The `usize` is the cap that was hit.
+    #[error("pinned items reached the per-scope limit ({0})")]
+    PinnedLimitExceeded(usize),
+    /// Phase 8A.9 — emitted by [`pinned::store::PinnedStore::add`] when the
+    /// caller's content exceeds `MAX_PIN_CONTENT_CHARS` (v2 §0.5 Δ-17).
+    /// `got` is the actual char count, `limit` is the cap.
+    #[error("pinned content exceeds per-pin limit ({limit} chars; got {got})")]
+    PinnedContentTooLong { got: usize, limit: usize },
 }
 
 impl From<rusqlite::Error> for MemoryError {

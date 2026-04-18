@@ -466,6 +466,36 @@ fn main() {
         Some(threat_scanner.clone()),
     ));
 
+    // Phase 8A.9 — PinnedStore backed by the shared
+    // `<memory_root>/memory.db` (same SQLite file as the summary store
+    // and MemoryProvider; the `pinned_items` table is disjoint from
+    // both).  The markdown sidecar lives at `<memory_root>/pinned.md`
+    // — single-root simplification per v2 §0.5 Δ-6 (multi-scope-root
+    // separation lands in 8B).  On open failure we fall back to
+    // `NullPinnedStore` so the app still boots; pinned writes will then
+    // surface a `MemoryError::Generic` to callers.
+    let pinned_store: std::sync::Arc<dyn modules::memory::PinnedStore> =
+        match modules::memory::SqlitePinnedStore::open(
+            &summary_db_path,
+            memory_root.clone(),
+            Some(threat_scanner.clone()),
+        ) {
+            Ok(store) => {
+                tracing::info!(
+                    "[init] PinnedStore initialised at {:?} (sidecar {:?}/pinned.md)",
+                    summary_db_path,
+                    memory_root
+                );
+                std::sync::Arc::new(store)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[init] PinnedStore failed to open {summary_db_path:?}: {e}; using NullPinnedStore (pin writes will error)"
+                );
+                std::sync::Arc::new(modules::memory::NullPinnedStore::new())
+            }
+        };
+
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =
@@ -579,6 +609,7 @@ fn main() {
         utility_llm,
         summary_store,
         rolling_summarizer,
+        pinned_store,
     });
 
     tauri::Builder::default()
