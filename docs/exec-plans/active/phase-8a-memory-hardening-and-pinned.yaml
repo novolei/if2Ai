@@ -33,11 +33,25 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5']
-  current_slice: '8A.6'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6']
+  current_slice: '8A.7'
   blocked: []
   notes: >
-    Phase A 4 个 slice 全部完成（PII scrub + JobRunner + LogicalDay + 双开关），
+    8A.6 完成（2026-04-18）：T-B2 滚动摘要 prompt 模板 + budget 线性缩放 +
+    build_conversation_text 落地。新文件 memory/summary/prompt.rs（~430 行
+    含 17 单测）：RollingSummaryPrompt + SummaryBudget + compute_budget
+    （turn*40 clamp[40,400]；facts=30%；max_tokens=total*1.5 clamp[150,750]）+
+    build_rolling_summary_prompt（中英双 system，含 "## 重要事实/Key facts" +
+    "## 事情经过/What happened" 固定两节，has_prev 时 user 拼 "## 已有摘要/
+    Previous summary" 三段式）+ build_conversation_text（跳过 System/Tool role
+    与 ToolUse/ToolResult blocks，assistant >300 char 用 char-based 截断 +
+    "…（长回复已截断）" 标记，避免 byte slice 撕裂中文）。Divergence vs
+    openhanako：本仓 ConversationMessage 无 timestamp 字段，openhanako 的
+    [HH:MM] 时间前缀已 drop（review_checklist 已记录）。locale 读 runtime::
+    locale::is_zh()（§0.5 Δ-13）；mod.rs 加 #[allow(unused_imports)] 给
+    re-exports（首消费者 8A.7 RollingSummarizer）。无新依赖、无 schema 改动、
+    无 trait 改动、无 commands/main 改动、无前端改动。Phase A 4 个 slice
+    全部完成（PII scrub + JobRunner + LogicalDay + 双开关），
     已触发 human_checkpoint #1，等人工 review 后再开 Phase B。
     8A.4 完成（2026-04-18）：SessionMeta + Session 增 memory_enabled
     / memory_disabled_since / memory_reenabled_at（全 Option + #[serde(default)]
@@ -395,7 +409,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.6"
     title: "T-B2 — 滚动摘要 LLM Prompt + budget 线性缩放"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
