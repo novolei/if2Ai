@@ -133,6 +133,7 @@
 
 | 日期       | 事件                                                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-19 | Slice 8B.9 完成：MemoryTicker.start + recover_unsummarized + 备用 daily timer + memory_ticker_recovery audit；Phase D (8B.6→8B.9) 闭环，下一步进入 UI Phase |
 | 2026-04-19 | Slice 8B.2 完成：fingerprint 边车机制（compute/read/write/is_unchanged 4 个纯函数 + 10 单测，MD5 缓存为 8B.3/8B.4 compile_* 提供短路）                 |
 | 2026-04-12 | Slice 1.11 重新实现：run_agent_turn 使用真实 ConversationRuntime + MockApiClient + ToolRegistryExecutor bridges                                         |
 | 2026-04-11 | 项目初始化，Phase 1 开始                                                                                                                                |

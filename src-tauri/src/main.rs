@@ -847,6 +847,25 @@ fn main() {
             // channel for `MemoryChip` / `MemoryWriteCard` consumption.
             modules::memory::audit::register_app_handle(app.handle().clone());
 
+            // Phase 8B.9 (T-D4) — kick off the MemoryTicker startup
+            // hook: recover_unsummarized() catches up dirty sessions
+            // from the previous boot, then a backup
+            // tokio::time::interval drives `maybe_run_daily` every
+            // `daily_check_interval_secs` so a long-idle agent still
+            // hits the daily compile cycle.  Spawned on the Tauri
+            // async runtime so the setup closure stays synchronous.
+            {
+                let ticker_for_start = app
+                    .state::<std::sync::Arc<AppState>>()
+                    .inner()
+                    .memory_ticker
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    let scope = modules::memory::scope::MemoryExecutionScope::global();
+                    ticker_for_start.start(scope).await;
+                });
+            }
+
             let bundled_skills_dir = ["resources/bundled-skills", "bundled-skills"]
                 .iter()
                 .filter_map(|candidate| {

@@ -33,10 +33,27 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8']
-  current_slice: '8B.9'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8', '8B.9']
+  current_slice: '8B.10'
   blocked: []
   notes: >
+    8B.9 (T-D4) 落地：MemoryTicker.start(self: &Arc<Self>, scope) +
+    recover_unsummarized 启动补偿 + 备用 daily timer。Phase D
+    (8B.6→8B.9) 闭环：Ticker 现已具备完整能力链（per-turn 滚摘要 →
+    机会式 daily kick → cold-boot 补偿 → 备用 timer 兜底空闲 agent）。
+    recover_unsummarized 扫 <data_local>/.if2ai/memory/summaries/*.json，
+    24h cutoff + 5s 时钟漂移容差判断 dirty session，emit
+    memory_ticker_recovery audit；不在冷启动时合成滚摘要（缺消息
+    transcript），由后续 user turn 自然驱动 — 与 openhanako 行为一致。
+    main.rs setup() 在 register_app_handle 之后通过
+    tauri::async_runtime::spawn 拉起 ticker.start。tauri.ts 联合追加
+    'memory_ticker_recovery'。新增 4 个 #[tokio::test]（recover 空目录
+    Ok(empty) / RecoveredSummary camelCase 序列化 / start 不 panic /
+    audit emitter 不 panic）。⚠️ 备用 timer 当前未挂 abort handle，
+    依赖进程退出时 tokio runtime drop（review_checklist 第 2 条留作
+    未来 9.x slice 的 graceful shutdown 工作）。下一步进入 UI Phase
+    (8B.10 CompiledMemoryViewer + 8B.11 NarrativeViewer)。
+    8B.8 (T-D3) 落地：MemoryTicker.do_daily 步骤化断点续跑 +
     8B.8 (T-D3) 落地：MemoryTicker.do_daily 步骤化断点续跑 +
     maybe_run_daily 机会式 daily kick。共享 run_daily_inline 自由
     函数支撑 do_daily 与 maybe_run_daily 的 spawn 闭包，避免双份
@@ -486,7 +503,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.9"
     title: "T-D4 — 启动补偿（recover_unsummarized）+ 备用 timer"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

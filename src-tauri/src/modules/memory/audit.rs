@@ -156,6 +156,35 @@ impl<'a> AuditContext<'a> {
     }
 }
 
+/// One entry in a `memory_ticker_recovery` audit event payload.
+///
+/// Surfaced when [`crate::modules::memory::ticker::MemoryTicker::start`]
+/// detects that a session sidecar file under
+/// `<data_local>/.if2ai/memory/summaries/*.json` was modified more
+/// recently than its last persisted [`crate::modules::memory::summary::SessionSummaryRecord`]
+/// (within the 24h cutoff window).
+///
+/// `recover_unsummarized` does **not** synthetically re-roll the
+/// summary from cold disk — the message transcript is unavailable at
+/// boot.  It only records the dirty session and emits the audit event
+/// so an operator can see "已补摘要 N 个 session" in the
+/// TelemetryDrawer; the actual re-roll happens on the next user turn
+/// once messages are in scope.  This mirrors the openhanako reference
+/// implementation.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // serialized via memory_ticker_recovery audit event.
+pub struct RecoveredSummary {
+    /// Session identifier (sidecar filename stem).
+    pub session_id: String,
+    /// File modification time (when the session sidecar was last
+    /// touched on disk).
+    pub mtime: chrono::DateTime<chrono::Utc>,
+    /// Timestamp of the last persisted summary, or `None` when the
+    /// session never had one (first-time roll required).
+    pub summary_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 /// Emits structured audit events for memory operations.
 ///
 /// All methods are synchronous and non-blocking — they log via `tracing::info!`
@@ -923,6 +952,54 @@ impl MemoryAuditEmitter {
             recall_query: None,
             recall_category: None,
             result_count: Some(chars),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Emit a `memory_ticker_recovery` event after
+    /// [`crate::modules::memory::ticker::MemoryTicker::start`] completes
+    /// its `recover_unsummarized` scan.  `extra.recovered` carries the
+    /// per-session list so the TelemetryDrawer can render a single
+    /// "已补摘要 N 个 session" timeline item with details on hover.
+    ///
+    /// Per v2 §0.5 Δ-3 (no `Arc<Self>` field) + Δ-4 (variable metadata
+    /// via `extra`).
+    ///
+    /// `allow(dead_code)`: the only producer is the ticker startup hook
+    /// (Phase 8B.9); the bin target sees no direct caller until the app
+    /// boot path spawns the ticker.
+    #[allow(dead_code)]
+    pub fn memory_ticker_recovery(ctx: &AuditContext<'_>, recovered: &[RecoveredSummary]) {
+        let count = recovered.len();
+        tracing::info!(
+            event = "memory_ticker_recovery",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            recovered_count = count,
+        );
+        let extra = serde_json::json!({
+            "recovered_count": count,
+            "recovered": recovered,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_ticker_recovery",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(count),
             from_category: None,
             to_category: None,
             extra: Some(extra),

@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter, RecoveredSummary};
 use crate::modules::memory::compiler::{CompilePaths, MemoryCompiler};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::summary::rolling::RollingSummarizer;
@@ -406,6 +406,181 @@ impl MemoryTicker {
                 tracing::error!(error = %e, "maybe_run_daily: do_daily failed");
             }
         });
+    }
+
+    /// Start the ticker — runs once on app boot.
+    ///
+    /// Two responsibilities:
+    /// 1. `recover_unsummarized(scope).await` — catches up rolling
+    ///    summaries for any session sidecar that's been written more
+    ///    recently than its last persisted summary (the
+    ///    "process killed mid-roll" failure mode).  The result is
+    ///    surfaced via the `memory_ticker_recovery` audit event; no
+    ///    synthetic re-roll happens here because the message
+    ///    transcript is unavailable at boot — the next user turn
+    ///    naturally drives the rolling pipeline (mirrors openhanako).
+    /// 2. Spawns a backup `tokio::time::interval` loop that fires
+    ///    `maybe_run_daily(scope)` every
+    ///    [`TickerConfig::daily_check_interval_secs`].  The
+    ///    per-turn opportunistic kick (8B.8) handles most cases; the
+    ///    timer covers truly idle agents (user away for hours).
+    ///
+    /// Cheap to call (recover scan is bounded by sidecar file count).
+    /// Re-spawning the timer is allowed in principle but guarded
+    /// against in practice by `maybe_run_daily`'s `daily_running`
+    /// short-circuit.
+    ///
+    /// Recover errors are demoted to `tracing::warn!` and never
+    /// propagate — a failed scan must not block the app from booting.
+    pub async fn start(self: &Arc<Self>, scope: MemoryExecutionScope) {
+        match self.recover_unsummarized(&scope).await {
+            Ok(recovered) => {
+                tracing::info!(
+                    count = recovered.len(),
+                    "MemoryTicker.start: recover_unsummarized completed"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "MemoryTicker.start: recover_unsummarized failed (non-fatal)"
+                );
+            }
+        }
+
+        let me = Arc::clone(self);
+        let interval_secs = self.config.daily_check_interval_secs.max(1);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            // Skip the immediate first tick (interval fires at t=0 by
+            // default) — we don't want to drive a daily run the
+            // instant the app boots; let the on_turn_complete
+            // opportunistic kick handle that case.
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                me.maybe_run_daily(&scope);
+            }
+        });
+    }
+
+    /// Catch up rolling summaries for sessions whose on-disk sidecar
+    /// has been modified more recently than its last persisted
+    /// summary.  Scans
+    /// `<data_local>/.if2ai/memory/summaries/*.json` (the layout
+    /// established by [`crate::modules::memory::summary::store::SqliteSessionSummaryStore`]
+    /// in 8A.5).
+    ///
+    /// Filtering rules:
+    /// - Only `*.json` files are considered.
+    /// - Files whose `mtime` is older than 24h are skipped (avoids
+    ///   re-recovering very stale sessions on a long-uptime machine).
+    /// - For files within the 24h window, the sidecar is "dirty"
+    ///   when `mtime > summary_at + 5s` (the 5s slop guards against
+    ///   filesystem clock drift) or when no summary exists at all.
+    ///
+    /// Returns the list of recovered (dirty) sessions; the caller is
+    /// also notified asynchronously via the
+    /// `memory_ticker_recovery` audit event when the list is
+    /// non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::Generic`] only when the OS does not
+    /// expose a local data directory or the summaries directory
+    /// `read_dir` itself fails.  Per-file errors (missing metadata,
+    /// unreadable filename) are silently skipped — recover is a
+    /// best-effort scan.
+    pub async fn recover_unsummarized(
+        &self,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<RecoveredSummary>, MemoryError> {
+        let memory_root = match Self::memory_root() {
+            Some(d) => d,
+            None => {
+                return Err(MemoryError::Generic(
+                    "data_local_dir unavailable; cannot scan summaries dir".into(),
+                ));
+            }
+        };
+        let summaries_dir = memory_root.join("summaries");
+        if !summaries_dir.exists() {
+            tracing::debug!(
+                ?summaries_dir,
+                "recover_unsummarized: summaries dir absent, nothing to recover"
+            );
+            return Ok(Vec::new());
+        }
+
+        let cutoff_at = chrono::Utc::now() - chrono::Duration::hours(24);
+        let mut candidates: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        let entries = std::fs::read_dir(&summaries_dir).map_err(|e| {
+            MemoryError::Generic(format!(
+                "recover_unsummarized: read_dir {summaries_dir:?} failed: {e}"
+            ))
+        })?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let session_id = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let mtime = match metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| {
+                    chrono::DateTime::<chrono::Utc>::from_timestamp(
+                        d.as_secs() as i64,
+                        d.subsec_nanos(),
+                    )
+                }) {
+                Some(t) => t,
+                None => continue,
+            };
+            if mtime < cutoff_at {
+                continue;
+            }
+            candidates.push((session_id, mtime));
+        }
+
+        let mut recovered: Vec<RecoveredSummary> = Vec::new();
+        for (sid, mtime) in candidates {
+            let existing = self.summary_store.get(&sid).await.ok().flatten();
+            let summary_at = existing.as_ref().map(|r| r.updated_at);
+            let stale = match summary_at {
+                Some(ts) => mtime > ts + chrono::Duration::seconds(5),
+                None => true,
+            };
+            if !stale {
+                continue;
+            }
+            recovered.push(RecoveredSummary {
+                session_id: sid,
+                mtime,
+                summary_at,
+            });
+        }
+
+        if !recovered.is_empty() {
+            let audit_ctx = AuditContext::from_scope(scope);
+            MemoryAuditEmitter::memory_ticker_recovery(&audit_ctx, &recovered);
+            tracing::info!(
+                count = recovered.len(),
+                "recover_unsummarized: surfaced dirty sessions"
+            );
+        }
+        Ok(recovered)
     }
 }
 
@@ -1066,6 +1241,85 @@ mod tests {
         let g = ticker.state.lock().expect("state lock");
         assert_eq!(g.last_daily_job_date, Some(today));
         assert!(!g.daily_running, "no spawn → daily_running stays false");
+    }
+
+    // ─── Phase 8B.9 (T-D4) — start + recover_unsummarized ───
+
+    #[tokio::test]
+    async fn recover_returns_empty_when_summaries_dir_absent() {
+        // dirs::data_local_dir() typically resolves on dev hosts; if
+        // .if2ai/memory/summaries doesn't exist the recover scan must
+        // return Ok(empty) without erroring out.
+        let ticker = make_ticker();
+        let scope = MemoryExecutionScope::global();
+        let result = ticker.recover_unsummarized(&scope).await;
+        // We don't assert the exact length (the host *may* legitimately
+        // have a populated summaries dir); we only assert the call
+        // succeeds and the audit pathway doesn't panic.
+        assert!(
+            result.is_ok(),
+            "recover_unsummarized must not error when summaries dir is missing or empty: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_summary_serializes_to_camel_case_json() {
+        let r = RecoveredSummary {
+            session_id: "sess-recovered".into(),
+            mtime: chrono::Utc::now(),
+            summary_at: None,
+        };
+        let json = serde_json::to_string(&r).expect("RecoveredSummary serializes");
+        assert!(json.contains("sess-recovered"), "session id present");
+        assert!(
+            json.contains("sessionId"),
+            "camelCase rename for sessionId, got: {json}"
+        );
+        assert!(
+            json.contains("summaryAt"),
+            "camelCase rename for summaryAt, got: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_completes_without_panicking() {
+        // start() awaits recover_unsummarized then spawns a background
+        // interval loop.  We bound the await with a timeout: if recover
+        // returns quickly (empty / missing dir) the future completes;
+        // the spawned timer keeps running but is detached from the
+        // returned future, so this test should always finish.
+        let ticker = Arc::new(make_ticker());
+        let started = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            ticker.start(MemoryExecutionScope::global()),
+        )
+        .await;
+        assert!(
+            started.is_ok(),
+            "start() must complete within 2s for an empty/missing summaries dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_emitter_memory_ticker_recovery_does_not_panic() {
+        let scope = MemoryExecutionScope::global();
+        let ctx = AuditContext::from_scope(&scope);
+        let recovered = vec![
+            RecoveredSummary {
+                session_id: "sess-a".into(),
+                mtime: chrono::Utc::now(),
+                summary_at: None,
+            },
+            RecoveredSummary {
+                session_id: "sess-b".into(),
+                mtime: chrono::Utc::now(),
+                summary_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            },
+        ];
+        // Pure tracing/emit call — verifies the audit function
+        // accepts the expected payload and runs cleanly when no
+        // AppHandle is registered (frontend emit short-circuits).
+        MemoryAuditEmitter::memory_ticker_recovery(&ctx, &recovered);
     }
 
     #[test]

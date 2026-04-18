@@ -105,6 +105,17 @@ export interface MemoryEventPayload {
      */
     | 'memory_compiled'
     /**
+     * Phase 8B.9 / T-D4 — `MemoryTicker.start` ran its
+     * `recover_unsummarized` scan on app boot and surfaced one or more
+     * session sidecar files whose mtime is newer than the last persisted
+     * summary (within the 24h cutoff window).  `extra` carries
+     * `{ recovered_count, recovered: [{ sessionId, mtime, summaryAt }] }`
+     * so the TelemetryDrawer can render a single "已补摘要 N 个 session"
+     * timeline item with details on hover.  The event fires once per
+     * boot (only when `recovered_count > 0`).
+     */
+    | 'memory_ticker_recovery'
+    /**
      * Phase 8B.4 / T-C4 — `assemble` concatenated the four `*.md`
      * artefacts (`facts → today → week → longterm`) into the
      * top-level `memory.md`.  `extra` carries `{ chars, sections }`
