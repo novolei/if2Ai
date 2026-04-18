@@ -33,8 +33,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4']
-  current_slice: '8A.5'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5']
+  current_slice: '8A.6'
   blocked: []
   notes: >
     Phase A 4 个 slice 全部完成（PII scrub + JobRunner + LogicalDay + 双开关），
@@ -334,7 +334,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.5"
     title: "T-B1 — SessionSummaryStore 骨架（SQLite + JSON 双写）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

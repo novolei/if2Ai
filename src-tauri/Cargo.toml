@@ -19,6 +19,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }
+# Phase 8A.5 — reserved for 8A.9 PinnedItem.id (ULID lexicographically sortable
+# by creation time, ideal for pinned-memory ordering).  Imported now so the
+# 8A.9 slice does not need a Cargo.toml churn commit.
+ulid = "1"
 glob = "0.3"
 regex = "1"
 walkdir = "2"

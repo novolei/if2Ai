@@ -413,6 +413,48 @@ fn main() {
         .join("memory");
     let job_runner = std::sync::Arc::new(open_job_runner_with_fallback(&memory_root));
 
+    // Phase 8A.5 — UtilityLlm shim (v2 §0.5 Δ-1).  ProviderManager is
+    // not currently bootstrapped in `main.rs` (provider construction
+    // lives behind the per-turn `runtime::conversation` path), so the
+    // production shim is a `MockUtilityLlm` placeholder that returns
+    // the empty string.  This is wired up correctly across `AppState`
+    // so subsequent slices (8A.7+) only need to swap the construction
+    // here once `ProviderManager` initialisation is centralised.
+    // See the slice 8A.5 commit body for the deferral rationale.
+    let utility_llm: std::sync::Arc<dyn modules::memory::UtilityLlm> =
+        std::sync::Arc::new(modules::memory::MockUtilityLlm::empty());
+    tracing::warn!(
+        "[init] UtilityLlm bound to MockUtilityLlm placeholder; real provider wiring deferred to slice 8A.7+"
+    );
+
+    // Phase 8A.5 — SessionSummaryStore backed by the shared
+    // `<memory_root>/memory.db` (same SQLite file as MemoryProvider —
+    // they own disjoint tables, so contention is bounded by the per-
+    // operation `spawn_blocking` lock).  JSON sidecars land at
+    // `<memory_root>/summaries/<session_id>.json` (v2 §0.5 Δ-6).
+    // On open failure we fall back to `NullSessionSummaryStore` so the
+    // app still boots — summaries simply do not persist.
+    let summary_db_path = memory_root.join("memory.db");
+    let summary_store: std::sync::Arc<dyn modules::memory::SessionSummaryStore> =
+        match modules::memory::SqliteSessionSummaryStore::open(
+            &summary_db_path,
+            memory_root.clone(),
+        ) {
+            Ok(store) => {
+                tracing::info!(
+                    "[init] SessionSummaryStore initialised at {:?}",
+                    summary_db_path
+                );
+                std::sync::Arc::new(store)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[init] SessionSummaryStore failed to open {summary_db_path:?}: {e}; using NullSessionSummaryStore (summaries will not persist)"
+                );
+                std::sync::Arc::new(modules::memory::NullSessionSummaryStore::new())
+            }
+        };
+
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =
@@ -523,6 +565,8 @@ fn main() {
         harness,
         threat_scanner,
         job_runner,
+        utility_llm,
+        summary_store,
     });
 
     tauri::Builder::default()

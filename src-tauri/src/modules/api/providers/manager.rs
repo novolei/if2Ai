@@ -2,8 +2,8 @@
 //!
 //! Provides a unified interface for registering and accessing multiple LLM providers.
 
-use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use super::ApiError;
@@ -97,6 +97,8 @@ pub struct MockStream {
 }
 
 impl MockStream {
+    /// Build a [`MockStream`] that yields the supplied content blocks
+    /// once when polled.  Used by `MockProvider` and tests.
     #[must_use]
     pub fn new(content: Vec<OutputContentBlock>) -> Self {
         Self {
@@ -128,7 +130,9 @@ impl tokio::io::AsyncRead for MockStream {
 #[allow(dead_code)]
 pub struct MockProvider {
     responses: Vec<MessageResponse>,
-    call_count: Cell<usize>,
+    // Phase 8A.5 — `AtomicUsize` (was `Cell<usize>`) so `MockProvider`
+    // is `Sync`, which the `Provider: Send + Sync` bound now requires.
+    call_count: AtomicUsize,
 }
 
 #[allow(dead_code)]
@@ -154,7 +158,7 @@ impl MockProvider {
                 },
                 request_id: None,
             }],
-            call_count: Cell::new(0),
+            call_count: AtomicUsize::new(0),
         }
     }
 
@@ -163,14 +167,14 @@ impl MockProvider {
     pub fn with_responses(responses: Vec<MessageResponse>) -> Self {
         Self {
             responses,
-            call_count: Cell::new(0),
+            call_count: AtomicUsize::new(0),
         }
     }
 
     /// Returns the number of times send_message was called.
     #[must_use]
     pub fn call_count(&self) -> usize {
-        self.call_count.get()
+        self.call_count.load(Ordering::SeqCst)
     }
 }
 
@@ -181,8 +185,7 @@ impl Provider for MockProvider {
         &'a self,
         _request: &'a MessageRequest,
     ) -> super::ProviderFuture<'a, MessageResponse> {
-        let call_idx = self.call_count.get();
-        self.call_count.set(call_idx + 1);
+        let call_idx = self.call_count.fetch_add(1, Ordering::SeqCst);
         let response = if call_idx < self.responses.len() {
             self.responses[call_idx].clone()
         } else {

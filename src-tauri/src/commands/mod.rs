@@ -19,7 +19,9 @@ use crate::modules::runtime::permissions::PermissionPromptDecision;
 // Memory and learning infrastructure
 use crate::modules::memory::security::ThreatScanner;
 use crate::modules::memory::JobRunner;
+use crate::modules::memory::SessionSummaryStore;
 use crate::modules::memory::SharedMemoryProvider;
+use crate::modules::memory::UtilityLlm;
 use crate::modules::runtime::budget::ContextBudget;
 
 /// Application state shared across all Tauri commands.
@@ -90,6 +92,28 @@ pub struct AppState {
     /// not re-thread construction through `main.rs`.
     #[allow(dead_code)]
     pub job_runner: Arc<JobRunner>,
+
+    /// Phase 8A.5 — single shared `UtilityLlm` shim (v2 §0.5 Δ-1).
+    /// Every memory subsystem (rolling summary, compile_today/week,
+    /// fact / experience / diary extractors) MUST dispatch its LLM
+    /// calls through this `Arc<dyn UtilityLlm>` so the memory modules
+    /// stay decoupled from `crate::modules::api::providers::*`.
+    ///
+    /// `allow(dead_code)`: first consumer lands in 8A.7
+    /// (`RollingSummarizer`); held here from 8A.5 so subsequent slices
+    /// only need to read `state.utility_llm`.
+    #[allow(dead_code)]
+    pub utility_llm: Arc<dyn UtilityLlm>,
+
+    /// Phase 8A.5 — session-summary store backed by SQLite + JSON
+    /// sidecar dual-write (v2 §Sprint 1 / T-B1 + §0.5 Δ-6).  Consumed
+    /// by 8A.6+ for rolling summary persistence, by 8A.8+ for
+    /// deep-memory dirty-session sweeping, and by the future
+    /// `MemoryBrowser` "session summaries" tab.
+    ///
+    /// `allow(dead_code)`: first reader lands in 8A.7.
+    #[allow(dead_code)]
+    pub summary_store: Arc<dyn SessionSummaryStore>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -126,6 +150,10 @@ pub struct AppStateConfig {
     pub threat_scanner: Arc<ThreatScanner>,
     /// Shared background-job coordinator; see [`AppState::job_runner`].
     pub job_runner: Arc<JobRunner>,
+    /// Shared utility-LLM shim; see [`AppState::utility_llm`].
+    pub utility_llm: Arc<dyn UtilityLlm>,
+    /// Shared session-summary store; see [`AppState::summary_store`].
+    pub summary_store: Arc<dyn SessionSummaryStore>,
 }
 
 impl AppState {
@@ -151,6 +179,8 @@ impl AppState {
             harness: cfg.harness,
             threat_scanner: cfg.threat_scanner,
             job_runner: cfg.job_runner,
+            utility_llm: cfg.utility_llm,
+            summary_store: cfg.summary_store,
         }
     }
 }

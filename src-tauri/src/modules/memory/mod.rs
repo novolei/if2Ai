@@ -15,12 +15,14 @@ pub mod embedding;
 pub mod hrr;
 pub mod intent;
 pub mod job_runner;
+pub mod llm;
 pub mod policy;
 pub mod promotion;
 mod providers;
 pub mod retrieval;
 pub mod scope;
 pub mod security;
+pub mod summary;
 pub mod working_memory;
 
 // Re-exports for the JobRunner module.  `JobAttempt` / `JobStatus` /
@@ -30,7 +32,22 @@ pub mod working_memory;
 // callers land in subsequent slices so the bin build stays warning-free.
 #[allow(unused_imports)]
 pub use job_runner::{JobAttempt, JobError, JobRunner, JobStatus};
+// Phase 8A.5 — UtilityLlm shim is the only LLM seam visible to memory
+// subsystems (v2 §0.5 Δ-1).  Producers (rolling summary, compile,
+// extractor, diary) land in 8A.6+; tagged `allow(unused_imports)` until
+// then so the bin build stays warning-free.
+#[allow(unused_imports)]
+pub use llm::{MockUtilityLlm, ProviderUtilityLlm, UtilityLlm};
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
+// Phase 8A.5 — session summary store (T-B1).  Consumers land in 8A.6
+// (RollingSummaryPrompt) and 8A.7 (RollingSummarizer); held on
+// `AppState` from this slice so subsequent slices only need to read
+// `state.summary_store`.
+#[allow(unused_imports)]
+pub use summary::{
+    NullSessionSummaryStore, SessionSummaryRecord, SessionSummaryStore, SqliteSessionSummaryStore,
+    SummarySource,
+};
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
 pub use scope::MemoryExecutionScope;

@@ -10,7 +10,11 @@ pub mod openai_compat;
 
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ApiError>> + Send + 'a>>;
 
-pub trait Provider {
+// Phase 8A.5 — `Send + Sync` is required so `Arc<ProviderManager>` can
+// live behind an `Arc<dyn UtilityLlm>` on `AppState` (v2 §0.5 Δ-1).
+// All concrete implementors (`ClawApiClient`, `OpenAiCompatClient`,
+// `MockProvider`) already satisfy these bounds via auto-derive.
+pub trait Provider: Send + Sync {
     type Stream;
 
     fn send_message<'a>(
@@ -142,6 +146,9 @@ const MODEL_REGISTRY: &[(&str, ProviderMetadata)] = &[
     ),
 ];
 
+/// Resolve a user-facing model alias (e.g. `"opus"`, `"sonnet"`,
+/// `"grok"`) to the canonical vendor model identifier expected by the
+/// upstream API.  Unknown aliases are returned unchanged (trimmed).
 #[must_use]
 pub fn resolve_model_alias(model: &str) -> String {
     let trimmed = model.trim();
@@ -168,6 +175,9 @@ pub fn resolve_model_alias(model: &str) -> String {
         .map_or_else(|| trimmed.to_string(), ToOwned::to_owned)
 }
 
+/// Look up the [`ProviderMetadata`] (auth env, base URL env, default
+/// base URL, provider kind) for a given model identifier or alias.
+/// Returns `None` for unknown models.
 #[must_use]
 pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
     let canonical = resolve_model_alias(model);
@@ -186,6 +196,9 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
     None
 }
 
+/// Best-effort routing: prefer the explicit model registry, then fall
+/// back to whichever provider has credentials available in the
+/// environment (Claw → OpenAI → xAI), defaulting to Claw.
 #[must_use]
 pub fn detect_provider_kind(model: &str) -> ProviderKind {
     if let Some(metadata) = metadata_for_model(model) {
@@ -203,6 +216,9 @@ pub fn detect_provider_kind(model: &str) -> ProviderKind {
     ProviderKind::ClawApi
 }
 
+/// Per-model output token budget used by request builders.  Opus
+/// caps at 32K to stay under the published context limits; everything
+/// else uses 64K.
 #[must_use]
 #[allow(dead_code)]
 pub fn max_tokens_for_model(model: &str) -> u32 {
