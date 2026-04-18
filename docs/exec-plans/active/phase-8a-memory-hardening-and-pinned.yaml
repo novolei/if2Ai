@@ -33,10 +33,37 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6']
-  current_slice: '8A.7'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7']
+  current_slice: '8A.8'
   blocked: []
   notes: >
+    8A.7 完成（2026-04-18）：T-B3 RollingSummarizer 端到端落地。新文件
+    memory/summary/rolling.rs（~470 行 + 9 单测，含 cfg(test)
+    InMemorySessionSummaryStore + AlwaysFailLlm doubles）实现 9 步流水线：
+    read existing → 增量切片（messages[prev_count..]） → build_conversation_text
+    → 计算 user-turn count → build_rolling_summary_prompt + compute_budget →
+    JobRunner.run("rolling_summary", session_id, ...) 包裹 UtilityLlm.complete →
+    PII scrub（defence-in-depth，scanner.scan_and_redact 命中触发
+    memory_pii_redacted）→ UPSERT SessionSummaryRecord(source=Rolling,
+    message_count=full len) → emit memory_summary_rolled。空切片 / 纯 Tool
+    role / 空 LLM 输出全部短路到 Ok(None) 不烧 budget；JobRunner Skip 与 Generic
+    错误分别返回 Ok(None) 与 Err(MemoryError::Generic)。runtime/conversation.rs
+    新增 TurnHook trait（sync fn，hook 内自己 spawn）+ ConversationRuntime
+    .turn_hook: Option<Arc<dyn TurnHook>> 字段 + with_turn_hook builder +
+    run_turn 末尾 Ok 之前调 hook.on_turn_complete()。当前调用点用
+    MemoryExecutionScope::global() + session_id="-"（runtime::session::Session
+    无 id/project_id 字段，TODO 标注待 8B 把真实 scope 接进来）。memory/audit.rs
+    加 memory_summary_rolled(ctx, session_id, turn_count, chars_before,
+    chars_after, latency_ms) 关联函数（v2 §0.5 Δ-3，无 Arc<MemoryAuditEmitter>
+    字段；变量元数据走 extra v2 §0.5 Δ-4）。tauri.ts MemoryEventPayload.event
+    union 追加 'memory_summary_rolled'。job_runner.rs 加 cfg(test) pub(crate)
+    open_in_memory_for_tests 让 sibling 模块 unit 测试复用 in-mem JobRunner
+    （生产路径无变化）。10 个新单测全 PASS（rolling 9 + conversation 1）。
+    阻碍点：runtime::session::Session 没有 id/project_id 字段，所以 hook 调用
+    点暂时退化到 global scope；待 8B 改 Session schema 后再接真实 scope。
+    无新依赖、无 schema 改动、无 trait 改动、无 commands/main 改动、无
+    capabilities.json 改动。下一步 8A.8（T-B4 compact ↔ rolling 协调，5
+    分钟防重复）。
     8A.6 完成（2026-04-18）：T-B2 滚动摘要 prompt 模板 + budget 线性缩放 +
     build_conversation_text 落地。新文件 memory/summary/prompt.rs（~430 行
     含 17 单测）：RollingSummaryPrompt + SummaryBudget + compute_budget
@@ -455,7 +482,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.7"
     title: "T-B3 — RollingSummarizer 主循环（增量切片 + PII + audit）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

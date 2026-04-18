@@ -70,6 +70,14 @@ export interface MemoryEventPayload {
      * carries `{ job, total_failures, last_error }`.
      */
     | 'memory_job_skipped'
+    /**
+     * Phase 8A T-B3 — `RollingSummarizer.rolling_summary` wrote a new
+     * [`SessionSummaryRecord`] for the active session.  `extra` carries
+     * `{ session_id, turn_count, chars_before, chars_after, latency_ms }`
+     * so the TelemetryDrawer can render a "第 N 轮 · 已更新摘要"
+     * timeline item with the char delta and LLM latency.
+     */
+    | 'memory_summary_rolled'
   trace_id?: string
   session_id?: string
   project_id?: string

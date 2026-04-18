@@ -646,6 +646,68 @@ impl MemoryAuditEmitter {
         });
     }
 
+    /// Emit a `memory_summary_rolled` event after
+    /// [`crate::modules::memory::summary::rolling::RollingSummarizer::rolling_summary`]
+    /// successfully writes a new [`crate::modules::memory::summary::SessionSummaryRecord`].
+    ///
+    /// Variable metadata (`session_id` / `turn_count` / `chars_before` /
+    /// `chars_after` / `latency_ms`) rides under `extra` per
+    /// v2 §0.5 Δ-3 + Δ-4 so the fixed [`MemoryEventPayload`] schema
+    /// stays stable.  The TelemetryDrawer renders the event as a "第 N
+    /// 轮 · 已更新摘要" timeline item with the char-delta and LLM
+    /// latency next to it.
+    ///
+    /// `allow(dead_code)`: the first producer is the RollingSummarizer
+    /// that lands together with this function in slice 8A.7; the bin
+    /// target sees no consumer until `AppState` wires the hook in 8B.
+    #[allow(dead_code)]
+    pub fn memory_summary_rolled(
+        ctx: &AuditContext<'_>,
+        session_id: &str,
+        turn_count: u32,
+        chars_before: usize,
+        chars_after: usize,
+        latency_ms: u64,
+    ) {
+        tracing::info!(
+            event = "memory_summary_rolled",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = session_id,
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            turn_count = turn_count,
+            chars_before = chars_before,
+            chars_after = chars_after,
+            latency_ms = latency_ms,
+        );
+        let extra = serde_json::json!({
+            "session_id": session_id,
+            "turn_count": turn_count,
+            "chars_before": chars_before,
+            "chars_after": chars_after,
+            "latency_ms": latency_ms,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_summary_rolled",
+            trace_id: ctx.trace_id,
+            session_id: Some(session_id),
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(turn_count as usize),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_cleared` event after the user triggers a global
     /// "wipe all memory" from Settings.  Carries the number of removed
     /// entries in `result_count` so the Telemetry Drawer can show "N

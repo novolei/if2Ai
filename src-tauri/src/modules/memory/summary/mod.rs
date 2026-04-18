@@ -8,6 +8,7 @@
 //! contract (SQLite is authoritative; JSON sidecar is best-effort).
 
 pub mod prompt;
+pub mod rolling;
 pub mod schema;
 pub mod store;
 
@@ -21,3 +22,9 @@ pub use prompt::{
 };
 pub use schema::{SessionSummaryRecord, SummarySource};
 pub use store::{NullSessionSummaryStore, SessionSummaryStore, SqliteSessionSummaryStore};
+
+// Phase 8A.7 — RollingSummarizer is the first production consumer of
+// every other item in this module.  Re-exported so `AppState` can hold
+// `Arc<RollingSummarizer>` without reaching into the submodule path.
+#[allow(unused_imports)]
+pub use rolling::RollingSummarizer;

@@ -201,6 +201,17 @@ impl JobRunner {
     }
 
     /// Build a runner backed by an in-memory SQLite database — used by
+    /// unit tests in this and sibling memory modules (8A.7
+    /// RollingSummarizer) so the suite does not need a tempdir.
+    #[cfg(test)]
+    pub(crate) fn open_in_memory_for_tests(
+        max_retries: u32,
+        max_concurrent: usize,
+    ) -> Result<Self, JobError> {
+        Self::open_in_memory(max_retries, max_concurrent)
+    }
+
+    /// Build a runner backed by an in-memory SQLite database — used by
     /// unit tests so the suite does not need a tempdir.
     #[cfg(test)]
     fn open_in_memory(max_retries: u32, max_concurrent: usize) -> Result<Self, JobError> {

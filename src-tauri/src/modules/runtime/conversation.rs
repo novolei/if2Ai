@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 use super::budget::ContextBudget;
 use super::compact::{
@@ -13,7 +14,48 @@ use super::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter
 use super::session::{ContentBlock, ConversationMessage, Session};
 use super::usage::{TokenUsage, UsageTracker};
 use crate::modules::api::ToolDefinition;
+use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
+
+/// Hook invoked by [`ConversationRuntime`] after each turn / on session end.
+///
+/// Phase 8A.7 / v2 §0.5 Δ-8.  Memory subsystems (rolling summarizer,
+/// experience extractor, ...) implement this trait so the runtime can
+/// fire background jobs without `commands/agent.rs` ever knowing the
+/// memory layer exists.  Implementations MUST be cheap — both methods
+/// are sync `fn` so [`ConversationRuntime`] stays `Send + Sync`; any
+/// long work belongs in a `tokio::spawn` inside the impl.
+///
+/// `messages` is borrowed from the live [`Session`] and outlives only
+/// the call: implementations MUST clone what they need before spawning
+/// background work.
+///
+/// Note (vs the openhanako reference): openhanako passes its
+/// in-house `ChatMessage` type; this crate hands over
+/// [`ConversationMessage`] so the hook signature stays aligned with
+/// the runtime's actual session model.
+pub trait TurnHook: Send + Sync {
+    /// Called after every successful agent turn (one full
+    /// user → assistant → optional tool loop completion).
+    fn on_turn_complete(
+        &self,
+        scope: &MemoryExecutionScope,
+        session_id: &str,
+        messages: &[ConversationMessage],
+    );
+
+    /// Called once when the session is being closed / archived.
+    /// Default implementation is a no-op so most hooks only need to
+    /// override [`Self::on_turn_complete`].
+    fn on_session_end(
+        &self,
+        scope: &MemoryExecutionScope,
+        session_id: &str,
+        messages: &[ConversationMessage],
+    ) {
+        let _ = (scope, session_id, messages);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
@@ -150,6 +192,11 @@ pub struct ConversationRuntime<C, T> {
     /// Working memory: when `Some`, only the sliding window of recent messages
     /// is sent to the LLM. Full history is preserved in `self.session.messages`.
     working_memory: Option<WorkingMemory>,
+    /// Phase 8A.7 — optional [`TurnHook`] fired after each successful turn
+    /// (and intended for `on_session_end` once the runtime gains an
+    /// explicit shutdown path).  Wired by `AppState` to the Phase 8B
+    /// `RollingSummarizer`; tests and harness fixtures leave it `None`.
+    turn_hook: Option<Arc<dyn TurnHook>>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -201,7 +248,20 @@ where
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(&feature_config),
             working_memory: None,
+            turn_hook: None,
         }
+    }
+
+    /// Attach a [`TurnHook`] that fires after every successful turn.
+    ///
+    /// Phase 8A.7 / v2 §0.5 Δ-8 — the production wire-up lives in
+    /// `AppState` and connects [`crate::modules::memory::summary::rolling::RollingSummarizer`].
+    /// The hook is invoked synchronously at the end of `run_turn`; long
+    /// work belongs in a `tokio::spawn` inside the impl.
+    #[must_use]
+    pub fn with_turn_hook(mut self, hook: Arc<dyn TurnHook>) -> Self {
+        self.turn_hook = Some(hook);
+        self
     }
 
     /// Cap the number of agent loop iterations within a single turn.
@@ -398,6 +458,17 @@ where
                 self.session.messages.push(result_message.clone());
                 tool_results.push(result_message);
             }
+        }
+
+        // Phase 8A.7 / v2 §0.5 Δ-8 — fire the turn-complete hook so
+        // memory subsystems (RollingSummarizer, …) can spawn background
+        // jobs without `commands/agent.rs` reaching into them directly.
+        // TODO(8B): once `runtime::session::Session` carries an `id` and
+        // `project_id`, replace the global / "-" fallback with the real
+        // scope so audit + dual-write attribution lines up.
+        if let Some(ref hook) = self.turn_hook {
+            let scope = MemoryExecutionScope::global();
+            hook.on_turn_complete(&scope, "-", &self.session.messages);
         }
 
         Ok(TurnSummary {
@@ -985,6 +1056,74 @@ mod tests {
     #[cfg(not(windows))]
     fn shell_snippet(script: &str) -> String {
         script.to_string()
+    }
+
+    /// Phase 8A.7 — `with_turn_hook` attaches a [`TurnHook`] that
+    /// fires once per successful `run_turn`.  We use a counting hook
+    /// to assert exactly one invocation per turn and that the hook
+    /// observes the in-flight session messages.
+    #[test]
+    fn turn_hook_fires_once_per_turn() {
+        use crate::modules::memory::scope::MemoryExecutionScope;
+        use crate::modules::runtime::conversation::TurnHook;
+        use crate::modules::runtime::session::ConversationMessage;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        struct CountingHook {
+            count: AtomicU32,
+            last_seen: std::sync::Mutex<usize>,
+        }
+
+        impl TurnHook for CountingHook {
+            fn on_turn_complete(
+                &self,
+                _scope: &MemoryExecutionScope,
+                _session_id: &str,
+                messages: &[ConversationMessage],
+            ) {
+                self.count.fetch_add(1, Ordering::SeqCst);
+                if let Ok(mut guard) = self.last_seen.lock() {
+                    *guard = messages.len();
+                }
+            }
+        }
+
+        struct SimpleApi;
+        impl ApiClient for SimpleApi {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                Ok(vec![
+                    AssistantEvent::TextDelta("ok".to_string()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let hook = Arc::new(CountingHook {
+            count: AtomicU32::new(0),
+            last_seen: std::sync::Mutex::new(0),
+        });
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SimpleApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        )
+        .with_turn_hook(hook.clone());
+
+        runtime.run_turn("first", None).expect("turn 1");
+        runtime.run_turn("second", None).expect("turn 2");
+
+        assert_eq!(hook.count.load(Ordering::SeqCst), 2);
+        let observed = *hook.last_seen.lock().expect("lock");
+        assert!(
+            observed >= 4,
+            "hook should observe >=4 messages after two turns, got {observed}"
+        );
     }
 
     /// Verifies that `with_working_memory` limits the messages sent to the LLM.
