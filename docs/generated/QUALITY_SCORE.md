@@ -209,3 +209,4 @@
 | 2026-04-17 | **Phase 7B ALL COMPLETE** (8/8 slices, 712 tests pass, 0 clippy warnings; browser capability gap vs openhanako closed) |
 | 2026-04-18 | 8A.1 | done | T-A1 PII Scrub 接入写入路径（ThreatScanner.scan_and_redact + 3 类新 pattern + sqlite/vector providers with_scanner 深度防御 + memory_pii_redacted audit + tauri.ts 扩展）| gate ✅ review ✅ (slice review_checklist 6/6 满足；harness review fmt/clippy/test/no-unwrap/no-secrets 5/6 PASS，剩余 doc-comment 失败均为 5e6f828 之前提交的 70+ 个 pre-existing pub fns，超出 8A.1 范围) |
 | 2026-04-18 | 8A.2 | done | T-A2 JobRunner（jobs.db + tokio Semaphore 限流 + skip-after-N 重试预算 + memory_job_failed/skipped audit 事件 + 6 个新单测）| gate ✅ review ✅ |
+| 2026-04-18 | 8A.3 | done | T-A3 LogicalDay 4AM 切日 + tz + locale helpers（runtime/logical_day.rs + runtime/locale.rs + chrono-tz 0.10 + MemoryFeatureConfig.timezone/logical_day_cutoff_hour，DST gap/ambiguous safe，13 logical_day + 5 locale + 2 config 新单测）| gate ✅ review ✅ |

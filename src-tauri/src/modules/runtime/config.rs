@@ -34,6 +34,7 @@ pub enum BoundaryEnforceMode {
 }
 
 impl BoundaryEnforceMode {
+    /// Wire-format label used in settings JSON and audit logs.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -138,11 +139,22 @@ impl MemoryPolicyEnforceMode {
 ///   }
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryFeatureConfig {
     control_plane_v1_enabled: bool,
     recall_mode: MemoryRecallMode,
     policy_enforce_mode: MemoryPolicyEnforceMode,
+    // Phase 8A.3 — IANA timezone name (e.g. `"Asia/Shanghai"`,
+    // `"America/New_York"`).  `None` means "no user override" → callers
+    // (see `runtime::logical_day::resolve_timezone`) fall back to
+    // `chrono_tz::UTC`.  Parse failures also fall back to UTC with a
+    // `tracing::warn!` so a typo can never panic the runtime.
+    timezone: Option<String>,
+    // Phase 8A.3 — Logical-day cutoff hour in LOCAL `timezone` (0-23).
+    // Default `4` — a 04:00 boundary keeps "I worked till 03:00 last
+    // night" rolled into yesterday's daily aggregations rather than
+    // fragmenting a single late-night session across two days.
+    logical_day_cutoff_hour: u8,
 }
 
 impl Default for MemoryFeatureConfig {
@@ -151,6 +163,8 @@ impl Default for MemoryFeatureConfig {
             control_plane_v1_enabled: true,
             recall_mode: MemoryRecallMode::default(),
             policy_enforce_mode: MemoryPolicyEnforceMode::default(),
+            timezone: None,
+            logical_day_cutoff_hour: 4,
         }
     }
 }
@@ -175,6 +189,25 @@ impl MemoryFeatureConfig {
     pub fn policy_enforce_mode(&self) -> MemoryPolicyEnforceMode {
         self.policy_enforce_mode
     }
+
+    /// User-configured IANA timezone name (e.g. `"Asia/Shanghai"`),
+    /// or `None` when no override is set.  Parsed by
+    /// [`crate::modules::runtime::logical_day::resolve_timezone`] which
+    /// falls back to `chrono_tz::UTC` on any failure.
+    #[must_use]
+    pub fn timezone(&self) -> Option<&str> {
+        self.timezone.as_deref()
+    }
+
+    /// Logical-day cutoff hour in LOCAL `timezone` (0-23, default `4`).
+    /// Used by every daily-aggregation memory pipeline (compile_today,
+    /// compile_week, diary writer) so the "day boundary" is consistent
+    /// across modules — see
+    /// [`crate::modules::runtime::logical_day`].
+    #[must_use]
+    pub fn logical_day_cutoff_hour(&self) -> u8 {
+        self.logical_day_cutoff_hour
+    }
 }
 
 impl Default for ControlPlaneGovernanceConfig {
@@ -189,6 +222,7 @@ impl Default for ControlPlaneGovernanceConfig {
 }
 
 impl ResolvedPermissionMode {
+    /// Wire-format label used in settings JSON and audit logs.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -198,6 +232,7 @@ impl ResolvedPermissionMode {
         }
     }
 
+    /// Project this resolved mode back to the runtime [`super::permissions::PermissionMode`].
     #[must_use]
     pub fn as_permission_mode(self) -> super::permissions::PermissionMode {
         match self {
@@ -400,6 +435,7 @@ pub struct ConfigLoader {
 }
 
 impl ConfigLoader {
+    /// Build a [`ConfigLoader`] rooted at the given working directory and config home.
     #[must_use]
     pub fn new(cwd: impl Into<PathBuf>, config_home: impl Into<PathBuf>) -> Self {
         Self {
@@ -408,6 +444,7 @@ impl ConfigLoader {
         }
     }
 
+    /// Build a [`ConfigLoader`] using the OS-default config home.
     #[must_use]
     pub fn default_for(cwd: impl Into<PathBuf>) -> Self {
         let cwd = cwd.into();
@@ -415,11 +452,13 @@ impl ConfigLoader {
         Self { cwd, config_home }
     }
 
+    /// Path to the resolved user-level config home directory.
     #[must_use]
     pub fn config_home(&self) -> &Path {
         &self.config_home
     }
 
+    /// Enumerate every config file path the loader will inspect, in precedence order.
     #[must_use]
     pub fn discover(&self) -> Vec<ConfigEntry> {
         let user_legacy_path = self.config_home.parent().map_or_else(
@@ -450,6 +489,7 @@ impl ConfigLoader {
         ]
     }
 
+    /// Load and merge every discovered config file into a [`RuntimeConfig`].
     pub fn load(&self) -> Result<RuntimeConfig, ConfigError> {
         let mut merged = BTreeMap::new();
         let mut loaded_entries = Vec::new();
@@ -489,6 +529,7 @@ impl ConfigLoader {
 }
 
 impl RuntimeConfig {
+    /// Construct an empty [`RuntimeConfig`] (no merged settings, no entries).
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -498,66 +539,79 @@ impl RuntimeConfig {
         }
     }
 
+    /// Raw merged top-level settings object (deep-merged across all sources).
     #[must_use]
     pub fn merged(&self) -> &BTreeMap<String, JsonValue> {
         &self.merged
     }
 
+    /// Sources that successfully contributed to the merged config, in load order.
     #[must_use]
     pub fn loaded_entries(&self) -> &[ConfigEntry] {
         &self.loaded_entries
     }
 
+    /// Look up a top-level merged settings key.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&JsonValue> {
         self.merged.get(key)
     }
 
+    /// Snapshot the merged settings as a [`JsonValue::Object`].
     #[must_use]
     pub fn as_json(&self) -> JsonValue {
         JsonValue::Object(self.merged.clone())
     }
 
+    /// Typed feature-config view derived from the merged settings.
     #[must_use]
     pub fn feature_config(&self) -> &RuntimeFeatureConfig {
         &self.feature_config
     }
 
+    /// Configured MCP server collection.
     #[must_use]
     pub fn mcp(&self) -> &McpConfigCollection {
         &self.feature_config.mcp
     }
 
+    /// Configured pre/post-tool hook commands.
     #[must_use]
     pub fn hooks(&self) -> &RuntimeHookConfig {
         &self.feature_config.hooks
     }
 
+    /// Plugin enable map and on-disk plugin discovery roots.
     #[must_use]
     pub fn plugins(&self) -> &RuntimePluginConfig {
         &self.feature_config.plugins
     }
 
+    /// Optional OAuth client configuration for the desktop app.
     #[must_use]
     pub fn oauth(&self) -> Option<&OAuthConfig> {
         self.feature_config.oauth.as_ref()
     }
 
+    /// Active model override (highest-precedence `model` value).
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.feature_config.model.as_deref()
     }
 
+    /// Default permission mode resolved from settings, if explicitly set.
     #[must_use]
     pub fn permission_mode(&self) -> Option<ResolvedPermissionMode> {
         self.feature_config.permission_mode
     }
 
+    /// Sandbox isolation policy for tool execution.
     #[must_use]
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.feature_config.sandbox
     }
 
+    /// Control-plane governance flags (boundary mode, transport, etc).
     #[must_use]
     pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
         &self.feature_config.control_plane
@@ -571,53 +625,63 @@ impl RuntimeConfig {
 }
 
 impl RuntimeFeatureConfig {
+    /// Replace the hook config and return the updated builder.
     #[must_use]
     pub fn with_hooks(mut self, hooks: RuntimeHookConfig) -> Self {
         self.hooks = hooks;
         self
     }
 
+    /// Replace the plugin config and return the updated builder.
     #[must_use]
     pub fn with_plugins(mut self, plugins: RuntimePluginConfig) -> Self {
         self.plugins = plugins;
         self
     }
 
+    /// Configured pre/post-tool hook commands.
     #[must_use]
     pub fn hooks(&self) -> &RuntimeHookConfig {
         &self.hooks
     }
 
+    /// Plugin enable map and on-disk plugin discovery roots.
     #[must_use]
     pub fn plugins(&self) -> &RuntimePluginConfig {
         &self.plugins
     }
 
+    /// Configured MCP server collection.
     #[must_use]
     pub fn mcp(&self) -> &McpConfigCollection {
         &self.mcp
     }
 
+    /// Optional OAuth client configuration.
     #[must_use]
     pub fn oauth(&self) -> Option<&OAuthConfig> {
         self.oauth.as_ref()
     }
 
+    /// Configured model override.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
     }
 
+    /// Resolved permission mode override.
     #[must_use]
     pub fn permission_mode(&self) -> Option<ResolvedPermissionMode> {
         self.permission_mode
     }
 
+    /// Sandbox isolation policy.
     #[must_use]
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.sandbox
     }
 
+    /// Control-plane governance flags.
     #[must_use]
     pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
         &self.control_plane
@@ -631,16 +695,19 @@ impl RuntimeFeatureConfig {
 }
 
 impl ControlPlaneGovernanceConfig {
+    /// `true` when the v2 control-plane wiring is active.
     #[must_use]
     pub fn control_plane_v2_enabled(&self) -> bool {
         self.control_plane_v2_enabled
     }
 
+    /// Active boundary enforcement mode (shadow vs enforce).
     #[must_use]
     pub fn boundary_enforce_mode(&self) -> BoundaryEnforceMode {
         self.boundary_enforce_mode
     }
 
+    /// `true` when the sandbox is configured to refuse risky operations.
     #[must_use]
     pub fn sandbox_strict_mode(&self) -> bool {
         self.sandbox_strict_mode
@@ -692,35 +759,42 @@ impl ProviderTransportConfig {
 }
 
 impl RuntimePluginConfig {
+    /// Map of plugin-id → enabled flag.
     #[must_use]
     pub fn enabled_plugins(&self) -> &BTreeMap<String, bool> {
         &self.enabled_plugins
     }
 
+    /// Additional directories scanned for external plugins.
     #[must_use]
     pub fn external_directories(&self) -> &[String] {
         &self.external_directories
     }
 
+    /// Filesystem root used when installing plugins.
     #[must_use]
     pub fn install_root(&self) -> Option<&str> {
         self.install_root.as_deref()
     }
 
+    /// Path to the persisted plugin install registry.
     #[must_use]
     pub fn registry_path(&self) -> Option<&str> {
         self.registry_path.as_deref()
     }
 
+    /// Filesystem root for bundled plugins shipped with the app.
     #[must_use]
     pub fn bundled_root(&self) -> Option<&str> {
         self.bundled_root.as_deref()
     }
 
+    /// Mark a plugin as enabled or disabled (in-memory only).
     pub fn set_plugin_state(&mut self, plugin_id: String, enabled: bool) {
         self.enabled_plugins.insert(plugin_id, enabled);
     }
 
+    /// Resolve a plugin's enabled state, falling back to `default_enabled`.
     #[must_use]
     pub fn state_for(&self, plugin_id: &str, default_enabled: bool) -> bool {
         self.enabled_plugins
@@ -730,6 +804,7 @@ impl RuntimePluginConfig {
     }
 }
 
+/// Resolve the default user-level config home directory.
 #[must_use]
 pub fn default_config_home() -> PathBuf {
     std::env::var_os("CLAW_CONFIG_HOME")
@@ -739,6 +814,7 @@ pub fn default_config_home() -> PathBuf {
 }
 
 impl RuntimeHookConfig {
+    /// Construct a [`RuntimeHookConfig`] from explicit hook command lists.
     #[must_use]
     pub fn new(pre_tool_use: Vec<String>, post_tool_use: Vec<String>) -> Self {
         Self {
@@ -747,16 +823,19 @@ impl RuntimeHookConfig {
         }
     }
 
+    /// Pre-tool-use hook command list.
     #[must_use]
     pub fn pre_tool_use(&self) -> &[String] {
         &self.pre_tool_use
     }
 
+    /// Post-tool-use hook command list.
     #[must_use]
     pub fn post_tool_use(&self) -> &[String] {
         &self.post_tool_use
     }
 
+    /// Return a new [`RuntimeHookConfig`] that contains commands from both inputs.
     #[must_use]
     pub fn merged(&self, other: &Self) -> Self {
         let mut merged = self.clone();
@@ -764,6 +843,7 @@ impl RuntimeHookConfig {
         merged
     }
 
+    /// Append unique commands from `other` into this hook config in-place.
     pub fn extend(&mut self, other: &Self) {
         extend_unique(&mut self.pre_tool_use, other.pre_tool_use());
         extend_unique(&mut self.post_tool_use, other.post_tool_use());
@@ -771,11 +851,13 @@ impl RuntimeHookConfig {
 }
 
 impl McpConfigCollection {
+    /// Map of MCP server name → scoped server config.
     #[must_use]
     pub fn servers(&self) -> &BTreeMap<String, ScopedMcpServerConfig> {
         &self.servers
     }
 
+    /// Look up a single MCP server by name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&ScopedMcpServerConfig> {
         self.servers.get(name)
@@ -783,6 +865,7 @@ impl McpConfigCollection {
 }
 
 impl ScopedMcpServerConfig {
+    /// Transport variant (stdio/http/sse/ws/sdk/proxy) of the underlying server config.
     #[must_use]
     pub fn transport(&self) -> McpTransport {
         self.config.transport()
@@ -790,6 +873,7 @@ impl ScopedMcpServerConfig {
 }
 
 impl McpServerConfig {
+    /// Transport variant for this MCP server config.
     #[must_use]
     pub fn transport(&self) -> McpTransport {
         match self {
@@ -1151,6 +1235,17 @@ fn parse_optional_memory_feature_config(
             {
                 config.policy_enforce_mode = parse_memory_policy_enforce_mode_label(label)?;
             }
+            // Phase 8A.3 — `memory.timezone` (IANA name) and
+            // `memory.logicalDayCutoffHour` (0-23) flow through here so
+            // both `settings.json` and `memory_config.json` agree.
+            if let Some(tz) = optional_string(memory, "timezone", "merged settings.memory")? {
+                config.timezone = Some(tz.to_string());
+            }
+            if let Some(hour) =
+                optional_u8(memory, "logicalDayCutoffHour", "merged settings.memory")?
+            {
+                config.logical_day_cutoff_hour = hour;
+            }
         }
     }
 
@@ -1166,6 +1261,12 @@ fn parse_optional_memory_feature_config(
         }
         if let Some(mode) = overrides.policy_enforce_mode {
             config.policy_enforce_mode = mode;
+        }
+        if let Some(tz) = overrides.timezone {
+            config.timezone = Some(tz);
+        }
+        if let Some(hour) = overrides.logical_day_cutoff_hour {
+            config.logical_day_cutoff_hour = hour;
         }
     }
 
@@ -1186,6 +1287,12 @@ struct If2AiMemoryOverrides {
     recall_mode: Option<MemoryRecallMode>,
     #[serde(default)]
     policy_enforce_mode: Option<MemoryPolicyEnforceMode>,
+    /// Phase 8A.3 — IANA timezone name override (e.g. `"Asia/Shanghai"`).
+    #[serde(default)]
+    timezone: Option<String>,
+    /// Phase 8A.3 — Logical-day cutoff hour override (0-23).
+    #[serde(default)]
+    logical_day_cutoff_hour: Option<u8>,
 }
 
 fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {
@@ -1373,6 +1480,27 @@ fn optional_bool(
             .as_bool()
             .map(Some)
             .ok_or_else(|| ConfigError::Parse(format!("{context}: field {key} must be a boolean"))),
+        None => Ok(None),
+    }
+}
+
+fn optional_u8(
+    object: &BTreeMap<String, JsonValue>,
+    key: &str,
+    context: &str,
+) -> Result<Option<u8>, ConfigError> {
+    match object.get(key) {
+        Some(value) => {
+            let Some(number) = value.as_i64() else {
+                return Err(ConfigError::Parse(format!(
+                    "{context}: field {key} must be an integer"
+                )));
+            };
+            let number = u8::try_from(number).map_err(|_| {
+                ConfigError::Parse(format!("{context}: field {key} is out of range"))
+            })?;
+            Ok(Some(number))
+        }
         None => Ok(None),
     }
 }
@@ -2048,6 +2176,47 @@ mod tests {
             MemoryPolicyEnforceMode::Enforce
         );
 
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_logical_day_overrides_from_settings() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{
+              "memory": {
+                "timezone": "Asia/Shanghai",
+                "logicalDayCutoffHour": 6
+              }
+            }"#,
+        )
+        .expect("write memory tz settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert_eq!(loaded.memory().timezone(), Some("Asia/Shanghai"));
+        assert_eq!(loaded.memory().logical_day_cutoff_hour(), 6);
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn defaults_logical_day_cutoff_to_4_and_tz_to_none() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert_eq!(loaded.memory().timezone(), None);
+        assert_eq!(loaded.memory().logical_day_cutoff_hour(), 4);
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 

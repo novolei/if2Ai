@@ -12,6 +12,8 @@ pub mod episodic_compaction;
 pub mod file_ops;
 pub mod hooks;
 pub mod json;
+pub mod locale;
+pub mod logical_day;
 pub mod lsp;
 pub mod mcp;
 pub mod mcp_client;

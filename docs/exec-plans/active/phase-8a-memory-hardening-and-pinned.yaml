@@ -33,10 +33,21 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2']
-  current_slice: '8A.3'
+  completed_slices: ['8A.1', '8A.2', '8A.3']
+  current_slice: '8A.4'
   blocked: []
   notes: >
+    8A.3 完成（2026-04-18）：runtime/logical_day.rs (LogicalDay struct +
+    get_logical_day + logical_day_for_date + get_today + resolve_timezone)
+    + runtime/locale.rs (is_zh + is_zh_for) + Cargo.toml chrono-tz 0.10。
+    MemoryFeatureConfig 扩展 timezone: Option<String> + logical_day_cutoff_hour: u8
+    (default 4)，settings.json `memory.timezone` / `memory.logicalDayCutoffHour`
+    与 ~/.if2ai/memory_config.json snake_case 双路径解析。DST spring-forward
+    用 +1h 重试，fall-back 取 earliest，未知 tz tracing::warn! 回落 UTC，无 panic。
+    13 个 logical_day 单测 + 5 个 locale 单测 + 2 个 config 单测，全 PASS。
+    遗留：RuntimeConfig 暂无 language 字段，is_zh() 暂回退 "en-US" 默认（带 TODO）；
+    8A.4 后人工 review 整 Phase A，再放行 8A.5+。
+  legacy_notes: >
     Phase 8A 已激活（2026-04-18）。8A.2 已完成：JobRunner 模块
     (src-tauri/src/modules/memory/job_runner.rs) + jobs.db (job_attempts 表)
     + tokio Semaphore 并发限速 + skip-after-N 重试预算 + 6 个单测
@@ -193,7 +204,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.3"
     title: "T-A3 — LogicalDay 工具（4AM 切日 + 用户时区）"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

@@ -23,6 +23,10 @@ glob = "0.3"
 regex = "1"
 walkdir = "2"
 chrono = { version = "0.4", features = ["serde"] }
+# Phase 8A §0.5 Δ-13/Δ-16 — IANA timezone DB used by `runtime::logical_day`
+# to compute the system-wide 04:00 LOCAL day boundary used by all daily
+# memory aggregations (compile_today/week, diary writer).
+chrono-tz = "0.10"
 thiserror = "1"
 async-trait = "0.1"
 sha2 = "0.9"
