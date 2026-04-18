@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::json::JsonValue;
 use super::sandbox::{FilesystemIsolationMode, SandboxConfig};
@@ -123,6 +123,68 @@ impl MemoryPolicyEnforceMode {
     }
 }
 
+/// Phase 8B.1 — `MemoryCompiler` runtime configuration (Sprint 2 / T-C1).
+///
+/// All fields use `usize` / `u64` / `u32` so [`CompilerConfig`] cleanly
+/// derives `Eq`, which in turn keeps the parent
+/// [`MemoryFeatureConfig: Eq`] derive intact.
+///
+/// The struct is read from `~/.if2ai/memory_config.json` under the
+/// `compiler` key (snake_case, per v2 §0.5 Δ-9 — complex structures
+/// live in `memory_config.json`, not the camelCase claw `settings.json`).
+/// Defaults match the openhanako baseline — see
+/// `docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md`
+/// §Sprint 2 / T-C1.
+///
+/// Schema:
+/// ```jsonc
+/// {
+///   "compiler": {
+///     "today_max_chars":            500,
+///     "week_max_chars":             500,
+///     "longterm_max_chars":         300,
+///     "facts_max_chars":            200,
+///     "daily_check_interval_secs":  3600,
+///     "max_concurrent_llm":         3,
+///     "max_retries":                3
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompilerConfig {
+    /// Maximum char budget for the LLM-rendered `today.md` body.
+    pub today_max_chars: usize,
+    /// Maximum char budget for the LLM-rendered `week.md` body.
+    pub week_max_chars: usize,
+    /// Maximum char budget for the LLM-rendered `longterm.md` body.
+    pub longterm_max_chars: usize,
+    /// Maximum char budget for the LLM-rendered `facts.md` body.
+    pub facts_max_chars: usize,
+    /// Backup `tokio::time::interval` period for the ticker's
+    /// `do_daily` watchdog (seconds).  Default `3600` (one hour).
+    pub daily_check_interval_secs: u64,
+    /// Maximum concurrent in-flight `UtilityLlm::complete` calls
+    /// dispatched from the four `compile_*` pipelines.
+    pub max_concurrent_llm: usize,
+    /// Per-job retry budget passed through to
+    /// [`crate::modules::memory::JobRunner`] for compile jobs.
+    pub max_retries: u32,
+}
+
+impl Default for CompilerConfig {
+    fn default() -> Self {
+        Self {
+            today_max_chars: 500,
+            week_max_chars: 500,
+            longterm_max_chars: 300,
+            facts_max_chars: 200,
+            daily_check_interval_secs: 3600,
+            max_concurrent_llm: 3,
+            max_retries: 3,
+        }
+    }
+}
+
 /// Aggregated memory subsystem feature flags (Memory Control Plane v1).
 ///
 /// Read from `settings.json` under the `memory` key.  Defaults preserve
@@ -167,6 +229,10 @@ pub struct MemoryFeatureConfig {
     // `MemoryFeatureConfig: Eq` — call sites cast to `usize` when
     // forwarding to [`crate::modules::memory::build_memory_injection`].
     max_inject_tokens: u32,
+    // Phase 8B.1 — `MemoryCompiler` knobs (T-C1).  All `usize`/`u64`/
+    // `u32` so the parent `Eq` derive holds.  Source-of-truth is
+    // `~/.if2ai/memory_config.json::compiler` per v2 §0.5 Δ-9.
+    compiler: CompilerConfig,
 }
 
 impl Default for MemoryFeatureConfig {
@@ -179,6 +245,7 @@ impl Default for MemoryFeatureConfig {
             logical_day_cutoff_hour: 4,
             inject_to_prompt: true,
             max_inject_tokens: 2000,
+            compiler: CompilerConfig::default(),
         }
     }
 }
@@ -240,6 +307,16 @@ impl MemoryFeatureConfig {
     #[must_use]
     pub fn max_inject_tokens(&self) -> u32 {
         self.max_inject_tokens
+    }
+
+    /// Phase 8B.1 — Active [`CompilerConfig`] for the
+    /// [`crate::modules::memory::MemoryCompiler`].  Source-of-truth is
+    /// `~/.if2ai/memory_config.json::compiler` (per v2 §0.5 Δ-9 — complex
+    /// structures live in the if2Ai memory config file, not the
+    /// camelCase claw `settings.json`).
+    #[must_use]
+    pub fn compiler(&self) -> &CompilerConfig {
+        &self.compiler
     }
 }
 
@@ -1384,6 +1461,9 @@ fn parse_optional_memory_feature_config(
         if let Some(tokens) = overrides.max_inject_tokens {
             config.max_inject_tokens = tokens;
         }
+        if let Some(compiler) = overrides.compiler {
+            config.compiler = compiler;
+        }
     }
 
     Ok(config)
@@ -1415,6 +1495,12 @@ struct If2AiMemoryOverrides {
     /// Phase 8A.11 — Token budget cap for memory injection payload.
     #[serde(default)]
     max_inject_tokens: Option<u32>,
+    /// Phase 8B.1 — `MemoryCompiler` knobs (T-C1).  Per v2 §0.5 Δ-9
+    /// the entire `compiler.*` block lives in `memory_config.json`
+    /// (not the claw `settings.json` camelCase tree) so the if2Ai
+    /// Memory Settings UI is the single source of truth.
+    #[serde(default)]
+    compiler: Option<CompilerConfig>,
 }
 
 fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {
@@ -1797,8 +1883,8 @@ fn push_unique(target: &mut Vec<String>, value: String) {
 #[cfg(test)]
 mod tests {
     use crate::modules::runtime::config::{
-        BoundaryEnforceMode, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
-        MemoryPolicyEnforceMode, MemoryRecallMode, ResolvedPermissionMode,
+        BoundaryEnforceMode, CompilerConfig, ConfigLoader, ConfigSource, McpServerConfig,
+        McpTransport, MemoryPolicyEnforceMode, MemoryRecallMode, ResolvedPermissionMode,
         CLAW_SETTINGS_SCHEMA_NAME,
     };
     use crate::modules::runtime::json::JsonValue;
@@ -2485,5 +2571,70 @@ mod tests {
                 || message.contains("initial_backoff_ms must be <= max_backoff_ms")
         );
         fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Phase 8B.1 — `CompilerConfig` defaults + override parsing.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn compiler_config_default_values() {
+        // Sprint 2 / T-C1 baseline; these match the openhanako port
+        // referenced from the design doc and are also surfaced by the
+        // `MemoryFeatureConfig::default` shipping path.
+        let cfg = CompilerConfig::default();
+        assert_eq!(cfg.today_max_chars, 500);
+        assert_eq!(cfg.week_max_chars, 500);
+        assert_eq!(cfg.longterm_max_chars, 300);
+        assert_eq!(cfg.facts_max_chars, 200);
+        assert_eq!(cfg.daily_check_interval_secs, 3600);
+        assert_eq!(cfg.max_concurrent_llm, 3);
+        assert_eq!(cfg.max_retries, 3);
+    }
+
+    #[test]
+    fn memory_feature_config_exposes_compiler_defaults() {
+        // The accessor surface that `main.rs` uses to construct the
+        // `MemoryCompiler` — guarantees the defaults flow through.
+        let mem = super::MemoryFeatureConfig::default();
+        assert_eq!(mem.compiler(), &CompilerConfig::default());
+    }
+
+    #[test]
+    fn memory_compiler_overrides_parses_from_memory_config_json() {
+        // Per v2 §0.5 Δ-9 the `compiler.*` block lives in
+        // `~/.if2ai/memory_config.json` (snake_case) — verify the
+        // overrides struct accepts the schema we'll document for users.
+        let raw = r#"{
+            "compiler": {
+                "today_max_chars": 800,
+                "week_max_chars": 700,
+                "longterm_max_chars": 400,
+                "facts_max_chars": 250,
+                "daily_check_interval_secs": 1800,
+                "max_concurrent_llm": 5,
+                "max_retries": 4
+            }
+        }"#;
+        let parsed: super::If2AiMemoryOverrides =
+            serde_json::from_str(raw).expect("overrides parse");
+        let compiler = parsed.compiler.expect("compiler block present");
+        assert_eq!(compiler.today_max_chars, 800);
+        assert_eq!(compiler.week_max_chars, 700);
+        assert_eq!(compiler.longterm_max_chars, 400);
+        assert_eq!(compiler.facts_max_chars, 250);
+        assert_eq!(compiler.daily_check_interval_secs, 1800);
+        assert_eq!(compiler.max_concurrent_llm, 5);
+        assert_eq!(compiler.max_retries, 4);
+    }
+
+    #[test]
+    fn memory_compiler_overrides_absent_compiler_keeps_defaults() {
+        // When the file exists but has no `compiler` key the loader
+        // must leave `MemoryFeatureConfig::default().compiler` intact.
+        let raw = r#"{"recall_mode": "hybrid"}"#;
+        let parsed: super::If2AiMemoryOverrides =
+            serde_json::from_str(raw).expect("overrides parse");
+        assert!(parsed.compiler.is_none());
     }
 }

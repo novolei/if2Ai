@@ -470,6 +470,22 @@ fn main() {
         Some(threat_scanner.clone()),
     ));
 
+    // Phase 8B.1 — `MemoryCompiler` skeleton (Sprint 2 / T-C1).  Real
+    // `compile_*` implementations land in 8B.2 (fingerprint cache) +
+    // 8B.3 (today / week / longterm) + 8B.4 (facts / assemble).  The
+    // process-global `runtime::config::current()` was installed above
+    // (line ~372) so the user's `~/.if2ai/memory_config.json::compiler`
+    // overrides flow through here at boot.
+    let memory_compiler = std::sync::Arc::new(modules::memory::MemoryCompiler::new(
+        summary_store.clone(),
+        utility_llm.clone(),
+        job_runner.clone(),
+        modules::runtime::config::current()
+            .memory()
+            .compiler()
+            .clone(),
+    ));
+
     // Phase 8A.9 — PinnedStore backed by the shared
     // `<memory_root>/memory.db` (same SQLite file as the summary store
     // and MemoryProvider; the `pinned_items` table is disjoint from
@@ -632,6 +648,7 @@ fn main() {
         summary_store,
         rolling_summarizer,
         pinned_store,
+        memory_compiler,
     });
 
     tauri::Builder::default()

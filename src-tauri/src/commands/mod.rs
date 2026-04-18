@@ -141,6 +141,18 @@ pub struct AppState {
     /// 8A.9 so the next slice only needs to read `state.pinned_store`.
     #[allow(dead_code)]
     pub pinned_store: Arc<dyn PinnedStore>,
+
+    /// Phase 8B.1 — `MemoryCompiler` skeleton (Sprint 2 / T-C1).
+    /// Held here so the future Phase 8B ticker (8B.6+) and the
+    /// `memory_compile_now` Tauri command (8B.5) can grab a ready
+    /// `Arc` instead of re-threading the four collaborators
+    /// (`summary_store`, `utility_llm`, `job_runner`, `CompilerConfig`)
+    /// through every call site.
+    ///
+    /// `allow(dead_code)`: first reader lands in 8B.3 (compile_today
+    /// real implementation) / 8B.5 (memory_compile_now command).
+    #[allow(dead_code)]
+    pub memory_compiler: Arc<crate::modules::memory::MemoryCompiler>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -186,6 +198,8 @@ pub struct AppStateConfig {
     pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
     /// Shared pinned-memory store; see [`AppState::pinned_store`].
     pub pinned_store: Arc<dyn PinnedStore>,
+    /// Shared `MemoryCompiler` skeleton; see [`AppState::memory_compiler`].
+    pub memory_compiler: Arc<crate::modules::memory::MemoryCompiler>,
 }
 
 impl AppState {
@@ -215,6 +229,7 @@ impl AppState {
             summary_store: cfg.summary_store,
             rolling_summarizer: cfg.rolling_summarizer,
             pinned_store: cfg.pinned_store,
+            memory_compiler: cfg.memory_compiler,
         }
     }
 }

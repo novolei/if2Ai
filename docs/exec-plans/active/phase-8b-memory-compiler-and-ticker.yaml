@@ -7,7 +7,7 @@
 meta:
   phase: 8B
   name: Memory Compiler & Ticker — Sprint 2
-  status: draft
+  status: active
   design_ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
   read_first:
     - CLAUDE.md
@@ -32,12 +32,15 @@ meta:
         (4) CompiledMemoryViewer + NarrativeViewer UI 可用。
 
 dashboard:
-  last_updated: '2026-04-18'
-  completed_slices: []
-  current_slice: '8B.1'
+  last_updated: '2026-04-19'
+  completed_slices: ['8B.1']
+  current_slice: '8B.2'
   blocked: []
   notes: >
-    Phase 8B 初始化（草案）。激活前提：Phase 8A 全部 done。
+    Phase 8B 已启动。Sprint 2 / T-C1 (8B.1) 完成：MemoryCompiler 骨架 +
+    CompilePaths + CompilerConfig + AppState/AppStateConfig wiring 已落盘。
+    五个 compile_* 方法是 Ok(Skipped) 空桩；真正实现按计划在 8B.2 (指纹缓存) /
+    8B.3 (today/week/longterm) / 8B.4 (facts/assemble) 落地。
     11 slices，~10 工程日。核心依赖：SessionSummaryStore（8A.5）+ JobRunner（8A.2）+ UtilityLlm（8A.5）。
 
     共享约束（v2 §0.7）：
@@ -58,7 +61,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.1"
     title: "T-C1 — MemoryCompiler 骨架（模块结构 + CompilePaths）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

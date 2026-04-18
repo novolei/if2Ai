@@ -11,6 +11,7 @@
 
 pub mod audit;
 pub mod compat;
+pub mod compiler;
 pub mod embedding;
 pub mod hrr;
 pub mod inject;
@@ -68,6 +69,13 @@ pub use inject::{build_memory_injection, MemoryInjection, CHARS_PER_TOKEN_ESTIMA
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
 pub use scope::MemoryExecutionScope;
+
+// Phase 8B.1 — MemoryCompiler skeleton (T-C1).  First production
+// consumer lands in 8B.3 (compile_today / week / longterm); held on
+// `AppState` from this slice so subsequent slices only need to read
+// `state.memory_compiler` instead of re-threading the constructor.
+#[allow(unused_imports)]
+pub use compiler::{CompilePaths, CompileResult, MemoryCompiler};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
