@@ -3,7 +3,7 @@
 mod commands;
 mod modules;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use commands::AppState;
@@ -235,6 +235,40 @@ fn create_memory_provider(
     }
 }
 
+/// Open the shared [`modules::memory::JobRunner`] backed by `<memory_root>/jobs.db`.
+///
+/// Tries the persistent path first.  If sqlite open fails (corrupt file,
+/// permission error), falls back to an ephemeral pid-scoped tempdir so
+/// the app still boots; failure counters simply won't survive a restart
+/// in that degraded mode.  Both paths come from the same `JobRunner::open`
+/// entry point, so the runner's behaviour itself is identical.
+fn open_job_runner_with_fallback(memory_root: &Path) -> modules::memory::JobRunner {
+    let primary = memory_root.join("jobs.db");
+    match modules::memory::JobRunner::open(&primary, 3, 3) {
+        Ok(runner) => runner,
+        Err(e) => {
+            tracing::error!(
+                "[init] JobRunner failed to open {primary:?}: {e}; falling back to ephemeral jobs.db (failure counts will not survive restart)"
+            );
+            let tmp =
+                std::env::temp_dir().join(format!("if2ai-jobs-fallback-{}.db", std::process::id()));
+            match modules::memory::JobRunner::open(&tmp, 3, 3) {
+                Ok(runner) => runner,
+                Err(e2) => {
+                    // Ephemeral tempdir open failure is unrecoverable — the
+                    // app cannot honour any background-job contract.  Log
+                    // and abort early with a clear message rather than
+                    // booting into a half-broken state.
+                    tracing::error!(
+                        "[init] Ephemeral JobRunner open at {tmp:?} also failed: {e2}; aborting startup"
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
 /// Create a HybridMemoryProvider (HRR + LanceDB) for algebraic reasoning.
 async fn create_hybrid_provider() -> Result<modules::memory::SharedMemoryProvider, String> {
     use crate::modules::memory::hrr::integration::HybridConfig;
@@ -359,6 +393,19 @@ fn main() {
     // regex compilation cost is paid once and audit emission is uniform.
     let threat_scanner =
         std::sync::Arc::new(modules::memory::security::ThreatScanner::with_builtin_patterns());
+
+    // Phase 8A §Sprint 1 / T-A2 — single shared JobRunner backed by
+    // `<data_local>/.if2ai/memory/jobs.db` (separate from `memory.db` to
+    // avoid sqlite mutex contention between the recall hot path and
+    // background bookkeeping; v2 §0.5 Δ-6 + 8A.2 review checklist #2).
+    // `max_retries=3` matches v2 §0.5 Δ-9 `compiler.max_retries`,
+    // `max_concurrent=3` matches `compiler.max_concurrent_llm`.
+    let memory_root = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".if2ai")
+        .join("memory");
+    let job_runner = std::sync::Arc::new(open_job_runner_with_fallback(&memory_root));
+
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =
@@ -468,6 +515,7 @@ fn main() {
         active_retrieval_manager,
         harness,
         threat_scanner,
+        job_runner,
     });
 
     tauri::Builder::default()

@@ -49,6 +49,14 @@ serde_yaml = "0.9"
 sysinfo = "0.33"
 chromiumoxide = { version = "0.9", default-features = true }
 tiktoken-rs = "0.9.1"
+# Phase 8A §0.5 Δ-10 — anyhow used by JobRunner closure return type
+# (`Future<Output = anyhow::Result<T>>`) so callers can ?-bubble heterogeneous
+# job-specific errors without all sharing one enum.
+anyhow = "1"
+# Phase 8A §0.5 Δ-10 — reserved for T-D3 daily_running flag (8B.x); imported
+# now so subsequent ticker slices can use `scopeguard::defer!` without a
+# Cargo.toml churn commit.  Not directly referenced by 8A.2 itself.
+scopeguard = "1"
 
 [[bin]]
 name = "harness-cli"

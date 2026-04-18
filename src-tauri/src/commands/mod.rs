@@ -18,6 +18,7 @@ use crate::modules::runtime::permissions::PermissionPromptDecision;
 
 // Memory and learning infrastructure
 use crate::modules::memory::security::ThreatScanner;
+use crate::modules::memory::JobRunner;
 use crate::modules::memory::SharedMemoryProvider;
 use crate::modules::runtime::budget::ContextBudget;
 
@@ -75,6 +76,20 @@ pub struct AppState {
     /// `summary` modules, and any future Tauri command that ingests
     /// user-supplied content (see v2 §0.5 Δ-2).
     pub threat_scanner: Arc<ThreatScanner>,
+
+    /// Phase 8A T-A2: shared [`JobRunner`] backed by `<memory_root>/jobs.db`.
+    /// Every background memory job (rolling summary, compile, fact extract,
+    /// experience extract, diary writer) goes through `job_runner.run(...)`
+    /// so failures are counted, retry budget is enforced, and the LLM
+    /// provider is rate-limited by a single semaphore (v2 §0.5 Δ-10 +
+    /// §Sprint 1 / T-A2 + §0.7 rule 5).
+    ///
+    /// `allow(dead_code)`: producers land in 8A.7 (RollingSummarizer) and
+    /// 8B/8C/8D (compile / facts / experience / diary).  Held on AppState
+    /// from 8A.2 so subsequent slices only need to wire `state.job_runner`,
+    /// not re-thread construction through `main.rs`.
+    #[allow(dead_code)]
+    pub job_runner: Arc<JobRunner>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -109,6 +124,8 @@ pub struct AppStateConfig {
     pub harness: Option<Arc<crate::modules::harness::HarnessState>>,
     /// Shared PII / secret scanner; see [`AppState::threat_scanner`].
     pub threat_scanner: Arc<ThreatScanner>,
+    /// Shared background-job coordinator; see [`AppState::job_runner`].
+    pub job_runner: Arc<JobRunner>,
 }
 
 impl AppState {
@@ -133,6 +150,7 @@ impl AppState {
             onboarding_flow: Arc::new(cfg.onboarding_flow),
             harness: cfg.harness,
             threat_scanner: cfg.threat_scanner,
+            job_runner: cfg.job_runner,
         }
     }
 }

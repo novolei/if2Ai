@@ -58,6 +58,18 @@ export interface MemoryEventPayload {
      * detected hits are forwarded under `extra.detected`.
      */
     | 'memory_pii_redacted'
+    /**
+     * Phase 8A T-A2 — a `JobRunner.run(...)` invocation finished with
+     * `Err(_)` but is still under the retry budget.  `extra` carries
+     * `{ job, attempt, max_retries, error }`.
+     */
+    | 'memory_job_failed'
+    /**
+     * Phase 8A T-A2 — `JobRunner.run(...)` exhausted `max_retries` and
+     * the `(kind, target)` is now quarantined until reset.  `extra`
+     * carries `{ job, total_failures, last_error }`.
+     */
+    | 'memory_job_skipped'
   trace_id?: string
   session_id?: string
   project_id?: string

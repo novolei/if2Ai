@@ -534,6 +534,117 @@ impl MemoryAuditEmitter {
         });
     }
 
+    /// Emit a `memory_job_failed` event after a [`crate::modules::memory::job_runner::JobRunner`]
+    /// invocation finished with `Err(_)` but is still under the retry budget.
+    ///
+    /// The variable metadata (`job` / `attempt` / `max_retries` / `error`)
+    /// rides under `extra` per v2 §0.5 Δ-3 + Δ-4 so the fixed
+    /// [`MemoryEventPayload`] schema does not need to grow per-event fields.
+    ///
+    /// `allow(dead_code)`: only consumed inside `JobRunner::run` (and via
+    /// `pub(crate)` callers in 8A.7+); the bin target sees no direct
+    /// caller until those slices land.
+    #[allow(dead_code)]
+    pub fn memory_job_failed(
+        ctx: &AuditContext<'_>,
+        job_kind: &str,
+        attempt: u32,
+        max_retries: u32,
+        error: &str,
+    ) {
+        tracing::warn!(
+            event = "memory_job_failed",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            job = job_kind,
+            attempt = attempt,
+            max_retries = max_retries,
+            error = error,
+        );
+        let extra = serde_json::json!({
+            "job": job_kind,
+            "attempt": attempt,
+            "max_retries": max_retries,
+            "error": error,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_job_failed",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: Some(error),
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(attempt as usize),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Emit a `memory_job_skipped` event after a [`crate::modules::memory::job_runner::JobRunner`]
+    /// hit `attempt >= max_retries` and flipped the entry's status to
+    /// `Skipped`, so subsequent calls for the same `(kind, target)` will
+    /// short-circuit until [`crate::modules::memory::job_runner::JobRunner::reset`]
+    /// is called.
+    ///
+    /// `total_failures` is the cumulative attempt count that triggered the
+    /// skip (typically `max_retries`); `last_error` is the most recent
+    /// error string captured before the skip.  Both ride under `extra`
+    /// per v2 §0.5 Δ-3 + Δ-4.
+    ///
+    /// `allow(dead_code)`: see [`Self::memory_job_failed`].
+    #[allow(dead_code)]
+    pub fn memory_job_skipped(
+        ctx: &AuditContext<'_>,
+        job_kind: &str,
+        total_failures: u32,
+        last_error: &str,
+    ) {
+        tracing::error!(
+            event = "memory_job_skipped",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            job = job_kind,
+            total_failures = total_failures,
+            last_error = last_error,
+        );
+        let extra = serde_json::json!({
+            "job": job_kind,
+            "total_failures": total_failures,
+            "last_error": last_error,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_job_skipped",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: Some(last_error),
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(total_failures as usize),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_cleared` event after the user triggers a global
     /// "wipe all memory" from Settings.  Carries the number of removed
     /// entries in `result_count` so the Telemetry Drawer can show "N

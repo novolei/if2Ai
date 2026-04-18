@@ -33,15 +33,23 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1']
-  current_slice: '8A.2'
+  completed_slices: ['8A.1', '8A.2']
+  current_slice: '8A.3'
   blocked: []
   notes: >
-    Phase 8A 已激活（2026-04-18）。8A.1 已完成（commit 5e27577）：
-    ThreatScanner.scan_and_redact + 3 类新 PII pattern + 8 个新单测 + 写入路径
-    深度防御（sqlite/vector providers with_scanner 注入）+ memory_pii_redacted
-    audit 事件 + tauri.ts 联合类型扩展。下一步 8A.2（T-A2 JobRunner）。
-    12 slices，~10 工程日。依赖 Phase 6B（memory SQLite provider）已完成。
+    Phase 8A 已激活（2026-04-18）。8A.2 已完成：JobRunner 模块
+    (src-tauri/src/modules/memory/job_runner.rs) + jobs.db (job_attempts 表)
+    + tokio Semaphore 并发限速 + skip-after-N 重试预算 + 6 个单测
+    (skip_after_max_retries / success_returns_some_t_and_marks_done /
+    reset_allows_retry / concurrent_limit_respected /
+    failure_then_success_resets_attempt_on_done /
+    audit_emit_on_failure_and_skip)。新增 audit 事件
+    memory_job_failed + memory_job_skipped (audit.rs) 通过 extra
+    JSON metadata 携带 attempt/max_retries/error。AppState.job_runner
+    Arc 注入，下一 Phase B (8A.5+) 起所有 background LLM 任务必须走
+    JobRunner.run。Cargo.toml 新增 anyhow + scopeguard (后者为 8B.x
+    T-D3 daily_running 预留)。tauri.ts MemoryEventName 联合追加两项。
+    下一步 8A.3（LogicalDay 4AM 切日）。12 slices，~10 工程日。
 
     共享约束（v2 §0.7）：
       - 每个 slice 至少 1 audit event + 1 harness 断言 + 1 UI 信号
@@ -127,7 +135,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.2"
     title: "T-A2 — JobRunner 后台任务限流 + 失败 skip 机制"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

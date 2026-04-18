@@ -14,6 +14,7 @@ pub mod compat;
 pub mod embedding;
 pub mod hrr;
 pub mod intent;
+pub mod job_runner;
 pub mod policy;
 pub mod promotion;
 mod providers;
@@ -22,6 +23,13 @@ pub mod scope;
 pub mod security;
 pub mod working_memory;
 
+// Re-exports for the JobRunner module.  `JobAttempt` / `JobStatus` /
+// `JobError` are part of the surface consumed by 8A.7+ slices
+// (rolling summary, compile, fact extract) and the future
+// MemoryJobsStatusCard UI; tagged `allow(unused_imports)` while those
+// callers land in subsequent slices so the bin build stays warning-free.
+#[allow(unused_imports)]
+pub use job_runner::{JobAttempt, JobError, JobRunner, JobStatus};
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
@@ -155,6 +163,33 @@ pub trait MemoryProvider: Send + Sync {
     /// Purge all entries in a category
     async fn purge_category(&self, category: &str) -> Result<(), MemoryError>;
 
+    /// Wipe **every** memory entry across all categories and scopes.
+    ///
+    /// Backs the "Clear all memories" affordance in the Memory Settings
+    /// page.  This is intentionally distinct from
+    /// [`Self::purge_category`]: it ignores category boundaries and is
+    /// expected to be a single fast bulk delete on backends that support
+    /// it (SQLite TRUNCATE-equivalent, LanceDB drop-rows).
+    ///
+    /// The default implementation provides a slow but safe fallback by
+    /// fanning out to [`Self::export`] and deleting each entry one at a
+    /// time, so providers that don't override it still behave correctly.
+    /// Returns the number of rows that were removed.
+    async fn clear_all(&self) -> Result<usize, MemoryError> {
+        let entries = self.export(None).await?;
+        let mut removed = 0usize;
+        for entry in &entries {
+            // Best-effort: skip rather than abort the whole operation if
+            // a single key has already been removed concurrently.
+            match self.delete(&entry.key).await {
+                Ok(()) => removed += 1,
+                Err(MemoryError::KeyNotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(removed)
+    }
+
     /// Export entries, optionally filtered by category
     async fn export(&self, category: Option<&str>) -> Result<Vec<MemoryEntry>, MemoryError>;
 
@@ -235,6 +270,28 @@ pub trait MemoryProvider: Send + Sync {
         Err(MemoryError::Generic(
             "promote_scope not supported by this provider".to_string(),
         ))
+    }
+
+    /// Reverse of [`Self::promote_scope`] — narrow an entry's visibility back
+    /// down (e.g. `global → project`, `project → session`) so a mistaken
+    /// promotion can be rolled back.  At the storage layer this writes the
+    /// same `session_id` / `project_id` columns; the distinct method exists
+    /// so call sites and audit listeners can attribute "demote" intent
+    /// separately from "promote".
+    ///
+    /// The default implementation delegates to `promote_scope`, since both
+    /// operations resolve to the same UPDATE.  Providers that want different
+    /// semantics (e.g. soft-archive on demote) can override this hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::KeyNotFound`] when no entry with `key` exists.
+    async fn demote_scope(
+        &self,
+        key: &str,
+        target_scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        self.promote_scope(key, target_scope).await
     }
 
     /// Apply Weibull importance decay to all stored entries.
