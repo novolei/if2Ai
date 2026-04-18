@@ -22,12 +22,16 @@
 //! - `MOSS-TTS-Nano-100M-ONNX` (main TTS model, ~100M params)
 //! - `MOSS-Audio-Tokenizer-Nano-ONNX` (audio tokenizer, ~20M params)
 
+pub mod audio;
 pub mod config;
 pub mod error;
 pub mod model;
 pub mod provider;
 pub mod text;
 pub mod voice;
+
+#[allow(unused_imports)]
+pub use audio::{wav_decode, wav_encode};
 
 pub use config::{AudioChunk, GenerationParams, VoicePreset};
 pub use error::TtsError;

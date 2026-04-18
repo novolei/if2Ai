@@ -58,6 +58,10 @@ pub enum TtsError {
     #[error("Warmup not complete. Please run warmup first.")]
     WarmupNotReady,
 
+    /// WAV encoding/decoding failure.
+    #[error("WAV decode failed: {0}")]
+    WavDecode(String),
+
     /// Generic error with a message.
     #[error("TTS error: {0}")]
     Generic(String),
