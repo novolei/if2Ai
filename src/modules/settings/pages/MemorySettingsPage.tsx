@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Brain, Download, AlertTriangle, Check, Sliders } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
+import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
 import {
   getMemoryConfig,
   setMemoryConfig,
@@ -129,6 +130,9 @@ export function MemorySettingsPage() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* ── Pinned Memory (Phase 8A.12 / T-UI-1) ── */}
+      <PinnedMemoryEditor />
+
       {/* ── Token Budget ── */}
       <SettingsSurface className="px-5 py-4">
         <div className="mb-3 flex items-center gap-2.5">

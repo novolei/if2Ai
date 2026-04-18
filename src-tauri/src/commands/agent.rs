@@ -43,6 +43,77 @@ use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
 use crate::modules::session::Session as AppSession;
 
+/// Phase 8A.12 (T-F5) — pre-fetch the [`crate::modules::memory::MemoryInjection`]
+/// payload via [`crate::modules::memory::build_memory_injection`] and append
+/// its rendered pinned + compiled + rules markdown sections onto an
+/// already-built system-prompt vector.
+///
+/// Equivalent to the synchronous
+/// [`crate::modules::runtime::prompt::SystemPromptBuilder::with_memory_injection`]
+/// flow but compatible with `load_system_prompt`'s `Vec<String>` return type
+/// (the builder is consumed by `load_system_prompt` before we get here).
+///
+/// Failures (PinnedStore errors, missing config) are logged at WARN and
+/// the system prompt is left untouched — never aborts the turn.
+async fn append_memory_injection_sections(
+    state: &AppState,
+    session_id: Option<&str>,
+    project_id: Option<&str>,
+    workdir: Option<&str>,
+    system_prompt: &mut Vec<String>,
+    caller: &'static str,
+) {
+    let memory_cfg = crate::modules::runtime::config::current().memory();
+    if !memory_cfg.inject_to_prompt() {
+        return;
+    }
+    let max_tokens = memory_cfg.max_inject_tokens() as usize;
+
+    let scope = crate::modules::memory::scope::MemoryScopeResolver::resolve(
+        session_id, project_id, workdir,
+    );
+
+    let memory_root = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".if2ai")
+        .join("memory");
+    let compiled_path = memory_root.join("memory.md");
+
+    let is_zh = crate::modules::runtime::locale::is_zh();
+
+    match crate::modules::memory::build_memory_injection(
+        state.pinned_store.clone(),
+        &scope,
+        &compiled_path,
+        is_zh,
+        max_tokens,
+    )
+    .await
+    {
+        Ok(injection) => {
+            if let Some(section) = injection.pinned_section {
+                system_prompt.push(section);
+            }
+            if let Some(section) = injection.compiled_section {
+                system_prompt.push(section);
+            }
+            system_prompt.push(injection.rules_section);
+            tracing::debug!(
+                caller = caller,
+                tokens_estimate = injection.total_tokens_estimate,
+                "[agent] memory injection appended to system prompt"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                caller = caller,
+                error = %e,
+                "[agent] memory injection failed; continuing without"
+            );
+        }
+    }
+}
+
 /// Token-budget breakdown emitted alongside the final `stream_complete` event
 /// so the frontend `ContextBar` can render usage without an extra IPC round-trip.
 ///
@@ -967,6 +1038,29 @@ pub async fn run_agent_turn(
         }
     };
 
+    // Phase 8A.12 (T-F5) — append pinned + compiled + rules memory sections.
+    // `SystemPromptBuilder::build` is synchronous (v2 §0.5 Δ-7), so we
+    // pre-fetch the [`MemoryInjection`] payload here and push the rendered
+    // markdown sections directly onto the prompt vec — equivalent to the
+    // builder's `with_memory_injection` flow but compatible with the
+    // already-built `Vec<String>` returned by `load_system_prompt`.
+    {
+        let exec_ctx = &tool_executor.execution_context;
+        append_memory_injection_sections(
+            &state,
+            Some(exec_ctx.session_id.as_str()),
+            if exec_ctx.project_id.is_empty() {
+                None
+            } else {
+                Some(exec_ctx.project_id.as_str())
+            },
+            exec_ctx.workdir.to_str(),
+            &mut system_prompt,
+            "run_agent_turn",
+        )
+        .await;
+    }
+
     // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories.
     // The retrieved items are also surfaced to the frontend on `stream_complete`
     // (run_agent_turn does not stream, but the data is logged for parity).
@@ -1461,7 +1555,23 @@ pub async fn start_agent_stream(
         std::env::consts::OS,
         std::env::consts::FAMILY,
     ) {
-        Ok(prompt_lines) => prompt_lines.join("\n"),
+        Ok(mut prompt_lines) => {
+            // Phase 8A.12 (T-F5) — see `run_agent_turn` for rationale.
+            append_memory_injection_sections(
+                &state,
+                Some(execution_context.session_id.as_str()),
+                if execution_context.project_id.is_empty() {
+                    None
+                } else {
+                    Some(execution_context.project_id.as_str())
+                },
+                execution_context.workdir.to_str(),
+                &mut prompt_lines,
+                "start_agent_stream",
+            )
+            .await;
+            prompt_lines.join("\n")
+        }
         Err(e) => {
             tracing::warn!(
                 "[start_agent_stream] Failed to build system prompt: {}, using fallback",

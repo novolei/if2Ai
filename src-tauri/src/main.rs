@@ -500,6 +500,23 @@ fn main() {
             }
         };
 
+    // Phase 8A.12 (T-F5) — first-run sentinel: ensure `<memory_root>/pinned.md`
+    // exists so `build_memory_injection` does not log a missing-file warning
+    // before the 8B compile pipeline ever writes to it.  `SqlitePinnedStore`
+    // already creates the parent directory; this only adds an empty file.
+    {
+        let pinned_md = memory_root.join("pinned.md");
+        if !pinned_md.exists() {
+            if let Err(e) = std::fs::write(&pinned_md, "") {
+                tracing::warn!(
+                    path = %pinned_md.display(),
+                    error = %e,
+                    "[init] failed to touch pinned.md sentinel; build_memory_injection will skip compiled section"
+                );
+            }
+        }
+    }
+
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =

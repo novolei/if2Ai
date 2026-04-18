@@ -18,6 +18,7 @@
  * provided — wired from the WorkingMemory C1 implementation.
  */
 
+import { Brain } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ContextBudgetUsage } from '@/lib/tauri'
 
@@ -138,6 +139,19 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
             </span>
           )
         })}
+
+        {/* Memory badge — Phase 8A.12 / T-UI-6 (skeleton).
+            Click handler intentionally absent until Sprint 2 ships
+            CompiledViewer; the badge is purely informational. */}
+        {usage.memory_tokens > 0 && (
+          <span
+            className="flex items-center gap-1 rounded bg-teal/15 px-1.5 py-0.5 text-teal-700/80"
+            title="置顶记忆 + 编译记忆已注入到 system prompt（Phase 8A.12）"
+          >
+            <Brain className="h-3 w-3" aria-hidden />
+            记忆已加载
+          </span>
+        )}
 
         {/* Remaining */}
         <span className="ml-auto tabular-nums">

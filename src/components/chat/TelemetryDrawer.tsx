@@ -17,17 +17,161 @@
  * `get_session_telemetry`, `start_harness_recording`, `stop_harness_recording`.
  */
 
-import { useEffect, useState } from 'react'
-import { Activity, CircleDot, Database, Lightbulb, RefreshCw, X, Zap } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  Activity,
+  CircleDot,
+  Database,
+  Lightbulb,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Shield,
+  Sparkles,
+  X,
+  Zap,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   getHarnessStatus,
   getSessionTelemetry,
+  listenMemoryEvent,
   startHarnessRecording,
   stopHarnessRecording,
   type HarnessStatusResponse,
+  type MemoryEventPayload,
   type SessionTelemetry,
 } from '@/lib/tauri'
+
+/**
+ * Phase 8A.12 (T-UI-8) — bounded ring buffer of recent
+ * pinned-memory / PII-redaction / rolling-summary lifecycle events.
+ * Events flow in via the Tauri `memory_event` channel and are kept
+ * outside React state long enough to render the timeline; older entries
+ * fall off once the buffer exceeds [`MEMORY_LIFECYCLE_HISTORY_LIMIT`].
+ */
+const MEMORY_LIFECYCLE_HISTORY_LIMIT = 30
+
+type MemoryLifecycleEventName =
+  | 'memory_pii_redacted'
+  | 'memory_pinned'
+  | 'memory_unpinned'
+  | 'memory_summary_rolled'
+
+interface MemoryLifecycleLogEntry {
+  uid: string
+  event: MemoryLifecycleEventName
+  timestamp: string
+  extra?: Record<string, unknown>
+  memory_category?: string
+}
+
+interface MemoryLifecycleMeta {
+  Icon: typeof Pin
+  tone: string
+  bg: string
+  label: string
+  render: (entry: MemoryLifecycleLogEntry) => string
+}
+
+function asStringList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const items = value.filter((v): v is string => typeof v === 'string')
+  return items.length > 0 ? items : null
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const MEMORY_LIFECYCLE_META: Record<MemoryLifecycleEventName, MemoryLifecycleMeta> = {
+  memory_pii_redacted: {
+    Icon: Shield,
+    tone: 'text-red-600',
+    bg: 'bg-red-50/60 border-red-200/60',
+    label: '已脱敏',
+    render: (entry) => {
+      const detected = asStringList(entry.extra?.detected) ?? ['未知']
+      return `已自动脱敏 ${detected.join(', ')}`
+    },
+  },
+  memory_pinned: {
+    Icon: Pin,
+    tone: 'text-amber-600',
+    bg: 'bg-amber-50/60 border-amber-200/60',
+    label: '已置顶',
+    render: (entry) => {
+      const excerpt = asString(entry.extra?.content_excerpt) ?? ''
+      return excerpt ? `已置顶："${excerpt}"` : '已置顶一条记忆'
+    },
+  },
+  memory_unpinned: {
+    Icon: PinOff,
+    tone: 'text-stone-500',
+    bg: 'bg-stone-50/60 border-stone-200/60',
+    label: '已取消置顶',
+    render: (entry) => {
+      const removed = asNumber(entry.extra?.removed_count) ?? 0
+      return `已取消置顶 ${removed} 条`
+    },
+  },
+  memory_summary_rolled: {
+    Icon: Sparkles,
+    tone: 'text-blue-600',
+    bg: 'bg-blue-50/60 border-blue-200/60',
+    label: '滚动摘要',
+    render: (entry) => {
+      const turn = asNumber(entry.extra?.turn_count) ?? 0
+      const before = asNumber(entry.extra?.chars_before) ?? 0
+      const after = asNumber(entry.extra?.chars_after) ?? 0
+      return `第 ${turn} 轮 · 摘要 ${before}→${after} 字`
+    },
+  },
+}
+
+const MEMORY_LIFECYCLE_EVENTS: ReadonlySet<MemoryLifecycleEventName> = new Set([
+  'memory_pii_redacted',
+  'memory_pinned',
+  'memory_unpinned',
+  'memory_summary_rolled',
+])
+
+function isMemoryLifecycleEvent(name: string): name is MemoryLifecycleEventName {
+  return MEMORY_LIFECYCLE_EVENTS.has(name as MemoryLifecycleEventName)
+}
+
+function MemoryLifecycleRow({ entry }: { entry: MemoryLifecycleLogEntry }) {
+  const meta = MEMORY_LIFECYCLE_META[entry.event]
+  const time = (() => {
+    try {
+      return new Date(entry.timestamp).toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    } catch {
+      return entry.timestamp
+    }
+  })()
+  return (
+    <li className={cn('rounded-md border px-2 py-1.5 text-[11px]', meta.bg)}>
+      <div className="flex items-center gap-1.5">
+        <meta.Icon className={cn('h-3 w-3 shrink-0', meta.tone)} aria-hidden />
+        <span className={cn('font-medium', meta.tone)}>{meta.label}</span>
+        <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/70">
+          {time}
+        </span>
+      </div>
+      <div className="mt-0.5 truncate text-[11px] text-foreground/80">
+        {meta.render(entry)}
+      </div>
+    </li>
+  )
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,6 +258,45 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
   const [loading, setLoading] = useState(false)
   const [recordingBusy, setRecordingBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [memoryLifecycleLog, setMemoryLifecycleLog] = useState<MemoryLifecycleLogEntry[]>([])
+  const memoryLifecycleUidRef = useRef(0)
+
+  // Phase 8A.12 (T-UI-8) — subscribe to backend memory lifecycle events
+  // (PII redaction, pin add/remove, rolling-summary writes).  Always on
+  // while the drawer is mounted so the timeline isn't empty the next
+  // time the user opens it.
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void listenMemoryEvent((payload: MemoryEventPayload) => {
+      if (cancelled) return
+      if (!isMemoryLifecycleEvent(payload.event)) return
+      memoryLifecycleUidRef.current += 1
+      const entry: MemoryLifecycleLogEntry = {
+        uid: `${payload.timestamp}-${memoryLifecycleUidRef.current}`,
+        event: payload.event,
+        timestamp: payload.timestamp,
+        extra: payload.extra,
+        memory_category: payload.memory_category,
+      }
+      setMemoryLifecycleLog((prev) => {
+        const next = [entry, ...prev]
+        return next.length > MEMORY_LIFECYCLE_HISTORY_LIMIT
+          ? next.slice(0, MEMORY_LIFECYCLE_HISTORY_LIMIT)
+          : next
+      })
+    }).then((fn) => {
+      if (cancelled) {
+        fn()
+      } else {
+        unlisten = fn
+      }
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
 
   const isRecording = harness !== null &&
     sessionId !== null &&
@@ -350,6 +533,18 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
                   最后事件：{new Date(telemetry.last_event_at).toLocaleTimeString('zh-CN')}
                 </div>
               )}
+            </>
+          )}
+
+          {/* Memory lifecycle timeline (Phase 8A.12 / T-UI-8) */}
+          {memoryLifecycleLog.length > 0 && (
+            <>
+              <SectionHeader title="记忆生命周期" />
+              <ul className="mt-1 space-y-1">
+                {memoryLifecycleLog.map((entry) => (
+                  <MemoryLifecycleRow key={entry.uid} entry={entry} />
+                ))}
+              </ul>
             </>
           )}
         </div>
