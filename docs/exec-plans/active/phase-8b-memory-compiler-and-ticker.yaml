@@ -33,11 +33,21 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6']
-  current_slice: '8B.7'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7']
+  current_slice: '8B.8'
   blocked: []
   notes: >
-    Phase C 闭环 — Human checkpoint #1 待人工验证。8B.5 落地了
+    8B.7 (T-D2) 落地：MemoryTicker.on_turn_complete /
+    on_session_end 真实现 + flush_session 同步 API。state 字段
+    Arc<Mutex<TickerState>> 化以支持 spawn 闭包；turn 阈值命中时
+    tokio::spawn 跑 rolling_summary → compile_today → assemble；
+    flush_session 用 InProgressGuard RAII 保证 in-progress 标记
+    panic-safe；session_id == "-" / 空 messages 防御性短路。新增
+    7 个 #[tokio::test]（含 idempotent / clear-turn-count /
+    snapshot-state）。⚠️ commands/agent.rs ConversationRuntime
+    .with_turn_hook(state.memory_ticker.clone()) 注入留待
+    commands/agent.rs un-stash 后的后续 slice — 当前 ticker 已构造
+    但还未被真实 turn 触发。8B.5 落地了
     memory_compile_now / memory_compiled_read / memory_compiled_clear
     三个 Tauri 命令（三处注册：commands/memory.rs + main.rs
     generate_handler! + capabilities/default.json description bump +
@@ -373,7 +383,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.7"
     title: "T-D2 — notify_turn / notify_session_end（6 轮触发 + session 结束冲刷）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
