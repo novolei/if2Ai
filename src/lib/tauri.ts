@@ -104,6 +104,16 @@ export interface MemoryEventPayload {
      * without parsing `extra`.
      */
     | 'memory_compiled'
+    /**
+     * Phase 8B.4 / T-C4 — `assemble` concatenated the four `*.md`
+     * artefacts (`facts → today → week → longterm`) into the
+     * top-level `memory.md`.  `extra` carries `{ chars, sections }`
+     * where `chars` is the final byte length of `memory.md` and
+     * `sections` is the four bilingual section titles in priority
+     * order.  `result_count` mirrors `chars` so the TelemetryDrawer
+     * can render "memory.md · {N} chars" without parsing `extra`.
+     */
+    | 'memory_assembled'
   trace_id?: string
   session_id?: string
   project_id?: string

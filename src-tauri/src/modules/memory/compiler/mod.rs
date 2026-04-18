@@ -228,25 +228,41 @@ impl MemoryCompiler {
 
     /// Extract the cumulative `## 重要事实` block → `facts.md`.
     ///
-    /// **Phase 8B.1 stub** — always returns `Ok(CompileResult::Skipped)`.
-    /// Real implementation lands in slice 8B.4.
+    /// Delegates to [`facts::compile_facts`] with the compiler's
+    /// stored collaborators; `is_zh` is read from
+    /// [`crate::modules::runtime::locale::is_zh`].
     pub async fn compile_facts(
         &self,
-        _scope: &MemoryExecutionScope,
-        _paths: &CompilePaths,
+        scope: &MemoryExecutionScope,
+        paths: &CompilePaths,
     ) -> Result<CompileResult, MemoryError> {
-        // TODO(8B.4): regex-extract + optional LLM compress.
-        Ok(CompileResult::Skipped)
+        let is_zh = crate::modules::runtime::locale::is_zh();
+        facts::compile_facts(
+            self.summary_store.clone(),
+            scope,
+            &paths.facts_md,
+            self.llm.clone(),
+            self.job_runner.clone(),
+            self.config.facts_max_chars,
+            is_zh,
+        )
+        .await
     }
 
     /// Concatenate the four `*.md` artifacts into `memory.md`.
     ///
-    /// **Phase 8B.1 stub** — always returns `Ok(())` without touching
-    /// the disk.  Real implementation (4 sections + placeholders +
-    /// 5000-char truncation per v2 §0.5 Δ-17) lands in slice 8B.4.
-    pub fn assemble(&self, _paths: &CompilePaths) -> Result<(), MemoryError> {
-        // TODO(8B.4): 4-section concat + truncation + memory_assembled audit.
-        Ok(())
+    /// Synchronous (no LLM, no async) — delegates to
+    /// [`assemble::assemble`].  The ticker (8B.7+) passes the real
+    /// scope; until then the orchestrator wires the global scope so
+    /// `memory_assembled` audit events still carry consistent
+    /// project/session fields.
+    pub fn assemble(
+        &self,
+        scope: &MemoryExecutionScope,
+        paths: &CompilePaths,
+    ) -> Result<(), MemoryError> {
+        let is_zh = crate::modules::runtime::locale::is_zh();
+        assemble::assemble(paths, scope, is_zh)
     }
 }
 
@@ -346,22 +362,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stub_compile_facts_returns_skipped() {
+    async fn wired_compile_facts_compiles_empty_then_skips() {
+        // 8B.4 — with the NullSessionSummaryStore returning zero rows
+        // the function takes the small-corpus fast path: writes an
+        // empty facts.md + sentinel fingerprint and returns Compiled.
+        // A second call hits the cache and returns Skipped.
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
-        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-facts"));
-        let out = compiler
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = CompilePaths::from_scope_root(dir.path());
+        let first = compiler
             .compile_facts(&scope, &paths)
             .await
-            .expect("stub must not error");
-        assert_eq!(out, CompileResult::Skipped);
+            .expect("first compile must not error");
+        assert_eq!(first, CompileResult::Compiled);
+        assert!(paths.facts_md.exists());
+        let second = compiler
+            .compile_facts(&scope, &paths)
+            .await
+            .expect("second compile must not error");
+        assert_eq!(second, CompileResult::Skipped);
     }
 
-    #[test]
-    fn stub_assemble_returns_ok() {
+    #[tokio::test]
+    async fn wired_assemble_writes_memory_md() {
+        // 8B.4 — assemble() is now real synchronous file I/O.  With
+        // empty *.md inputs it still produces a memory.md skeleton
+        // populated with the four bilingual section placeholders.
         let compiler = make_compiler();
-        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-assemble"));
-        compiler.assemble(&paths).expect("stub must not error");
+        let scope = MemoryExecutionScope::global();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = CompilePaths::from_scope_root(dir.path());
+        compiler
+            .assemble(&scope, &paths)
+            .expect("assemble must not error");
+        assert!(paths.memory_md.exists());
+        let body = std::fs::read_to_string(&paths.memory_md).expect("read memory.md");
+        assert!(body.contains("## "));
     }
 
     #[test]

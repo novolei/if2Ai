@@ -879,6 +879,57 @@ impl MemoryAuditEmitter {
         });
     }
 
+    /// Emit a `memory_assembled` event after
+    /// [`crate::modules::memory::compiler::assemble::assemble`]
+    /// concatenates the four `*.md` artefacts into `memory.md`
+    /// (Phase 8B.4 / T-C4).
+    ///
+    /// `chars` is the final on-disk char count of `memory.md`;
+    /// `sections` lists the four bilingual section titles in priority
+    /// order (`facts → today → week → longterm`).  Both ride under
+    /// `extra` per v2 §0.5 Δ-3 + Δ-4 so the fixed
+    /// [`MemoryEventPayload`] schema does not need to grow per audit
+    /// family.  The Telemetry Drawer renders this as a "memory.md ·
+    /// {chars} 字" timeline item.
+    ///
+    /// `allow(dead_code)`: first producer is the `assemble` function
+    /// landing in this slice; the bin target sees no direct caller
+    /// until `MemoryCompiler::assemble` is wired by 8B.5+.
+    #[allow(dead_code)]
+    pub fn memory_assembled(ctx: &AuditContext<'_>, chars: usize, sections: &[&str]) {
+        tracing::info!(
+            event = "memory_assembled",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            chars = chars,
+        );
+        let extra = serde_json::json!({
+            "chars": chars,
+            "sections": sections,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_assembled",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(chars),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_cleared` event after the user triggers a global
     /// "wipe all memory" from Settings.  Carries the number of removed
     /// entries in `result_count` so the Telemetry Drawer can show "N
