@@ -76,6 +76,9 @@ use commands::{
     list_tools,
     list_toolsets,
     memory_clear_all,
+    memory_compile_now,
+    memory_compiled_clear,
+    memory_compiled_read,
     memory_delete,
     memory_demote,
     memory_export,
@@ -719,6 +722,10 @@ fn main() {
             memory_demote,
             // Per-session memory toggle (Phase 8A.4 / v2 §Sprint 1 / T-A4)
             memory_session_set_enabled,
+            // Memory compile pipeline (Phase 8B.5 / T-C5 / v2 §0.5 Δ-11)
+            memory_compile_now,
+            memory_compiled_read,
+            memory_compiled_clear,
             // Pinned-memory commands (Phase 8A.10 / T-F3 / v2 §0.5 Δ-11)
             pinned_get,
             pinned_add,

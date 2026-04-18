@@ -33,14 +33,21 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4']
-  current_slice: '8B.5'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5']
+  current_slice: '8B.6'
   blocked: []
   notes: >
-    Phase 8B 已启动。Sprint 2 / T-C1 (8B.1) 完成：MemoryCompiler 骨架 +
-    CompilePaths + CompilerConfig + AppState/AppStateConfig wiring 已落盘。
-    五个 compile_* 方法是 Ok(Skipped) 空桩；真正实现按计划在 8B.2 (指纹缓存) /
-    8B.3 (today/week/longterm) / 8B.4 (facts/assemble) 落地。
+    Phase C 闭环 — Human checkpoint #1 待人工验证。8B.5 落地了
+    memory_compile_now / memory_compiled_read / memory_compiled_clear
+    三个 Tauri 命令（三处注册：commands/memory.rs + main.rs
+    generate_handler! + capabilities/default.json description bump +
+    src/lib/tauri.ts wrapper），CompileReport / CompiledMemoryDto /
+    CompiledSection DTO 全部带 #[derive(Serialize)] 并通过 6 个新单测。
+    8B.1–8B.5 共同构成完整的 LLM 编译流水线：MemoryCompiler 骨架 +
+    指纹缓存 + 4 个 compile_* + assemble + 前端可触发命令。下一步进入
+    Phase D（Ticker / 8B.6+）前，请人工：(1) 启动 dev 后手动调
+    memory_compile_now → 4 个 .md + memory.md 都生成；(2) 第二次调用
+    所有 verdicts 为 skipped；(3) memory.md 内容符合 4-section 模板。
     11 slices，~10 工程日。核心依赖：SessionSummaryStore（8A.5）+ JobRunner（8A.2）+ UtilityLlm（8A.5）。
 
     共享约束（v2 §0.7）：
@@ -260,7 +267,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.5"
     title: "T-C5 — memory_compile_now / memory_compiled_read / memory_compiled_clear Tauri 命令"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

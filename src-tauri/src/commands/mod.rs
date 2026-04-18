@@ -273,8 +273,9 @@ pub use harness::{
 };
 #[allow(unused_imports)]
 pub use memory::{
-    memory_clear_all, memory_delete, memory_demote, memory_export, memory_promote,
-    memory_promotion_candidates, memory_purge, memory_recall, MemoryEntryDto,
+    memory_clear_all, memory_compile_now, memory_compiled_clear, memory_compiled_read,
+    memory_delete, memory_demote, memory_export, memory_promote, memory_promotion_candidates,
+    memory_purge, memory_recall, CompileReport, CompiledMemoryDto, CompiledSection, MemoryEntryDto,
     MemoryPromotionCandidateDto,
 };
 #[allow(unused_imports)]

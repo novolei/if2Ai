@@ -1565,3 +1565,83 @@ export async function memoryDemote(args: {
 export async function memoryClearAll(): Promise<number> {
   return invoke<number>('memory_clear_all')
 }
+
+// ─── Memory Compile Pipeline (Phase 8B.5 / T-C5) ────────────────────────────
+//
+// Tauri wrappers for `memory_compile_now` / `memory_compiled_read` /
+// `memory_compiled_clear`.  The four-stage compile pipeline
+// (today / week / longterm / facts → assemble) lives entirely in
+// `src-tauri/src/modules/memory/compiler/` and is normally driven by
+// the Phase 8B ticker (8B.6+); these commands let the frontend
+// CompiledMemoryViewer (8B.10) and operator scripts trigger / inspect /
+// drop the compiled cache on demand.
+//
+// `scope` is one of `'current' | 'all' | 'project' | 'global'`.  Until
+// multi-scope sidecars land in 8B.x every value collapses onto the
+// shared `<data_local_dir>/.if2ai/memory/` root on the backend; the
+// string union is kept so the wire-shape stays stable for future
+// project / session sidecars.
+
+/** Single-stage compile verdict mirroring Rust `CompileResult`. */
+export type CompileResultKind = 'compiled' | 'skipped'
+
+/** Frontend mirror of the backend `CompileReport`. */
+export interface CompileReport {
+  today: CompileResultKind
+  week: CompileResultKind
+  longterm: CompileResultKind
+  facts: CompileResultKind
+  assembled: boolean
+  elapsed_ms: number
+}
+
+/** Frontend mirror of the backend `CompiledSection`. */
+export interface CompiledSection {
+  /** Raw markdown contents; empty string when the section is missing. */
+  content: string
+  /** ISO-8601 file mtime, or null when the section has never been compiled. */
+  last_compiled_at: string | null
+  /** Character count of `content` (Unicode scalars, not bytes). */
+  chars: number
+}
+
+/** Frontend mirror of the backend `CompiledMemoryDto`. */
+export interface CompiledMemoryDto {
+  memory_md: string
+  today: CompiledSection
+  week: CompiledSection
+  longterm: CompiledSection
+  facts: CompiledSection
+}
+
+/**
+ * Trigger the full Phase 8B compile pipeline (today → week → longterm →
+ * facts → assemble) for `scope`.  Each stage honours its fingerprint
+ * cache so repeated calls without changes are cheap.
+ */
+export async function memoryCompileNow(
+  scope: 'current' | 'all' | 'project' | 'global'
+): Promise<CompileReport> {
+  return invoke<CompileReport>('memory_compile_now', { scope })
+}
+
+/**
+ * Snapshot every compiled `*.md` for `scope` plus the assembled
+ * `memory.md`.  Read-only — never invokes the LLM.
+ */
+export async function memoryCompiledRead(
+  scope: 'current' | 'all' | 'project' | 'global'
+): Promise<CompiledMemoryDto> {
+  return invoke<CompiledMemoryDto>('memory_compiled_read', { scope })
+}
+
+/**
+ * Drop the compiled cache for `scope`: truncates the four section
+ * files plus `memory.md`, then unlinks every fingerprint sidecar so
+ * the next [`memoryCompileNow`] is guaranteed to re-run the LLM.
+ */
+export async function memoryCompiledClear(
+  scope: 'current' | 'all' | 'project' | 'global'
+): Promise<void> {
+  await invoke<void>('memory_compiled_clear', { scope })
+}
