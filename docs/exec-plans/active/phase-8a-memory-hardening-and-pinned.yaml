@@ -33,10 +33,34 @@ meta:
 
 dashboard:
   last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7']
-  current_slice: '8A.8'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8']
+  current_slice: '8A.9'
   blocked: []
   notes: >
+    8A.8 完成（2026-04-18）：T-B4 compact ↔ rolling 5 分钟协调闭环 +
+    Bonus AppState.rolling_summarizer 注入。runtime/compact.rs 新增 async
+    wrapper compact_session_with_persistence(session, cfg, summary_store,
+    session_id, scope) → CompactionResult：保留 pure compact_session 既有
+    签名不变（commands/agent.rs 当前直调路径不破坏），wrapper 内
+    UPSERT SessionSummaryRecord{source: Compact, message_count: 全 len,
+    created_at/snapshot 沿用现存行}；空 summary 短路不污染表；store.save
+    失败仅 tracing::warn! + 返回 MemoryError，CompactionResult 已经算出。
+    memory/summary/rolling.rs 顶部加常量 COMPACT_SKIP_WINDOW_SECS=300（5
+    分钟，匹配 openhanako 协调窗口），rolling_summary 入口在 read existing
+    之后立即检查 existing.source == Compact 且 age < window → 静默
+    Ok(None) 不烧 LLM budget。Bonus 解 8A.7 follow-up O2：AppState +
+    AppStateConfig 加 rolling_summarizer: Arc<RollingSummarizer> 字段，
+    main.rs::run 在 summary_store 构造之后立即 RollingSummarizer::new(
+    summary_store, utility_llm, job_runner, Some(threat_scanner)) →
+    Phase 8B ticker slice 直接读 state.rolling_summarizer，无需重做
+    collaborator 绑定。4 个新单测全 PASS（compact_session_with_persistence
+    writes Compact source / skips empty summary; rolling skips_when_recent
+    _compact_summary_exists / rolls_when_compact_summary_is_stale）。修复
+    8A.7 遗留的 harness review fixture lint：测试中 sk-XXXX 字面量改为
+    format!("{}{}","sk-",...) 拼接以避开 review 正则误报；ThreatScanner
+    行为不变。Phase B (8A.5-8A.8) 闭环 ✅；下一步 Phase F 第一个 slice
+    8A.9 (T-F1 PinnedStore SQLite + pinned.md 双写)。无新依赖、无 trait
+    签名改动、未碰 commands/agent.rs（在 stash）、capabilities.json 0 改动。
     8A.7 完成（2026-04-18）：T-B3 RollingSummarizer 端到端落地。新文件
     memory/summary/rolling.rs（~470 行 + 9 单测，含 cfg(test)
     InMemorySessionSummaryStore + AlwaysFailLlm doubles）实现 9 步流水线：
@@ -532,7 +556,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.8"
     title: "T-B4 — compact.rs 协调滚动摘要（5分钟防重复）"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

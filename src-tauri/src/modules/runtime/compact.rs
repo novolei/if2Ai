@@ -531,6 +531,80 @@ fn extract_summary_highlights(summary: &str) -> Vec<String> {
     lines
 }
 
+use std::sync::Arc;
+
+use crate::modules::memory::scope::MemoryExecutionScope;
+use crate::modules::memory::summary::schema::{SessionSummaryRecord, SummarySource};
+use crate::modules::memory::summary::store::SessionSummaryStore;
+use crate::modules::memory::MemoryError;
+
+/// Run [`compact_session`] and additionally persist a
+/// [`SessionSummaryRecord`] tagged `source = Compact` to the supplied
+/// [`SessionSummaryStore`] so the rolling summarizer (8A.7) can detect
+/// "we just compacted, no need to roll right now".
+///
+/// Pure-function semantics of [`compact_session`] are preserved: the
+/// compaction itself stays synchronous; only the persistence step is
+/// async, hence the wrapper itself is async.  Empty `result.summary`
+/// (i.e. `should_compact` returned `false`) short-circuits without
+/// touching the store so we never insert blank rows.
+///
+/// On `summary_store.save` failure the wrapper returns the
+/// [`MemoryError`] but the in-memory `CompactionResult` is already
+/// computed; the caller is free to log and continue with the trimmed
+/// session.  See `tracing::warn!` below.
+///
+/// Phase 8A.8 / Sprint 1 / T-B4.  See v2 §0.5 Δ-19 for the
+/// coordination rationale: rolling and compact must share one
+/// persistent surface so downstream readers (facts extractor, compile
+/// pipeline) see exactly one row per session.
+///
+/// # Errors
+///
+/// Returns [`MemoryError`] when the underlying [`SessionSummaryStore`]
+/// fails (sqlite I/O, sidecar write, etc.).
+pub async fn compact_session_with_persistence(
+    session: &Session,
+    config: CompactionConfig,
+    summary_store: Arc<dyn SessionSummaryStore>,
+    session_id: &str,
+    scope: &MemoryExecutionScope,
+) -> Result<CompactionResult, MemoryError> {
+    let result = compact_session(session, config);
+    if result.summary.is_empty() {
+        return Ok(result);
+    }
+
+    // UPSERT semantics: preserve created_at / snapshot from any existing
+    // row so a compact-after-roll does not reset the deep-memory cursor.
+    let existing = summary_store.get(session_id).await.ok().flatten();
+    let now = chrono::Utc::now();
+    let record = SessionSummaryRecord {
+        session_id: session_id.to_string(),
+        project_id: scope.project_id.clone(),
+        created_at: existing.as_ref().map(|r| r.created_at).unwrap_or(now),
+        updated_at: now,
+        summary: result.summary.clone(),
+        snapshot: existing
+            .as_ref()
+            .map(|r| r.snapshot.clone())
+            .unwrap_or_default(),
+        snapshot_at: existing.as_ref().and_then(|r| r.snapshot_at),
+        message_count: session.messages.len(),
+        source: SummarySource::Compact,
+    };
+    if let Err(e) = summary_store.save(&record).await {
+        tracing::warn!(
+            session_id,
+            error = %e,
+            "compact_session_with_persistence: failed to persist Compact summary"
+        );
+        return Err(e);
+    }
+
+    Ok(result)
+}
+
 fn extract_summary_timeline(summary: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut in_timeline = false;
@@ -754,6 +828,124 @@ mod tests {
         )]);
         assert!(files.contains(&"rust/crates/runtime/src/compact.rs".to_string()));
         assert!(files.contains(&"rust/crates/tools/src/lib.rs".to_string()));
+    }
+
+    #[tokio::test]
+    async fn compact_session_with_persistence_writes_compact_source() {
+        use super::compact_session_with_persistence;
+        use crate::modules::memory::scope::MemoryExecutionScope;
+        use crate::modules::memory::summary::schema::SummarySource;
+        use crate::modules::memory::summary::store::SessionSummaryStore;
+        use crate::modules::memory::MemoryError;
+        use async_trait::async_trait;
+        use chrono::{DateTime, Utc};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        struct InMemoryStore {
+            rows: RwLock<HashMap<String, super::SessionSummaryRecord>>,
+        }
+        #[async_trait]
+        impl SessionSummaryStore for InMemoryStore {
+            async fn get(
+                &self,
+                session_id: &str,
+            ) -> Result<Option<super::SessionSummaryRecord>, MemoryError> {
+                Ok(self.rows.read().await.get(session_id).cloned())
+            }
+            async fn save(&self, record: &super::SessionSummaryRecord) -> Result<(), MemoryError> {
+                self.rows
+                    .write()
+                    .await
+                    .insert(record.session_id.clone(), record.clone());
+                Ok(())
+            }
+            async fn list_in_range(
+                &self,
+                _scope: &MemoryExecutionScope,
+                _start: DateTime<Utc>,
+                _end: DateTime<Utc>,
+            ) -> Result<Vec<super::SessionSummaryRecord>, MemoryError> {
+                Ok(Vec::new())
+            }
+            async fn list_dirty(
+                &self,
+                _scope: &MemoryExecutionScope,
+            ) -> Result<Vec<super::SessionSummaryRecord>, MemoryError> {
+                Ok(Vec::new())
+            }
+            async fn mark_processed(&self, _session_id: &str) -> Result<(), MemoryError> {
+                Ok(())
+            }
+        }
+
+        let store: Arc<dyn SessionSummaryStore> = Arc::new(InMemoryStore {
+            rows: RwLock::new(HashMap::new()),
+        });
+        // Build a session large enough for should_compact to fire under
+        // the small max_estimated_tokens threshold below.
+        let session = Session {
+            version: 1,
+            messages: vec![
+                ConversationMessage::user_text("alpha ".repeat(60)),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "beta ".repeat(60),
+                }]),
+                ConversationMessage::user_text("gamma".to_string()),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "delta".to_string(),
+                }]),
+            ],
+        };
+        let cfg = CompactionConfig {
+            preserve_recent_messages: 2,
+            max_estimated_tokens: 1,
+        };
+
+        let result = compact_session_with_persistence(
+            &session,
+            cfg,
+            store.clone(),
+            "sess-x",
+            &MemoryExecutionScope::global(),
+        )
+        .await
+        .expect("ok");
+        assert!(!result.summary.is_empty());
+        assert!(result.removed_message_count >= 1);
+
+        let stored = store.get("sess-x").await.unwrap().expect("row written");
+        assert_eq!(stored.source, SummarySource::Compact);
+        assert_eq!(stored.summary, result.summary);
+        assert_eq!(stored.message_count, session.messages.len());
+    }
+
+    #[tokio::test]
+    async fn compact_session_with_persistence_skips_empty_summary() {
+        use super::compact_session_with_persistence;
+        use crate::modules::memory::scope::MemoryExecutionScope;
+        use crate::modules::memory::NullSessionSummaryStore;
+        use crate::modules::memory::SessionSummaryStore;
+        use std::sync::Arc;
+
+        let store: Arc<dyn SessionSummaryStore> = Arc::new(NullSessionSummaryStore::new());
+        // Tiny session that will not trigger should_compact → empty summary.
+        let session = Session {
+            version: 1,
+            messages: vec![ConversationMessage::user_text("hi")],
+        };
+        let result = compact_session_with_persistence(
+            &session,
+            CompactionConfig::default(),
+            store,
+            "sess-y",
+            &MemoryExecutionScope::global(),
+        )
+        .await
+        .expect("ok");
+        assert!(result.summary.is_empty());
+        assert_eq!(result.removed_message_count, 0);
     }
 
     #[test]

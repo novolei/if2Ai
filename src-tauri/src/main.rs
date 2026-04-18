@@ -455,6 +455,17 @@ fn main() {
             }
         };
 
+    // Phase 8A.7 + 8A.8 — RollingSummarizer wires SessionSummaryStore +
+    // UtilityLlm + JobRunner + ThreatScanner.  Held on AppState so the
+    // future Phase 8B ticker (TurnHook::on_turn_complete) can invoke
+    // `rolling_summary` without re-threading these collaborators.
+    let rolling_summarizer = std::sync::Arc::new(modules::memory::summary::RollingSummarizer::new(
+        summary_store.clone(),
+        utility_llm.clone(),
+        job_runner.clone(),
+        Some(threat_scanner.clone()),
+    ));
+
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =
@@ -567,6 +578,7 @@ fn main() {
         job_runner,
         utility_llm,
         summary_store,
+        rolling_summarizer,
     });
 
     tauri::Builder::default()

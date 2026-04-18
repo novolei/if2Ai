@@ -114,6 +114,22 @@ pub struct AppState {
     /// `allow(dead_code)`: first reader lands in 8A.7.
     #[allow(dead_code)]
     pub summary_store: Arc<dyn SessionSummaryStore>,
+
+    /// Phase 8A.7 + 8A.8 — shared rolling-summary orchestrator.
+    /// Constructed once in `main.rs::run` after `summary_store`,
+    /// `utility_llm`, `job_runner`, and `threat_scanner` are all
+    /// available, then handed to the future Phase 8B `TurnHook`
+    /// implementation that calls
+    /// [`crate::modules::memory::summary::RollingSummarizer::rolling_summary`]
+    /// from `on_turn_complete` (currently no in-tree consumer; the
+    /// 8B ticker slice will read this field).
+    ///
+    /// `allow(dead_code)`: first runtime caller lands in 8B.x; held
+    /// here from 8A.8 so the next slice only needs to read
+    /// `state.rolling_summarizer` instead of re-threading the
+    /// constructor.
+    #[allow(dead_code)]
+    pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -154,6 +170,9 @@ pub struct AppStateConfig {
     pub utility_llm: Arc<dyn UtilityLlm>,
     /// Shared session-summary store; see [`AppState::summary_store`].
     pub summary_store: Arc<dyn SessionSummaryStore>,
+    /// Shared rolling-summary orchestrator; see
+    /// [`AppState::rolling_summarizer`].
+    pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
 }
 
 impl AppState {
@@ -181,6 +200,7 @@ impl AppState {
             job_runner: cfg.job_runner,
             utility_llm: cfg.utility_llm,
             summary_store: cfg.summary_store,
+            rolling_summarizer: cfg.rolling_summarizer,
         }
     }
 }

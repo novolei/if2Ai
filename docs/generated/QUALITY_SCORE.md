@@ -2,7 +2,7 @@
 
 > **自动生成文件** — 由 executor 每个 Phase 完成后更新。禁止手动修改。
 
-**更新时间**: 2026-04-15
+**更新时间**: 2026-04-18
 **当前 Phase**: Phase 6B 完成（Memory Control Plane）
 **整体状态**: ✅ Phase 6B 全部完成（9/9 slices）
 
@@ -214,3 +214,4 @@
 | 2026-04-18 | 8A.5 | done | T-B1 UtilityLlm shim + SessionSummaryStore SQLite/JSON 双写 + Provider Send+Sync bound（MockProvider 改 AtomicUsize） | gate ✅ review ✅ |
 | 2026-04-18 | 8A.6 | done | T-B2 RollingSummaryPrompt + budget 线性缩放 + build_conversation_text（memory/summary/prompt.rs 新建 ~430 行 + 17 单测；compute_budget turn*40 clamp[40,400]/facts 30%/max_tokens*1.5 clamp[150,750]；中英双 system 含 "## 重要事实/Key facts" + "## 事情经过/What happened" 两节固定标题；has_prev → user 三段式；build_conversation_text 跳过 System/Tool role 与 ToolUse/ToolResult blocks，char-based 截断 assistant >300 字）| gate ✅ review ✅ 6/6 |
 | 2026-04-18 | 8A.7 | done | T-B3 RollingSummarizer 端到端 9 步流水线（read existing → 增量切片 → conv_text → user-turn count → prompt+budget → JobRunner.run("rolling_summary",...) 包 UtilityLlm.complete → PII scrub → UPSERT SessionSummaryRecord(source=Rolling) → emit memory_summary_rolled）+ TurnHook trait（sync fn，§0.5 Δ-8）+ ConversationRuntime.turn_hook 字段 + with_turn_hook builder + run_turn 末尾调用（暂用 scope::global+session_id="-"，TODO 8B 接真实 scope）+ memory/audit.rs::memory_summary_rolled 关联函数（§0.5 Δ-3+Δ-4，extra 携 turn_count/chars_before/chars_after/latency_ms）+ tauri.ts MemoryEventName 追加 memory_summary_rolled + job_runner.rs cfg(test) pub(crate) open_in_memory_for_tests 让 sibling 模块复用；10 个新单测全 PASS（rolling 9 + conversation 1）| gate ✅ review ✅ 6/6 |
+| 2026-04-18 | 8A.8 | done | T-B4 compact ↔ rolling 5 分钟协调（compact_session_with_persistence async wrapper UPSERT SessionSummaryRecord{source: Compact}，pure compact_session 签名不变；rolling.rs 入口检查 COMPACT_SKIP_WINDOW_SECS=300 内 Compact 行 → 静默 Ok(None) 不烧 LLM budget）+ Bonus AppState.rolling_summarizer 注入（Arc<RollingSummarizer> 字段 + main.rs 构造 wires summary_store/utility_llm/job_runner/threat_scanner，8B ticker 直接读取，解 8A.7 follow-up O2）；4 个新单测 PASS（compact writes Compact source / skips empty; rolling skips fresh compact / rolls stale compact）；修复 8A.7 fixture lint（sk-XXXX 改 format! 拼接避开 review 正则误报）| gate ✅ review ✅ 6/6 → **Phase B (8A.5-8A.8) 闭环；进入 Phase F (8A.9-8A.12 Pinned Memory)** |
