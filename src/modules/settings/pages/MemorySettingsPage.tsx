@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Brain, Download, AlertTriangle, Check, Sliders } from 'lucide-react'
+import { Brain, Download, AlertTriangle, Check, Sliders, BookOpen } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
+import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import {
   getMemoryConfig,
   setMemoryConfig,
@@ -39,6 +40,9 @@ export function MemorySettingsPage() {
   const [controlPlaneEnabled, setControlPlaneEnabled] = useState(true)
   const [recallMode, setRecallMode] = useState<MemoryRecallMode>('hybrid')
   const [policyEnforceMode, setPolicyEnforceMode] = useState<MemoryPolicyEnforceMode>('shadow')
+
+  // Phase 8B.10 / T-UI-2 — modal state for the compiled memory viewer.
+  const [compiledViewerOpen, setCompiledViewerOpen] = useState(false)
 
   const totalPercentage = slots.reduce((sum, s) => sum + s.value, 0)
   const isValid = totalPercentage === 100
@@ -132,6 +136,27 @@ export function MemorySettingsPage() {
     <div className="flex flex-col gap-3">
       {/* ── Pinned Memory (Phase 8A.12 / T-UI-1) ── */}
       <PinnedMemoryEditor />
+
+      {/* ── Compiled memory.md viewer entry (Phase 8B.10 / T-UI-2) ── */}
+      <SettingsSurface className="px-5 py-3">
+        <button
+          type="button"
+          onClick={() => setCompiledViewerOpen(true)}
+          className="flex w-full items-center justify-between rounded-lg border border-black/[0.06] bg-background/50 px-4 py-2.5 text-[12px] transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
+        >
+          <span className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-blue-600" />
+            <span className="font-medium">查看 AI 长期记忆 (memory.md)</span>
+          </span>
+          <span className="text-[10.5px] text-muted-foreground">查看 →</span>
+        </button>
+      </SettingsSurface>
+
+      <CompiledMemoryViewer
+        open={compiledViewerOpen}
+        onClose={() => setCompiledViewerOpen(false)}
+        scope="global"
+      />
 
       {/* ── Token Budget ── */}
       <SettingsSurface className="px-5 py-4">

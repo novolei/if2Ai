@@ -18,9 +18,11 @@
  * provided — wired from the WorkingMemory C1 implementation.
  */
 
+import { useState } from 'react'
 import { Brain } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ContextBudgetUsage } from '@/lib/tauri'
+import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +91,9 @@ function pct(value: number, total: number): number {
  * `ContextBudgetUsage` data is present in the latest stream payload.
  */
 export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
+  // Phase 8B.10 / T-UI-2 — wire the memory badge to the CompiledMemoryViewer modal.
+  const [memoryViewerOpen, setMemoryViewerOpen] = useState(false)
+
   if (!usage) return null
 
   const { total_budget, remaining } = usage
@@ -96,6 +101,7 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
   const remainingPct = pct(remaining, total_budget)
 
   return (
+    <>
     <div
       className={cn('flex flex-col gap-0.5 px-3 py-1', className)}
       role="status"
@@ -140,17 +146,19 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
           )
         })}
 
-        {/* Memory badge — Phase 8A.12 / T-UI-6 (skeleton).
-            Click handler intentionally absent until Sprint 2 ships
-            CompiledViewer; the badge is purely informational. */}
+        {/* Memory badge — Phase 8A.12 (skeleton) wired in 8B.10 / T-UI-2.
+            Click opens the CompiledMemoryViewer modal so users can inspect
+            the exact memory.md being injected into the system prompt. */}
         {usage.memory_tokens > 0 && (
-          <span
-            className="flex items-center gap-1 rounded bg-teal/15 px-1.5 py-0.5 text-teal-700/80"
-            title="置顶记忆 + 编译记忆已注入到 system prompt（Phase 8A.12）"
+          <button
+            type="button"
+            onClick={() => setMemoryViewerOpen(true)}
+            className="flex items-center gap-1 rounded bg-teal/15 px-1.5 py-0.5 text-teal-700/80 transition-colors hover:bg-teal/25"
+            title="点击查看 system prompt 注入的全部长期记忆"
           >
             <Brain className="h-3 w-3" aria-hidden />
             记忆已加载
-          </span>
+          </button>
         )}
 
         {/* Remaining */}
@@ -178,5 +186,11 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
         </span>
       </div>
     </div>
+    <CompiledMemoryViewer
+      open={memoryViewerOpen}
+      onClose={() => setMemoryViewerOpen(false)}
+      scope="global"
+    />
+    </>
   )
 }

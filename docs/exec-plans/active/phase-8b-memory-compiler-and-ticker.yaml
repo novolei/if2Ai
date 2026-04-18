@@ -33,10 +33,25 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8', '8B.9']
-  current_slice: '8B.10'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8', '8B.9', '8B.10']
+  current_slice: '8B.11'
   blocked: []
   notes: >
+    8B.10 (T-UI-2) 落地：CompiledMemoryViewer 模态 + CompiledSectionPanel
+    单 section 渲染（react-markdown + remark-gfm）。MemorySettingsPage
+    在 PinnedMemoryEditor 下方新增"查看 AI 长期记忆 (memory.md)"入口
+    SettingsSurface（BookOpen icon），点击打开 viewer scope='global'。
+    ContextBar 8A.12 占位的 "记忆已加载" badge 升级为 button，绑定
+    CompiledMemoryViewer open；hook 在 early-return 之前声明以遵守
+    rules-of-hooks，外层用 fragment 包裹以并列渲染 modal。Modal 行为：
+    open 时调 memoryCompiledRead；右上角"重新编译"调 memoryCompileNow
+    + toast 报告 N/4 重编译；"清空编译"两段式 armed 模式（6s 自动
+    disarm）调 memoryCompiledClear；ESC + backdrop click 关闭；loading
+    时 Loader2 spinner；prose-sm + dark:prose-invert 暗色模式适配。
+    react-markdown 10.1.0 / remark-gfm 4.0.1 已在 package.json，无需
+    新增依赖。下一步进入 8B.11 NarrativeViewer 骨架（session 摘要
+    时间线）。
+  notes_archive: >
     8B.9 (T-D4) 落地：MemoryTicker.start(self: &Arc<Self>, scope) +
     recover_unsummarized 启动补偿 + 备用 daily timer。Phase D
     (8B.6→8B.9) 闭环：Ticker 现已具备完整能力链（per-turn 滚摘要 →
@@ -553,7 +568,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.10"
     title: "T-UI-2 — CompiledMemoryViewer 前端（memory.md 内容展示 + 重编译）"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
