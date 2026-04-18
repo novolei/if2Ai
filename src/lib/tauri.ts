@@ -430,6 +430,74 @@ export async function memorySessionSetEnabled(
 }
 
 /**
+ * Wire-shape mirror of the backend `PinnedItemDto`
+ * (`src-tauri/src/commands/pinned.rs`). Phase 8A.10 / T-F3.
+ *
+ * `scope` is `'project' | 'global'`; `createdByKind` is `'user'` for
+ * pins added from the PinnedMemoryEditor and `'tool'` for pins added
+ * by the agent via the `pin_memory` tool, in which case `toolName` and
+ * `sessionId` carry the originating call.
+ */
+export interface PinnedItemDto {
+  id: string;
+  content: string;
+  scope: 'project' | 'global';
+  projectId?: string;
+  createdAt: string;
+  createdByKind: 'user' | 'tool';
+  toolName?: string;
+  sessionId?: string;
+}
+
+/**
+ * 列出钉住的记忆 (Phase 8A.10 / T-F3)
+ *
+ * @param scope - `'project'` 仅当前项目, `'global'` 全局, `'both'`
+ *   返回 system-prompt 注入 (8A.11) 实际看到的合并集合.
+ * @param projectId - 当前 project_id; `scope='global'` 时忽略.
+ */
+export async function pinnedGet(
+  scope: 'project' | 'global' | 'both',
+  projectId?: string
+): Promise<PinnedItemDto[]> {
+  return await invoke<PinnedItemDto[]>('pinned_get', { scope, projectId });
+}
+
+/**
+ * 用户从 PinnedMemoryEditor UI 新增一条 pin (Phase 8A.10 / T-F3).
+ *
+ * 后端会自动经过 `ThreatScanner.scan_and_redact` PII 脱敏, 触及
+ * `MAX_PIN_CONTENT_CHARS` (500) 或 `MAX_PINS_PER_SCOPE` (50) 时返回
+ * 错误 (在前端表现为 `Error('PinnedLimitExceeded(50)')` 之类的字符串).
+ */
+export async function pinnedAdd(
+  content: string,
+  scope: 'project' | 'global',
+  projectId?: string
+): Promise<PinnedItemDto> {
+  return await invoke<PinnedItemDto>('pinned_add', {
+    content,
+    scope,
+    projectId,
+  });
+}
+
+/**
+ * 删除一条 pin (幂等 - 已不存在时返回 `false`, 不报错).
+ */
+export async function pinnedDelete(id: string): Promise<boolean> {
+  return await invoke<boolean>('pinned_delete', { id });
+}
+
+/**
+ * 重排 pin 顺序 (拖拽后调用).  按数组顺序重新打 `created_at`,
+ * 不在 store 中的 id 静默跳过.
+ */
+export async function pinnedReorder(ids: string[]): Promise<void> {
+  await invoke<void>('pinned_reorder', { ids });
+}
+
+/**
  * 创建新项目
  *
  * @param name - 项目名称

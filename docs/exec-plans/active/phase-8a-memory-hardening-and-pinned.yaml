@@ -32,11 +32,44 @@ meta:
         (4) F5 迁移兜底正确运行。
 
 dashboard:
-  last_updated: '2026-04-18'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9']
-  current_slice: '8A.10'
+  last_updated: '2026-04-19'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9', '8A.10']
+  current_slice: '8A.11'
   blocked: []
-    notes: >
+  notes: >
+    8A.10 完成（2026-04-19）：T-F2 + T-F3 — pin_memory / unpin_memory
+    内置工具 + 4 个 Pinned Tauri 命令 (pinned_get / pinned_add /
+    pinned_delete / pinned_reorder)。新模块 src-tauri/src/modules/tools/
+    builtin/pin_memory.rs + unpin_memory.rs：handler 走 ToolHandler =
+    Arc<Fn(Value, SharedToolContext) -> Pin<Box<...>>>，pin_memory 默认
+    Auto（无 permission 字段；ToolEntry 没有 permission 概念，已经被
+    PinnedStore.add() 内部的 ThreatScanner 脱敏兜底，与设计文档 §Sprint
+    1 / T-F2 一致）；unpin_memory 0 匹配返回 status="not_found" + removed=0，
+    不报错；扫描双 scope (project + global)，按 removed 计数动态选择 audit
+    scope_label ("both" / "project" / "global")，单次 memory_unpinned 事件
+    （per v2 §0.6 audit 反映用户可见动作）。register_builtin_tools 增
+    pinned: Arc<dyn PinnedStore> 第 5 参数；4 处 caller 全部更新（main.rs
+    生产路径、commands/agent.rs::ScriptedSkillApiClient 测试、tools/
+    integration_phase4.rs 两处测试），测试场景用 NullPinnedStore::new()
+    占位。新模块 src-tauri/src/commands/pinned.rs：PinnedItemDto
+    (camelCase serde) + 4 个 #[tauri::command] 函数，全部 thin pass-through
+    到 state.pinned_store；scope='both' 走 list_all_for_prompt 让前端
+    PinnedMemoryEditor 预览 system-prompt 注入实际看到的合并集合。三处
+    注册到位（main.rs::generate_handler! + capabilities/default.json 描述
+    bump + gen/schemas/capabilities.json 描述 bump，capabilities 沿用
+    core:default 整体覆盖，无需 per-command allow）。src/lib/tauri.ts
+    追加 PinnedItemDto interface + pinnedGet/pinnedAdd/pinnedDelete/
+    pinnedReorder 4 个 wrapper（projectId 自动 camelCase ↔ snake_case
+    桥接已由 Tauri 处理）。8 个新单测全 PASS（pin_memory: tool_entry_has_
+    correct_name_and_schema / pin_memory_persists_to_store / pin_memory_
+    rejects_too_long_content / pin_memory_rejects_invalid_scope；
+    unpin_memory: substring_match_case_insensitive / zero_matches_returns
+    _status_not_found / searches_both_scopes；commands::pinned: pinned_
+    get_returns_added_items_via_dto_round_trip）。Lint 0 warning，gate
+    PASS（compile + 906 tests + 4 security_integration），review 6/6
+    PASS。修复 dashboard.notes pre-existing YAML 缩进 bug（8A.9 写入时
+    多缩进 2 空格导致 yaml.parser.ParserError，本 slice 顺手修正）。
+    -----
     8A.9 完成（2026-04-18）：T-F1 PinnedStore 骨架 + SQLite/pinned.md
     双写 + ulid 引入。新模块 src-tauri/src/modules/memory/pinned/ 完整
     实现 PinnedStore trait（list / list_all_for_prompt / add / delete
@@ -683,7 +716,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.10"
     title: "T-F2+T-F3 — pin_memory/unpin_memory 工具 + Tauri 命令暴露"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

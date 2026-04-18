@@ -223,6 +223,7 @@ pub mod agent;
 pub mod browser;
 pub mod harness;
 pub mod memory;
+pub mod pinned;
 pub mod project;
 pub mod session;
 pub mod settings;
@@ -261,6 +262,8 @@ pub use memory::{
     memory_promotion_candidates, memory_purge, memory_recall, MemoryEntryDto,
     MemoryPromotionCandidateDto,
 };
+#[allow(unused_imports)]
+pub use pinned::{pinned_add, pinned_delete, pinned_get, pinned_reorder, PinnedItemDto};
 #[allow(unused_imports)]
 pub use project::{
     create_permanent_worktree, create_project, delete_project, ensure_default_workdir, get_project,

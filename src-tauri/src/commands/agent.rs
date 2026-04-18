@@ -3272,6 +3272,7 @@ mod tests {
             memory::default_memory_provider().await,
             scheduler::default_scheduler(),
             test_browser_registry,
+            std::sync::Arc::new(crate::modules::memory::NullPinnedStore::new()),
         );
 
         let execution_context =

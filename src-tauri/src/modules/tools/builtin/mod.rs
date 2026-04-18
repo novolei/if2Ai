@@ -25,6 +25,7 @@ pub mod memory_purge;
 pub mod memory_recall;
 pub mod memory_store;
 pub mod notebook_edit;
+pub mod pin_memory;
 pub mod powershell;
 pub mod repl;
 pub mod send_user_message;
@@ -39,6 +40,7 @@ pub mod sleep;
 pub mod structured_output;
 pub mod todo_write;
 pub mod tool_search;
+pub mod unpin_memory;
 pub mod web_fetch;
 pub mod web_search;
 pub mod web_search_config;
@@ -90,6 +92,8 @@ pub use memory_store::entry as memory_store_entry;
 #[allow(unused_imports)]
 pub use notebook_edit::notebook_edit_tool_entry;
 #[allow(unused_imports)]
+pub use pin_memory::entry as pin_memory_entry;
+#[allow(unused_imports)]
 pub use powershell::powershell_tool_entry;
 #[allow(unused_imports)]
 pub use repl::repl_tool_entry;
@@ -115,6 +119,8 @@ pub use sleep::sleep_tool_entry;
 pub use structured_output::structured_output_tool_entry;
 #[allow(unused_imports)]
 pub use todo_write::todo_write_tool_entry;
+#[allow(unused_imports)]
+pub use unpin_memory::entry as unpin_memory_entry;
 #[allow(unused_imports)]
 pub use web_fetch::entry as web_fetch_entry;
 #[allow(unused_imports)]

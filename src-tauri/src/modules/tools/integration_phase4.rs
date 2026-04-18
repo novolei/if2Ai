@@ -53,7 +53,13 @@ mod tests {
         let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
             "/tmp/browser-cold-state-phase4-test.json",
         ));
-        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler, test_browser);
+        crate::modules::tools::register_builtin_tools(
+            &registry,
+            memory,
+            scheduler,
+            test_browser,
+            Arc::new(crate::modules::memory::NullPinnedStore::new()),
+        );
 
         // Verify all expected tools exist
         let defs = registry.get_definitions(None);
@@ -217,7 +223,13 @@ mod tests {
         let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
             "/tmp/browser-cold-state-phase4-test2.json",
         ));
-        crate::modules::tools::register_builtin_tools(&registry, memory, scheduler, test_browser);
+        crate::modules::tools::register_builtin_tools(
+            &registry,
+            memory,
+            scheduler,
+            test_browser,
+            Arc::new(crate::modules::memory::NullPinnedStore::new()),
+        );
 
         // Get registry via toolset registry
         let toolset_registry = crate::modules::tools::ToolSetRegistry::new();

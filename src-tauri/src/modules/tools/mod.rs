@@ -17,7 +17,7 @@ pub use registry::{ToolEntry, ToolError, ToolRegistry};
 pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 
 use crate::modules::browser::BrowserRegistry;
-use crate::modules::memory::SharedMemoryProvider;
+use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
 use crate::modules::scheduler::SharedScheduler;
 
 /// Register all builtin tools to the given registry.
@@ -26,11 +26,17 @@ use crate::modules::scheduler::SharedScheduler;
 /// built-in tools including: bash, file operations, web search/fetch,
 /// browser automation, memory, scheduler/cron, skills management, and
 /// utility tools (json_parse, todo_write, sleep, config, etc.).
+///
+/// Phase 8A.10 / T-F2 — `pinned` is the shared [`PinnedStore`] used by
+/// the new `pin_memory` / `unpin_memory` tools.  Callers without access
+/// to a real store (legacy tests) can pass
+/// `Arc::new(crate::modules::memory::NullPinnedStore::new())`.
 pub fn register_builtin_tools(
     registry: &ToolRegistry,
     memory: SharedMemoryProvider,
     scheduler: SharedScheduler,
     browser: Arc<BrowserRegistry>,
+    pinned: Arc<dyn PinnedStore>,
 ) {
     if let Err(e) = registry.register(builtin::browser_tool_entry(browser)) {
         eprintln!("Failed to register browser tool: {}", e);
@@ -79,6 +85,12 @@ pub fn register_builtin_tools(
     }
     if let Err(e) = registry.register(builtin::memory_export_entry(memory.clone())) {
         eprintln!("Failed to register memory_export tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::pin_memory_entry(pinned.clone())) {
+        eprintln!("Failed to register pin_memory tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::unpin_memory_entry(pinned.clone())) {
+        eprintln!("Failed to register unpin_memory tool: {}", e);
     }
     if let Err(e) = registry.register(builtin::cron_add_entry(scheduler.clone())) {
         eprintln!("Failed to register cron_add tool: {}", e);

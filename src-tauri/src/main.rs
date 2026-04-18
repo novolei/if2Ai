@@ -102,6 +102,10 @@ use commands::{
     open_settings_window,
     parse_slash_command,
     pick_folder_dialog,
+    pinned_add,
+    pinned_delete,
+    pinned_get,
+    pinned_reorder,
     provider_configure,
     provider_configure_with_models,
     provider_get_all_configured_models,
@@ -505,6 +509,7 @@ fn main() {
         memory_provider.clone(),
         scheduler_provider,
         browser_registry.clone(),
+        pinned_store.clone(),
     );
     let project_manager = modules::projects::ProjectManager::new(projects_dir);
 
@@ -680,6 +685,11 @@ fn main() {
             memory_demote,
             // Per-session memory toggle (Phase 8A.4 / v2 §Sprint 1 / T-A4)
             memory_session_set_enabled,
+            // Pinned-memory commands (Phase 8A.10 / T-F3 / v2 §0.5 Δ-11)
+            pinned_get,
+            pinned_add,
+            pinned_delete,
+            pinned_reorder,
             // Skills Hub CLI commands
             hub_browse,
             hub_search,
