@@ -24,10 +24,16 @@
 
 pub mod config;
 pub mod error;
+pub mod model;
 pub mod provider;
+pub mod voice;
 
 pub use config::{AudioChunk, GenerationParams, VoicePreset};
 pub use error::TtsError;
+#[allow(unused_imports)]
+pub use model::{ensure_models_cached, ModelPaths};
+#[allow(unused_imports)]
+pub use voice::DemoEntry;
 
 use async_trait::async_trait;
 
