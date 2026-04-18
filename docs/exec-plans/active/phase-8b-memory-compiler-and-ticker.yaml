@@ -33,10 +33,22 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7']
-  current_slice: '8B.8'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8']
+  current_slice: '8B.9'
   blocked: []
   notes: >
+    8B.8 (T-D3) 落地：MemoryTicker.do_daily 步骤化断点续跑 +
+    maybe_run_daily 机会式 daily kick。共享 run_daily_inline 自由
+    函数支撑 do_daily 与 maybe_run_daily 的 spawn 闭包，避免双份
+    实现漂移；scopeguard::guard 保证 daily_running 在 panic /
+    early-return 时也释放；daily_steps_date 切日时 clear
+    daily_steps_completed；Longterm 在 Week 未完成时 silent skip
+    （拓扑序）；DeepMemory 是 8D Phase E 之前的 no-op；单步失败
+    走 MemoryAuditEmitter::memory_job_failed 不阻断后续步骤。
+    on_turn_complete 末尾追加 self.maybe_run_daily(scope) 形成
+    机会式触发链。新增 6 个 #[tokio::test]（含 idempotent /
+    reentrancy guard / day rollover / longterm-after-week /
+    maybe_run_daily no-op / step-name coverage）。
     8B.7 (T-D2) 落地：MemoryTicker.on_turn_complete /
     on_session_end 真实现 + flush_session 同步 API。state 字段
     Arc<Mutex<TickerState>> 化以支持 spawn 闭包；turn 阈值命中时
@@ -429,7 +441,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.8"
     title: "T-D3 — 每日任务步骤化断点续跑（daily_running + scopeguard）"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
