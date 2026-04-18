@@ -87,6 +87,7 @@ use commands::{
     memory_purge,
     memory_recall,
     memory_session_set_enabled,
+    memory_summaries_list,
     model_get_active,
     model_get_role_config,
     model_list_available,
@@ -743,6 +744,8 @@ fn main() {
             memory_compile_now,
             memory_compiled_read,
             memory_compiled_clear,
+            // Session summary timeline (Phase 8B.11 / T-UI-3 / v2 §0.5 Δ-11)
+            memory_summaries_list,
             // Pinned-memory commands (Phase 8A.10 / T-F3 / v2 §0.5 Δ-11)
             pinned_get,
             pinned_add,

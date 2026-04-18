@@ -33,10 +33,37 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8', '8B.9', '8B.10']
-  current_slice: '8B.11'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6', '8B.7', '8B.8', '8B.9', '8B.10', '8B.11']
+  current_slice: ''
   blocked: []
   notes: >
+    **Phase 8B (Sprint 2) 全部 11/11 slices 完成；Human Checkpoint #2 触发。**
+    8B.11 (T-UI-3) 落地：MemoryNarrativeViewer 模态 (S2 骨架) + 后端
+    memory_summaries_list Tauri 命令 + SessionSummaryDto wire-shape +
+    DateGroupHeader / FactCard 子组件 + MemorySettingsPage 入口。后端
+    复用 SessionSummaryStore::list_in_range，scope 字符串通过校验
+    ('current'|'all'|'project'|'global')；limit 默认 100、硬上限 500；
+    since_days 默认 90；rows 按 updated_at DESC 排序后 truncate。三处
+    注册齐备 (commands/mod.rs re-export + main.rs invoke_handler! +
+    capabilities/default.json + gen schema description bump)。前端
+    MemoryNarrativeViewer 模态 80vh × max-w-4xl，header(refresh+X) +
+    toolbar(search input + sinceDays select 7/30/90/365) + main(date
+    分组 + sticky DateGroupHeader + FactCard 列表) + footer(总数/
+    筛选数)；ESC + backdrop click 关闭；in-memory 搜索过滤 summary +
+    session_id；按 YYYY-MM-DD 分组 + descending sort。FactCard S2
+    骨架展示 source badge (rolling=blue / compact=purple) + time +
+    msg count + 8-char session prefix + summary 文本，预留注释说明
+    S3 增量将引入 fact.id/tags/importance。MemoryBrowser.tsx 保留
+    （v2 §0.5 Δ-15 二者并存）。MemorySettingsPage 在 CompiledMemory
+    入口下方新增 History icon 紫色入口"查看 Session 摘要时间线"。
+    新增 3 个 Rust test (dto_from_record_flattens_source_to_lowercase_string
+    + dto_serialises_snake_case_fields + memory_summaries_list_validates_scope)。
+    与原 slice 规范的细微偏差：未实现 InfiniteScrollSentinel
+    （hard limit 500 行 + 200 行默认 limit 让 client-side filter 足
+    以承载 S2 骨架；未来 S3 接入 facts 时再引入虚拟滚动）。
+    ⚠️ 等待人工 review：端到端 demo (6 轮对话 → session_summaries 出现
+    → memory.md 自动更新 → CompiledMemoryViewer + NarrativeViewer 可用)。
+  notes_archive: >
     8B.10 (T-UI-2) 落地：CompiledMemoryViewer 模态 + CompiledSectionPanel
     单 section 渲染（react-markdown + remark-gfm）。MemorySettingsPage
     在 PinnedMemoryEditor 下方新增"查看 AI 长期记忆 (memory.md)"入口
@@ -619,7 +646,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.11"
     title: "T-UI-3 — MemoryNarrativeViewer 骨架（session 摘要时间线 + 日期分组）"
-    status: pending
+    status: done
     priority: P1
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

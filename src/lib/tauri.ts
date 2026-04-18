@@ -1656,3 +1656,43 @@ export async function memoryCompiledClear(
 ): Promise<void> {
   await invoke<void>('memory_compiled_clear', { scope })
 }
+
+// ─── Phase 8B.11 / T-UI-3 — session-summary timeline ──────────────────
+
+/**
+ * Frontend mirror of the backend `SessionSummaryDto`
+ * (`src-tauri/src/commands/memory.rs`).  One row per session of the
+ * rolling-summary table, surfaced to MemoryNarrativeViewer.
+ */
+export interface SessionSummaryDto {
+  session_id: string
+  project_id: string | null
+  summary: string
+  /** RFC-3339 / ISO-8601 timestamp of first save. */
+  created_at: string
+  /** RFC-3339 / ISO-8601 timestamp of latest save. */
+  updated_at: string
+  message_count: number
+  /** `'rolling'` = scheduled summary update; `'compact'` = T-B5 context-window compaction. */
+  source: 'rolling' | 'compact'
+}
+
+/**
+ * List session summaries in `[now - sinceDays, now]` ordered newest-first.
+ *
+ * Used by MemoryNarrativeViewer (Phase 8B.11 / T-UI-3) to render the
+ * per-session rolling-summary timeline grouped by date.  `limit`
+ * defaults to 100 backend-side and is hard-capped at 500.  `sinceDays`
+ * defaults to 90.
+ */
+export async function memorySummariesList(
+  scope: 'current' | 'all' | 'project' | 'global',
+  limit?: number,
+  sinceDays?: number,
+): Promise<SessionSummaryDto[]> {
+  return invoke<SessionSummaryDto[]>('memory_summaries_list', {
+    scope,
+    limit,
+    sinceDays,
+  })
+}

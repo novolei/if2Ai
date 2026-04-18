@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Brain, Download, AlertTriangle, Check, Sliders, BookOpen } from 'lucide-react'
+import { Brain, Download, AlertTriangle, Check, Sliders, BookOpen, History } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
+import { MemoryNarrativeViewer } from '@/components/memory/narrative/MemoryNarrativeViewer'
 import {
   getMemoryConfig,
   setMemoryConfig,
@@ -43,6 +44,8 @@ export function MemorySettingsPage() {
 
   // Phase 8B.10 / T-UI-2 — modal state for the compiled memory viewer.
   const [compiledViewerOpen, setCompiledViewerOpen] = useState(false)
+  // Phase 8B.11 / T-UI-3 — modal state for the session-summary timeline.
+  const [narrativeViewerOpen, setNarrativeViewerOpen] = useState(false)
 
   const totalPercentage = slots.reduce((sum, s) => sum + s.value, 0)
   const isValid = totalPercentage === 100
@@ -155,6 +158,27 @@ export function MemorySettingsPage() {
       <CompiledMemoryViewer
         open={compiledViewerOpen}
         onClose={() => setCompiledViewerOpen(false)}
+        scope="global"
+      />
+
+      {/* ── Session summary timeline entry (Phase 8B.11 / T-UI-3) ── */}
+      <SettingsSurface className="px-5 py-3">
+        <button
+          type="button"
+          onClick={() => setNarrativeViewerOpen(true)}
+          className="flex w-full items-center justify-between rounded-lg border border-black/[0.06] bg-background/50 px-4 py-2.5 text-[12px] transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
+        >
+          <span className="flex items-center gap-2">
+            <History className="h-4 w-4 text-purple-600" />
+            <span className="font-medium">查看 Session 摘要时间线</span>
+          </span>
+          <span className="text-[10.5px] text-muted-foreground">查看 →</span>
+        </button>
+      </SettingsSurface>
+
+      <MemoryNarrativeViewer
+        open={narrativeViewerOpen}
+        onClose={() => setNarrativeViewerOpen(false)}
         scope="global"
       />
 

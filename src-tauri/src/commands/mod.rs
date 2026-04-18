@@ -292,8 +292,8 @@ pub use harness::{
 pub use memory::{
     memory_clear_all, memory_compile_now, memory_compiled_clear, memory_compiled_read,
     memory_delete, memory_demote, memory_export, memory_promote, memory_promotion_candidates,
-    memory_purge, memory_recall, CompileReport, CompiledMemoryDto, CompiledSection, MemoryEntryDto,
-    MemoryPromotionCandidateDto,
+    memory_purge, memory_recall, memory_summaries_list, CompileReport, CompiledMemoryDto,
+    CompiledSection, MemoryEntryDto, MemoryPromotionCandidateDto, SessionSummaryDto,
 };
 #[allow(unused_imports)]
 pub use pinned::{pinned_add, pinned_delete, pinned_get, pinned_reorder, PinnedItemDto};
