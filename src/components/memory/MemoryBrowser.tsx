@@ -19,6 +19,7 @@ import { MemoryCategoryNav } from './MemoryCategoryNav'
 import { Button } from '@/components/ui/button'
 import {
   memoryDelete,
+  memoryDemote,
   memoryExport,
   memoryPromote,
   memoryPromotionCandidates,
@@ -178,6 +179,56 @@ export function MemoryBrowser({
     const next = !promotionOpen
     setPromotionOpen(next)
     if (next) loadCandidates()
+  }
+
+  /**
+   * Demote one entry one tier down (`global → project` or `project → session`),
+   * landing in whatever active project/session the browser currently has.
+   *
+   * The button is hidden / disabled at the card level when context is
+   * missing, so reaching this handler without a usable target is a logic
+   * bug — we still surface an error toast instead of throwing so the user
+   * never gets stuck.
+   */
+  const handleDemote = async (entry: MemoryEntryDto) => {
+    try {
+      if (entry.session_id) {
+        // Already at the bottom — should not happen because the card hides
+        // the button, but guard anyway.
+        return
+      }
+      if (entry.project_id) {
+        // Currently project-scoped → demote to session.  Need both ids.
+        if (!activeSessionId || !activeProjectId) {
+          setError('需要打开一个项目和会话才能将记忆降级到 session 范围')
+          return
+        }
+        await memoryDemote({
+          key: entry.key,
+          targetScopeKind: 'session',
+          sessionId: activeSessionId,
+          projectId: activeProjectId,
+        })
+      } else {
+        // Currently global → demote to project.  Need a project id.
+        if (!activeProjectId) {
+          setError('需要打开一个项目才能将全局记忆降级到 project 范围')
+          return
+        }
+        await memoryDemote({
+          key: entry.key,
+          targetScopeKind: 'project',
+          projectId: activeProjectId,
+        })
+      }
+      // Reload so the chip color reflects the new tier and refresh the
+      // promotion candidate list — a freshly demoted entry may now qualify
+      // for re-promotion or drop off the list.
+      loadEntries()
+      if (promotionOpen) loadCandidates()
+    } catch (e) {
+      setError(`降级失败: ${e}`)
+    }
   }
 
   const applyPromotion = async (cand: MemoryPromotionCandidateDto) => {
@@ -416,9 +467,26 @@ export function MemoryBrowser({
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {entries.map((entry) => (
-              <MemoryCard key={entry.key} entry={entry} onDelete={handleDelete} />
-            ))}
+            {entries.map((entry) => {
+              // Demote target depends on the entry's *current* tier:
+              //   global  -> needs activeProjectId
+              //   project -> needs both activeSessionId AND activeProjectId
+              //   session -> demote not applicable (already lowest)
+              const isProjectTier = entry.session_id === null && entry.project_id !== null
+              const isGlobalTier = entry.session_id === null && entry.project_id === null
+              const canDemote =
+                (isGlobalTier && Boolean(activeProjectId)) ||
+                (isProjectTier && Boolean(activeProjectId) && Boolean(activeSessionId))
+              return (
+                <MemoryCard
+                  key={entry.key}
+                  entry={entry}
+                  onDelete={handleDelete}
+                  onDemote={handleDemote}
+                  canDemote={canDemote}
+                />
+              )
+            })}
           </div>
         )}
       </div>

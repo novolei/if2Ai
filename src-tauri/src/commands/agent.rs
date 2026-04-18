@@ -1330,6 +1330,32 @@ pub async fn run_agent_turn(
                 }
             }
 
+            // Background memory promotion scan (throttled).  See
+            // `start_agent_stream` for full rationale; same hook here so
+            // non-streaming turns also surface candidates.
+            {
+                use crate::modules::memory::promotion::{
+                    MemoryPromotionEngine, PromotionThresholds,
+                };
+                let thresholds = PromotionThresholds::load_from_disk();
+                let engine = MemoryPromotionEngine::with_thresholds(
+                    state.memory_provider.as_ref(),
+                    thresholds,
+                );
+                match engine.evaluate_and_audit().await {
+                    Ok(Some(n)) if n > 0 => tracing::info!(
+                        "[run_agent_turn] PromotionEngine: surfaced {n} candidate(s)"
+                    ),
+                    Ok(Some(_)) => {
+                        tracing::debug!("[run_agent_turn] PromotionEngine: scan ran, no candidates")
+                    }
+                    Ok(None) => {
+                        tracing::debug!("[run_agent_turn] PromotionEngine: throttled, scan skipped")
+                    }
+                    Err(e) => tracing::warn!("[run_agent_turn] PromotionEngine: scan failed: {e}"),
+                }
+            }
+
             // Log compaction-related decay factor for observability.
             let removed_count =
                 pre_compact_message_count.saturating_sub(post_compact_message_count);
@@ -2782,6 +2808,31 @@ pub async fn start_agent_stream(
                 tracing::warn!(
                     "[start_agent_stream] WeibullDecay: apply_importance_decay failed: {e}"
                 );
+            }
+        }
+
+        // Background memory promotion scan — throttled to once per minute
+        // (process-wide) so the cost is amortised across turns.  Surfaces
+        // candidates as `memory_promotion_candidate` audit events; never
+        // mutates the store on its own.
+        {
+            use crate::modules::memory::promotion::{MemoryPromotionEngine, PromotionThresholds};
+            let thresholds = PromotionThresholds::load_from_disk();
+            let engine = MemoryPromotionEngine::with_thresholds(
+                memory_provider_for_stream.as_ref(),
+                thresholds,
+            );
+            match engine.evaluate_and_audit().await {
+                Ok(Some(n)) if n > 0 => tracing::info!(
+                    "[start_agent_stream] PromotionEngine: surfaced {n} candidate(s)"
+                ),
+                Ok(Some(_)) => {
+                    tracing::debug!("[start_agent_stream] PromotionEngine: scan ran, no candidates")
+                }
+                Ok(None) => {
+                    tracing::debug!("[start_agent_stream] PromotionEngine: throttled, scan skipped")
+                }
+                Err(e) => tracing::warn!("[start_agent_stream] PromotionEngine: scan failed: {e}"),
             }
         }
 

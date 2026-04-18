@@ -9,7 +9,7 @@
  * - onDelete: 删除回调
  */
 
-import { Trash2 } from 'lucide-react'
+import { ArrowDown, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export interface MemoryEntryDto {
@@ -30,6 +30,22 @@ export interface MemoryEntryDto {
 export interface MemoryCardProps {
   entry: MemoryEntryDto
   onDelete: (key: string) => void
+  /**
+   * Callback for the "降一级" (demote) action.
+   *
+   * The card itself only knows the entry's *current* tier; the parent (e.g.
+   * MemoryBrowser) owns the active project/session context, so the demote
+   * button delegates the decision of "where to land" to the parent.  Pass
+   * `undefined` to hide the demote affordance entirely.
+   */
+  onDemote?: (entry: MemoryEntryDto) => void
+  /**
+   * `true` when the parent has an active project/session pair that lets the
+   * demote target be unambiguous.  When `false` the button is rendered but
+   * disabled with an explanatory tooltip — keeps the affordance discoverable
+   * without firing a "missing context" error toast on click.
+   */
+  canDemote?: boolean
 }
 
 function formatTime(isoString: string): string {
@@ -93,8 +109,12 @@ function getScopeChip(entry: { session_id: string | null; project_id: string | n
   }
 }
 
-export function MemoryCard({ entry, onDelete }: MemoryCardProps) {
+export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardProps) {
   const scope = getScopeChip(entry)
+  // Global → project → session: only entries currently above session may
+  // be demoted.  We hide the action entirely on session-tier rows so the
+  // hover surface stays clean for the common case.
+  const showDemote = Boolean(onDemote) && (entry.project_id !== null || entry.session_id === null)
   return (
     <div className="group relative rounded-lg border border-black/5 bg-white/60 px-4 py-3 shadow-sm transition-shadow duration-150 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
@@ -133,14 +153,37 @@ export function MemoryCard({ entry, onDelete }: MemoryCardProps) {
             />
           </div>
         </div>
-        <button
-          type="button"
-          className="shrink-0 rounded p-1 text-black/30 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
-          onClick={() => onDelete(entry.key)}
-          aria-label="删除记忆"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 flex-col gap-1">
+          {showDemote && (
+            <button
+              type="button"
+              className={cn(
+                'shrink-0 rounded p-1 transition-all duration-150 group-hover:opacity-100',
+                canDemote
+                  ? 'text-amber-500/70 opacity-0 hover:bg-amber-50 hover:text-amber-600'
+                  : 'cursor-not-allowed text-black/20 opacity-0',
+              )}
+              disabled={!canDemote}
+              onClick={() => onDemote?.(entry)}
+              aria-label="降级记忆"
+              title={
+                canDemote
+                  ? '降一级（将该记忆移到当前项目/会话范围）'
+                  : '需要打开一个项目（以及对应会话）才能降级到更小范围'
+              }
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="shrink-0 rounded p-1 text-black/30 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+            onClick={() => onDelete(entry.key)}
+            aria-label="删除记忆"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   )

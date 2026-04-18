@@ -1,17 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Brain, Download, AlertTriangle, Check, Sliders, BookOpen, History } from 'lucide-react'
+import {
+  AlertTriangle,
+  BookOpen,
+  Brain,
+  Check,
+  Download,
+  History,
+  Sliders,
+  Trash2,
+  TrendingUp,
+} from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import { MemoryNarrativeViewer } from '@/components/memory/narrative/MemoryNarrativeViewer'
+import { MemoryDebugTab } from './MemoryDebugTab'
 import {
   getMemoryConfig,
   setMemoryConfig,
   exportTrajectories,
+  memoryClearAll,
+  DEFAULT_PROMOTION_THRESHOLDS,
   type MemoryConfigInput,
   type MemoryRecallMode,
   type MemoryPolicyEnforceMode,
+  type PromotionThresholds,
 } from '@/lib/tauri'
 
 interface SlotConfig {
@@ -37,10 +51,23 @@ export function MemorySettingsPage() {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Two-step confirm flow for the destructive "Clear all memories" action.
+  // First click flips `clearArmed` true (button morphs to red "确认清空"),
+  // second click within ~6s actually invokes the backend.  A timeout
+  // disarms the button so a stray click later doesn't wipe the store.
+  const [clearArmed, setClearArmed] = useState(false)
+  const [clearing, setClearing] = useState(false)
+
+  // Phase 8B Phase C verification — header tab switcher.
+  // 'settings' renders the production memory configuration UI;
+  // 'debug' renders MemoryDebugTab (一键 5 步编译测试).
+  const [activeTab, setActiveTab] = useState<'settings' | 'debug'>('settings')
+
   // Memory Control Plane V1 feature flags (FE-B / FE-Settings).
   const [controlPlaneEnabled, setControlPlaneEnabled] = useState(true)
   const [recallMode, setRecallMode] = useState<MemoryRecallMode>('hybrid')
   const [policyEnforceMode, setPolicyEnforceMode] = useState<MemoryPolicyEnforceMode>('shadow')
+  const [promotion, setPromotion] = useState<PromotionThresholds>(DEFAULT_PROMOTION_THRESHOLDS)
 
   // Phase 8B.10 / T-UI-2 — modal state for the compiled memory viewer.
   const [compiledViewerOpen, setCompiledViewerOpen] = useState(false)
@@ -66,6 +93,7 @@ export function MemorySettingsPage() {
       setControlPlaneEnabled(cfg.control_plane_v1_enabled)
       setRecallMode(cfg.recall_mode)
       setPolicyEnforceMode(cfg.policy_enforce_mode)
+      setPromotion(cfg.promotion ?? DEFAULT_PROMOTION_THRESHOLDS)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -102,6 +130,7 @@ export function MemorySettingsPage() {
         control_plane_v1_enabled: controlPlaneEnabled,
         recall_mode: recallMode,
         policy_enforce_mode: policyEnforceMode,
+        promotion,
       }
       await setMemoryConfig(config)
       toast.success('配置已保存')
@@ -112,6 +141,34 @@ export function MemorySettingsPage() {
       setSaving(false)
     }
   }
+
+  /**
+   * Two-step destructive flow.  First call arms; second call within the
+   * 6-second auto-disarm window actually wipes the store.  We never
+   * persist the confirmation across reloads.
+   */
+  const handleClearAll = useCallback(async () => {
+    if (!clearArmed) {
+      setClearArmed(true)
+      window.setTimeout(() => setClearArmed(false), 6000)
+      return
+    }
+    setClearing(true)
+    setError(null)
+    try {
+      const removed = await memoryClearAll()
+      toast.success('记忆已清空', {
+        description:
+          removed === 0 ? '没有可删除的条目' : `已删除 ${removed} 条记忆`,
+      })
+    } catch (e) {
+      setError(String(e))
+      toast.error('清空失败', { description: String(e) })
+    } finally {
+      setClearing(false)
+      setClearArmed(false)
+    }
+  }, [clearArmed])
 
   const handleExport = async () => {
     setError(null)
@@ -137,8 +194,36 @@ export function MemorySettingsPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* ── Pinned Memory (Phase 8A.12 / T-UI-1) ── */}
-      <PinnedMemoryEditor />
+      {/* ── Tab switcher (Phase 8B verification UI) ── */}
+      <div className="flex items-center gap-1 rounded-xl bg-black/[0.04] p-1 dark:bg-white/[0.04]">
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
+            activeTab === 'settings'
+              ? 'bg-white text-foreground shadow-sm dark:bg-black/40'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          ⚙️ 设置
+        </button>
+        <button
+          onClick={() => setActiveTab('debug')}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
+            activeTab === 'debug'
+              ? 'bg-white text-foreground shadow-sm dark:bg-black/40'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          🧪 编译流水线测试 (Phase 8B)
+        </button>
+      </div>
+
+      {activeTab === 'debug' ? (
+        <MemoryDebugTab />
+      ) : (
+        <>
+          {/* ── Pinned Memory (Phase 8A.12 / T-UI-1) ── */}
+          <PinnedMemoryEditor />
 
       {/* ── Compiled memory.md viewer entry (Phase 8B.10 / T-UI-2) ── */}
       <SettingsSurface className="px-5 py-3">
@@ -359,6 +444,118 @@ export function MemorySettingsPage() {
         </div>
       </SettingsSurface>
 
+      {/* ── Memory Promotion thresholds ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-amber-500/[0.1]">
+            <TrendingUp className="h-3.5 w-3.5 text-amber-600" />
+          </div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+            记忆晋升阈值
+          </div>
+        </div>
+        <p className="mb-4 text-[11.5px] text-muted-foreground">
+          后台扫描器使用以下阈值推荐 <span className="font-mono">session→project</span> 与{' '}
+          <span className="font-mono">project→global</span> 的记忆升级。仅生成候选；最终晋升仍需在
+          Memory Browser 中手动确认。
+        </p>
+
+        <div className="grid grid-cols-2 gap-4">
+          {/* session → project */}
+          <div className="rounded-xl border border-violet-200/60 bg-violet-50/40 px-3 py-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-violet-700">
+              session → project
+            </div>
+            <label className="mb-1 block text-[11px] text-foreground/70">
+              最低访问次数 ({promotion.sessionToProjectAccess})
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={promotion.sessionToProjectAccess}
+              onChange={(e) =>
+                setPromotion((p) => ({
+                  ...p,
+                  sessionToProjectAccess: Math.max(1, Number(e.target.value) || 1),
+                }))
+              }
+              className="mb-2 h-7 w-full rounded-lg border border-black/[0.09] bg-white/70 px-2 font-mono text-[12px] outline-none focus:border-violet-400/40 focus:ring-[2px] focus:ring-violet-400/15"
+            />
+            <label className="mb-1 block text-[11px] text-foreground/70">
+              最低重要度 ({promotion.sessionToProjectImportance.toFixed(2)})
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={promotion.sessionToProjectImportance}
+              onChange={(e) =>
+                setPromotion((p) => ({
+                  ...p,
+                  sessionToProjectImportance: Number(e.target.value),
+                }))
+              }
+              className="w-full accent-violet-500"
+            />
+          </div>
+
+          {/* project → global */}
+          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 px-3 py-3">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+              project → global
+            </div>
+            <label className="mb-1 block text-[11px] text-foreground/70">
+              最低访问次数 ({promotion.projectToGlobalAccess})
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={promotion.projectToGlobalAccess}
+              onChange={(e) =>
+                setPromotion((p) => ({
+                  ...p,
+                  projectToGlobalAccess: Math.max(1, Number(e.target.value) || 1),
+                }))
+              }
+              className="mb-2 h-7 w-full rounded-lg border border-black/[0.09] bg-white/70 px-2 font-mono text-[12px] outline-none focus:border-emerald-400/40 focus:ring-[2px] focus:ring-emerald-400/15"
+            />
+            <label className="mb-1 block text-[11px] text-foreground/70">
+              最低重要度 ({promotion.projectToGlobalImportance.toFixed(2)})
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={promotion.projectToGlobalImportance}
+              onChange={(e) =>
+                setPromotion((p) => ({
+                  ...p,
+                  projectToGlobalImportance: Number(e.target.value),
+                }))
+              }
+              className="w-full accent-emerald-500"
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setPromotion(DEFAULT_PROMOTION_THRESHOLDS)}
+            className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+          >
+            重置为默认
+          </button>
+          <span className="font-mono text-[10.5px] text-muted-foreground">
+            默认: 3/0.55 · 8/0.70
+          </span>
+        </div>
+      </SettingsSurface>
+
       {/* ── Trajectory Export ── */}
       <SettingsSurface className="px-5 py-4">
         <div className="mb-1 flex items-center justify-between">
@@ -383,12 +580,48 @@ export function MemorySettingsPage() {
         </div>
       </SettingsSurface>
 
-      {/* ── Error ── */}
-      {error && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-[11.5px] text-red-700">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {error}
+      {/* ── Danger zone: wipe all memory ── */}
+      <SettingsSurface className="border-red-200/70 bg-red-50/40 px-5 py-4">
+        <div className="mb-1 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-red-500/[0.1]">
+            <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+          </div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-red-700/70">
+            危险操作
+          </div>
         </div>
+        <p className="mb-3 text-[11.5px] text-red-700/80">
+          一键清空所有记忆条目（包括 session / project / global 三层），
+          此操作无法撤销。
+        </p>
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[10.5px] text-red-700/60">
+            {clearArmed ? '再次点击以确认 (6 秒内有效)' : ''}
+          </span>
+          <button
+            type="button"
+            disabled={clearing}
+            onClick={handleClearAll}
+            className={
+              clearArmed
+                ? 'flex h-8 items-center gap-1.5 rounded-xl bg-red-600 px-3.5 text-[12px] font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40'
+                : 'flex h-8 items-center gap-1.5 rounded-xl border border-red-300/70 bg-white/70 px-3.5 text-[12px] font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40'
+            }
+          >
+            <Trash2 className={`h-3.5 w-3.5 ${clearing ? 'animate-pulse' : ''}`} />
+            {clearing ? '清空中…' : clearArmed ? '确认清空所有记忆' : '清空所有记忆'}
+          </button>
+        </div>
+      </SettingsSurface>
+
+          {/* ── Error ── */}
+          {error && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-[11.5px] text-red-700">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {error}
+            </div>
+          )}
+        </>
       )}
     </div>
   )

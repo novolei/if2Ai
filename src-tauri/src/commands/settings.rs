@@ -51,6 +51,11 @@ pub struct MemoryConfig {
     /// Policy enforcement mode (`shadow` audits only, `enforce` blocks
     /// denied writes).
     pub policy_enforce_mode: MemoryPolicyEnforceModeSetting,
+    /// Promotion thresholds — surfaced so the Memory Settings UI can tune
+    /// when the background scanner recommends `session→project` and
+    /// `project→global` upgrades.  See
+    /// [`crate::modules::memory::promotion::PromotionThresholds`].
+    pub promotion: crate::modules::memory::promotion::PromotionThresholds,
 }
 
 /// Configuration to persist.
@@ -68,6 +73,11 @@ pub struct MemoryConfigInput {
     pub recall_mode: Option<MemoryRecallModeSetting>,
     #[serde(default)]
     pub policy_enforce_mode: Option<MemoryPolicyEnforceModeSetting>,
+    /// Optional so older clients without the promotion-tuning UI keep
+    /// working; backend falls back to
+    /// [`crate::modules::memory::promotion::PromotionThresholds::default`].
+    #[serde(default)]
+    pub promotion: Option<crate::modules::memory::promotion::PromotionThresholds>,
 }
 
 fn read_persisted_config() -> Option<MemoryConfigInput> {
@@ -120,6 +130,7 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         control_plane_v1_enabled: None,
         recall_mode: None,
         policy_enforce_mode: None,
+        promotion: None,
     });
 
     MemoryConfig {
@@ -132,6 +143,7 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         control_plane_v1_enabled: config.control_plane_v1_enabled.unwrap_or(true),
         recall_mode: config.recall_mode.unwrap_or_default(),
         policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
+        promotion: config.promotion.unwrap_or_default(),
     }
 }
 
@@ -147,6 +159,15 @@ pub fn set_memory_config(
         + config.working_pct as u16;
     if total != 100 {
         return Err(format!("Slot percentages must sum to 100%, got {}%", total));
+    }
+
+    // Surface validation errors instead of silently writing a malformed
+    // promotion config — Memory Settings UI relies on the error string to
+    // highlight the bad field.
+    if let Some(promo) = &config.promotion {
+        promo
+            .validate()
+            .map_err(|msg| format!("promotion thresholds invalid: {msg}"))?;
     }
 
     write_persisted_config(&config)?;
@@ -165,6 +186,7 @@ pub fn set_memory_config(
         control_plane_v1_enabled: config.control_plane_v1_enabled.unwrap_or(true),
         recall_mode: config.recall_mode.unwrap_or_default(),
         policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
+        promotion: config.promotion.unwrap_or_default(),
     })
 }
 

@@ -20,6 +20,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   CircleDot,
   Database,
   Lightbulb,
@@ -173,6 +175,30 @@ function MemoryLifecycleRow({ entry }: { entry: MemoryLifecycleLogEntry }) {
   )
 }
 
+/**
+ * Bounded ring buffer of recent memory promotion / demotion / candidate
+ * events.  We keep this in component state so the drawer can show "what
+ * just happened" without polling the backend; older entries are dropped
+ * once we exceed [`MEMORY_EVENT_HISTORY_LIMIT`].
+ */
+const MEMORY_EVENT_HISTORY_LIMIT = 20
+
+type MemoryPromoEventName =
+  | 'memory_promoted'
+  | 'memory_demoted'
+  | 'memory_promotion_candidate'
+
+/**
+ * Snapshot of a promotion-related memory event with a client-side
+ * stable id.  We intersect with `MemoryEventPayload` (rather than
+ * declaring a narrower struct) so any future field added on the Rust
+ * side is automatically picked up by the timeline row.
+ */
+type MemoryEventLogEntry = MemoryEventPayload & {
+  event: MemoryPromoEventName
+  uid: string
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TelemetryDrawerProps {
@@ -247,6 +273,89 @@ function SectionHeader({ title }: { title: string }) {
   )
 }
 
+/**
+ * Single row of the memory promotion / demotion / candidate timeline.
+ *
+ * Visual language:
+ *   - promoted   → emerald arrow-up   (write happened)
+ *   - demoted    → amber  arrow-down  (write happened)
+ *   - candidate  → violet sparkle     (advisory only, no write)
+ *
+ * Tier transitions are pulled from the audit payload's
+ * `from_category` / `to_category` slots — the backend reuses those fields
+ * to carry tier names so we don't have to widen `MemoryEventPayload`.
+ */
+type MemoryTimelineMeta = {
+  Icon: typeof ArrowUp
+  tone: string
+  bg: string
+  label: string
+}
+
+const MEMORY_TIMELINE_META: Record<MemoryPromoEventName, MemoryTimelineMeta> = {
+  memory_promoted: {
+    Icon: ArrowUp,
+    tone: 'text-emerald-600',
+    bg: 'bg-emerald-50/60 border-emerald-200/60',
+    label: '已晋升',
+  },
+  memory_demoted: {
+    Icon: ArrowDown,
+    tone: 'text-amber-600',
+    bg: 'bg-amber-50/60 border-amber-200/60',
+    label: '已降级',
+  },
+  memory_promotion_candidate: {
+    Icon: Sparkles,
+    tone: 'text-violet-600',
+    bg: 'bg-violet-50/60 border-violet-200/60',
+    label: '候选晋升',
+  },
+}
+
+function MemoryTimelineItem({ event }: { event: MemoryEventLogEntry }) {
+  const meta = MEMORY_TIMELINE_META[event.event]
+
+  const fromTier = event.from_category ?? '?'
+  const toTier = event.to_category ?? '?'
+  const time = (() => {
+    try {
+      return new Date(event.timestamp).toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    } catch {
+      return event.timestamp
+    }
+  })()
+
+  return (
+    <li className={cn('rounded-md border px-2 py-1.5 text-[11px]', meta.bg)}>
+      <div className="flex items-center gap-1.5">
+        <meta.Icon className={cn('h-3 w-3 shrink-0', meta.tone)} aria-hidden />
+        <span className={cn('font-medium', meta.tone)}>{meta.label}</span>
+        <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/70">
+          {time}
+        </span>
+      </div>
+      <div className="mt-0.5 truncate text-[11px] text-foreground/80">
+        <span className="font-mono">{event.memory_key ?? '(no key)'}</span>
+      </div>
+      <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+        <span className="font-mono">{fromTier}</span>
+        <span aria-hidden>→</span>
+        <span className="font-mono">{toTier}</span>
+        {event.reason_message && (
+          <span className="ml-auto truncate" title={event.reason_message}>
+            {event.reason_message}
+          </span>
+        )}
+      </div>
+    </li>
+  )
+}
+
 // ── TelemetryDrawer ───────────────────────────────────────────────────────────
 
 /**
@@ -260,29 +369,58 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
   const [error, setError] = useState<string | null>(null)
   const [memoryLifecycleLog, setMemoryLifecycleLog] = useState<MemoryLifecycleLogEntry[]>([])
   const memoryLifecycleUidRef = useRef(0)
+  const [memoryLog, setMemoryLog] = useState<MemoryEventLogEntry[]>([])
+  const memoryUidCounter = useRef(0)
 
-  // Phase 8A.12 (T-UI-8) — subscribe to backend memory lifecycle events
-  // (PII redaction, pin add/remove, rolling-summary writes).  Always on
-  // while the drawer is mounted so the timeline isn't empty the next
-  // time the user opens it.
+  // Subscribe to backend memory events for the lifetime of the drawer
+  // being mounted (not gated on `open` — we want to keep capturing events
+  // in the background so the timeline isn't empty the next time the drawer
+  // is reopened).
+  //
+  // Two disjoint sub-streams share a single subscription:
+  //   - Promotion / demotion / candidate (prior-session work)
+  //   - Phase 8A.12 (T-UI-8) lifecycle: pin add/remove, PII redaction,
+  //     rolling-summary writes
   useEffect(() => {
     let cancelled = false
     let unlisten: (() => void) | undefined
+
     void listenMemoryEvent((payload: MemoryEventPayload) => {
       if (cancelled) return
-      if (!isMemoryLifecycleEvent(payload.event)) return
-      memoryLifecycleUidRef.current += 1
-      const entry: MemoryLifecycleLogEntry = {
-        uid: `${payload.timestamp}-${memoryLifecycleUidRef.current}`,
-        event: payload.event,
-        timestamp: payload.timestamp,
-        extra: payload.extra,
-        memory_category: payload.memory_category,
+      if (isMemoryLifecycleEvent(payload.event)) {
+        memoryLifecycleUidRef.current += 1
+        const entry: MemoryLifecycleLogEntry = {
+          uid: `${payload.timestamp}-${memoryLifecycleUidRef.current}`,
+          event: payload.event,
+          timestamp: payload.timestamp,
+          extra: payload.extra,
+          memory_category: payload.memory_category,
+        }
+        setMemoryLifecycleLog((prev) => {
+          const next = [entry, ...prev]
+          return next.length > MEMORY_LIFECYCLE_HISTORY_LIMIT
+            ? next.slice(0, MEMORY_LIFECYCLE_HISTORY_LIMIT)
+            : next
+        })
+        return
       }
-      setMemoryLifecycleLog((prev) => {
-        const next = [entry, ...prev]
-        return next.length > MEMORY_LIFECYCLE_HISTORY_LIMIT
-          ? next.slice(0, MEMORY_LIFECYCLE_HISTORY_LIMIT)
+      if (
+        payload.event !== 'memory_promoted' &&
+        payload.event !== 'memory_demoted' &&
+        payload.event !== 'memory_promotion_candidate'
+      ) {
+        return
+      }
+      memoryUidCounter.current += 1
+      const promoEntry: MemoryEventLogEntry = {
+        ...payload,
+        event: payload.event,
+        uid: `${payload.timestamp}-${memoryUidCounter.current}`,
+      }
+      setMemoryLog((prev) => {
+        const next = [promoEntry, ...prev]
+        return next.length > MEMORY_EVENT_HISTORY_LIMIT
+          ? next.slice(0, MEMORY_EVENT_HISTORY_LIMIT)
           : next
       })
     }).then((fn) => {
@@ -546,6 +684,22 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
                 ))}
               </ul>
             </>
+          )}
+
+          {/* Memory promotion / demotion timeline.  Always rendered (even
+              without telemetry) because the listener captures events
+              process-wide. */}
+          <SectionHeader title="记忆晋升 / 降级" />
+          {memoryLog.length === 0 ? (
+            <div className="px-1 py-1 text-[11px] text-muted-foreground/70">
+              暂无晋升或降级事件
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {memoryLog.map((evt) => (
+                <MemoryTimelineItem key={evt.uid} event={evt} />
+              ))}
+            </ul>
           )}
         </div>
       </aside>

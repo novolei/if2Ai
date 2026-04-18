@@ -10,6 +10,8 @@
 
 #![allow(dead_code)]
 
+use std::sync::Mutex;
+
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use thiserror::Error;
 
@@ -31,7 +33,7 @@ pub enum EmbeddingError {
 /// Uses a 384-dimensional model by default.
 /// The model is downloaded on first use and cached locally.
 pub struct FastEmbedProvider {
-    model: TextEmbedding,
+    model: Mutex<TextEmbedding>,
     dimension: usize,
 }
 
@@ -51,7 +53,7 @@ impl FastEmbedProvider {
         .map_err(|e| EmbeddingError::ModelError(e.to_string()))?;
 
         Ok(Self {
-            model,
+            model: Mutex::new(model),
             dimension: Self::DIMENSION,
         })
     }
@@ -59,7 +61,7 @@ impl FastEmbedProvider {
     /// Create a provider with a custom model
     pub fn with_model(model: TextEmbedding) -> Self {
         Self {
-            model,
+            model: Mutex::new(model),
             dimension: Self::DIMENSION,
         }
     }
@@ -71,6 +73,8 @@ impl FastEmbedProvider {
         }
 
         self.model
+            .lock()
+            .unwrap()
             .embed(texts, None)
             .map_err(|e| EmbeddingError::ModelError(e.to_string()))
     }

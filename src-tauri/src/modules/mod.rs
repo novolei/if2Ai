@@ -33,6 +33,7 @@ pub mod session;
 pub mod skills;
 pub mod system_check;
 pub mod tools;
+pub mod tts;
 pub mod viewer_registry;
 
 #[allow(unused_imports)]

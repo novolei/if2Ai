@@ -18,8 +18,8 @@
  *     the array order — drag-end calls this with the post-drag id list.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Pin, Shield } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AlertCircle, Folder, Pin, Shield } from 'lucide-react'
 import {
   closestCenter,
   DndContext,
@@ -37,10 +37,12 @@ import {
 } from '@dnd-kit/sortable'
 import { PinItem } from './PinItem'
 import {
+  listProjects,
   pinnedAdd,
   pinnedDelete,
   pinnedGet,
   pinnedReorder,
+  type ProjectMeta,
   type PinnedItemDto,
 } from '@/lib/tauri'
 
@@ -54,13 +56,52 @@ export interface PinnedMemoryEditorProps {
   projectId?: string
 }
 
-export function PinnedMemoryEditor({ projectId }: PinnedMemoryEditorProps) {
-  const [scope, setScope] = useState<Scope>('project')
+export function PinnedMemoryEditor({ projectId: propProjectId }: PinnedMemoryEditorProps) {
+  // Settings is opened in a separate window without App.tsx state; fall back
+  // to localStorage `lastActiveProjectId` (set by App.tsx on every project
+  // switch) so users can pin to "current project" without an explicit prop.
+  // Falls back further to a fetched project list for picker UX.
+  const [projects, setProjects] = useState<ProjectMeta[]>([])
+  const [pickedProjectId, setPickedProjectId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem('lastActiveProjectId') ?? undefined
+    } catch {
+      return undefined
+    }
+  })
+  const projectId = propProjectId ?? pickedProjectId
+
+  // Default the scope to "global" when we have no project context — the
+  // "project" tab would otherwise be functionally inert.
+  const [scope, setScope] = useState<Scope>(projectId ? 'project' : 'global')
   const [pins, setPins] = useState<PinnedItemDto[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [redactedNotice, setRedactedNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await listProjects()
+        setProjects(list)
+        // If localStorage gave us an id but it no longer exists, drop it.
+        if (pickedProjectId && !list.some((p) => p.id === pickedProjectId)) {
+          setPickedProjectId(list[0]?.id)
+        } else if (!pickedProjectId && list[0]) {
+          setPickedProjectId(list[0].id)
+        }
+      } catch (e) {
+        console.warn('PinnedMemoryEditor: listProjects failed:', e)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === projectId),
+    [projects, projectId],
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -164,20 +205,67 @@ export function PinnedMemoryEditor({ projectId }: PinnedMemoryEditorProps) {
         <div className="flex gap-1 rounded-md bg-background/60 p-0.5 text-xs">
           <button
             type="button"
-            className={`rounded px-2 py-1 ${scope === 'project' ? 'bg-amber-200 dark:bg-amber-800' : ''}`}
+            disabled={!projectId}
+            className={`rounded px-2 py-1 ${
+              scope === 'project' ? 'bg-amber-200 dark:bg-amber-800' : ''
+            } disabled:cursor-not-allowed disabled:opacity-40`}
             onClick={() => setScope('project')}
+            title={projectId ? '项目范围' : '当前未选择项目；请先在下方选择'}
           >
             当前项目
           </button>
           <button
             type="button"
-            className={`rounded px-2 py-1 ${scope === 'global' ? 'bg-amber-200 dark:bg-amber-800' : ''}`}
+            className={`rounded px-2 py-1 ${
+              scope === 'global' ? 'bg-amber-200 dark:bg-amber-800' : ''
+            }`}
             onClick={() => setScope('global')}
           >
             全局
           </button>
         </div>
       </header>
+
+      {/* Project picker — only shown in 'project' tab. Settings is a separate
+          window without App.tsx state, so we read localStorage + listProjects
+          to give the user an explicit dropdown. */}
+      {scope === 'project' && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200/40 bg-background/40 p-2 text-xs">
+          <Folder className="h-3.5 w-3.5 text-amber-700/70" />
+          <span className="shrink-0 text-muted-foreground">项目:</span>
+          {projects.length === 0 ? (
+            <span className="italic text-muted-foreground">
+              暂无项目 — 请在主界面创建一个项目后再来 pin 项目级记忆，或切到「全局」。
+            </span>
+          ) : (
+            <select
+              value={pickedProjectId ?? ''}
+              onChange={(e) => {
+                const id = e.target.value || undefined
+                setPickedProjectId(id)
+                try {
+                  if (id) localStorage.setItem('lastActiveProjectId', id)
+                } catch {
+                  /* ignore */
+                }
+              }}
+              disabled={!!propProjectId} // upstream-controlled when given as prop
+              className="flex-1 rounded-md border border-black/10 bg-background px-2 py-1 text-xs disabled:opacity-60"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.id.slice(0, 8)})
+                </option>
+              ))}
+            </select>
+          )}
+          {activeProject && (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              ✅ {activeProject.name}
+            </span>
+          )}
+        </div>
+      )}
 
       {redactedNotice && (
         <div className="mb-2 flex items-center gap-2 rounded bg-yellow-50 p-2 text-xs text-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-200">
