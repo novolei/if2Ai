@@ -33,10 +33,49 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9', '8A.10']
-  current_slice: '8A.11'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9', '8A.10', '8A.11']
+  current_slice: '8A.12'
   blocked: []
   notes: >
+    8A.11 完成（2026-04-19）：T-F4 — System Prompt 静态注入 builder + helper
+    落地。新模块 src-tauri/src/modules/memory/inject.rs 提供 MemoryInjection
+    payload + async build_memory_injection(pinned_store, scope, compiled_path,
+    is_zh, max_tokens) helper：1.list_all_for_prompt(scope) 拉 pinned；
+    2.读 compiled memory.md（缺失 → None，不报错）；3.budget 按 chars =
+    max_tokens * CHARS_PER_TOKEN_ESTIMATE(=4) 切，pinned 优先填满，
+    compiled 接收剩余预算并 char-aware 截断（CJK 安全）；4.rules_section
+    总是包含中英文一套（is_zh 控制），从 openhanako agent.js 626-644
+    移植。SystemPromptBuilder 加 memory_injection 字段 + with_memory_injection
+    builder 方法（保持同步，per v2 §0.5 Δ-7，调用方 await build_memory_
+    injection 后再传入 builder），build() 在 SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+    之后追加 pinned + compiled + rules 三段。MemoryFeatureConfig 新增
+    inject_to_prompt: bool（默认 true）+ max_inject_tokens: u32（默认
+    2000；选 u32 而非 usize 以保留 Eq derive，调用方 cast 为 usize）。
+    Settings 解析路径同时支持 settings.json 的 injectToPrompt /
+    maxInjectTokens 字段和 If2AiMemoryOverrides 的 snake_case 字段。
+    选项 A 决策：本 slice 不修改 commands/agent.rs（仍在 prior-session
+    stash 中），end-to-end wiring（run_agent_turn 中 await
+    build_memory_injection 并接入 SystemPromptBuilder）推迟到 8A.12（T-F5
+    + T-UI-1）或后续 commands/agent.rs un-stash 时。当前 SystemPromptBuilder
+    的两处 .render() 调用点（agent.rs:966 + :1496）行为不变，无 memory
+    injection — 待 8A.12 一并处理。新增 14 个单测全 PASS（inject.rs:
+    build_with_no_pins_no_compiled_returns_rules_only / build_with_pins_
+    includes_pinned_section / build_with_compiled_file_includes_compiled_
+    section / budget_truncation_pinned_priority / degenerate_budget_returns_
+    rules_only / is_zh_true_uses_chinese_rules / is_zh_false_uses_english_
+    rules / missing_compiled_file_is_silently_handled / truncate_chars_
+    handles_cjk_without_panic / truncate_chars_returns_input_when_within_
+    cap / truncate_chars_zero_cap_returns_empty / pin_content_truncated_
+    when_exceeds_max_pin_chars；prompt.rs: builder_appends_pinned_section_
+    after_boundary / builder_omits_memory_section_when_none；config.rs:
+    parses_memory_inject_overrides_from_settings_json + 默认值断言扩展）。
+    Lint 0 warning，gate PASS（compile + 921 tests + 4 security_integration），
+    review 6/6 PASS（顺手补全 ProjectContext::discover / discover_with_git /
+    SystemPromptBuilder::{new,with_output_style,with_os,with_project_
+    context,with_runtime_config,append_section,with_lsp_context,build,
+    render} / prepend_bullets 9 个 pre-existing pub fn 的 doc comments）。
+    Diff-gate PASS。
+    -----
     8A.10 完成（2026-04-19）：T-F2 + T-F3 — pin_memory / unpin_memory
     内置工具 + 4 个 Pinned Tauri 命令 (pinned_get / pinned_add /
     pinned_delete / pinned_reorder)。新模块 src-tauri/src/modules/tools/
@@ -772,7 +811,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.11"
     title: "T-F4 — System Prompt 静态注入（pinned + compiled memory）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

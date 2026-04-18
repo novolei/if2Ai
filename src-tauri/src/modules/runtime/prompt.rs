@@ -316,6 +316,11 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
+    /// Discover the project context for `cwd` without inspecting git.
+    ///
+    /// Walks the ancestor chain to collect Claw instruction files
+    /// (`CLAW.md`, `.claw/instructions.md`, etc.) and stamps the
+    /// caller-supplied `current_date` onto the returned context.
     pub fn discover(
         cwd: impl Into<PathBuf>,
         current_date: impl Into<String>,
@@ -331,6 +336,10 @@ impl ProjectContext {
         })
     }
 
+    /// Same as [`Self::discover`] but additionally probes `git status`
+    /// and `git diff` so the rendered prompt can show the working
+    /// tree state.  Git failures are silently swallowed (the fields
+    /// stay `None`) so a missing `git` binary never breaks the prompt.
     pub fn discover_with_git(
         cwd: impl Into<PathBuf>,
         current_date: impl Into<String>,
@@ -353,14 +362,26 @@ pub struct SystemPromptBuilder {
     config: Option<RuntimeConfig>,
     /// Pre-built skills index section, injected after the dynamic boundary.
     skills_index: Option<String>,
+    /// Phase 8A.11 — pre-fetched memory injection (pinned + compiled +
+    /// rules sections).  Assembled by
+    /// [`crate::modules::memory::build_memory_injection`] BEFORE the
+    /// (synchronous) builder runs (per v2 §0.5 Δ-7) and rendered after
+    /// the dynamic boundary.
+    memory_injection: Option<crate::modules::memory::MemoryInjection>,
 }
 
 impl SystemPromptBuilder {
+    /// Construct an empty builder.  All fields default to `None` /
+    /// empty so an unconfigured builder still renders a usable
+    /// minimal prompt.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Attach an output-style preset (name + prompt body).  The name
+    /// is shown as a heading; the body becomes its own section right
+    /// after the simple intro.
     #[must_use]
     pub fn with_output_style(mut self, name: impl Into<String>, prompt: impl Into<String>) -> Self {
         self.output_style_name = Some(name.into());
@@ -368,6 +389,8 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Set the host OS name + version shown in the environment
+    /// section.  Both default to `"unknown"` when omitted.
     #[must_use]
     pub fn with_os(mut self, os_name: impl Into<String>, os_version: impl Into<String>) -> Self {
         self.os_name = Some(os_name.into());
@@ -375,24 +398,35 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Attach the discovered project context (cwd, instruction files,
+    /// git state).  Drives the project-context and instruction-files
+    /// sections after the dynamic boundary.
     #[must_use]
     pub fn with_project_context(mut self, project_context: ProjectContext) -> Self {
         self.project_context = Some(project_context);
         self
     }
 
+    /// Attach the loaded [`RuntimeConfig`] so the prompt can echo the
+    /// active permission mode, memory feature flags, and other
+    /// user-tunable settings.
     #[must_use]
     pub fn with_runtime_config(mut self, config: RuntimeConfig) -> Self {
         self.config = Some(config);
         self
     }
 
+    /// Append an arbitrary trailing section (rendered last, after
+    /// every other section).  Used by callers that need to inject
+    /// ad-hoc context that does not fit the existing slots.
     #[must_use]
     pub fn append_section(mut self, section: impl Into<String>) -> Self {
         self.append_sections.push(section.into());
         self
     }
 
+    /// Append the LSP context-enrichment section when non-empty.
+    /// Falls through silently when the enrichment carries no entries.
     #[must_use]
     pub fn with_lsp_context(mut self, enrichment: &LspContextEnrichment) -> Self {
         if !enrichment.is_empty() {
@@ -411,6 +445,31 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Phase 8A.11 — attach a
+    /// [`crate::modules::memory::MemoryInjection`] payload pre-fetched
+    /// by [`crate::modules::memory::build_memory_injection`].  The
+    /// injection's pinned + compiled + rules sections are appended
+    /// after the dynamic boundary (i.e. re-rendered every turn so a
+    /// freshly-pinned fact shows up immediately).
+    ///
+    /// Per v2 §0.5 Δ-7 the builder stays synchronous — callers MUST
+    /// `await` `build_memory_injection` before invoking this method.
+    #[must_use]
+    pub fn with_memory_injection(
+        mut self,
+        injection: crate::modules::memory::MemoryInjection,
+    ) -> Self {
+        self.memory_injection = Some(injection);
+        self
+    }
+
+    /// Render the system prompt as an ordered list of sections.
+    ///
+    /// Stable contract: the static intro / system / actions sections
+    /// come first, followed by [`SYSTEM_PROMPT_DYNAMIC_BOUNDARY`],
+    /// then per-turn dynamic context (environment, project, config,
+    /// memory injection, append sections).  Each entry is a
+    /// markdown-formatted block joined with `\n\n` by [`Self::render`].
     #[must_use]
     pub fn build(&self) -> Vec<String> {
         let mut sections = Vec::new();
@@ -436,10 +495,22 @@ impl SystemPromptBuilder {
         if let Some(config) = &self.config {
             sections.push(render_config_section(config));
         }
+        if let Some(ref injection) = self.memory_injection {
+            if let Some(ref pinned) = injection.pinned_section {
+                sections.push(pinned.clone());
+            }
+            if let Some(ref compiled) = injection.compiled_section {
+                sections.push(compiled.clone());
+            }
+            sections.push(injection.rules_section.clone());
+        }
         sections.extend(self.append_sections.iter().cloned());
         sections
     }
 
+    /// Convenience wrapper that calls [`Self::build`] and joins the
+    /// returned sections with a blank line, producing the final
+    /// system-prompt string sent to the LLM.
     #[must_use]
     pub fn render(&self) -> String {
         self.build().join("\n\n")
@@ -469,6 +540,9 @@ impl SystemPromptBuilder {
     }
 }
 
+/// Prefix each entry in `items` with `" - "` so the caller can join
+/// them into a markdown bullet list.  Used by section renderers to
+/// keep formatting consistent across the prompt.
 #[must_use]
 pub fn prepend_bullets(items: Vec<String>) -> Vec<String> {
     items.into_iter().map(|item| format!(" - {item}")).collect()
@@ -1075,5 +1149,51 @@ mod tests {
         assert!(rendered.contains("# Claw instructions"));
         assert!(rendered.contains("scope: /tmp/project"));
         assert!(rendered.contains("Project rules"));
+    }
+
+    /// Phase 8A.11 — confirm `with_memory_injection` appends pinned +
+    /// compiled + rules sections after the dynamic boundary marker.
+    #[test]
+    fn builder_appends_pinned_section_after_boundary() {
+        use crate::modules::memory::MemoryInjection;
+        let injection = MemoryInjection {
+            pinned_section: Some("## Pinned memory\n\n- alpha\n".to_string()),
+            compiled_section: Some("## Compiled memory\n\nbody\n".to_string()),
+            rules_section: "## Memory usage rules\n\n- rule one\n".to_string(),
+            total_tokens_estimate: 10,
+        };
+        let sections = SystemPromptBuilder::new()
+            .with_memory_injection(injection)
+            .build();
+        let boundary_idx = sections
+            .iter()
+            .position(|s| s == SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
+            .expect("boundary present");
+        let pinned_idx = sections
+            .iter()
+            .position(|s| s.contains("## Pinned memory"))
+            .expect("pinned section present");
+        let compiled_idx = sections
+            .iter()
+            .position(|s| s.contains("## Compiled memory"))
+            .expect("compiled section present");
+        let rules_idx = sections
+            .iter()
+            .position(|s| s.contains("## Memory usage rules"))
+            .expect("rules section present");
+        assert!(pinned_idx > boundary_idx);
+        assert!(compiled_idx > pinned_idx);
+        assert!(rules_idx > compiled_idx);
+    }
+
+    /// Phase 8A.11 — without `with_memory_injection`, the build output
+    /// must contain none of the memory section headers.
+    #[test]
+    fn builder_omits_memory_section_when_none() {
+        let rendered = SystemPromptBuilder::new().render();
+        assert!(!rendered.contains("## Pinned memory"));
+        assert!(!rendered.contains("## 置顶记忆"));
+        assert!(!rendered.contains("## Compiled memory"));
+        assert!(!rendered.contains("## Memory usage rules"));
     }
 }

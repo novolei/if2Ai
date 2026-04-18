@@ -13,6 +13,7 @@ pub mod audit;
 pub mod compat;
 pub mod embedding;
 pub mod hrr;
+pub mod inject;
 pub mod intent;
 pub mod job_runner;
 pub mod llm;
@@ -58,6 +59,12 @@ pub use pinned::{
     NullPinnedStore, PinScope, PinSource, PinnedItem, PinnedStore, SqlitePinnedStore,
     MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
 };
+// Phase 8A.11 — system-prompt memory injection (T-F4).  First
+// production wiring (commands/agent.rs un-stash) lands in 8A.12 or a
+// subsequent slice; tagged `allow(unused_imports)` until then so the
+// bin build stays warning-free.
+#[allow(unused_imports)]
+pub use inject::{build_memory_injection, MemoryInjection, CHARS_PER_TOKEN_ESTIMATE};
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
 pub use scope::MemoryExecutionScope;

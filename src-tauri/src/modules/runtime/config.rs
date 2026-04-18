@@ -155,6 +155,18 @@ pub struct MemoryFeatureConfig {
     // night" rolled into yesterday's daily aggregations rather than
     // fragmenting a single late-night session across two days.
     logical_day_cutoff_hour: u8,
+    // Phase 8A.11 — Master toggle for system-prompt memory injection
+    // (pinned + compiled memory + usage rules).  Default `true`.  When
+    // `false`, [`crate::modules::memory::build_memory_injection`] is
+    // skipped at the call site and the system prompt contains no
+    // pinned/compiled sections (per v2 §0.5 Δ-9).
+    inject_to_prompt: bool,
+    // Phase 8A.11 — Token budget cap for the assembled
+    // [`crate::modules::memory::MemoryInjection`] payload (default
+    // `2000`).  `u32` (not `usize`) to keep
+    // `MemoryFeatureConfig: Eq` — call sites cast to `usize` when
+    // forwarding to [`crate::modules::memory::build_memory_injection`].
+    max_inject_tokens: u32,
 }
 
 impl Default for MemoryFeatureConfig {
@@ -165,6 +177,8 @@ impl Default for MemoryFeatureConfig {
             policy_enforce_mode: MemoryPolicyEnforceMode::default(),
             timezone: None,
             logical_day_cutoff_hour: 4,
+            inject_to_prompt: true,
+            max_inject_tokens: 2000,
         }
     }
 }
@@ -207,6 +221,25 @@ impl MemoryFeatureConfig {
     #[must_use]
     pub fn logical_day_cutoff_hour(&self) -> u8 {
         self.logical_day_cutoff_hour
+    }
+
+    /// Phase 8A.11 — Whether the system prompt should include the
+    /// pinned + compiled + rules memory sections produced by
+    /// [`crate::modules::memory::build_memory_injection`].  Default
+    /// `true`.  Surfaces in the Memory Settings UI as the "Inject
+    /// memory into prompt" master toggle (per v2 §0.5 Δ-9).
+    #[must_use]
+    pub fn inject_to_prompt(&self) -> bool {
+        self.inject_to_prompt
+    }
+
+    /// Phase 8A.11 — Token budget cap for the memory-injection payload
+    /// (default `2000`).  Callers convert this to a char budget via
+    /// [`crate::modules::memory::CHARS_PER_TOKEN_ESTIMATE`] before
+    /// calling [`crate::modules::memory::build_memory_injection`].
+    #[must_use]
+    pub fn max_inject_tokens(&self) -> u32 {
+        self.max_inject_tokens
     }
 }
 
@@ -1313,6 +1346,16 @@ fn parse_optional_memory_feature_config(
             {
                 config.logical_day_cutoff_hour = hour;
             }
+            // Phase 8A.11 — `memory.injectToPrompt` (bool) and
+            // `memory.maxInjectTokens` (u32) keep settings.json in
+            // sync with the Memory Settings UI overrides below.
+            if let Some(flag) = optional_bool(memory, "injectToPrompt", "merged settings.memory")? {
+                config.inject_to_prompt = flag;
+            }
+            if let Some(tokens) = optional_u32(memory, "maxInjectTokens", "merged settings.memory")?
+            {
+                config.max_inject_tokens = tokens;
+            }
         }
     }
 
@@ -1334,6 +1377,12 @@ fn parse_optional_memory_feature_config(
         }
         if let Some(hour) = overrides.logical_day_cutoff_hour {
             config.logical_day_cutoff_hour = hour;
+        }
+        if let Some(flag) = overrides.inject_to_prompt {
+            config.inject_to_prompt = flag;
+        }
+        if let Some(tokens) = overrides.max_inject_tokens {
+            config.max_inject_tokens = tokens;
         }
     }
 
@@ -1360,6 +1409,12 @@ struct If2AiMemoryOverrides {
     /// Phase 8A.3 — Logical-day cutoff hour override (0-23).
     #[serde(default)]
     logical_day_cutoff_hour: Option<u8>,
+    /// Phase 8A.11 — Master toggle for system-prompt memory injection.
+    #[serde(default)]
+    inject_to_prompt: Option<bool>,
+    /// Phase 8A.11 — Token budget cap for memory injection payload.
+    #[serde(default)]
+    max_inject_tokens: Option<u32>,
 }
 
 fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {
@@ -2284,6 +2339,35 @@ mod tests {
             .expect("config should load");
         assert_eq!(loaded.memory().timezone(), None);
         assert_eq!(loaded.memory().logical_day_cutoff_hour(), 4);
+        // Phase 8A.11 — memory injection defaults.
+        assert!(loaded.memory().inject_to_prompt());
+        assert_eq!(loaded.memory().max_inject_tokens(), 2000);
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_memory_inject_overrides_from_settings_json() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{
+              "memory": {
+                "injectToPrompt": false,
+                "maxInjectTokens": 512
+              }
+            }"#,
+        )
+        .expect("write memory inject settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+        assert!(!loaded.memory().inject_to_prompt());
+        assert_eq!(loaded.memory().max_inject_tokens(), 512);
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
