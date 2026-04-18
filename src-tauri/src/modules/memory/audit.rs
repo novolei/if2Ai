@@ -28,6 +28,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::modules::memory::policy::{PolicyDecision, ReasonCode};
 use crate::modules::memory::scope::MemoryExecutionScope;
+use crate::modules::memory::security::DetectedPii;
 
 /// Global Tauri app handle registered at startup so `MemoryAuditEmitter` can
 /// forward audit events to the frontend `MemoryChip` / `MemoryWriteCard` UI.
@@ -79,6 +80,12 @@ struct MemoryEventPayload<'a> {
     from_category: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     to_category: Option<&'a str>,
+    /// v2 §0.5 Δ-4 — variable structured metadata for events whose payload
+    /// shape differs from the original 14 fixed fields (e.g. PII detection
+    /// arrays, summary section counts, recovered job lists).  Default `None`
+    /// + `skip_serializing_if` keeps the JSON wire shape backward compatible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra: Option<serde_json::Value>,
     /// ISO 8601 timestamp captured at emit time so the frontend can sort
     /// events by recency without trusting clock skew across IPC.
     timestamp: String,
@@ -186,6 +193,7 @@ impl MemoryAuditEmitter {
             result_count: None,
             from_category: None,
             to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }
@@ -228,6 +236,7 @@ impl MemoryAuditEmitter {
             result_count: None,
             from_category: None,
             to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }
@@ -261,6 +270,7 @@ impl MemoryAuditEmitter {
             result_count: None,
             from_category: None,
             to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }
@@ -300,6 +310,7 @@ impl MemoryAuditEmitter {
             result_count: Some(result_count),
             from_category: None,
             to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }
@@ -340,12 +351,63 @@ impl MemoryAuditEmitter {
             result_count: None,
             from_category: None,
             to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }
 
     /// Emit a `memory_promoted` event.
     ///
+    /// Emit a non-destructive `memory_promotion_candidate` event.
+    ///
+    /// Surfaced by [`crate::modules::memory::promotion::MemoryPromotionEngine`]
+    /// during periodic background scans (post-turn hook) so the frontend can
+    /// proactively show "you have N candidate promotions" without the user
+    /// opening the Memory Browser.
+    ///
+    /// Reuses the `from_category` / `to_category` payload slots to carry the
+    /// scope tier names (`"session"` / `"project"` / `"global"`) — kept this
+    /// way to avoid widening `MemoryEventPayload` for one more tag pair.
+    /// `reason_message` carries the human-readable rationale.
+    pub fn memory_promotion_candidate(
+        ctx: &AuditContext<'_>,
+        key: &str,
+        from_tier: &'static str,
+        to_tier: &'static str,
+        reason: &str,
+    ) {
+        tracing::info!(
+            event = "memory_promotion_candidate",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            memory_key = key,
+            from_tier = from_tier,
+            to_tier = to_tier,
+            reason = reason,
+        );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_promotion_candidate",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: Some(reason),
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: Some(from_tier),
+            to_category: Some(to_tier),
+            extra: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Call this when an entry is elevated from session-scoped to globally-visible
     /// (e.g., a user pins or promotes a session memory for long-term retention).
     /// Will be called from the memory promotion UI flow (FE-A memory-chip component).
@@ -382,6 +444,129 @@ impl MemoryAuditEmitter {
             result_count: None,
             from_category: Some(from_category),
             to_category: Some(to_category),
+            extra: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Reverse of [`Self::memory_promoted`].  Emit when a previously promoted
+    /// entry is narrowed back down (e.g. user clicks "撤销" on a recent
+    /// promotion).  Carries the same payload shape so the Telemetry Drawer
+    /// can render promote / demote with a single timeline component.
+    pub fn memory_demoted(ctx: &AuditContext<'_>, key: &str, from_tier: &str, to_tier: &str) {
+        tracing::info!(
+            event = "memory_demoted",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            memory_key = key,
+            from_tier = from_tier,
+            to_tier = to_tier,
+        );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_demoted",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: Some(from_tier),
+            to_category: Some(to_tier),
+            extra: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Emit a `memory_cleared` event after the user triggers a global
+    /// "wipe all memory" from Settings.  Carries the number of removed
+    /// entries in `result_count` so the Telemetry Drawer can show "N
+    /// entries cleared" without a separate field.
+    ///
+    /// `ctx` is intentionally a thin / global context (no session /
+    /// project) since this operation deliberately crosses every scope.
+    /// Emit a `memory_pii_redacted` event after [`crate::modules::memory::security::ThreatScanner::scan_and_redact`]
+    /// found PII in the candidate write and the writer substituted
+    /// `[REDACTED:<kind>]` markers in place of every hit.
+    ///
+    /// `detected` is forwarded verbatim under the `extra.detected` key so
+    /// the Telemetry Drawer can render per-kind counts and excerpts without
+    /// widening the fixed `MemoryEventPayload` schema (v2 §0.5 Δ-3 + Δ-4).
+    pub fn memory_pii_redacted(ctx: &AuditContext<'_>, key: &str, detected: &[DetectedPii]) {
+        tracing::warn!(
+            event = "memory_pii_redacted",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            memory_key = key,
+            detected_count = detected.len(),
+        );
+        let extra = serde_json::json!({
+            "detected_count": detected.len(),
+            "detected": detected,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_pii_redacted",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(detected.len()),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    /// Emit a `memory_cleared` event after the user triggers a global
+    /// "wipe all memory" from Settings.  Carries the number of removed
+    /// entries in `result_count` so the Telemetry Drawer can show "N
+    /// entries cleared" without a separate field.
+    ///
+    /// `ctx` is intentionally a thin / global context (no session /
+    /// project) since this operation deliberately crosses every scope.
+    pub fn memory_cleared(ctx: &AuditContext<'_>, removed: usize) {
+        tracing::warn!(
+            event = "memory_cleared",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            removed = removed,
+        );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_cleared",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: Some("memory store wiped via Settings"),
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(removed),
+            from_category: None,
+            to_category: None,
+            extra: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
     }

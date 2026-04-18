@@ -55,6 +55,7 @@ pub struct ToolError {
 }
 
 impl ToolError {
+    /// Construct a [`ToolError`] from any message convertible to `String`.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -82,26 +83,31 @@ pub enum RuntimeError {
 }
 
 impl RuntimeError {
+    /// Convenience constructor for an [`ApiError`](RuntimeError::ApiError) variant.
     #[must_use]
     pub fn api_error(message: impl Into<String>) -> Self {
         Self::ApiError(message.into())
     }
 
+    /// Convenience constructor for a [`ToolError`](RuntimeError::ToolError) variant.
     #[must_use]
     pub fn tool_error(message: impl Into<String>) -> Self {
         Self::ToolError(message.into())
     }
 
+    /// Convenience constructor for [`PermissionDenied`](RuntimeError::PermissionDenied).
     #[must_use]
     pub fn permission_denied(message: impl Into<String>) -> Self {
         Self::PermissionDenied(message.into())
     }
 
+    /// Convenience constructor for [`SessionError`](RuntimeError::SessionError).
     #[must_use]
     pub fn session_error(message: impl Into<String>) -> Self {
         Self::SessionError(message.into())
     }
 
+    /// Convenience constructor for [`ConfigError`](RuntimeError::ConfigError).
     #[must_use]
     pub fn config_error(message: impl Into<String>) -> Self {
         Self::ConfigError(message.into())

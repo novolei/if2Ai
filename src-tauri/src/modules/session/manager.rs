@@ -357,6 +357,10 @@ impl SessionManager {
         {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
+                // Walked from `read_dir` over a `.json` filter immediately
+                // above; both unwraps are infallible for a valid JSON
+                // filename produced by `Self::session_path`.
+                #[allow(clippy::unwrap_used)]
                 let id = path.file_stem().unwrap().to_str().unwrap();
                 match self.restore_session_internal(id, project_id).await {
                     Ok(session) => {
@@ -436,6 +440,10 @@ impl SessionManager {
         {
             let path = entry.path();
             if path.is_dir() {
+                // `path` came directly from `read_dir`, so `file_name()`
+                // is always `Some` and the on-disk name is guaranteed UTF-8
+                // by our own writers.
+                #[allow(clippy::unwrap_used)]
                 let project_id = path.file_name().unwrap().to_str().unwrap();
                 let sessions_dir = path.join("sessions");
                 if sessions_dir.exists() {
@@ -556,6 +564,9 @@ impl SessionManager {
         {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
+                // Same invariants as the project-scoped iterator above:
+                // a `.json` filename produced by our own writer.
+                #[allow(clippy::unwrap_used)]
                 let id = path.file_stem().unwrap().to_str().unwrap();
                 match self.restore_session_internal(id, "").await {
                     Ok(session) => {

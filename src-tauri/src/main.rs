@@ -75,7 +75,9 @@ use commands::{
     list_slash_commands,
     list_tools,
     list_toolsets,
+    memory_clear_all,
     memory_delete,
+    memory_demote,
     memory_export,
     memory_promote,
     memory_promotion_candidates,
@@ -150,14 +152,20 @@ fn cleanup_processes() {
 /// back to SQLite with a 30-second timeout guard.
 ///
 /// Priority: Hybrid (HRR + Vector) > Vector (FastEmbed + LanceDB) > SQLite > InMemory
-fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
+///
+/// `scanner` (Phase 8A) is plumbed through to whichever provider wins so
+/// every scope-aware write goes through `ThreatScanner::scan_and_redact`
+/// before reaching disk (v2 §0.5 Δ-2 defence-in-depth).
+fn create_memory_provider(
+    scanner: std::sync::Arc<modules::memory::security::ThreatScanner>,
+) -> modules::memory::SharedMemoryProvider {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
             tracing::error!(
                 "[memory] Failed to create tokio runtime for memory init: {e}, falling back to SQLite"
             );
-            return create_sqlite_provider();
+            return create_sqlite_provider(scanner);
         }
     };
 
@@ -182,16 +190,23 @@ fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
     // Attempt VectorMemoryProvider with 30s timeout (FastEmbed model load can be slow)
     let vector_result = runtime.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let db_path = dirs::data_local_dir()
+            let memory_root = dirs::data_local_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".if2ai")
-                .join("memory")
-                .join("vector_db");
+                .join("memory");
+            let db_path = memory_root.join("vector_db");
+            // Dual-write to SQLite is what backs every scope-aware operation
+            // (`store_scoped`, `recall_scoped`, `promote_scope`,
+            // `demote_scope`, `apply_importance_decay`).  Without it the
+            // VectorMemoryProvider falls back to no-op trait defaults that
+            // strip scope metadata, which silently breaks the three-tier
+            // session/project/global model.
+            let sqlite_path = Some(memory_root.join("memory.db"));
 
             let config = modules::memory::VectorProviderConfig {
                 db_path,
                 vector_search_enabled: true,
-                sqlite_path: None,
+                sqlite_path,
             };
 
             modules::memory::VectorMemoryProvider::new(config).await
@@ -202,19 +217,20 @@ fn create_memory_provider() -> modules::memory::SharedMemoryProvider {
     match vector_result {
         Ok(Ok(provider)) => {
             tracing::info!("[memory] VectorMemoryProvider initialized successfully");
+            let provider = provider.with_scanner(scanner);
             std::sync::Arc::new(provider) as modules::memory::SharedMemoryProvider
         }
         Ok(Err(e)) => {
             tracing::warn!(
                 "[memory] VectorMemoryProvider initialization failed: {e}, falling back to SQLite"
             );
-            create_sqlite_provider()
+            create_sqlite_provider(scanner)
         }
         Err(_) => {
             tracing::warn!(
                 "[memory] VectorMemoryProvider timed out after 30s, falling back to SQLite"
             );
-            create_sqlite_provider()
+            create_sqlite_provider(scanner)
         }
     }
 }
@@ -236,7 +252,9 @@ async fn create_hybrid_provider() -> Result<modules::memory::SharedMemoryProvide
 }
 
 /// Create a SQLite-backed memory provider as fallback.
-fn create_sqlite_provider() -> modules::memory::SharedMemoryProvider {
+fn create_sqlite_provider(
+    scanner: std::sync::Arc<modules::memory::security::ThreatScanner>,
+) -> modules::memory::SharedMemoryProvider {
     let db_path = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".if2ai")
@@ -246,7 +264,9 @@ fn create_sqlite_provider() -> modules::memory::SharedMemoryProvider {
         let _ = std::fs::create_dir_all(parent);
     }
     match modules::memory::SqliteMemoryProvider::new(db_path) {
-        Ok(p) => std::sync::Arc::new(p) as modules::memory::SharedMemoryProvider,
+        Ok(p) => {
+            std::sync::Arc::new(p.with_scanner(scanner)) as modules::memory::SharedMemoryProvider
+        }
         Err(e) => {
             tracing::error!(
                 "[memory] Failed to create SqliteMemoryProvider: {e}, falling back to in-memory"
@@ -334,7 +354,12 @@ fn main() {
     let tool_registry = modules::tools::ToolRegistry::new(std::sync::Arc::new(
         std::sync::Mutex::new(default_tool_context),
     ));
-    let memory_provider = create_memory_provider();
+    // Phase 8A §0.5 Δ-2 — single shared ThreatScanner Arc threaded through
+    // every memory write path (providers + future pinned/summary stores) so
+    // regex compilation cost is paid once and audit emission is uniform.
+    let threat_scanner =
+        std::sync::Arc::new(modules::memory::security::ThreatScanner::with_builtin_patterns());
+    let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
     let browser_registry =
         modules::browser::BrowserRegistry::new(if2ai_dir.join("browser-cold-state.json"));
@@ -442,6 +467,7 @@ fn main() {
         learning_module,
         active_retrieval_manager,
         harness,
+        threat_scanner,
     });
 
     tauri::Builder::default()
@@ -505,9 +531,11 @@ fn main() {
             memory_delete,
             memory_export,
             memory_purge,
+            memory_clear_all,
             // Memory promotion (session → project → global)
             memory_promotion_candidates,
             memory_promote,
+            memory_demote,
             // Skills Hub CLI commands
             hub_browse,
             hub_search,

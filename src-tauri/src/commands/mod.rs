@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 
 // Memory and learning infrastructure
+use crate::modules::memory::security::ThreatScanner;
 use crate::modules::memory::SharedMemoryProvider;
 use crate::modules::runtime::budget::ContextBudget;
 
@@ -67,6 +68,13 @@ pub struct AppState {
     /// `None` when harness is disabled (default production mode).
     /// `Some(...)` when developer/eval recording mode is active.
     pub harness: Option<Arc<crate::modules::harness::HarnessState>>,
+
+    /// Phase 8A: shared `ThreatScanner` for PII / secret detection on every
+    /// memory write path.  Held as `Arc` so the same compiled regex set is
+    /// reused across the SQLite + Vector providers, the `pin_memory` /
+    /// `summary` modules, and any future Tauri command that ingests
+    /// user-supplied content (see v2 §0.5 Δ-2).
+    pub threat_scanner: Arc<ThreatScanner>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -99,6 +107,8 @@ pub struct AppStateConfig {
     /// Harness state for agent loop observability.
     /// `None` disables all harness overhead (default production mode).
     pub harness: Option<Arc<crate::modules::harness::HarnessState>>,
+    /// Shared PII / secret scanner; see [`AppState::threat_scanner`].
+    pub threat_scanner: Arc<ThreatScanner>,
 }
 
 impl AppState {
@@ -122,6 +132,7 @@ impl AppState {
             active_retrieval_manager: cfg.active_retrieval_manager,
             onboarding_flow: Arc::new(cfg.onboarding_flow),
             harness: cfg.harness,
+            threat_scanner: cfg.threat_scanner,
         }
     }
 }
@@ -164,8 +175,9 @@ pub use harness::{
 };
 #[allow(unused_imports)]
 pub use memory::{
-    memory_delete, memory_export, memory_promote, memory_promotion_candidates, memory_purge,
-    memory_recall, MemoryEntryDto, MemoryPromotionCandidateDto,
+    memory_clear_all, memory_delete, memory_demote, memory_export, memory_promote,
+    memory_promotion_candidates, memory_purge, memory_recall, MemoryEntryDto,
+    MemoryPromotionCandidateDto,
 };
 #[allow(unused_imports)]
 pub use project::{

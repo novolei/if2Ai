@@ -45,6 +45,19 @@ export interface MemoryEventPayload {
     | 'memory_recall_served'
     | 'memory_rejected'
     | 'memory_promoted'
+    /** Background scanner surfaced an entry that meets promotion thresholds. */
+    | 'memory_promotion_candidate'
+    /** A previously promoted entry was narrowed back down. */
+    | 'memory_demoted'
+    /** Operator wiped every memory entry from the Settings page. */
+    | 'memory_cleared'
+    /**
+     * Phase 8A §0.5 Δ-2 — `ThreatScanner.scan_and_redact` matched one or
+     * more PII / secret patterns on a candidate write and the writer
+     * substituted `[REDACTED:<kind>]` markers in place of every hit. The
+     * detected hits are forwarded under `extra.detected`.
+     */
+    | 'memory_pii_redacted'
   trace_id?: string
   session_id?: string
   project_id?: string
@@ -59,6 +72,14 @@ export interface MemoryEventPayload {
   result_count?: number
   from_category?: string
   to_category?: string
+  /**
+   * Phase 8A §0.5 Δ-4 — variable structured metadata for events whose
+   * payload shape differs from the original 14 fixed fields (e.g. PII
+   * detection arrays for `memory_pii_redacted`, summary section counts,
+   * recovered job lists). Backward compatible: omitted on every legacy
+   * event.
+   */
+  extra?: Record<string, unknown>
   /** ISO 8601 timestamp captured server-side at emit time. */
   timestamp: string
 }
@@ -1008,6 +1029,27 @@ export type MemoryRecallMode = 'lexical' | 'hybrid'
  */
 export type MemoryPolicyEnforceMode = 'shadow' | 'enforce'
 
+/**
+ * Promotion thresholds — gating values for when the background scanner
+ * recommends `session→project` and `project→global` upgrades.
+ *
+ * Mirrors the Rust `PromotionThresholds` struct (camelCase serde).
+ */
+export interface PromotionThresholds {
+  sessionToProjectAccess: number
+  sessionToProjectImportance: number
+  projectToGlobalAccess: number
+  projectToGlobalImportance: number
+}
+
+/** Backend-supplied default thresholds (kept in sync with `PromotionThresholds::default`). */
+export const DEFAULT_PROMOTION_THRESHOLDS: PromotionThresholds = {
+  sessionToProjectAccess: 3,
+  sessionToProjectImportance: 0.55,
+  projectToGlobalAccess: 8,
+  projectToGlobalImportance: 0.7,
+}
+
 /** Memory configuration returned by the backend. */
 export interface MemoryConfig {
   total_tokens: number
@@ -1020,6 +1062,7 @@ export interface MemoryConfig {
   control_plane_v1_enabled: boolean
   recall_mode: MemoryRecallMode
   policy_enforce_mode: MemoryPolicyEnforceMode
+  promotion: PromotionThresholds
 }
 
 /** Configuration input to persist. */
@@ -1032,6 +1075,7 @@ export interface MemoryConfigInput {
   control_plane_v1_enabled?: boolean
   recall_mode?: MemoryRecallMode
   policy_enforce_mode?: MemoryPolicyEnforceMode
+  promotion?: PromotionThresholds
 }
 
 /** Get the current memory configuration. */
@@ -1334,4 +1378,48 @@ export async function memoryPromote(args: {
     targetScopeKind: args.targetScopeKind,
     projectId: args.projectId ?? null,
   })
+}
+
+/**
+ * Reverse of [`memoryPromote`] — narrow an entry's visibility back down.
+ *
+ * `targetScopeKind` must be `'project'` or `'session'`; demoting to
+ * `'global'` is rejected by the backend.  When demoting to `'project'`,
+ * `projectId` is required; when demoting to `'session'`, both `sessionId`
+ * and (typically) the entry's owning `projectId` are required so the entry
+ * stays visible to the active context.
+ *
+ * Backend rejects calls that would *raise* visibility (e.g. demoting a
+ * session-scoped entry to project) with an error string — call
+ * `memoryPromote` for that direction instead.
+ */
+export async function memoryDemote(args: {
+  key: string
+  targetScopeKind: Exclude<MemoryScopeKind, 'global'>
+  sessionId?: string
+  projectId?: string
+}): Promise<void> {
+  return invoke<void>('memory_demote', {
+    key: args.key,
+    targetScopeKind: args.targetScopeKind,
+    sessionId: args.sessionId ?? null,
+    projectId: args.projectId ?? null,
+  })
+}
+
+/**
+ * Wipe **every** memory entry across all categories and scopes.
+ *
+ * Drives the "Clear all memories" affordance on the Memory Settings
+ * page.  The frontend MUST present a confirmation dialog before
+ * invoking this — the backend performs no extra confirmation so it
+ * stays scriptable from harness tooling.
+ *
+ * Returns the number of rows the backend reports as removed.  A
+ * `memory_cleared` event is emitted on the `memory_event` channel even
+ * when the count is zero, so the Telemetry Drawer can correlate the
+ * action.
+ */
+export async function memoryClearAll(): Promise<number> {
+  return invoke<number>('memory_clear_all')
 }

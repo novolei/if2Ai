@@ -29,8 +29,12 @@ use tokio::sync::RwLock;
 
 use super::lancedb::{LanceDBError, LanceDBMemory, ScoredMemory};
 use super::sqlite_provider::SqliteMemoryProvider;
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::embedding::FastEmbedProvider;
-use crate::modules::memory::{MemoryCategory, MemoryEntry, MemoryError, MemoryProvider};
+use crate::modules::memory::security::ThreatScanner;
+use crate::modules::memory::{
+    MemoryCategory, MemoryEntry, MemoryError, MemoryExecutionScope, MemoryProvider,
+};
 
 /// Error type for VectorMemoryProvider operations
 #[derive(Debug, thiserror::Error)]
@@ -106,6 +110,10 @@ pub struct VectorMemoryProvider {
     /// Optional SQLite provider for dual-write and importance decay.
     sqlite: Option<Arc<SqliteMemoryProvider>>,
     config: VectorProviderConfig,
+    /// Phase 8A — shared PII scanner.  When `Some`, `store_scoped` runs
+    /// `scan_and_redact` ONCE before forwarding to SQLite + LanceDB so the
+    /// two stores never diverge on the cleaned content.  See v2 §0.5 Δ-2.
+    scanner: Option<Arc<ThreatScanner>>,
 }
 
 impl VectorMemoryProvider {
@@ -165,7 +173,17 @@ impl VectorMemoryProvider {
             lancedb: Arc::new(RwLock::new(lancedb)),
             sqlite,
             config,
+            scanner: None,
         })
+    }
+
+    /// Builder: attach a shared [`ThreatScanner`] so every scope-aware write
+    /// scrubs PII / secrets before reaching either backing store.  See the
+    /// `scanner` field doc for the threat model.
+    #[must_use]
+    pub fn with_scanner(mut self, scanner: Arc<ThreatScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 
     /// Check if vector search is enabled
@@ -379,6 +397,47 @@ impl MemoryProvider for VectorMemoryProvider {
         Ok(())
     }
 
+    /// Bulk-delete every entry across both stores.
+    ///
+    /// Drives the Settings "Clear all memories" button.  Order matters:
+    /// SQLite first (authoritative), LanceDB second (best-effort mirror)
+    /// so a partial failure leaves the system in a consistent
+    /// "metadata gone, vectors will be reaped on next compaction" state
+    /// rather than the inverse.
+    async fn clear_all(&self) -> Result<usize, MemoryError> {
+        let removed = if let Some(ref sqlite) = self.sqlite {
+            sqlite.clear_all().await?
+        } else {
+            0
+        };
+
+        // Drop everything LanceDB knows about by listing + deleting.
+        // (LanceDB has no table-truncate primitive in our wrapper, and we
+        // don't want to drop the table itself because that would also
+        // wipe the FTS / vector index configuration.)
+        let db = self.lancedb.read().await;
+        let all = db
+            .export_all(None)
+            .await
+            .map_err(|e| MemoryError::Generic(format!("lancedb list-for-clear failed: {e}")))?;
+        for scored in &all {
+            if let Err(e) = db.delete(&scored.key).await {
+                tracing::warn!(
+                    "[VectorMemoryProvider] clear_all: lancedb delete failed for key={}: {e}",
+                    scored.key
+                );
+            }
+        }
+
+        // When SQLite isn't mirroring, the LanceDB count is the authoritative
+        // "removed" count for the caller.
+        Ok(if self.sqlite.is_some() {
+            removed
+        } else {
+            all.len()
+        })
+    }
+
     async fn purge_category(&self, category: &str) -> Result<(), MemoryError> {
         // Direct LanceDB query — no embedding needed
         let db = self.lancedb.read().await;
@@ -430,6 +489,162 @@ impl MemoryProvider for VectorMemoryProvider {
             "[VectorMemoryProvider] apply_importance_decay: no-op (SQLite dual-write not enabled)"
         );
         Ok(0)
+    }
+
+    /// Scope-aware store — delegates to the SQLite dual-write provider when
+    /// available so `session_id` / `project_id` are persisted.  Without
+    /// SQLite the entry is stored without scope metadata; LanceDB has no
+    /// scope columns of its own and would otherwise silently drop the
+    /// three-tier model.
+    ///
+    /// LanceDB still receives the same write (via the inner [`Self::store`]
+    /// path) so vector search continues to find the entry; recall-time
+    /// scope filtering happens against the SQLite mirror.
+    async fn store_scoped(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        // Phase 8A §0.5 Δ-2: scrub ONCE here so SQLite + LanceDB receive
+        // the same cleaned text.  The inner SqliteMemoryProvider's own
+        // scanner is intentionally *not* configured by this path because
+        // running scrub twice would double-emit `memory_pii_redacted`.
+        let cleaned: String = if let Some(ref scanner) = self.scanner {
+            let result = scanner.scan_and_redact(key, content);
+            if result.flagged {
+                let ctx = AuditContext::from_scope(scope);
+                MemoryAuditEmitter::memory_pii_redacted(&ctx, key, &result.detected);
+            }
+            result.cleaned
+        } else {
+            content.to_string()
+        };
+        let content = cleaned.as_str();
+        if let Some(ref sqlite) = self.sqlite {
+            sqlite
+                .store_scoped(key, content, category.clone(), scope)
+                .await?;
+
+            // Mirror to LanceDB so semantic recall can still surface the entry.
+            // Failures here are non-fatal: SQLite is the authoritative source
+            // for both metadata and scope; LanceDB is best-effort.
+            let embedding = match self.embedder.embed_one(content) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        "[VectorMemoryProvider] store_scoped: embedding failed for key={key}: {e}; LanceDB mirror skipped"
+                    );
+                    return Ok(());
+                }
+            };
+            let now = chrono::Utc::now();
+            let entry = MemoryEntry {
+                key: key.to_string(),
+                content: content.to_string(),
+                category,
+                created_at: now,
+                updated_at: now,
+                importance: 0.5,
+                access_count: 0,
+                trust_score: 0.0,
+                session_id: scope.session_id.clone(),
+                project_id: scope.project_id.clone(),
+            };
+            let lancedb = Arc::clone(&self.lancedb);
+            let key_for_log = key.to_string();
+            tokio::spawn(async move {
+                let db = lancedb.read().await;
+                if let Err(e) = db.insert(&entry, &embedding).await {
+                    tracing::warn!(
+                        "[VectorMemoryProvider] store_scoped: async LanceDB insert failed for key={key_for_log}: {e}"
+                    );
+                }
+            });
+            return Ok(());
+        }
+
+        // No SQLite mirror: fall through to the existing scope-less store
+        // (the trait default would just drop scope metadata, but we make
+        // that explicit here with a warning so operators notice the
+        // degraded mode).
+        tracing::warn!(
+            "[VectorMemoryProvider] store_scoped: SQLite dual-write not enabled; scope metadata for key={key} will be dropped"
+        );
+        self.store(key, content, category).await
+    }
+
+    /// Scope-aware recall — delegates to the SQLite mirror so we honour
+    /// the three-tier visibility rules (session entries visible only to
+    /// their session, project entries to their project, global entries
+    /// always).  Without the SQLite mirror this falls back to the
+    /// scope-less LanceDB recall (degraded but still functional).
+    async fn recall_scoped(
+        &self,
+        query: &str,
+        category: Option<&str>,
+        limit: usize,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        if let Some(ref sqlite) = self.sqlite {
+            return sqlite.recall_scoped(query, category, limit, scope).await;
+        }
+        self.recall(query, category, limit).await
+    }
+
+    /// Scope-aware export — same delegation pattern as [`Self::recall_scoped`].
+    async fn export_scoped(
+        &self,
+        category: Option<&str>,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        if let Some(ref sqlite) = self.sqlite {
+            return sqlite.export_scoped(category, scope).await;
+        }
+        // Conservative fallback: filter LanceDB-sourced entries against
+        // the scope using the trait helper (most will lack scope metadata
+        // and only match the global tier — that matches the no-mirror
+        // degraded behaviour).
+        let entries = self.export(category).await?;
+        Ok(entries
+            .into_iter()
+            .filter(|e| crate::modules::memory::entry_matches_scope_default(e, scope))
+            .collect())
+    }
+
+    /// Promote (or demote) an entry's scope.  Always routed to SQLite
+    /// because LanceDB has no notion of scope columns; without dual-write
+    /// the operation is unsupported and we surface a precise error rather
+    /// than silently succeeding.
+    async fn promote_scope(
+        &self,
+        key: &str,
+        target_scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        if let Some(ref sqlite) = self.sqlite {
+            return sqlite.promote_scope(key, target_scope).await;
+        }
+        Err(MemoryError::Generic(
+            "promote_scope requires SQLite dual-write to be enabled on VectorMemoryProvider"
+                .to_string(),
+        ))
+    }
+
+    /// Demote — symmetric to [`Self::promote_scope`].  Same SQLite
+    /// requirement applies.
+    async fn demote_scope(
+        &self,
+        key: &str,
+        target_scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        if let Some(ref sqlite) = self.sqlite {
+            return sqlite.demote_scope(key, target_scope).await;
+        }
+        Err(MemoryError::Generic(
+            "demote_scope requires SQLite dual-write to be enabled on VectorMemoryProvider"
+                .to_string(),
+        ))
     }
 }
 

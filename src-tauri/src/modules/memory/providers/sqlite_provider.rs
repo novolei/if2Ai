@@ -8,8 +8,10 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::compat::ClawCliMemoryEntry;
 use crate::modules::memory::scope::MemoryExecutionScope;
+use crate::modules::memory::security::ThreatScanner;
 use crate::modules::memory::{MemoryCategory, MemoryEntry, MemoryError, MemoryProvider};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
 
@@ -19,6 +21,14 @@ use crate::modules::runtime::episodic_compaction::WeibullDecay;
 /// for category-based queries and full-text search support.
 pub struct SqliteMemoryProvider {
     conn: Arc<Mutex<Connection>>,
+    /// Phase 8A — optional shared PII scanner.  When `Some`, every
+    /// scope-aware write (`store_scoped`) runs the content through
+    /// [`ThreatScanner::scan_and_redact`] before persisting and emits a
+    /// `memory_pii_redacted` audit event when hits are found.  Defaults to
+    /// `None` so existing tests / call sites that construct the provider
+    /// directly remain unchanged (defence-in-depth: the tool layer or
+    /// command layer is the primary scrub site; this is the safety net).
+    scanner: Option<Arc<ThreatScanner>>,
 }
 
 impl SqliteMemoryProvider {
@@ -84,7 +94,17 @@ impl SqliteMemoryProvider {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            scanner: None,
         })
+    }
+
+    /// Builder: attach a shared [`ThreatScanner`] so every scope-aware write
+    /// goes through `scan_and_redact` before INSERT.  See the `scanner`
+    /// field doc for the threat model.
+    #[must_use]
+    pub fn with_scanner(mut self, scanner: Arc<ThreatScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 
     /// Parse a database row into a MemoryEntry.
@@ -378,8 +398,21 @@ impl MemoryProvider for SqliteMemoryProvider {
         category: MemoryCategory,
         scope: &MemoryExecutionScope,
     ) -> Result<(), MemoryError> {
+        // Phase 8A §0.5 Δ-2 defence-in-depth: scrub PII/secrets one last
+        // time at the persistence boundary so even direct provider callers
+        // (bypassing the tool / command layer) never leak credentials to
+        // disk.  No-op when no scanner is attached.
+        let content = if let Some(ref scanner) = self.scanner {
+            let result = scanner.scan_and_redact(key, content);
+            if result.flagged {
+                let ctx = AuditContext::from_scope(scope);
+                MemoryAuditEmitter::memory_pii_redacted(&ctx, key, &result.detected);
+            }
+            result.cleaned
+        } else {
+            content.to_string()
+        };
         let key = key.to_string();
-        let content = content.to_string();
         let category_str = category.as_str().to_string();
         let session_id = scope.session_id.clone();
         let project_id = scope.project_id.clone();
@@ -646,6 +679,27 @@ impl MemoryProvider for SqliteMemoryProvider {
             )
             .map_err(|e| MemoryError::Generic(format!("Failed to purge category: {e}")))?;
             Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Bulk-delete every row in `memory_entries` in a single statement.
+    ///
+    /// Overrides the trait's row-by-row fallback so the Settings "Clear
+    /// all memories" affordance completes in O(1) round-trips even when
+    /// the table has thousands of entries.  Returns the number of rows
+    /// the SQLite engine reports as removed.
+    async fn clear_all(&self) -> Result<usize, MemoryError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let removed = c
+                .execute("DELETE FROM memory_entries", [])
+                .map_err(|e| MemoryError::Generic(format!("Failed to clear memories: {e}")))?;
+            Ok(removed)
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
@@ -1456,6 +1510,70 @@ mod tests {
             vec!["true_global".to_string()],
             "global scope must only see truly unscoped entries; got {:?}",
             from_global
+        );
+    }
+
+    /// `demote_scope` is wired through the trait default to `promote_scope`,
+    /// so a successful demote must persist the narrower scope tags exactly
+    /// like a promote does.  Round-trip: `global → project → session`.
+    #[tokio::test]
+    async fn demote_scope_round_trip_global_to_project_to_session() {
+        let (provider, _t) = create_test_provider();
+
+        // Seed: a global entry (no session/project tags).
+        let global_scope = MemoryExecutionScope {
+            session_id: None,
+            project_id: None,
+            workdir: None,
+        };
+        provider
+            .store_scoped(
+                "demoteable",
+                "secret",
+                MemoryCategory::Conversation,
+                &global_scope,
+            )
+            .await
+            .unwrap();
+
+        // Demote 1: global → project P1.
+        let project_scope = MemoryExecutionScope {
+            session_id: None,
+            project_id: Some("P1".to_string()),
+            workdir: None,
+        };
+        provider
+            .demote_scope("demoteable", &project_scope)
+            .await
+            .unwrap();
+        let after_p = provider.export(None).await.unwrap();
+        let entry_p = after_p.iter().find(|e| e.key == "demoteable").unwrap();
+        assert_eq!(entry_p.session_id, None);
+        assert_eq!(entry_p.project_id.as_deref(), Some("P1"));
+
+        // Demote 2: project → session S1 (still owned by P1).
+        let session_scope = MemoryExecutionScope {
+            session_id: Some("S1".to_string()),
+            project_id: Some("P1".to_string()),
+            workdir: None,
+        };
+        provider
+            .demote_scope("demoteable", &session_scope)
+            .await
+            .unwrap();
+        let after_s = provider.export(None).await.unwrap();
+        let entry_s = after_s.iter().find(|e| e.key == "demoteable").unwrap();
+        assert_eq!(entry_s.session_id.as_deref(), Some("S1"));
+        assert_eq!(entry_s.project_id.as_deref(), Some("P1"));
+
+        // Sanity: a non-existent key surfaces KeyNotFound, not silent success.
+        let err = provider
+            .demote_scope("missing", &session_scope)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, MemoryError::KeyNotFound(ref k) if k == "missing"),
+            "expected KeyNotFound for missing key, got {err:?}"
         );
     }
 }

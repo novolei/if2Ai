@@ -316,12 +316,12 @@ async fn execute_browser_action(
                     let sid_clone = session_id.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                        emit_browser_status(
-                            &reg_clone.app_handle().cloned().expect("app handle"),
-                            &sid_clone,
-                            &reg_clone,
-                        )
-                        .await;
+                        // Registry is constructed with `set_app_handle` during
+                        // Tauri `setup()` (see `main.rs`), so this branch is
+                        // never reached without an installed handle.
+                        #[allow(clippy::expect_used)]
+                        let handle = reg_clone.app_handle().cloned().expect("app handle");
+                        emit_browser_status(&handle, &sid_clone, &reg_clone).await;
                     });
 
                     let captcha_hint =

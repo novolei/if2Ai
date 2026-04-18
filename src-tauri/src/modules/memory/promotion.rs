@@ -16,9 +16,23 @@
 //!   recommender to any specific provider implementation.
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicI64, Ordering};
 
+use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryEntry, MemoryError, MemoryProvider};
+
+/// Global throttle: minimum seconds between two background promotion scans.
+///
+/// 60 s is loose enough to feel "near real-time" for the UI yet keeps the
+/// per-turn overhead negligible (one scan = one `export()` + a linear pass).
+const BACKGROUND_SCAN_MIN_INTERVAL_SECS: i64 = 60;
+
+/// Last unix-second at which a background scan ran. We use a process-wide
+/// atomic instead of a per-engine field because [`MemoryPromotionEngine`] is
+/// stateless / re-created per call site, but the throttle should apply
+/// across all call sites.
+static LAST_BACKGROUND_SCAN_AT: AtomicI64 = AtomicI64::new(0);
 
 /// Visible scope tier of an entry, used to decide promotion direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +79,8 @@ impl ScopeTier {
 /// applicable threshold to be considered for promotion.  Tuned to be
 /// conservative by default so the recommender doesn't flood the Memory
 /// Browser with false positives on a fresh install.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PromotionThresholds {
     /// `session → project`: minimum `access_count` and `importance`.
     pub session_to_project_access: u64,
@@ -73,6 +88,68 @@ pub struct PromotionThresholds {
     /// `project → global`: minimum `access_count` and `importance`.
     pub project_to_global_access: u64,
     pub project_to_global_importance: f64,
+}
+
+impl PromotionThresholds {
+    /// Validate values so an out-of-range config (e.g. importance > 1.0,
+    /// access = 0) cannot silently slip through `runtime/config` parsing.
+    /// Returns the bad-field name for [`crate::modules::runtime::config::ConfigError`]
+    /// to wrap.
+    /// Best-effort lazy load from `~/.if2ai/memory_config.json` (the same
+    /// file the Memory Settings UI writes to).  Falls back silently to
+    /// [`Self::default`] when the file is missing, malformed, or omits the
+    /// `promotion` key — the same gracefully-degraded contract used by
+    /// [`crate::modules::tools::builtin::memory_store`] for the policy
+    /// enforce-mode flag.
+    pub fn load_from_disk() -> Self {
+        let Ok(home) = std::env::var("HOME") else {
+            return Self::default();
+        };
+        let path = std::path::Path::new(&home).join(".if2ai/memory_config.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        let Ok(root) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return Self::default();
+        };
+        let Some(promo) = root.get("promotion") else {
+            return Self::default();
+        };
+        match serde_json::from_value::<Self>(promo.clone()) {
+            Ok(parsed) if parsed.validate().is_ok() => parsed,
+            Ok(_) => {
+                tracing::warn!(
+                    "[PromotionThresholds] disk override failed validation; falling back to defaults"
+                );
+                Self::default()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[PromotionThresholds] disk override unparseable ({e}); falling back to defaults"
+                );
+                Self::default()
+            }
+        }
+    }
+
+    /// Validate the threshold tuple — every access-count threshold must be
+    /// `>= 1`, otherwise the promotion engine would treat brand-new
+    /// (never-recalled) entries as immediate promotion candidates.
+    pub fn validate(self) -> Result<(), &'static str> {
+        if self.session_to_project_access == 0 {
+            return Err("sessionToProject.accessCount must be >= 1");
+        }
+        if self.project_to_global_access == 0 {
+            return Err("projectToGlobal.accessCount must be >= 1");
+        }
+        if !(0.0..=1.0).contains(&self.session_to_project_importance) {
+            return Err("sessionToProject.importance must be in [0, 1]");
+        }
+        if !(0.0..=1.0).contains(&self.project_to_global_importance) {
+            return Err("projectToGlobal.importance must be in [0, 1]");
+        }
+        Ok(())
+    }
 }
 
 impl Default for PromotionThresholds {
@@ -237,6 +314,62 @@ impl<'a> MemoryPromotionEngine<'a> {
         });
         Ok(out)
     }
+
+    /// Background scan + audit emit, intended for the post-turn hook.
+    ///
+    /// Runs at most once per [`BACKGROUND_SCAN_MIN_INTERVAL_SECS`] seconds
+    /// (process-wide).  When a scan does run, every recommendation is
+    /// emitted as a `memory_promotion_candidate` audit event so subscribers
+    /// (frontend toast, Telemetry Drawer) can react proactively.
+    ///
+    /// Returns `Ok(Some(n))` when a scan ran (`n` = candidate count, possibly 0)
+    /// and `Ok(None)` when the call was suppressed by the throttle window.
+    pub async fn evaluate_and_audit(&self) -> Result<Option<usize>, MemoryError> {
+        let now = chrono::Utc::now().timestamp();
+        let last = LAST_BACKGROUND_SCAN_AT.load(Ordering::Relaxed);
+        if now.saturating_sub(last) < BACKGROUND_SCAN_MIN_INTERVAL_SECS {
+            return Ok(None);
+        }
+        // Compare-and-set to avoid two concurrent post-turn hooks both passing
+        // the throttle and double-scanning.  We don't care about precise
+        // scheduling — losing the race just means the other caller scans now
+        // and we wait for the next window.
+        if LAST_BACKGROUND_SCAN_AT
+            .compare_exchange(last, now, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return Ok(None);
+        }
+
+        let recs = self.evaluate_all().await?;
+        for rec in &recs {
+            // Reuse the entry's persisted scope (best-effort) as the audit
+            // context.  The recommender doesn't carry the original
+            // `MemoryExecutionScope`, so we synthesise a minimal one from the
+            // recommendation tier so listeners still see meaningful tier tags.
+            let synthetic_scope = MemoryExecutionScope {
+                session_id: None,
+                project_id: None,
+                workdir: None,
+            };
+            let ctx = AuditContext::from_scope(&synthetic_scope);
+            MemoryAuditEmitter::memory_promotion_candidate(
+                &ctx,
+                &rec.key,
+                rec.current_tier.label(),
+                rec.target_tier.label(),
+                &rec.reason,
+            );
+        }
+        Ok(Some(recs.len()))
+    }
+
+    /// Test-only override that resets the throttle so unit tests can run
+    /// `evaluate_and_audit` deterministically.
+    #[cfg(test)]
+    pub fn reset_throttle_for_test() {
+        LAST_BACKGROUND_SCAN_AT.store(0, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -316,6 +449,40 @@ mod tests {
         let rec = evaluate_promotion(entry, &PromotionThresholds::default()).unwrap();
         assert_eq!(rec.current_tier, ScopeTier::Project);
         assert_eq!(rec.target_tier, ScopeTier::Global);
+    }
+
+    /// `evaluate_and_audit` runs on first call and is suppressed on the
+    /// immediate retry by the throttle window.
+    #[tokio::test]
+    async fn evaluate_and_audit_throttles_repeated_calls() {
+        MemoryPromotionEngine::reset_throttle_for_test();
+
+        let (provider, _t, db) = make_provider();
+        insert_with_signal(&provider, &db, "ready", Some("s1"), Some("p1"), 0.8, 5).await;
+
+        let engine = MemoryPromotionEngine::new(&provider);
+        let first = engine.evaluate_and_audit().await.unwrap();
+        assert_eq!(
+            first,
+            Some(1),
+            "first call should scan and find 1 candidate"
+        );
+
+        // A second call within the throttle window must be suppressed.
+        let second = engine.evaluate_and_audit().await.unwrap();
+        assert_eq!(
+            second, None,
+            "second call within window should be throttled"
+        );
+
+        // Manually resetting the throttle re-enables scanning.
+        MemoryPromotionEngine::reset_throttle_for_test();
+        let third = engine.evaluate_and_audit().await.unwrap();
+        assert_eq!(
+            third,
+            Some(1),
+            "after throttle reset, scan should run again"
+        );
     }
 
     #[tokio::test]

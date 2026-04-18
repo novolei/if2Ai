@@ -42,6 +42,9 @@ pub struct CompactionResult {
     pub removed_message_count: usize,
 }
 
+/// Sum [`estimate_message_tokens`] across every message in the session
+/// to produce a coarse running token estimate (used by the compaction
+/// trigger and the context-budget header in the chat UI).
 #[must_use]
 pub fn estimate_session_tokens(session: &Session) -> usize {
     session.messages.iter().map(estimate_message_tokens).sum()
@@ -58,6 +61,10 @@ pub fn estimate_token_count_from_chars(char_count: usize) -> usize {
     char_count / 4 + 1
 }
 
+/// Decide whether `session` is large enough to trigger compaction.
+///
+/// Returns `true` when the messages outside any prior compaction summary
+/// exceed both the recent-message buffer and the configured token budget.
 #[must_use]
 pub fn should_compact(session: &Session, config: CompactionConfig) -> bool {
     let start = compacted_summary_prefix_len(session);
@@ -71,6 +78,9 @@ pub fn should_compact(session: &Session, config: CompactionConfig) -> bool {
             >= config.max_estimated_tokens
 }
 
+/// Strip the `<analysis>...</analysis>` block and unwrap the
+/// `<summary>...</summary>` block from a model-produced compact summary,
+/// returning the user-visible Markdown.
 #[must_use]
 pub fn format_compact_summary(summary: &str) -> String {
     let without_analysis = strip_tag_block(summary, "analysis");
@@ -86,6 +96,9 @@ pub fn format_compact_summary(summary: &str) -> String {
     collapse_blank_lines(&formatted).trim().to_string()
 }
 
+/// Build the assistant continuation message that primes the next turn after
+/// compaction.  Combines the formatted summary with optional reminders about
+/// preserved tail messages and follow-up-question suppression.
 #[must_use]
 pub fn get_compact_continuation_message(
     summary: &str,
@@ -110,6 +123,9 @@ pub fn get_compact_continuation_message(
     base
 }
 
+/// Run synchronous compaction over `session`: emit a placeholder summary
+/// (the LLM call is performed elsewhere) and return the trimmed session
+/// plus the count of removed messages.
 #[must_use]
 pub fn compact_session(session: &Session, config: CompactionConfig) -> CompactionResult {
     if !should_compact(session, config) {

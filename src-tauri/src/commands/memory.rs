@@ -14,7 +14,35 @@ use crate::modules::memory::promotion::{
     target_scope_for, MemoryPromotionEngine, PromotionRecommendation, ScopeTier,
 };
 use crate::modules::memory::scope::MemoryExecutionScope;
+use crate::modules::memory::security::ScrubResult;
 use crate::modules::memory::MemoryEntry;
+
+/// Phase 8A — thin wrapper that delegates to
+/// [`crate::modules::memory::security::ThreatScanner::scan_and_redact`] on
+/// the shared `state.threat_scanner` and emits the
+/// `memory_pii_redacted` audit event when hits are found.
+///
+/// This is **not** a parallel scrub implementation (per v2 §0.5 Δ-2 the
+/// scrub logic lives entirely on [`ThreatScanner`]); it only centralises
+/// the audit-emission boilerplate so every Tauri command that ingests
+/// user-supplied content emits the same payload shape.
+///
+/// Callers must persist `result.cleaned`, never the original content.
+#[allow(dead_code)] // consumed by Phase 8A.9 + 8A.10 commands; wired here so the
+                    // helper review-checks the shared signature in this slice.
+pub(crate) fn scan_and_emit_pii_audit(
+    state: &AppState,
+    scope: &MemoryExecutionScope,
+    key: &str,
+    content: &str,
+) -> ScrubResult {
+    let result = state.threat_scanner.scan_and_redact(key, content);
+    if result.flagged {
+        let ctx = AuditContext::from_scope(scope);
+        MemoryAuditEmitter::memory_pii_redacted(&ctx, key, &result.detected);
+    }
+    result
+}
 
 /// Serialisable memory entry for the frontend.
 ///
@@ -184,6 +212,35 @@ pub async fn memory_purge(state: State<'_, AppState>, category: String) -> Resul
         .map_err(|e| e.to_string())
 }
 
+/// Wipe **every** memory entry across all categories and scopes.
+///
+/// Backs the "Clear all memories" affordance in the Memory Settings page.
+/// Returns the number of rows removed (best effort — providers without a
+/// fast bulk delete report the iteration count from the trait fallback).
+///
+/// The frontend is expected to present a confirmation dialog before
+/// invoking this; the backend deliberately performs no extra
+/// confirmation so it remains scriptable from harness tooling.  A
+/// `memory_cleared` audit event is always emitted, even when zero rows
+/// were removed, so operators can correlate the action in the Telemetry
+/// Drawer.
+#[tauri::command]
+pub async fn memory_clear_all(state: State<'_, AppState>) -> Result<usize, String> {
+    let removed = state
+        .memory_provider
+        .clear_all()
+        .await
+        .map_err(|e| e.to_string())?;
+    let audit_ctx = AuditContext {
+        trace_id: None,
+        session_id: None,
+        project_id: None,
+        effective_workdir: None,
+    };
+    MemoryAuditEmitter::memory_cleared(&audit_ctx, removed);
+    Ok(removed)
+}
+
 /// Frontend-facing DTO for a promotion recommendation.
 ///
 /// Mirrors [`PromotionRecommendation`] one-to-one so the Memory Browser can
@@ -281,4 +338,90 @@ pub async fn memory_promote(
     MemoryAuditEmitter::memory_promoted(&audit_ctx, &key, from_tier.label(), target_tier.label());
 
     Ok(())
+}
+
+/// Reverse of [`memory_promote`] — narrow an entry's visibility back down.
+///
+/// `target_scope_kind` accepts `"project"` or `"session"`.  When demoting to
+/// `project`, `project_id` is required; when demoting to `session`, both
+/// `session_id` and `project_id` (the entry's owning project) are required so
+/// the entry doesn't disappear from the user's current view.
+///
+/// Emits a `memory_demoted` audit event so the Telemetry Drawer can render
+/// the round-trip.  Refuses to demote into a higher tier (e.g. `session →
+/// project` request) — call [`memory_promote`] for that direction.
+#[tauri::command]
+pub async fn memory_demote(
+    state: State<'_, AppState>,
+    key: String,
+    target_scope_kind: MemoryScopeKind,
+    session_id: Option<String>,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let target_tier = match target_scope_kind {
+        MemoryScopeKind::Session => ScopeTier::Session,
+        MemoryScopeKind::Project => ScopeTier::Project,
+        MemoryScopeKind::Global => {
+            return Err("cannot demote into global scope (global is the top tier)".to_string());
+        }
+    };
+
+    if matches!(target_tier, ScopeTier::Project) && project_id.is_none() {
+        return Err("project_id is required when demoting to project scope".to_string());
+    }
+    if matches!(target_tier, ScopeTier::Session) && session_id.is_none() {
+        return Err("session_id is required when demoting to session scope".to_string());
+    }
+
+    let entries = state
+        .memory_provider
+        .export(None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let entry = entries
+        .iter()
+        .find(|e| e.key == key)
+        .ok_or_else(|| format!("memory key not found: {key}"))?;
+
+    let from_tier = ScopeTier::from_entry(entry);
+
+    // Reject same-or-upward "demotion" calls so the UI cannot accidentally
+    // launder a promote through this command.
+    let from_rank = scope_tier_rank(from_tier);
+    let to_rank = scope_tier_rank(target_tier);
+    if to_rank <= from_rank {
+        return Err(format!(
+            "demote_scope refused: {from} is already at or below {to}",
+            from = from_tier.label(),
+            to = target_tier.label(),
+        ));
+    }
+
+    let target_scope = MemoryExecutionScope {
+        session_id: session_id.clone(),
+        project_id: project_id.clone().or_else(|| entry.project_id.clone()),
+        workdir: None,
+    };
+
+    state
+        .memory_provider
+        .demote_scope(&key, &target_scope)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let audit_ctx = AuditContext::from_scope(&target_scope);
+    MemoryAuditEmitter::memory_demoted(&audit_ctx, &key, from_tier.label(), target_tier.label());
+
+    Ok(())
+}
+
+/// Tier ordering for [`memory_demote`] — lower rank = broader visibility.
+/// Global is the most-visible tier (rank 0); session is the most-restricted
+/// (rank 2).  Demote requests must move from a lower rank to a higher rank.
+fn scope_tier_rank(tier: ScopeTier) -> u8 {
+    match tier {
+        ScopeTier::Global => 0,
+        ScopeTier::Project => 1,
+        ScopeTier::Session => 2,
+    }
 }
