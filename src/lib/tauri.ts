@@ -94,6 +94,16 @@ export interface MemoryEventPayload {
      * unpin from the PinnedMemoryEditor UI (8A.12).
      */
     | 'memory_unpinned'
+    /**
+     * Phase 8B.3 / T-C3 — `compile_today` / `compile_week` /
+     * `compile_longterm` / `compile_facts` rewrote its `*.md`
+     * artifact.  `extra` carries `{ kind, result, chars_in,
+     * chars_out, latency_ms }`; `memory_category` mirrors `kind`
+     * (`"today" | "week" | "longterm" | "facts"`) so the
+     * TelemetryDrawer can colour-chip "已编译 · today / week / …"
+     * without parsing `extra`.
+     */
+    | 'memory_compiled'
   trace_id?: string
   session_id?: string
   project_id?: string

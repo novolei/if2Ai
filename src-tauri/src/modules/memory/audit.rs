@@ -815,6 +815,70 @@ impl MemoryAuditEmitter {
         });
     }
 
+    /// Emit a `memory_compiled` event after a `compile_today` /
+    /// `compile_week` / `compile_longterm` / `compile_facts` cycle
+    /// rewrote its `*.md` artifact (Phase 8B.3 / T-C3).
+    ///
+    /// `kind` is the section discriminator (`"today"` / `"week"` /
+    /// `"longterm"` / `"facts"`); `result` is `"compiled"` for a real
+    /// rewrite or `"skipped"` for a cache hit / quota exhaustion that
+    /// the caller still wishes to surface.  `chars_in` / `chars_out` /
+    /// `latency_ms` ride under `extra` per v2 §0.5 Δ-3 + Δ-4 so the
+    /// fixed [`MemoryEventPayload`] schema does not need to grow per
+    /// audit family.
+    ///
+    /// `allow(dead_code)`: first producers are the three compile_*
+    /// functions in slice 8B.3; the bin target sees no direct caller
+    /// until `MemoryCompiler` wires them in this slice's mod.rs.
+    #[allow(dead_code)]
+    pub fn memory_compiled(
+        ctx: &AuditContext<'_>,
+        kind: &'static str,
+        result: &'static str,
+        chars_in: usize,
+        chars_out: usize,
+        latency_ms: u64,
+    ) {
+        tracing::info!(
+            event = "memory_compiled",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            workdir = ctx.effective_workdir.unwrap_or("-"),
+            kind = kind,
+            result = result,
+            chars_in = chars_in,
+            chars_out = chars_out,
+            latency_ms = latency_ms,
+        );
+        let extra = serde_json::json!({
+            "kind": kind,
+            "result": result,
+            "chars_in": chars_in,
+            "chars_out": chars_out,
+            "latency_ms": latency_ms,
+        });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_compiled",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: Some(kind),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: Some(chars_out),
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_cleared` event after the user triggers a global
     /// "wipe all memory" from Settings.  Carries the number of removed
     /// entries in `result_count` so the Telemetry Drawer can show "N

@@ -33,8 +33,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2']
-  current_slice: '8B.3'
+  completed_slices: ['8B.1', '8B.2', '8B.3']
+  current_slice: '8B.4'
   blocked: []
   notes: >
     Phase 8B 已启动。Sprint 2 / T-C1 (8B.1) 完成：MemoryCompiler 骨架 +
@@ -160,7 +160,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.3"
     title: "T-C3 — compile_today/week/longterm（LLM 编译 + 指纹缓存）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

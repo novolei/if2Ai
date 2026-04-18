@@ -157,42 +157,73 @@ impl MemoryCompiler {
 
     /// Compile today's session summaries → `today.md`.
     ///
-    /// **Phase 8B.1 stub** — always returns `Ok(CompileResult::Skipped)`.
-    /// Real implementation (fingerprint cache + LLM call + atomic
-    /// write) lands in slice 8B.3.
+    /// Delegates to [`today::compile_today`] with the compiler's
+    /// stored collaborators; `is_zh` is read from
+    /// [`crate::modules::runtime::locale::is_zh`] per v2 §0.5 Δ-13.
     pub async fn compile_today(
         &self,
-        _scope: &MemoryExecutionScope,
-        _paths: &CompilePaths,
+        scope: &MemoryExecutionScope,
+        paths: &CompilePaths,
     ) -> Result<CompileResult, MemoryError> {
-        // TODO(8B.3): fingerprint cache + LLM call + atomic write.
-        Ok(CompileResult::Skipped)
+        let is_zh = crate::modules::runtime::locale::is_zh();
+        today::compile_today(
+            self.summary_store.clone(),
+            scope,
+            &paths.today_md,
+            self.llm.clone(),
+            self.job_runner.clone(),
+            self.config.today_max_chars,
+            is_zh,
+        )
+        .await
     }
 
     /// Compile the trailing-7-day session summaries → `week.md`.
     ///
-    /// **Phase 8B.1 stub** — always returns `Ok(CompileResult::Skipped)`.
-    /// Real implementation lands in slice 8B.3.
+    /// Delegates to [`week::compile_week`] with the compiler's stored
+    /// collaborators; `is_zh` is read from
+    /// [`crate::modules::runtime::locale::is_zh`].
     pub async fn compile_week(
         &self,
-        _scope: &MemoryExecutionScope,
-        _paths: &CompilePaths,
+        scope: &MemoryExecutionScope,
+        paths: &CompilePaths,
     ) -> Result<CompileResult, MemoryError> {
-        // TODO(8B.3): 7-day window LLM compile.
-        Ok(CompileResult::Skipped)
+        let is_zh = crate::modules::runtime::locale::is_zh();
+        week::compile_week(
+            self.summary_store.clone(),
+            scope,
+            &paths.week_md,
+            self.llm.clone(),
+            self.job_runner.clone(),
+            self.config.week_max_chars,
+            is_zh,
+        )
+        .await
     }
 
     /// Compile the long-term summary by folding new `week.md` content
     /// into the existing `longterm.md`.
     ///
-    /// **Phase 8B.1 stub** — always returns `Ok(CompileResult::Skipped)`.
-    /// Real implementation lands in slice 8B.3.
+    /// Delegates to [`longterm::compile_longterm`].  Returns
+    /// `Ok(Skipped)` when `paths.week_md` does not exist yet — the
+    /// daily ticker (8B.8) is responsible for sequencing
+    /// `compile_week` before `compile_longterm`.
     pub async fn compile_longterm(
         &self,
-        _paths: &CompilePaths,
+        scope: &MemoryExecutionScope,
+        paths: &CompilePaths,
     ) -> Result<CompileResult, MemoryError> {
-        // TODO(8B.3): depends on week.md; fingerprint = MD5 of week.
-        Ok(CompileResult::Skipped)
+        let is_zh = crate::modules::runtime::locale::is_zh();
+        longterm::compile_longterm(
+            &paths.longterm_md,
+            &paths.week_md,
+            self.config.longterm_max_chars,
+            self.llm.clone(),
+            self.job_runner.clone(),
+            scope,
+            is_zh,
+        )
+        .await
     }
 
     /// Extract the cumulative `## 重要事实` block → `facts.md`.
@@ -259,37 +290,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stub_compile_today_returns_skipped() {
+    async fn wired_compile_today_compiles_empty_then_skips() {
+        // 8B.3 — with the NullSessionSummaryStore returning zero rows
+        // the function takes the empty-input fast path: writes an
+        // empty today.md + sentinel fingerprint and returns Compiled.
+        // A second call hits the cache and returns Skipped.
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
-        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-today"));
-        let out = compiler
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = CompilePaths::from_scope_root(dir.path());
+        let first = compiler
             .compile_today(&scope, &paths)
             .await
-            .expect("stub must not error");
-        assert_eq!(out, CompileResult::Skipped);
+            .expect("first compile must not error");
+        assert_eq!(first, CompileResult::Compiled);
+        assert!(paths.today_md.exists());
+        let second = compiler
+            .compile_today(&scope, &paths)
+            .await
+            .expect("second compile must not error");
+        assert_eq!(second, CompileResult::Skipped);
     }
 
     #[tokio::test]
-    async fn stub_compile_week_returns_skipped() {
+    async fn wired_compile_week_compiles_empty_then_skips() {
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
-        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-week"));
-        let out = compiler
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = CompilePaths::from_scope_root(dir.path());
+        let first = compiler
             .compile_week(&scope, &paths)
             .await
-            .expect("stub must not error");
-        assert_eq!(out, CompileResult::Skipped);
+            .expect("first compile must not error");
+        assert_eq!(first, CompileResult::Compiled);
+        let second = compiler
+            .compile_week(&scope, &paths)
+            .await
+            .expect("second compile must not error");
+        assert_eq!(second, CompileResult::Skipped);
     }
 
     #[tokio::test]
     async fn stub_compile_longterm_returns_skipped() {
+        // 8B.3 wired the real implementation; with no week.md on disk
+        // the function still returns Skipped, preserving the original
+        // contract of this test.
         let compiler = make_compiler();
-        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-longterm"));
+        let scope = MemoryExecutionScope::global();
+        let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-longterm-8b3"));
         let out = compiler
-            .compile_longterm(&paths)
+            .compile_longterm(&scope, &paths)
             .await
-            .expect("stub must not error");
+            .expect("must not error");
         assert_eq!(out, CompileResult::Skipped);
     }
 
