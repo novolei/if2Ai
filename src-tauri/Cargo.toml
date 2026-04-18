@@ -2,9 +2,11 @@
 name = "if2ai-backend"
 version = "0.1.0"
 edition = "2021"
+# 与 [[bin]] harness-cli 并存时，cargo run / tauri dev 需默认入口（否则 Cargo 无法选择 binary）
+default-run = "if2ai-backend"
 
 [dependencies]
-tauri = { version = "2", features = ["devtools", "tray-icon"] }
+tauri = { version = "2", features = ["devtools", "tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,7 +35,10 @@ bytes = "1"
 base64 = "0.22"
 dirs = "5"
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
-fastembed = { version = "4", default-features = false, features = ["online", "ort-download-binaries"] }
+fastembed = { version = "4", default-features = false, features = [
+    "online",
+    "ort-download-binaries",
+] }
 lancedb = "0.18"
 arrow-array = "54"
 arrow-schema = "54"
@@ -43,6 +48,7 @@ futures = "0.3"
 serde_yaml = "0.9"
 sysinfo = "0.33"
 chromiumoxide = { version = "0.9", default-features = true }
+tiktoken-rs = "0.9.1"
 
 [[bin]]
 name = "harness-cli"

@@ -1,6 +1,6 @@
 # Memory System & Honcho Integration 设计文档
 
-**版本**: 1.0 | **最后更新**: 2026-04-11 | **状态**: Design Phase | **对齐**: Hermes Memory Providers (8 providers)
+**版本**: 1.1 | **最后更新**: 2026-04-18 | **状态**: Mixed (Current Impl + Design) | **对齐**: Hermes Memory Providers (8 providers)
 
 > If2Ai 集成 Honcho AI 作为主要的外部记忆提供商，支持 AI-native 跨会话用户建模、辩证问答和语义搜索。同时支持 7 个其他记忆提供商作为替代方案。
 
@@ -20,6 +20,42 @@
 ---
 
 ## 系统概览
+
+### 当前实现状态
+
+当前代码不是“每个 Session 一份独立 memory 库”，而是：
+
+- 使用共享 SQLite 库：`~/.if2ai/memory/memory.db`
+- 每条 memory entry 可携带 `session_id` / `project_id` 作为 scope 标签
+- Agent 工具链中的 `memory_store` / `memory_recall` 已接入 scoped 读写
+- 当前实际生效的隔离以 `session` 为主，`global` 为兜底可见范围
+- `project` 级共享在数据模型中已预留，但读路径尚未完整打通
+- 前端 Memory Browser 当前更接近“全库视图”，不是“当前 Session 视图”
+
+换句话说，现状是：
+
+`共享存储 + scope 字段隔离 + Session 优先 + Global 兼容`
+
+### 推荐作用域策略
+
+为了兼顾安全性和复用价值，推荐采用三层 memory scope：
+
+| Scope | 用途 | 是否默认自动写入 |
+| --- | --- | --- |
+| `session` | 临时任务事实、当前轮次结论、一次性上下文 | 是 |
+| `project` | 仓库约定、架构决策、常用命令、工程偏好 | 否，需 promotion |
+| `global` | 用户长期偏好、稳定身份信息、跨项目习惯 | 否，需高置信或显式确认 |
+
+推荐写入策略：
+
+1. 默认把新记忆写入 `session`
+2. 当信息在同一 `Project` 内重复出现并被多次使用时，提升到 `project`
+3. 只有稳定、长期、跨项目适用的信息才进入 `global`
+
+这样可以避免两种极端：
+
+- 全部 `global`：污染严重，容易跨任务串味
+- 全部 `session`：无法跨会话复用，高价值工程记忆沉没
 
 ### 记忆的三个层次
 

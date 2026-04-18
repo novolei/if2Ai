@@ -21,6 +21,10 @@ export interface MemoryEntryDto {
   importance: number
   access_count: number
   trust_score: number
+  /** Persisted session scope tag; null = entry not session-scoped. */
+  session_id: string | null
+  /** Persisted project scope tag; null = entry not project-scoped. */
+  project_id: string | null
 }
 
 export interface MemoryCardProps {
@@ -59,17 +63,57 @@ function getTrustScoreLabel(score: number): string {
   return '不可信'
 }
 
+/**
+ * Derive the visible scope tier of an entry from its persisted tags.
+ *
+ * Mirrors the SQL precedence in `SqliteMemoryProvider::recall_scoped`:
+ * - `session_id != NULL`              → session
+ * - `session_id == NULL && project_id != NULL` → project
+ * - both NULL                          → global
+ */
+function getScopeChip(entry: { session_id: string | null; project_id: string | null }) {
+  if (entry.session_id) {
+    return {
+      label: '会话',
+      title: `Session ${entry.session_id}`,
+      cls: 'bg-violet-50 text-violet-700 border-violet-200',
+    }
+  }
+  if (entry.project_id) {
+    return {
+      label: '项目',
+      title: `Project ${entry.project_id}`,
+      cls: 'bg-sky-50 text-sky-700 border-sky-200',
+    }
+  }
+  return {
+    label: '全局',
+    title: '全局共享记忆（所有项目可见）',
+    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  }
+}
+
 export function MemoryCard({ entry, onDelete }: MemoryCardProps) {
+  const scope = getScopeChip(entry)
   return (
     <div className="group relative rounded-lg border border-black/5 bg-white/60 px-4 py-3 shadow-sm transition-shadow duration-150 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[12px] font-medium text-black/60">
               {entry.key}
             </span>
             <span className="shrink-0 rounded-full bg-black/5 px-2 py-0.5 text-[10px] text-black/50">
               {entry.category}
+            </span>
+            <span
+              title={scope.title}
+              className={cn(
+                'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                scope.cls,
+              )}
+            >
+              {scope.label}
             </span>
           </div>
           <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-foreground/80">

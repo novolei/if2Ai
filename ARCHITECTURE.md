@@ -164,47 +164,33 @@
 
 ## 🗄️ 数据模型
 
-### 核心实体
+### 术语表
 
-**Session** (会话)
+| 术语 | 定义 | 边界 / 备注 |
+| --- | --- | --- |
+| `Project` | 工作空间边界，通常绑定一个 `workdir`。 | 一个 `Project` 下可以包含多个 `Session`。 |
+| `Session` | 一次可持久化、可恢复的对话线程，也是 Agent 执行时的主上下文锚点。 | 用户点击“新聊天”创建的就是新的 `Session`。 |
+| `Conversation` | `Session` 在前端 UI 中的展示态。 | 不是独立持久化实体，而是前端投影。 |
+| `Message` | 对话中的最小消息单元。 | 常见类型包括 `user` / `assistant` / `tool` / `system`。 |
+| `Turn` | 一次完整交互周期：从用户请求到 Agent 完成响应。 | 一个 `Turn` 往往包含多条 `Message`。 |
+| `Browser Session` | 挂在某个 `Session` 下的浏览器运行态。 | 不是主会话实体，只是浏览器子系统状态。 |
+| `Memory Scope` | Memory 的可见性边界。 | 逻辑上支持 `session` / `project` / `global` 三层。 |
 
-```rust
-pub struct Session {
-    id: String,
-    user_id: String,
-    created_at: DateTime,
-    messages: Vec<Message>,  // 完整历史
-    state: SessionState,     // Active, Paused, Completed
-}
-```
+### 关键关系
 
-**Message** (消息)
+- 一个 `Project` 下可以有多个 `Session`
+- 一个 `Session` 对应一个前端 `Conversation`
+- 一个 `Session` 包含多条 `Message`
+- 一个 `Turn` 通常会生成多条 `Message`
+- `Conversation` 是展示态，`Session` 才是事实来源
 
-```rust
-pub struct Message {
-    id: String,
-    session_id: String,
-    role: MessageRole,  // User, Assistant, System
-    content: String,
-    tools_used: Vec<String>,
-    tokens: TokenCount,
-}
-```
+### 当前实现提示
 
-**Tool** (工具)
+- 后端主会话实体定义在 `src-tauri/src/modules/session/manager.rs`
+- 前端聊天窗口渲染的是 `Conversation`
+- Runtime 内部还存在轻量 `Session` 结构，仅用于模型调用消息容器，不等同于产品层 `Session`
 
-```rust
-pub struct Tool {
-    name: String,
-    description: String,
-    input_schema: JsonSchema,
-    output_schema: JsonSchema,
-    dependencies: Vec<String>,
-    handlers: ToolHandler,
-}
-```
-
-详见 [docs/design-docs/data-schema.md](./docs/design-docs/data-schema.md)
+详见 [docs/design-docs/data-schema.md](./docs/design-docs/data-schema.md) 和 [docs/design-docs/session-persistence.md](./docs/design-docs/session-persistence.md)
 
 ## 🎯 架构设计原则
 

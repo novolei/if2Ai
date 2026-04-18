@@ -42,6 +42,7 @@ import type { Conversation, Message, RecentSession, SessionTitleState } from '@/
 import { OnboardingApp } from '@/modules/onboarding/OnboardingApp'
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
 import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
+import { TelemetryDrawer } from '@/components/chat/TelemetryDrawer'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 import { Button } from '@/components/ui/button'
@@ -281,6 +282,55 @@ function App() {
     } catch {
       return null
     }
+  }
+
+  /**
+   * Parse the structured `memory_store` tool result emitted by the backend
+   * (`src-tauri/src/modules/tools/builtin/memory_store.rs`).  The handler
+   * always returns a JSON object with `policy_decision`, `scope`,
+   * `reason_code`, and `status`; we lift those onto `Message` so the
+   * `MemoryStoreToolCard` highlight (deny / prompt) fires deterministically
+   * instead of relying on the control-plane permission `policy_decision`,
+   * which is unrelated to memory-write policy.
+   *
+   * Returns `null` when the result is missing, not JSON, or not produced by
+   * the new structured `memory_store` handler — callers should fall back to
+   * existing behaviour in that case so legacy tool flows are unaffected.
+   */
+  const extractMemoryStoreFields = (
+    raw: string | null | undefined,
+  ): {
+    policyDecision?: 'allow' | 'deny' | 'prompt'
+    memoryScope?: 'global' | 'project' | 'session'
+    memoryReasonCode?: string
+  } | null => {
+    if (!raw) return null
+    let parsed: Record<string, unknown>
+    try {
+      const candidate = JSON.parse(raw)
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+      parsed = candidate as Record<string, unknown>
+    } catch {
+      return null
+    }
+    const decisionRaw = parsed.policy_decision
+    const scopeRaw = parsed.scope
+    const reasonCodeRaw = parsed.reason_code
+    const out: {
+      policyDecision?: 'allow' | 'deny' | 'prompt'
+      memoryScope?: 'global' | 'project' | 'session'
+      memoryReasonCode?: string
+    } = {}
+    if (decisionRaw === 'allow' || decisionRaw === 'deny' || decisionRaw === 'prompt') {
+      out.policyDecision = decisionRaw
+    }
+    if (scopeRaw === 'global' || scopeRaw === 'project' || scopeRaw === 'session') {
+      out.memoryScope = scopeRaw
+    }
+    if (typeof reasonCodeRaw === 'string') {
+      out.memoryReasonCode = reasonCodeRaw
+    }
+    return Object.keys(out).length > 0 ? out : null
   }
 
   const buildLoopCompletionStatus = (
@@ -694,6 +744,21 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
         e.preventDefault()
         void openSettingsWindow()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // ⌘+Shift+D (macOS) / Ctrl+Shift+D — developer shortcut that toggles
+  // the TelemetryDrawer for the active session.  Drives the Phase 6E
+  // harness observability surface visible from the chat workspace.
+  const [isTelemetryDrawerOpen, setIsTelemetryDrawerOpen] = useState(false)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault()
+        setIsTelemetryDrawerOpen((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -1433,6 +1498,14 @@ function App() {
                       (msg) => msg.role === 'tool' && msg.toolCallId === toolCallId
                     )
                     const existingMessage = existingIndex >= 0 ? currentConv.messages[existingIndex] : undefined
+                    // For `memory_store` results we extract the structured
+                    // policy fields from the tool result JSON so deny / prompt
+                    // states surface in the UI even though the control-plane
+                    // permission `policy_decision` is always 'allow'.
+                    const memoryFields =
+                      payload.tool_name === 'memory_store'
+                        ? extractMemoryStoreFields(payload.tool_result ?? null)
+                        : null
                     const updatedToolMessage: Message = {
                       id: existingMessage?.id ?? `tool-${toolCallId}-${Date.now()}`,
                       role: 'tool',
@@ -1448,7 +1521,13 @@ function App() {
                       isError: nextStatus === 'error' || existingMessage?.isError,
                       toolStatus: nextStatus,
                       effectiveWorkdir: payload.effective_workdir ?? existingMessage?.effectiveWorkdir,
-                      policyDecision: payload.policy_decision ?? existingMessage?.policyDecision,
+                      policyDecision:
+                        memoryFields?.policyDecision ??
+                        payload.policy_decision ??
+                        existingMessage?.policyDecision,
+                      memoryScope: memoryFields?.memoryScope ?? existingMessage?.memoryScope,
+                      memoryReasonCode:
+                        memoryFields?.memoryReasonCode ?? existingMessage?.memoryReasonCode,
                       evidenceId: payload.evidence_id ?? existingMessage?.evidenceId,
                       requestId: payload.request_id ?? existingMessage?.requestId,
                       taskOutcome: payload.task_outcome ?? existingMessage?.taskOutcome,
@@ -1500,6 +1579,8 @@ function App() {
                               degradedReason: payload.degraded_reason ?? msg.degradedReason,
                               resumeAvailable: payload.resume_available ?? msg.resumeAvailable ?? false,
                               resumeCursor: payload.resume_cursor ?? msg.resumeCursor,
+                              memoryContext: payload.memory_context ?? msg.memoryContext,
+                              contextBudgetUsage: payload.context_budget_usage ?? msg.contextBudgetUsage,
                             }
                           }
                           if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
@@ -1643,6 +1724,14 @@ function App() {
               )
               const existingMessage = existingIndex >= 0 ? currentConv.messages[existingIndex] : undefined
 
+              // Mirror of the skill-invocation branch above: pull deny / prompt
+              // state out of the structured `memory_store` JSON so the UI can
+              // render the highlighted MemoryWriteCard for those decisions.
+              const memoryFields =
+                payload.tool_name === 'memory_store'
+                  ? extractMemoryStoreFields(payload.tool_result ?? null)
+                  : null
+
               const updatedToolMessage: Message = {
                 id: existingMessage?.id ?? `tool-${toolCallId}-${Date.now()}`,
                 role: 'tool',
@@ -1658,7 +1747,13 @@ function App() {
                 isError: nextStatus === 'error' || existingMessage?.isError,
                 toolStatus: nextStatus,
                 effectiveWorkdir: payload.effective_workdir ?? existingMessage?.effectiveWorkdir,
-                policyDecision: payload.policy_decision ?? existingMessage?.policyDecision,
+                policyDecision:
+                  memoryFields?.policyDecision ??
+                  payload.policy_decision ??
+                  existingMessage?.policyDecision,
+                memoryScope: memoryFields?.memoryScope ?? existingMessage?.memoryScope,
+                memoryReasonCode:
+                  memoryFields?.memoryReasonCode ?? existingMessage?.memoryReasonCode,
                 evidenceId: payload.evidence_id ?? existingMessage?.evidenceId,
                 requestId: payload.request_id ?? existingMessage?.requestId,
                 taskOutcome: payload.task_outcome ?? existingMessage?.taskOutcome,
@@ -1769,6 +1864,8 @@ function App() {
                         resumeCursor: streamResumeCursor ?? msg.resumeCursor,
                         statusLabel: finalStatus.label,
                         statusKind: finalStatus.kind,
+                        memoryContext: payload.memory_context ?? msg.memoryContext,
+                        contextBudgetUsage: payload.context_budget_usage ?? msg.contextBudgetUsage,
                       }
                     }
                     if (msg.role === 'tool' && (msg.toolStatus === 'queued' || msg.toolStatus === 'running')) {
@@ -2207,7 +2304,11 @@ function App() {
               runningSessionIds={runningSessionIds}
             />
           ) : activeSection === 'memory' ? (
-            <MemoryBrowser onStartWindowDrag={startWindowDrag} />
+            <MemoryBrowser
+              onStartWindowDrag={startWindowDrag}
+              activeProjectId={activeProjectId}
+              activeSessionId={activeSessionId}
+            />
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
           )}
@@ -2279,6 +2380,11 @@ function App() {
     </div>
       )}
       <Toaster position="bottom-right" richColors closeButton />
+      <TelemetryDrawer
+        sessionId={activeSessionId}
+        open={isTelemetryDrawerOpen}
+        onClose={() => setIsTelemetryDrawerOpen(false)}
+      />
     </>
   )
 }

@@ -1,0 +1,433 @@
+# Phase 6H: Harness V2 Evaluation Control Plane
+# ─────────────────────────────────────────────────────────────────────────────
+# 从现有 observability harness 演进到 app-native evaluation + archive 基础设施
+# 覆盖 trace / outcome / task packs / graders / archive / regression / general productivity
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "6h"
+  phase_status: active
+  title: "Harness V2 Evaluation Control Plane"
+  owner: "@executor"
+  depends_on_phase: "6e"
+  design_docs:
+    - docs/design-docs/harness/harness-strategy-v2.md
+    - docs/design-docs/harness/modules-harness-architecture.md
+    - docs/design-docs/harness/modules-harness-core-contracts.md
+    - docs/design-docs/harness/modules-harness-implementation-plan.md
+    - docs/design-docs/harness/modules-harness-archive-layout.md
+    - docs/design-docs/harness/general-productivity-task-pack-spec.md
+    - docs/design-docs/harness/grader-scoring-rubric-spec.md
+    - docs/design-docs/harness/archive-query-cli-spec.md
+    - docs/design-docs/harness/archive-module-file-by-file-spec.md
+    - docs/design-docs/harness/task-pack-examples-v1.md
+    - docs/design-docs/harness/task-pack-authoring-guide-and-review-checklist.md
+    - docs/design-docs/harness/harness-frontend-transparency-uiux.md
+    - docs/design-docs/harness/harness-frontend-transparency-backlog.md
+  human_checkpoints:
+    - after_slice: "6h.4"
+    - after_slice: "6h.7"
+    - after_slice: "6h.10"
+    - after_slice: "6h.12"
+
+slices:
+
+  - id: "6h.1"
+    title: "Harness Core Contracts — TaskSpec / TraceRecord / OutcomeSnapshot / Report"
+    status: pending
+    design_ref: "docs/design-docs/harness/modules-harness-core-contracts.md"
+    impl_targets:
+      - src-tauri/src/modules/harness/mod.rs
+      - src-tauri/src/modules/harness/task.rs
+      - src-tauri/src/modules/harness/trace.rs
+      - src-tauri/src/modules/harness/outcome.rs
+      - src-tauri/src/modules/harness/report.rs
+      - src-tauri/src/modules/harness/registry.rs
+    must_implement:
+      - "TaskSpec v1 与子结构：TaskDomain, TaskCategory, TaskPrompt, TaskSetup, TaskExpectations, ExecutionPlan"
+      - "TraceRecord v1 与 TraceEvent / TraceSummary"
+      - "OutcomeSnapshot v1：workspace / session / memory / control_plane"
+      - "HarnessRunReport / TaskRunResult / TaskAggregateResult"
+      - "所有 schema 均显式带 version，支持 serde round-trip"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::task_schema harness::trace_schema harness::outcome_schema"
+    review_checklist:
+      - "契约不绑定 Python runner/evaluator/fixture/suite"
+      - "TaskDomain 与 general productivity 相关 expectation 已进入 v1 schema"
+      - "TraceRecord 不直接等同于采集层 AgentEvent"
+
+  - id: "6h.2"
+    title: "Trace Adapters — AgentEvent / AuditEvent / Runtime State 映射"
+    status: pending
+    design_ref: "docs/design-docs/harness/modules-harness-core-contracts.md"
+    depends_on: ["6h.1"]
+    impl_targets:
+      - src-tauri/src/modules/harness/trace.rs
+      - src-tauri/src/modules/harness/agent_loop_integration.rs
+      - src-tauri/src/modules/harness/event_bus.rs
+      - src-tauri/src/modules/control_plane/audit.rs
+      - src-tauri/src/commands/agent.rs
+    must_implement:
+      - "AgentEvent -> TraceEvent adapter"
+      - "AuditEvent -> TraceEvent adapter"
+      - "task/session/request/trace id 关联"
+      - "TraceSummary finalize 逻辑"
+      - "ContextCompacted / ResumeApplied / PolicyDecision / ToolResult 等关键事件映射"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::trace_adapters"
+    review_checklist:
+      - "映射优先使用结构化字段，不依赖自然语言 message 解析"
+      - "tool / permission / compaction / resume 关键路径均可追踪"
+      - "不破坏现有 event bus 与 telemetry 行为"
+
+  - id: "6h.3"
+    title: "TaskPack Loader + Fixtures + TrialRunner"
+    status: pending
+    design_ref: "docs/design-docs/harness/general-productivity-task-pack-spec.md"
+    depends_on: ["6h.1"]
+    impl_targets:
+      - src-tauri/src/modules/harness/task.rs
+      - src-tauri/src/modules/harness/trial.rs
+      - src-tauri/src/modules/harness/config.rs
+      - src-tauri/src/modules/harness/fixtures/mod.rs
+      - src-tauri/src/modules/harness/fixtures/workspace.rs
+      - src-tauri/src/modules/harness/fixtures/session.rs
+      - src-tauri/src/modules/harness/fixtures/provider.rs
+      - src-tauri/src/modules/harness/fixtures/memory.rs
+      - harness/task-packs/general-productivity/.gitkeep
+    must_implement:
+      - "TaskPack manifest parser (`pack.toml`) 与 task YAML loader"
+      - "validate_task_domain / schema version / fixture existence 校验"
+      - "TrialRunner 生命周期：prepare -> setup -> invoke runtime -> collect trace -> inspect outcome -> teardown"
+      - "workspace / session / provider / memory fixture 协议"
+      - "最低限度支持 information_work pack 加载"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::task_pack_loader harness::trial_runner"
+    review_checklist:
+      - "task pack 是 authored asset，不写入 runtime archive"
+      - "fixture 协议可重放且不依赖作者本地环境"
+      - "默认工具权限遵守最小权限原则"
+
+  - id: "6h.4"
+    title: "Outcome Snapshot + Base Grader System"
+    status: pending
+    design_ref: "docs/design-docs/harness/grader-scoring-rubric-spec.md"
+    depends_on: ["6h.1", "6h.2", "6h.3"]
+    impl_targets:
+      - src-tauri/src/modules/harness/outcome.rs
+      - src-tauri/src/modules/harness/registry.rs
+      - src-tauri/src/modules/harness/graders/mod.rs
+      - src-tauri/src/modules/harness/graders/task_success.rs
+      - src-tauri/src/modules/harness/graders/trace_quality.rs
+      - src-tauri/src/modules/harness/graders/policy_safety.rs
+      - src-tauri/src/modules/harness/graders/outcome_snapshot.rs
+      - src-tauri/src/modules/harness/graders/resource_efficiency.rs
+    must_implement:
+      - "workspace/session/control_plane snapshot builders"
+      - "Grader trait / GradeInput / GradeResult / GradeBundle registry wiring"
+      - "TaskSuccessGrader"
+      - "PermissionComplianceGrader"
+      - "NoDeadLoopGrader"
+      - "OutcomeSnapshotGrader"
+      - "blocking failure 聚合规则"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::outcome_snapshot harness::graders::base"
+    review_checklist:
+      - "base grader 以 deterministic rules 为主"
+      - "blocking failures 不依赖总分推断"
+      - "OutcomeSnapshot 与 grading 解耦"
+
+  - id: "6h.5"
+    title: "General Productivity UX Graders — Intent / Evidence / Memory / Routing"
+    status: pending
+    design_ref: "docs/design-docs/harness/grader-scoring-rubric-spec.md"
+    depends_on: ["6h.4"]
+    impl_targets:
+      - src-tauri/src/modules/harness/graders/user_experience.rs
+      - src-tauri/src/modules/harness/task.rs
+      - src-tauri/src/modules/harness/outcome.rs
+      - src-tauri/src/modules/memory/retrieval.rs
+    must_implement:
+      - "IntentAlignmentGrader"
+      - "EvidenceFidelityGrader"
+      - "MemoryAlignmentGrader"
+      - "ContinuityGrader v1"
+      - "MessagingRoutingGrader v1 接口占位与 blocking 规则"
+      - "UserExperienceExpectation 与 grader family 的 supports() 逻辑"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::graders::user_experience"
+    review_checklist:
+      - "general productivity 不是作为附属评分项实现"
+      - "unsupported claim / stale memory / misroute 有独立 failure taxonomy"
+      - "事务型高风险错误优先于流畅性"
+
+  - id: "6h.6"
+    title: "Archive Foundation — Layout / IO / Errors / Types"
+    status: pending
+    design_ref: "docs/design-docs/harness/archive-module-file-by-file-spec.md"
+    depends_on: ["6h.1"]
+    impl_targets:
+      - src-tauri/src/modules/harness/archive/mod.rs
+      - src-tauri/src/modules/harness/archive/types.rs
+      - src-tauri/src/modules/harness/archive/layout.rs
+      - src-tauri/src/modules/harness/archive/io.rs
+      - src-tauri/src/modules/harness/archive/errors.rs
+    must_implement:
+      - "ArchiveRoot resolution with If2Ai user-local data root semantics"
+      - "runtime-local archive path helpers"
+      - "atomic JSON / JSONL read-write helpers"
+      - "archive error normalization"
+      - "platform-neutral root override"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::archive::layout harness::archive::io"
+    review_checklist:
+      - "不把 `~/.if2ai/` 物理路径写死到所有模块"
+      - "所有 archive 路径拼接集中在 layout.rs"
+      - "raw artifact 写入优先于 summary-only 存储"
+
+  - id: "6h.7"
+    title: "Archive Query + Export + CLI"
+    status: pending
+    design_ref: "docs/design-docs/harness/archive-query-cli-spec.md"
+    depends_on: ["6h.6"]
+    impl_targets:
+      - src-tauri/src/modules/harness/archive/query.rs
+      - src-tauri/src/modules/harness/archive/filters.rs
+      - src-tauri/src/modules/harness/archive/visibility.rs
+      - src-tauri/src/modules/harness/archive/frontier.rs
+      - src-tauri/src/modules/harness/archive/export.rs
+      - src-tauri/src/modules/harness/archive/formatter.rs
+      - src-tauri/src/modules/harness/archive/cli.rs
+      - src-tauri/src/bin/harness_cli.rs
+    must_implement:
+      - "`runs list/show` 查询"
+      - "`tasks show` 查询"
+      - "`trace show` 查询"
+      - "`export create`"
+      - "human-readable + `--json` output"
+      - "VisibilityDenied / proposer-visible filtering / final-test hidden 基础能力"
+    acceptance:
+      - type: compile
+        cmd: "cargo build -p if2ai --bin harness_cli"
+      - type: test
+        cmd: "cargo test -p if2ai harness::archive::query harness::archive::visibility"
+    review_checklist:
+      - "CLI 不直接读取 JSON 文件，统一走 query/export service"
+      - "visibility denied 不静默降级为空结果"
+      - "`--json` 输出带 schema version"
+
+  - id: "6h.8"
+    title: "Orchestrator / Report / Regression / Learning Sink"
+    status: pending
+    design_ref: "docs/design-docs/harness/modules-harness-implementation-plan.md"
+    depends_on: ["6h.4", "6h.5", "6h.6"]
+    impl_targets:
+      - src-tauri/src/modules/harness/orchestrator.rs
+      - src-tauri/src/modules/harness/report.rs
+      - src-tauri/src/modules/harness/regression/mod.rs
+      - src-tauri/src/modules/harness/regression/corpus.rs
+      - src-tauri/src/modules/harness/regression/serializer.rs
+      - src-tauri/src/modules/harness/regression/clustering.rs
+      - src-tauri/src/modules/learning/trajectory.rs
+      - src-tauri/src/modules/learning/reflection.rs
+    must_implement:
+      - "HarnessRunRequest -> HarnessRunReport 主编排"
+      - "single task / multi-trial 执行"
+      - "failure taxonomy 持久化"
+      - "regression artifact store/load"
+      - "reflection export candidate / trajectory export candidate"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness::orchestrator harness::regression"
+    review_checklist:
+      - "report 聚合保留 variance 与 worst failure mode"
+      - "learning sink 与 RL 逻辑保持松耦合"
+      - "regression artifact 可重放"
+
+  - id: "6h.9"
+    title: "MVP Task Packs + Integration Tests"
+    status: pending
+    design_ref: "docs/design-docs/harness/task-pack-examples-v1.md"
+    depends_on: ["6h.3", "6h.5", "6h.8"]
+    impl_targets:
+      - harness/task-packs/general-productivity/information-work/pack.toml
+      - harness/task-packs/general-productivity/information-work/tasks/multi-source-summary-001.yaml
+      - harness/task-packs/general-productivity/information-work/tasks/compare-and-recommend-001.yaml
+      - harness/task-packs/general-productivity/communication-assistant/pack.toml
+      - harness/task-packs/general-productivity/communication-assistant/tasks/follow-up-draft-001.yaml
+      - harness/task-packs/general-productivity/memory-driven-collaboration/pack.toml
+      - harness/task-packs/general-productivity/memory-driven-collaboration/tasks/project-continuation-001.yaml
+      - harness/task-packs/general-productivity/messaging-collaboration/pack.toml
+      - harness/task-packs/general-productivity/messaging-collaboration/tasks/draft-route-check-001.yaml
+      - src-tauri/tests/harness_general_productivity_integration.rs
+    must_implement:
+      - "至少 4 个 authored MVP task packs"
+      - "对应 workspace/evidence/memory/messaging fixtures"
+      - "至少 1 个 information_work integration test"
+      - "至少 1 个 communication_assistant integration test"
+      - "至少 1 个 memory/routing 负向 failure taxonomy test"
+    acceptance:
+      - type: compile
+        cmd: "cargo check -p if2ai"
+      - type: test
+        cmd: "cargo test -p if2ai harness_general_productivity_integration"
+    review_checklist:
+      - "pack 不退化成 prompt collection"
+      - "fixtures 稳定、可重放、可 review"
+      - "至少验证 unsupported claim / stale memory / misroute 三类失败"
+
+  - id: "6h.10"
+    title: "Transparency View Models — Summary / Detail / User-Facing Status"
+    status: pending
+    design_ref: "docs/design-docs/harness/harness-frontend-transparency-backlog.md"
+    depends_on: ["6h.4", "6h.5", "6h.8"]
+    impl_targets:
+      - src/modules/chat/types.ts
+      - src/lib/tauri.ts
+      - src/stores/conversation-slice.ts
+      - src/modules/chat/components/ChatWorkspace.tsx
+      - src/components/ui/chat-ui.tsx
+    must_implement:
+      - "TransparencySummary view model"
+      - "TransparencyDetail view model"
+      - "status: completed / partial_success / needs_confirmation / failed"
+      - "前端不直接消费 raw grader names"
+      - "将 harness 结果映射成用户语言字段"
+    acceptance:
+      - type: compile
+        cmd: "npm run build"
+      - type: test
+        cmd: "npm run test -- transparency"
+    review_checklist:
+      - "view model 稳定，可同时服务普通模式和 expert 模式"
+      - "用户语言优先于内部 taxonomy / grader 名称"
+      - "不把 raw trace 直接泄露给普通消息 UI"
+
+  - id: "6h.11"
+    title: "Message Provenance + Partial Success Surfaces"
+    status: pending
+    design_ref: "docs/design-docs/harness/harness-frontend-transparency-backlog.md"
+    depends_on: ["6h.10"]
+    impl_targets:
+      - src/components/chat/ResponseProvenanceRow.tsx
+      - src/components/chat/TransparencyChip.tsx
+      - src/components/chat/PartialSuccessCard.tsx
+      - src/components/chat/ActionBoundaryNotice.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/modules/chat/components/ChatWorkspace.tsx
+    must_implement:
+      - "assistant message footer provenance row"
+      - "依据 / 记忆 / 文件改动 / 草稿未发送 / 需确认 chips"
+      - "PartialSuccessCard"
+      - "NeedsConfirmation / 未真正执行边界提示"
+      - "顶部轻量 ambient status 的最小版本"
+    acceptance:
+      - type: compile
+        cmd: "npm run build"
+      - type: test
+        cmd: "npm run test -- provenance partial-success"
+    review_checklist:
+      - "message transparency 不演变成日志流"
+      - "partial success 与 failed 明确区分"
+      - "优先展示依据与边界，而不是系统统计"
+
+  - id: "6h.12"
+    title: "Turn Inspector + Expert Telemetry Mode"
+    status: pending
+    design_ref: "docs/design-docs/harness/harness-frontend-transparency-backlog.md"
+    depends_on: ["6h.10", "6h.7"]
+    impl_targets:
+      - src/components/chat/TurnInspectorDrawer.tsx
+      - src/components/ds/InspectorPanel.tsx
+      - src/components/chat/TelemetryDrawer.tsx
+      - src/modules/chat/components/ChatWorkspace.tsx
+      - src/modules/settings/types.ts
+      - src/modules/settings/data.ts
+    must_implement:
+      - "Turn Inspector with tabs: evidence / actions / memory / risks / details"
+      - "message provenance row -> inspector 跳转"
+      - "Minimal / Standard / Expert transparency mode wiring"
+      - "TelemetryDrawer 归位到 Expert 模式"
+      - "Expert 模式可查看 deeper diagnostics 但不污染普通体验"
+    acceptance:
+      - type: compile
+        cmd: "npm run build"
+      - type: test
+        cmd: "npm run test -- inspector telemetry"
+    review_checklist:
+      - "普通模式与 expert 模式共用同一 transparency model"
+      - "inspector 默认展示自然语言总结，不强迫用户看 raw ids"
+      - "TelemetryDrawer 不再是唯一透明化入口"
+
+dashboard:
+  last_updated: "2026-04-18"
+  completed_slices: []
+  current_slice: "6h.1"
+  blocked: []
+  notes: >
+    2026-04-18：index.md 已将 [当前] 从 Phase 7B 切至本 Phase；phase_status 已改为 active。
+    人类要求：仅切换指针与状态，暂不自动开始执行 slices。
+    Phase 6H — 基于 harness v2 文档簇：contracts, adapters, graders, archive, regression,
+    general productivity MVP packs，以及前端透明化 UI surfaces。
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recommended Execution Order
+# ─────────────────────────────────────────────────────────────────────────────
+# Main critical path:
+# 6h.1 -> 6h.2 -> 6h.3 -> 6h.4 -> 6h.5 -> 6h.8 -> 6h.10 -> 6h.9 -> 6h.11 -> 6h.12
+#
+# Parallel side path:
+# 6h.6 -> 6h.7
+#
+# Phase grouping:
+# A. Eval Kernel:
+#    6h.1, 6h.2, 6h.3, 6h.4
+# B. General Productivity Core:
+#    6h.5, 6h.8, 6h.10
+# C. MVP Task Pack Validation:
+#    6h.9
+# D. Archive + Transparency Completion:
+#    6h.6, 6h.7, 6h.11, 6h.12
+#
+# Ordering rationale:
+# - Freeze contracts first, or every downstream slice will churn.
+# - Build the eval loop before archive/query surfaces.
+# - Land general productivity grading before MVP packs, so the system does not
+#   regress into coding-only evaluation.
+# - Introduce front-end transparency only after a stable user-facing view model
+#   exists (`6h.10`), to avoid binding UI directly to raw harness internals.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 依赖关系
+# ─────────────────────────────────────────────────────────────────────────────
+# 6h.1 Core Contracts ──┬── 6h.2 Trace Adapters
+#                       ├── 6h.3 TaskPack + TrialRunner
+#                       ├── 6h.4 Outcome + Base Graders
+#                       └── 6h.6 Archive Foundation
+# 6h.4 ──┬── 6h.5 UX Graders
+#         └── 6h.8 Orchestrator / Regression / Learning Sink
+# 6h.6 ─────── 6h.7 Archive Query + Export + CLI
+# 6h.3 + 6h.5 + 6h.8 ─── 6h.9 MVP Task Packs + Integration Tests
+# 6h.4 + 6h.5 + 6h.8 ─── 6h.10 Transparency View Models
+# 6h.10 ──┬── 6h.11 Message Provenance + Partial Success
+#         └── 6h.12 Turn Inspector + Expert Telemetry

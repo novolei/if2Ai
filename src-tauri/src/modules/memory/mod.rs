@@ -15,9 +15,11 @@ pub mod embedding;
 pub mod hrr;
 pub mod intent;
 pub mod policy;
+pub mod promotion;
 mod providers;
 pub mod retrieval;
 pub mod scope;
+pub mod security;
 pub mod working_memory;
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
@@ -96,6 +98,37 @@ impl From<rusqlite::Error> for MemoryError {
     }
 }
 
+/// Three-tier scope visibility check used by the default `export_scoped`
+/// implementation and the `commands::memory` filter path.
+///
+/// Mirrors the SQL `WHERE` rules in `SqliteMemoryProvider::recall_scoped`:
+/// - `session+project` → own session OR project-level OR global.
+/// - `session-only`    → own session OR global.
+/// - `project-only`    → project-level OR global.
+/// - `global`          → only truly unscoped entries.
+#[must_use]
+pub(crate) fn entry_matches_scope_default(
+    entry: &MemoryEntry,
+    scope: &MemoryExecutionScope,
+) -> bool {
+    match (&scope.session_id, &scope.project_id) {
+        (Some(s), Some(p)) => {
+            entry.session_id.as_deref() == Some(s.as_str())
+                || (entry.session_id.is_none() && entry.project_id.as_deref() == Some(p.as_str()))
+                || (entry.session_id.is_none() && entry.project_id.is_none())
+        }
+        (Some(s), None) => {
+            entry.session_id.as_deref() == Some(s.as_str())
+                || (entry.session_id.is_none() && entry.project_id.is_none())
+        }
+        (None, Some(p)) => {
+            (entry.session_id.is_none() && entry.project_id.as_deref() == Some(p.as_str()))
+                || (entry.session_id.is_none() && entry.project_id.is_none())
+        }
+        (None, None) => entry.session_id.is_none() && entry.project_id.is_none(),
+    }
+}
+
 /// Trait for memory storage providers
 /// Implement this trait to provide different storage backends (in-memory, file-based, etc.)
 #[async_trait]
@@ -162,6 +195,46 @@ pub trait MemoryProvider: Send + Sync {
     ) -> Result<Vec<MemoryEntry>, MemoryError> {
         let _ = scope; // scope is ignored by the default no-op delegation
         self.recall(query, category, limit).await
+    }
+
+    /// Export memory entries within a specific execution scope.
+    ///
+    /// Same three-tier visibility rules as `recall_scoped` but without a query
+    /// filter — used by the Memory Browser export / scoped-listing surface.
+    /// Override this in concrete providers to push the scope filter down to
+    /// the storage engine; the default fans out to `export()` plus an
+    /// in-memory filter for backward-compat.
+    async fn export_scoped(
+        &self,
+        category: Option<&str>,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        let entries = self.export(category).await?;
+        Ok(entries
+            .into_iter()
+            .filter(|e| entry_matches_scope_default(e, scope))
+            .collect())
+    }
+
+    /// Promote (or demote) an existing entry to a different scope.
+    ///
+    /// Used by the memory-promotion pipeline (`MemoryPromotionEngine`) to move
+    /// an entry from `session` → `project` or `project` → `global`.  The
+    /// default implementation is a no-op for backward compatibility — override
+    /// in concrete providers that support in-place scope updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::KeyNotFound`] when no entry with `key` exists.
+    async fn promote_scope(
+        &self,
+        key: &str,
+        target_scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        let _ = (key, target_scope);
+        Err(MemoryError::Generic(
+            "promote_scope not supported by this provider".to_string(),
+        ))
     }
 
     /// Apply Weibull importance decay to all stored entries.

@@ -459,4 +459,71 @@ mod tests {
             .unwrap();
         assert!(!result);
     }
+
+    // -----------------------------------------------------------------
+    // Zero-dependency HRR coverage (H5)
+    //
+    // These tests intentionally avoid HybridMemoryProvider so they don't
+    // need a FastEmbed model download or LanceDB on disk. They exercise
+    // the algebraic surface (bind / unbind / probe / contradict) directly
+    // against `HolographicStore` using `MockEmbedder`-derived vectors.
+    // -----------------------------------------------------------------
+
+    use super::super::store::HolographicStore;
+    use super::super::{bind, unbind};
+    use crate::modules::memory::embedding::MockEmbedder;
+
+    fn embed_vec(embedder: &MockEmbedder, text: &str) -> HRRVector {
+        HRRVector(embedder.embed_one(text).expect("mock embed"))
+    }
+
+    #[tokio::test]
+    async fn hrr_store_round_trip_with_mock_embedder() {
+        let embedder = MockEmbedder::new();
+        let store = HolographicStore::new(MockEmbedder::DIMENSION);
+
+        let key = "fact:capital_of_france";
+        let value = embed_vec(&embedder, "Paris");
+        store.store(key, &value).await.expect("store");
+
+        // Probing with the same vector should surface the same key at rank 0.
+        let hits = store.probe(&value, 5).await;
+        assert!(!hits.is_empty(), "probe should return at least one hit");
+        assert_eq!(hits[0].0, key, "expected stored key as top hit");
+    }
+
+    #[tokio::test]
+    async fn hrr_bind_unbind_recovers_value_with_mock_embedder() {
+        let embedder = MockEmbedder::new();
+
+        let key_vec = embed_vec(&embedder, "likes");
+        let value_vec = embed_vec(&embedder, "pizza");
+
+        let composite = bind(&key_vec, &value_vec);
+        let recovered = unbind(&composite, &key_vec);
+
+        // Recovered vector should correlate strongly with the original value.
+        // We use a generous threshold because mock vectors are random
+        // unit-norm — the algebraic structure is what matters here.
+        let dot: f32 = recovered
+            .0
+            .iter()
+            .zip(value_vec.0.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        assert!(
+            dot > 0.1,
+            "unbind should recover non-trivial correlation (dot = {dot})"
+        );
+    }
+
+    #[tokio::test]
+    async fn hrr_probe_returns_empty_for_missing_key() {
+        let embedder = MockEmbedder::new();
+        let store = HolographicStore::new(MockEmbedder::DIMENSION);
+
+        let probe_vec = embed_vec(&embedder, "never_stored");
+        let hits = store.probe(&probe_vec, 5).await;
+        assert!(hits.is_empty(), "expected no hits in empty store");
+    }
 }

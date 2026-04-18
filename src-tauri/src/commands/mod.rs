@@ -154,7 +154,8 @@ pub use agent::{
 };
 #[allow(unused_imports)]
 pub use browser::{
-    close_browser_session, get_browser_sessions, get_chrome_status, ChromeStatusPayload,
+    close_browser_session, get_browser_sessions, get_chrome_status, request_browser_status,
+    ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use harness::{
@@ -162,7 +163,10 @@ pub use harness::{
     stop_harness_recording, HarnessStatusResponse, HarnessTelemetryResponse,
 };
 #[allow(unused_imports)]
-pub use memory::{memory_delete, memory_export, memory_purge, memory_recall, MemoryEntryDto};
+pub use memory::{
+    memory_delete, memory_export, memory_promote, memory_promotion_candidates, memory_purge,
+    memory_recall, MemoryEntryDto, MemoryPromotionCandidateDto,
+};
 #[allow(unused_imports)]
 pub use project::{
     create_permanent_worktree, create_project, delete_project, ensure_default_workdir, get_project,
@@ -201,8 +205,9 @@ pub use web_search::{
 };
 #[allow(unused_imports)]
 pub use window::{
-    close_settings_window, focus_main_window_and_prefill_prompt, open_browser_viewer_window,
-    open_settings_window,
+    browser_viewer_go_back, browser_viewer_go_forward, browser_viewer_reload,
+    close_settings_window, focus_main_window_and_prefill_prompt, navigate_viewer_window,
+    open_browser_viewer_window, open_settings_window,
 };
 
 // Onboarding commands (Phase 6G)

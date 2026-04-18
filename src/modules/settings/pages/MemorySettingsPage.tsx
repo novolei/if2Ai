@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Brain, Download, AlertTriangle, Check } from 'lucide-react'
+import { Brain, Download, AlertTriangle, Check, Sliders } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import {
   getMemoryConfig,
   setMemoryConfig,
   exportTrajectories,
   type MemoryConfigInput,
+  type MemoryRecallMode,
+  type MemoryPolicyEnforceMode,
 } from '@/lib/tauri'
 
 interface SlotConfig {
@@ -32,6 +34,11 @@ export function MemorySettingsPage() {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Memory Control Plane V1 feature flags (FE-B / FE-Settings).
+  const [controlPlaneEnabled, setControlPlaneEnabled] = useState(true)
+  const [recallMode, setRecallMode] = useState<MemoryRecallMode>('hybrid')
+  const [policyEnforceMode, setPolicyEnforceMode] = useState<MemoryPolicyEnforceMode>('shadow')
+
   const totalPercentage = slots.reduce((sum, s) => sum + s.value, 0)
   const isValid = totalPercentage === 100
 
@@ -48,6 +55,9 @@ export function MemorySettingsPage() {
         { ...DEFAULT_SLOTS[2], value: cfg.semantic_pct },
         { ...DEFAULT_SLOTS[3], value: cfg.working_pct },
       ])
+      setControlPlaneEnabled(cfg.control_plane_v1_enabled)
+      setRecallMode(cfg.recall_mode)
+      setPolicyEnforceMode(cfg.policy_enforce_mode)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -81,6 +91,9 @@ export function MemorySettingsPage() {
         episodic_pct: slots[1].value,
         semantic_pct: slots[2].value,
         working_pct: slots[3].value,
+        control_plane_v1_enabled: controlPlaneEnabled,
+        recall_mode: recallMode,
+        policy_enforce_mode: policyEnforceMode,
       }
       await setMemoryConfig(config)
       toast.success('配置已保存')
@@ -191,6 +204,105 @@ export function MemorySettingsPage() {
           >
             {saving ? '保存中…' : '保存配置'}
           </button>
+        </div>
+      </SettingsSurface>
+
+      {/* ── Memory Control Plane V1 feature flags ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-blue-500/[0.1]">
+            <Sliders className="h-3.5 w-3.5 text-blue-600" />
+          </div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+            记忆控制平面 V1
+          </div>
+        </div>
+        <p className="mb-4 text-[11.5px] text-muted-foreground">
+          控制混合检索、策略执行模式与新一代记忆管线总开关
+        </p>
+
+        {/* Master kill-switch */}
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-black/[0.06] bg-black/[0.015] px-3 py-2.5">
+          <div>
+            <div className="text-[12px] font-semibold text-foreground/85">启用 Control Plane V1</div>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              关闭后所有记忆请求回退到 v0 路径（仅排错使用）
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={controlPlaneEnabled}
+            aria-label="启用 Memory Control Plane V1"
+            onClick={() => setControlPlaneEnabled((v) => !v)}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+              controlPlaneEnabled ? 'bg-jade' : 'bg-black/15'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                controlPlaneEnabled ? 'translate-x-5' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Recall mode radio */}
+        <div className="mb-4">
+          <div className="mb-1.5 text-[12px] font-semibold text-foreground/85">检索模式 (recall_mode)</div>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            <span className="font-mono">lexical</span> 仅词法检索；<span className="font-mono">hybrid</span> 启用向量 + FTS + 情景融合
+          </p>
+          <div className="flex gap-2" role="radiogroup" aria-label="Recall mode">
+            {(['lexical', 'hybrid'] as MemoryRecallMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={recallMode === mode}
+                onClick={() => setRecallMode(mode)}
+                className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-medium transition-all ${
+                  recallMode === mode
+                    ? 'border-jade/40 bg-jade/10 text-jade'
+                    : 'border-black/[0.09] bg-black/[0.02] text-foreground/65 hover:border-black/[0.18]'
+                }`}
+              >
+                <div className="font-mono text-[11.5px] font-semibold">{mode}</div>
+                <div className="mt-0.5 text-[10.5px] opacity-75">
+                  {mode === 'lexical' ? '保守，无 embedding 依赖' : '推荐，多源融合排序'}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Policy enforce mode radio */}
+        <div>
+          <div className="mb-1.5 text-[12px] font-semibold text-foreground/85">策略执行模式 (policy_enforce_mode)</div>
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            <span className="font-mono">shadow</span> 仅审计不阻断；<span className="font-mono">enforce</span> 拒绝违规写入
+          </p>
+          <div className="flex gap-2" role="radiogroup" aria-label="Policy enforce mode">
+            {(['shadow', 'enforce'] as MemoryPolicyEnforceMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={policyEnforceMode === mode}
+                onClick={() => setPolicyEnforceMode(mode)}
+                className={`flex-1 rounded-xl border px-3 py-2 text-[12px] font-medium transition-all ${
+                  policyEnforceMode === mode
+                    ? 'border-jade/40 bg-jade/10 text-jade'
+                    : 'border-black/[0.09] bg-black/[0.02] text-foreground/65 hover:border-black/[0.18]'
+                }`}
+              >
+                <div className="font-mono text-[11.5px] font-semibold">{mode}</div>
+                <div className="mt-0.5 text-[10.5px] opacity-75">
+                  {mode === 'shadow' ? '默认，灰度阶段使用' : '生产强制，写入受限'}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       </SettingsSurface>
 

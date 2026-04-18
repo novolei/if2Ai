@@ -1,0 +1,736 @@
+# Phase 7C: Browser Subsystem Remediation — 12 Gap 全量纠正
+#
+# Design-ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md
+# Goal: 把 Phase 7B 完成后的 12 个真实缺陷全部修复，
+#       让 if2Ai 的 browser/web 工具链从 demo 级升级到 production 级，
+#       让 AI 能完成"代我登录""读 GitHub PR""下载发票"等真实代理任务
+
+meta:
+  phase: 7C
+  name: Browser Subsystem Remediation — 12 Gap Closure
+  status: draft
+  design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md
+  created: 2026-04-18
+  total_slices: 13
+  human_checkpoints:
+    - after_slice: "7C.4"
+      reason: >
+        P0 四大块（profile 持久化 / vision pipeline / headed 接管 / system prompt routing）
+        完成。人工验证：(1) AI 能登录 GitHub 并保留 cookies；
+        (2) screenshot 在 vision LLM 上真的"被看见"（验证 OpenAI/Anthropic 转换）；
+        (3) 用户接管 → 释放 → AI 继续 完整链路；
+        (4) 简单"今天天气"任务 LLM 不再无脑 launch browser。
+        人工 review 通过后开放 P1。
+    - after_slice: "7C.8"
+      reason: >
+        P1 四大块（wait 状态机 / multi-tab / iframe / download）完成。
+        人工验证：(1) 在 SPA 站点 click 后 wait(networkidle) 行为正确；
+        (2) target=_blank 链接打开后 AI 能 switch_tab 看到；
+        (3) iframe 内的 reCAPTCHA / YouTube embed 在 snapshot 中可见；
+        (4) 下载 .csv 后文件出现在 ~/.if2ai/desk/<session>/downloads/。
+        人工 review 通过后开放 P2。
+
+dashboard:
+  last_updated: '2026-04-18'
+  completed_slices: []
+  current_slice: '7C.1'
+  blocked: []
+  notes: >
+    Phase 7C 初始化（草案）。激活方式：将本 YAML phase_status 改为 active，
+    并将 docs/exec-plans/index.md 中本 phase 的状态标为 [当前]。
+    13 slices，~25-30 工程日。所有改动严格保持向后兼容（旧 API 保留 + Ephemeral 测试 fallback）。
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  P0 — 让 AI 真正能用浏览器
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.1: BrowserProfileMode 持久化 cookies/login
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.1"
+    name: "Browser Profile Persistence — cookies/login 跨重启保留"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G1
+    estimated_days: 2
+
+    current_state: |
+      src-tauri/src/modules/browser/session.rs:117 用 tempfile::Builder::tempdir() 建临时
+      user-data-dir，再 :167 调 start_incognito_context() 套一层无痕。
+      Chromium 进程退出后所有 cookies / localStorage / IndexedDB / cache 全部清空。
+      "帮我看 GitHub 通知"、"清掉我 Gmail 垃圾" 这类需要登录的任务 100% 失败。
+      openhanako 用 session.fromPartition("persist:hana-browser") 自动落盘到
+      ~/Library/Application Support/openhanako/Partitions/，cookies 永久持久化。
+
+    must_implement:
+      - "src-tauri/src/modules/browser/profile.rs — pub enum BrowserProfileMode { PerSessionPersistent, Shared, Ephemeral }"
+      - "BrowserProfileMode::from_env_or_config(if2ai_home) — 解析 env IF2AI_BROWSER_PROFILE_MODE + ~/.if2ai/browser.toml [browser] profile_mode 字段"
+      - "BrowserProfileMode::resolve(if2ai_home, session_id) -> Result<ProfileHandle> — 创建/获取 user-data-dir，PerSessionPersistent 用 <data_dir>/if2ai/browser-profiles/<session_id>/、Shared 用 .../_shared/、Ephemeral 用 tempdir"
+      - "pub struct ProfileHandle { pub path: PathBuf, _guard: Option<TempDir> } — Drop 仅在 Ephemeral 删目录"
+      - "BrowserSession::new 签名改为 (session_id, profile_mode: BrowserProfileMode, if2ai_home: &Path) -> Result<Self>"
+      - "BrowserSession 移除 start_incognito_context() 调用，直接 browser.new_page(\"about:blank\")"
+      - "BrowserSession::_data_dir 字段改名为 _profile: ProfileHandle"
+      - "BrowserSession::new_for_test(id) -> Result<Self> 包装函数 — 默认 Ephemeral 模式 + tempdir，给所有现有测试用"
+      - "BrowserRegistry::new 签名改为 (cold_state_path, profile_mode, if2ai_home)"
+      - "BrowserRegistry::for_test(path) -> Arc<Self> 包装 — Ephemeral 模式"
+      - "main.rs 用 BrowserProfileMode::from_env_or_config(&if2ai_dir) 构造 registry"
+      - "src-tauri/src/commands/browser.rs 新增 #[tauri::command] clear_browser_profile(session_id) — 必须 session 已 close 才能调用"
+      - "src-tauri/src/commands/browser.rs 新增 #[tauri::command] list_browser_profiles() -> Vec<ProfileEntry { session_id, path, size_bytes, last_used }>"
+      - "src-tauri/gen/schemas/capabilities.json 注册 clear_browser_profile + list_browser_profiles 权限"
+      - "browser.toml 配置示例文件：~/.if2ai/browser.toml.example，含 profile_mode / max_profile_disk_mb / max_total_disk_mb 注释"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/profile.rs
+      - src-tauri/src/modules/browser/mod.rs
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/commands/browser.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+
+    acceptance:
+      - "cargo test browser::profile 全通过"
+      - "集成测试 browser_profile_persistence: launch(PerSessionPersistent) → navigate → set cookie via evaluate → close → relaunch → cookie 仍然存在"
+      - "集成测试 browser_profile_ephemeral: launch(Ephemeral) → set cookie → close → relaunch → cookie 不存在"
+      - "clear_browser_profile 在 session 仍 running 时返回 'session must be closed first' 错误"
+      - "list_browser_profiles 返回的 size_bytes 是真实磁盘占用（非 0）"
+      - "现有 712 个测试无回归（旧测试通过 BrowserSession::new_for_test 路径）"
+
+    review_checklist:
+      - "BrowserProfileMode 三个 variant 都有 doc comment"
+      - "ProfileHandle::Drop 实现仅在 Ephemeral 时删目录（用 match arm 显式判断）"
+      - "BrowserSession::new 不再调用 start_incognito_context()"
+      - "main.rs 默认 PerSessionPersistent，可通过 env / toml 切换"
+      - "无 unwrap()，无 expect() 在生产路径"
+      - "Tauri 命令在 capabilities.json 中精确声明，无 wildcard"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.2: ToolOutput 多模态 + Vision Pipeline
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.2"
+    name: "Multimodal ToolOutput + Vision Pipeline — LLM 真的看见截图"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G2
+    estimated_days: 3
+
+    current_state: |
+      src-tauri/src/modules/tools/registry.rs:209 ToolHandler 返回 Result<String, ToolError>
+      ——只能返回字符串。
+      browser_tool.rs:367 screenshot 把 base64 当字符串"data:image/jpeg;base64,..."返回，
+      LLM 看到一坨 ASCII 而非真正的 image content part：浪费 30-100k token、看不见图。
+      OpenAI/Anthropic/Gemini 三个 provider adapter 都没有 image content part 转换路径。
+
+    must_implement:
+      - "src-tauri/src/modules/tools/output.rs — pub enum ToolResultPart { Text { text }, Image { mime, data, alt: Option<String> } } + #[serde(tag = \"kind\", rename_all = \"snake_case\")]"
+      - "pub struct ToolOutput { pub parts: Vec<ToolResultPart> } 含 ToolOutput::text(s)、ToolOutput::image(mime, data) 构造器"
+      - "ToolOutput::to_legacy_string() — 折叠为纯文本（Image → \"[image: <mime> <bytes>B]\" 占位）"
+      - "ToolOutput::byte_size() — 总字节数"
+      - "ToolOutput::text_byte_size() / image_byte_size() — 拆分计算"
+      - "registry.rs ToolHandler 类型改为 Pin<Box<Fn(...) -> Future<Output = Result<ToolOutput, ToolError>>>>"
+      - "registry.rs 加 impl<F, Fut> From<F> for ToolHandler 兼容包装：旧 Result<String, ToolError> handler 自动 wrap 成 ToolOutput::text(s)"
+      - "ToolEntry 新增字段 max_text_bytes: Option<usize> 与 max_image_bytes: Option<usize>，max_result_size 标记为 deprecated 但保留兼容"
+      - "registry.rs dispatch_with_context 返回 Result<ToolOutput, ToolError>；旧调用方走 .to_legacy_string()"
+      - "tools/builtin/browser_tool.rs screenshot action 返回 ToolOutput { parts: [Text(简短描述), Image { mime: image/jpeg, data, alt }] }"
+      - "tools/builtin/browser_tool.rs 其余 12 个 action 全部从 Ok(String) 改为 Ok(ToolOutput::text(..))"
+      - "src-tauri/src/modules/api/mod.rs 加 trait ProviderCapabilities { fn supports_vision(&self) -> bool }"
+      - "src-tauri/src/modules/api/openai.rs 处理 ToolResultPart::Image → {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:<mime>;base64,<data>\"}}"
+      - "src-tauri/src/modules/api/anthropic.rs 处理 → {\"type\": \"image\", \"source\": {\"type\": \"base64\", \"media_type\": <mime>, \"data\": <data>}}"
+      - "src-tauri/src/modules/api/gemini.rs 处理 → {\"inlineData\": {\"mimeType\": <mime>, \"data\": <data>}}"
+      - "vision-incapable provider 收到 Image 时跳过 base64，emit \"[image not shown to non-vision model]\" 占位"
+      - "image 尺寸超 5MB 时各 adapter 用 image crate 自动 resize 至 1280×800（保持长宽比）"
+
+    impl_targets:
+      - src-tauri/src/modules/tools/output.rs
+      - src-tauri/src/modules/tools/mod.rs
+      - src-tauri/src/modules/tools/registry.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+      - src-tauri/src/modules/api/mod.rs
+      - src-tauri/src/modules/api/openai.rs
+      - src-tauri/src/modules/api/anthropic.rs
+      - src-tauri/src/modules/api/gemini.rs
+      - src-tauri/Cargo.toml
+
+    acceptance:
+      - "cargo test tools::output 全通过（含 Serialize/Deserialize roundtrip 测试）"
+      - "cargo test api::openai::vision、api::anthropic::vision、api::gemini::vision 各有 image part 转换 unit test"
+      - "ToolOutput::to_legacy_string() 对 5 种组合（text only / image only / text+image / multi-image / empty）有覆盖"
+      - "browser screenshot action 返回 ToolOutput.parts 长度为 2（Text + Image），Image.data 是有效 base64"
+      - "max_image_bytes 默认 5MB，超出返回 ToolError::OutputTooLarge"
+      - "vision-incapable provider 收到 Image part 时不 panic，输出含 '[image not shown' 占位"
+      - "回归：所有现有 30+ 工具单测通过（旧 String 返回路径走 ToolHandler::From wrapper）"
+
+    review_checklist:
+      - "ToolResultPart 与 ToolOutput 实现 Serialize / Deserialize / Clone / Debug"
+      - "ToolHandler::From 自动 wrap 兼容老签名，不破坏任何现有 builtin tool 注册"
+      - "三个 provider adapter 各有显式 supports_vision 字段；Gemini Pro vs Pro Vision 区分"
+      - "image resize 用 image crate 在 spawn_blocking 中执行，不阻塞 async runtime"
+      - "无 unwrap()；image decode 失败返回 ToolError::Handler"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.3: Headed Mode + 用户真接管
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.3"
+    name: "Headed Mode + 真正的用户接管"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G3
+    estimated_days: 3
+    depends_on: ["7C.1"]
+
+    current_state: |
+      src-tauri/src/modules/browser/session.rs:134 BrowserConfig 永远不调 with_head()，
+      AI 操控的是 headless Chromium 子进程。
+      src/modules/browser-viewer/BrowserViewerPage.tsx + viewer_registry.rs:23 是
+      "视觉幻觉"——用户看到的是 *另一个* Tauri WebView，不共享 cookies / DOM / session storage，
+      用户在 viewer 里点击对 AI 那个 Chromium 完全没影响，
+      "我先登录一下让 AI 接着用"做不到。
+
+    must_implement:
+      - "BrowserSession 新增字段 pub headed: bool"
+      - "BrowserSession::new 加 headed: bool 参数，headed=true 时 BrowserConfig::builder().with_head().arg(\"--window-position=900,80\").arg(\"--window-size=1024,768\")"
+      - "BrowserRegistry::relaunch_with_mode(session_id, headed) -> Result<NavigateResult> — close + new + 复用同一 profile + 自动 navigate 到 last_known_url"
+      - "BrowserRegistry 新增字段 takeover_flags: DashMap<String, bool>"
+      - "BrowserRegistry::set_takeover(session_id, taken) / is_taken_over(session_id) -> bool"
+      - "src-tauri/src/commands/browser.rs 新增 #[tauri::command] request_browser_takeover(session_id) -> NavigateResult — set_takeover(true) + relaunch_with_mode(true)"
+      - "src-tauri/src/commands/browser.rs 新增 #[tauri::command] release_browser_takeover(session_id, back_to_headless: bool)"
+      - "browser_tool.rs execute_browser_action 入口检查 is_taken_over，是则返回 ToolError::Handler(\"User has taken over the browser; AI tools are paused. Wait for the next user message before retrying.\")"
+      - "src/modules/browser-viewer/BrowserViewerPage.tsx 移除掉 invoke('navigate_viewer_window') / setRunning + setCurrentUrl 后立即 webview.navigate 的逻辑"
+      - "BrowserViewerPage.tsx 改为 thumbnail polling（监听 browser-status 事件，img src 直接是 base64 thumbnail）"
+      - "BrowserViewerPage.tsx 顶部加 \"接管浏览器\" / \"释放接管\" 切换按钮，绑定 request_browser_takeover / release_browser_takeover"
+      - "src/components/browser/BrowserCard.tsx 新增 \"用户接管中\" 徽章状态（is_taken_over=true 时显示 amber 色 indicator）"
+      - "src/lib/tauri.ts 加 requestBrowserTakeover / releaseBrowserTakeover invoke wrapper + 类型"
+      - "src-tauri/gen/schemas/capabilities.json 注册两个新命令"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/commands/browser.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+      - src/modules/browser-viewer/BrowserViewerPage.tsx
+      - src/components/browser/BrowserCard.tsx
+      - src/lib/tauri.ts
+      - src-tauri/gen/schemas/capabilities.json
+
+    acceptance:
+      - "BrowserConfig::with_head() 仅在 headed=true 时调用（cargo test browser::session::headed_only_when_requested）"
+      - "relaunch_with_mode 在重启前后 cookies 保留（依赖 7C.1 PerSessionPersistent profile）"
+      - "集成测试 browser_takeover: navigate → request_takeover → 真实 Chrome 窗口出现 → AI tool call 返回 'paused' 错误 → release → AI 调用恢复"
+      - "BrowserViewerPage 不再调用 webview.navigate（grep 验证）"
+      - "BrowserCard 在 is_taken_over=true 时显示徽章 + 隐藏所有 AI 操作按钮"
+      - "request_browser_takeover 在 DISPLAY 缺失（Linux）时返回 'no display available' 错误"
+
+    review_checklist:
+      - "is_taken_over 用 DashMap 实现，无锁竞争"
+      - "BrowserViewerPage.tsx 不再有任何 webview.navigate / invoke navigate_viewer_window 调用（保留 import 但不用）"
+      - "release_browser_takeover 的 back_to_headless 参数有 default = true 行为"
+      - "system prompt 中通过 G4 routing block 告知 LLM 收到 'paused' 错误的正确处理（与 7C.4 联动）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.4: System Prompt Tools Routing
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.4"
+    name: "System Prompt Tools Routing — 让 LLM 知道何时用哪个 web 工具"
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G4
+    estimated_days: 1
+    depends_on: ["7C.3"]
+
+    current_state: |
+      src-tauri/src/modules/runtime/prompt.rs:734 系统提示无任何
+      web_search / web_fetch / browser 之间的 routing 指引。
+      LLM 看到三个工具会无脑首选 browser（看起来最强大），导致每次都冷启 Chrome（3-8s）+ 高
+      bot detection 概率。openhanako 在 core/agent.js:676 给出明确路由：
+      "browser 只在登录/表单/SPA/视觉布局时用；DO NOT launch browser when web_search or
+      web_fetch can do the job."
+
+    must_implement:
+      - "src-tauri/src/modules/runtime/prompt_tools_guide.rs — pub fn web_tools_routing_block(registered: &[&str]) -> Option<String>"
+      - "web_tools_routing_block 仅当 registered 中有 ≥2 个 ['web_search', 'web_fetch', 'browser'] 时返回 Some(块)"
+      - "块内容 4 段：(1) 三工具+web_research 的成本对比；(2) 何时升级到 browser 的明确条件清单；(3) 'DO NOT' 反例；(4) takeover paused 错误处理"
+      - "pub fn file_tools_routing_block(registered: &[&str]) -> Option<String> — 顺手补 read_file / grep_search / glob_search 路由（同样可选）"
+      - "prompt.rs build_system_prompt 调用 web_tools_routing_block 与 file_tools_routing_block，结果非 None 时插入 sections"
+      - "tool_registry 暴露 list_names_borrowed() -> Vec<&str> 给 prompt builder 用"
+      - "单测覆盖：(a) 注册 3 web 工具 → 包含全部内容；(b) 仅注册 web_fetch → 返回 None；(c) web_fetch + browser → 包含说明；(d) 全部不注册 → None"
+
+    impl_targets:
+      - src-tauri/src/modules/runtime/prompt_tools_guide.rs
+      - src-tauri/src/modules/runtime/prompt.rs
+      - src-tauri/src/modules/runtime/mod.rs
+      - src-tauri/src/modules/tools/registry.rs
+
+    acceptance:
+      - "cargo test runtime::prompt_tools_guide::tests 全通过（4 种组合）"
+      - "在开发环境启动 app，检查系统提示中确实包含 'web_search → web_fetch → browser' routing 段"
+      - "harness 集成测试：mock LLM 收到含 routing 块的 system prompt 时不应在 'what's the weather today' 任务中调用 browser tool"
+
+    review_checklist:
+      - "web_tools_routing_block 阈值 ≥2 工具才插入，避免单工具时浪费 token"
+      - "块内文本明确包含 'DO NOT use browser if web_fetch can do the job'"
+      - "块内文本明确告知 LLM 收到 'paused' 错误时的处理（联动 7C.3）"
+      - "prompt token 增量 ≤ 350"
+      - "list_names_borrowed 不分配新 String（性能）"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Human Checkpoint #1 — 7C.4 后人工 review
+  # ═══════════════════════════════════════════════════════════════════
+  # 验证项：
+  # 1. cargo test --workspace 全通过
+  # 2. 启动 app，让 AI 完成 "登录 GitHub 并截图我的通知页" 任务
+  # 3. 验证 screenshot 在 OpenAI gpt-4o 上真的"被看见"（让 LLM 描述图中内容）
+  # 4. 用户接管 → 释放 → AI 继续 完整链路
+  # 5. "今天天气怎么样" 任务 LLM 用 web_search 而不是 browser
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  P1 — 让浏览器交互更智能、更覆盖
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.5: Wait State Machine + 时序修正
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.5"
+    name: "Wait State Machine + click/type 时序修正"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G5
+    estimated_days: 2
+    depends_on: ["7C.4"]
+
+    current_state: |
+      src-tauri/src/modules/browser/session.rs:539 wait() 完全忽略 _state 参数，
+      不管传 'load' / 'domcontentloaded' / 'networkidle' 都走 wait_for_navigation()。
+      session.rs:390 click 后 sleep(200ms)、:441 type sleep(150ms)、:471 scroll sleep(150ms)、
+      :526 press_key sleep(150ms) ——SPA 路由切换需 300-600ms，AI 经常拿到变更前的快照导致
+      重复点击 / 双击 / 重复提交。
+
+    must_implement:
+      - "session.rs pub enum WaitState { DomContentLoaded, Load, NetworkIdle } + WaitState::from_str(&str) -> Self"
+      - "BrowserSession::wait 重写：根据 WaitState 选择 EventDomContentEventFired / EventLoadEventFired / wait_network_idle"
+      - "BrowserSession::wait_network_idle(deadline, quiet_window=500ms) -> Result<()> — tokio::select 监听 EventRequestWillBeSent + EventResponseReceived，inflight 计数 0 持续 quiet_window 即返回"
+      - "session.rs 常量：DELAY_AFTER_CLICK_MS=600, DELAY_AFTER_TYPE_MS=300, DELAY_AFTER_TYPE_ENTER_MS=800, DELAY_AFTER_SCROLL_MS=400, DELAY_AFTER_KEY_MS=300"
+      - "click / type_text / scroll / press_key 改为 'sleep(常量) + tokio::time::timeout(1500ms, wait_for_navigation())' 双保险"
+      - "BrowserRegistry::wait 签名改为 (session_id, timeout_ms, state: WaitState)"
+      - "browser_tool.rs wait action 把 args.state 字符串映射到 WaitState"
+      - "browser_tool.rs input_schema 'state' 改为 enum: ['load', 'domcontentloaded', 'networkidle']，default 'domcontentloaded'"
+      - "browser_tool.rs click / type / scroll / key actions schema 加 quick: bool（true 时跳过等待，AI 显式选择）"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+
+    acceptance:
+      - "cargo test browser::session::wait_state_machine — 三种 state 各自单测"
+      - "集成测试 browser_wait_networkidle: navigate example.com → wait('networkidle', 5000) 在 < 2s 返回"
+      - "集成测试 browser_click_spa_timing: click → 立即 snapshot 与 click → wait → snapshot 显示明显差异（前者拿到旧页，后者拿到新页）"
+      - "集成测试 browser_quick_skip: click({quick: true}) 跳过等待，节省 ~1s"
+      - "回归：现有 click / type / scroll 单测全通过（默认行为只是等更久）"
+
+    review_checklist:
+      - "WaitState 三个 variant 都有 doc comment"
+      - "wait_network_idle 用 tokio::select! 不阻塞 runtime"
+      - "默认延迟从 200/150/150/150 → 600/300/400/300，与 openhanako (800/300-800/500) 对齐但略保守"
+      - "tool schema 'state' 是真正的 JSON Schema enum 不是自由 string"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.6: Multi-Tab / Popup 跟踪
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.6"
+    name: "Multi-Tab / Popup 跟踪 — target=_blank 不再丢失"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G6
+    estimated_days: 2
+    depends_on: ["7C.5"]
+
+    current_state: |
+      src-tauri/src/modules/browser/session.rs:74 BrowserSession 持有单一 page: Page 字段。
+      window.open 或 <a target=\"_blank\"> 在 chromiumoxide 中创建新 Page，但 BrowserSession.page
+      仍指向旧页 → AI 看到原页没变误以为 click 失败，新窗口的内容（支付确认、商品详情）完全失明。
+
+    must_implement:
+      - "BrowserSession 字段改为 pages: Vec<Page> + active_idx: usize（移除原 page 字段）"
+      - "BrowserSession::active_page(&self) -> &Page 辅助方法，所有原 self.page 调用替换"
+      - "BrowserSession::new 监听 EventTargetCreated（type=='page'），新 page attach 后追加到 pages，可配置 auto_focus_new"
+      - "BrowserSession::list_tabs(&self) -> Vec<TabInfo { idx, url, title, active }>"
+      - "BrowserSession::switch_tab(&mut self, idx) -> Result<String> — 改 active_idx，返回新 active 的 snapshot"
+      - "BrowserSession::close_tab(&mut self, idx) -> Result<()> — 关闭指定 page，调整 active_idx"
+      - "硬上限 max_tabs=10，超出自动关闭最旧的非 active tab"
+      - "BrowserRegistry 委托 list_tabs / switch_tab / close_tab"
+      - "browser_tool.rs schema action enum 新增 'tabs' / 'switch_tab' / 'close_tab'，参数 tab_index: u32"
+      - "browser_tool.rs tabs action 返回格式化文本：'[0] * https://current — Title'，星号标记 active"
+      - "snapshot 输出末尾追加 '## Other tabs (use action=switch_tab):' 段（仅当 pages.len() > 1）"
+      - "browser.toml 配置：[browser.tabs] auto_focus_new = true"
+      - "src-tauri/src/modules/browser/events.rs 新增 BrowserTabsEvent { session_id, tabs: Vec<TabInfo> } + emit on tab change"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/browser/events.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+
+    acceptance:
+      - "cargo test browser::session::multi_tab — 单测覆盖 list_tabs / switch_tab / close_tab"
+      - "集成测试 browser_target_blank: navigate google.com → 评估 window.open('https://example.com') → list_tabs 返回 2 项 → switch_tab(1) → snapshot 是 example.com"
+      - "集成测试 browser_max_tabs: 连续 open 11 个 tab → list_tabs 返回 10 项（最旧的被关）"
+      - "switch_tab 越界返回 BrowserError::TabIndexOutOfRange"
+      - "snapshot 含多 tab 时末尾正确追加 '## Other tabs' 段"
+
+    review_checklist:
+      - "EventTargetCreated 监听器在 session close 时通过 _watcher: JoinHandle 正确取消"
+      - "active_page() 在 active_idx 越界时 panic 不可达（用 assert! + 单测）"
+      - "ref 编号在 switch_tab 后重新生成（每个 tab 自有 data-if2ai-ref 序列）"
+      - "max_tabs 硬上限避免 OOM 攻击"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.7: Frame-Aware Snapshot
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.7"
+    name: "Frame-Aware Snapshot — iframe 不再失明"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G7
+    estimated_days: 2.5
+    depends_on: ["7C.6"]
+
+    current_state: |
+      src-tauri/src/modules/browser/snapshot.rs SNAPSHOT_SCRIPT 的 walk(document.body, 0)
+      只遍历主 frame，所有 iframe 内容（YouTube embed / reCAPTCHA / Stripe Checkout / 广告位）
+      AI 完全看不见。
+
+    must_implement:
+      - "snapshot.rs SNAPSHOT_SCRIPT 加 walkIframes(out, depth) 函数，对 same-origin iframe 通过 frame.contentDocument 同步访问并递归 walk"
+      - "snapshot.rs SNAPSHOT_SCRIPT 对 cross-origin iframe（contentDocument 抛 SecurityError）输出 '--- iframe (cross-origin): <src> [content not directly accessible] ---' 占位"
+      - "session.rs BrowserSession::run_snapshot 重构：先 eval_snapshot_in_frame(主 frame) → 遍历 frames() → 对每个 cross-origin frame 调 eval_snapshot_in_frame 单独抓"
+      - "session.rs eval_snapshot_in_frame(frame_id) -> Result<String> — 用 Page.createIsolatedWorld + Runtime.evaluate(contextId) 在指定 frame 跑 SNAPSHOT_SCRIPT"
+      - "ref 编号格式：主 frame [N]，iframe [F<frame_idx>.<N>]，frame_idx 从 1 开始连号"
+      - "snapshot 头部输出说明：'Refs: [N] for main frame, [F<n>.<m>] for iframe <n>'"
+      - "session.rs click / type_text / select_option / press_key 解析 ref 时支持 [F<n>.<m>] 形式：先按 frame_id 找到 page/frame，在该 frame 上 querySelector"
+      - "browser_tool.rs ref 参数 schema 从 integer 改为 string（接受 '3' 或 'F1.3'）"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/snapshot.rs
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+
+    acceptance:
+      - "cargo test browser::snapshot::same_origin_iframe — 测试页含 srcdoc iframe → snapshot 含其内容"
+      - "集成测试 browser_iframe_cross_origin: 加载含 YouTube iframe 的页 → snapshot 含 '[F1.<n>] iframe (cross-origin)' 段"
+      - "集成测试 browser_iframe_click: click('F1.2') 在跨域 iframe 内的元素上正确触发"
+      - "无 iframe 的页面 snapshot 末尾不出现 frame 段（不浪费 token）"
+
+    review_checklist:
+      - "cross-origin iframe SecurityError 用 try/catch 静默处理，不污染 snapshot 输出"
+      - "ref 解析在 main frame 与 iframe 严格区分（'3' vs 'F1.3'）"
+      - "createIsolatedWorld 仅创建一次/frame，缓存 contextId 避免重复"
+      - "snapshot 头部说明文字简洁（≤ 1 行）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.8: Download Manager + 简易 Upload
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.8"
+    name: "Download Manager + Upload 通道"
+    status: pending
+    priority: P1
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G8
+    estimated_days: 2
+    depends_on: ["7C.7"]
+
+    current_state: |
+      src-tauri/src/modules/browser/session.rs 完全没处理 download / upload。
+      "帮我下载这张发票" / "把桌面这张图传到 ChatGPT" 类任务无法完成。
+
+    must_implement:
+      - "session.rs new() 末尾用 SetDownloadBehaviorParams { behavior: AllowAndName, download_path: <if2ai_home>/desk/<session_id>/downloads, events_enabled: true } 启用 CDP 下载"
+      - "session.rs 监听 EventDownloadWillBegin → 写入 DashMap<guid, DownloadEntry { guid, url, suggested_filename, state, saved_path, started_at }>"
+      - "session.rs 监听 EventDownloadProgress → 更新 state（InProgress(percent) → Completed | Canceled）"
+      - "session.rs list_downloads(&self) -> Vec<DownloadEntry>（最近 20 条）"
+      - "session.rs upload_file(&mut self, ref_num, file_path: &Path) -> Result<String> — click(ref) 触发 file chooser → HandleFileChooserParams { action: Accept, files: vec![path] }"
+      - "upload_file 校验 file_path canonicalize 后必须在 tool_context.workspace_root 或 ~/.if2ai/desk/ 之内（防越权）"
+      - "BrowserRegistry 委托 list_downloads / upload_file"
+      - "browser_tool.rs action enum 新增 'downloads' / 'upload'，schema 字段 file_path: string"
+      - "browser_tool.rs upload action 校验 file_path，失败返回 ToolError::Handler"
+      - "snapshot 末尾在有近期下载时追加 '## Recent downloads (saved to ~/.if2ai/desk/<session>/downloads/):' 段，列出最近 5 条"
+      - "events.rs 新增 BrowserDownloadEvent { session_id, download: DownloadEntry } + emit"
+      - "src/components/browser/BrowserCard.tsx 新增 Downloads 区域 + '在 Finder/Explorer 中显示' 按钮"
+      - "src/components/browser/BrowserCard.tsx '清空下载' 按钮调用新 Tauri 命令 clear_session_downloads"
+      - "commands/browser.rs 新增 clear_session_downloads(session_id) 命令"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/browser/events.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+      - src-tauri/src/commands/browser.rs
+      - src/components/browser/BrowserCard.tsx
+      - src-tauri/gen/schemas/capabilities.json
+
+    acceptance:
+      - "集成测试 browser_download: navigate 一个 .csv URL → 文件出现在 ~/.if2ai/desk/<session>/downloads/，list_downloads 返回 1 条 Completed"
+      - "集成测试 browser_upload: 加载含 <input type=file> 的测试页 → upload(ref, '/tmp/test.txt') → snapshot 显示文件名"
+      - "upload 路径越权（如 /etc/passwd）返回 ToolError::Handler 'path outside allowed directory'"
+      - "BrowserCard Downloads 区域实时显示新下载（监听 BrowserDownloadEvent）"
+      - "clear_session_downloads 删除目录后 list_downloads 返回空"
+
+    review_checklist:
+      - "download 路径含 session_id，多 session 互不干扰"
+      - "upload 路径校验用 canonicalize → starts_with，避免 ../ 绕过"
+      - "DownloadEntry ring buffer 上限 20 条，避免内存膨胀"
+      - "EventDownloadWillBegin 监听器在 session close 时取消"
+      - "无 unwrap()"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Human Checkpoint #2 — 7C.8 后人工 review
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  P2 — 体验完善 + 周边工具升级
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.9: Console / Network 错误注入 Snapshot
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.9"
+    name: "Console / Network 错误注入 Snapshot — AI 能自我诊断"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G9
+    estimated_days: 1.5
+    depends_on: ["7C.8"]
+
+    current_state: |
+      AI 调 click 后页面没变 → 不知道是按钮被禁用、JS 报错还是 API 401。
+      SNAPSHOT_SCRIPT 只看 DOM，console / network 事件不在 DOM 里。
+
+    must_implement:
+      - "session.rs BrowserSession 新增字段 recent_console: Arc<Mutex<VecDeque<ConsoleEvent>>>（cap 50） + recent_network_errors: Arc<Mutex<VecDeque<NetEvent>>>（cap 30）"
+      - "session.rs new() 启动 EventEntryAdded（Console.messageAdded）监听器，收集 level=='error'|'warning' 入 ring buffer"
+      - "session.rs new() 启动 EventResponseReceived 监听器，状态码 ≥ 400 入 network ring buffer"
+      - "ConsoleEvent { level, source, text, ts } / NetEvent { method, url, status, ts }"
+      - "snapshot.rs run_snapshot 末尾在 buffer 非空时追加 '## Recent console errors (last 5):' 与 '## Recent network errors (last 5):' 段"
+      - "browser_tool.rs action enum 新增 'console' / 'network'，返回完整 buffer dump（不限 5 条）"
+      - "BrowserCard 抽屉新增 Console / Network tab，显示完整事件流"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/snapshot.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+      - src/components/browser/BrowserCard.tsx
+
+    acceptance:
+      - "集成测试 browser_console_inject: 加载触发 JS 错误的测试页 → snapshot 含 'Recent console errors' 段"
+      - "集成测试 browser_network_error_inject: 加载请求 404 资源的页 → snapshot 含 '404' 行"
+      - "console action 返回完整 buffer（最多 50 条）"
+      - "无 console / network 错误的页面 snapshot 末尾不增加这两段"
+
+    review_checklist:
+      - "ring buffer 容量硬限制（50/30），无内存泄漏"
+      - "level=='log'|'info' 不入 buffer（只看 error/warning）"
+      - "snapshot 仅在 buffer 非空时追加（节省 token）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.10: web_fetch — Readability + scraper 升级
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.10"
+    name: "web_fetch 升级 — Readability 主要内容 + scraper CSS selector"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G10
+    estimated_days: 3
+    depends_on: ["7C.9"]
+
+    current_state: |
+      src-tauri/src/modules/tools/builtin/web_fetch.rs:199-218 selector 实现是 regex 解析 HTML，
+      嵌套元素抓不全；无 selector 时直接 strip-tag + split_whitespace，把整页噪音都喂给 LLM。
+
+    must_implement:
+      - "src-tauri/src/modules/tools/builtin/web_fetch/mod.rs — 把原 web_fetch.rs 拆为 mod"
+      - "src-tauri/src/modules/tools/builtin/web_fetch/extract.rs — pub(crate) async fn fetch_internal(url, mode, max_length) -> Result<FetchResult>"
+      - "src-tauri/src/modules/tools/builtin/web_fetch/readability.rs — pub fn extract_article(html, base_url) -> ExtractedArticle"
+      - "Readability 算法 7 步：strip script/style/iframe/nav/footer/aside → score 候选节点（class/id 含 article/content/main/post 加分；含 nav/sidebar/footer/ad 减分）→ 选最高分容器 → 转 markdown（h1-h6 → #~######; p → 段落; a → [text](url); img → ![alt](src); ul/ol → -/N.）→ 提取标题（h1 或 <title>）→ 摘要（前 200 字符）→ reading_time"
+      - "ExtractedArticle { title, byline: Option<String>, markdown, excerpt, estimated_reading_time_min }"
+      - "selector mode 改用 scraper crate（Cargo.toml 添加 scraper = \"0.20\"），抛弃 regex"
+      - "web_fetch tool schema 新增 mode: 'auto' | 'text' | 'article' | 'selector'，default 'auto'"
+      - "auto 模式：HTML → readability article（markdown 输出）；JSON / text → 原 text 路径"
+      - "article 模式：强制 readability"
+      - "text 模式：原全文 strip"
+      - "selector 模式：scraper CSS selector"
+      - "tool description 更新，说明 4 种 mode 的使用场景"
+
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/web_fetch/mod.rs
+      - src-tauri/src/modules/tools/builtin/web_fetch/extract.rs
+      - src-tauri/src/modules/tools/builtin/web_fetch/readability.rs
+      - src-tauri/src/modules/tools/builtin/mod.rs
+      - src-tauri/Cargo.toml
+
+    acceptance:
+      - "cargo test web_fetch::readability — 对 wikipedia.org 测试页输出干净 markdown，含标题/段落/链接"
+      - "cargo test web_fetch::extract::selector — :nth-child / 属性选择器 / 嵌套元素正常工作"
+      - "mode=auto 在 wikipedia.org 上输出 token 数 ≤ raw text 50%"
+      - "mode=auto 在 JSON API 上自动跳过 readability，返回原 JSON"
+      - "回归：现有 web_fetch 单测全通过（旧调用方默认 mode=auto）"
+
+    review_checklist:
+      - "scraper Selector::parse 失败返回 ToolError::Handler，不 panic"
+      - "Readability 在极端 HTML（空 body / 全是 nav）上返回原 text 而非崩溃"
+      - "extract_article 输出 markdown 转义了 _* 等 markdown 特殊字符"
+      - "mode 参数 schema 是 enum 不是自由 string"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.11: web_research 复合工具
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.11"
+    name: "web_research 复合工具 — search → fetch top-k → synthesize"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G11
+    estimated_days: 1.5
+    depends_on: ["7C.10"]
+
+    current_state: |
+      "查资料"任务典型链路：web_search → 选 top 3 → web_fetch ×3 → 拼摘要，
+      4 轮 LLM round-trip。无复合工具，UX 差。
+
+    must_implement:
+      - "src-tauri/src/modules/tools/builtin/web_search.rs 抽 pub(crate) async fn search_internal(query, max_results) -> Result<Vec<SearchResult>>"
+      - "src-tauri/src/modules/tools/builtin/web_fetch/extract.rs 已含 fetch_internal（7C.10 完成）"
+      - "src-tauri/src/modules/tools/builtin/web_research.rs — pub fn entry() -> ToolEntry"
+      - "web_research handler：(1) search_internal(query, max_pages*2) → 取 top max_pages URLs；(2) futures::future::join_all 并发 fetch_internal(url, FetchMode::Article, 8000)；(3) 每个 fetch 独立 timeout 10s，失败用 'FETCH FAILED: <err>' 占位；(4) 拼 markdown：'# Research: <query>\\n\\n## Sources (N fetched)\\n\\n### [i] <title> — <url>\\n\\n<markdown[:2000]>'"
+      - "tool schema：query: string, max_pages: u32 default=3 max=5, language_hint: Option<string>"
+      - "tools/mod.rs register_builtin_tools 注册 web_research"
+      - "runtime/prompt_tools_guide.rs web_tools_routing_block 新增 web_research 推荐段（'4. web_research — Compound, replaces 1 search + N fetch chains for TOPIC research'）"
+
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/web_research.rs
+      - src-tauri/src/modules/tools/builtin/web_search.rs
+      - src-tauri/src/modules/tools/builtin/mod.rs
+      - src-tauri/src/modules/tools/mod.rs
+      - src-tauri/src/modules/runtime/prompt_tools_guide.rs
+
+    acceptance:
+      - "cargo test web_research::entry — 验证 ToolEntry 结构"
+      - "集成测试 web_research_parallel: mock 3 个 fetch，2 个成功 1 个超时 → 输出含 2 个 article + 1 个 'FETCH FAILED' 占位，总耗时 ≈ max(单个) 不是 sum"
+      - "harness 集成测试：'调研 Tauri 2.0 新特性' 任务用 web_research 单调用完成（不再链式 search + fetch×3）"
+      - "max_pages 上限 5（防止滥用）"
+
+    review_checklist:
+      - "search_internal 与 fetch_internal 是 pub(crate) 不是 pub（不暴露给外部 crate）"
+      - "并发 fetch 用 futures::future::join_all 不是顺序循环"
+      - "单个 fetch 失败不阻塞其他"
+      - "输出 markdown 总长度 ≤ max_text_bytes"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.12: Quality 小坑集合（5 个独立修复）
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.12"
+    name: "Quality Fixes — evaluate cap / current_url / action_log / max_*_bytes"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G12
+    estimated_days: 1
+    depends_on: ["7C.11"]
+
+    current_state: |
+      5 个独立的小问题 — evaluate 无长度上限 / current_url try_lock 死角 / action_log 不能实时观测
+      / max_result_size 与 G2 多模态拆分冲突 / get_all_status 同 try_lock 问题。
+
+    must_implement:
+      - "12a: session.rs evaluate(expression) 加 if expression.len() > 10000 return Err(BrowserError::EvaluateTooLong(expression.len()))"
+      - "12a: errors.rs BrowserError 新 variant EvaluateTooLong(usize)"
+      - "12b: registry.rs current_url 改为 async pub async fn current_url(&self, session_id: &str) -> Option<String> 用 arc.lock().await（既然调用方都在 emit 路径，已经是 async context）"
+      - "12c: BrowserRegistry 新增字段 last_known_urls: DashMap<String, String>，navigate 后写入；get_all_status 改为读 last_known_urls 不再 try_lock 每个 session"
+      - "12d: commands/browser.rs 新增 #[tauri::command] get_browser_action_log(session_id) -> Vec<ActionLogEntry>"
+      - "12d: src/components/browser/BrowserCard.tsx 新增 'Action Log' 抽屉，按时间倒序显示完整 action_log"
+      - "12d: capabilities.json 注册 get_browser_action_log"
+      - "12e: ToolEntry max_result_size 字段标记 #[deprecated]，新增 max_text_bytes / max_image_bytes（已在 7C.2 完成基础，本步骤补全 browser_tool 配置：max_text_bytes=64*1024, max_image_bytes=5*1024*1024）"
+      - "12e: 旧 max_result_size 在 dispatch 中作为 fallback（当 max_text_bytes None 时用 max_result_size），保证向后兼容"
+
+    impl_targets:
+      - src-tauri/src/modules/browser/session.rs
+      - src-tauri/src/modules/browser/errors.rs
+      - src-tauri/src/modules/browser/registry.rs
+      - src-tauri/src/modules/tools/builtin/browser_tool.rs
+      - src-tauri/src/modules/tools/registry.rs
+      - src-tauri/src/commands/browser.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/components/browser/BrowserCard.tsx
+
+    acceptance:
+      - "12a: cargo test session::evaluate_too_long → 11000 字符表达式返回 EvaluateTooLong(11000)"
+      - "12b: 集成测试 current_url_during_navigate: 长 navigate 进行中调 current_url 返回上一次的 URL（不是 None）"
+      - "12c: get_all_status 在 session 全部正在 navigate 时返回包含正确 URL 的 Vec（不再全 None）"
+      - "12d: BrowserCard Action Log 抽屉显示完整时间线"
+      - "12e: screenshot 不会因 max_text_bytes 被截断；text-only action 仍受 max_text_bytes 约束"
+
+    review_checklist:
+      - "BrowserError::EvaluateTooLong(usize) Display 显示长度 + 限制"
+      - "current_url async 化后所有调用点更新（grep 验证无 .try_lock 残留）"
+      - "last_known_urls DashMap 在 close 时清理"
+      - "get_browser_action_log 不清空 log（read-only），与 take_action_log（清空）区分"
+      - "max_result_size deprecated 注释指向 max_text_bytes 替代"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 7C.13: 集成测试 + Harness Suite + 文档
+  # ─────────────────────────────────────────────────────────────
+  - id: "7C.13"
+    name: "集成测试 + Harness Suite + 文档"
+    status: pending
+    priority: P2
+    design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md "Cross-Cutting Concerns / 测试基线"
+    estimated_days: 2
+    depends_on: ["7C.12"]
+
+    current_state: |
+      Phase 7C 11 个 slice 完成后，需要端到端 harness suite 与更新文档。
+
+    must_implement:
+      - "harness/suites/browser_login_persistence.yaml — A 登录 → close → relaunch → 仍登录"
+      - "harness/suites/browser_vision.yaml — screenshot 返回 ImageContent；mock OpenAI/Anthropic provider 验证转换正确"
+      - "harness/suites/browser_takeover.yaml — headless → request takeover → headed window opens → release → headless"
+      - "harness/suites/browser_multitab.yaml — navigate → window.open → tabs → switch_tab"
+      - "harness/suites/browser_iframe.yaml — 访问含 iframe 测试页 → snapshot 含 iframe 内容"
+      - "harness/suites/browser_download.yaml — navigate .csv URL → 文件出现"
+      - "harness/suites/web_research.yaml — 复合工具单调用完成 topic 调研"
+      - "harness/suites/browser_routing_prompt.yaml — system prompt 含 routing 时 LLM 选 web_search 不选 browser"
+      - "docs/design-docs/postCLI/browser-control-system.md 更新：添加 'Phase 7C Remediation' 章节，链接到 ADR-015 + 总结新能力"
+      - "docs/exec-plans/index.md 把 Phase 7C 状态从 [当前] 改为 [已完成]，添加 backlog 总结"
+      - "AGENTS.md 浏览器章节同步更新（如有）"
+      - "docs/generated/QUALITY_SCORE.md 追加 Phase 7C 完成记录"
+
+    impl_targets:
+      - harness/suites/browser_login_persistence.yaml
+      - harness/suites/browser_vision.yaml
+      - harness/suites/browser_takeover.yaml
+      - harness/suites/browser_multitab.yaml
+      - harness/suites/browser_iframe.yaml
+      - harness/suites/browser_download.yaml
+      - harness/suites/web_research.yaml
+      - harness/suites/browser_routing_prompt.yaml
+      - docs/design-docs/postCLI/browser-control-system.md
+      - docs/exec-plans/index.md
+      - docs/generated/QUALITY_SCORE.md
+
+    acceptance:
+      - "8 个 harness suite 全部通过"
+      - "python -m harness.runner run --slice 7C.13 --workspace . --suite harness/suites/browser_login_persistence.yaml passed: true"
+      - "browser-control-system.md 含 'Phase 7C Remediation' 章节链接 ADR-015"
+      - "index.md Phase 7C 标记为 [已完成]"
+      - "QUALITY_SCORE.md 包含本次完成记录一行"
+
+    review_checklist:
+      - "8 个 suite 都有清晰的 setup / steps / expectations 三段"
+      - "vision suite 用 mock provider，不依赖真实 OpenAI key"
+      - "takeover suite 在 headless CI 上自动 skip（DISPLAY check）"
+      - "browser-control-system.md 章节风格与原文一致"
+      - "无 unwrap()"

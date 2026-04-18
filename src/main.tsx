@@ -7,6 +7,7 @@ import { If2AiLoadingScreen } from './components/loading/If2AiLoadingScreen'
 import { BrowserViewerPage } from './modules/browser-viewer/BrowserViewerPage'
 import { closeSettingsWindow } from '@/lib/tauri'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { ThemeProvider } from '@/components/theme/ThemeProvider'
 
 const urlParams = new URLSearchParams(window.location.search)
 const windowType = urlParams.get('window')
@@ -34,7 +35,9 @@ const Root = () => {
 }
 
 createRoot(document.getElementById('app')!).render(
-  <TooltipProvider>
-    <Root />
-  </TooltipProvider>,
+  <ThemeProvider>
+    <TooltipProvider>
+      <Root />
+    </TooltipProvider>
+  </ThemeProvider>,
 )

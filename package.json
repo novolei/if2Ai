@@ -52,6 +52,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.0",
+    "@tanstack/react-virtual": "^3.13.24",
     "@tauri-apps/plugin-dialog": "latest",
     "@tauri-apps/plugin-fs": "latest",
     "@types/markdown-it": "^14.1.2",

@@ -446,6 +446,7 @@ impl Default for ToolRegistry {
         use std::sync::Mutex;
         let default_context = std::sync::Arc::new(Mutex::new(super::context::ToolContext {
             session_id: None,
+            project_id: None,
             workdir: std::path::PathBuf::from("."),
             permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
         }));

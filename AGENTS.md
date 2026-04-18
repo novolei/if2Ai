@@ -13,7 +13,7 @@
 
 ## 🏗️ 项目核心
 
-**If2Ai** 是一个 Tauri + Rust + Svelte 的智能体桌面应用，复刻 hermes-agent 框架。
+**If2Ai** 是一个 Tauri + Rust + React（TypeScript）的智能体桌面应用，复刻 hermes-agent 框架。
 
 核心理念：
 
@@ -24,14 +24,16 @@
 
 ## 📚 关键文档
 
-| 文档                                         | 目的                     | 受众             |
-| -------------------------------------------- | ------------------------ | ---------------- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)         | 系统架构全景图和模块关系 | 所有人           |
-| [DESIGN.md](./DESIGN.md)                     | 设计原则和决策框架       | 架构师、决策者   |
-| [docs/design-docs/](./docs/design-docs/)     | 具体设计决策（分主题）   | 实现者           |
-| [docs/product-specs/](./docs/product-specs/) | 产品规范和需求           | PM、开发者       |
-| [docs/exec-plans/](./docs/exec-plans/)       | 执行计划和进度追踪       | 项目经理、开发者 |
-| [harness/README.md](../harness/README.md)    | 测试和评估框架           | 测试、QA         |
+
+| 文档                                           | 目的           | 受众       |
+| -------------------------------------------- | ------------ | -------- |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)         | 系统架构全景图和模块关系 | 所有人      |
+| [DESIGN.md](./DESIGN.md)                     | 设计原则和决策框架    | 架构师、决策者  |
+| [docs/design-docs/](./docs/design-docs/)     | 具体设计决策（分主题）  | 实现者      |
+| [docs/product-specs/](./docs/product-specs/) | 产品规范和需求      | PM、开发者   |
+| [docs/exec-plans/](./docs/exec-plans/)       | 执行计划和进度追踪    | 项目经理、开发者 |
+| [harness/README.md](../harness/README.md)    | 测试和评估框架      | 测试、QA    |
+
 
 ## 🎯 当前执行计划
 
@@ -49,10 +51,9 @@
 
 ```
 if2Ai/
-├── src/                    # Svelte 前端
-├── src-tauri/             # Rust 后端
-│   ├── modules/           # 核心业务逻辑
-│   └── commands/          # Tauri IPC 命令处理
+├── src/                    # React + TypeScript + Vite 前端
+├── src-tauri/             # Rust 后端（Tauri 2）
+│   └── src/modules/       # 核心业务逻辑（含 commands 注册）
 ├── harness/               # 测试和评估框架
 └── docs/                  # 知识库和规范
 ```
@@ -88,7 +89,7 @@ if2Ai/
 # 在活跃计划中找到相关任务
 → docs/exec-plans/active/
 → 选择符合你技能的任务：
-   - 前端：Svelte/TypeScript 相关
+   - 前端：React/TypeScript 相关
    - 后端：Rust/Tokio 相关
    - 测试：harness 框架相关
 ```
@@ -108,7 +109,7 @@ If2Ai 工程遵循严格的架构约束（见 [DESIGN.md](./DESIGN.md)）：
 
 1. **分层架构**：类型 → 配置 → 模型 → 服务 → 运行时 → UI
 2. **依赖方向**：只能"向前"依赖
-3. **命名约定**：符合 Rust/Svelte 官方指南
+3. **命名约定**：符合 Rust / TypeScript / React 官方与项目惯例
 4. **测试覆盖率**：核心逻辑 ≥ 80%
 5. **文档完备性**：公开 API 必须有文档和例子
 
@@ -135,7 +136,7 @@ A:
 4. 开始编码并使用 harness 验证
 
 **Q: 如何理解当前的项目进度？**
-A: 查看 `docs/QUALITY_SCORE.md` 和 `docs/exec-plans/` 中的各个计划。
+A: 查看 `docs/generated/QUALITY_SCORE.md` 和 `docs/exec-plans/` 中的各个计划。
 
 **Q: 遇到架构决策问题怎么办？**
 A: 查看 [DESIGN.md](./DESIGN.md) 和相应的设计文档，如无答案则创建新的设计讨论。
@@ -148,4 +149,4 @@ A: 查看 [DESIGN.md](./DESIGN.md) 和相应的设计文档，如无答案则创
 
 ---
 
-**版本**: 0.3.0 | **最后更新**: 2026-04-11 | **新增**: Memory System + Honcho, Agent 自我进化设计、Messaging Gateway 设计
+**版本**: 0.3.1 | **最后更新**: 2026-04-18 | **修正**: 前端栈为 React+TypeScript；质量分路径 `docs/generated/QUALITY_SCORE.md`

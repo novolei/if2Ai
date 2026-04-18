@@ -21,8 +21,89 @@
 //! The sink for these events is the application's tracing subscriber (file logs,
 //! telemetry backend, etc.).  No async I/O or locking is required at the call site.
 
+use std::sync::OnceLock;
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
 use crate::modules::memory::policy::{PolicyDecision, ReasonCode};
 use crate::modules::memory::scope::MemoryExecutionScope;
+
+/// Global Tauri app handle registered at startup so `MemoryAuditEmitter` can
+/// forward audit events to the frontend `MemoryChip` / `MemoryWriteCard` UI.
+///
+/// `OnceLock` is used so the emitter remains a fire-and-forget API while
+/// still being able to publish structured events over IPC when wired.
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+/// Register the Tauri `AppHandle` used by `MemoryAuditEmitter` to forward
+/// events to the frontend.  Must be called once at startup; subsequent
+/// invocations are ignored.
+pub fn register_app_handle(handle: AppHandle) {
+    let _ = APP_HANDLE.set(handle);
+}
+
+/// Tauri event payload mirrored to the frontend `memory_event` channel.
+///
+/// Mirrors the TypeScript `MemoryEventPayload` interface in `src/lib/tauri.ts`.
+#[derive(Debug, Clone, Serialize)]
+struct MemoryEventPayload<'a> {
+    /// One of `memory_captured` / `memory_write_decision` / `memory_persisted`
+    /// / `memory_recall_served` / `memory_rejected` / `memory_promoted`.
+    event: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_workdir: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_category: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy_decision: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_message: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_query: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_category: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_category: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to_category: Option<&'a str>,
+    /// ISO 8601 timestamp captured at emit time so the frontend can sort
+    /// events by recency without trusting clock skew across IPC.
+    timestamp: String,
+}
+
+fn emit_to_frontend(payload: MemoryEventPayload<'_>) {
+    let Some(handle) = APP_HANDLE.get() else {
+        return;
+    };
+    if let Err(e) = handle.emit("memory_event", &payload) {
+        tracing::warn!(
+            "[MemoryAuditEmitter] failed to emit memory_event {event}: {err}",
+            event = payload.event,
+            err = e
+        );
+    }
+}
+
+fn policy_decision_label(decision: &PolicyDecision) -> &'static str {
+    match decision {
+        PolicyDecision::Allow => "allow",
+        PolicyDecision::Deny => "deny",
+        PolicyDecision::Prompt => "prompt",
+    }
+}
 
 /// Standard fields present on every memory audit event.
 ///
@@ -89,6 +170,24 @@ impl MemoryAuditEmitter {
             memory_key = key,
             memory_category = category,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_captured",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: Some(category),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 
     /// Emit a `memory_write_decision` event.
@@ -113,6 +212,24 @@ impl MemoryAuditEmitter {
             reason_code = reason_code.label(),
             reason_message = message,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_write_decision",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: Some(policy_decision_label(decision)),
+            reason_code: Some(reason_code.label()),
+            reason_message: Some(message),
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 
     /// Emit a `memory_persisted` event.
@@ -128,6 +245,24 @@ impl MemoryAuditEmitter {
             memory_key = key,
             memory_category = category,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_persisted",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: Some(category),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 
     /// Emit a `memory_recall_served` event.
@@ -149,6 +284,24 @@ impl MemoryAuditEmitter {
             recall_category = category.unwrap_or("-"),
             result_count = result_count,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_recall_served",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: Some(query),
+            recall_category: category,
+            result_count: Some(result_count),
+            from_category: None,
+            to_category: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 
     /// Emit a `memory_rejected` event.
@@ -171,6 +324,24 @@ impl MemoryAuditEmitter {
             reason_code = reason_code.label(),
             reason_message = message,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_rejected",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: Some("deny"),
+            reason_code: Some(reason_code.label()),
+            reason_message: Some(message),
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 
     /// Emit a `memory_promoted` event.
@@ -195,6 +366,24 @@ impl MemoryAuditEmitter {
             from_category = from_category,
             to_category = to_category,
         );
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_promoted",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: Some(key),
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: Some(from_category),
+            to_category: Some(to_category),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
     }
 }
 

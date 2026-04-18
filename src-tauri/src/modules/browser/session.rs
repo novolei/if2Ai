@@ -20,6 +20,7 @@ use chromiumoxide::page::{Page, ScreenshotParams};
 use chrono::Utc;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
@@ -76,6 +77,16 @@ pub struct BrowserSession {
     /// Full log of every action taken in this session.
     /// Access via [`BrowserRegistry::take_action_log`] rather than directly.
     pub(crate) action_log: Vec<ActionLogEntry>,
+    /// Unique temporary user-data directory for this Chromium process.
+    ///
+    /// chromiumoxide 0.9 defaults to a fixed `$TMPDIR/chromiumoxide-runner` path.
+    /// During Tauri hot-reloads, zombie Chrome processes from the previous run
+    /// hold a lock on that fixed path, causing the next launch to fail with
+    /// "CDP error: Browser process exit".  By creating a unique temp dir per
+    /// session we guarantee zero cross-session / cross-run conflicts.
+    /// The `TempDir` handle is kept here so the directory stays alive for the
+    /// entire session lifetime and is cleaned up automatically on drop.
+    _data_dir: TempDir,
 }
 
 impl BrowserSession {
@@ -97,6 +108,23 @@ impl BrowserSession {
             "launching headless browser"
         );
 
+        // Create a unique user-data directory per session.
+        //
+        // chromiumoxide 0.9 defaults to a fixed $TMPDIR/chromiumoxide-runner path.
+        // During Tauri hot-reloads zombie Chrome processes from the prior run hold
+        // a lock on that shared directory, causing the next launch to fail with
+        // "CDP error: Browser process exit" immediately.  Unique dirs prevent this.
+        let data_dir = tempfile::Builder::new()
+            .prefix("if2ai-chrome-")
+            .tempdir()
+            .map_err(|e| BrowserError::Cdp(format!("failed to create browser data dir: {e}")))?;
+
+        debug!(
+            session_id = %session_id,
+            data_dir = %data_dir.path().display(),
+            "created unique browser user-data-dir"
+        );
+
         // no_sandbox() passes --no-sandbox and --disable-setuid-sandbox to Chrome.
         // This is REQUIRED when Chrome is launched as a child process of another
         // application (e.g. a Tauri app) on macOS and Linux: without it, Chrome's
@@ -105,6 +133,7 @@ impl BrowserSession {
         // which chromiumoxide surfaces as "CDP error: Browser process exit".
         let config = BrowserConfig::builder()
             .chrome_executable(chrome_path)
+            .user_data_dir(data_dir.path())
             .no_sandbox()
             // Prevent GPU-initialisation crash in headless environments.
             .arg("--disable-gpu")
@@ -113,6 +142,15 @@ impl BrowserSession {
             .arg("--no-default-browser-check")
             // Prevent /dev/shm exhaustion on Linux (harmless on macOS).
             .arg("--disable-dev-shm-usage")
+            // Remove the `navigator.webdriver = true` signal injected by the
+            // Chrome DevTools automation layer. Without this, any site that
+            // calls `navigator.webdriver` will immediately know it's being
+            // automated (basic bot detection).
+            .arg("--disable-blink-features=AutomationControlled")
+            // Remove the `--enable-automation` Chrome feature flag that is
+            // added automatically by chromiumoxide. It shows an info-bar in
+            // headed mode and exposes an automation flag in JS.
+            .arg("--exclude-switches=enable-automation")
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
@@ -134,6 +172,27 @@ impl BrowserSession {
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
+        // Inject stealth-mode JS patches on every new document (runs before page JS):
+        // - Removes navigator.webdriver = true (most common bot detection signal)
+        // - Fakes window.chrome, navigator.plugins, WebGL vendor, permissions
+        // - Sets a realistic macOS Chrome user-agent (removes "HeadlessChrome" string)
+        //
+        // NOTE: This reduces detection by basic-to-medium bot protection systems.
+        // Cloudflare Turnstile (used by claude.ai, some Anthropic sites) and other
+        // enterprise-grade solutions use additional signals (TLS fingerprinting,
+        // behavioural analysis, Canvas fingerprinting) that cannot be bypassed by
+        // headless Chrome regardless of these patches. For such sites the correct
+        // approach is to use `web_fetch` or `web_search` instead.
+        page.enable_stealth_mode_with_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+             AppleWebKit/537.36 (KHTML, like Gecko) \
+             Chrome/131.0.0.0 Safari/537.36",
+        )
+        .await
+        .map_err(|e| BrowserError::Cdp(format!("stealth mode init failed: {e}")))?;
+
+        debug!(session_id = %session_id, "stealth mode enabled");
+
         Ok(Self {
             session_id,
             browser,
@@ -141,6 +200,7 @@ impl BrowserSession {
             page,
             current_url: None,
             action_log: Vec::new(),
+            _data_dir: data_dir,
         })
     }
 
@@ -250,12 +310,14 @@ impl BrowserSession {
         self.sync_url().await;
         let current_url = self.current_url.clone().unwrap_or_else(|| url.to_owned());
 
+        // get_title() can fail on protected/CAPTCHA pages (e.g. Cloudflare).
+        // Treat it as non-fatal: a missing title does not invalidate the session.
         let title = self
             .page
             .get_title()
             .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?
-            .unwrap_or_default();
+            .unwrap_or_default() // Result<Option<String>, CdpError> → Option<String>
+            .unwrap_or_default(); // Option<String> → String (empty if None)
 
         let snapshot = self.run_snapshot().await.unwrap_or_else(|e| {
             warn!("snapshot after navigate failed: {e}");

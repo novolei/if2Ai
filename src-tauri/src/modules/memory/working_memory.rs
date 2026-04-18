@@ -3,8 +3,6 @@
 //! Maintains a bounded window of recent conversation turns,
 //! evicting oldest messages when turn count or token budget is exceeded.
 
-#![allow(dead_code)]
-
 use crate::modules::runtime::budget::estimate_tokens;
 use crate::modules::runtime::session::ConversationMessage;
 
@@ -31,6 +29,7 @@ impl Default for WorkingMemory {
 
 impl WorkingMemory {
     /// Create a new working memory with the given limits
+    #[allow(dead_code)] // Public API; callers in streaming path (fix-streaming-parity)
     pub fn new(max_turns: usize, max_tokens: usize) -> Self {
         Self {
             turns: Vec::new(),
@@ -40,6 +39,7 @@ impl WorkingMemory {
     }
 
     /// Add a message and evict oldest entries if limits are exceeded
+    #[allow(dead_code)] // Public API; will be called once streaming path is wired (fix-streaming-parity)
     pub fn push(&mut self, message: ConversationMessage) {
         self.turns.push(message);
         self.evict_if_needed();
@@ -57,11 +57,13 @@ impl WorkingMemory {
     }
 
     /// Current number of retained messages
+    #[allow(dead_code)] // Public API; used in tests and future telemetry
     pub fn len(&self) -> usize {
         self.turns.len()
     }
 
     /// Whether working memory is empty
+    #[allow(dead_code)] // Public API; used in tests and future checks
     pub fn is_empty(&self) -> bool {
         self.turns.is_empty()
     }
@@ -194,8 +196,12 @@ mod tests {
         let mut wm = WorkingMemory::new(100, 10000);
         wm.push(text_message(MessageRole::User, "hello"));
         wm.push(text_message(MessageRole::Assistant, "world"));
-        // "hello" = 6/4+1 = 2, "world" = 6/4+1 = 2, total = 4
-        assert_eq!(wm.token_count(), 4);
+        // M2: estimate_tokens now uses cl100k_base BPE; "hello" and "world"
+        // each encode to a single token, so the total falls in [2, 4] depending
+        // on whether any role/wrapper tokens are added in the future. We assert
+        // a sensible upper bound rather than an exact char/4 value.
+        let n = wm.token_count();
+        assert!((1..=4).contains(&n), "expected 1..=4 tokens, got {n}");
     }
 
     #[test]

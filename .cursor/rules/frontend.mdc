@@ -1,0 +1,32 @@
+---
+description: React 19 + TypeScript + Tailwind v4 前端规范（if2ai，单文件合并以减少 TSX 上多规则重复注入）
+globs: src/**/*.tsx, src/**/*.ts, src/**/*.jsx, src/**/*.css
+---
+
+# Frontend（React + TS + Tailwind v4）
+
+> 一条规则覆盖 `src/` 下 TS/TSX/JSX/CSS，避免 react + typescript + tailwind 三条同时命中同一 TSX 造成三倍 token。
+
+## TypeScript
+- `strict`；禁止 `any`，未知用 `unknown` + 收窄
+- 对象形状用 `interface`；联合/映射用 `type`
+- 公共 API 显式返回类型；回调可用箭头
+- Props 接口命名 `XxxProps`；常量 `UPPER_SNAKE`
+- 优先 `readonly`、判别联合、类型守卫；避免无必要 `as`
+
+## React 19
+- 仅函数组件；小组件 + composition；逻辑抽 custom hooks
+- Hooks 规则、effect 依赖完整、需要时 cleanup
+- 本地 `useState`；复杂用 `useReducer`；跨层用 Context，避免过早上全局 store
+- 列表稳定 `key`；昂贵子树 `React.memo` / `useMemo` / `useCallback`（有测量再优化）
+- Error Boundary + 异步错误与用户可见反馈；表单受控 + a11y（语义标签、ARIA、键盘）
+
+## Tailwind v4（CSS-first）
+- 主题与 token 写在 `src/styles/globals.css` 的 `@theme { ... }`，**不用** `tailwind.config.js`
+- 第三方样式在 CSS 层 `@import`；插件 `@plugin "..."`；v4 不写手动 `content`/`purge`
+- 优先 utility；必要时 `@apply`；移动端优先；语义色 + 对比度
+- 与 shadcn/Radix 变体保持一致；暗色配合 `next-themes` + `class`
+
+## 不要
+- 在组件里堆业务常量魔法数（抽到模块顶或常量文件）
+- 无依据的 `eslint-disable` / 滥用 `!` 断言

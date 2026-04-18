@@ -3,6 +3,7 @@
 //! Provides session creation, restoration, and management with JSON file storage.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -143,6 +144,51 @@ impl Session {
             self.message_count.max(self.messages.len())
         }
     }
+
+    // ── M4: claw-cli-compatible typed accessors ──
+    //
+    // The on-disk schema keeps `project_id: String` (empty == "no project"),
+    // `created_at` / `updated_at: String` (RFC3339), and `token_count: u64`
+    // for stable JSON serialisation across versions.  These helpers expose the
+    // claw-cli-equivalent typed views (`Option<String>`, `DateTime<Utc>`,
+    // `usize`) without requiring a breaking schema migration.
+
+    /// Project identifier as `Option<String>` — `None` for legacy sessions
+    /// without a parent project (stored as the empty string on disk).
+    #[must_use]
+    pub fn project_id_opt(&self) -> Option<&str> {
+        if self.project_id.is_empty() {
+            None
+        } else {
+            Some(self.project_id.as_str())
+        }
+    }
+
+    /// Parsed `created_at` as `chrono::DateTime<Utc>`. Returns `None` when the
+    /// stored RFC3339 string fails to parse (corrupted file or future schema).
+    #[must_use]
+    pub fn created_at_utc(&self) -> Option<DateTime<Utc>> {
+        DateTime::parse_from_rfc3339(&self.created_at)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    }
+
+    /// Parsed `updated_at` as `chrono::DateTime<Utc>`. Returns `None` on parse
+    /// failure (see [`Session::created_at_utc`]).
+    #[must_use]
+    pub fn updated_at_utc(&self) -> Option<DateTime<Utc>> {
+        DateTime::parse_from_rfc3339(&self.updated_at)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    }
+
+    /// Token count as `usize` — the in-memory unit used by the budget /
+    /// compaction layer.  Saturates if the on-disk `u64` exceeds `usize::MAX`
+    /// on 32-bit targets (in practice unreachable for conversation transcripts).
+    #[must_use]
+    pub fn token_count_usize(&self) -> usize {
+        usize::try_from(self.token_count).unwrap_or(usize::MAX)
+    }
 }
 
 /// SessionManager handles session persistence to JSON files with dual-path support.
@@ -150,6 +196,10 @@ impl Session {
 /// Path rules:
 /// - `project_id == ""` → `~/.if2ai/sessions/<id>.json` (legacy path, read-only)
 /// - `project_id != ""` → `~/.if2ai/projects/<project_id>/sessions/<id>.json` (new path)
+///
+/// The optional `active_retrieval` field enables memory injection into new
+/// sessions when an `ActiveRetrievalManager` is provided via
+/// [`SessionManager::with_active_retrieval`].
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SessionManager {
@@ -157,25 +207,62 @@ pub struct SessionManager {
     sessions_dir: PathBuf,
     /// Projects base directory: ~/.if2ai/projects/
     projects_base_dir: PathBuf,
+    /// Optional active retrieval manager for injecting memory context at
+    /// session creation time.  `None` when active retrieval is disabled.
+    active_retrieval: Option<Arc<crate::modules::memory::retrieval::ActiveRetrievalManager>>,
 }
 
 #[allow(dead_code)]
 impl SessionManager {
-    /// Creates a new SessionManager with the specified directories.
+    /// Creates a new `SessionManager` with the specified directories and no
+    /// active retrieval attached.
     ///
     /// # Arguments
-    /// * `sessions_dir` - Legacy sessions directory (~/.if2ai/sessions/)
-    /// * `projects_base_dir` - Projects base directory (~/.if2ai/projects/)
+    /// * `sessions_dir` - Legacy sessions directory (`~/.if2ai/sessions/`)
+    /// * `projects_base_dir` - Projects base directory (`~/.if2ai/projects/`)
     ///
-    /// # Panics
-    ///
-    /// Panics if the sessions directory cannot be created.
+    /// # Notes
+    /// Directory creation is deferred to the first write via [`Self::init`];
+    /// this constructor itself does not perform any I/O.
     #[must_use]
     pub fn new(sessions_dir: PathBuf, projects_base_dir: PathBuf) -> Self {
         Self {
             sessions_dir,
             projects_base_dir,
+            active_retrieval: None,
         }
+    }
+
+    /// Attach an `ActiveRetrievalManager` to this manager.
+    ///
+    /// When set, newly created sessions will be tagged with the retrieval
+    /// configuration so that the agent loop can inject retrieved memory
+    /// context before the first LLM call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use std::path::PathBuf;
+    /// use if2ai_backend::modules::session::manager::SessionManager;
+    /// use if2ai_backend::modules::memory::retrieval::ActiveRetrievalManager;
+    /// let mgr = SessionManager::new(PathBuf::from("/tmp/sessions"), PathBuf::from("/tmp/projects"))
+    ///     .with_active_retrieval(Arc::new(ActiveRetrievalManager::with_defaults()));
+    /// ```
+    #[must_use]
+    pub fn with_active_retrieval(
+        mut self,
+        manager: Arc<crate::modules::memory::retrieval::ActiveRetrievalManager>,
+    ) -> Self {
+        self.active_retrieval = Some(manager);
+        self
+    }
+
+    /// Returns a reference to the active retrieval manager, if one is set.
+    #[must_use]
+    pub fn active_retrieval(
+        &self,
+    ) -> Option<&Arc<crate::modules::memory::retrieval::ActiveRetrievalManager>> {
+        self.active_retrieval.as_ref()
     }
 
     /// Initialize the sessions directory (legacy path).
@@ -560,6 +647,32 @@ mod tests {
             resume_cursor: None,
             request_id: None,
         }
+    }
+
+    #[test]
+    fn claw_cli_typed_accessors() {
+        // Legacy (no project) session: project_id_opt should be None.
+        let s = Session::new("title".into(), String::new());
+        assert_eq!(s.project_id_opt(), None);
+        // Timestamps round-trip RFC3339 → DateTime<Utc> → back.
+        let created = s.created_at_utc().expect("created_at parses");
+        let updated = s.updated_at_utc().expect("updated_at parses");
+        assert!(updated >= created);
+        // token_count_usize returns 0 for fresh sessions.
+        assert_eq!(s.token_count_usize(), 0);
+
+        // Project-scoped session.
+        let s2 = Session::new("title".into(), "proj-42".into());
+        assert_eq!(s2.project_id_opt(), Some("proj-42"));
+    }
+
+    #[test]
+    fn claw_cli_accessors_handle_corrupt_timestamps() {
+        let mut s = Session::new("t".into(), String::new());
+        s.created_at = "not-a-date".into();
+        assert!(s.created_at_utc().is_none());
+        // Other accessors remain functional.
+        assert_eq!(s.token_count_usize(), 0);
     }
 
     #[tokio::test]

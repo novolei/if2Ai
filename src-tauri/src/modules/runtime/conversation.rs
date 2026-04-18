@@ -13,6 +13,7 @@ use super::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter
 use super::session::{ContentBlock, ConversationMessage, Session};
 use super::usage::{TokenUsage, UsageTracker};
 use crate::modules::api::ToolDefinition;
+use crate::modules::memory::working_memory::WorkingMemory;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
@@ -140,6 +141,9 @@ pub struct ConversationRuntime<C, T> {
     context_budget: Option<ContextBudget>,
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
+    /// Working memory: when `Some`, only the sliding window of recent messages
+    /// is sent to the LLM. Full history is preserved in `self.session.messages`.
+    working_memory: Option<WorkingMemory>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -185,6 +189,7 @@ where
             context_budget: None,
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(&feature_config),
+            working_memory: None,
         }
     }
 
@@ -201,6 +206,17 @@ where
     #[must_use]
     pub fn with_context_budget(mut self, budget: ContextBudget) -> Self {
         self.context_budget = Some(budget);
+        self
+    }
+
+    /// Enable working-memory sliding-window filtering.
+    ///
+    /// When set, each LLM request will contain only the messages retained by
+    /// `wm` (evicted by turn count and token budget) rather than the full
+    /// session history. Full history is always preserved in `self.session`.
+    #[must_use]
+    pub fn with_working_memory(mut self, wm: WorkingMemory) -> Self {
+        self.working_memory = Some(wm);
         self
     }
 
@@ -269,9 +285,21 @@ where
                 }
             }
 
+            // Build the message list for this LLM request.
+            // When a WorkingMemory is configured, populate it from the current
+            // session so that only the most recent turns (within token budget)
+            // are sent — full history stays in `self.session.messages`.
+            let messages_for_request = if let Some(ref mut wm) = self.working_memory {
+                wm.clear();
+                wm.extend(self.session.messages.iter().cloned());
+                wm.messages().to_vec()
+            } else {
+                self.session.messages.clone()
+            };
+
             let request = ApiRequest {
                 system_prompt: self.system_prompt.clone(),
-                messages: self.session.messages.clone(),
+                messages: messages_for_request,
                 tools: Some(self.tool_executor.get_definitions()),
             };
             let events = self.api_client.stream(request)?;
@@ -929,5 +957,78 @@ mod tests {
     #[cfg(not(windows))]
     fn shell_snippet(script: &str) -> String {
         script.to_string()
+    }
+
+    /// Verifies that `with_working_memory` limits the messages sent to the LLM.
+    ///
+    /// The session is pre-filled with many turns; the API client records how many
+    /// messages each request contains.  After one more turn we assert that the
+    /// LLM saw at most `max_turns` messages — not the full session history.
+    #[test]
+    fn working_memory_limits_messages_sent_to_llm() {
+        use crate::modules::memory::working_memory::WorkingMemory;
+        use std::sync::{Arc, Mutex};
+
+        let counts: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+
+        struct MessageCountingApi {
+            counts: Arc<Mutex<Vec<usize>>>,
+        }
+
+        impl ApiClient for MessageCountingApi {
+            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                self.counts
+                    .lock()
+                    .expect("lock poisoned")
+                    .push(request.messages.len());
+                Ok(vec![
+                    AssistantEvent::TextDelta("ok".to_string()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        // Build a session with 10 existing messages (5 user + 5 assistant pairs).
+        let mut session = Session::new();
+        for i in 0..5_u8 {
+            session.messages.push(
+                crate::modules::runtime::session::ConversationMessage::user_text(format!(
+                    "msg {i}"
+                )),
+            );
+            session.messages.push(
+                crate::modules::runtime::session::ConversationMessage::assistant(vec![
+                    crate::modules::runtime::session::ContentBlock::Text {
+                        text: format!("reply {i}"),
+                    },
+                ]),
+            );
+        }
+
+        // Window of 4 turns max.
+        let wm = WorkingMemory::new(4, 100_000);
+        let mut runtime = ConversationRuntime::new(
+            session,
+            MessageCountingApi {
+                counts: Arc::clone(&counts),
+            },
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(
+                crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            ),
+            vec!["system".to_string()],
+        )
+        .with_working_memory(wm);
+
+        runtime.run_turn("new question".to_string(), None).unwrap();
+
+        // Full session has 10 pre-existing + 1 new user = 11 messages,
+        // but the API should only have seen ≤ 4 (the working memory window).
+        let snapshot = counts.lock().expect("lock poisoned");
+        let sent = snapshot.first().copied().unwrap_or(0);
+        assert!(
+            sent <= 4,
+            "expected ≤ 4 messages sent to LLM (working memory limit), got {sent}"
+        );
     }
 }

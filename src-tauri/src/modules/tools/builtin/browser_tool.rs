@@ -25,10 +25,12 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
+use tracing::info;
 
-use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
 use crate::modules::browser::events::emit_browser_status;
+use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
+use crate::modules::viewer_registry::sync_viewer_url;
 
 // ── SSRF / URL safety ─────────────────────────────────────────────────────────
 
@@ -296,58 +298,80 @@ async fn execute_browser_action(
                 .map_err(|e| ToolError::Handler(format!("URL safety check failed: {e}")))?;
 
             if !registry.is_running(&session_id) {
-                registry
-                    .launch(&session_id)
-                    .await
-                    .map_err(|e| ToolError::Handler(e.to_string()))?;
+                registry.launch(&session_id).await.map_err(|e| {
+                    spawn_emit(Arc::clone(&registry), session_id.clone());
+                    ToolError::Handler(e.to_string())
+                })?;
             }
 
             match registry.navigate(&session_id, url).await {
                 Ok(result) => {
-                    spawn_emit(Arc::clone(&registry), session_id);
-                    Ok(format!(
+                    // Mirror the AI's navigation into the live BrowserViewer window
+                    // (no-op when the viewer isn't open).
+                    sync_viewer_url(&session_id, &result.url);
+
+                    // Wait briefly for the page to render before emitting thumbnail.
+                    // Without this delay the screenshot may capture a blank page.
+                    let reg_clone = Arc::clone(&registry);
+                    let sid_clone = session_id.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                        emit_browser_status(
+                            &reg_clone.app_handle().cloned().expect("app handle"),
+                            &sid_clone,
+                            &reg_clone,
+                        )
+                        .await;
+                    });
+
+                    let captcha_hint =
+                        detect_verification_hint(&result.url, &result.title, &result.snapshot);
+                    let mut output = format!(
                         "Navigated to: {}\nTitle: {}\n\n{}",
                         result.url, result.title, result.snapshot
-                    ))
+                    );
+                    if let Some(hint) = captcha_hint {
+                        output.push_str("\n\n");
+                        output.push_str(&hint);
+                    }
+                    Ok(output)
                 }
-                Err(BrowserError::Cdp(_)) | Err(BrowserError::Snapshot(_)) => {
+                Err(BrowserError::Cdp(msg)) | Err(BrowserError::Snapshot(msg)) => {
                     // The browser process may have exited mid-operation.
                     // Remove the stale session entry so the next navigate call
                     // can auto-launch a fresh browser instead of failing again.
                     let _ = registry.close(&session_id).await;
-                    // Emit stopped status so BrowserCard disappears.
                     spawn_emit(Arc::clone(&registry), session_id);
-                    Err(ToolError::Handler(
-                        "Browser process exited unexpectedly. \
+                    Err(ToolError::Handler(format!(
+                        "Browser process exited unexpectedly ({msg}). \
                          The session has been reset — call 'navigate' again \
                          and a fresh browser will start automatically."
-                            .to_owned(),
-                    ))
+                    )))
                 }
                 Err(e) => Err(ToolError::Handler(e.to_string())),
             }
         }
 
         "snapshot" => {
-            ensure_running(&registry, &session_id)?;
-            let snapshot = registry
-                .snapshot(&session_id)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            Ok(snapshot)
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.snapshot(&session_id).await {
+                Ok(snapshot) => Ok(snapshot),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "screenshot" => {
-            ensure_running(&registry, &session_id)?;
-            let b64 = registry
-                .screenshot(&session_id)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            Ok(format!("data:image/jpeg;base64,{b64}"))
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.screenshot(&session_id).await {
+                Ok(b64) => Ok(format!("data:image/jpeg;base64,{b64}")),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "click" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let ref_num = args
                 .get("ref")
                 .and_then(|v| v.as_u64())
@@ -356,16 +380,18 @@ async fn execute_browser_action(
                     ToolError::Handler("'ref' field (integer) is required for 'click'".into())
                 })?;
 
-            let snapshot = registry
-                .click(&session_id, ref_num)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            match registry.click(&session_id, ref_num).await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "type" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let text = args
                 .get("text")
                 .and_then(|v| v.as_str())
@@ -376,16 +402,21 @@ async fn execute_browser_action(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            let snapshot = registry
+            match registry
                 .type_text(&session_id, text, ref_num, press_enter)
                 .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "scroll" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let direction = match args
                 .get("direction")
                 .and_then(|v| v.as_str())
@@ -400,16 +431,18 @@ async fn execute_browser_action(
                 .map(|v| v as u32)
                 .unwrap_or(3);
 
-            let snapshot = registry
-                .scroll(&session_id, direction, amount)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            match registry.scroll(&session_id, direction, amount).await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "select" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let ref_num = args
                 .get("ref")
                 .and_then(|v| v.as_u64())
@@ -421,46 +454,52 @@ async fn execute_browser_action(
                 ToolError::Handler("'value' field is required for 'select'".into())
             })?;
 
-            let snapshot = registry
-                .select_option(&session_id, ref_num, value)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            match registry.select_option(&session_id, ref_num, value).await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "key" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let key = args
                 .get("key")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| ToolError::Handler("'key' field is required for 'key'".into()))?;
 
-            let snapshot = registry
-                .press_key(&session_id, key)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            match registry.press_key(&session_id, key).await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "wait" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let timeout_ms = args
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5_000);
 
-            let snapshot = registry
-                .wait(&session_id, timeout_ms, "load")
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            spawn_emit(Arc::clone(&registry), session_id);
-            Ok(snapshot)
+            match registry.wait(&session_id, timeout_ms, "load").await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         "evaluate" => {
-            ensure_running(&registry, &session_id)?;
+            ensure_running_or_restore(&registry, &session_id).await?;
             let expression = args
                 .get("expression")
                 .and_then(|v| v.as_str())
@@ -468,11 +507,11 @@ async fn execute_browser_action(
                     ToolError::Handler("'expression' field is required for 'evaluate'".into())
                 })?;
 
-            let result = registry
-                .evaluate(&session_id, expression)
-                .await
-                .map_err(|e| ToolError::Handler(e.to_string()))?;
-            Ok(result)
+            match registry.evaluate(&session_id, expression).await {
+                Ok(result) => Ok(result),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
         }
 
         unknown => Err(ToolError::Handler(format!(
@@ -483,12 +522,107 @@ async fn execute_browser_action(
     }
 }
 
-fn ensure_running(registry: &BrowserRegistry, session_id: &str) -> Result<(), ToolError> {
-    if !registry.is_running(session_id) {
-        Err(ToolError::Handler(
-            "Browser is not running. Use action='start' first.".to_owned(),
-        ))
-    } else {
-        Ok(())
+// ── Session health helpers ────────────────────────────────────────────────────
+
+/// Check whether the session is running, and if not, attempt to restore it
+/// from cold state (previously visited URL).  Returns an error only when the
+/// browser is absent AND cannot be auto-restored.
+async fn ensure_running_or_restore(
+    registry: &Arc<BrowserRegistry>,
+    session_id: &str,
+) -> Result<(), ToolError> {
+    if registry.is_running(session_id) {
+        return Ok(());
     }
+
+    match registry.restore_cold_state(session_id).await {
+        Ok(true) => {
+            info!(session_id, "browser auto-restored from cold state");
+            Ok(())
+        }
+        Ok(false) => Err(ToolError::Handler(
+            "Browser is not running. Use 'navigate' with a URL to start browsing.".into(),
+        )),
+        Err(e) => Err(ToolError::Handler(format!(
+            "Browser is not running and auto-restore failed ({e}). \
+             Use 'navigate' to restart."
+        ))),
+    }
+}
+
+/// Handle a CDP crash during a non-navigate action: clean up the stale session
+/// and emit a stopped status event so the BrowserCard UI clears itself.
+async fn on_cdp_crash(
+    registry: &Arc<BrowserRegistry>,
+    session_id: String,
+    cdp_msg: &str,
+) -> ToolError {
+    let _ = registry.close(&session_id).await;
+    spawn_emit(Arc::clone(registry), session_id);
+    ToolError::Handler(format!(
+        "Browser process crashed during this action ({cdp_msg}). \
+         The session has been reset — use 'navigate' to restart."
+    ))
+}
+
+// ── CAPTCHA / bot-protection detection ───────────────────────────────────────
+
+/// Detect common human-verification page patterns and return an actionable hint
+/// for the LLM so it can switch strategies instead of blindly trying click/type.
+fn detect_verification_hint(url: &str, title: &str, snapshot: &str) -> Option<String> {
+    let url_lower = url.to_ascii_lowercase();
+    let title_lower = title.to_ascii_lowercase();
+    let snap_lower = snapshot.to_ascii_lowercase();
+
+    // ── Cloudflare Turnstile (enterprise-grade, cannot be bypassed by headless) ──
+    // Affects: claude.ai, anthropic.com, and many other Cloudflare-protected sites.
+    // Even with stealth mode, Cloudflare's server-side checks (TLS fingerprinting,
+    // behavioural scoring) will still block headless Chrome.  The ONLY reliable
+    // option for these sites is web_fetch or web_search.
+    let is_cloudflare_protected = url_lower.contains("claude.ai")
+        || url_lower.contains("anthropic.com")
+        || title_lower.contains("just a moment")
+        || title_lower.contains("attention required")
+        || snap_lower.contains("checking if the site connection is secure")
+        || snap_lower.contains("enable javascript and cookies to continue")
+        || snap_lower.contains("cf-browser-verification")
+        || snap_lower.contains("ray id");
+
+    if is_cloudflare_protected {
+        return Some(
+            "⚠️  Cloudflare bot-protection detected (or site is claude.ai/anthropic.com). \
+             Headless Chrome CANNOT bypass Cloudflare Turnstile regardless of stealth settings — \
+             this is a fundamental limitation. \
+             You MUST switch strategy: use web_search or web_fetch to get content \
+             from this site instead of continuing with browser actions."
+                .into(),
+        );
+    }
+
+    // ── Google "unusual traffic" / reCAPTCHA ──────────────────────────────────
+    if url_lower.contains("/sorry/") || url_lower.contains("google.com/sorry") {
+        return Some(
+            "⚠️  Google bot-protection detected. \
+             The page is requiring human verification. \
+             Switch to web_search to search Google programmatically instead."
+                .into(),
+        );
+    }
+
+    // ── Generic CAPTCHA patterns ───────────────────────────────────────────────
+    if title_lower.contains("captcha")
+        || snap_lower.contains("i am not a robot")
+        || snap_lower.contains("prove you are human")
+        || snap_lower.contains("verify you are human")
+        || snap_lower.contains("human verification")
+    {
+        return Some(
+            "⚠️  Human verification page detected. \
+             Headless browsers cannot reliably solve CAPTCHAs. \
+             Switch to web_fetch or web_search for this content instead."
+                .into(),
+        );
+    }
+
+    None
 }

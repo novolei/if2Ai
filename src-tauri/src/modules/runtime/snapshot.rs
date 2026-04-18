@@ -26,6 +26,26 @@ pub struct FrozenSnapshot {
     pub version: String,
 }
 
+/// Detailed result of a [`FrozenSnapshot::verify_detailed`] call (M6).
+///
+/// In addition to the boolean outcome, callers receive both hashes and a
+/// short, human-readable description of *why* verification failed.  This
+/// turns "integrity check failed" log lines into actionable diagnostics
+/// without forcing every callsite to re-hash both prompts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyResult {
+    /// `true` when `current` hashes to the same value as the snapshot.
+    pub valid: bool,
+    /// Hash captured at snapshot time (always present).
+    pub expected_hash: String,
+    /// Hash of the prompt currently being verified.
+    pub actual_hash: String,
+    /// `None` on success.  On failure, a short description such as
+    /// `"length differs: snapshot=128 current=256"` or
+    /// `"hash mismatch: prompts differ at byte 42"`.
+    pub details: Option<String>,
+}
+
 impl FrozenSnapshot {
     /// Capture a snapshot of the current system prompt
     pub fn capture(prompt: &str) -> Self {
@@ -37,12 +57,57 @@ impl FrozenSnapshot {
         }
     }
 
-    /// Verify that the current prompt matches the snapshot
+    /// Verify that the current prompt matches the snapshot.
     ///
-    /// Returns true if the current system prompt hash equals the
-    /// stored snapshot hash, indicating no modification.
+    /// Returns `true` if the current system prompt hash equals the stored
+    /// snapshot hash, indicating no modification.  This is the legacy boolean
+    /// interface; new callers should prefer [`Self::verify_detailed`] for
+    /// richer diagnostics on mismatch.
     pub fn verify(&self, current_prompt: &str) -> bool {
-        self.prompt_hash == compute_hash(current_prompt)
+        self.verify_detailed(current_prompt).valid
+    }
+
+    /// M6: hash-based verification that returns full diagnostics.
+    ///
+    /// On mismatch the `details` field carries a short description of the
+    /// first observable divergence (length differs, byte position of the
+    /// first differing character, or `"hash mismatch"` when the texts are
+    /// identical but hashing produces different values — which would
+    /// indicate a corrupted snapshot).
+    #[must_use]
+    pub fn verify_detailed(&self, current_prompt: &str) -> VerifyResult {
+        let actual_hash = compute_hash(current_prompt);
+        if self.prompt_hash == actual_hash {
+            return VerifyResult {
+                valid: true,
+                expected_hash: self.prompt_hash.clone(),
+                actual_hash,
+                details: None,
+            };
+        }
+
+        let snap_len = self.prompt.len();
+        let cur_len = current_prompt.len();
+        let details = if snap_len != cur_len {
+            format!("length differs: snapshot={snap_len} current={cur_len}")
+        } else if let Some(idx) = self
+            .prompt
+            .as_bytes()
+            .iter()
+            .zip(current_prompt.as_bytes().iter())
+            .position(|(a, b)| a != b)
+        {
+            format!("hash mismatch: prompts differ at byte {idx}")
+        } else {
+            "hash mismatch: identical bytes but hash differs (corrupted snapshot?)".to_string()
+        };
+
+        VerifyResult {
+            valid: false,
+            expected_hash: self.prompt_hash.clone(),
+            actual_hash,
+            details: Some(details),
+        }
     }
 
     /// Estimate token count of the frozen prompt
@@ -98,9 +163,41 @@ mod tests {
     }
 
     #[test]
+    fn verify_detailed_reports_success() {
+        let snapshot = FrozenSnapshot::capture("hello");
+        let result = snapshot.verify_detailed("hello");
+        assert!(result.valid);
+        assert!(result.details.is_none());
+        assert_eq!(result.expected_hash, result.actual_hash);
+    }
+
+    #[test]
+    fn verify_detailed_reports_length_diff() {
+        let snapshot = FrozenSnapshot::capture("short");
+        let result = snapshot.verify_detailed("a much longer prompt");
+        assert!(!result.valid);
+        let details = result.details.expect("details on failure");
+        assert!(details.contains("length differs"), "got {details}");
+        assert_ne!(result.expected_hash, result.actual_hash);
+    }
+
+    #[test]
+    fn verify_detailed_reports_byte_position_when_lengths_match() {
+        let snapshot = FrozenSnapshot::capture("hello world!");
+        let result = snapshot.verify_detailed("hello WORLD!");
+        assert!(!result.valid);
+        let details = result.details.expect("details on failure");
+        assert!(details.contains("byte"), "got {details}");
+    }
+
+    #[test]
     fn token_estimate() {
         let snapshot = FrozenSnapshot::capture("hello world");
-        // "hello world" = 11 chars / 4 + 1 = 3
-        assert_eq!(snapshot.token_estimate(), 3);
+        // M2: estimate_tokens now uses cl100k_base BPE; just bound-check.
+        let tokens = snapshot.token_estimate();
+        assert!(
+            (1..=11).contains(&tokens),
+            "expected 1..=11 tokens for 'hello world', got {tokens}"
+        );
     }
 }

@@ -269,12 +269,121 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   DARK MODE TOKEN OVERRIDES
+   Applied when <html class="dark"> is present (set by ThemeProvider).
+   Keeps the Jade Mist Teal aesthetic on dark backgrounds.
+   ══════════════════════════════════════════════════════════════════ */
+.dark {
+  color-scheme: dark;
+
+  /* ── Core Background & Surface ───────────────────────────────── */
+  --background:       oklch(14%   0.008 200);
+  --foreground:       oklch(93%   0.008 195);
+  --card:             oklch(17%   0.008 200);
+  --card-foreground:  oklch(93%   0.008 195);
+  --popover:          oklch(18%   0.007 200);
+  --popover-foreground: oklch(93% 0.008 195);
+
+  /* ── Primary（Jade 玉绿 — 暗色下稍亮）──────────────────────── */
+  --primary:            oklch(62%  0.13  162);
+  --primary-foreground: oklch(98%  0.005 160);
+
+  /* ── Secondary（深雾色）─────────────────────────────────────── */
+  --secondary:            oklch(22%  0.012 200);
+  --secondary-foreground: oklch(82%  0.015 195);
+
+  /* ── Muted（极暗背景）──────────────────────────────────────── */
+  --muted:            oklch(20%  0.009 200);
+  --muted-foreground: oklch(56%  0.018 200);
+
+  /* ── Accent（暗版强调）──────────────────────────────────────── */
+  --accent:            oklch(22%  0.014 195);
+  --accent-foreground: oklch(80%  0.040 195);
+
+  /* ── Destructive ────────────────────────────────────────────── */
+  --destructive:            oklch(48%  0.16  18);
+  --destructive-foreground: oklch(96%  0.005 195);
+
+  /* ── Border & Input ─────────────────────────────────────────── */
+  --border: oklch(28%  0.012 200);
+  --input:  oklch(24%  0.010 200);
+  --ring:   oklch(62%  0.11  162);
+
+  /* ── Jade Brand Palette (dark-adjusted) ─────────────────────── */
+  --jade:       oklch(64%  0.12  162);
+  --jade-light: oklch(28%  0.04  195);
+  --jade-dim:   oklch(44%  0.08  195);
+
+  /* ── Teal secondary (dark) ──────────────────────────────────── */
+  --teal:          oklch(58%  0.09  198);
+  --teal-light:    oklch(26%  0.04  198);
+  --celadon:       oklch(60%  0.06  170);
+  --celadon-light: oklch(24%  0.03  170);
+  --mist:          oklch(22%  0.010 195);
+  --mist-dark:     oklch(18%  0.010 195);
+
+  /* ── Warm Neutrals (dark) ───────────────────────────────────── */
+  --sand:      oklch(26%  0.014 80);
+  --sand-warm: oklch(20%  0.010 75);
+  --stone:     oklch(48%  0.010 195);
+  --ink:       oklch(92%  0.008 200);
+
+  /* ── Surface Layers (dark) ───────────────────────────────────── */
+  --surface:         oklch(16%   0.007 200);
+  --surface-raised:  oklch(20%   0.006 200);
+  --surface-overlay: oklch(18%   0.006 200 / 0.92);
+
+  /* ── Status Colors (dark) ───────────────────────────────────── */
+  --status-active:    oklch(60%  0.09  195);
+  --status-active-bg: oklch(20%  0.04  195);
+  --status-pending:    oklch(68%  0.10  78);
+  --status-pending-bg: oklch(22%  0.04  78);
+  --status-warning:    oklch(68%  0.12  55);
+  --status-warning-bg: oklch(22%  0.04  55);
+  --status-success:    oklch(62%  0.10  160);
+  --status-success-bg: oklch(20%  0.04  160);
+  --status-error:    oklch(60%  0.14  18);
+  --status-error-bg: oklch(22%  0.05  18);
+  --status-neutral:    oklch(50%  0.012 195);
+  --status-neutral-bg: oklch(20%  0.008 195);
+
+  /* ── Chart Palette (dark) ───────────────────────────────────── */
+  --chart-1: oklch(62%  0.10  195);
+  --chart-2: oklch(68%  0.09  160);
+  --chart-3: oklch(68%  0.10  78);
+  --chart-4: oklch(66%  0.08  240);
+  --chart-5: oklch(62%  0.08  30);
+
+  /* ── Sidebar (dark) ─────────────────────────────────────────── */
+  --sidebar:                    oklch(15%   0.007 200);
+  --sidebar-foreground:         oklch(82%   0.012 195);
+  --sidebar-primary:            oklch(62%   0.13  162);
+  --sidebar-primary-foreground: oklch(98%   0.005 160);
+  --sidebar-accent:             oklch(22%   0.010 200);
+  --sidebar-accent-foreground:  oklch(78%   0.014 195);
+  --sidebar-border:             oklch(24%   0.010 200);
+  --sidebar-ring:               oklch(55%   0.08  195);
+
+  /* ── Inspector (dark) ──────────────────────────────────────── */
+  --inspector:        oklch(19%   0.010 75);
+  --inspector-border: oklch(26%   0.014 75);
+
+  /* ── Shadow System (dark — deeper, more saturated) ─────────── */
+  --shadow-color:  oklch(8% 0.005 200 / 0.40);
+  --shadow-xs:    0 1px  4px 0   oklch(8% 0.005 200 / 0.30);
+  --shadow-sm:    0 2px  8px 0   oklch(8% 0.005 200 / 0.40);
+  --shadow-md:    0 4px 16px 0   oklch(8% 0.005 200 / 0.48);
+  --shadow-lg:    0 8px 28px -2px oklch(8% 0.005 200 / 0.55);
+  --shadow-ring:  0 0  0 3px     oklch(62% 0.09 195 / 0.28);
+}
+
+/* ══════════════════════════════════════════════════════════════════
    BASE STYLES
    ══════════════════════════════════════════════════════════════════ */
 @layer base {
   html {
     height: 100%;
-    color-scheme: light;
+    color-scheme: light dark;
     background: var(--background);
   }
 

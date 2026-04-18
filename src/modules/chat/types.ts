@@ -1,4 +1,11 @@
-import type { PermissionMode, Project, ProjectMeta, SessionMeta } from '@/lib/tauri'
+import type {
+  ContextBudgetUsage,
+  MemoryContextItem,
+  PermissionMode,
+  Project,
+  ProjectMeta,
+  SessionMeta,
+} from '@/lib/tauri'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TodoItem } from '@/components/ui/TodoPanel'
 
@@ -30,6 +37,20 @@ export interface Message {
   toolStatus?: 'queued' | 'running' | 'completed' | 'error'
   effectiveWorkdir?: string
   policyDecision?: 'allow' | 'deny' | 'prompt'
+  /**
+   * Memory-write scope reported by the `memory_store` tool result JSON
+   * (one of `global` / `project` / `session`).  Only populated for
+   * `memory_store` tool messages so the highlighted `MemoryWriteCard`
+   * does not have to re-derive scope from `toolArgs`.
+   */
+  memoryScope?: 'global' | 'project' | 'session'
+  /**
+   * Reason code returned by `MemoryPolicyEngine` (e.g.
+   * `length_prompt_threshold`, `content_too_long`, `shadow_denied`).
+   * Surfaces the precise rule that triggered a `deny` / `prompt`
+   * decision in the UI tooltip, falling back to a derived label.
+   */
+  memoryReasonCode?: string
   evidenceId?: string
   requestId?: string
   taskOutcome?: 'completed' | 'partial_success' | 'failed'
@@ -39,6 +60,17 @@ export interface Message {
   statusLabel?: string
   statusKind?: 'info' | 'success' | 'partial' | 'failed'
   isRecovering?: boolean
+  /**
+   * Memory items the agent recalled while generating this assistant response.
+   * Populated from `StreamTokenPayload.memory_context` on `stream_complete`.
+   * Drives the `MemoryChip` + `MemoryEvidencePanel` UI in `ChatMessage`.
+   */
+  memoryContext?: MemoryContextItem[]
+  /**
+   * Per-turn context-budget snapshot reported by the backend on completion.
+   * Used by `ContextBar` (snapshot variant) and future evidence views.
+   */
+  contextBudgetUsage?: ContextBudgetUsage
 }
 
 export interface Conversation {
@@ -105,4 +137,10 @@ export interface ChatWorkspaceProps {
   onStartWindowDrag: (event: React.MouseEvent<HTMLElement>) => void
   onPreviewFocusChange: (active: boolean) => void
   runningSessionIds: string[]
+  /**
+   * Most recent context-budget snapshot emitted by the streaming agent for
+   * the active session. Drives the live `ContextBar` rendered above the
+   * composer. `null` when no turn has completed yet for this session.
+   */
+  latestContextBudgetUsage?: ContextBudgetUsage | null
 }

@@ -5,6 +5,8 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+
 use super::json::JsonValue;
 use super::sandbox::{FilesystemIsolationMode, SandboxConfig};
 
@@ -70,6 +72,108 @@ impl Default for ProviderTransportConfig {
             initial_backoff_ms: 200,
             max_backoff_ms: 2_000,
         }
+    }
+}
+
+/// Memory recall strategy (Memory Control Plane v1 feature flag).
+///
+/// - `Lexical` — keyword / FTS only (legacy fallback).
+/// - `Hybrid` — lexical + semantic vector search via `VectorMemoryProvider`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryRecallMode {
+    Lexical,
+    #[default]
+    Hybrid,
+}
+
+impl MemoryRecallMode {
+    /// Wire-format label used in settings JSON and audit logs.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lexical => "lexical",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+/// Memory policy enforcement mode (Memory Control Plane v1 feature flag).
+///
+/// - `Shadow` — `MemoryPolicyEngine` *evaluates* writes and emits audit
+///   events but never blocks the underlying `store()` call.
+/// - `Enforce` — `Deny` decisions block writes (returns `Err` to the caller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryPolicyEnforceMode {
+    #[default]
+    Shadow,
+    Enforce,
+}
+
+impl MemoryPolicyEnforceMode {
+    /// Wire-format label used in settings JSON and audit logs.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Enforce => "enforce",
+        }
+    }
+}
+
+/// Aggregated memory subsystem feature flags (Memory Control Plane v1).
+///
+/// Read from `settings.json` under the `memory` key.  Defaults preserve
+/// shipping behaviour (control plane on, hybrid recall, shadow policy) so
+/// existing installs keep working without configuration changes.
+///
+/// Schema:
+/// ```jsonc
+/// {
+///   "memory": {
+///     "controlPlaneV1Enabled": true,
+///     "recallMode": "hybrid",          // "lexical" | "hybrid"
+///     "policyEnforceMode": "shadow"    // "shadow"  | "enforce"
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryFeatureConfig {
+    control_plane_v1_enabled: bool,
+    recall_mode: MemoryRecallMode,
+    policy_enforce_mode: MemoryPolicyEnforceMode,
+}
+
+impl Default for MemoryFeatureConfig {
+    fn default() -> Self {
+        Self {
+            control_plane_v1_enabled: true,
+            recall_mode: MemoryRecallMode::default(),
+            policy_enforce_mode: MemoryPolicyEnforceMode::default(),
+        }
+    }
+}
+
+impl MemoryFeatureConfig {
+    /// `true` when the Memory Control Plane v1 wiring (scope resolver,
+    /// policy engine, audit emitter) is active.  When `false` the legacy
+    /// scope-less store/recall paths are used.
+    #[must_use]
+    pub fn control_plane_v1_enabled(&self) -> bool {
+        self.control_plane_v1_enabled
+    }
+
+    /// Active recall strategy.
+    #[must_use]
+    pub fn recall_mode(&self) -> MemoryRecallMode {
+        self.recall_mode
+    }
+
+    /// Active policy enforcement mode.
+    #[must_use]
+    pub fn policy_enforce_mode(&self) -> MemoryPolicyEnforceMode {
+        self.policy_enforce_mode
     }
 }
 
@@ -175,6 +279,7 @@ pub struct RuntimeFeatureConfig {
     permission_mode: Option<ResolvedPermissionMode>,
     sandbox: SandboxConfig,
     control_plane: ControlPlaneGovernanceConfig,
+    memory: MemoryFeatureConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -372,6 +477,7 @@ impl ConfigLoader {
             permission_mode: parse_optional_permission_mode(&merged_value)?,
             sandbox: parse_optional_sandbox_config(&merged_value)?,
             control_plane: parse_optional_control_plane_config(&merged_value)?,
+            memory: parse_optional_memory_feature_config(&merged_value)?,
         };
 
         Ok(RuntimeConfig {
@@ -456,6 +562,12 @@ impl RuntimeConfig {
     pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
         &self.feature_config.control_plane
     }
+
+    /// Memory subsystem feature flags (see [`MemoryFeatureConfig`]).
+    #[must_use]
+    pub fn memory(&self) -> &MemoryFeatureConfig {
+        &self.feature_config.memory
+    }
 }
 
 impl RuntimeFeatureConfig {
@@ -509,6 +621,12 @@ impl RuntimeFeatureConfig {
     #[must_use]
     pub fn control_plane(&self) -> &ControlPlaneGovernanceConfig {
         &self.control_plane
+    }
+
+    /// Memory subsystem feature flags (see [`MemoryFeatureConfig`]).
+    #[must_use]
+    pub fn memory(&self) -> &MemoryFeatureConfig {
+        &self.memory
     }
 }
 
@@ -1009,6 +1127,96 @@ fn validate_provider_transport_config(config: &ProviderTransportConfig) -> Resul
     Ok(())
 }
 
+fn parse_optional_memory_feature_config(
+    root: &JsonValue,
+) -> Result<MemoryFeatureConfig, ConfigError> {
+    // Start from defaults so missing keys at every layer behave deterministically.
+    let mut config = MemoryFeatureConfig::default();
+
+    // Layer 1: settings.json `memory.*` keys (camelCase).  This is the
+    // historical claw-cli source of truth and keeps backward compatibility.
+    if let Some(object) = root.as_object() {
+        if let Some(value) = object.get("memory") {
+            let memory = expect_object(value, "merged settings.memory")?;
+            if let Some(flag) =
+                optional_bool(memory, "controlPlaneV1Enabled", "merged settings.memory")?
+            {
+                config.control_plane_v1_enabled = flag;
+            }
+            if let Some(label) = optional_string(memory, "recallMode", "merged settings.memory")? {
+                config.recall_mode = parse_memory_recall_mode_label(label)?;
+            }
+            if let Some(label) =
+                optional_string(memory, "policyEnforceMode", "merged settings.memory")?
+            {
+                config.policy_enforce_mode = parse_memory_policy_enforce_mode_label(label)?;
+            }
+        }
+    }
+
+    // Layer 2 (overrides Layer 1): the if2Ai Memory Settings UI writes to
+    // `~/.if2ai/memory_config.json` using snake_case keys.  Overlay any
+    // user-set feature flags here so the UI is the immediate source of truth.
+    if let Some(overrides) = read_if2ai_memory_overrides() {
+        if let Some(flag) = overrides.control_plane_v1_enabled {
+            config.control_plane_v1_enabled = flag;
+        }
+        if let Some(mode) = overrides.recall_mode {
+            config.recall_mode = mode;
+        }
+        if let Some(mode) = overrides.policy_enforce_mode {
+            config.policy_enforce_mode = mode;
+        }
+    }
+
+    Ok(config)
+}
+
+/// Subset of `~/.if2ai/memory_config.json` that the runtime reads to discover
+/// user-driven feature-flag overrides written by the Memory Settings UI.
+///
+/// Only the three feature-flag fields are extracted; token-budget percentages
+/// remain owned by the legacy `ContextBudget`/`BudgetConfig` path so this
+/// loader stays additive and backward-compatible.
+#[derive(Debug, Default, Deserialize)]
+struct If2AiMemoryOverrides {
+    #[serde(default)]
+    control_plane_v1_enabled: Option<bool>,
+    #[serde(default)]
+    recall_mode: Option<MemoryRecallMode>,
+    #[serde(default)]
+    policy_enforce_mode: Option<MemoryPolicyEnforceMode>,
+}
+
+fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {
+    let home = std::env::var("HOME").ok()?;
+    let path = std::path::Path::new(&home).join(".if2ai/memory_config.json");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn parse_memory_recall_mode_label(value: &str) -> Result<MemoryRecallMode, ConfigError> {
+    match value {
+        "lexical" => Ok(MemoryRecallMode::Lexical),
+        "hybrid" => Ok(MemoryRecallMode::Hybrid),
+        other => Err(ConfigError::Parse(format!(
+            "merged settings.memory.recallMode: unsupported mode {other}"
+        ))),
+    }
+}
+
+fn parse_memory_policy_enforce_mode_label(
+    value: &str,
+) -> Result<MemoryPolicyEnforceMode, ConfigError> {
+    match value {
+        "shadow" => Ok(MemoryPolicyEnforceMode::Shadow),
+        "enforce" => Ok(MemoryPolicyEnforceMode::Enforce),
+        other => Err(ConfigError::Parse(format!(
+            "merged settings.memory.policyEnforceMode: unsupported mode {other}"
+        ))),
+    }
+}
+
 fn parse_boundary_enforce_mode_label(value: &str) -> Result<BoundaryEnforceMode, ConfigError> {
     match value {
         "shadow" => Ok(BoundaryEnforceMode::Shadow),
@@ -1340,7 +1548,8 @@ fn push_unique(target: &mut Vec<String>, value: String) {
 mod tests {
     use crate::modules::runtime::config::{
         BoundaryEnforceMode, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
-        ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
+        MemoryPolicyEnforceMode, MemoryRecallMode, ResolvedPermissionMode,
+        CLAW_SETTINGS_SCHEMA_NAME,
     };
     use crate::modules::runtime::json::JsonValue;
     use crate::modules::runtime::sandbox::FilesystemIsolationMode;
@@ -1782,6 +1991,83 @@ mod tests {
             2400
         );
 
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_memory_feature_flags_with_defaults() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+
+        // No `memory` key anywhere → all three flags use shipping defaults.
+        assert!(loaded.memory().control_plane_v1_enabled());
+        assert_eq!(loaded.memory().recall_mode(), MemoryRecallMode::Hybrid);
+        assert_eq!(
+            loaded.memory().policy_enforce_mode(),
+            MemoryPolicyEnforceMode::Shadow
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn parses_memory_feature_flags_overrides() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{
+              "memory": {
+                "controlPlaneV1Enabled": false,
+                "recallMode": "lexical",
+                "policyEnforceMode": "enforce"
+              }
+            }"#,
+        )
+        .expect("write memory settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+
+        assert!(!loaded.memory().control_plane_v1_enabled());
+        assert_eq!(loaded.memory().recall_mode(), MemoryRecallMode::Lexical);
+        assert_eq!(
+            loaded.memory().policy_enforce_mode(),
+            MemoryPolicyEnforceMode::Enforce
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn rejects_invalid_memory_recall_mode_label() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claw");
+        fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+        fs::write(
+            cwd.join(".claw").join("settings.local.json"),
+            r#"{"memory":{"recallMode":"telepathy"}}"#,
+        )
+        .expect("write bad memory settings");
+
+        let error = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect_err("config should reject");
+        assert!(error.to_string().contains("memory.recallMode"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 

@@ -114,6 +114,12 @@ impl ToolExecutionBroker {
     }
 
     /// Build a shared tool context from a session execution context.
+    ///
+    /// Both `session_id` and `project_id` are forwarded so that downstream
+    /// scope-aware tooling (memory, future project-aware tools) can resolve a
+    /// complete three-tier scope. Empty strings on the
+    /// `SessionExecutionContext` are normalised to `None` to avoid spurious
+    /// "empty project" matches in scoped queries.
     #[must_use]
     pub fn to_tool_context(
         &self,
@@ -124,8 +130,14 @@ impl ToolExecutionBroker {
         } else {
             Some(context.session_id.clone())
         };
-        Arc::new(Mutex::new(ToolContext::new_with_session(
+        let project_id = if context.project_id.is_empty() {
+            None
+        } else {
+            Some(context.project_id.clone())
+        };
+        Arc::new(Mutex::new(ToolContext::new_with_scope(
             session_id,
+            project_id,
             context.workdir.clone(),
             context.permission_mode,
         )))

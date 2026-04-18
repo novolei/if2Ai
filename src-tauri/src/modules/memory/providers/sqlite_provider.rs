@@ -5,9 +5,10 @@
 
 use async_trait::async_trait;
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::modules::memory::compat::ClawCliMemoryEntry;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryCategory, MemoryEntry, MemoryError, MemoryProvider};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
@@ -66,9 +67,18 @@ impl SqliteMemoryProvider {
         )
         .map_err(|e| MemoryError::Generic(format!("Failed to create index: {e}")))?;
 
-        // Index for scope-based queries
+        // Indexes for scope-based queries — partial indexes on the rows that
+        // actually carry the scope tag, which keeps them small and selective
+        // (most rows are session-only or global, so `idx_memory_project_id`
+        // typically covers a few percent of the table).
         let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_session_id ON memory_entries(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_session_id ON memory_entries(session_id) \
+             WHERE session_id IS NOT NULL",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_project_id ON memory_entries(project_id) \
+             WHERE project_id IS NOT NULL",
             [],
         );
 
@@ -129,6 +139,188 @@ impl SqliteMemoryProvider {
             project_id,
         })
     }
+
+    /// Migrate a legacy `memory.json` (claw-cli format) into the SQLite store (M1).
+    ///
+    /// The legacy file is a JSON array of [`ClawCliMemoryEntry`] objects with
+    /// only the base fields (`key`, `content`, `category`, `created_at`,
+    /// `updated_at`). All extended fields (importance, access_count, trust_score,
+    /// scope ids) default to neutral values: `importance=0.5`, `access_count=0`,
+    /// `trust_score=0.0`, and the entry is stored unscoped (NULL session/project).
+    ///
+    /// The entire migration runs inside a single SQLite transaction. On any
+    /// per-row insert failure the whole transaction is rolled back and the
+    /// error is propagated. Calling this on a non-existent path returns
+    /// `Ok(0)` so it can be used as an idempotent upgrade hook.
+    ///
+    /// Returns the number of entries successfully imported.
+    #[allow(dead_code)] // Invoked from upgrade path; keep the public API stable.
+    pub async fn migrate_from_json(&self, path: &Path) -> Result<usize, MemoryError> {
+        if !path.exists() {
+            tracing::debug!(
+                "[SqliteMemoryProvider] migrate_from_json: no legacy file at {path:?}, skipping"
+            );
+            return Ok(0);
+        }
+
+        let raw = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| MemoryError::Generic(format!("read {path:?} failed: {e}")))?;
+
+        let legacy: Vec<ClawCliMemoryEntry> = serde_json::from_str(&raw)
+            .map_err(|e| MemoryError::Generic(format!("parse {path:?} failed: {e}")))?;
+
+        if legacy.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.clone();
+        let path_for_log = path.to_path_buf();
+        tokio::task::spawn_blocking(move || -> Result<usize, MemoryError> {
+            let mut c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let tx = c
+                .transaction()
+                .map_err(|e| MemoryError::Generic(format!("begin transaction failed: {e}")))?;
+
+            let mut inserted = 0usize;
+            for entry in &legacy {
+                let now = chrono::Utc::now().to_rfc3339();
+                let created = if entry.created_at.is_empty() {
+                    now.clone()
+                } else {
+                    entry.created_at.clone()
+                };
+                let updated = if entry.updated_at.is_empty() {
+                    now.clone()
+                } else {
+                    entry.updated_at.clone()
+                };
+
+                // ON CONFLICT(key) DO NOTHING preserves existing entries when migrating
+                // a second time — the migration is idempotent and never overwrites
+                // newer SQLite-native data.
+                let rows = tx
+                    .execute(
+                        "INSERT INTO memory_entries
+                            (key, content, category, created_at, updated_at,
+                             importance, access_count, trust_score,
+                             session_id, project_id)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 0.5, 0, 0.0, NULL, NULL)
+                         ON CONFLICT(key) DO NOTHING",
+                        params![
+                            entry.key,
+                            entry.content,
+                            entry.category,
+                            created,
+                            updated,
+                        ],
+                    )
+                    .map_err(|e| {
+                        MemoryError::Generic(format!(
+                            "insert key={} during migration failed: {e}",
+                            entry.key
+                        ))
+                    })?;
+                inserted += rows;
+            }
+
+            tx.commit()
+                .map_err(|e| MemoryError::Generic(format!("commit failed: {e}")))?;
+            tracing::info!(
+                "[SqliteMemoryProvider] migrate_from_json: imported {inserted}/{total} entries from {path:?}",
+                total = legacy.len(),
+                path = path_for_log,
+            );
+            Ok(inserted)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("migration task panicked: {e}")))?
+    }
+}
+
+/// Build the SQL `WHERE` fragment that enforces the three-tier visibility rules
+/// described on `recall_scoped`.
+///
+/// Returns a fragment that uses positional parameters `?1`..`?N`, where `N`
+/// matches the length of the slice returned by [`scope_visibility_params`].
+/// The returned fragment is intentionally wrapped in parentheses by the caller
+/// so it can be combined with additional `AND` clauses (e.g. category filter).
+fn scope_visibility_clause(session_id: Option<&str>, project_id: Option<&str>) -> String {
+    match (session_id, project_id) {
+        // session + project: own session entries OR project-level entries OR global.
+        (Some(_), Some(_)) => "session_id = ?1 \
+             OR (session_id IS NULL AND project_id = ?2) \
+             OR (session_id IS NULL AND project_id IS NULL)"
+            .to_string(),
+        // session only: own session entries OR global (legacy callers without project).
+        (Some(_), None) => "session_id = ?1 \
+             OR (session_id IS NULL AND project_id IS NULL)"
+            .to_string(),
+        // project only: project-level entries OR global. No session entries leak across.
+        (None, Some(_)) => "(session_id IS NULL AND project_id = ?1) \
+             OR (session_id IS NULL AND project_id IS NULL)"
+            .to_string(),
+        // global: only truly unscoped entries.
+        (None, None) => "session_id IS NULL AND project_id IS NULL".to_string(),
+    }
+}
+
+/// Build the bound parameter list aligned with [`scope_visibility_clause`].
+fn scope_visibility_params(session_id: Option<&str>, project_id: Option<&str>) -> Vec<String> {
+    match (session_id, project_id) {
+        (Some(s), Some(p)) => vec![s.to_string(), p.to_string()],
+        (Some(s), None) => vec![s.to_string()],
+        (None, Some(p)) => vec![p.to_string()],
+        (None, None) => Vec::new(),
+    }
+}
+
+/// SQL `ORDER BY` fragment that ranks recall results by **scope tier first**,
+/// then by importance / access_count / recency.  Lower tier number wins.
+///
+/// Tiering (must match `scope_visibility_clause` so every visible row has a
+/// well-defined tier):
+///   - 0 = session-owned (`session_id` matches the caller)
+///   - 1 = project-owned (`session_id IS NULL AND project_id` matches)
+///   - 2 = global / legacy (both NULL)
+///
+/// Within a tier we surface the most "trusted-and-frequently-used" memory
+/// first: `importance DESC, access_count DESC, updated_at DESC`.
+///
+/// Returns a clause without the leading `ORDER BY` keyword so the caller can
+/// inline it after `WHERE (...)`.
+fn scope_priority_order_by(session_id: Option<&str>, project_id: Option<&str>) -> String {
+    // The CASE expression is parameter-free and safe to inline because both
+    // operands come from already-bound `?N` slots; we just *reference* them.
+    let case_expr = match (session_id, project_id) {
+        (Some(_), Some(_)) => {
+            // ?1 = session, ?2 = project — same parameter positions used by
+            // `scope_visibility_clause`.
+            "CASE \
+                 WHEN session_id = ?1 THEN 0 \
+                 WHEN session_id IS NULL AND project_id = ?2 THEN 1 \
+                 ELSE 2 \
+             END"
+        }
+        (Some(_), None) => {
+            // ?1 = session.  No project, so tier 1 collapses into tier 2.
+            "CASE WHEN session_id = ?1 THEN 0 ELSE 2 END"
+        }
+        (None, Some(_)) => {
+            // ?1 = project.  No session-tier rows are visible; collapse to 1/2.
+            "CASE WHEN session_id IS NULL AND project_id = ?1 THEN 1 ELSE 2 END"
+        }
+        (None, None) => {
+            // Only globals are visible; constant tier.
+            "2"
+        }
+    };
+    format!(
+        "{case_expr} ASC, \
+         importance DESC, \
+         access_count DESC, \
+         updated_at DESC"
+    )
 }
 
 /// Parse a category string, handling both known and custom categories
@@ -231,6 +423,7 @@ impl MemoryProvider for SqliteMemoryProvider {
         let query_str = query.to_string();
         let category_str = category.map(String::from);
         let session_id = scope.session_id.clone();
+        let project_id = scope.project_id.clone();
         let conn = self.conn.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -238,39 +431,58 @@ impl MemoryProvider for SqliteMemoryProvider {
                 .lock()
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
 
-            // Returns entries that:
-            //   a) belong to the requested session_id, OR
-            //   b) are globally scoped (session_id IS NULL) — legacy/shared entries
-            // This ensures forward-compatibility: unscoped entries remain visible to all sessions.
+            // Three-tier visibility rules — see `MemoryExecutionScope` doc.
             //
-            // TODO(fix-mcp-policy P1): also filter by project_id when scope.project_id is Some.
-            // Currently project_id is always None from from_tool_context() so this is safe,
-            // but project-level isolation will be needed once project_id flows through the stack.
-            let mut stmt = match &category_str {
-                Some(_) => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
-                     FROM memory_entries
-                     WHERE (session_id = ?1 OR session_id IS NULL)
-                       AND category = ?2
-                     ORDER BY updated_at DESC
-                     LIMIT ?3",
-                )?,
-                None => c.prepare(
-                    "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
-                     FROM memory_entries
-                     WHERE (session_id = ?1 OR session_id IS NULL)
-                     ORDER BY updated_at DESC
-                     LIMIT ?2",
-                )?,
-            };
+            // 1) session + project scope (most common, agent tool execution):
+            //      a) entries owned by this exact session, OR
+            //      b) project entries (session_id IS NULL AND project_id = $project), OR
+            //      c) legacy / global entries (session_id IS NULL AND project_id IS NULL).
+            //    NOT visible: other sessions' session entries, other projects' project entries.
+            //
+            // 2) project-only scope (no active session, e.g. project-level Memory Browser):
+            //      a) project entries (session_id IS NULL AND project_id = $project), OR
+            //      b) global entries.
+            //    NOT visible: any session-scoped entry, other projects' entries.
+            //
+            // 3) global scope (CLI / harness / un-bound caller):
+            //      a) global entries only (session_id IS NULL AND project_id IS NULL).
+            //
+            // Legacy unscoped entries (session_id IS NULL AND project_id IS NULL) always
+            // behave as global entries, preserving backward-compatibility with rows
+            // written before the scope columns existed.
+            let scope_clause =
+                scope_visibility_clause(session_id.as_deref(), project_id.as_deref());
+            let scope_params =
+                scope_visibility_params(session_id.as_deref(), project_id.as_deref());
+            // Project-aware ranking: scope tier (session > project > global)
+            // first, then importance / access_count / recency within tier.
+            let order_by = scope_priority_order_by(session_id.as_deref(), project_id.as_deref());
 
+            let limit_i64: i64 = limit as i64;
             let mut all_entries: Vec<MemoryEntry> = Vec::new();
             if let Some(ref cat) = category_str {
+                let cat_pos = scope_params.len() + 1;
+                let limit_pos = scope_params.len() + 2;
+                let sql = format!(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE ({scope_clause})
+                       AND category = ?{cat_pos}
+                     ORDER BY {order_by}
+                     LIMIT ?{limit_pos}"
+                );
+                let mut stmt = c.prepare(&sql)?;
+                let mut bound: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(scope_params.len() + 2);
+                for p in &scope_params {
+                    bound.push(p);
+                }
+                bound.push(cat);
+                bound.push(&limit_i64);
                 for row in stmt
                     .query_map(
-                        params![session_id, cat, limit as i64],
+                        rusqlite::params_from_iter(bound),
                         SqliteMemoryProvider::row_to_entry,
                     )?
                     .flatten()
@@ -278,9 +490,25 @@ impl MemoryProvider for SqliteMemoryProvider {
                     all_entries.push(row);
                 }
             } else {
+                let limit_pos = scope_params.len() + 1;
+                let sql = format!(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE ({scope_clause})
+                     ORDER BY {order_by}
+                     LIMIT ?{limit_pos}"
+                );
+                let mut stmt = c.prepare(&sql)?;
+                let mut bound: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(scope_params.len() + 1);
+                for p in &scope_params {
+                    bound.push(p);
+                }
+                bound.push(&limit_i64);
                 for row in stmt
                     .query_map(
-                        params![session_id, limit as i64],
+                        rusqlite::params_from_iter(bound),
                         SqliteMemoryProvider::row_to_entry,
                     )?
                     .flatten()
@@ -466,6 +694,129 @@ impl MemoryProvider for SqliteMemoryProvider {
             }
 
             Ok(result)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    async fn export_scoped(
+        &self,
+        category: Option<&str>,
+        scope: &MemoryExecutionScope,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        let category_str = category.map(String::from);
+        let session_id = scope.session_id.clone();
+        let project_id = scope.project_id.clone();
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+
+            let scope_clause =
+                scope_visibility_clause(session_id.as_deref(), project_id.as_deref());
+            let scope_params =
+                scope_visibility_params(session_id.as_deref(), project_id.as_deref());
+
+            let mut result: Vec<MemoryEntry> = Vec::new();
+            if let Some(ref cat) = category_str {
+                let cat_pos = scope_params.len() + 1;
+                let sql = format!(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE ({scope_clause})
+                       AND category = ?{cat_pos}
+                     ORDER BY updated_at DESC"
+                );
+                let mut stmt = c.prepare(&sql)?;
+                let mut bound: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(scope_params.len() + 1);
+                for p in &scope_params {
+                    bound.push(p);
+                }
+                bound.push(cat);
+                for row in stmt
+                    .query_map(
+                        rusqlite::params_from_iter(bound),
+                        SqliteMemoryProvider::row_to_entry,
+                    )?
+                    .flatten()
+                {
+                    result.push(row);
+                }
+            } else {
+                let sql = format!(
+                    "SELECT key, content, category, created_at, updated_at, importance,
+                            access_count, trust_score, session_id, project_id
+                     FROM memory_entries
+                     WHERE ({scope_clause})
+                     ORDER BY updated_at DESC"
+                );
+                let mut stmt = c.prepare(&sql)?;
+                let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(scope_params.len());
+                for p in &scope_params {
+                    bound.push(p);
+                }
+                for row in stmt
+                    .query_map(
+                        rusqlite::params_from_iter(bound),
+                        SqliteMemoryProvider::row_to_entry,
+                    )?
+                    .flatten()
+                {
+                    result.push(row);
+                }
+            }
+
+            Ok(result)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Update an entry's scope tags in place.
+    ///
+    /// Used by [`MemoryPromotionEngine`](crate::modules::memory::promotion) to
+    /// promote `session` → `project` (set `session_id = NULL`, fill
+    /// `project_id`) or `project` → `global` (clear both).  The `target_scope`
+    /// fields are written verbatim, so callers must construct the desired
+    /// final scope.
+    async fn promote_scope(
+        &self,
+        key: &str,
+        target_scope: &MemoryExecutionScope,
+    ) -> Result<(), MemoryError> {
+        let key_owned = key.to_string();
+        let session_id = target_scope.session_id.clone();
+        let project_id = target_scope.project_id.clone();
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let rows = c
+                .execute(
+                    "UPDATE memory_entries
+                       SET session_id = ?1,
+                           project_id = ?2,
+                           updated_at = ?3
+                     WHERE key = ?4",
+                    params![
+                        session_id,
+                        project_id,
+                        chrono::Utc::now().to_rfc3339(),
+                        key_owned,
+                    ],
+                )
+                .map_err(|e| MemoryError::Generic(format!("promote_scope failed: {e}")))?;
+            if rows == 0 {
+                Err(MemoryError::KeyNotFound(key_owned))
+            } else {
+                Ok(())
+            }
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
@@ -786,6 +1137,49 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn migrate_from_json_imports_entries_idempotently() {
+        let (provider, temp) = create_test_provider();
+        let json_path = temp.path().join("memory.json");
+
+        let payload = r#"[
+            {
+                "key": "claw_a",
+                "content": "claw content A",
+                "category": "core",
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-02T00:00:00Z"
+            },
+            {
+                "key": "claw_b",
+                "content": "claw content B",
+                "category": "daily",
+                "created_at": "2024-01-03T00:00:00Z",
+                "updated_at": "2024-01-04T00:00:00Z"
+            }
+        ]"#;
+        std::fs::write(&json_path, payload).unwrap();
+
+        let imported = provider.migrate_from_json(&json_path).await.unwrap();
+        assert_eq!(imported, 2);
+
+        let exported = provider.export(None).await.unwrap();
+        assert_eq!(exported.len(), 2);
+        assert!(exported.iter().any(|e| e.key == "claw_a"));
+        assert!(exported.iter().any(|e| e.key == "claw_b"));
+
+        // Second migration is a no-op — ON CONFLICT DO NOTHING preserves originals.
+        let imported_again = provider.migrate_from_json(&json_path).await.unwrap();
+        assert_eq!(imported_again, 0);
+
+        // Missing file returns Ok(0).
+        let missing = provider
+            .migrate_from_json(&temp.path().join("nope.json"))
+            .await
+            .unwrap();
+        assert_eq!(missing, 0);
+    }
+
     /// Test that an unscoped (global) entry stored via store() is visible to
     /// recall_scoped with any session — backward-compat requirement.
     #[tokio::test]
@@ -814,5 +1208,254 @@ mod tests {
             "global entry should be visible to all sessions"
         );
         assert_eq!(results[0].content, "global fact");
+    }
+
+    // -----------------------------------------------------------------------
+    // Three-tier scope visibility regression suite — covers the rules in
+    // `recall_scoped` / `scope_visibility_clause`.
+    //
+    // Each test stores entries via `store_scoped` with explicit scopes and
+    // asserts the visibility set seen from various caller scopes.  We assert
+    // exact key sets (sorted) to make accidental leaks very loud.
+
+    use crate::modules::memory::scope::MemoryScopeResolver;
+
+    /// Helper: store a scoped entry from a tuple `(key, session, project)`.
+    async fn store_scope(
+        provider: &SqliteMemoryProvider,
+        key: &str,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+    ) {
+        let scope = MemoryScopeResolver::resolve(session_id, project_id, None);
+        provider
+            .store_scoped(key, key, MemoryCategory::Core, &scope)
+            .await
+            .unwrap();
+    }
+
+    /// Helper: collect sorted keys returned by `recall_scoped`.
+    async fn recall_keys(
+        provider: &SqliteMemoryProvider,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let scope = MemoryScopeResolver::resolve(session_id, project_id, None);
+        let mut out: Vec<String> = provider
+            .recall_scoped("", None, 100, &scope)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// (1) session-scoped entry is visible to its own session — and that
+    ///     session also sees its project's project-level entries plus globals.
+    /// (2) session-scoped entry is invisible to other sessions in the same
+    ///     project (sessions are leaves, not shared).
+    #[tokio::test]
+    async fn session_entry_visible_to_own_session_only() {
+        let (provider, _temp) = create_test_provider();
+
+        // Same-project, two sessions.
+        store_scope(&provider, "sess_a_only", Some("sess-a"), Some("proj-1")).await;
+        store_scope(&provider, "sess_b_only", Some("sess-b"), Some("proj-1")).await;
+        // Project-level (no session) and global entries for cross-checks.
+        store_scope(&provider, "proj_1_shared", None, Some("proj-1")).await;
+        store_scope(&provider, "global_shared", None, None).await;
+
+        let from_a = recall_keys(&provider, Some("sess-a"), Some("proj-1")).await;
+        assert_eq!(
+            from_a,
+            vec![
+                "global_shared".to_string(),
+                "proj_1_shared".to_string(),
+                "sess_a_only".to_string(),
+            ],
+            "sess-a should see its own + project-level + global; got {:?}",
+            from_a
+        );
+
+        let from_b = recall_keys(&provider, Some("sess-b"), Some("proj-1")).await;
+        assert!(
+            !from_b.contains(&"sess_a_only".to_string()),
+            "sess-b must NOT see sess-a's session entry; got {:?}",
+            from_b
+        );
+    }
+
+    /// (3) project-scoped entry is visible across different sessions of the
+    ///     SAME project.
+    #[tokio::test]
+    async fn project_entry_visible_across_sessions_of_same_project() {
+        let (provider, _temp) = create_test_provider();
+
+        store_scope(&provider, "proj_1_shared", None, Some("proj-1")).await;
+
+        let from_a = recall_keys(&provider, Some("sess-a"), Some("proj-1")).await;
+        let from_b = recall_keys(&provider, Some("sess-b"), Some("proj-1")).await;
+
+        assert!(
+            from_a.contains(&"proj_1_shared".to_string()),
+            "sess-a should see project entry; got {:?}",
+            from_a
+        );
+        assert!(
+            from_b.contains(&"proj_1_shared".to_string()),
+            "sess-b should see project entry too; got {:?}",
+            from_b
+        );
+    }
+
+    /// (4) project-scoped entry is invisible to OTHER projects, regardless of
+    ///     whether the caller is session-bound.
+    #[tokio::test]
+    async fn project_entry_isolated_from_other_project() {
+        let (provider, _temp) = create_test_provider();
+
+        store_scope(&provider, "proj_1_secret", None, Some("proj-1")).await;
+        store_scope(&provider, "proj_2_secret", None, Some("proj-2")).await;
+
+        // Caller in proj-1 must not see proj-2's entry, and vice versa.
+        let from_proj1 = recall_keys(&provider, Some("sess-x"), Some("proj-1")).await;
+        assert!(
+            !from_proj1.contains(&"proj_2_secret".to_string()),
+            "proj-1 caller leaked proj-2 entry; got {:?}",
+            from_proj1
+        );
+
+        let from_proj2 = recall_keys(&provider, Some("sess-y"), Some("proj-2")).await;
+        assert!(
+            !from_proj2.contains(&"proj_1_secret".to_string()),
+            "proj-2 caller leaked proj-1 entry; got {:?}",
+            from_proj2
+        );
+
+        // Project-only scope (no session) should also enforce isolation.
+        let proj1_only = recall_keys(&provider, None, Some("proj-1")).await;
+        assert!(
+            proj1_only.contains(&"proj_1_secret".to_string())
+                && !proj1_only.contains(&"proj_2_secret".to_string()),
+            "project-only scope failed isolation; got {:?}",
+            proj1_only
+        );
+    }
+
+    /// (5) global entry is visible from every scope flavour: session+project,
+    ///     project-only, and global.
+    #[tokio::test]
+    async fn global_entry_visible_from_every_scope() {
+        let (provider, _temp) = create_test_provider();
+
+        store_scope(&provider, "global_x", None, None).await;
+
+        let from_session = recall_keys(&provider, Some("sess-a"), Some("proj-1")).await;
+        let from_project = recall_keys(&provider, None, Some("proj-1")).await;
+        let from_global = recall_keys(&provider, None, None).await;
+
+        assert!(from_session.contains(&"global_x".to_string()));
+        assert!(from_project.contains(&"global_x".to_string()));
+        assert!(from_global.contains(&"global_x".to_string()));
+    }
+
+    /// Project-aware ranking: when a session caller can see entries from all
+    /// three tiers, the session-tier rows must surface FIRST, then project,
+    /// then global — regardless of `updated_at` order.
+    #[tokio::test]
+    async fn recall_ranks_session_above_project_above_global() {
+        let (provider, _temp) = create_test_provider();
+
+        // Insert in reverse-priority order so a naive `ORDER BY updated_at`
+        // would put global first; the scope-tier ranking must override that.
+        store_scope(&provider, "g_first", None, None).await;
+        store_scope(&provider, "p_then", None, Some("proj-1")).await;
+        store_scope(&provider, "s_last", Some("sess-a"), Some("proj-1")).await;
+
+        let scope = MemoryScopeResolver::resolve(Some("sess-a"), Some("proj-1"), None);
+        let ordered: Vec<String> = provider
+            .recall_scoped("", None, 10, &scope)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+
+        assert_eq!(
+            ordered,
+            vec![
+                "s_last".to_string(),
+                "p_then".to_string(),
+                "g_first".to_string(),
+            ],
+            "expected session > project > global ordering, got {:?}",
+            ordered
+        );
+    }
+
+    /// Within the same scope tier, higher `importance` wins over recency.
+    /// We use `apply_importance_decay` then a manual UPDATE to set deterministic
+    /// importance values, since `store_scoped` always defaults to 0.5.
+    #[tokio::test]
+    async fn recall_within_tier_orders_by_importance_then_access_count() {
+        let (provider, _temp) = create_test_provider();
+
+        // Two same-tier entries.
+        store_scope(&provider, "low_imp", None, None).await;
+        store_scope(&provider, "high_imp", None, None).await;
+
+        // Bump high_imp's importance and access_count via direct SQL — this is
+        // a test-only path that bypasses store_scoped to set up a deterministic
+        // ranking signal.
+        {
+            let c = provider.conn.lock().unwrap();
+            c.execute(
+                "UPDATE memory_entries SET importance = 0.95, access_count = 10 WHERE key = ?1",
+                params!["high_imp"],
+            )
+            .unwrap();
+            c.execute(
+                "UPDATE memory_entries SET importance = 0.10, access_count = 0 WHERE key = ?1",
+                params!["low_imp"],
+            )
+            .unwrap();
+        }
+
+        let scope = MemoryExecutionScope::global();
+        let ordered: Vec<String> = provider
+            .recall_scoped("", None, 10, &scope)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+
+        assert_eq!(
+            ordered,
+            vec!["high_imp".to_string(), "low_imp".to_string()],
+            "high-importance entry must surface first within the same tier; got {:?}",
+            ordered
+        );
+    }
+
+    /// Belt-and-braces: global scope must NOT see any session- or project-
+    /// scoped entries, only true globals.
+    #[tokio::test]
+    async fn global_scope_sees_only_global_entries() {
+        let (provider, _temp) = create_test_provider();
+
+        store_scope(&provider, "sess_only", Some("sess-a"), Some("proj-1")).await;
+        store_scope(&provider, "proj_only", None, Some("proj-1")).await;
+        store_scope(&provider, "true_global", None, None).await;
+
+        let from_global = recall_keys(&provider, None, None).await;
+        assert_eq!(
+            from_global,
+            vec!["true_global".to_string()],
+            "global scope must only see truly unscoped entries; got {:?}",
+            from_global
+        );
     }
 }

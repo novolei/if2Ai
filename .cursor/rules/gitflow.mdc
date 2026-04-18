@@ -1,0 +1,10 @@
+---
+description: Git 与分支要点（精简）。完整 slice 提交流程与 commit 正文模板以 CLAUDE.md 为准。
+globs:
+---
+# Git / 分支（精简）
+
+- 保护分支（如 `main`）禁止直推；改动走 PR，CI 绿再合并
+- 分支命名：`feature/<issue>-topic`、`release/vX.Y.Z`、`hotfix/vX.Y.Z`；合并后删分支
+- 日常 commit：`type(scope): summary`，type ∈ `feat|fix|docs|style|refactor|test|chore`
+- **执行 exec-plan slice 时**：必须使用 `CLAUDE.md` 中的 slice 提交模板（含 `Slice:`、`Design-ref:`、`Gate:`、`Review:`），勿与本文件的一般格式混用

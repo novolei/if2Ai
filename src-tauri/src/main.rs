@@ -13,6 +13,9 @@ use commands::{
     activation_start,
     activation_test_message,
     activation_validate,
+    browser_viewer_go_back,
+    browser_viewer_go_forward,
+    browser_viewer_reload,
     channel_configure,
     channel_list,
     channel_list_configured,
@@ -74,6 +77,8 @@ use commands::{
     list_toolsets,
     memory_delete,
     memory_export,
+    memory_promote,
+    memory_promotion_candidates,
     memory_purge,
     memory_recall,
     model_get_active,
@@ -83,6 +88,7 @@ use commands::{
     model_set_active,
     model_set_role_config,
     model_test,
+    navigate_viewer_window,
     onboarding_complete,
     onboarding_get_state,
     onboarding_next_step,
@@ -107,6 +113,7 @@ use commands::{
     rename_project,
     rename_session,
     reorder_web_search_providers,
+    request_browser_status,
     resolve_skill_slash,
     respond_permission,
     run_agent_turn,
@@ -276,6 +283,30 @@ fn main() {
 
     tracing::info!("If2Ai backend starting, log directory: {:?}", log_dir);
 
+    // Surface memory feature flags at startup so operators can confirm which
+    // recall / policy mode the binary actually picked up from settings.json.
+    // ConfigLoader is per-cwd, so we use the process cwd here purely for
+    // logging — runtime callers re-load with their own scope.
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        match modules::runtime::config::ConfigLoader::default_for(&cwd).load() {
+            Ok(cfg) => {
+                let mem = cfg.memory();
+                tracing::info!(
+                    control_plane_v1_enabled = mem.control_plane_v1_enabled(),
+                    recall_mode = mem.recall_mode().as_str(),
+                    policy_enforce_mode = mem.policy_enforce_mode().as_str(),
+                    "[memory] feature flags loaded"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[memory] failed to load runtime config for feature flags: {e}; using defaults"
+                );
+            }
+        }
+    }
+
     // Set up cleanup hooks
     std::panic::set_hook(Box::new(|_| {
         cleanup_processes();
@@ -319,8 +350,15 @@ fn main() {
     // OnboardingFlow is a stateless driver; state is loaded lazily via Tauri commands.
     let onboarding_flow = modules::onboarding::flow::OnboardingFlow;
 
-    // Initialize context budget (default: 4000 tokens, 10/20/30/40%)
-    let context_budget = modules::runtime::budget::ContextBudget::default();
+    // Initialize context budget. M3: prefer ~/.if2ai/budget.yaml when present;
+    // any read / parse / validation error falls back to the historical default
+    // (4000 tokens, 10/20/30/40%).
+    let context_budget = {
+        let path = dirs::home_dir()
+            .map(|h| h.join(".if2ai").join("budget.yaml"))
+            .unwrap_or_else(|| std::path::PathBuf::from(".if2ai/budget.yaml"));
+        modules::runtime::budget::BudgetConfig::load_or_default(&path)
+    };
 
     // ── Phase 6BW: Persistent memory/learning infrastructure ──
 
@@ -421,6 +459,7 @@ fn main() {
             get_browser_sessions,
             close_browser_session,
             get_chrome_status,
+            request_browser_status,
             list_sessions,
             delete_session,
             rename_session,
@@ -444,6 +483,10 @@ fn main() {
             open_settings_window,
             close_settings_window,
             open_browser_viewer_window,
+            navigate_viewer_window,
+            browser_viewer_go_back,
+            browser_viewer_go_forward,
+            browser_viewer_reload,
             focus_main_window_and_prefill_prompt,
             execute_tool,
             fetch_skills_market_audits,
@@ -462,6 +505,9 @@ fn main() {
             memory_delete,
             memory_export,
             memory_purge,
+            // Memory promotion (session → project → global)
+            memory_promotion_candidates,
+            memory_promote,
             // Skills Hub CLI commands
             hub_browse,
             hub_search,
@@ -487,6 +533,9 @@ fn main() {
             get_memory_config,
             set_memory_config,
             export_trajectories,
+            // Trajectory introspection (H6) — async commands from modules/commands/trajectory.rs
+            modules::commands::trajectory::get_trajectory_count,
+            modules::commands::trajectory::get_trajectory_path,
             // Onboarding & Configuration Platform (Phase 6G)
             // onboarding.rs (5 commands)
             onboarding_get_state,
@@ -550,6 +599,13 @@ fn main() {
                     .clone();
                 registry.set_app_handle(app.handle().clone());
             }
+
+            // Register the same AppHandle with MemoryAuditEmitter so memory
+            // lifecycle events (memory_captured / memory_write_decision /
+            // memory_persisted / memory_recall_served / memory_rejected /
+            // memory_promoted) are forwarded to the frontend `memory_event`
+            // channel for `MemoryChip` / `MemoryWriteCard` consumption.
+            modules::memory::audit::register_app_handle(app.handle().clone());
 
             let bundled_skills_dir = ["resources/bundled-skills", "bundled-skills"]
                 .iter()

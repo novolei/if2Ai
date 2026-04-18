@@ -7,6 +7,27 @@ use tauri::State;
 
 use crate::commands::AppState;
 
+/// Memory recall mode — selects between lexical-only and hybrid (vector +
+/// FTS + episodic) retrieval pipelines.  Mirrors the Rust runtime
+/// `MemoryRecallMode` enum so the frontend can drive the same feature flag.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryRecallModeSetting {
+    Lexical,
+    #[default]
+    Hybrid,
+}
+
+/// Memory write policy enforce mode — `shadow` audits decisions without
+/// blocking, `enforce` rejects denied writes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryPolicyEnforceModeSetting {
+    #[default]
+    Shadow,
+    Enforce,
+}
+
 /// Memory configuration returned by the backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
@@ -22,6 +43,14 @@ pub struct MemoryConfig {
     pub working_pct: u8,
     /// Number of trajectories recorded
     pub trajectory_count: usize,
+    /// Memory Control Plane V1 — master kill-switch for the new memory pipeline.
+    pub control_plane_v1_enabled: bool,
+    /// Recall mode (`lexical` keeps the legacy SQL search; `hybrid` enables
+    /// vector + FTS + episodic fusion).
+    pub recall_mode: MemoryRecallModeSetting,
+    /// Policy enforcement mode (`shadow` audits only, `enforce` blocks
+    /// denied writes).
+    pub policy_enforce_mode: MemoryPolicyEnforceModeSetting,
 }
 
 /// Configuration to persist.
@@ -32,6 +61,13 @@ pub struct MemoryConfigInput {
     pub episodic_pct: u8,
     pub semantic_pct: u8,
     pub working_pct: u8,
+    /// Optional so older clients that don't ship feature-flag UI keep working.
+    #[serde(default)]
+    pub control_plane_v1_enabled: Option<bool>,
+    #[serde(default)]
+    pub recall_mode: Option<MemoryRecallModeSetting>,
+    #[serde(default)]
+    pub policy_enforce_mode: Option<MemoryPolicyEnforceModeSetting>,
 }
 
 fn read_persisted_config() -> Option<MemoryConfigInput> {
@@ -66,6 +102,10 @@ fn count_trajectories() -> usize {
 }
 
 /// Get the current memory configuration.
+///
+/// Resolves feature-flag values from the persisted config first, falling
+/// back to safe defaults (`control_plane_v1_enabled = true`, recall =
+/// `Hybrid`, policy = `Shadow`) when older configs are read.
 #[tauri::command]
 pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
     let persisted = read_persisted_config();
@@ -77,6 +117,9 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         episodic_pct: (budget.episodic_pct * 100.0) as u8,
         semantic_pct: (budget.semantic_pct * 100.0) as u8,
         working_pct: (budget.working_pct * 100.0) as u8,
+        control_plane_v1_enabled: None,
+        recall_mode: None,
+        policy_enforce_mode: None,
     });
 
     MemoryConfig {
@@ -86,6 +129,9 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         semantic_pct: config.semantic_pct,
         working_pct: config.working_pct,
         trajectory_count: count_trajectories(),
+        control_plane_v1_enabled: config.control_plane_v1_enabled.unwrap_or(true),
+        recall_mode: config.recall_mode.unwrap_or_default(),
+        policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
     }
 }
 
@@ -116,6 +162,9 @@ pub fn set_memory_config(
         semantic_pct: config.semantic_pct,
         working_pct: config.working_pct,
         trajectory_count: count_trajectories(),
+        control_plane_v1_enabled: config.control_plane_v1_enabled.unwrap_or(true),
+        recall_mode: config.recall_mode.unwrap_or_default(),
+        policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
     })
 }
 

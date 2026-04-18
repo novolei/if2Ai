@@ -1,0 +1,13 @@
+# Cursor 索引/默认上下文排除 — 降低噪音与 token；需要时仍可用 @路径 显式引用单文件
+node_modules/
+dist/
+target/
+src-tauri/target/
+.venv/
+.harness-reports/
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.ico

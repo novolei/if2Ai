@@ -87,16 +87,21 @@ impl MemoryScopeResolver {
         }
     }
 
-    /// Resolve scope from a `ToolContext`, using `session_id` and `workdir` fields.
+    /// Resolve scope from a `ToolContext`, using `session_id`, `project_id`
+    /// and `workdir` fields.
     ///
-    /// This is the preferred entry point when resolving scope inside a tool handler.
+    /// This is the preferred entry point when resolving scope inside a tool
+    /// handler. With a fully populated `ToolContext` (typical for sessions
+    /// dispatched through `ToolExecutionBroker`) the returned scope carries
+    /// all three tiers (`session_id` + `project_id` + `workdir`), enabling the
+    /// provider layer to apply session/project/global visibility rules.
     #[must_use]
     pub fn from_tool_context(
         ctx: &crate::modules::tools::context::ToolContext,
     ) -> MemoryExecutionScope {
         MemoryExecutionScope {
             session_id: ctx.session_id.clone(),
-            project_id: None,
+            project_id: ctx.project_id.clone(),
             workdir: Some(ctx.workdir.to_string_lossy().into_owned()),
         }
     }

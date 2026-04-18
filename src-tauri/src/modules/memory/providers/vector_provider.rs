@@ -14,11 +14,14 @@
 //! - Vector search still benefits from LanceDB's approximate nearest-neighbor index.
 //! - A crash mid-write leaves SQLite intact; LanceDB can be rebuilt from it.
 //!
-//! # `#![allow(dead_code)]` justification
-//! VectorMemoryProvider and its helpers are not yet called from all agent loop
-//! code paths. They are wired through HybridMemoryProvider for the active path.
-
-#![allow(dead_code)]
+//! # Dead-code policy (H4)
+//!
+//! The module-level `#![allow(dead_code)]` was removed once the agent loop
+//! started consuming the trait impl. Helpers that are not yet wired (such as
+//! `vector_search`, `full_text_search`, `is_enabled`, `dimension`,
+//! `with_sqlite_path`) carry a function-level `#[allow(dead_code)]` so that
+//! removing them later requires an explicit decision instead of silently
+//! deleting public API.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,6 +84,7 @@ impl VectorProviderConfig {
     ///
     /// Calling this enables importance decay and durable metadata storage.
     #[must_use]
+    #[allow(dead_code)] // Public builder; consumed by tests and future config code.
     pub fn with_sqlite_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.sqlite_path = Some(path.into());
         self
@@ -126,6 +130,15 @@ impl VectorMemoryProvider {
             .await
             .map_err(|e| VectorProviderError::VectorStoreError(e.to_string()))?;
 
+        // H2: best-effort IVF-PQ index. Failure is logged inside the helper
+        // and never propagates — empty/young tables and missing kmeans
+        // samples will simply degrade to brute-force scan until the next call.
+        if let Err(e) = lancedb.ensure_vector_index(32, 24).await {
+            tracing::warn!(
+                "[VectorMemoryProvider] ensure_vector_index returned hard error ({e}); continuing without ANN index"
+            );
+        }
+
         // Optional SQLite dual-write (H3).
         let sqlite = if let Some(ref sqlite_path) = config.sqlite_path {
             match SqliteMemoryProvider::new(sqlite_path.clone()) {
@@ -156,11 +169,13 @@ impl VectorMemoryProvider {
     }
 
     /// Check if vector search is enabled
+    #[allow(dead_code)] // Surfaced for future UI / settings introspection.
     pub fn is_enabled(&self) -> bool {
         self.config.vector_search_enabled
     }
 
     /// Search using vector similarity
+    #[allow(dead_code)] // Direct vector path; recall() uses hybrid_search instead.
     pub async fn vector_search(
         &self,
         query: &str,
@@ -242,6 +257,7 @@ impl VectorMemoryProvider {
     }
 
     /// Return the embedding dimension
+    #[allow(dead_code)] // Diagnostic accessor; currently consumed only by tests.
     pub fn dimension(&self) -> usize {
         self.embedder.dimension()
     }

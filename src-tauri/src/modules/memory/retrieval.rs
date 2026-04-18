@@ -99,6 +99,7 @@ impl Default for ActiveRetrievalConfig {
 ///
 /// Classifies the query intent, retrieves from each memory layer
 /// with intent-based weights, and fuses the results.
+#[derive(Debug)]
 pub struct ActiveRetrievalManager {
     pub config: ActiveRetrievalConfig,
 }

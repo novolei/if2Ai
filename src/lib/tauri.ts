@@ -10,7 +10,94 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 export { invoke };
 
 /**
+ * Token budget usage breakdown emitted by the backend WorkingMemory + ContextBudget
+ * components at the end of each streaming turn (event_type: 'stream_complete').
+ *
+ * All values are in tokens. Fields are optional — older backend versions omit them.
+ */
+export interface ContextBudgetUsage {
+  /** Total context window budget for this model (e.g. 200_000). */
+  total_budget: number;
+  /** Tokens currently occupied by the system prompt (static). */
+  system_tokens: number;
+  /** Tokens occupied by the sliding-window message history. */
+  history_tokens: number;
+  /** Tokens occupied by retrieved memory context. */
+  memory_tokens: number;
+  /** Tokens reserved for the model's output generation. */
+  output_reserve: number;
+  /** Remaining tokens available for the next turn. */
+  remaining: number;
+}
+
+/**
+ * Memory lifecycle event emitted by the backend `MemoryAuditEmitter` over
+ * the Tauri `memory_event` channel.  Drives the live MemoryChip /
+ * MemoryWriteCard UI feedback.
+ *
+ * Mirrors `MemoryEventPayload` in `src-tauri/src/modules/memory/audit.rs`.
+ */
+export interface MemoryEventPayload {
+  event:
+    | 'memory_captured'
+    | 'memory_write_decision'
+    | 'memory_persisted'
+    | 'memory_recall_served'
+    | 'memory_rejected'
+    | 'memory_promoted'
+  trace_id?: string
+  session_id?: string
+  project_id?: string
+  effective_workdir?: string
+  memory_key?: string
+  memory_category?: string
+  policy_decision?: 'allow' | 'deny' | 'prompt'
+  reason_code?: string
+  reason_message?: string
+  recall_query?: string
+  recall_category?: string
+  result_count?: number
+  from_category?: string
+  to_category?: string
+  /** ISO 8601 timestamp captured server-side at emit time. */
+  timestamp: string
+}
+
+/**
+ * Subscribe to backend memory lifecycle events.  Returns an unlisten function.
+ */
+export async function listenMemoryEvent(
+  handler: (payload: MemoryEventPayload) => void,
+): Promise<UnlistenFn> {
+  return await listen<MemoryEventPayload>('memory_event', (event) => {
+    handler(event.payload)
+  })
+}
+
+/**
+ * A single recalled memory item surfaced by MemoryAuditEmitter for the
+ * MemoryChip / MemoryEvidencePanel UI components.
+ */
+export interface MemoryContextItem {
+  /** Backend memory entry ID. */
+  id: string;
+  /** Short summary or raw content of the recalled memory. */
+  content: string;
+  /** Memory scope: global | project | session. */
+  scope: 'global' | 'project' | 'session';
+  /** Relevance score (0–1) assigned by the retrieval layer. */
+  relevance_score?: number;
+  /** ISO timestamp when this memory was originally stored. */
+  stored_at?: string;
+}
+
+/**
  * 流式 Token 事件载荷
+ *
+ * Phase 1 additions (2026-04-18):
+ *   - `context_budget_usage`: token budget breakdown from WorkingMemory + ContextBudget
+ *   - `memory_context`: recalled memory items from MemoryAuditEmitter
+ *   Both fields are optional for backward compatibility with older backend builds.
  */
 export interface StreamTokenPayload {
   stream_id: string;
@@ -39,6 +126,19 @@ export interface StreamTokenPayload {
   degraded_reason?: string;
   resume_available?: boolean;
   resume_cursor?: string;
+  // ── Phase 1: Memory + Context Budget fields ────────────────────────────────
+  /**
+   * Token budget breakdown for the current turn.
+   * Present on `stream_complete` events when the backend WorkingMemory module
+   * is active (requires memoryControlPlaneV1Enabled feature flag).
+   */
+  context_budget_usage?: ContextBudgetUsage;
+  /**
+   * Memory items recalled from episodic / semantic memory for this turn.
+   * Present on `stream_complete` events when MemoryAuditEmitter is active.
+   * Used by MemoryChip and MemoryEvidencePanel components.
+   */
+  memory_context?: MemoryContextItem[];
 }
 
 /**
@@ -896,6 +996,18 @@ export async function validateWebSearchKey(
 
 // ─── Memory Settings Configuration ─────────────────────────────────────────
 
+/**
+ * Memory recall mode — `lexical` keeps the legacy SQL search; `hybrid`
+ * enables vector + FTS + episodic fusion.
+ */
+export type MemoryRecallMode = 'lexical' | 'hybrid'
+
+/**
+ * Memory write policy enforce mode — `shadow` audits decisions without
+ * blocking, `enforce` rejects denied writes.
+ */
+export type MemoryPolicyEnforceMode = 'shadow' | 'enforce'
+
 /** Memory configuration returned by the backend. */
 export interface MemoryConfig {
   total_tokens: number
@@ -904,6 +1016,10 @@ export interface MemoryConfig {
   semantic_pct: number
   working_pct: number
   trajectory_count: number
+  /** Memory Control Plane V1 master kill-switch. */
+  control_plane_v1_enabled: boolean
+  recall_mode: MemoryRecallMode
+  policy_enforce_mode: MemoryPolicyEnforceMode
 }
 
 /** Configuration input to persist. */
@@ -913,6 +1029,9 @@ export interface MemoryConfigInput {
   episodic_pct: number
   semantic_pct: number
   working_pct: number
+  control_plane_v1_enabled?: boolean
+  recall_mode?: MemoryRecallMode
+  policy_enforce_mode?: MemoryPolicyEnforceMode
 }
 
 /** Get the current memory configuration. */
@@ -1003,4 +1122,216 @@ export async function listenToBrowserStatus(
  */
 export async function openBrowserViewerWindow(sessionId: string): Promise<void> {
   return invoke<void>('open_browser_viewer_window', { sessionId })
+}
+
+/**
+ * Ask the backend to immediately emit a `"browser-status"` event for `sessionId`.
+ * Call this when the BrowserViewer window first mounts so it can bootstrap its
+ * display state without waiting for the next AI browser action.
+ */
+export async function requestBrowserStatus(sessionId: string): Promise<void> {
+  return invoke<void>('request_browser_status', { sessionId })
+}
+
+/** Navigate the embedded live WKWebView in the viewer window to `url`. */
+export async function navigateViewerWindow(sessionId: string, url: string): Promise<void> {
+  return invoke<void>('navigate_viewer_window', { sessionId, url })
+}
+
+/** Go back in the viewer WKWebView's navigation history. */
+export async function browserViewerGoBack(sessionId: string): Promise<void> {
+  return invoke<void>('browser_viewer_go_back', { sessionId })
+}
+
+/** Go forward in the viewer WKWebView's navigation history. */
+export async function browserViewerGoForward(sessionId: string): Promise<void> {
+  return invoke<void>('browser_viewer_go_forward', { sessionId })
+}
+
+/** Reload the current page in the viewer WKWebView. */
+export async function browserViewerReload(sessionId: string): Promise<void> {
+  return invoke<void>('browser_viewer_reload', { sessionId })
+}
+
+// ── Harness Control IPC ────────────────────────────────────────────────────────
+
+/**
+ * Per-session telemetry snapshot emitted by the agent loop Harness.
+ * Mirrors the Rust `SessionTelemetry` struct in `src-tauri/src/modules/harness/telemetry.rs`.
+ */
+export interface SessionTelemetry {
+  session_id: string;
+  turns_completed: number;
+  turns_succeeded: number;
+  llm_calls: number;
+  input_tokens_total: number;
+  output_tokens_total: number;
+  /** Per-tool call counts (tool_name → count). */
+  tool_calls: Record<string, number>;
+  /** Per-tool success counts (tool_name → count). */
+  tool_successes: Record<string, number>;
+  compaction_events: number;
+  permission_prompts: number;
+  reflection_cycles: number;
+  reflection_insights_total: number;
+  /** ISO 8601 timestamp of the last agent event, or null. */
+  last_event_at: string | null;
+  total_turn_duration_ms: number;
+}
+
+/** Harness recording status from `get_harness_status`. */
+export interface HarnessStatusResponse {
+  harness_enabled: boolean;
+  /** Session IDs currently being recorded. */
+  active_recordings: string[];
+}
+
+/** Telemetry query result from `get_session_telemetry`. */
+export interface HarnessTelemetryResponse {
+  found: boolean;
+  telemetry: SessionTelemetry | null;
+}
+
+/** Return the current harness status (whether recording, which sessions). */
+export async function getHarnessStatus(): Promise<HarnessStatusResponse> {
+  return invoke<HarnessStatusResponse>('get_harness_status')
+}
+
+/** Start recording agent events for `sessionId` to a JSONL trace file. */
+export async function startHarnessRecording(sessionId: string): Promise<void> {
+  return invoke<void>('start_harness_recording', { sessionId })
+}
+
+/** Stop recording for `sessionId` and flush the trace file. */
+export async function stopHarnessRecording(sessionId: string): Promise<void> {
+  return invoke<void>('stop_harness_recording', { sessionId })
+}
+
+/** Fetch the telemetry snapshot for `sessionId`. */
+export async function getSessionTelemetry(sessionId: string): Promise<HarnessTelemetryResponse> {
+  return invoke<HarnessTelemetryResponse>('get_session_telemetry', { sessionId })
+}
+
+/** Fetch telemetry snapshots for all sessions tracked by the harness. */
+export async function getAllSessionTelemetry(): Promise<SessionTelemetry[]> {
+  return invoke<SessionTelemetry[]>('get_all_session_telemetry')
+}
+
+// ---------------------------------------------------------------------------
+// Memory Browser commands — three-tier scope wrappers.
+//
+// These helpers mirror `src-tauri/src/commands/memory.rs`.  All scope-related
+// arguments are optional: when `scopeKind` is omitted the backend falls back
+// to the legacy unscoped library view, so existing callers (e.g. the current
+// MemoryBrowser without a scope selector) continue to work unchanged.
+
+/** Persisted memory entry as returned by Tauri commands. */
+export interface MemoryEntryDto {
+  key: string
+  content: string
+  category: string
+  created_at: string
+  updated_at: string
+  importance: number
+  access_count: number
+  trust_score: number
+  /** Persisted session scope tag; null = entry not session-scoped. */
+  session_id: string | null
+  /** Persisted project scope tag; null = entry not project-scoped. */
+  project_id: string | null
+}
+
+/** Three-tier memory scope kind matching `MemoryScopeKind` on the backend. */
+export type MemoryScopeKind = 'global' | 'project' | 'session'
+
+/** Optional scope filter for `memoryRecall` / `memoryExport`. */
+export interface MemoryScopeArgs {
+  scopeKind?: MemoryScopeKind
+  sessionId?: string
+  projectId?: string
+}
+
+/**
+ * Search memory entries.  When `scopeKind` is omitted the call falls back to
+ * the legacy unscoped recall path.
+ */
+export async function memoryRecall(args: {
+  query: string
+  category?: string | null
+  limit?: number
+  scope?: MemoryScopeArgs
+}): Promise<MemoryEntryDto[]> {
+  return invoke<MemoryEntryDto[]>('memory_recall', {
+    query: args.query,
+    category: args.category ?? null,
+    limit: args.limit ?? null,
+    scopeKind: args.scope?.scopeKind ?? null,
+    sessionId: args.scope?.sessionId ?? null,
+    projectId: args.scope?.projectId ?? null,
+  })
+}
+
+/**
+ * Export memory entries.  When `scopeKind` is omitted the call falls back to
+ * the legacy full-library export.
+ */
+export async function memoryExport(args: {
+  category?: string | null
+  scope?: MemoryScopeArgs
+} = {}): Promise<MemoryEntryDto[]> {
+  return invoke<MemoryEntryDto[]>('memory_export', {
+    category: args.category ?? null,
+    scopeKind: args.scope?.scopeKind ?? null,
+    sessionId: args.scope?.sessionId ?? null,
+    projectId: args.scope?.projectId ?? null,
+  })
+}
+
+/** Delete a memory entry by key. */
+export async function memoryDelete(key: string): Promise<void> {
+  return invoke<void>('memory_delete', { key })
+}
+
+/** A single promotion recommendation surfaced to the Memory Browser. */
+export interface MemoryPromotionCandidateDto {
+  key: string
+  category: string
+  /** `'session'` / `'project'` / `'global'` — the entry's tier today. */
+  current_tier: string
+  /** `'project'` / `'global'` — where the engine recommends moving it. */
+  target_tier: string
+  access_count: number
+  importance: number
+  /** Human-readable rationale (Chinese). */
+  reason: string
+}
+
+/**
+ * Scan the memory library for entries that meet promotion thresholds.
+ *
+ * Non-destructive: returns recommendations only.  Apply with [`memoryPromote`].
+ */
+export async function memoryPromotionCandidates(): Promise<
+  MemoryPromotionCandidateDto[]
+> {
+  return invoke<MemoryPromotionCandidateDto[]>('memory_promotion_candidates')
+}
+
+/**
+ * Apply a promotion to a single entry.
+ *
+ * `targetScopeKind` must be `'project'` or `'global'`; promoting to
+ * `'session'` is rejected by the backend.  When promoting to `'project'`,
+ * `projectId` is required.
+ */
+export async function memoryPromote(args: {
+  key: string
+  targetScopeKind: Exclude<MemoryScopeKind, 'session'>
+  projectId?: string
+}): Promise<void> {
+  return invoke<void>('memory_promote', {
+    key: args.key,
+    targetScopeKind: args.targetScopeKind,
+    projectId: args.projectId ?? null,
+  })
 }

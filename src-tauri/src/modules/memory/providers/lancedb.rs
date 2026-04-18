@@ -264,6 +264,83 @@ impl LanceDBMemory {
         scored_memories_from_stream(results).await
     }
 
+    /// Ensure an IVF-PQ ANN index exists on the `embedding` column (H2).
+    ///
+    /// Creates an `IVF_PQ` index with the requested partitioning to accelerate
+    /// vector search on large memory tables. The index is only created when:
+    ///
+    /// 1. No existing index covers the `embedding` column (idempotent).
+    /// 2. The table contains enough rows to train the IVF kmeans (at least
+    ///    `num_partitions * 32`, capped at a small floor).
+    ///
+    /// Index build failure is treated as a soft error: a `warn` is logged and
+    /// the function returns `Ok(false)` so the agent loop can keep using brute
+    /// force vector scan. Hard storage errors are still surfaced.
+    ///
+    /// Returns `Ok(true)` when a new index was created, `Ok(false)` when the
+    /// index was skipped (already present or table too small), and `Err` only
+    /// when an unrecoverable storage error occurs.
+    pub async fn ensure_vector_index(
+        &self,
+        num_partitions: u32,
+        num_sub_vectors: u32,
+    ) -> Result<bool, LanceDBError> {
+        use lancedb::index::vector::IvfPqIndexBuilder;
+        use lancedb::index::Index;
+
+        match self.table.list_indices().await {
+            Ok(indices) => {
+                if indices
+                    .iter()
+                    .any(|cfg| cfg.columns.iter().any(|c| c == "embedding"))
+                {
+                    tracing::debug!(
+                        "[LanceDBMemory] ensure_vector_index: existing index on `embedding` column, skipping"
+                    );
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[LanceDBMemory] ensure_vector_index: list_indices failed ({e}); attempting create anyway"
+                );
+            }
+        }
+
+        let row_count = self.count().await?;
+        let min_rows = (num_partitions as usize).saturating_mul(32).max(256);
+        if row_count < min_rows {
+            tracing::debug!(
+                "[LanceDBMemory] ensure_vector_index: only {row_count} rows (< {min_rows}); deferring IVF-PQ build"
+            );
+            return Ok(false);
+        }
+
+        let builder = IvfPqIndexBuilder::default()
+            .num_partitions(num_partitions)
+            .num_sub_vectors(num_sub_vectors);
+
+        match self
+            .table
+            .create_index(&["embedding"], Index::IvfPq(builder))
+            .execute()
+            .await
+        {
+            Ok(()) => {
+                tracing::info!(
+                    "[LanceDBMemory] IVF-PQ index created (num_partitions={num_partitions}, num_sub_vectors={num_sub_vectors}, rows={row_count})"
+                );
+                Ok(true)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[LanceDBMemory] IVF-PQ index build failed ({e}); falling back to brute-force vector scan"
+                );
+                Ok(false)
+            }
+        }
+    }
+
     /// Return a reference to the LanceDB connection
     pub fn connection(&self) -> &lancedb::Connection {
         &self.db

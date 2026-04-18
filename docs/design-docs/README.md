@@ -28,6 +28,19 @@
 | 记忆系统 / Honcho | [memory-system.md](./memory-system.md)                   | —                                                  |
 | Agent RL 自我进化 | [agent-self-improvement.md](./agent-self-improvement.md) | —                                                  |
 | 测试与评估        | [testing-strategy.md](./testing-strategy.md)             | [harness-testing.md](./harness-testing.md)         |
+| Harness 升级策略  | [harness-strategy-v2.md](./harness/harness-strategy-v2.md)       | [harness-testing.md](./harness-testing.md)         |
+| Harness 模块架构  | [modules-harness-architecture.md](./harness/modules-harness-architecture.md) | [modules-harness-core-contracts.md](./harness/modules-harness-core-contracts.md) |
+| Harness Archive 设计 | [modules-harness-archive-layout.md](./harness/modules-harness-archive-layout.md) | [modules-harness-implementation-plan.md](./harness/modules-harness-implementation-plan.md) |
+| Harness 日常任务优化 | [harness-general-task-optimization.md](./harness/harness-general-task-optimization.md) | [memory-system.md](./memory-system.md) |
+| Harness 事务型 Task Pack 规范 | [general-productivity-task-pack-spec.md](./harness/general-productivity-task-pack-spec.md) | [modules-harness-core-contracts.md](./harness/modules-harness-core-contracts.md) |
+| Harness 评分 Rubric 规范 | [grader-scoring-rubric-spec.md](./harness/grader-scoring-rubric-spec.md) | [modules-harness-implementation-plan.md](./harness/modules-harness-implementation-plan.md) |
+| Harness Archive Query CLI 规范 | [archive-query-cli-spec.md](./harness/archive-query-cli-spec.md) | [modules-harness-archive-layout.md](./harness/modules-harness-archive-layout.md) |
+| Harness Task Pack 示例集 | [task-pack-examples-v1.md](./harness/task-pack-examples-v1.md) | [general-productivity-task-pack-spec.md](./harness/general-productivity-task-pack-spec.md) |
+| Harness Archive 模块逐文件规格 | [archive-module-file-by-file-spec.md](./harness/archive-module-file-by-file-spec.md) | [archive-query-cli-spec.md](./harness/archive-query-cli-spec.md) |
+| Harness Task Pack 编写与审查指南 | [task-pack-authoring-guide-and-review-checklist.md](./harness/task-pack-authoring-guide-and-review-checklist.md) | [task-pack-examples-v1.md](./harness/task-pack-examples-v1.md) |
+| Harness 前端透明化 UI/UX | [harness-frontend-transparency-uiux.md](./harness/harness-frontend-transparency-uiux.md) | [grader-scoring-rubric-spec.md](./harness/grader-scoring-rubric-spec.md) |
+| Harness 前端透明化 Backlog | [harness-frontend-transparency-backlog.md](./harness/harness-frontend-transparency-backlog.md) | [harness-frontend-transparency-uiux.md](./harness/harness-frontend-transparency-uiux.md) |
+| Harness 预期产品结果 | [harness-expected-product-outcomes.md](./harness/harness-expected-product-outcomes.md) | [harness-frontend-transparency-uiux.md](./harness/harness-frontend-transparency-uiux.md) |
 
 ---
 
@@ -83,6 +96,21 @@ entry-points-design.md
 | -------------------------------------------- | ---------------------------------- | ------- |
 | [testing-strategy.md](./testing-strategy.md) | 单元 / 集成 / E2E / Harness 全策略 | ✅ 完成 |
 | [harness-testing.md](./harness-testing.md)   | Harness 评估框架详细流程           | ✅ 完成 |
+| [harness-strategy-v2.md](./harness/harness-strategy-v2.md) | 面向 Agent v2 的评测控制平面升级方案 | ✅ 新增 |
+| [modules-harness-architecture.md](./harness/modules-harness-architecture.md) | `modules/harness` 子系统架构与边界 | ✅ 新增 |
+| [modules-harness-core-contracts.md](./harness/modules-harness-core-contracts.md) | `TraceRecord / TaskSpec / Grader` 核心契约 | ✅ 新增 |
+| [modules-harness-archive-layout.md](./harness/modules-harness-archive-layout.md) | runtime-local archive / export bundle / frontier / query 设计 | ✅ 新增 |
+| [modules-harness-implementation-plan.md](./harness/modules-harness-implementation-plan.md) | 实施计划、requirements 与任务拆解 | ✅ 新增 |
+| [harness-general-task-optimization.md](./harness/harness-general-task-optimization.md) | 面向信息整理、沟通、事务处理用户的 harness 设计 | ✅ 新增 |
+| [general-productivity-task-pack-spec.md](./harness/general-productivity-task-pack-spec.md) | 一般事务任务 task pack 的目录、schema、fixture、validation 规范 | ✅ 新增 |
+| [grader-scoring-rubric-spec.md](./harness/grader-scoring-rubric-spec.md) | grader 的评分带、blocking 规则、权重模板与 taxonomy 映射 | ✅ 新增 |
+| [archive-query-cli-spec.md](./harness/archive-query-cli-spec.md) | `if2ai harness archive ...` 命令组的查询面、输出模式、可见性与错误语义 | ✅ 新增 |
+| [task-pack-examples-v1.md](./harness/task-pack-examples-v1.md) | 第一批事务型 task pack 的可执行示例蓝图 | ✅ 新增 |
+| [archive-module-file-by-file-spec.md](./harness/archive-module-file-by-file-spec.md) | `archive/*` 各 Rust 文件的职责、API、依赖方向与测试矩阵 | ✅ 新增 |
+| [task-pack-authoring-guide-and-review-checklist.md](./harness/task-pack-authoring-guide-and-review-checklist.md) | task pack 编写流程、review checklist、拒绝条件与常见反模式 | ✅ 新增 |
+| [harness-frontend-transparency-uiux.md](./harness/harness-frontend-transparency-uiux.md) | harness 如何在聊天、右侧面板和 Expert 模式中做透明化呈现 | ✅ 新增 |
+| [harness-frontend-transparency-backlog.md](./harness/harness-frontend-transparency-backlog.md) | 前端透明化任务的 backlog、依赖、验收与 review 细则 | ✅ 新增 |
+| [harness-expected-product-outcomes.md](./harness/harness-expected-product-outcomes.md) | 完整实现 harness v2 后，面向用户、团队和系统演进的预期结果 | ✅ 新增 |
 
 ---
 

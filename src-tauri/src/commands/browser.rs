@@ -1,21 +1,23 @@
 //! Browser control IPC commands.
 //!
-//! Exposes three Tauri commands that the frontend can `invoke()`:
+//! Exposes four Tauri commands that the frontend can `invoke()`:
 //!
 //! | Command | Purpose |
 //! |---|---|
 //! | `get_browser_sessions` | List all active browser sessions and their state |
 //! | `close_browser_session` | Gracefully shut down a specific browser session |
 //! | `get_chrome_status` | Report whether a Chrome/Chromium binary is available |
+//! | `request_browser_status` | Trigger an immediate `browser-status` event for the viewer |
 //!
 //! The `BrowserRegistry` is registered as Tauri managed state in `main.rs`
 //! and injected here via `State<'_, Arc<BrowserRegistry>>`.
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::modules::browser::chrome_finder::find_chrome_binary;
+use crate::modules::browser::events::emit_browser_status;
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
 
 /// Response payload for `get_chrome_status`.
@@ -58,4 +60,21 @@ pub fn get_chrome_status() -> ChromeStatusPayload {
         found: status.found,
         path: status.path.map(|p| p.to_string_lossy().into_owned()),
     }
+}
+
+/// Trigger an immediate `"browser-status"` event for `session_id`.
+///
+/// Called by the BrowserViewer window when it first opens so it can
+/// initialise its display from the current session state — without waiting
+/// for the next AI browser action to fire an event naturally.
+/// If the session is not running the event is still emitted (`running: false`),
+/// which causes the viewer to show the idle placeholder.
+#[tauri::command]
+pub async fn request_browser_status(
+    session_id: String,
+    app: AppHandle,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<(), String> {
+    emit_browser_status(&app, &session_id, &registry).await;
+    Ok(())
 }

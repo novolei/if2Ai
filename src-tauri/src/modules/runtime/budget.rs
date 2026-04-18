@@ -175,6 +175,92 @@ impl ContextBudget {
     }
 }
 
+/// On-disk budget configuration loaded from YAML (M3).
+///
+/// Schema (all fields optional — missing keys fall back to [`ContextBudget::default`]):
+///
+/// ```yaml
+/// total: 8000
+/// system_pct: 0.10
+/// episodic_pct: 0.20
+/// semantic_pct: 0.30
+/// working_pct: 0.40
+/// ```
+///
+/// Use [`BudgetConfig::load_or_default`] to read from a path with graceful
+/// degradation: missing file, malformed YAML, or invalid percentage sums all
+/// log a warning and return [`ContextBudget::default`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct BudgetConfig {
+    pub(crate) total: Option<usize>,
+    pub(crate) system_pct: Option<f32>,
+    pub(crate) episodic_pct: Option<f32>,
+    pub(crate) semantic_pct: Option<f32>,
+    pub(crate) working_pct: Option<f32>,
+}
+
+impl BudgetConfig {
+    /// Merge this partial config onto `defaults`, producing a full
+    /// [`ContextBudget`]. Validation is the caller's responsibility.
+    #[must_use]
+    pub(crate) fn into_budget(self, defaults: ContextBudget) -> ContextBudget {
+        ContextBudget {
+            total: self.total.unwrap_or(defaults.total),
+            system_pct: self.system_pct.unwrap_or(defaults.system_pct),
+            episodic_pct: self.episodic_pct.unwrap_or(defaults.episodic_pct),
+            semantic_pct: self.semantic_pct.unwrap_or(defaults.semantic_pct),
+            working_pct: self.working_pct.unwrap_or(defaults.working_pct),
+        }
+    }
+
+    /// Read a YAML file and produce a validated [`ContextBudget`].
+    ///
+    /// Behaviour:
+    /// - Missing file → returns `ContextBudget::default()` (no warning).
+    /// - YAML parse / validation error → logs `warn` and returns default.
+    pub(crate) fn load_or_default(path: &std::path::Path) -> ContextBudget {
+        if !path.exists() {
+            return ContextBudget::default();
+        }
+        match std::fs::read_to_string(path) {
+            Ok(raw) => match serde_yaml::from_str::<BudgetConfig>(&raw) {
+                Ok(cfg) => {
+                    let candidate = cfg.into_budget(ContextBudget::default());
+                    match candidate.validate() {
+                        Ok(()) => {
+                            tracing::info!(
+                                "[budget] loaded BudgetConfig from {path:?}: total={}, sys={:.2}, epi={:.2}, sem={:.2}, work={:.2}",
+                                candidate.total,
+                                candidate.system_pct,
+                                candidate.episodic_pct,
+                                candidate.semantic_pct,
+                                candidate.working_pct,
+                            );
+                            candidate
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[budget] {path:?} percentages invalid ({e}); falling back to default"
+                            );
+                            ContextBudget::default()
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[budget] failed to parse {path:?} as YAML ({e}); falling back to default"
+                    );
+                    ContextBudget::default()
+                }
+            },
+            Err(e) => {
+                tracing::warn!("[budget] failed to read {path:?} ({e}); falling back to default");
+                ContextBudget::default()
+            }
+        }
+    }
+}
+
 /// Context slots tracking actual token usage per slot
 #[derive(Debug, Clone)]
 pub struct ContextSlots {
@@ -224,13 +310,29 @@ impl ContextSlots {
     }
 }
 
-/// Estimate token count for a text string using character-based heuristic
+/// Estimate token count for a text string.
 ///
-/// Uses a 4:1 character-to-token ratio, which is a reasonable approximation
-/// for English text. For accurate counting, use a tokenizer library.
+/// M2: prefers an exact `cl100k_base` BPE tokeniser (via `tiktoken-rs`) so the
+/// returned value lines up with the budgeting math used by GPT-4 / GPT-3.5.
+/// The BPE is lazily initialised behind a `OnceLock`; if construction ever
+/// fails (e.g. in a stripped-down test build) we fall back to the historical
+/// `char_len / 4 + 1` heuristic so callers never panic.
 #[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4 + 1
+    use std::sync::OnceLock;
+    use tiktoken_rs::CoreBPE;
+
+    static BPE: OnceLock<Option<CoreBPE>> = OnceLock::new();
+    let bpe = BPE.get_or_init(|| tiktoken_rs::cl100k_base().ok());
+
+    if let Some(bpe) = bpe {
+        // `encode_with_special_tokens` matches OpenAI's accounting (BOS / role
+        // tokens count). For arbitrary user/assistant strings without role
+        // markers this produces the same number as `encode_ordinary`.
+        bpe.encode_with_special_tokens(text).len()
+    } else {
+        text.len() / 4 + 1
+    }
 }
 
 /// Estimate token count for a memory entry
@@ -370,9 +472,67 @@ mod tests {
 
     #[test]
     fn estimate_tokens_basic() {
-        assert_eq!(estimate_tokens("hello"), 2); // 5/4 + 1
-        assert_eq!(estimate_tokens(""), 1); // 0/4 + 1
-        assert_eq!(estimate_tokens("abcdefghijklmnop"), 5); // 16/4 + 1
+        // M2: estimate_tokens now uses cl100k_base. Exact counts depend on the
+        // BPE; we just assert sensible bounds rather than the old char/4 values.
+        assert_eq!(estimate_tokens(""), 0);
+        assert!(estimate_tokens("hello").ge(&1));
+        let long = estimate_tokens("abcdefghijklmnop");
+        assert!(
+            (1..=16).contains(&long),
+            "expected 1..=16 tokens, got {long}"
+        );
+    }
+
+    #[test]
+    fn budget_config_defaults_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("budget.yaml");
+        let cfg = BudgetConfig::load_or_default(&p);
+        let default = ContextBudget::default();
+        assert_eq!(cfg.total, default.total);
+        assert!((cfg.system_pct - default.system_pct).abs() < 1e-6);
+    }
+
+    #[test]
+    fn budget_config_loads_partial_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("budget.yaml");
+        std::fs::write(&p, "total: 8000\nworking_pct: 0.50\nsemantic_pct: 0.20\n").unwrap();
+
+        let partial: BudgetConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let merged = partial.into_budget(ContextBudget::default());
+        assert_eq!(merged.total, 8000);
+        assert!((merged.working_pct - 0.50).abs() < 1e-6);
+        assert!((merged.semantic_pct - 0.20).abs() < 1e-6);
+        // sys+epi unchanged from default 0.10 + 0.20 = 0.30; total = 0.30+0.20+0.50 = 1.0 ✅
+        assert!(merged.validate().is_ok());
+    }
+
+    #[test]
+    fn budget_config_invalid_sum_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("budget.yaml");
+        // 0.5 + 0.5 + 0.5 + 0.5 = 2.0 — invalid.
+        std::fs::write(
+            &p,
+            "system_pct: 0.5\nepisodic_pct: 0.5\nsemantic_pct: 0.5\nworking_pct: 0.5\n",
+        )
+        .unwrap();
+
+        let cfg = BudgetConfig::load_or_default(&p);
+        // Should fall back to default (validates).
+        assert!(cfg.validate().is_ok());
+        assert!((cfg.system_pct - 0.10).abs() < 1e-6);
+    }
+
+    #[test]
+    fn budget_config_malformed_yaml_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("budget.yaml");
+        std::fs::write(&p, ":::: not yaml ::::").unwrap();
+        let cfg = BudgetConfig::load_or_default(&p);
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

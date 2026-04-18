@@ -43,6 +43,35 @@ use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
 use crate::modules::session::Session as AppSession;
 
+/// Token-budget breakdown emitted alongside the final `stream_complete` event
+/// so the frontend `ContextBar` can render usage without an extra IPC round-trip.
+///
+/// All values are in tokens. Mirrors the TypeScript `ContextBudgetUsage`
+/// interface in `src/lib/tauri.ts`.
+#[derive(serde::Serialize, Clone, Debug)]
+pub(crate) struct ContextBudgetUsagePayload {
+    pub(crate) total_budget: usize,
+    pub(crate) system_tokens: usize,
+    pub(crate) history_tokens: usize,
+    pub(crate) memory_tokens: usize,
+    pub(crate) output_reserve: usize,
+    pub(crate) remaining: usize,
+}
+
+/// Single recalled memory item surfaced to the frontend `MemoryChip` /
+/// `MemoryEvidencePanel` components. Mirrors the TypeScript `MemoryContextItem`.
+#[derive(serde::Serialize, Clone, Debug)]
+pub(crate) struct MemoryContextItemPayload {
+    pub(crate) id: String,
+    pub(crate) content: String,
+    /// One of `"global" | "project" | "session"`.
+    pub(crate) scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) relevance_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stored_at: Option<String>,
+}
+
 /// Event payload for streaming token updates
 #[derive(serde::Serialize, Clone)]
 struct StreamTokenPayload {
@@ -65,6 +94,16 @@ struct StreamTokenPayload {
     degraded_reason: Option<String>,
     resume_available: Option<bool>,
     resume_cursor: Option<String>,
+    /// Token-budget breakdown for this turn — populated on `stream_complete`
+    /// so the frontend `ContextBar` can render usage live.  Never present on
+    /// per-token `text_delta` events to avoid serialisation overhead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_budget_usage: Option<ContextBudgetUsagePayload>,
+    /// Memory items recalled for this turn — populated on `stream_complete`
+    /// alongside `context_budget_usage`.  Drives the `MemoryChip` /
+    /// `MemoryEvidencePanel` UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_context: Option<Vec<MemoryContextItemPayload>>,
 }
 
 #[derive(Debug, Clone)]
@@ -687,31 +726,94 @@ fn extract_skill_proposal_name(text: &str) -> Option<String> {
 }
 // harness symbol marker: skill_proposal|draft|approval
 
+/// Result of pre-LLM memory retrieval — both the formatted prompt fragment
+/// and the structured items used for `MemoryChip` / `MemoryEvidencePanel`.
+struct RetrievedMemoryContext {
+    /// Plain-text fragment to inject into the system prompt.  Empty when no
+    /// memories were recalled (or retrieval failed).
+    prompt_fragment: String,
+    /// Structured payload mirrored over IPC to the frontend.  Empty when no
+    /// memories were recalled.
+    items: Vec<MemoryContextItemPayload>,
+}
+
+/// Map a backend `MemoryEntry` (+ scored fusion result) to the IPC payload
+/// expected by the frontend.  Scope is derived from the entry's optional
+/// `session_id` / `project_id` bindings; entries without either are treated
+/// as `"global"`.
+fn map_scored_memory_to_payload(
+    sm: &crate::modules::memory::retrieval::ScoredMemory,
+) -> MemoryContextItemPayload {
+    let scope = if sm.entry.session_id.is_some() {
+        "session"
+    } else if sm.entry.project_id.is_some() {
+        "project"
+    } else {
+        "global"
+    };
+    MemoryContextItemPayload {
+        id: sm.entry.key.clone(),
+        content: sm.entry.content.clone(),
+        scope: scope.to_string(),
+        relevance_score: Some(sm.score),
+        stored_at: Some(sm.entry.created_at.to_rfc3339()),
+    }
+}
+
 /// Retrieve relevant memories and format them as context for the LLM.
 ///
 /// Uses the `AppState`-level `ActiveRetrievalManager` when available to avoid
 /// re-allocating config on every turn. Falls back to a temporary manager when
 /// the AppState field is `None`.
 ///
-/// Returns an empty string on any error to avoid blocking the main flow.
-async fn retrieve_memory_context(state: &AppState, user_message: &str) -> String {
+/// Returns an empty `RetrievedMemoryContext` on any error so that retrieval
+/// failures never block the main agent loop.
+async fn retrieve_memory_context(state: &AppState, user_message: &str) -> RetrievedMemoryContext {
     let result = if let Some(mgr) = &state.active_retrieval_manager {
-        mgr.retrieve_as_context(user_message, &*state.memory_provider)
-            .await
+        mgr.retrieve(user_message, &*state.memory_provider).await
     } else {
         ActiveRetrievalManager::with_defaults()
-            .retrieve_as_context(user_message, &*state.memory_provider)
+            .retrieve(user_message, &*state.memory_provider)
             .await
     };
 
-    match result {
-        Ok(context) => context,
+    let scored = match result {
+        Ok(scored) => scored,
         Err(e) => {
             tracing::warn!(
                 "[retrieve_memory_context] Retrieval failed, proceeding without memory context: {e}"
             );
-            String::new()
+            return RetrievedMemoryContext {
+                prompt_fragment: String::new(),
+                items: Vec::new(),
+            };
         }
+    };
+
+    if scored.is_empty() {
+        return RetrievedMemoryContext {
+            prompt_fragment: String::new(),
+            items: Vec::new(),
+        };
+    }
+
+    // Build prompt fragment (matches the previous `retrieve_as_context` format).
+    let mut prompt_fragment = String::from("# Relevant Memories\n\n");
+    for sm in &scored {
+        prompt_fragment.push_str(&format!(
+            "- [{}] (score: {:.3}): {}\n",
+            sm.entry.category.as_str(),
+            sm.score,
+            sm.entry.content
+        ));
+    }
+
+    let items: Vec<MemoryContextItemPayload> =
+        scored.iter().map(map_scored_memory_to_payload).collect();
+
+    RetrievedMemoryContext {
+        prompt_fragment,
+        items,
     }
 }
 
@@ -794,6 +896,19 @@ pub async fn run_agent_turn(
         app_session.messages.len()
     );
 
+    // Phase 6E harness: emit TurnStarted onto the EventBus.  The bus is
+    // `None` in production unless `IF2AI_HARNESS_ENABLED=1`, so this is a
+    // zero-cost no-op for typical users.  Turn number is derived from the
+    // current message count to keep the API stateless.
+    let harness_event_bus_run = state.harness.as_ref().map(|h| h.event_bus.clone());
+    let turn_number_run = (app_session.messages.len() as u64) + 1;
+    crate::modules::harness::agent_loop_integration::emit_turn_started(
+        harness_event_bus_run.as_ref(),
+        &session_id,
+        turn_number_run,
+    );
+    let turn_started_at_run = std::time::Instant::now();
+
     let mode = parse_permission_mode(permission_mode.as_deref());
 
     // Create a per-turn execution context to avoid cross-session context leakage.
@@ -852,14 +967,17 @@ pub async fn run_agent_turn(
         }
     };
 
-    // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories
-    let memory_context = retrieve_memory_context(&state, &user_message).await;
-    if !memory_context.is_empty() {
+    // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories.
+    // The retrieved items are also surfaced to the frontend on `stream_complete`
+    // (run_agent_turn does not stream, but the data is logged for parity).
+    let retrieved_memory = retrieve_memory_context(&state, &user_message).await;
+    if !retrieved_memory.prompt_fragment.is_empty() {
         tracing::info!(
-            "[run_agent_turn] Injecting {} chars of memory context",
-            memory_context.len()
+            "[run_agent_turn] Injecting {} chars of memory context, {} items",
+            retrieved_memory.prompt_fragment.len(),
+            retrieved_memory.items.len(),
         );
-        system_prompt.push(memory_context);
+        system_prompt.push(retrieved_memory.prompt_fragment.clone());
     }
 
     // Capture frozen snapshot of system prompt at session start for integrity verification
@@ -1049,15 +1167,21 @@ pub async fn run_agent_turn(
             // The prompt captured at start is compared against the current text.
             // Since system_prompt is moved into ConversationRuntime, we compare
             // the captured snapshot against the original text (which includes memory context).
-            if !frozen_snapshot.verify(&system_prompt_text) {
+            // M6: use verify_detailed so failures expose actionable diagnostics
+            // (length delta or first differing byte) instead of an opaque
+            // "hash mismatch" log line.
+            let verify = frozen_snapshot.verify_detailed(&system_prompt_text);
+            if !verify.valid {
                 tracing::warn!(
-                    "[run_agent_turn] System prompt integrity check FAILED: snapshot hash={}, current prompt changed",
-                    frozen_snapshot.prompt_hash
+                    expected_hash = %verify.expected_hash,
+                    actual_hash = %verify.actual_hash,
+                    details = %verify.details.as_deref().unwrap_or("-"),
+                    "[run_agent_turn] System prompt integrity check FAILED",
                 );
             } else {
                 tracing::info!(
                     "[run_agent_turn] System prompt integrity verified: snapshot hash={}",
-                    frozen_snapshot.prompt_hash
+                    verify.expected_hash
                 );
             }
 
@@ -1124,6 +1248,15 @@ pub async fn run_agent_turn(
             }
 
             tracing::info!("[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}", final_text.len(), thinking_content.as_ref().map(|s| s.len()), session_id);
+            // Phase 6E harness: emit TurnFinished on success.
+            crate::modules::harness::agent_loop_integration::emit_turn_finished(
+                harness_event_bus_run.as_ref(),
+                &session_id,
+                turn_number_run,
+                true,
+                0,
+                turn_started_at_run.elapsed().as_millis() as u64,
+            );
             Ok(RunAgentTurnResponse {
                 message: final_text,
                 session_id,
@@ -1176,6 +1309,15 @@ pub async fn run_agent_turn(
                     format!("Configuration error: {}. Please check your settings.", msg)
                 }
             };
+            // Phase 6E harness: emit TurnFinished on error.
+            crate::modules::harness::agent_loop_integration::emit_turn_finished(
+                harness_event_bus_run.as_ref(),
+                &session_id,
+                turn_number_run,
+                false,
+                0,
+                turn_started_at_run.elapsed().as_millis() as u64,
+            );
             Err(error_message)
         }
     }
@@ -1330,20 +1472,27 @@ pub async fn start_agent_stream(
     };
 
     // Pre-LLM memory retrieval: fetch relevant memories to inject into system prompt
-    // (mirrors the same call in run_agent_turn)
-    let stream_memory_context = retrieve_memory_context(&state, &normalized_user_message).await;
-    if !stream_memory_context.is_empty() {
+    // (mirrors the same call in run_agent_turn).  The structured `items` are
+    // moved into the spawned task and emitted on `stream_complete` so the
+    // frontend `MemoryChip` / `MemoryEvidencePanel` can render them.
+    let retrieved_stream_memory = retrieve_memory_context(&state, &normalized_user_message).await;
+    if !retrieved_stream_memory.prompt_fragment.is_empty() {
         tracing::info!(
-            "[start_agent_stream] Injecting {} chars of memory context",
-            stream_memory_context.len()
+            "[start_agent_stream] Injecting {} chars of memory context, {} items",
+            retrieved_stream_memory.prompt_fragment.len(),
+            retrieved_stream_memory.items.len(),
         );
     }
+    let memory_context_items_for_task = retrieved_stream_memory.items.clone();
 
     // Build the full system prompt including memory context.
-    let system_prompt_with_memory = if stream_memory_context.is_empty() {
+    let system_prompt_with_memory = if retrieved_stream_memory.prompt_fragment.is_empty() {
         system_prompt.clone()
     } else {
-        format!("{}\n{}", system_prompt, stream_memory_context)
+        format!(
+            "{}\n{}",
+            system_prompt, retrieved_stream_memory.prompt_fragment
+        )
     };
 
     // Clone everything needed for the background task
@@ -1364,6 +1513,9 @@ pub async fn start_agent_stream(
     let trajectory_manager_for_stream = state.trajectory_manager.clone();
     let learning_module_for_stream = state.learning_module.clone();
     let memory_provider_for_stream = state.memory_provider.clone();
+    // Phase 6E harness EventBus clone (zero-cost when harness disabled).
+    let harness_event_bus_for_stream = state.harness.as_ref().map(|h| h.event_bus.clone());
+    let turn_number_for_stream = (app_session.messages.len() as u64) + 1;
 
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
@@ -1396,6 +1548,15 @@ pub async fn start_agent_stream(
         let mut has_successful_tool = false;
         let mut has_successful_mutating_tool = false;
         let mut terminal_status: Option<&'static str> = None;
+
+        // Phase 6E harness: emit TurnStarted at the top of the spawned task
+        // so all timing measurements include API client setup time.
+        crate::modules::harness::agent_loop_integration::emit_turn_started(
+            harness_event_bus_for_stream.as_ref(),
+            &session_id,
+            turn_number_for_stream,
+        );
+        let stream_turn_started_at = std::time::Instant::now();
         let mut last_stream_error_reason: Option<String> = None;
         let mut sanitize_rounds = 0usize;
         let mut sanitized_dropped_empty_messages = 0usize;
@@ -1466,6 +1627,8 @@ pub async fn start_agent_stream(
                     degraded_reason: cancelled_truth.degraded_reason,
                     resume_available: Some(cancelled_truth.resume_available),
                     resume_cursor: None,
+                    context_budget_usage: None,
+                    memory_context: None,
                 };
                 let _ = window.emit("agent-token", payload);
                 completion_already_emitted = true;
@@ -1670,6 +1833,8 @@ pub async fn start_agent_stream(
                         degraded_reason,
                         resume_available: Some(user_visible_truth.resume_available),
                         resume_cursor,
+                        context_budget_usage: None,
+                        memory_context: None,
                     };
                     let _ = window.emit("agent-token", payload);
                     // Save session and emit stream_complete even on error
@@ -1763,6 +1928,8 @@ pub async fn start_agent_stream(
                                     degraded_reason: None,
                                     resume_available: None,
                                     resume_cursor: None,
+                                    context_budget_usage: None,
+                                    memory_context: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
@@ -1788,6 +1955,8 @@ pub async fn start_agent_stream(
                                     degraded_reason: None,
                                     resume_available: None,
                                     resume_cursor: None,
+                                    context_budget_usage: None,
+                                    memory_context: None,
                                 };
                                 let _ = window.emit("agent-token", payload);
                             }
@@ -1856,6 +2025,8 @@ pub async fn start_agent_stream(
                                         degraded_reason: None,
                                         resume_available: None,
                                         resume_cursor: None,
+                                        context_budget_usage: None,
+                                        memory_context: None,
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -1886,6 +2057,8 @@ pub async fn start_agent_stream(
                                         degraded_reason: None,
                                         resume_available: None,
                                         resume_cursor: None,
+                                        context_budget_usage: None,
+                                        memory_context: None,
                                     };
                                     let _ = window.emit("agent-token", payload);
                                 }
@@ -1980,6 +2153,8 @@ pub async fn start_agent_stream(
                                 degraded_reason: degraded_reason.clone(),
                                 resume_available: Some(user_visible_truth.resume_available),
                                 resume_cursor: resume_cursor.clone(),
+                                context_budget_usage: None,
+                                memory_context: None,
                             };
                             let _ = window.emit("agent-token", payload);
                         }
@@ -2003,6 +2178,8 @@ pub async fn start_agent_stream(
                             degraded_reason,
                             resume_available: Some(user_visible_truth.resume_available),
                             resume_cursor,
+                            context_budget_usage: None,
+                            memory_context: None,
                         };
                         let _ = window.emit("agent-token", payload);
                         stream_failed = true;
@@ -2104,6 +2281,8 @@ pub async fn start_agent_stream(
                         degraded_reason: None,
                         resume_available: None,
                         resume_cursor: None,
+                        context_budget_usage: None,
+                        memory_context: None,
                     },
                 );
 
@@ -2179,6 +2358,13 @@ pub async fn start_agent_stream(
                     permission_outcome,
                     crate::modules::runtime::permissions::PermissionOutcome::Deny { .. }
                 );
+                // Phase 6E harness: emit ToolCalled before invocation.
+                crate::modules::harness::agent_loop_integration::emit_tool_called(
+                    harness_event_bus_for_stream.as_ref(),
+                    &session_id,
+                    &tool_name,
+                    &input_json.to_string(),
+                );
                 let (result_text, is_error) = match permission_outcome {
                     crate::modules::runtime::permissions::PermissionOutcome::Allow => {
                         match tool_executor.execute_with_trace(
@@ -2200,6 +2386,14 @@ pub async fn start_agent_stream(
                 if !is_error {
                     has_successful_tool = true;
                 }
+                // Phase 6E harness: emit ToolResult after invocation.
+                crate::modules::harness::agent_loop_integration::emit_tool_result(
+                    harness_event_bus_for_stream.as_ref(),
+                    &session_id,
+                    &tool_name,
+                    !is_error,
+                    duration_ms,
+                );
                 if is_mutating_tool_success(&tool_name, &input_json, is_error) {
                     has_successful_mutating_tool = true;
                 }
@@ -2228,6 +2422,8 @@ pub async fn start_agent_stream(
                         degraded_reason: None,
                         resume_available: None,
                         resume_cursor: None,
+                        context_budget_usage: None,
+                        memory_context: None,
                     },
                 );
 
@@ -2306,6 +2502,8 @@ pub async fn start_agent_stream(
                     degraded_reason: None,
                     resume_available: None,
                     resume_cursor: None,
+                    context_budget_usage: None,
+                    memory_context: None,
                 },
             );
         }
@@ -2480,6 +2678,66 @@ pub async fn start_agent_stream(
         // Emit stream_complete exactly once, and only after the full
         // tool/LLM loop has finished for this request.
         if !stream_failed && !completion_already_emitted {
+            // Compute live token-budget breakdown for the frontend ContextBar.
+            // Counts are estimates derived from tiktoken cl100k_base; the
+            // total budget mirrors the runtime ContextGovernor.
+            let system_tokens =
+                crate::modules::runtime::budget::estimate_tokens(&system_prompt_for_stream);
+            let history_tokens: usize = session_messages
+                .iter()
+                .map(|m| {
+                    m.content
+                        .iter()
+                        .map(|c| match c {
+                            crate::modules::api::InputContentBlock::Text { text } => {
+                                crate::modules::runtime::budget::estimate_tokens(text)
+                            }
+                            crate::modules::api::InputContentBlock::ToolResult {
+                                content, ..
+                            } => content
+                                .iter()
+                                .map(|b| match b {
+                                    crate::modules::api::ToolResultContentBlock::Text { text } => {
+                                        crate::modules::runtime::budget::estimate_tokens(text)
+                                    }
+                                    // JSON tool results are estimated from their serialised
+                                    // representation so structured outputs still count toward
+                                    // the per-turn history budget surfaced in `ContextBar`.
+                                    crate::modules::api::ToolResultContentBlock::Json { value } => {
+                                        crate::modules::runtime::budget::estimate_tokens(
+                                            &value.to_string(),
+                                        )
+                                    }
+                                })
+                                .sum::<usize>(),
+                            _ => 0,
+                        })
+                        .sum::<usize>()
+                })
+                .sum();
+            let memory_tokens: usize = memory_context_items_for_task
+                .iter()
+                .map(|i| crate::modules::runtime::budget::estimate_tokens(&i.content))
+                .sum();
+            const OUTPUT_RESERVE: usize = 4_096;
+            let total_budget = MAX_REQUEST_TOKEN_BUDGET_ESTIMATE
+                .max(system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE + 1024);
+            let used = system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE;
+            let remaining = total_budget.saturating_sub(used);
+            let usage = ContextBudgetUsagePayload {
+                total_budget,
+                system_tokens,
+                history_tokens,
+                memory_tokens,
+                output_reserve: OUTPUT_RESERVE,
+                remaining,
+            };
+            let memory_payload = if memory_context_items_for_task.is_empty() {
+                None
+            } else {
+                Some(memory_context_items_for_task.clone())
+            };
+
             let payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
                 text: None,
@@ -2499,12 +2757,26 @@ pub async fn start_agent_stream(
                 degraded_reason: degraded_reason.clone(),
                 resume_available: Some(user_visible_truth.resume_available),
                 resume_cursor: resume_cursor.clone(),
+                context_budget_usage: Some(usage),
+                memory_context: memory_payload,
             };
             let _ = window.emit("agent-token", payload);
             if terminal_status.is_none() {
                 terminal_status = Some("completed");
             }
         }
+
+        // Phase 6E harness: emit TurnFinished for the streaming path.
+        // We treat any non-failed stream as success here; downstream consumers
+        // can refine via `task_outcome` if needed.
+        crate::modules::harness::agent_loop_integration::emit_turn_finished(
+            harness_event_bus_for_stream.as_ref(),
+            &session_id,
+            turn_number_for_stream,
+            !stream_failed,
+            token_count,
+            stream_turn_started_at.elapsed().as_millis() as u64,
+        );
 
         if is_resume_turn {
             tracing::info!(

@@ -47,8 +47,13 @@ pub fn estimate_session_tokens(session: &Session) -> usize {
     session.messages.iter().map(estimate_message_tokens).sum()
 }
 
+/// Estimate token count from a character count.
+///
+/// Retained as a fallback for legacy call sites that only have a length
+/// (e.g. aggregated character counters). Prefer the text-aware
+/// [`crate::modules::runtime::budget::estimate_tokens`] when the underlying
+/// string is available — it uses `cl100k_base` BPE for accurate counting (M2).
 #[must_use]
-/// Estimate token count from a character count using compact heuristics.
 pub fn estimate_token_count_from_chars(char_count: usize) -> usize {
     char_count / 4 + 1
 }
@@ -415,17 +420,22 @@ fn truncate_summary(content: &str, max_chars: usize) -> String {
 }
 
 fn estimate_message_tokens(message: &ConversationMessage) -> usize {
+    use crate::modules::runtime::budget::estimate_tokens;
+
+    // M2: use the BPE-backed estimator. Concatenation is fine because BPE token
+    // counts are sub-additive: combining two strings can never inflate the count
+    // beyond the sum of their individual token counts.
     message
         .blocks
         .iter()
         .map(|block| match block {
-            ContentBlock::Text { text } => estimate_token_count_from_chars(text.len()),
+            ContentBlock::Text { text } => estimate_tokens(text),
             ContentBlock::ToolUse { name, input, .. } => {
-                estimate_token_count_from_chars(name.len() + input.len())
+                estimate_tokens(name) + estimate_tokens(input)
             }
             ContentBlock::ToolResult {
                 tool_name, output, ..
-            } => estimate_token_count_from_chars(tool_name.len() + output.len()),
+            } => estimate_tokens(tool_name) + estimate_tokens(output),
         })
         .sum()
 }

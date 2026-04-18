@@ -47,7 +47,19 @@ import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type DirectoryEntryPreview, type FilePreviewPayload, type PermissionMode } from "@/lib/tauri"
+import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode } from "@/lib/tauri"
+import { MemoryChip } from "@/components/memory/MemoryChip"
+import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
+import { ContextBar } from "@/components/chat/ContextBar"
+import { VirtualMessageList } from "@/components/chat/VirtualMessageList"
+
+/**
+ * Threshold above which the chat transcript switches from straight
+ * `messages.map(...)` rendering to virtualised rendering.  Sessions below
+ * this size keep the original DOM shape (zero behaviour change); long
+ * sessions automatically opt into virtualisation for stable scroll perf.
+ */
+const VIRTUAL_LIST_THRESHOLD = 50
 import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
 import { WaveDotsAnimation } from "@/components/loading/WaveDotsAnimation"
 import { ProjectPreviewPanel } from "@/components/ui/ProjectPreviewPanel"
@@ -78,6 +90,8 @@ interface Message {
   toolStatus?: 'queued' | 'running' | 'completed' | 'error'
   effectiveWorkdir?: string
   policyDecision?: 'allow' | 'deny' | 'prompt'
+  memoryScope?: 'global' | 'project' | 'session'
+  memoryReasonCode?: string
   evidenceId?: string
   requestId?: string
   taskOutcome?: 'completed' | 'partial_success' | 'failed'
@@ -87,6 +101,8 @@ interface Message {
   statusLabel?: string
   statusKind?: 'info' | 'success' | 'partial' | 'failed'
   isRecovering?: boolean
+  memoryContext?: MemoryContextItem[]
+  contextBudgetUsage?: ContextBudgetUsage
 }
 
 interface ChatUIProps {
@@ -284,6 +300,17 @@ export function ChatUI({
   const projectRailRefreshSeqRef = React.useRef(0)
   const projectRailNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [composerDropItems, setComposerDropItems] = React.useState<ComposerDropItem[]>([])
+  // Derive the most recent context-budget snapshot from the assistant
+  // messages.  This is propagated by `App.tsx` from the `stream_complete`
+  // event payload.  When no turn has completed yet, the bar renders
+  // nothing (see `ContextBar`).
+  const latestContextBudgetUsage = React.useMemo<ContextBudgetUsage | undefined>(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i]
+      if (m.contextBudgetUsage) return m.contextBudgetUsage
+    }
+    return undefined
+  }, [messages])
   const [projectPreviewTabs, setProjectPreviewTabs] = React.useState<FilePreviewPayload[]>([])
   const [activeProjectPreviewPath, setActiveProjectPreviewPath] = React.useState<string | null>(null)
   const [isProjectPreviewOpen, setIsProjectPreviewOpen] = React.useState(false)
@@ -1110,6 +1137,22 @@ export function ChatUI({
               </div>
             </div>
           )}
+          {latestContextBudgetUsage ? (
+            <div
+              className="relative z-0 shrink-0 px-10 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+              style={{ paddingRight: `${40 + chatVisibleRightInset}px` }}
+            >
+              <div
+                className="mx-auto w-full transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                style={{ maxWidth: `${composerMaxWidth}px` }}
+              >
+                <ContextBar
+                  usage={latestContextBudgetUsage}
+                  windowSize={messages.length}
+                />
+              </div>
+            </div>
+          ) : null}
           <ComposerDock
             input={draftInput}
             onInputChange={setDraftInput}
@@ -1804,6 +1847,26 @@ const ChatTranscript = React.memo(function ChatTranscript({
       >
         {messages.length === 0 ? (
           <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
+        ) : messages.length >= VIRTUAL_LIST_THRESHOLD ? (
+          <VirtualMessageList
+            messages={messages}
+            scrollElementRef={scrollRef}
+            estimatedItemSize={84}
+            renderMessage={(msg) => (
+              <div className={densityMode === 'compact' ? 'pb-2' : 'pb-3'}>
+                <ChatMessage
+                  message={msg}
+                  onCopyMessage={onCopyMessage}
+                  onResumeFromCursor={onResumeFromCursor}
+                  isCopied={copiedMessageId === msg.id}
+                  defaultWorkdir={defaultWorkdir}
+                  isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
+                  densityMode={densityMode}
+                  fontMode={fontMode}
+                />
+              </div>
+            )}
+          />
         ) : (
           <div className={densityMode === 'compact' ? 'space-y-2' : 'space-y-3'}>
             {messages.map((msg) => (
@@ -2359,6 +2422,65 @@ const ComposerDock = React.memo(function ComposerDock({
 
 const WEB_SEARCH_NO_KEY_PREFIX = '[web_search: 当前使用 DuckDuckGo 免费搜索'
 
+function MemoryStoreToolCard({ message }: { message: Message }) {
+  const args = (message.toolArgs ?? {}) as Record<string, unknown>
+  // The user-supplied content is the most accurate preview; the backend
+  // only echoes a 120-char content_preview for prompt decisions, and not at
+  // all for allow / deny.
+  const argsContent =
+    typeof args.content === 'string'
+      ? (args.content as string)
+      : typeof args.text === 'string'
+        ? (args.text as string)
+        : ''
+  // Backend `pending_approval` payload includes a short preview when the
+  // input args aren't reachable (rare, but parses defensively).
+  let backendPreview = ''
+  try {
+    const parsed = JSON.parse(message.content || '') as Record<string, unknown>
+    if (typeof parsed.content_preview === 'string') {
+      backendPreview = parsed.content_preview
+    }
+  } catch {
+    // Not a JSON payload (legacy tool flow); fall through.
+  }
+  const contentText = argsContent || backendPreview || message.content || ''
+
+  // Prefer structured fields lifted from the tool result by App.tsx; fall
+  // back to args (legacy) and finally to derived defaults.
+  const scopeFromArgs =
+    typeof args.scope === 'string' &&
+    (args.scope === 'global' || args.scope === 'project' || args.scope === 'session')
+      ? (args.scope as 'global' | 'project' | 'session')
+      : undefined
+  const scope: 'global' | 'project' | 'session' =
+    message.memoryScope ?? scopeFromArgs ?? 'session'
+
+  const decision = message.policyDecision ?? 'allow'
+  const reasonCode =
+    message.memoryReasonCode ??
+    (typeof args.reason_code === 'string'
+      ? (args.reason_code as string)
+      : decision === 'deny'
+        ? 'POLICY_DENIED'
+        : decision === 'prompt'
+          ? 'USER_APPROVAL_REQUIRED'
+          : 'ALLOWED_BY_POLICY')
+
+  return (
+    <div className="my-1.5 pl-4">
+      <MemoryWriteCard
+        content={contentText}
+        policyDecision={decision}
+        reasonCode={reasonCode}
+        scope={scope}
+        toolStatus={message.toolStatus}
+        isStreaming={message.toolStatus === 'queued' || message.toolStatus === 'running'}
+      />
+    </div>
+  )
+}
+
 function ToolCallMessage({
   message,
   defaultWorkdir,
@@ -2368,6 +2490,17 @@ function ToolCallMessage({
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const [isHovered, setIsHovered] = React.useState(false)
+
+  // Specialized memory_store renderer — only used when the policy engine
+  // produces a `deny` or `prompt` decision so the user notices it.  The
+  // common `allow` path falls through to the generic tool-call card so
+  // routine memory writes blend into the tool history like any other tool.
+  if (
+    message.toolName === 'memory_store' &&
+    (message.policyDecision === 'deny' || message.policyDecision === 'prompt')
+  ) {
+    return <MemoryStoreToolCard message={message} />
+  }
   const status = normalizeToolStatus(message)
   const display = buildToolCallDisplay(message, defaultWorkdir, status)
   const title = status === 'error' ? `执行失败：${display.title}` : display.title
@@ -2910,6 +3043,9 @@ const ChatMessage = React.memo(function ChatMessage({
                         visible={showCopyButton}
                         onClick={() => onCopyMessage(message)}
                       />
+                      {message.memoryContext && message.memoryContext.length > 0 ? (
+                        <MemoryChip items={message.memoryContext} className="ml-1" />
+                      ) : null}
                     </div>
                   </>
                 ) : null}
@@ -4032,6 +4168,25 @@ function summarizeToolResult(content: string): string {
   const parsed = tryParseJson(trimmed)
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const record = parsed as Record<string, unknown>
+
+    // memory_store structured payload — emit a human readable summary
+    // instead of the raw JSON ("Stored memory: <key>" replaces what the
+    // legacy plain-string handler used to produce, while pending_approval
+    // / denied surface their own dedicated cards above).
+    if (typeof record.status === 'string' && typeof record.key === 'string') {
+      const key = record.key as string
+      switch (record.status) {
+        case 'stored':
+          return `已写入记忆：${truncateText(key, 80)}`
+        case 'pending_approval':
+          return `等待审批：${truncateText(key, 80)}`
+        case 'denied':
+          return `已拒绝写入：${truncateText(key, 80)}`
+        default:
+        // Fall through to generic handling.
+      }
+    }
+
     const exitCode = typeof record.exit_code === 'number' ? record.exit_code : null
     const stdout = typeof record.stdout === 'string' ? record.stdout.trim() : ''
     const stderr = typeof record.stderr === 'string' ? record.stderr.trim() : ''

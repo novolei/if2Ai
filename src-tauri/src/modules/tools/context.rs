@@ -14,6 +14,14 @@ use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 pub struct ToolContext {
     /// Optional session id for session-scoped tool state.
     pub session_id: Option<String>,
+    /// Optional project id for project-scoped tool state.
+    ///
+    /// When `Some`, downstream consumers (notably `MemoryScopeResolver`) treat
+    /// this as the active project boundary so that project-level memory entries
+    /// are visible across sessions belonging to the same project but isolated
+    /// from other projects. `None` indicates the caller is not bound to any
+    /// project (legacy or stateless executions).
+    pub project_id: Option<String>,
     /// The allowed working directory for file operations.
     pub workdir: PathBuf,
     /// The permission mode controlling what operations are allowed.
@@ -46,6 +54,7 @@ impl ToolContext {
     ) -> Self {
         Self {
             session_id: None,
+            project_id: None,
             workdir,
             permission_mode,
         }
@@ -60,6 +69,27 @@ impl ToolContext {
     ) -> Self {
         Self {
             session_id,
+            project_id: None,
+            workdir,
+            permission_mode,
+        }
+    }
+
+    /// Creates a new ToolContext with explicit session and project ids.
+    ///
+    /// Preferred entry point used by the control-plane broker so memory tools
+    /// can resolve a complete three-tier scope (`session` / `project` /
+    /// `global`).
+    #[must_use]
+    pub fn new_with_scope(
+        session_id: Option<String>,
+        project_id: Option<String>,
+        workdir: PathBuf,
+        permission_mode: crate::modules::runtime::permissions::PermissionMode,
+    ) -> Self {
+        Self {
+            session_id,
+            project_id,
             workdir,
             permission_mode,
         }
@@ -70,6 +100,7 @@ impl ToolContext {
     pub fn default_for_workdir(workdir: PathBuf) -> Self {
         Self {
             session_id: None,
+            project_id: None,
             workdir,
             permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
         }

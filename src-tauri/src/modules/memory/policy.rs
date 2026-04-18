@@ -55,6 +55,9 @@ pub enum ReasonCode {
     CategoryDenied,
     /// Content length is above the threshold that triggers a user-confirmation prompt.
     LengthPromptThreshold,
+    /// M5: a write-time secret/credential pattern was detected by `ThreatScanner`.
+    /// The accompanying message carries the matched category (e.g. `api_key`).
+    ThreatScannerMatch,
 }
 
 impl ReasonCode {
@@ -68,6 +71,7 @@ impl ReasonCode {
             ReasonCode::KeyConflict => "key_conflict",
             ReasonCode::CategoryDenied => "category_denied",
             ReasonCode::LengthPromptThreshold => "length_prompt_threshold",
+            ReasonCode::ThreatScannerMatch => "threat_scanner_match",
         }
     }
 }
@@ -125,7 +129,13 @@ impl MemoryPolicyEngine {
     }
 
     /// Create a policy engine with default configuration (shadow mode).
+    ///
+    /// Retained for tests and library consumers that don't yet thread the
+    /// `MemoryFeatureConfig`-derived enforce mode through their call sites.
+    /// Production callers should use [`MemoryPolicyEngine::new`] with an
+    /// explicit [`MemoryPolicyConfig`].
     #[must_use]
+    #[allow(dead_code)]
     pub fn default_shadow() -> Self {
         Self::new(MemoryPolicyConfig::default())
     }

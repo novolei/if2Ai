@@ -1,0 +1,81 @@
+---
+description: Rust + Tauri 2 backend best practices for the if2ai desktop app (src-tauri/)
+globs: src-tauri/**/*.rs, src-tauri/Cargo.toml, src-tauri/tauri.conf.json, src-tauri/capabilities/**/*.json
+---
+
+# Rust + Tauri 2 Best Practices
+
+> **范围**：`src-tauri/` 本地约定与 Tauri 2 模式。完整 executor 17 步 SOP、diff-gate、harness 流程见根目录 `CLAUDE.md`（勿在本文件重复粘贴）。
+
+## Project Layout
+- 后端代码全部位于 `src-tauri/`；不要在前端 `src/` 下放 `.rs`
+- 模块化按功能聚合：`src-tauri/src/modules/<domain>/{mod.rs, ...}`，避免在 `main.rs` 写业务逻辑
+- 二进制工具放 `src-tauri/src/bin/`（如 `harness_cli.rs`）；与主应用共享逻辑通过 lib crate 复用
+- 公共类型（DTO、错误、命令入参/出参）集中在 domain 模块的 `types.rs` 或 `contracts.rs`
+
+## Tauri 2 Commands
+- 所有 `#[tauri::command]` 必须 `async fn` 并显式声明返回 `Result<T, E>`，错误类型实现 `serde::Serialize`
+- 命令入参类型必须 `#[derive(Deserialize)]`、出参类型必须 `#[derive(Serialize)]`，避免直接 `serde_json::Value`
+- 在 `modules/commands/mod.rs` 用 `pub fn register(builder)` 风格集中 `invoke_handler![...]`，禁止散落
+- 命令必须在 `src-tauri/capabilities/` 中声明权限；新增命令同时更新 `capabilities.json`
+- 跨命令共享状态使用 `tauri::State<Arc<AppState>>`，禁止全局可变 static；初始化在 `setup()` 中完成
+- 长任务必须返回快速响应 + 通过 `Channel<T>` 或 `app_handle.emit()` 推送进度事件
+
+## Async (Tokio)
+- 默认使用项目级 `tokio` runtime，`#[tokio::main]` 已在 `main.rs` 配置；命令内不要 `block_on`
+- IO 与命令边界用 `tokio::spawn` 派发后台任务；CPU 密集任务必须 `spawn_blocking`
+- 共享可变状态使用 `tokio::sync::{Mutex, RwLock}`，禁止在 async 上下文持有 `std::sync::Mutex` 跨 await
+- 取消语义使用 `tokio_util::sync::CancellationToken`，并在 Drop 中保证子任务退出
+- 通道选择：单生产者用 `tokio::sync::oneshot`/`mpsc`，多消费者用 `broadcast`，UI 推流用 Tauri `Channel`
+
+## Errors
+- 每个 module 定义自己的 `Error` enum，使用 `thiserror::Error`，避免 `anyhow` 出现在 lib API 边界
+- 内部胶水代码可用 `anyhow::Result`；命令边界必须转换为可序列化的领域错误
+- 禁止 `unwrap()`/`expect()` 出现在生产路径；测试与一次性脚本除外，且 `expect("...")` 必须含上下文
+- 错误日志使用 `tracing::error!(error = ?err, ...)`，不要 `println!`/`eprintln!`
+
+## Logging & Telemetry
+- 全部使用 `tracing`，禁止 `log` crate；命令入口加 `#[tracing::instrument(skip(state, ...), err)]`
+- 日志字段使用结构化 K=V，避免拼接字符串：`tracing::info!(session_id = %id, "...")`
+- 业务遥测事件统一通过 `modules/telemetry`（如已存在）下沉，不在业务代码直接 emit Tauri event
+
+## Serde & Data Contracts
+- 与前端共享的结构体必须 `#[serde(rename_all = "camelCase")]`，保持前端 TS 类型一致
+- 可选字段使用 `Option<T>` + `#[serde(skip_serializing_if = "Option::is_none")]`
+- 枚举默认 `#[serde(tag = "type")]` 或 `#[serde(rename_all = "snake_case")]`，明确变体形态
+- 时间统一 `chrono::DateTime<Utc>` + RFC3339；ID 用 `uuid::Uuid`，不要裸 `String`
+
+## State & Persistence
+- SQLite 通过 `rusqlite` 时必须使用连接池（如 `r2d2` 或自管 `Arc<Mutex<Connection>>` 包一层 `spawn_blocking`）
+- LanceDB / 向量库等 IO 全部 async，禁止在命令线程同步阻塞
+- 文件路径统一通过 `tauri::Manager::path()` 解析（`app_data_dir`、`app_config_dir`），禁止硬编码
+- 写入磁盘前先写临时文件再 `rename`，保证崩溃安全
+
+## Security
+- 所有命令必须最小权限：在 `capabilities/*.json` 精确声明，不开 `"allow": ["*"]`
+- 用户输入路径必须 canonicalize 并校验在允许目录内，防止路径穿越
+- shell/子进程调用使用 `tauri-plugin-shell` allowlist；禁止裸 `std::process::Command` 接受用户输入
+- 凭据/密钥使用 `keyring` 或 OS secure storage，禁止落地明文 JSON
+
+## Performance
+- 大对象在异步边界传递使用 `Arc<T>`，避免 clone；只读切片优先 `&[T]` / `&str`
+- 字符串拼接热路径使用 `String::with_capacity` 或 `write!`
+- 序列化热路径优先 `serde_json::to_writer` 避免中间 `String`
+- 热点结构 benchmark 用 `criterion`，不要靠 `Instant` 手测
+
+## Testing
+- 单元测试与代码同文件 `#[cfg(test)] mod tests`；集成测试放 `src-tauri/tests/`
+- 异步测试使用 `#[tokio::test]`；涉及时间使用 `tokio::time::pause()`
+- Tauri 命令的纯逻辑必须能脱离 `AppHandle` 测试：把核心逻辑抽到普通 async fn，命令只做薄包装
+- Mock HTTP 用 `wiremock`，文件系统用 `tempfile::TempDir`
+
+## Tooling
+- 提交前必须 `cargo fmt --all` 与 `cargo clippy --all-targets --all-features -- -D warnings` 通过
+- 新增依赖前确认 license 与维护状态；优先选项目已有的 crate
+- `Cargo.lock` 必须提交（应用项目）；`tauri.conf.json` 改动需说明影响
+
+## Don't
+- 不要在 Rust 侧拼 HTML/CSS/JS 字符串塞回前端
+- 不要绕过 `#[tauri::command]` 直接暴露 IPC
+- 不要让命令吞错误返回 `Result<T, ()>` 或字符串，必须结构化错误
+- 不要在 release 构建保留 `dbg!`、`todo!`、`unimplemented!`
