@@ -33,10 +33,49 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9', '8A.10', '8A.11']
-  current_slice: '8A.12'
+  completed_slices: ['8A.1', '8A.2', '8A.3', '8A.4', '8A.5', '8A.6', '8A.7', '8A.8', '8A.9', '8A.10', '8A.11', '8A.12']
+  current_slice: ''
   blocked: []
   notes: >
+    8A.12 完成（2026-04-19）：T-F5 + T-UI-1 + T-UI-6 + T-UI-8 — Sprint 1 收官 slice。
+    **Sprint 1 全部 12 slice 完成（Phase A + B + F 全闭环）**：
+    (1) Backend wiring：commands/agent.rs 新增 async helper
+    `append_memory_injection_sections(state, session_id, project_id, workdir,
+    system_prompt, caller)`，在 run_agent_turn:966 + start_agent_stream:1497
+    两处 load_system_prompt Ok 分支后调用；helper 读 runtime::config::current()
+    .memory()，gates on inject_to_prompt，scope 走 MemoryScopeResolver::resolve
+    取自 SessionExecutionContext，调 modules::memory::build_memory_injection
+    后将 pinned/compiled/rules 三段 markdown push 到 Vec<String> 系统提示
+    (与 SystemPromptBuilder::with_memory_injection 等价但适配 load_system_prompt
+    返回的 Vec)；失败仅 tracing::warn，绝不中断 turn。
+    (2) main.rs：启动时 touch <memory_root>/pinned.md sentinel，避免
+    build_memory_injection 在 8B compile 落地前 warn missing。
+    (3) Frontend 新组件 src/components/memory/pinned/PinnedMemoryEditor.tsx
+    （241 行）+ PinItem.tsx（59 行）：项目/全局 scope 切换 + @dnd-kit 拖拽
+    （PointerSensor + KeyboardSensor）+ Enter 提交 + 500 字符计数 + 50 条上限 +
+    乐观插入/删除（失败回滚）+ PII 脱敏黄色提示（server 返回 content !==
+    input 时显示 6 秒）。
+    (4) MemorySettingsPage.tsx 顶部插入 <PinnedMemoryEditor />。
+    (5) TelemetryDrawer.tsx 新增「记忆生命周期」timeline section + 4 个
+    新事件 META（memory_pii_redacted=Shield/red、memory_pinned=Pin/amber、
+    memory_unpinned=PinOff/stone、memory_summary_rolled=Sparkles/blue），
+    bounded ring buffer 30 条；与 prior-session 的 promotion timeline 共存。
+    (6) ContextBar.tsx 新增"记忆已加载" badge（Brain icon, teal chip），
+    usage.memory_tokens > 0 时出现（CompiledViewer 跳转留 Sprint 2）。
+    (7) package.json 首次引入 @dnd-kit/core ^6.3.1 + sortable ^10.0.0 +
+    utilities ^3.2.2 (per v2 §0.5 Δ-10)。
+    Lint 0 warning，gate PASS（compile + 921 tests + 4 security_integration），
+    review 6/6 PASS，diff-gate PASS（9 files / 1016 lines inserted）。
+    Commit 8308105。Stash pop 后只有 TelemetryDrawer 1 处冲突
+    （prior-session 也加了 listenMemoryEvent 的 promotion 分支），合并方式：
+    把两个事件家族合并到同一 useEffect 中分发，互不干扰。
+    Sprint 1 commit chain: 8A.1..8A.12 共 12 个 commits，最后 commit 8308105。
+    **Sprint 1 完成：Phase A + B + F 全闭环；触发 human checkpoint #2
+    （设计文档 §Sprint 1 / 8A.12 完成后人工 review 要求 4 项试用）**：
+    (1) agent 能 pin/unpin 记忆；(2) system prompt 包含 pinned + compiled
+    内容；(3) PII scrub 在 PinnedMemoryEditor 触发脱敏提示；
+    (4) F5 迁移兜底（pinned.md sentinel）正确运行。
+    -----
     8A.11 完成（2026-04-19）：T-F4 — System Prompt 静态注入 builder + helper
     落地。新模块 src-tauri/src/modules/memory/inject.rs 提供 MemoryInjection
     payload + async build_memory_injection(pinned_store, scope, compiled_path,
@@ -865,7 +904,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8A.12"
     title: "T-F5+T-UI-1 — 迁移默认值 + PinnedMemoryEditor 前端组件"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
