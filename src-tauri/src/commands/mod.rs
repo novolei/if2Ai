@@ -153,6 +153,19 @@ pub struct AppState {
     /// real implementation) / 8B.5 (memory_compile_now command).
     #[allow(dead_code)]
     pub memory_compiler: Arc<crate::modules::memory::MemoryCompiler>,
+
+    /// Phase 8B.6 — turn-based memory scheduler (Sprint 2 / T-D1).
+    /// Constructed in `main.rs::run` once
+    /// [`AppState::rolling_summarizer`], [`AppState::memory_compiler`],
+    /// and [`AppState::summary_store`] are all available.  The
+    /// `TurnHook` impl is a no-op stub from 8B.6 — real `notify_turn`
+    /// and `notify_session_end` wiring lands in 8B.7, at which point
+    /// `commands/agent.rs` will install it via
+    /// `ConversationRuntime::with_turn_hook(state.memory_ticker.clone())`.
+    ///
+    /// `allow(dead_code)`: first reader lands in 8B.7.
+    #[allow(dead_code)]
+    pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -200,6 +213,9 @@ pub struct AppStateConfig {
     pub pinned_store: Arc<dyn PinnedStore>,
     /// Shared `MemoryCompiler` skeleton; see [`AppState::memory_compiler`].
     pub memory_compiler: Arc<crate::modules::memory::MemoryCompiler>,
+    /// Shared turn-based memory scheduler; see
+    /// [`AppState::memory_ticker`].
+    pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
 }
 
 impl AppState {
@@ -230,6 +246,7 @@ impl AppState {
             rolling_summarizer: cfg.rolling_summarizer,
             pinned_store: cfg.pinned_store,
             memory_compiler: cfg.memory_compiler,
+            memory_ticker: cfg.memory_ticker,
         }
     }
 }

@@ -33,8 +33,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5']
-  current_slice: '8B.6'
+  completed_slices: ['8B.1', '8B.2', '8B.3', '8B.4', '8B.5', '8B.6']
+  current_slice: '8B.7'
   blocked: []
   notes: >
     Phase C 闭环 — Human checkpoint #1 待人工验证。8B.5 落地了
@@ -326,7 +326,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "8B.6"
     title: "T-D1 — MemoryTicker 主结构（TickerState + DailyStep）"
-    status: pending
+    status: done
     priority: P0
     design_ref: >
       docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md

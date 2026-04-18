@@ -26,6 +26,7 @@ pub mod retrieval;
 pub mod scope;
 pub mod security;
 pub mod summary;
+pub mod ticker;
 pub mod working_memory;
 
 // Re-exports for the JobRunner module.  `JobAttempt` / `JobStatus` /
@@ -76,6 +77,14 @@ pub use scope::MemoryExecutionScope;
 // `state.memory_compiler` instead of re-threading the constructor.
 #[allow(unused_imports)]
 pub use compiler::{CompilePaths, CompileResult, MemoryCompiler};
+
+// Phase 8B.6 — MemoryTicker skeleton (Sprint 2 / T-D1).  The
+// `TurnHook` impl is a no-op stub until 8B.7 wires
+// `notify_turn` / `notify_session_end` to the real
+// rolling-summary + compile pipeline; held on `AppState` from this
+// slice so subsequent slices only need to read `state.memory_ticker`.
+#[allow(unused_imports)]
+pub use ticker::{DailyStep, MemoryTicker, TickerConfig, TickerState};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

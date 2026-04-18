@@ -489,6 +489,22 @@ fn main() {
             .clone(),
     ));
 
+    // Phase 8B.6 — MemoryTicker (Sprint 2 / T-D1).  Constructed once
+    // here and held on `AppState` so the future
+    // `ConversationRuntime::with_turn_hook(state.memory_ticker.clone())`
+    // wiring (handled by `commands/agent.rs` once the prior-session
+    // diff is un-stashed) can reach it without re-threading the four
+    // collaborators.  The `TurnHook` impl is a no-op stub from 8B.6;
+    // real `notify_turn` / `notify_session_end` lands in 8B.7.
+    // TODO(8B.x): read `TickerConfig` from `MemoryConfigOverrides`
+    // instead of hard-coded defaults once the Settings UI lands.
+    let memory_ticker = std::sync::Arc::new(modules::memory::MemoryTicker::new(
+        rolling_summarizer.clone(),
+        memory_compiler.clone(),
+        summary_store.clone(),
+        modules::memory::TickerConfig::default(),
+    ));
+
     // Phase 8A.9 — PinnedStore backed by the shared
     // `<memory_root>/memory.db` (same SQLite file as the summary store
     // and MemoryProvider; the `pinned_items` table is disjoint from
@@ -652,6 +668,7 @@ fn main() {
         rolling_summarizer,
         pinned_store,
         memory_compiler,
+        memory_ticker,
     });
 
     tauri::Builder::default()
