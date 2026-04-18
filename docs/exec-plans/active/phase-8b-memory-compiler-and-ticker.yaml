@@ -1,0 +1,603 @@
+# Phase 8B: Memory Compiler & Ticker (Sprint 2)
+#
+# Design-ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+# Goal: 实现 LLM 编译流水线（today/week/longterm/facts）+ 指纹缓存 + Turn-based ticker
+#       + CompiledMemoryViewer 前端 + NarrativeViewer 骨架，让用户看到 agent 的长期记忆。
+
+meta:
+  phase: 8B
+  name: Memory Compiler & Ticker — Sprint 2
+  status: draft
+  design_ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+  read_first:
+    - CLAUDE.md
+    - docs/references/coding-style-and-lint-contract.md
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.5 Calibration Δ"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.6 Audit Event 字段约定"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.7 跨 Sprint 共享原则"
+  created: 2026-04-18
+  total_slices: 11
+  human_checkpoints:
+    - after_slice: "8B.5"
+      reason: >
+        4 个 compile_* 完成后人工验证 memory.md 质量：(1) cargo test 全通过；
+        (2) 手动触发 memory_compile_now → 4 个 .md 文件都生成内容；
+        (3) 重复触发 → Skipped（指纹命中）；(4) memory.md 内容符合预期格式。
+    - after_slice: "8B.11"
+      reason: >
+        Ticker 6 轮触发 + recover 链路真实跑通后做端到端 demo：
+        (1) 6 轮对话后 session_summaries 有新行；
+        (2) session 结束后 memory.md 被自动更新；
+        (3) 进程 kill 重启后 24h 内 dirty session 被补摘要；
+        (4) CompiledMemoryViewer + NarrativeViewer UI 可用。
+
+dashboard:
+  last_updated: '2026-04-18'
+  completed_slices: []
+  current_slice: '8B.1'
+  blocked: []
+  notes: >
+    Phase 8B 初始化（草案）。激活前提：Phase 8A 全部 done。
+    11 slices，~10 工程日。核心依赖：SessionSummaryStore（8A.5）+ JobRunner（8A.2）+ UtilityLlm（8A.5）。
+
+    共享约束（v2 §0.7）：
+      - 每个 slice 至少 1 audit event + 1 harness 断言 + 1 UI 信号
+      - PII scrub 默认 ON（继承 8A.1）
+      - 所有 background job 走 JobRunner.run
+      - 所有 LLM 调用走 UtilityLlm
+      - 新 Tauri command 必须三处注册
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Phase C — Memory Compiler
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.1: T-C1 — Compiler 模块骨架 + CompilePaths
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.1"
+    title: "T-C1 — MemoryCompiler 骨架（模块结构 + CompilePaths）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-C1 + §0.5 Δ-1 Δ-3 Δ-6
+    estimated_days: 1
+    depends_on: ["8A.5"]
+
+    current_state: |
+      src-tauri/src/modules/memory/compiler/ 目录：不存在。
+      MemoryCompiler / CompilePaths / CompileResult 类型：均不存在。
+      AppState.memory_compiler 字段：不存在。
+      ❌ MISSING：memory/compiler/mod.rs + fingerprint.rs + today.rs + week.rs + longterm.rs + facts.rs + assemble.rs
+      ❌ MISSING：MemoryCompiler struct + 5 个 compile_* 方法签名（空桩）
+      ❌ MISSING：AppState.memory_compiler 字段
+
+    must_implement:
+      - "src-tauri/src/modules/memory/compiler/mod.rs — pub use + MemoryCompiler 主结构"
+      - "src-tauri/src/modules/memory/compiler/mod.rs — pub struct MemoryCompiler { summary_store: Arc<dyn SessionSummaryStore>, llm: Arc<dyn UtilityLlm>, job_runner: Arc<JobRunner>, config: CompilerConfig }"
+      - "src-tauri/src/modules/memory/compiler/mod.rs — pub struct CompilePaths { root, today_md, week_md, longterm_md, facts_md, memory_md: PathBuf }"
+      - "src-tauri/src/modules/memory/compiler/mod.rs — impl CompilePaths { pub fn from_scope_root(root: &Path) -> Self }"
+      - "src-tauri/src/modules/memory/compiler/mod.rs — pub enum CompileResult { Compiled, Skipped } #[derive(Debug, Serialize)]"
+      - "MemoryCompiler 方法签名（此 slice 空桩）：pub async fn compile_today / compile_week / compile_longterm / compile_facts / assemble"
+      - "src-tauri/src/modules/runtime/config.rs — pub struct CompilerConfig { today_max_chars, week_max_chars, longterm_max_chars, facts_max_chars, daily_check_interval_secs, max_concurrent_llm, max_retries: 所有字段 usize/u64/u32，走 MemoryConfigOverrides }"
+      - "src-tauri/src/commands/mod.rs AppState — pub memory_compiler: Arc<MemoryCompiler>"
+      - "src-tauri/src/main.rs — 构造 MemoryCompiler 并注入 AppState"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/compiler/mod.rs
+      - src-tauri/src/modules/memory/compiler/fingerprint.rs
+      - src-tauri/src/modules/memory/compiler/today.rs
+      - src-tauri/src/modules/memory/compiler/week.rs
+      - src-tauri/src/modules/memory/compiler/longterm.rs
+      - src-tauri/src/modules/memory/compiler/facts.rs
+      - src-tauri/src/modules/memory/compiler/assemble.rs
+      - src-tauri/src/modules/memory/mod.rs
+      - src-tauri/src/modules/runtime/config.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo check -p if2ai-backend 通过（模块结构编译通过）"
+      - "cargo test memory::compiler — CompilePaths::from_scope_root 路径正确"
+      - "CompilerConfig 从 MemoryConfigOverrides 反序列化（单测 mock JSON 验证）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-1：MemoryCompiler.llm 类型 Arc<dyn UtilityLlm>"
+      - "遵守 v2 §0.5 Δ-3：无 Arc<MemoryAuditEmitter> 字段"
+      - "遵守 v2 §0.5 Δ-6：CompilePaths 路径基于 dirs::data_local_dir()/.if2ai/memory/"
+      - "CompilerConfig 所有字段都有合理 Default 实现（via #[derive(Default)]）"
+      - "空桩方法返回 Ok(CompileResult::Skipped) 占位，带 TODO 注释"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.2: T-C2 — 指纹边车机制
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.2"
+    title: "T-C2 — 指纹边车机制（MD5 + .fingerprint 文件）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-C2 + §0.5 Δ-10（md5 已在 Cargo）
+    estimated_days: 0.5
+    depends_on: ["8B.1"]
+
+    current_state: |
+      src-tauri/src/modules/memory/compiler/fingerprint.rs：文件骨架已建（8B.1），但实现为空。
+      src-tauri/Cargo.toml：md5 crate 已存在（按 v2 §0.5 Δ-10 确认）。
+      ❌ MISSING：compute_fingerprint() + read_fingerprint() + write_fingerprint() + is_unchanged() 完整实现
+
+    must_implement:
+      - "src-tauri/src/modules/memory/compiler/fingerprint.rs — pub fn compute_fingerprint(keys: &[String]) -> String { MD5(keys.join('\\n')) }"
+      - "src-tauri/src/modules/memory/compiler/fingerprint.rs — pub fn read_fingerprint(output_path: &Path) -> Option<String>"
+      - "src-tauri/src/modules/memory/compiler/fingerprint.rs — pub fn write_fingerprint(output_path: &Path, fp: &str) -> Result<()>"
+      - "src-tauri/src/modules/memory/compiler/fingerprint.rs — pub fn is_unchanged(output_path: &Path, current_fp: &str) -> bool"
+      - "fingerprint 边车文件命名规则：output_path.with_extension('md.fingerprint')"
+      - "所有 compile_* 在 8B.3/8B.4 实现时：先算 fp → is_unchanged → Skipped / 编译后 write_fingerprint"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/compiler/fingerprint.rs
+
+    acceptance:
+      - "cargo test memory::compiler::fingerprint::tests::same_keys_same_fp — 相同 keys 输出相同 fingerprint"
+      - "cargo test memory::compiler::fingerprint::tests::changed_key_changed_fp — 改一个 key → 指纹变"
+      - "cargo test memory::compiler::fingerprint::tests::roundtrip — write 后 read 返回相同值"
+      - "cargo test memory::compiler::fingerprint::tests::unchanged_true — is_unchanged 在文件存在且指纹匹配时返回 true"
+
+    review_checklist:
+      - "fingerprint 路径后缀 .md.fingerprint（不是 .fingerprint）"
+      - "compute_fingerprint 空 keys 时返回固定值 'empty'，不 panic"
+      - "read_fingerprint 文件不存在时返回 None（不报错）"
+      - "write_fingerprint 失败通过 ? 传播，不 unwrap"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.3: T-C3 — compile_today / compile_week / compile_longterm
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.3"
+    title: "T-C3 — compile_today/week/longterm（LLM 编译 + 指纹缓存）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-C3 + §0.5 Δ-1 Δ-3 Δ-13
+    estimated_days: 2
+    depends_on: ["8B.2", "8A.3"]
+
+    current_state: |
+      compiler/today.rs + week.rs + longterm.rs：文件骨架已建（8B.1），实现为空桩。
+      ❌ MISSING：compile_today / compile_week / compile_longterm 完整实现
+      ❌ MISSING：compile_today_prompt / compile_week_prompt / compile_longterm_prompt（Prompt 构建）
+
+    must_implement:
+      - "compiler/today.rs — pub(crate) async fn compile_today(summary_store, scope, output_path, llm, config, is_zh) -> Result<CompileResult>"
+      - "compile_today 流程：get_today() → list_in_range → compute_fingerprint → is_unchanged→Skipped / 摘要拼接 → llm.complete(prompt, input, 750, 0.3) → atomic_write + write_fingerprint → Ok(Compiled)"
+      - "fp_keys 格式：'{session_id}:{updated_at.rfc3339()}'，为空时 keys=['empty']"
+      - "compiler/week.rs — 同构，range = 过去 7 天"
+      - "compiler/longterm.rs — 依赖 week.md 已存在；input = 旧 longterm 内容 + week 内容；指纹仅用 week 文件的 md5"
+      - "compile_today_prompt(is_zh, max_chars) 中英文各一套（搬 openhanako compile.js:62-63）"
+      - "compile_week_prompt(is_zh, max_chars) 中英文各一套"
+      - "compile_longterm_prompt(is_zh, max_chars) 中英文各一套"
+      - "MemoryAuditEmitter::memory_compiled(ctx, kind, result, chars_in, chars_out, latency_ms)"
+      - "atomic_write helper：先写 .tmp 再 rename"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/compiler/today.rs
+      - src-tauri/src/modules/memory/compiler/week.rs
+      - src-tauri/src/modules/memory/compiler/longterm.rs
+      - src-tauri/src/modules/memory/audit.rs
+
+    acceptance:
+      - "cargo test memory::compiler::today::tests::compile_and_write — 有 summary → today.md 生成内容"
+      - "cargo test memory::compiler::today::tests::fingerprint_cache_hit — 同内容第二次调用 → Skipped + 0 LLM 调用"
+      - "cargo test memory::compiler::week::tests::seven_day_range — 查询范围 7 天"
+      - "cargo test memory::compiler::longterm::tests::depends_on_week — week.md 不存在时返回 Ok(Skipped)"
+      - "audit 事件 memory_compiled 在每次真正编译后触发"
+      - "harness suite harness/suites/memory_pipeline_e2e.yaml 中 compile_today 步骤通过"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-1：所有 llm 调用通过 dyn UtilityLlm，不直接用 ProviderManager"
+      - "遵守 v2 §0.5 Δ-13：is_zh 参数从 locale::is_zh() 传入，不在 compile_* 内部读 config"
+      - "compile_longterm 在 Week 完成前不运行（由 Ticker 保证顺序；compile_longterm 单独调用时检查 week.md 存在）"
+      - "atomic_write 跨平台（tempfile + rename 在 Windows 上 replace）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.4: T-C3 增量 — compile_facts + assemble.rs
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.4"
+    title: "T-C3+T-C4 — compile_facts（事实抽取）+ assemble（memory.md 聚合）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-C3 compile_facts + T-C4 assemble + §0.5 Δ-17
+    estimated_days: 1
+    depends_on: ["8B.3"]
+
+    current_state: |
+      compiler/facts.rs：文件骨架已建，实现为空桩。
+      compiler/assemble.rs：文件骨架已建，实现为空桩。
+      ❌ MISSING：compile_facts 实现（regex 抽取重要事实段 + < 500 字跳过 LLM）
+      ❌ MISSING：assemble() 实现（4 块拼接 + 占位符 + memory_assembled audit）
+
+    must_implement:
+      - "compiler/facts.rs — compile_facts：从最近 30 天 summary 抽取 '## 重要事实' 段（regex '##\\s*重要事实\\s*\\n([\\s\\S]*?)(?=\\n##|$)'）"
+      - "facts 内容 < 500 字时直接写 facts.md（不调 LLM）"
+      - "facts 内容 ≥ 500 字时调 llm.complete（compile_facts_prompt，max_tokens=500）压缩"
+      - "compile_facts_prompt(is_zh, max_chars) 中英文各一套"
+      - "compiler/assemble.rs — pub(crate) fn assemble(paths: &CompilePaths, is_zh: bool) -> Result<()>"
+      - "assemble 输出格式：4 个 section（重要事实/今天/最近一周/长期情况），各有占位符 '（暂无）'/'(none)'"
+      - "assemble 总字数超 5000 时按 facts→today→week→longterm 优先级截断（v2 §0.5 Δ-17）"
+      - "MemoryAuditEmitter::memory_assembled(ctx, chars, sections: &[&str])"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/compiler/facts.rs
+      - src-tauri/src/modules/memory/compiler/assemble.rs
+      - src-tauri/src/modules/memory/audit.rs
+
+    acceptance:
+      - "cargo test memory::compiler::facts::tests::extract_section — regex 正确提取 '重要事实' 段"
+      - "cargo test memory::compiler::facts::tests::small_facts_no_llm — < 500 字直接写入，0 LLM 调用"
+      - "cargo test memory::compiler::assemble::tests::four_sections — memory.md 包含 4 个 section"
+      - "cargo test memory::compiler::assemble::tests::empty_section_placeholder — 空内容填写占位符"
+      - "cargo test memory::compiler::assemble::tests::truncation_5000 — 总字数超 5000 按优先级截断"
+      - "audit 事件 memory_assembled 在 assemble() 后触发"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-17：memory.md 总 max 5000 字；截断顺序 facts→today→week→longterm"
+      - "assemble() 是同步函数（不 async），无 LLM 调用"
+      - "4 个 section 标题中英文由 is_zh 参数控制"
+      - "regex compile 用 OnceLock 缓存"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.5: T-C5 — memory_compile_now 等 Tauri 命令
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.5"
+    title: "T-C5 — memory_compile_now / memory_compiled_read / memory_compiled_clear Tauri 命令"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-C5 + §0.5 Δ-11
+    estimated_days: 1
+    depends_on: ["8B.4"]
+
+    current_state: |
+      src-tauri/src/commands/memory.rs：无 memory_compile_now / memory_compiled_read / memory_compiled_clear。
+      src-tauri/src/commands/mod.rs：AppState.memory_compiler 已在 8B.1 引入。
+      ❌ MISSING：CompileReport / CompiledMemoryDto / CompiledSection 类型
+      ❌ MISSING：三个 Tauri 命令 + 三处注册
+
+    must_implement:
+      - "commands/memory.rs — pub struct CompileReport { today, week, longterm, facts: CompileResult, assembled: bool, elapsed_ms: u64 }"
+      - "commands/memory.rs — pub struct CompiledMemoryDto { memory_md: String, today, week, longterm, facts: CompiledSection }"
+      - "commands/memory.rs — pub struct CompiledSection { content: String, last_compiled_at: Option<DateTime<Utc>>, chars: usize }"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_compile_now(scope: String, state) -> Result<CompileReport, String>"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_compiled_read(scope: String, state) -> Result<CompiledMemoryDto, String>"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_compiled_clear(scope: String, state) -> Result<(), String>"
+      - "memory_compiled_clear：清空 today/week/longterm/facts/memory.md 内容 + unlink 4 个 fingerprint 文件"
+      - "src-tauri/src/main.rs — 三个命令加入 invoke_handler!"
+      - "src-tauri/gen/schemas/capabilities.json — 三个命令加入 permissions"
+      - "src/lib/tauri.ts — export memoryCompileNow / memoryCompiledRead / memoryCompiledClear"
+
+    impl_targets:
+      - src-tauri/src/commands/memory.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "cargo test commands::memory::tests::compile_report_serialization — CompileReport serde 测试"
+      - "memory_compile_now 触发编译后 today.md 存在且有内容"
+      - "memory_compiled_read 返回 memory.md 内容 + 4 section 编译时间"
+      - "memory_compiled_clear 后 memory.md 内容为空，fingerprint 文件不存在"
+      - "Tauri 命令三处注册：npm run tauri dev 启动无 capability error"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-11：三个命令三处注册"
+      - "CompiledSection.last_compiled_at 取自文件 mtime（tokio::fs::metadata）"
+      - "scope 参数校验：只接受 'current'/'all'/'project'/'global'，其他返回错误"
+      - "memory_compiled_clear atomic：先清内容再删 fingerprint，不保留半清状态"
+      - "无 unwrap()"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Human Checkpoint #1 — 8B.5 后人工验证 memory.md 质量
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Phase D — Memory Ticker（Turn-based 调度）
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.6: T-D1 — MemoryTicker 主结构
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.6"
+    title: "T-D1 — MemoryTicker 主结构（TickerState + DailyStep）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-D1 + §0.5 Δ-8 Δ-3
+    estimated_days: 1
+    depends_on: ["8A.7", "8B.1"]
+
+    current_state: |
+      src-tauri/src/modules/memory/ticker.rs：不存在。
+      AppState.memory_ticker 字段：不存在。
+      ❌ MISSING：MemoryTicker struct + TickerState + DailyStep 枚举
+      ❌ MISSING：MemoryTicker 实现 TurnHook trait（Δ-8）
+      ❌ MISSING：AppState.memory_ticker 字段
+
+    must_implement:
+      - "src-tauri/src/modules/memory/ticker.rs — pub struct MemoryTicker { summarizer, compiler, summary_store, config: TickerConfig, state: Mutex<TickerState> }"
+      - "TickerConfig { turns_per_summary: u32, daily_check_interval_secs: u64, experience_enabled: bool }"
+      - "TickerState { turn_counts: HashMap<String, u32>, summary_in_progress: HashSet<String>, last_daily_job_date: Option<NaiveDate>, daily_steps_completed: HashSet<DailyStep>, daily_steps_date: Option<NaiveDate>, daily_running: bool }"
+      - "pub enum DailyStep { Today, Week, Longterm, Facts, Assemble, DeepMemory } — impl Hash + PartialEq + Eq"
+      - "MemoryTicker — impl TurnHook { fn on_turn_complete / fn on_session_end }（8B.7 实现）"
+      - "src-tauri/src/commands/mod.rs AppState — pub memory_ticker: Arc<MemoryTicker>"
+      - "src-tauri/src/main.rs — 构造 MemoryTicker，注入 ConversationRuntime::with_turn_hook(ticker)"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/ticker.rs
+      - src-tauri/src/modules/memory/mod.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo check — 无编译错误"
+      - "cargo test memory::ticker::tests::ticker_state_init — 初始 turn_counts 空，daily_running=false"
+      - "MemoryTicker 实现 TurnHook（符号验证）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-8：MemoryTicker 实现 TurnHook，不在 commands/agent.rs 直接依赖 ticker"
+      - "遵守 v2 §0.5 Δ-3：无 Arc<MemoryAuditEmitter> 字段"
+      - "TickerState 用 Mutex（std 或 parking_lot），on_turn_complete 是同步 fn"
+      - "DailyStep 实现 Hash + Eq（用于 HashSet）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.7: T-D2 — notify_turn / notify_session_end
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.7"
+    title: "T-D2 — notify_turn / notify_session_end（6 轮触发 + session 结束冲刷）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-D2 + §0.5 Δ-8 Δ-4
+    estimated_days: 1.5
+    depends_on: ["8B.6", "8A.4"]
+
+    current_state: |
+      src-tauri/src/modules/memory/ticker.rs：TurnHook trait 实现为空桩（8B.6）。
+      ❌ MISSING：notify_turn 完整实现（turn_count 累加 + N轮触发 rolling + compile_today）
+      ❌ MISSING：notify_session_end 完整实现（final rolling + compile_today + assemble）
+      ❌ MISSING：spawn_rolling_then_compile_today 异步调度
+
+    must_implement:
+      - "ticker.rs — impl TurnHook for MemoryTicker { fn on_turn_complete(&self, scope, session_id) }"
+      - "on_turn_complete：1.is_session_memory_on 检查 → 2.turn_counts 累加 → 3.count % turns_per_summary == 0 → spawn_rolling_then_compile_today → 4.maybe_run_daily"
+      - "ticker.rs — fn spawn_rolling_then_compile_today(&self, scope, session_id) — tokio::spawn 异步执行 rolling_summary + do_compile_today_and_assemble"
+      - "ticker.rs — impl TurnHook for MemoryTicker { fn on_session_end(&self, scope, session_id) }"
+      - "on_session_end：remove turn_counts → do_rolling_summary → do_compile_today_and_assemble → （if experience_enabled）do_extract_experiences（S4 桩）"
+      - "ticker.rs — pub async fn flush_session(&self, scope, session_id) — 供 end_session 命令调用"
+      - "ticker.rs — fn is_session_memory_on(&self, session_id) — 通过 AppState.session_manager 查询"
+      - "commands/session.rs end_session — 调用 state.memory_ticker.flush_session()"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/ticker.rs
+      - src-tauri/src/commands/session.rs
+
+    acceptance:
+      - "cargo test memory::ticker::tests::turn_count_trigger — 第 6/12/18 轮触发 spawn"
+      - "cargo test memory::ticker::tests::session_end_flush — session_end 后 summary 记录出现"
+      - "cargo test memory::ticker::tests::disabled_session_skip — is_session_memory_on=false 时 on_turn_complete 立即返回"
+      - "harness suite harness/suites/memory_pipeline_e2e.yaml — 6 轮对话后 session_summaries 有新行"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-8：TurnHook 是同步 fn，内部用 tokio::spawn 调异步逻辑"
+      - "spawn_rolling_then_compile_today 失败时只 tracing::error!，不 panic"
+      - "do_extract_experiences 在 S4 未实现时是空桩（返回 Ok(())）"
+      - "flush_session 不重复运行（如果 session 已 flush 则 skip）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.8: T-D3 — 每日任务断点续跑 + scopeguard
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.8"
+    title: "T-D3 — 每日任务步骤化断点续跑（daily_running + scopeguard）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-D3 + §0.5 Δ-10（scopeguard）
+    estimated_days: 1
+    depends_on: ["8B.7"]
+
+    current_state: |
+      ticker.rs：do_daily() 方法不存在。
+      src-tauri/Cargo.toml：scopeguard 已在 8A.2 引入。
+      ❌ MISSING：do_daily() 完整实现
+      ❌ MISSING：DailyStep 断点续跑逻辑（daily_steps_completed）
+      ❌ MISSING：daily_running 防重入 + scopeguard 释放
+
+    must_implement:
+      - "ticker.rs — async fn do_daily(&self, scope, paths) -> Result<()>"
+      - "do_daily 入口：lock → daily_running=true → new day → clear daily_steps_completed + scopeguard"
+      - "_guard = scopeguard::guard((), |_| self.state.lock().daily_running = false)"
+      - "步骤顺序：Today → Week → Longterm（依赖 Week）→ Facts → Assemble → DeepMemory（空桩）"
+      - "每步骤：if steps_completed.contains → skip；否则 run_step → insert / log error"
+      - "Longterm 依赖 Week：if !steps_completed.contains(Week) { skip Longterm }"
+      - "ticker.rs — fn maybe_run_daily(&self, scope) — 检查 today 是否已跑过，未跑则 tokio::spawn do_daily"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/ticker.rs
+
+    acceptance:
+      - "cargo test memory::ticker::tests::daily_idempotent — 同一逻辑日 do_daily 调两次，第二次全部 Skipped"
+      - "cargo test memory::ticker::tests::daily_running_guard — do_daily 运行中再次调用被跳过（guard 生效）"
+      - "cargo test memory::ticker::tests::longterm_after_week — Week 未完成时 Longterm 被跳过"
+      - "audit 事件 memory_job_failed 在某步骤抛错时触发"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-10：scopeguard 用于 daily_running flag，防止异常退出后 flag 不释放"
+      - "daily_steps_date 切日时清空 completed_steps（新的一天重新执行所有步骤）"
+      - "do_daily 单步失败不影响其他步骤（had_failure 记录但继续）"
+      - "DeepMemory step 是 S3 的空桩（返回 Ok(())）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.9: T-D4 — 启动补偿 + 备用 timer
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.9"
+    title: "T-D4 — 启动补偿（recover_unsummarized）+ 备用 timer"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-D4 + §0.5 Δ-3
+    estimated_days: 1
+    depends_on: ["8B.8"]
+
+    current_state: |
+      ticker.rs：start() 方法不存在。
+      ❌ MISSING：start() + recover_unsummarized() + 备用 timer loop
+
+    must_implement:
+      - "ticker.rs — pub async fn start(&self, scope: &MemoryExecutionScope)"
+      - "start()：1.recover_unsummarized(scope).await.ok() → 2.tokio::spawn 备用 timer loop"
+      - "备用 timer：tokio::time::interval(daily_check_interval_secs) → loop { tick → maybe_run_daily(scope) }"
+      - "ticker.rs — async fn recover_unsummarized(&self, scope) -> Result<()>"
+      - "recover：24h 内修改的 session file mtime > summary_at + 5s → do_rolling_summary"
+      - "recover 收集 recovered: Vec<{ session_id, mtime, summary_at }> → emit memory_ticker_recovery"
+      - "list_session_files_modified_after：扫描 <scope_root>/.if2ai/memory/summaries/ 目录"
+      - "MemoryAuditEmitter::memory_ticker_recovery(ctx, recovered: &[RecoveredSummary])"
+      - "src-tauri/src/main.rs — AppHandle ready 后调 ticker.start(scope)"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/ticker.rs
+      - src-tauri/src/modules/memory/audit.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo test memory::ticker::tests::recover_dirty_session — 模拟 dirty session → recover 后 summary 存在"
+      - "cargo test memory::ticker::tests::recover_fresh_session — summary 新鲜的 session 不被重复处理"
+      - "harness suite harness/suites/memory_recovery.yaml — 进程崩溃重启后 dirty session 被补摘要"
+      - "audit 事件 memory_ticker_recovery 在 recover 有 session 时触发（extra.recovered 数组不空）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-3：memory_ticker_recovery 用 MemoryAuditEmitter::memory_ticker_recovery 关联函数，不用 self.audit"
+      - "备用 timer 在 App 退出时通过 abort handle 取消（不 leak）"
+      - "recover_unsummarized 不阻塞 start() 调用（用 .await.ok() 忽略错误）"
+      - "list_session_files_modified_after 只扫 .json 文件"
+      - "无 unwrap()"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  UI — S2 前端组件
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.10: T-UI-2 — CompiledMemoryViewer 前端
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.10"
+    title: "T-UI-2 — CompiledMemoryViewer 前端（memory.md 内容展示 + 重编译）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-UI-2 + §0.5 Δ-10（react-markdown）+ Δ-15
+    estimated_days: 2
+    depends_on: ["8B.5"]
+
+    current_state: |
+      src/components/memory/compiled/ 目录：不存在。
+      MemorySettingsPage.tsx：无 CompiledMemoryViewer 入口。
+      package.json：react-markdown / remark-gfm 需确认；若缺则引入。
+      ❌ MISSING：CompiledMemoryViewer.tsx + CompiledSectionPanel.tsx
+      ❌ MISSING：MemorySettingsPage 中的"查看编译记忆"按钮
+
+    must_implement:
+      - "src/components/memory/compiled/CompiledMemoryViewer.tsx — 模态弹窗，左侧 5 个 section tab（all / facts / today / week / longterm），右侧 ReactMarkdown 渲染"
+      - "顶部 metadata 行：chars + 编译时间格式化（formatRelative）"
+      - "右上角'重新编译'按钮调 memoryCompileNow，loading 状态 + 完成 toast"
+      - "'清空编译'两段式确认（clearArmed 模式）调 memoryCompiledClear"
+      - "src/components/memory/compiled/CompiledSectionPanel.tsx — 单 section 渲染（title + chars + last_compiled_at badge）"
+      - "src/modules/settings/pages/MemorySettingsPage.tsx — 在 PinnedMemoryEditor 下方添加'查看 AI 记忆'行，点击打开 CompiledMemoryViewer"
+      - "package.json — react-markdown + remark-gfm 依赖（若缺则 npm install）"
+      - "src/components/chat/ContextBar.tsx — '记忆已加载' badge 点击事件绑定 CompiledMemoryViewer open"
+
+    impl_targets:
+      - src/components/memory/compiled/CompiledMemoryViewer.tsx
+      - src/components/memory/compiled/CompiledSectionPanel.tsx
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+      - src/components/chat/ContextBar.tsx
+      - package.json
+
+    acceptance:
+      - "打开 CompiledMemoryViewer → 4 个 section 都有 tab 可切换"
+      - "点击'重新编译' → loading 动画出现 → 完成后 toast '编译完成'"
+      - "'清空编译'第一次点击变为'确认清空'，再次点击才执行"
+      - "ContextBar '记忆已加载' badge 点击打开 CompiledMemoryViewer"
+      - "memory.md 内容以 Markdown 渲染（标题、段落可见）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-15：不删除 MemoryBrowser.tsx，CompiledMemoryViewer 是新增组件"
+      - "react-markdown 用 remarkGfm plugin（支持表格、删除线）"
+      - "CompiledMemoryViewer 有 loading skeleton（编译过程中 ReactMarkdown 区域显示 spinner）"
+      - "TypeScript 严格类型：CompiledMemoryDto / CompiledSection interface 对齐后端"
+      - "暗色模式下 prose-invert 样式正确"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8B.11: T-UI-3 — MemoryNarrativeViewer 骨架（S2 部分）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8B.11"
+    title: "T-UI-3 — MemoryNarrativeViewer 骨架（session 摘要时间线 + 日期分组）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 2 / T-UI-3（S2 骨架部分）+ §0.5 Δ-15
+    estimated_days: 2
+    depends_on: ["8B.5"]
+
+    current_state: |
+      src/components/memory/narrative/ 目录：不存在。
+      src/components/memory/MemoryBrowser.tsx：495 行，按 key-value 展示记忆条目（保留不删）。
+      ❌ MISSING：MemoryNarrativeViewer.tsx（S2 骨架，展示 session 摘要时间线）
+      ❌ MISSING：DateGroupHeader.tsx + FactCard.tsx（S2 骨架，S3 增量接入 facts）
+      ❌ MISSING：memorySummariesList Tauri wrapper（src/lib/tauri.ts）
+      ❌ MISSING：MemorySettingsPage 中'查看全部记忆'按钮
+
+    must_implement:
+      - "src/components/memory/narrative/MemoryNarrativeViewer.tsx — 模态弹窗，groupBy(date/scope/category) + scope 过滤 + 搜索输入"
+      - "S2 骨架：展示 session 摘要列表（调 memorySummariesList），按日期分组"
+      - "src/components/memory/narrative/DateGroupHeader.tsx — 日期 + 条目数"
+      - "src/components/memory/narrative/FactCard.tsx — S2 骨架：展示 session 摘要卡片（S3 会增量改为展示 facts）"
+      - "InfiniteScrollSentinel 组件（或现有等价物）实现无限滚动 + loadMore"
+      - "src/lib/tauri.ts — export memorySummariesList(scope: string, limit: number): Promise<SessionSummaryDto[]>"
+      - "src/modules/settings/pages/MemorySettingsPage.tsx — 添加'查看全部记忆'按钮打开 MemoryNarrativeViewer"
+      - "src/lib/tauri.ts — SessionSummaryDto interface { session_id, summary, created_at, updated_at, source }"
+
+    impl_targets:
+      - src/components/memory/narrative/MemoryNarrativeViewer.tsx
+      - src/components/memory/narrative/DateGroupHeader.tsx
+      - src/components/memory/narrative/FactCard.tsx
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "打开 MemoryNarrativeViewer → 显示 session 摘要列表（有数据时按日期分组）"
+      - "scope 过滤（project/global）切换后列表更新"
+      - "无数据时显示空状态占位（'暂无记忆记录'）"
+      - "MemorySettingsPage 出现'查看全部记忆'按钮"
+      - "MemoryBrowser.tsx 仍可通过其他入口访问（未删除）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-15：MemoryBrowser.tsx 保留，NarrativeViewer 是新增（两者共存）"
+      - "S3 增量接入点：FactCard 预留 fact.id / fact.tags / fact.importance 字段（S3 补全）"
+      - "memorySummariesList Tauri wrapper 调用后端 memory_summaries_list 命令（需 8B.5 三处注册）"
+      - "InfiniteScrollSentinel 用 IntersectionObserver，不用 scroll event listener"
+      - "TypeScript interface SessionSummaryDto 与后端 SessionSummaryRecord 字段对齐"

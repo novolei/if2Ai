@@ -1,0 +1,300 @@
+# Phase 8C: Memory Facts & Tag Search (Sprint 3)
+#
+# Design-ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+# Goal: 实现原子事实 FactStore（FTS5 + tag 检索）+ 自动抽取 extractor + search_memory_by_tag 工具，
+#       同时完成 NarrativeViewer facts/tag 搜索接入（T-UI-3 增量），让"找原子事实"链路完整可用。
+
+meta:
+  phase: 8C
+  name: Memory Facts & Tag Search — Sprint 3
+  status: draft
+  design_ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+  read_first:
+    - CLAUDE.md
+    - docs/references/coding-style-and-lint-contract.md
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.5 Calibration Δ"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.6 Audit Event 字段约定"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.7 跨 Sprint 共享原则"
+  created: 2026-04-18
+  total_slices: 5
+  human_checkpoints:
+    - after_slice: "8C.4"
+      reason: >
+        FactStore + tag 工具上线后验证 retrieval planner 路由：
+        (1) search_memory_by_tag 工具能在 LLM 调用时路由到 FactStore；
+        (2) intent_classifier 对含 [tag:xxx] 的 query 选择 search_memory_by_tag；
+        (3) 抽取的 fact excerpt 在 TelemetryDrawer 可见；
+        (4) NarrativeViewer facts 分页翻页正确。
+
+dashboard:
+  last_updated: '2026-04-18'
+  completed_slices: []
+  current_slice: '8C.1'
+  blocked: []
+  notes: >
+    Phase 8C 初始化（草案）。激活前提：Phase 8B 全部 done。
+    5 slices，~7 工程日。核心依赖：SessionSummaryStore（8A.5）+ JobRunner（8A.2）+ UtilityLlm（8A.5）。
+
+    共享约束（v2 §0.7）：
+      - 每个 slice 至少 1 audit event + 1 harness 断言 + 1 UI 信号
+      - PII scrub 默认 ON（facts 写入路径必须接入）
+      - 所有 LLM 调用走 UtilityLlm
+      - 新 Tauri command 必须三处注册
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Phase E — Atomic Facts + Tag Search
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8C.1: T-E1 — FactStore 主结构（SQLite + FTS5）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8C.1"
+    title: "T-E1 — FactStore（SQLite FTS5 + 全量 CRUD API）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 3 / T-E1 + §0.5 Δ-2 Δ-6 Δ-17
+    estimated_days: 2
+
+    current_state: |
+      src-tauri/src/modules/memory/facts/ 目录：不存在。
+      memory.db：无 facts / facts_fts 表。
+      AppState.fact_store 字段：不存在。
+      ❌ MISSING：memory/facts/mod.rs + store.rs + types.rs 整个子模块
+      ❌ MISSING：facts + facts_fts SQLite 表 + 3 个触发器
+
+    must_implement:
+      - "src-tauri/src/modules/memory/facts/types.rs — pub struct FactRecord { id: i64, fact, tags: Vec<String>, time: Option<DateTime<Utc>>, session_id, project_id, scope, created_at }"
+      - "src-tauri/src/modules/memory/facts/types.rs — pub struct NewFact { fact, tags, time, session_id, project_id, scope: PinScope }"
+      - "src-tauri/src/modules/memory/facts/store.rs — pub trait FactStore: Send + Sync { async fn add / add_batch / search_by_tags / search_full_text / list / delete / clear_all }"
+      - "SQL facts 表：id INTEGER PRIMARY KEY, fact TEXT, tags TEXT DEFAULT '[]', time TEXT, session_id TEXT, project_id TEXT, scope TEXT DEFAULT 'session', created_at TEXT"
+      - "SQL facts_fts 虚表：USING fts5(fact, content=facts, content_rowid=id, tokenize='unicode61')"
+      - "SQL 触发器：facts_ai / facts_ad / facts_au（insert/delete/update 同步 fts 表）"
+      - "SQL 索引：idx_facts_time + idx_facts_session + idx_facts_project + idx_facts_scope"
+      - "add() 接入 threat_scanner.scan_and_redact（PII scrub）+ emit memory_fact_extracted"
+      - "add() content max 300 chars（v2 §0.5 Δ-17），超出截断（extractor 分裂逻辑在 8C.3）"
+      - "src-tauri/src/commands/mod.rs AppState — pub fact_store: Arc<dyn FactStore>"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/facts/mod.rs
+      - src-tauri/src/modules/memory/facts/types.rs
+      - src-tauri/src/modules/memory/facts/store.rs
+      - src-tauri/src/modules/memory/audit.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo test memory::facts::store::tests::add_and_list — add 后 list 能查到"
+      - "cargo test memory::facts::store::tests::fts_search — search_full_text('rust') 返回含 rust 的 fact"
+      - "cargo test memory::facts::store::tests::pii_in_fact — 含 API key 的 fact → 存储为 [REDACTED]"
+      - "cargo test memory::facts::store::tests::scope_isolation — project fact 不出现在 global 查询"
+      - "harness suite harness/suites/memory_facts_search.yaml — tag 查询 + FTS 查询"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-2：add() 接入 ThreatScanner.scan_and_redact"
+      - "遵守 v2 §0.5 Δ-17：单条 ≤ 300 chars"
+      - "fts5 触发器正确维护（insert/update/delete 各有对应）"
+      - "tags 存储为 JSON 数组字符串，反序列化用 serde_json::from_str"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8C.2: T-E2 — 标签检索 SQL（json_each + OR + count 排序）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8C.2"
+    title: "T-E2 — FactStore 标签检索（json_each + count 排序 + 日期过滤）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 3 / T-E2 + §0.5 Δ-19（retrieval planner 路由）
+    estimated_days: 1
+    depends_on: ["8C.1"]
+
+    current_state: |
+      store.rs search_by_tags：方法签名存在（8C.1 骨架），但实现为 todo!()。
+      ❌ MISSING：search_by_tags 完整 SQL 实现
+      ❌ MISSING：DateRange struct + build_scope_where helper 调用
+
+    must_implement:
+      - "store.rs — pub struct DateRange { pub from: Option<DateTime<Utc>>, pub to: Option<DateTime<Utc>> }"
+      - "search_by_tags SQL：SELECT f.*, COUNT(DISTINCT je.value) as match_count FROM facts f, json_each(f.tags) je WHERE je.value IN (...) GROUP BY f.id ORDER BY match_count DESC, f.time DESC LIMIT :limit"
+      - "日期过滤：date_range.from → AND f.time >= :date_from；date_range.to → AND f.time <= :date_to"
+      - "scope 过滤：复用 build_scope_where('f.scope', 'f.session_id', 'f.project_id', scope)"
+      - "tags 为空时返回 Ok(vec![])（不执行 SQL）"
+      - "search_full_text SQL：SELECT f.* FROM facts f JOIN facts_fts fts ON f.id = fts.rowid WHERE facts_fts MATCH :query ORDER BY rank LIMIT :limit"
+      - "retrieval_planner（既有）：query 含 '[tag:xxx]' 模式时优先选 search_memory_by_tag（§0.5 Δ-19）"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/facts/store.rs
+
+    acceptance:
+      - "cargo test memory::facts::store::tests::tag_search_or_logic — 多 tag 用 OR 逻辑，match_count 排序"
+      - "cargo test memory::facts::store::tests::tag_search_date_filter — 日期过滤排除范围外数据"
+      - "cargo test memory::facts::store::tests::fts_rank — FTS 搜索按 rank 排序"
+      - "cargo test memory::facts::store::tests::empty_tags_returns_empty — tags=[] 返回空列表"
+      - "harness suite harness/suites/memory_facts_search.yaml 全通过"
+
+    review_checklist:
+      - "json_each 用法正确（SQLite 3.38+ 内置 json 函数，rusqlite bundled 版本支持）"
+      - "SQL 参数绑定用 named params（:tag0, :tag1），不拼字符串"
+      - "scope WHERE 子句用括号包裹避免 AND/OR 优先级问题"
+      - "FTS match 用 fts5 的 MATCH 语法，query 需转义特殊字符"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8C.3: T-E3 — deep-memory 元事实自动抽取
+  # ─────────────────────────────────────────────────────────────
+  - id: "8C.3"
+    title: "T-E3 — FactExtractor（deep-memory 并发抽取 + JSON parse）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 3 / T-E3 + §0.5 Δ-1 Δ-3
+    estimated_days: 2
+    depends_on: ["8A.5", "8C.1"]
+
+    current_state: |
+      src-tauri/src/modules/memory/facts/extractor.rs：不存在。
+      MemoryTicker.do_daily() 中 DeepMemory step 是空桩（8B.8）。
+      ❌ MISSING：FactExtractor struct + process_dirty_sessions() + process_one()
+      ❌ MISSING：deep-memory LLM prompt（搬 openhanako deep-memory.js:146-227）
+      ❌ MISSING：parse_json_with_fence helper（解析 LLM 输出的 JSON）
+
+    must_implement:
+      - "src-tauri/src/modules/memory/facts/extractor.rs — pub struct FactExtractor { summary_store, fact_store, llm: Arc<dyn UtilityLlm>, job_runner, config }"
+      - "pub async fn process_dirty_sessions(&self, scope) -> Result<ExtractReport>"
+      - "process_dirty_sessions：list_dirty → tokio Semaphore(max_concurrent) → join_all tasks → aggregate"
+      - "process_one：job_runner.run('deep_memory_extract', session_id, || extract_facts_from_diff(summary, snapshot) → fact_store.add_batch → summary_store.mark_processed)"
+      - "extract_facts_from_diff：调 llm.complete(build_extract_prompt(is_zh), diff_text, 2048, 0.3) → parse_json_with_fence"
+      - "parse_json_with_fence：剥离 ```json ... ``` 围栏 → serde_json::from_str → 容错（partial parse）"
+      - "build_extract_prompt(is_zh) 中英文各一套（搬 deep-memory.js:146-227 prompt）"
+      - "单条 fact 入库时 emit memory_fact_extracted（via MemoryAuditEmitter::memory_fact_extracted）"
+      - "ExtractReport { extracted: usize, skipped: usize, failed: usize }"
+      - "MemoryTicker.do_daily() DeepMemory step：调 fact_extractor.process_dirty_sessions(scope).await.ok()"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/facts/extractor.rs
+      - src-tauri/src/modules/memory/facts/mod.rs
+      - src-tauri/src/modules/memory/audit.rs
+      - src-tauri/src/modules/memory/ticker.rs
+
+    acceptance:
+      - "cargo test memory::facts::extractor::tests::parse_json_fence — 带围栏的 JSON 正确解析"
+      - "cargo test memory::facts::extractor::tests::parse_partial_json — 不合法 JSON 返回空列表不 panic"
+      - "cargo test memory::facts::extractor::tests::process_one_extracts_facts — mock LLM 返回 2 个 fact → facts 表有 2 行"
+      - "cargo test memory::facts::extractor::tests::marks_processed_after_extract — process_one 后 is_dirty=false"
+      - "audit 事件 memory_fact_extracted 在 TelemetryDrawer 显示 fact excerpt + tags"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-1：FactExtractor.llm 类型 Arc<dyn UtilityLlm>"
+      - "遵守 v2 §0.5 Δ-3：memory_fact_extracted 用 MemoryAuditEmitter 关联函数"
+      - "并发用 tokio Semaphore + tokio::spawn，不用 std thread"
+      - "parse_json_with_fence 容错：剥离围栏失败时直接 serde_json::from_str 原始文本"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8C.4: T-E4 — search_memory_by_tag 工具 + Tauri 命令
+  # ─────────────────────────────────────────────────────────────
+  - id: "8C.4"
+    title: "T-E4 — search_memory_by_tag 工具 + memory_facts_search / list Tauri 命令"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 3 / T-E4 + §0.5 Δ-11 Δ-14 Δ-19
+    estimated_days: 1.5
+    depends_on: ["8C.2", "8C.3"]
+
+    current_state: |
+      src-tauri/src/modules/tools/builtin/search_memory_by_tag.rs：不存在。
+      commands/memory.rs：无 memory_facts_search / memory_facts_list 命令。
+      ❌ MISSING：search_memory_by_tag 工具注册 + 执行逻辑
+      ❌ MISSING：memory_facts_search / memory_facts_list Tauri 命令（三处注册）
+
+    must_implement:
+      - "src-tauri/src/modules/tools/builtin/search_memory_by_tag.rs — pub fn entry() -> ToolEntry"
+      - "search_memory_by_tag 参数：query: String(required), tags: Vec<String>(optional), date_from: Option<String>(YYYY-MM-DD), date_to: Option<String>(optional)"
+      - "执行流程：1.tag 搜索（≤15条）→ 2.tag命中<3条且query非空 → FTS补充（≤10条）→ 3.日期范围再过滤 → 4.格式化输出 '1. {fact} ({tags}) — {time}'"
+      - "search_memory_by_tag 工具注册：tools/builtin/mod.rs + tools/registry.rs"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_facts_search(query, tags, date_from, date_to, limit, state) -> Result<Vec<FactDto>, String>"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_facts_list(scope, limit, offset, state) -> Result<PaginatedFactDto, String>"
+      - "FactDto { id, fact, tags, time, session_id, scope, created_at }"
+      - "PaginatedFactDto { items: Vec<FactDto>, total: usize, offset: usize }"
+      - "src-tauri/src/main.rs + capabilities.json — 两命令三处注册"
+      - "src/lib/tauri.ts — memoryFactsSearch + memoryFactsList wrapper"
+
+    impl_targets:
+      - src-tauri/src/modules/tools/builtin/search_memory_by_tag.rs
+      - src-tauri/src/modules/tools/builtin/mod.rs
+      - src-tauri/src/commands/memory.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "cargo test tools::search_memory_by_tag::tests::tag_search_fallback_fts — tag < 3 条时 FTS 补充"
+      - "memory_facts_search Tauri 命令返回格式正确的 FactDto 列表"
+      - "memory_facts_list 支持分页（offset + limit）"
+      - "LLM 调用 search_memory_by_tag 时 retrieval_planner 优先路由到此工具（含 [tag:] 的 query）"
+      - "harness suite harness/suites/memory_facts_search.yaml 全通过"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-14：工具注册流程（builtin/mod.rs + registry）"
+      - "遵守 v2 §0.5 Δ-11：两 Tauri 命令三处注册"
+      - "遵守 v2 §0.5 Δ-19：search_memory_by_tag 与 memory_recall 共存，retrieval_planner 按 query 自动选"
+      - "date_from/date_to 字符串解析失败时返回 ToolError::Handler（不 panic）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8C.5: T-UI-3 增量 — NarrativeViewer facts 分页 + tag 搜索接入
+  # ─────────────────────────────────────────────────────────────
+  - id: "8C.5"
+    title: "T-UI-3 增量 — NarrativeViewer facts 分页 + tag 搜索 + TagChip"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 3 / T-UI-3（增量 facts/tag 搜索接入）+ §0.5 Δ-15
+    estimated_days: 2
+    depends_on: ["8C.4", "8B.11"]
+
+    current_state: |
+      src/components/memory/narrative/MemoryNarrativeViewer.tsx：8B.11 已建，展示 session 摘要。
+      src/components/memory/narrative/FactCard.tsx：8B.11 预留字段骨架，未接入 facts。
+      src/components/memory/chips/TagChip.tsx：不存在。
+      ❌ MISSING：FactCard 完整实现（importance / promote / demote / tag 点击）
+      ❌ MISSING：TagChip.tsx
+      ❌ MISSING：NarrativeViewer 搜索框接入 memoryFactsSearch
+
+    must_implement:
+      - "src/components/memory/chips/TagChip.tsx — 带 onClick 的 tag 徽章（点击添加到搜索 query）"
+      - "src/components/memory/narrative/FactCard.tsx — 完整实现：fact 内容 + tags（TagChip）+ scope + importance + access_count + promote/demote/delete/查看出处 DropdownMenu"
+      - "NarrativeViewer — 搜索框 onSubmit 调 memoryFactsSearch + 显示 FactCard 列表"
+      - "NarrativeViewer — InfiniteScroll 分页：加载更多调 memoryFactsList(scope, limit=20, offset)"
+      - "NarrativeViewer — groupBy=date 时把 facts 和 summaries 混合按日期排序"
+      - "TagChip 点击：setQuery(q => q + ' [tag:${tag}]')（触发 tag 搜索）"
+      - "空搜索时默认展示 memoryFactsList 分页结果"
+      - "promote/demote 操作调既有 memory_promote / memory_demote Tauri 命令"
+
+    impl_targets:
+      - src/components/memory/chips/TagChip.tsx
+      - src/components/memory/narrative/FactCard.tsx
+      - src/components/memory/narrative/MemoryNarrativeViewer.tsx
+
+    acceptance:
+      - "NarrativeViewer 搜索输入 'rust [tag:programming]' → 调用 memoryFactsSearch 并显示结果"
+      - "TagChip 点击 → 搜索框自动添加 [tag:xxx]"
+      - "FactCard 显示 importance 浮点数（保留 2 位小数）+ access_count"
+      - "promote/demote 操作成功后 FactCard importance 数值更新"
+      - "无限滚动：滚动到底部加载下一页"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-15：MemoryBrowser.tsx 仍然保留（NarrativeViewer 不替换入口）"
+      - "TagChip 颜色使用 memoryColors.fact（cyan 系，Δ-10 色彩 token）"
+      - "FactCard importance 来自 FactRecord（SQLite 字段），promote/demote 后重新 fetch"
+      - "搜索 debounce 300ms，避免每次按键触发请求"
+      - "TypeScript 严格类型：FactDto 字段完整"

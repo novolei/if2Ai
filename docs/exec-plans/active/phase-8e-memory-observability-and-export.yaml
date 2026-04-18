@@ -1,0 +1,351 @@
+# Phase 8E: Memory Observability & Export (Sprint 5)
+#
+# Design-ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+# Goal: 完成 Audit 事件全套接入 + JobRunner UI 看板 + 日志规范 + Export/Import v3 圆环兼容
+#       + Onboarding MemoryIntroStep + 视觉系统色彩 token + 微动效，收尾整个 memory 升级。
+
+meta:
+  phase: 8E
+  name: Memory Observability & Export — Sprint 5
+  status: draft
+  design_ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+  read_first:
+    - CLAUDE.md
+    - docs/references/coding-style-and-lint-contract.md
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.5 Calibration Δ"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.6 Audit Event 字段约定"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.7 跨 Sprint 共享原则"
+  created: 2026-04-18
+  total_slices: 6
+  human_checkpoints:
+    - after_slice: "8E.4"
+      reason: >
+        Export v3 round-trip 兼容验证：(1) memory_export_v3 能导出 facts + summaries + pinned + experience；
+        (2) memory_import_v3 能从 v1/v2/v3 payload 正确导入；
+        (3) 导出→导入后数据无丢失（round-trip 一致性测试）；
+        (4) 大文件（1000 facts）导出性能可接受（< 5s）。
+
+dashboard:
+  last_updated: '2026-04-18'
+  completed_slices: []
+  current_slice: '8E.1'
+  blocked: []
+  notes: >
+    Phase 8E 初始化（草案）。激活前提：Phase 8D 全部 done。
+    6 slices，~5 工程日。本 Phase 是 memory 升级收尾，主要工作是可观测性完善 + UI polish。
+
+    共享约束（v2 §0.7）：
+      - 每个 slice 至少 1 audit event + 1 harness 断言 + 1 UI 信号
+      - PII scrub 默认 ON（Export payload 导出前必须过一遍 scrub）
+      - 新 Tauri command 必须三处注册
+
+slices:
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.1: T-H1 — Audit 事件全套接入 + MemoryEventPayload 完善
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.1"
+    title: "T-H1 — Audit 事件全套接入（11 个 v2 事件全部补齐）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-H1 + §0.6 Audit Event 字段约定 + §0.5 Δ-3 Δ-4
+    estimated_days: 1
+
+    current_state: |
+      src-tauri/src/modules/memory/audit.rs：MemoryAuditEmitter 已有若干关联函数（既有事件），
+      但 v2 新增的 11 个事件（Δ-4 + §4 清单）在 8A-8D 各 slice 中已部分添加，
+      但 MemoryEventPayload.extra 字段可能未在所有事件中正确传递。
+      src/lib/tauri.ts：MemoryEventName 联合类型在 8A.1 已追加，需验证 11 个值全部存在。
+      TelemetryDrawer.tsx：部分事件在 8A-8D 中已追加渲染，需全量 audit。
+      ❌ MISSING：memory_assembled / memory_ticker_recovery 的 audit emit（可能遗漏）
+      ❌ MISSING：TelemetryDrawer 全部 11 个新事件的渲染 META 条目
+
+    must_implement:
+      - "audit.rs — 验证并补全所有 11 个 v2 事件方法：memory_pii_redacted / memory_summary_rolled / memory_compiled / memory_assembled / memory_pinned / memory_unpinned / memory_fact_extracted / memory_experience_extracted / memory_diary_written / memory_ticker_recovery / memory_job_failed / memory_job_skipped"
+      - "每个 emit 方法：无 panic + 失败不阻塞业务 + 通过 AppHandle emit_to 推前端 memory_event channel"
+      - "MemoryEventPayload：确认 extra: Option<serde_json::Value> 字段在所有事件序列化中正确输出"
+      - "src/components/chat/TelemetryDrawer.tsx — 补全所有 11 个新事件的 META 条目（icon + color + render fn）"
+      - "memory_summary_rolled：blue RefreshCw 图标，render '第{turn_count}轮 · 更新 session 摘要'"
+      - "memory_compiled：green BookOpen 图标，render '已编译 {kind}.md · {latency_ms}ms'"
+      - "memory_pii_redacted：red Shield 图标，render '已脱敏 {detected.join(,)}'"
+      - "memory_pinned：amber Pin 图标，render '已置顶：\"{content_excerpt}\"'"
+      - "memory_diary_written：purple FileText 图标，render '已生成日记 {logical_date}'"
+      - "memory_fact_extracted：cyan Sparkle 图标，render '提取事实 [{tags.join(,)}]'"
+      - "memory_experience_extracted：indigo GraduationCap 图标，render '学到经验【{category}】'"
+      - "memory_ticker_recovery：gray Heart 图标，render '启动补偿：恢复{n}个 session'"
+      - "memory_job_failed：orange AlertCircle 图标，render '{job} 失败 ({attempt}/{max_retries})'"
+      - "memory_job_skipped：gray Ban 图标，render '{job} 已放弃（{total_failures}次）'"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/audit.rs
+      - src/components/chat/TelemetryDrawer.tsx
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "cargo test memory::audit::tests::all_events_emit — 11 个事件方法各自单测（不 panic）"
+      - "TelemetryDrawer 能正确渲染所有 11 个新事件（snapshot / visual 测试）"
+      - "MemoryEventPayload.extra 在含数组字段的事件中正确序列化（memory_ticker_recovery.recovered 数组）"
+      - "harness suite harness/suites/memory_pipeline_e2e.yaml 包含 audit event 验证步骤"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-3：所有 emit 方法为 MemoryAuditEmitter 关联函数，无 Arc 字段"
+      - "遵守 v2 §0.5 Δ-4：数组类 metadata 走 extra: serde_json::Value，不新增顶级字段"
+      - "TelemetryDrawer META 条目 render 函数：用可选链（e.extra?.recovered?.length）避免 undefined panic"
+      - "MemoryEventName TS 联合类型覆盖所有 11 个新值"
+      - "emit_to 失败时只 tracing::warn!，不影响业务逻辑"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.2: T-H2 — JobRunner UI 看板（MemoryJobsStatusCard）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.2"
+    title: "T-H2 — JobsStatusCard backend（memory_jobs_status 命令）+ 前端看板"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-H2 + T-UI-9 + §0.5 Δ-11
+    estimated_days: 1.5
+
+    current_state: |
+      commands/memory.rs：无 memory_jobs_status 命令。
+      src/components/memory/ 目录：无 MemoryJobsStatusCard。
+      MemorySettingsPage.tsx：无后台任务区域。
+      ❌ MISSING：memory_jobs_status Tauri 命令 + JobsStatus struct
+      ❌ MISSING：MemoryJobsStatusCard.tsx 前端组件
+
+    must_implement:
+      - "src-tauri/src/commands/memory.rs — #[tauri::command] pub async fn memory_jobs_status(state) -> Result<JobsStatus, String>"
+      - "pub struct JobsStatus { active: u32, failed: u32, skipped: u32, done_today: u32, recent_failures: Vec<JobAttempt> }"
+      - "memory_jobs_status 实现：查 jobs.db 各状态计数；recent_failures 取最近 5 条 status=skipped/failed"
+      - "src-tauri/src/main.rs + capabilities.json — memory_jobs_status 三处注册"
+      - "src/lib/tauri.ts — memoryJobsStatus(): Promise<JobsStatus>"
+      - "src/components/memory/MemoryJobsStatusCard.tsx — 看板 Card：active/done_today/failed/skipped 4 个 Stat + recent_failures 折叠列表"
+      - "src/modules/settings/pages/MemorySettingsPage.tsx — 在 ExportImportRow 上方插入 MemoryJobsStatusCard"
+      - "MemoryJobsStatusCard 每 30 秒 polling（setInterval），打开 MemorySettingsPage 时触发首次加载"
+
+    impl_targets:
+      - src-tauri/src/commands/memory.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+      - src/components/memory/MemoryJobsStatusCard.tsx
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+
+    acceptance:
+      - "memory_jobs_status 返回 JobsStatus 各字段（集成：先跑几个 job 再查）"
+      - "MemoryJobsStatusCard 显示 4 个 Stat 数字"
+      - "recent_failures 折叠详情显示 job_kind + last_error"
+      - "Tauri 命令三处注册：无 capability error"
+      - "30 秒 polling 在 MemorySettingsPage 关闭后停止（cleanup）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-11：memory_jobs_status 三处注册"
+      - "polling 用 useEffect + clearInterval cleanup，避免内存泄漏"
+      - "Stat 组件：failed/skipped 用 warn/danger variant（黄/红色）"
+      - "JobsStatus Serialize 向后兼容（新增字段时 Option 默认）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.3: T-H3 — 日志关键词 grep 化规范
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.3"
+    title: "T-H3 — 日志规范（[memory:{kind}:{target}] 统一格式）"
+    status: pending
+    priority: P2
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-H3
+    estimated_days: 0.5
+
+    current_state: |
+      8A-8D 各模块的 tracing 日志格式不统一，无法用 grep '[memory:' 快速定位。
+      ❌ MISSING：统一日志格式约定的落地（各 background job 开始/结束/失败时的标准日志）
+
+    must_implement:
+      - "约定日志格式：tracing::info!('[memory:{kind}:{target}] {phase} {msg}')（kind=job_kind, target=session_id/scope）"
+      - "job_runner.rs run() — 开始时 tracing::info!('[memory:{kind}:{target}] start')，成功时 info!(' done {elapsed}ms')，失败时 error!(' fail attempt={} err={}')"
+      - "rolling.rs — rolling_summary 开始/完成各一行 '[memory:rolling:{session_id}] ...' 格式"
+      - "ticker.rs — do_daily 每个 DailyStep 开始/结束一行"
+      - "compiler/today.rs + week.rs + longterm.rs + facts.rs — 编译开始/Skipped/完成各一行"
+      - "extractor.rs — process_one 开始/提取数量/失败各一行"
+      - "writer.rs — write_diary 开始/完成各一行"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/job_runner.rs
+      - src-tauri/src/modules/memory/summary/rolling.rs
+      - src-tauri/src/modules/memory/ticker.rs
+      - src-tauri/src/modules/memory/compiler/today.rs
+      - src-tauri/src/modules/memory/compiler/week.rs
+      - src-tauri/src/modules/memory/compiler/longterm.rs
+      - src-tauri/src/modules/memory/compiler/facts.rs
+      - src-tauri/src/modules/memory/facts/extractor.rs
+      - src-tauri/src/modules/diary/writer.rs
+
+    acceptance:
+      - "grep '[memory:' $(cargo run 2>&1) 能命中各 background job 的关键日志"
+      - "所有关键路径有 info! 开始 + info!/error! 结束"
+      - "日志 target 字段（session_id / scope key）在每条日志可见"
+
+    review_checklist:
+      - "tracing 字段用 ? 前缀（?err）自动实现 Debug 格式化"
+      - "不在 hot path 上调 format!（tracing 的懒求值特性）"
+      - "不记录 PII（summary 内容不进日志，只记录 chars / session_id）"
+      - "日志级别分明：开始/结束用 info!，失败用 error!，跳过用 debug!"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.4: T-UI-7 — Export/Import v3（round-trip 兼容）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.4"
+    title: "T-UI-7 — memory_export_v3 / memory_import_v3（v1/v2/v3 三版兼容）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-UI-7 + §0.5 Δ-2 Δ-11
+    estimated_days: 2
+
+    current_state: |
+      commands/memory.rs：已有 memory_export / memory_import（v1/v2 格式），但无 v3。
+      facts + summaries + pinned + experience 数据：8A-8D 引入，尚未纳入 export 范围。
+      ❌ MISSING：memory_export_v3 / memory_import_v3 Tauri 命令
+      ❌ MISSING：ExportPayload v3 格式 + v1/v2 兼容解析
+
+    must_implement:
+      - "commands/memory.rs — pub struct ExportPayload { version: u8, exported_at: DateTime<Utc>, scope: String, facts: Vec<FactRecord>, summaries: Vec<SessionSummaryRecord>, pinned: Vec<PinnedItem>, experience: Vec<ExperienceEntry>, diary_index: Vec<String> }"
+      - "pub struct ExportOptions { include_facts: bool, include_summaries: bool, include_pinned: bool, include_experience: bool, include_diary_index: bool }"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_export_v3(scope: String, include: ExportOptions, state) -> Result<ExportPayload, String>"
+      - "memory_export_v3：收集各 store 数据，diary_index 只返回文件路径列表（不含正文），导出前对 fact/experience/pinned content 过一遍 scan_and_redact（scrub PII）"
+      - "commands/memory.rs — #[tauri::command] pub async fn memory_import_v3(payload: ExportPayload, state) -> Result<ImportReport, String>"
+      - "pub struct ImportReport { facts_imported, summaries_imported, pinned_imported, experience_imported, errors: Vec<String> }"
+      - "import v1 兼容：payload.version==1 → memories 字段映射到 facts"
+      - "import v2 兼容：payload.version==2 → facts 字段直接导入"
+      - "import v3：全量恢复按 include 选项"
+      - "src-tauri/src/main.rs + capabilities.json — 两命令三处注册"
+      - "src/lib/tauri.ts — memoryExportV3 / memoryImportV3 wrapper"
+      - "MemorySettingsPage ExportImportRow — 使用新 v3 API，支持 include 选项勾选"
+
+    impl_targets:
+      - src-tauri/src/commands/memory.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+
+    acceptance:
+      - "cargo test commands::memory::tests::export_v3_round_trip — export → import → 数据一致"
+      - "cargo test commands::memory::tests::import_v1_compat — v1 payload 正确映射到 facts"
+      - "cargo test commands::memory::tests::import_v2_compat — v2 payload 正确导入 facts"
+      - "1000 个 fact 的 export 时间 < 5s"
+      - "导出文件不含原始 PII（scrub 生效）"
+      - "harness suite 验证 Export v3 round-trip"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-11：两命令三处注册"
+      - "遵守 v2 §0.5 Δ-2：导出前 scan_and_redact content 字段（不是原文导出）"
+      - "ExportPayload Serialize + Deserialize（version 字段用于兼容路由）"
+      - "import 重复数据用 upsert（fact.id 存在则跳过，不报错）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.5: T-UI-10 — Onboarding MemoryIntroStep
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.5"
+    title: "T-UI-10 — Onboarding MemoryIntroStep（4 种记忆介绍 + 首次 pin）"
+    status: pending
+    priority: P2
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-UI-10 + §0.5 Δ-18
+    estimated_days: 1
+
+    current_state: |
+      src/ Onboarding 流程：已存在基础 onboarding（Phase 6G）。
+      MemoryIntroStep：不存在。
+      ❌ MISSING：MemoryIntroStep 组件（4 种记忆介绍 + 首次 pin 行动）
+
+    must_implement:
+      - "src/components/onboarding/MemoryIntroStep.tsx — OnboardingStep 容器，4 个 FeatureCard"
+      - "FeatureCard 1：Pin（amber）— '置顶记忆 · 你钉死的事实，永远记得'"
+      - "FeatureCard 2：Sparkle（cyan）— '原子事实 · 每次对话后自动提取'"
+      - "FeatureCard 3：Sun（blue）— '今日叙事 · 把今天发生的事浓缩'"
+      - "FeatureCard 4：Mountain（purple）— '长期沉淀 · 一周/一月维度的稳定知识'"
+      - "分割线下方：'来钉一条吧 — 告诉 agent 你叫什么名字'提示"
+      - "PinAddRow 组件（复用 PinnedMemoryEditor 的 PinAddRow）：placeholder '比如：我叫 Ryan'，onAdd 调 pinnedAdd('global') 后 next()"
+      - "'稍后再说'按钮跳过此步"
+      - "将 MemoryIntroStep 插入现有 Onboarding 流程（找到 onboarding steps 数组追加）"
+
+    impl_targets:
+      - src/components/onboarding/MemoryIntroStep.tsx
+      - src/components/memory/pinned/PinnedMemoryEditor.tsx
+
+    acceptance:
+      - "首次运行 onboarding 流程出现 MemoryIntroStep"
+      - "4 个 FeatureCard 使用对应颜色（amber/cyan/blue/purple）"
+      - "输入 '我叫 Ryan' 点 add → pinnedAdd 被调用 → next"
+      - "'稍后再说'点击跳过 step"
+      - "onboarding 完成后 MemoryIntroStep 不再出现（一次性）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-18：Onboarding 是 S5 末尾 nice-to-have，不阻塞核心功能"
+      - "FeatureCard 颜色与 memoryColors token 一致（已在 8E.6 定义）"
+      - "PinAddRow 复用现有组件，不重复实现"
+      - "一次性状态存储：onboarding_completed 标记（本地存储或 settings）"
+      - "TypeScript 严格类型"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8E.6: T-UI-11 + T-UI-12 — 视觉系统 + 微动效
+  # ─────────────────────────────────────────────────────────────
+  - id: "8E.6"
+    title: "T-UI-11+T-UI-12 — 视觉色彩 token + 微动效（Pin 滑入 + 编译进度 + 首次引用 chip）"
+    status: pending
+    priority: P2
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 5 / T-UI-11 + T-UI-12 + §0.5 Δ-10（framer-motion）
+    estimated_days: 1
+
+    current_state: |
+      src/lib/theme.ts（或等价文件）：无 memoryColors token。
+      framer-motion：需确认；若缺则引入（可降级为 CSS transition）。
+      PinnedMemoryEditor.tsx：无 slide-in 动画。
+      CompiledMemoryViewer.tsx：无 section 进度环。
+      chat 气泡：无"首次引用 fact"chip。
+      ❌ MISSING：memoryColors token
+      ❌ MISSING：Pin 添加 slide-in 动效
+      ❌ MISSING：编译进度条（4 section 各自进度环）
+      ❌ MISSING：首次引用 fact chip（可选）
+
+    must_implement:
+      - "src/lib/theme.ts（或 src/lib/memory-colors.ts）— export const memoryColors = { pin, fact, today, longterm, experience, diary }（6 种语义色彩，amber/cyan/blue/violet/indigo/teal）"
+      - "每色包含 fg / bg / border（暗色模式对比度 ≥ 4.5:1）"
+      - "PinnedMemoryEditor.tsx — 新条目 slide-in：framer-motion layout + initial={{ opacity:0, y:-8 }} animate={{ opacity:1, y:0 }} 200ms ease-out"
+      - "CompiledMemoryViewer.tsx — '重新编译'进行中：4 个 section tab 显示进度环（监听 memory_compiled 事件逐个完成）"
+      - "所有现有 chip / card 组件（TagChip / PinItem / FactCard）— 替换硬编码颜色为 memoryColors token"
+      - "chat 气泡首次引用 fact chip（可选 / 降级版）：收到含 memory_fact_extracted 事件时气泡下方 fade-in chip '📚 记忆引用' → 3s 后 fade-out"
+      - "package.json — framer-motion 依赖（若缺则 npm install；若选降级 CSS 则不需要）"
+
+    impl_targets:
+      - src/lib/memory-colors.ts
+      - src/components/memory/pinned/PinnedMemoryEditor.tsx
+      - src/components/memory/compiled/CompiledMemoryViewer.tsx
+      - src/components/memory/chips/TagChip.tsx
+      - src/components/memory/narrative/FactCard.tsx
+      - src/components/memory/pinned/PinItem.tsx
+      - package.json
+
+    acceptance:
+      - "memoryColors token 正确导出，各语义色符合 6 种颜色系"
+      - "PinnedMemoryEditor 新增 pin 时有 slide-in 动画（200ms）"
+      - "CompiledMemoryViewer 重新编译时 section tab 逐渐显示勾（监听事件）"
+      - "暗色模式下所有 memoryColors 对比度 ≥ 4.5:1（视觉验证）"
+      - "TagChip / FactCard / PinItem 颜色与 token 一致"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-10：framer-motion 在本 slice 引入（若降级为 CSS 则注释说明原因）"
+      - "memoryColors 暗色模式值手工测试对比度（不依赖自动工具）"
+      - "slide-in 用 framer-motion layout prop（不用 position 绝对定位）"
+      - "进度环组件复用（不为每个 section 写独立实现）"
+      - "首次引用 fact chip 是锦上添花，若影响性能可标注为 TODO v2.1"

@@ -1,0 +1,463 @@
+# Phase 8D: Memory Experience & Diary (Sprint 4)
+#
+# Design-ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+# Goal: 实现 Experience extractor（教训自动提取）+ Diary writer（AI 日记）+ ExperienceViewer + DiaryViewer
+#       四大前端组件，完成"agent 能学到教训、能写日记"的差异化能力闭环。
+#       注：T-G7（PULSE preset）按 §0.5 Δ-18 标注为延后项，不进本 Phase。
+
+meta:
+  phase: 8D
+  name: Memory Experience & Diary — Sprint 4
+  status: draft
+  design_ref: docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+  read_first:
+    - CLAUDE.md
+    - docs/references/coding-style-and-lint-contract.md
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.5 Calibration Δ"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.6 Audit Event 字段约定"
+    - "docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md §0.7 跨 Sprint 共享原则"
+  created: 2026-04-18
+  total_slices: 8
+  human_checkpoints:
+    - after_slice: "8D.6"
+      reason: >
+        diary 写入后人工 review 文风：(1) write_diary 对今日 session 生成合理日记；
+        (2) 日记 markdown 格式正确（#标题 + 段落）；
+        (3) PII scrub 在日记路径生效；
+        (4) audit 事件 memory_diary_written 在 TelemetryDrawer 可见。
+    - after_slice: "8D.8"
+      reason: >
+        4 viewer 全联调：(1) ExperienceViewer 显示 category 分组的经验条目；
+        (2) DiaryViewer 月历能点击查看历史日记；
+        (3) TelemetryDrawer 显示 memory_experience_extracted 事件；
+        (4) experience 注入 system prompt 验证（inject_experience=true）。
+
+dashboard:
+  last_updated: '2026-04-18'
+  completed_slices: []
+  current_slice: '8D.1'
+  blocked: []
+  notes: >
+    Phase 8D 初始化（草案）。激活前提：Phase 8C 全部 done。
+    8 slices，~10 工程日。核心依赖：SessionSummaryStore（8A.5）+ UtilityLlm（8A.5）+
+    PinnedStore（8A.9）+ memory_config.json ExperienceConfig + DiaryConfig。
+    注：T-G7（PULSE personality preset）延后至产品决策后，不在本 Phase 实现。
+
+    共享约束（v2 §0.7）：
+      - 每个 slice 至少 1 audit event + 1 harness 断言 + 1 UI 信号
+      - PII scrub 默认 ON（experience + diary 写入路径均需接入）
+      - 所有 LLM 调用走 UtilityLlm
+      - 新 Tauri command 必须三处注册
+
+slices:
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Phase G — Experience Extractor
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.1: T-G1 — ExperienceStore 骨架
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.1"
+    title: "T-G1 — ExperienceStore（SQLite + markdown 镜像 + 去重）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G1 + §0.5 Δ-2 Δ-6 Δ-17
+    estimated_days: 1.5
+
+    current_state: |
+      src-tauri/src/modules/memory/experience/ 目录：不存在。
+      memory.db：无 experience 表。
+      AppState.experience_store 字段：不存在。
+      ❌ MISSING：memory/experience/mod.rs + store.rs + types.rs 整个子模块
+      ❌ MISSING：experience SQLite 表 + markdown 镜像写入
+
+    must_implement:
+      - "src-tauri/src/modules/memory/experience/types.rs — pub struct ExperienceEntry { id: String(ULID), category, content, source_session_id, project_id, created_at }"
+      - "src-tauri/src/modules/memory/experience/types.rs — pub struct NewExperience { category, content, source_session_id, project_id, scope: PinScope }"
+      - "src-tauri/src/modules/memory/experience/store.rs — pub trait ExperienceStore: Send + Sync { async fn add / list / delete / clear_category / list_by_scope_for_prompt }"
+      - "add() 返回 AddResult { id, added: bool }（added=false 表示去重跳过）"
+      - "add() 去重：content trim lowercase 与同 category 已有条目比较"
+      - "add() 接入 threat_scanner.scan_and_redact（PII scrub）"
+      - "add() content max 400 chars（v2 §0.5 Δ-17）"
+      - "SQL experience 表：id TEXT PK, category TEXT, content TEXT, source_session_id TEXT, project_id TEXT, scope TEXT, created_at TEXT"
+      - "双写：SQLite + <scope_root>/.if2ai/experience/<category>.md（每行 - {content}）+ index.md（按 category 计数）"
+      - "src-tauri/src/commands/mod.rs AppState — pub experience_store: Arc<dyn ExperienceStore>"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/experience/mod.rs
+      - src-tauri/src/modules/memory/experience/types.rs
+      - src-tauri/src/modules/memory/experience/store.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo test memory::experience::store::tests::add_dedup — 相同 content+category 第二次 add 返回 added=false"
+      - "cargo test memory::experience::store::tests::scope_isolation — project experience 不出现在 global 列表"
+      - "cargo test memory::experience::store::tests::markdown_mirror — add 后 <category>.md 文件更新"
+      - "cargo test memory::experience::store::tests::pii_scrub — 含敏感信息的 content 被脱敏"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-2：add() 接入 ThreatScanner.scan_and_redact"
+      - "遵守 v2 §0.5 Δ-17：单条 ≤ 400 chars"
+      - "ULID 生成用 ulid crate（已在 8A.5 引入）"
+      - "index.md 每次 add/delete 后同步更新"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.2: T-G2 — Experience Extractor
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.2"
+    title: "T-G2 — Experience Extractor（session 摘要 → 教训分类 → 入库）"
+    status: pending
+    priority: P0
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G2 + §0.5 Δ-1 Δ-3
+    estimated_days: 1.5
+    depends_on: ["8D.1"]
+
+    current_state: |
+      src-tauri/src/modules/memory/experience/extractor.rs：不存在。
+      MemoryTicker.notify_session_end 中 do_extract_experiences 是空桩（8B.7）。
+      ❌ MISSING：extract_session_experiences() 完整实现
+      ❌ MISSING：experience extraction LLM prompt（搬 openhanako experience-extractor.js:86-144）
+      ❌ MISSING：Ticker.notify_session_end 中实际调用（空桩 → 真实调用）
+
+    must_implement:
+      - "src-tauri/src/modules/memory/experience/extractor.rs — pub async fn extract_session_experiences(summary_text, store, scope, llm, job_runner, is_zh) -> Result<ExtractReport>"
+      - "extract_session_experiences：1.summary_text.trim().chars().count() < 100 → 返回默认 → 2.llm.complete(build_extraction_prompt(is_zh), summary_text, 2048, 0.3) → 3.parse_json_with_fence → 4.for each experience → store.add → 统计"
+      - "build_extraction_prompt(is_zh) 中英文各一套（搬 experience-extractor.js:86-144）"
+      - "parse_json_with_fence 复用 facts extractor 的（或在 memory/utils.rs 提取公共函数）"
+      - "ExtractReport { extracted: usize, skipped: usize }"
+      - "entry category 和 content 各自 trim()，空则跳过"
+      - "MemoryTicker.do_extract_experiences：实现为 extract_session_experiences 调用（替换空桩）"
+      - "MemoryAuditEmitter::memory_experience_extracted(ctx, category, content_excerpt, total_in_category)"
+
+    impl_targets:
+      - src-tauri/src/modules/memory/experience/extractor.rs
+      - src-tauri/src/modules/memory/experience/mod.rs
+      - src-tauri/src/modules/memory/audit.rs
+      - src-tauri/src/modules/memory/ticker.rs
+
+    acceptance:
+      - "cargo test memory::experience::extractor::tests::extract_from_summary — mock LLM 返回 2 条经验 → experience 表有 2 行"
+      - "cargo test memory::experience::extractor::tests::too_short_summary — 摘要 < 100 chars → 直接返回默认"
+      - "cargo test memory::experience::extractor::tests::parse_malformed_json — 非法 JSON → 空列表不 panic"
+      - "audit 事件 memory_experience_extracted 在 TelemetryDrawer 显示 category + excerpt"
+      - "session 结束后 experience 表有新条目（集成验证）"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-1：llm 参数类型 Arc<dyn UtilityLlm>"
+      - "遵守 v2 §0.5 Δ-3：memory_experience_extracted 用关联函数调用"
+      - "parse_json_with_fence 代码复用（不重复实现）"
+      - "job_runner.run('experience_extract', session_id, ...) 防重试"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.3: T-G3 — experience Tauri 命令 + system prompt 注入
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.3"
+    title: "T-G3 — experience_list/delete Tauri 命令 + system prompt experience 注入"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G3 + §0.5 Δ-11
+    estimated_days: 1
+    depends_on: ["8D.2"]
+
+    current_state: |
+      commands/memory.rs：无 experience_list / experience_delete 命令。
+      prompt.rs：无 experience 注入路径。
+      MemoryFeatureConfig：inject_experience 字段不存在。
+      ❌ MISSING：experience_list / experience_delete / experience_clear_category 命令
+      ❌ MISSING：inject.rs 中 build_memory_injection 扩展（追加 experience section）
+
+    must_implement:
+      - "commands/memory.rs — #[tauri::command] pub async fn experience_list(scope: String, category: Option<String>, state) -> Result<Vec<ExperienceEntry>, String>"
+      - "commands/memory.rs — #[tauri::command] pub async fn experience_delete(id: String, state) -> Result<(), String>"
+      - "commands/memory.rs — #[tauri::command] pub async fn experience_clear_category(scope: String, category: String, state) -> Result<usize, String>"
+      - "src-tauri/src/main.rs + capabilities.json — 三个命令三处注册"
+      - "src/lib/tauri.ts — experienceList / experienceDelete / experienceClearCategory wrapper"
+      - "MemoryFeatureConfig — pub inject_experience: bool (default true，走 MemoryConfigOverrides)"
+      - "inject.rs build_memory_injection 扩展：在 compiled_section 之后追加 experience_section（按 category 取最近 3 条）"
+      - "experience_section budget：从 max_inject_tokens 剩余空间分配（experience 优先级低于 pinned > compiled > experience）"
+
+    impl_targets:
+      - src-tauri/src/commands/memory.rs
+      - src-tauri/src/modules/memory/inject.rs
+      - src-tauri/src/modules/runtime/config.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "experience_list 按 category 过滤正确"
+      - "experience_delete 后对应条目消失 + markdown 镜像更新"
+      - "inject_experience=true 时 system prompt 末尾包含 '# 经验' section"
+      - "inject_experience=false 时 system prompt 不含 experience"
+      - "Tauri 命令三处注册：npm run tauri dev 无 capability error"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-11：三个命令三处注册"
+      - "inject_experience 是 bool，走 MemoryConfigOverrides（不进 settings.json JSON value）"
+      - "experience section 每 category 取最近 3 条（按 created_at DESC）"
+      - "budget 分配：pinned 先占，compiled 次，experience 最后，超出则截断"
+      - "无 unwrap()"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  Phase G' — Diary Writer
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.4: T-G4 — DiaryStore 骨架
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.4"
+    title: "T-G4 — DiaryStore（文件系统 + 月历元数据）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G4 + §0.5 Δ-6 Δ-17
+    estimated_days: 1
+    depends_on: ["8A.3"]
+
+    current_state: |
+      src-tauri/src/modules/diary/ 目录：不存在（v2 选择顶级 modules/diary/ 模块）。
+      AppState.diary_store 字段：不存在。
+      ❌ MISSING：diary/mod.rs + writer.rs + store.rs 整个模块
+      ❌ MISSING：DiaryStore trait + DiaryEntry + DiaryMeta
+
+    must_implement:
+      - "src-tauri/src/modules/diary/mod.rs — pub use store::*, pub use writer::*"
+      - "src-tauri/src/modules/diary/store.rs — pub struct DiaryEntry { logical_date: NaiveDate, file_path: PathBuf, content: String, chars: usize, generated_at: DateTime<Utc> }"
+      - "src-tauri/src/modules/diary/store.rs — pub struct DiaryMeta { date: NaiveDate, title: String, chars: usize }"
+      - "src-tauri/src/modules/diary/store.rs — pub trait DiaryStore: Send + Sync { async fn read / write / list_metas }"
+      - "DiaryStore 实现：FsDiaryStore { scope_root: PathBuf }"
+      - "文件路径：<scope_root>/.if2ai/diary/YYYY-MM-DD.md（按日期命名）"
+      - "title 从首行 '# ...' 提取；无 # 标题则用日期字符串"
+      - "list_metas(year, month)：glob <scope_root>/.if2ai/diary/YYYY-MM-*.md，提取 title + chars"
+      - "write() max 8000 chars（v2 §0.5 Δ-17），超出截断"
+      - "src-tauri/src/commands/mod.rs AppState — pub diary_store: Arc<dyn DiaryStore>"
+
+    impl_targets:
+      - src-tauri/src/modules/diary/mod.rs
+      - src-tauri/src/modules/diary/store.rs
+      - src-tauri/src/commands/mod.rs
+      - src-tauri/src/main.rs
+
+    acceptance:
+      - "cargo test diary::store::tests::write_and_read — write 后 read 返回相同内容"
+      - "cargo test diary::store::tests::list_metas_month — 列出指定月份的日记元数据"
+      - "cargo test diary::store::tests::title_extraction — 首行 # 标题正确提取"
+      - "cargo test diary::store::tests::truncation_8000 — 超 8000 chars 被截断"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-6：diary 路径基于 dirs::data_local_dir()/.if2ai/memory/ 下的 diary/ 子目录"
+      - "遵守 v2 §0.5 Δ-17：单天 max 8000 chars"
+      - "FsDiaryStore 用 tokio::fs（不用 std::fs）"
+      - "list_metas 不读文件全文，只读前两行提取 title（性能）"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.5: T-G5 — write_diary 实现
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.5"
+    title: "T-G5 — write_diary（LLM 生成 + PII scrub + 结构清洗）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G5 + §0.5 Δ-1 Δ-2 Δ-3 Δ-18
+    estimated_days: 1.5
+    depends_on: ["8A.5", "8A.9", "8D.4"]
+
+    current_state: |
+      src-tauri/src/modules/diary/writer.rs：不存在。
+      ❌ MISSING：write_diary() 完整实现 + diary prompt（搬 diary-writer.js:25-103）
+      ❌ MISSING：strip_inner_blocks helper（剥离 mood/pulse/reflect 块）
+
+    must_implement:
+      - "src-tauri/src/modules/diary/writer.rs — pub async fn write_diary(summary_store, diary_store, scope, date, llm, agent_personality, is_zh, pinned_md, memory_md, user_name, agent_name) -> Result<DiaryEntry, DiaryError>"
+      - "write_diary 流程：1.get_today() / LogicalDay::for_date(date) → 2.list_in_range → 空返回 DiaryError::NoConversations → 3.sort + join → 4.PII scrub → 5.build_diary_user_prompt → 6.llm.complete(agent_personality, user_prompt, 2048, 0.7) → 7.strip_inner_blocks → 8.确保 # 标题 → 9.diary_store.write"
+      - "build_diary_user_prompt(summary_text, memory_md, user_name, agent_name, logical_day, is_zh) 中英文各一套（搬 diary-writer.js:25-103）"
+      - "strip_inner_blocks(text, blocks: &[&str]) → 剥离 <mood>...</mood> <pulse>...</pulse> <reflect>...</reflect>"
+      - "pub enum DiaryError { NoConversations, LlmError(MemoryError), StorageError(anyhow::Error) }"
+      - "MemoryAuditEmitter::memory_diary_written(ctx, logical_date, file_path, chars)"
+
+    impl_targets:
+      - src-tauri/src/modules/diary/writer.rs
+      - src-tauri/src/modules/diary/mod.rs
+      - src-tauri/src/modules/memory/audit.rs
+
+    acceptance:
+      - "cargo test diary::writer::tests::no_conversations_error — 无 session → DiaryError::NoConversations"
+      - "cargo test diary::writer::tests::strip_inner_blocks — mood/pulse/reflect 块被剥离"
+      - "cargo test diary::writer::tests::ensure_h1_title — LLM 输出无 # 标题时自动加日期标题"
+      - "cargo test diary::writer::tests::pii_in_summary_scrubbed — summary 中 API key 被脱敏"
+      - "audit 事件 memory_diary_written 在 TelemetryDrawer 显示日期 + chars"
+      - "harness suite harness/suites/memory_diary_write.yaml 通过"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-1：llm 参数 Arc<dyn UtilityLlm>"
+      - "遵守 v2 §0.5 Δ-2：summary_text 在传入 LLM 前调 scan_and_redact"
+      - "遵守 v2 §0.5 Δ-18：diary.auto 默认 false，write_diary 仅手动触发（Tauri 命令或 /diary slash）"
+      - "DiaryError 实现 std::error::Error + Display"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.6: T-G6 — diary Tauri 命令 + /diary slash command
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.6"
+    title: "T-G6 — diary_write / diary_read / diary_list Tauri 命令 + /diary slash"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-G6 + §0.5 Δ-11
+    estimated_days: 1
+    depends_on: ["8D.5"]
+
+    current_state: |
+      commands/ 目录下无 diary.rs。
+      聊天输入框：无 /diary slash command 处理。
+      ❌ MISSING：diary_write / diary_read / diary_list Tauri 命令
+      ❌ MISSING：/diary slash command 入口
+
+    must_implement:
+      - "src-tauri/src/commands/diary.rs — #[tauri::command] pub async fn diary_write(date: Option<String>, state) -> Result<DiaryEntry, String>"
+      - "src-tauri/src/commands/diary.rs — #[tauri::command] pub async fn diary_read(date: String, state) -> Result<Option<DiaryEntry>, String>"
+      - "src-tauri/src/commands/diary.rs — #[tauri::command] pub async fn diary_list(year: i32, month: u32, state) -> Result<Vec<DiaryMeta>, String>"
+      - "diary_write 的 date 参数：None = 今天；Some('YYYY-MM-DD') = 指定日期"
+      - "src-tauri/src/main.rs + capabilities.json — 三个命令三处注册"
+      - "src/lib/tauri.ts — diaryWrite / diaryRead / diaryList wrapper"
+      - "聊天 /diary slash command：输入框识别 /diary → 调 diaryWrite(undefined) → 在 chat 中显示生成结果（或 toast 通知）"
+      - "DiaryEntry 需实现 Serialize（已有），TS interface 对齐"
+
+    impl_targets:
+      - src-tauri/src/commands/diary.rs
+      - src-tauri/src/main.rs
+      - src-tauri/gen/schemas/capabilities.json
+      - src/lib/tauri.ts
+
+    acceptance:
+      - "diary_write(None) 调用 write_diary(today) 并返回生成内容"
+      - "diary_read('2026-04-18') 返回当天日记内容（若存在）"
+      - "diary_list(2026, 4) 返回该月有日记的日期列表"
+      - "/diary slash command 在聊天中触发 diary_write"
+      - "Tauri 命令三处注册：无 capability error"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-11：三个命令三处注册"
+      - "date 字符串解析用 NaiveDate::parse_from_str，失败返回 Err String"
+      - "diary_write 失败（NoConversations）时返回 Err('今日无对话记录，无法生成日记')"
+      - "slash command 在 composer 中优先匹配 /diary（不与其他 slash 冲突）"
+      - "无 unwrap()"
+
+  # ═══════════════════════════════════════════════════════════════════
+  #  UI — S4 前端组件
+  # ═══════════════════════════════════════════════════════════════════
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.7: T-UI-4 — ExperienceViewer 前端
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.7"
+    title: "T-UI-4 — ExperienceViewer 前端（教训库 category 分组）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-UI-4 + §0.5 Δ-15
+    estimated_days: 1.5
+    depends_on: ["8D.3"]
+
+    current_state: |
+      src/components/memory/experience/ 目录：不存在。
+      MemorySettingsPage.tsx：无 ExperienceViewer 入口。
+      ❌ MISSING：ExperienceViewer.tsx + ExperienceCategoryGroup.tsx
+
+    must_implement:
+      - "src/components/memory/experience/ExperienceViewer.tsx — 模态弹窗，按 category 分组展示经验条目"
+      - "<details> + <summary> 展开收起 category（默认 open）"
+      - "category badge 显示条目数；行内删除按钮 (X) 调 experienceDelete"
+      - "'清空此类别'按钮调 experienceClearCategory（两段式确认）"
+      - "src/components/memory/experience/ExperienceCategoryGroup.tsx — category 分组组件"
+      - "src/modules/settings/pages/MemorySettingsPage.tsx — 添加'查看 AI 教训库'入口"
+      - "TelemetryDrawer.tsx — 追加 memory_experience_extracted 事件渲染（indigo 色 GraduationCap 图标）"
+      - "MemorySettingsPage — inject_experience 开关（调 memory_config.json 配置或本地状态）"
+
+    impl_targets:
+      - src/components/memory/experience/ExperienceViewer.tsx
+      - src/components/memory/experience/ExperienceCategoryGroup.tsx
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+      - src/components/chat/TelemetryDrawer.tsx
+
+    acceptance:
+      - "打开 ExperienceViewer → 按 category 分组展示经验（有数据时 details 展开）"
+      - "行内删除后条目消失（乐观更新）"
+      - "TelemetryDrawer 显示 memory_experience_extracted 事件（indigo 徽章）"
+      - "MemorySettingsPage 出现'查看 AI 教训库'按钮"
+      - "空状态：显示'Agent 还没有积累教训，完成几次对话后自动提取'"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-15：保留 MemoryBrowser.tsx 不删"
+      - "ExperienceViewer category 颜色用 memoryColors.experience（indigo 系）"
+      - "乐观更新：delete 先本地移除，失败后回滚 + toast 错误"
+      - "TypeScript interface ExperienceEntry 与后端 DTO 对齐"
+      - "暗色模式下 details/summary 样式正确"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice 8D.8: T-UI-5 — DiaryViewer 前端（月历 + 渲染 + 生成）
+  # ─────────────────────────────────────────────────────────────
+  - id: "8D.8"
+    title: "T-UI-5 — DiaryViewer 前端（DiaryCalendar + DiaryRenderer + 生成按钮）"
+    status: pending
+    priority: P1
+    design_ref: >
+      docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md
+      §Sprint 4 / T-UI-5 + §0.5 Δ-10（date-fns）+ Δ-15
+    estimated_days: 2
+    depends_on: ["8D.6"]
+
+    current_state: |
+      src/components/memory/diary/ 目录：不存在。
+      package.json：date-fns 需确认（若缺则引入）。
+      ❌ MISSING：DiaryViewer.tsx + DiaryCalendar.tsx + DiaryRenderer.tsx
+      ❌ MISSING：TelemetryDrawer memory_diary_written 事件渲染
+
+    must_implement:
+      - "src/components/memory/diary/DiaryViewer.tsx — 模态弹窗，左侧月历 + 右侧日记内容"
+      - "src/components/memory/diary/DiaryCalendar.tsx — 基于 date-fns 的月历，有日记的日期显示 dot 标记"
+      - "src/components/memory/diary/DiaryRenderer.tsx — ReactMarkdown 渲染日记内容（prose-sm + prose-invert）"
+      - "选中日期调 diaryRead(date) → 显示内容 or 空状态 + '立即生成日记' 按钮"
+      - "'立即生成日记'按钮调 diaryWrite(selectedDate)，loading 状态 + 完成后刷新"
+      - "月份切换调 diaryList(year, month) 更新 datesWithEntries"
+      - "src/modules/settings/pages/MemorySettingsPage.tsx — 添加'查看 AI 日记'入口"
+      - "TelemetryDrawer.tsx — 追加 memory_diary_written 事件渲染（purple 色 FileText 图标）"
+      - "package.json — date-fns 依赖（若缺则 npm install）"
+
+    impl_targets:
+      - src/components/memory/diary/DiaryViewer.tsx
+      - src/components/memory/diary/DiaryCalendar.tsx
+      - src/components/memory/diary/DiaryRenderer.tsx
+      - src/modules/settings/pages/MemorySettingsPage.tsx
+      - src/components/chat/TelemetryDrawer.tsx
+      - package.json
+
+    acceptance:
+      - "打开 DiaryViewer → 左侧月历显示，有日记的日期有 dot 标记"
+      - "点击有日记的日期 → 右侧显示日记内容（Markdown 渲染）"
+      - "点击无日记的日期 → 显示'立即生成日记'按钮"
+      - "生成中显示 loading，完成后日记内容自动更新"
+      - "TelemetryDrawer 显示 memory_diary_written 事件（purple FileText 图标）"
+      - "月份切换后 dot 标记更新"
+
+    review_checklist:
+      - "遵守 v2 §0.5 Δ-10：date-fns 在本 slice 首次引入（或确认已有）"
+      - "DiaryCalendar 月历用 date-fns 的 getDaysInMonth / startOfMonth / getDay 等"
+      - "diary 内容颜色用 memoryColors.diary（teal 系）"
+      - "DiaryRenderer prose 样式适配暗色模式（dark:prose-invert）"
+      - "TypeScript interface DiaryEntry / DiaryMeta 与后端对齐"
