@@ -21,7 +21,7 @@ use crate::modules::browser::cold_state::ColdState;
 use crate::modules::browser::errors::BrowserError;
 use crate::modules::browser::profile::BrowserProfileMode;
 use crate::modules::browser::session::{
-    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir, TabInfo, WaitState,
+    ActionLogEntry, BrowserSession, DownloadEntry, NavigateResult, ScrollDir, TabInfo, WaitState,
 };
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
@@ -349,6 +349,25 @@ impl BrowserRegistry {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
         guard.close_tab(idx).await
+    }
+
+    // ── Downloads (Phase 7C, slice 7C.8) ────────────────────────────────────
+
+    /// Return the in-memory list of downloads initiated by this session.
+    pub async fn list_downloads(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<DownloadEntry>, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        Ok(guard.list_downloads().await)
+    }
+
+    /// Return the absolute on-disk download directory for `session_id`.
+    pub fn download_dir(&self, session_id: &str) -> Option<std::path::PathBuf> {
+        let arc = self.get_arc(session_id).ok()?;
+        let guard = arc.try_lock().ok()?;
+        Some(guard.download_dir().to_path_buf())
     }
 
     /// Evaluate arbitrary JavaScript and return the serialised result.

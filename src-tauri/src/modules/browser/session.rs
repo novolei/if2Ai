@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::browser::{
+    DownloadProgressState, EventDownloadProgress, EventDownloadWillBegin,
+    SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
+};
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
 };
@@ -26,6 +30,9 @@ use chromiumoxide::page::{Page, ScreenshotParams};
 use chrono::Utc;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
@@ -66,6 +73,56 @@ pub struct TabInfo {
 /// drag us into OOM.  The oldest *non-active* tab is closed first
 /// when `refresh_pages` discovers we're over the limit.
 const MAX_TRACKED_TABS: usize = 10;
+
+/// Phase 7C, slice 7C.8 — ring-buffer cap on remembered downloads.
+/// When we've recorded this many, the oldest entry is evicted.
+const MAX_TRACKED_DOWNLOADS: usize = 50;
+
+/// Lifecycle state of a single download (Phase 7C, slice 7C.8).
+/// Mirrors CDP's `Browser.downloadProgress.state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadState {
+    /// `downloadWillBegin` fired but no progress yet (or progress < 100%).
+    InProgress,
+    /// CDP reports `state = "completed"`.
+    Completed,
+    /// CDP reports `state = "canceled"` or the tab closed mid-download.
+    Canceled,
+}
+
+/// Snapshot of one download initiated by the AI's browser session,
+/// surfaced to the LLM via `action="downloads"` and to the frontend
+/// BrowserCard via the `browser-status` Tauri event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadEntry {
+    /// Stable CDP-issued identifier; also the name used by Chromium
+    /// when `behavior = AllowAndName` is in effect (the downloaded
+    /// file lives at `<download_dir>/<guid>`).
+    pub guid: String,
+    /// Original URL the file was fetched from (best effort).
+    pub url: String,
+    /// Filename suggested by the server's `Content-Disposition`
+    /// header, or by the `<a download="">` attribute.
+    pub suggested_filename: String,
+    /// Live state — `InProgress` until the corresponding
+    /// `downloadProgress` event reports `Completed` / `Canceled`.
+    pub state: DownloadState,
+    /// Bytes downloaded so far (last seen value).
+    pub received_bytes: u64,
+    /// Total bytes the server announced; `0` when unknown.
+    pub total_bytes: u64,
+    /// Absolute path of the saved file on disk.  Populated for both
+    /// completed and in-progress downloads (Chromium writes the file
+    /// incrementally) so the user can already inspect a partial.
+    pub saved_path: String,
+    /// RFC-3339 timestamp of when this entry was first seen.
+    pub started_at: String,
+}
+
+/// Async-shared download ledger, owned by `BrowserSession` and
+/// updated by the background CDP listener task.
+pub(crate) type DownloadLedger = Arc<AsyncMutex<VecDeque<DownloadEntry>>>;
 
 /// Phase 7C, slice 7C.5 — what `wait()` should wait for.  Maps directly
 /// to the three Playwright lifecycle states the LLM already knows.
@@ -176,6 +233,16 @@ pub struct BrowserSession {
     /// browser by relaunching the session in this mode (see
     /// [`crate::modules::browser::registry::BrowserRegistry::relaunch_with_mode`]).
     pub headed: bool,
+    /// Phase 7C, slice 7C.8 — ring buffer of every download initiated
+    /// since launch, populated by a background task reading CDP
+    /// `Browser.downloadWillBegin` / `downloadProgress` events.
+    pub(crate) downloads: DownloadLedger,
+    /// Background task that fans the CDP download stream into
+    /// [`Self::downloads`]; aborted on `Drop` of the session via the
+    /// [`Browser::close`] cascade.
+    _download_watcher: Option<JoinHandle<()>>,
+    /// Absolute directory where downloads land.
+    pub(crate) download_dir: std::path::PathBuf,
 }
 
 impl BrowserSession {
@@ -276,6 +343,39 @@ impl BrowserSession {
         // Handler implements Stream; it must be polled so CDP messages flow.
         let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
+        // Phase 7C, slice 7C.8 — enable downloads to disk and spawn the
+        // CDP listener that updates `downloads` ledger asynchronously.
+        let download_dir = if2ai_home.join("desk").join(&session_id).join("downloads");
+        std::fs::create_dir_all(&download_dir).map_err(|e| {
+            BrowserError::ProfileError(format!(
+                "failed to create download dir {}: {e}",
+                download_dir.display()
+            ))
+        })?;
+
+        let download_path_str = download_dir.to_string_lossy().to_string();
+        if let Err(e) = browser
+            .execute(SetDownloadBehaviorParams {
+                behavior: SetDownloadBehaviorBehavior::AllowAndName,
+                browser_context_id: None,
+                download_path: Some(download_path_str.clone()),
+                events_enabled: Some(true),
+            })
+            .await
+        {
+            // Non-fatal — the rest of the session works without download
+            // tracking.  Surface as a warn so the user sees it in tracing.
+            warn!(
+                session_id = %session_id,
+                error = %e,
+                "browser: SetDownloadBehavior failed; downloads will be silent"
+            );
+        }
+
+        let downloads: DownloadLedger = Arc::new(AsyncMutex::new(VecDeque::new()));
+        let download_watcher =
+            spawn_download_watcher(&browser, downloads.clone(), download_dir.clone()).await;
+
         // Phase 7C, slice 7C.1: opening a normal page on the default
         // browser context (no `start_incognito_context`).  Cookie /
         // localStorage isolation is now provided by the per-session profile
@@ -316,6 +416,9 @@ impl BrowserSession {
             action_log: Vec::new(),
             _profile: profile,
             headed,
+            downloads,
+            _download_watcher: download_watcher,
+            download_dir,
         })
     }
 
@@ -987,14 +1090,99 @@ impl BrowserSession {
         out
     }
 
+    /// Phase 7C, slice 7C.8 — return the most recent N downloads
+    /// initiated by this session (oldest first).  The full ring buffer
+    /// is capped at [`MAX_TRACKED_DOWNLOADS`].
+    pub async fn list_downloads(&self) -> Vec<DownloadEntry> {
+        let guard = self.downloads.lock().await;
+        guard.iter().cloned().collect()
+    }
+
+    /// Read-only view of the directory used for download persistence
+    /// (`<if2ai_home>/desk/<session_id>/downloads/`).  Surfaced via
+    /// the BrowserCard so the user can open it in Finder/Explorer.
+    #[must_use]
+    pub fn download_dir(&self) -> &std::path::Path {
+        &self.download_dir
+    }
+
     /// Close the browser and release all resources.
     pub async fn close(mut self) -> Result<(), BrowserError> {
+        if let Some(handle) = self._download_watcher.take() {
+            handle.abort();
+        }
         self.browser
             .close()
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         Ok(())
     }
+}
+
+// ── Phase 7C, slice 7C.8 — download CDP listener ──────────────────────────────
+
+/// Spawn a background task that fans CDP `Browser.downloadWillBegin`
+/// + `downloadProgress` events into the shared [`DownloadLedger`].
+///
+/// Returns `None` when the listener subscriptions fail (rare; usually
+/// only when the browser has already detached).  The session keeps
+/// running in that case — downloads are simply not tracked.
+async fn spawn_download_watcher(
+    browser: &Browser,
+    ledger: DownloadLedger,
+    download_dir: std::path::PathBuf,
+) -> Option<JoinHandle<()>> {
+    let mut will_begin = browser
+        .event_listener::<EventDownloadWillBegin>()
+        .await
+        .ok()?;
+    let mut progress = browser
+        .event_listener::<EventDownloadProgress>()
+        .await
+        .ok()?;
+
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(evt) = will_begin.next() => {
+                    let mut guard = ledger.lock().await;
+                    let saved_path = download_dir.join(evt.guid.clone()).to_string_lossy().into_owned();
+                    let entry = DownloadEntry {
+                        guid: evt.guid.clone(),
+                        url: evt.url.clone(),
+                        suggested_filename: evt.suggested_filename.clone(),
+                        state: DownloadState::InProgress,
+                        received_bytes: 0,
+                        total_bytes: 0,
+                        saved_path,
+                        started_at: chrono::Utc::now().to_rfc3339(),
+                    };
+                    if guard.len() >= MAX_TRACKED_DOWNLOADS {
+                        guard.pop_front();
+                    }
+                    guard.push_back(entry);
+                }
+                Some(evt) = progress.next() => {
+                    let new_state = match evt.state {
+                        DownloadProgressState::Completed => DownloadState::Completed,
+                        DownloadProgressState::Canceled => DownloadState::Canceled,
+                        DownloadProgressState::InProgress => DownloadState::InProgress,
+                    };
+                    let mut guard = ledger.lock().await;
+                    if let Some(entry) = guard.iter_mut().find(|d| d.guid == evt.guid) {
+                        entry.received_bytes = evt.received_bytes as u64;
+                        entry.total_bytes = evt.total_bytes as u64;
+                        entry.state = new_state;
+                    }
+                }
+                else => {
+                    // All listener streams ended — browser detaching.
+                    break;
+                }
+            }
+        }
+    });
+    Some(handle)
 }
 
 #[cfg(test)]

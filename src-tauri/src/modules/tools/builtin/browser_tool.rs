@@ -175,7 +175,8 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
             "Lifecycle: start | stop | navigate. ",
             "Perception: snapshot | screenshot. ",
             "Interaction: click | type | scroll | select | key | wait | evaluate. ",
-            "Tabs: tabs | switch_tab | close_tab."
+            "Tabs: tabs | switch_tab | close_tab. ",
+            "Files: downloads."
         )
         .to_owned(),
         input_schema: json!({
@@ -185,7 +186,7 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
                     "type": "string",
                     "enum": ["start","stop","navigate","snapshot","screenshot",
                              "click","type","scroll","select","key","wait","evaluate",
-                             "tabs","switch_tab","close_tab"],
+                             "tabs","switch_tab","close_tab","downloads"],
                     "description": "The browser operation to perform."
                 },
                 "tab_index": {
@@ -696,13 +697,62 @@ async fn execute_browser_action(
             }
         }
 
+        // ── Downloads (Phase 7C, slice 7C.8) ──
+        "downloads" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.list_downloads(&session_id).await {
+                Ok(downloads) => Ok(format_downloads(
+                    &downloads,
+                    registry.download_dir(&session_id),
+                )),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
         unknown => Err(ToolError::Handler(format!(
             "Unknown browser action '{unknown}'. Valid actions: \
              start | stop | navigate | snapshot | screenshot | \
              click | type | scroll | select | key | wait | evaluate | \
-             tabs | switch_tab | close_tab"
+             tabs | switch_tab | close_tab | downloads"
         ))),
     }
+}
+
+/// Format a download list for the LLM (Phase 7C, slice 7C.8).
+fn format_downloads(
+    downloads: &[crate::modules::browser::session::DownloadEntry],
+    download_dir: Option<std::path::PathBuf>,
+) -> String {
+    if downloads.is_empty() {
+        return "(no downloads yet)".to_string();
+    }
+    let mut out = String::new();
+    if let Some(dir) = download_dir {
+        out.push_str(&format!("Downloads land in: {}\n\n", dir.display()));
+    }
+    out.push_str(&format!("{} download(s) tracked:\n", downloads.len()));
+    for d in downloads {
+        let progress = if d.total_bytes > 0 {
+            format!(
+                "{:.1}% ({}/{} bytes)",
+                (d.received_bytes as f64 / d.total_bytes as f64) * 100.0,
+                d.received_bytes,
+                d.total_bytes
+            )
+        } else {
+            format!("{} bytes", d.received_bytes)
+        };
+        out.push_str(&format!(
+            "- [{state:?}] {filename} — {progress} — from {url}\n  saved at {path}\n",
+            state = d.state,
+            filename = d.suggested_filename,
+            progress = progress,
+            url = d.url,
+            path = d.saved_path,
+        ));
+    }
+    out
 }
 
 /// Format a `Vec<TabInfo>` for the LLM (Phase 7C, slice 7C.6).

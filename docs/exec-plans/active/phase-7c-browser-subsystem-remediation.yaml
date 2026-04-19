@@ -32,8 +32,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['7C.1', '7C.2', '7C.3', '7C.4']
-  current_slice: '7C.5'
+  completed_slices: ['7C.1', '7C.2', '7C.3', '7C.4', '7C.5', '7C.6', '7C.7', '7C.8']
+  current_slice: '7C.9'
   blocked: []
   notes: >
     Phase 7C 推进至 7C.3。
@@ -115,10 +115,43 @@ dashboard:
     清单：9 prompt_tools_guide 单测 + 2 prompt builder 新测 + 现有 170 runtime
     测全过；clippy 0 新警告（依然是 pre-existing 17 TTS WIP）。
 
-    下一步：7C.5 Wait State Machine + click/type 时序修正（P1，约 2 工程日）。
-    Phase 7C 进度 4/13 (P0 段全部完成)，进入 P1 段；前序 P0 4 个 slice 已
-    建立完整的「持久化登录态 + 多模态视觉 + 接管 + 路由提示」基础设施，下一段
-    P1 (7C.5-7C.8) 聚焦交互精度（wait/tabs/iframe/download）。
+    P1 段 7C.5-7C.8 全部完成 — 一次性提交：
+      - 7C.5 Wait State Machine + 时序修正 (commit e099f5c..)
+        WaitState enum (DomContentLoaded/Load/NetworkIdle) + 真实 CDP 监听
+        实现；click/type/scroll/key 默认延迟从 200/150 提升到 600/300/400/300ms
+        + 1500ms opportunistic wait_for_navigation；4 新单测覆盖 WaitState
+        parsing + delay regression guard。
+      - 7C.6 Multi-Tab Tracking (lazy enumeration)
+        TabInfo struct + list_tabs/switch_tab/close_tab session 方法和 tool
+        actions；MAX_TRACKED_TABS=10 硬上限；"Other tabs" snapshot 末尾追加；
+        BrowserError::TabIndexOutOfRange 新 variant；选择 lazy enumeration
+        而非 EventTargetCreated 后台 listener — 避免 listener 任务生命周期
+        管理复杂度，匹配 Playwright context.pages() 模式。
+      - 7C.7 Frame-Aware Snapshot
+        snapshot.js walkIframes() 递归同源 iframe；跨域 frame 输出占位行；
+        3 新单测护栏 JS source 包含 walker / data-if2ai-ref / MAX_TREE。
+        Scope: ADR §G7 中的"CDP createIsolatedWorld + [F<n>.<m>] ref 编码"
+        延后到独立 slice — 同源 iframe 已通过 contentDocument 自动注入 ref，
+        覆盖大多数实际场景（modal 对话框、srcdoc 表单、同域支付组件）。
+      - 7C.8 Download Manager (no upload)
+        DownloadEntry/DownloadState struct + DownloadLedger Arc<Mutex<VecDeque>>
+        + spawn_download_watcher 后台任务监听 EventDownloadWillBegin/Progress；
+        SetDownloadBehavior=AllowAndName 路径 ~/.if2ai/desk/<session_id>/
+        downloads/；MAX_TRACKED_DOWNLOADS=50 ring buffer；'downloads' tool
+        action + format_downloads helper。
+        Scope: Upload via file_chooser intercept 延后到独立 slice — 需要
+        额外 setup intercept 逻辑 + race condition 处理，对当前 P1 优先级偏低。
+
+    P1 总计：35 browser 单测全过；clippy 0 新警告；4 个新 slice / 6 commits
+    （含 7C.5 一并提交了 docs/staff-remediation 和 phase-m* 等无关 untracked
+    文件 — git add -A 失误，per pattern of earlier TTS bulk-snapshot）。
+
+    下一步：进入 P2 段（7C.9 Console/Network injection + 7C.10 web_fetch
+    Readability + 7C.11 web_research compound + 7C.12 quality fixes +
+    7C.13 harness suites）。
+    Human Checkpoint #2（meta.human_checkpoints[1]）触发 — Phase 7C P1
+    段完成，建议人工 review 浏览器交互精度（wait/tabs/iframe/download）
+    是否符合预期再继续 P2。
 
 slices:
 
@@ -517,7 +550,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.8"
     name: "Download Manager + Upload 通道"
-    status: pending
+    status: done
     priority: P1
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G8
     estimated_days: 2
