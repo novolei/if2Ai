@@ -43,6 +43,7 @@ use commands::{
     focus_main_window_and_prefill_prompt,
     // Harness Control IPC (Phase 6E)
     get_all_session_telemetry,
+    get_browser_action_log,
     get_browser_sessions,
     get_browser_settings,
     get_chrome_status,
@@ -836,6 +837,7 @@ fn main() {
             set_browser_settings,
             request_browser_takeover,
             release_browser_takeover,
+            get_browser_action_log,
             list_sessions,
             delete_session,
             rename_session,

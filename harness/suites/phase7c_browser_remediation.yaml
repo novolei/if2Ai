@@ -1,0 +1,173 @@
+# Harness Suite: Phase 7C Browser Subsystem Remediation
+# 引用自: docs/exec-plans/active/phase-7c-browser-subsystem-remediation.yaml slice 7C.13
+# 设计参考: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md
+# 用途: 验证 7C.1-7C.12 落地的所有 unit-level 行为（profile / vision / takeover /
+#       routing / wait state / multi-tab / iframe / download / console-network /
+#       web_fetch readability / web_research / quality fixes）。
+#
+# Live-Chrome integration suites (login persistence, takeover relaunch, real
+# downloads, real iframe / multi-tab) are intentionally NOT in this file —
+# they require a working Chromium binary on the harness runner and are tracked
+# as a follow-up.  Everything below runs against pure-Rust unit tests.
+# ─────────────────────────────────────────────────────────────────────────────
+
+suite_id: "phase7c_browser_remediation"
+name: "Phase 7C — Browser Subsystem Remediation (unit suite)"
+description: "Validates the deterministic / non-Chromium parts of slices 7C.1..7C.12"
+target_pass_rate: 1.0
+runner: "cargo_test"
+
+test_cases:
+
+  # ── Slice 7C.1: Browser profile persistence ────────────────────────────────
+  - id: "7c1-001"
+    name: "BrowserProfileMode default is per_session_persistent"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::default_is_per_session_persistent"
+
+  - id: "7c1-002"
+    name: "BrowserProfileMode parsing of all aliases"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::parse_mode_str_roundtrip"
+
+  - id: "7c1-003"
+    name: "BrowserSettings load returns defaults when browser.toml missing"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::settings_load_returns_defaults_when_missing"
+
+  - id: "7c1-004"
+    name: "BrowserSettings save then reload roundtrips"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::settings_save_then_reload_roundtrips"
+
+  - id: "7c1-005"
+    name: "BrowserSettings surfaces IF2AI_BROWSER_PROFILE_MODE env override"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::settings_load_surfaces_env_override"
+
+  - id: "7c1-006"
+    name: "Ephemeral profile drops directory on Drop"
+    type: "unit"
+    test_fn: "modules::browser::profile::tests::resolve_ephemeral_drops_directory"
+
+  # ── Slice 7C.2: Multimodal ToolOutput + vision pipeline ───────────────────
+  - id: "7c2-001"
+    name: "ToolOutput::text_then_image preserves order"
+    type: "unit"
+    test_fn: "modules::tools::output::tests::text_then_image_keeps_order"
+
+  - id: "7c2-002"
+    name: "ToolOutput::byte_size sums text + image"
+    type: "unit"
+    test_fn: "modules::tools::output::tests::byte_size_sums_text_and_image"
+
+  - id: "7c2-003"
+    name: "Multimodal vision integration — Image part round-trips"
+    type: "integration"
+    test_fn: "tool_vision_integration::anthropic_image_block_roundtrips_via_serde"
+
+  # ── Slice 7C.3: Headed mode + takeover ────────────────────────────────────
+  - id: "7c3-001"
+    name: "Takeover flag defaults false and round-trips"
+    type: "unit"
+    test_fn: "modules::browser::registry::tests::takeover_flag_defaults_false_and_round_trips"
+
+  - id: "7c3-002"
+    name: "is_headed returns None when session missing"
+    type: "unit"
+    test_fn: "modules::browser::registry::tests::is_headed_returns_none_when_session_missing"
+
+  # ── Slice 7C.4: System prompt routing ─────────────────────────────────────
+  - id: "7c4-001"
+    name: "Routing block returns None when fewer than two web tools"
+    type: "unit"
+    test_fn: "modules::runtime::prompt_tools_guide::tests::returns_none_when_only_one_web_tool_registered"
+
+  - id: "7c4-002"
+    name: "Routing block returned with full text when all web tools registered"
+    type: "unit"
+    test_fn: "modules::runtime::prompt_tools_guide::tests::returns_some_with_full_routing_when_all_three_registered"
+
+  - id: "7c4-003"
+    name: "Routing block surfaces takeover paused error handling"
+    type: "unit"
+    test_fn: "modules::runtime::prompt_tools_guide::tests::surfaces_takeover_paused_handling_when_browser_present"
+
+  - id: "7c4-004"
+    name: "Routing block known names list is stable (incl. web_research)"
+    type: "unit"
+    test_fn: "modules::runtime::prompt_tools_guide::tests::web_tool_names_is_stable"
+
+  - id: "7c4-005"
+    name: "Builder injects routing guide before dynamic boundary"
+    type: "unit"
+    test_fn: "modules::runtime::prompt::tests::builder_inserts_tool_routing_guide_before_boundary"
+
+  # ── Slice 7C.5: Wait state machine + delay regression guard ───────────────
+  - id: "7c5-001"
+    name: "WaitState parses 'load'"
+    type: "unit"
+    test_fn: "modules::browser::session::tests::wait_state_from_str_recognises_load"
+
+  - id: "7c5-002"
+    name: "WaitState recognises networkidle aliases"
+    type: "unit"
+    test_fn: "modules::browser::session::tests::wait_state_from_str_recognises_networkidle_aliases"
+
+  - id: "7c5-003"
+    name: "Default delays are above pre-7C.5 baseline"
+    type: "unit"
+    test_fn: "modules::browser::session::tests::delay_constants_are_above_pre_7c5_baseline"
+
+  # ── Slice 7C.7: Frame-aware snapshot ──────────────────────────────────────
+  - id: "7c7-001"
+    name: "snapshot.js contains iframe walker"
+    type: "unit"
+    test_fn: "modules::browser::snapshot::tests::snapshot_script_contains_iframe_walker"
+
+  - id: "7c7-002"
+    name: "snapshot.js uses canonical data-if2ai-ref attribute"
+    type: "unit"
+    test_fn: "modules::browser::snapshot::tests::snapshot_script_uses_data_if2ai_ref_attribute"
+
+  - id: "7c7-003"
+    name: "snapshot.js enforces 30 KB MAX_TREE cap"
+    type: "unit"
+    test_fn: "modules::browser::snapshot::tests::snapshot_script_enforces_max_tree_size"
+
+  # ── Slice 7C.10: web_fetch upgrade ────────────────────────────────────────
+  - id: "7c10-001"
+    name: "web_fetch tool entry has 'mode' enum in schema"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_fetch::tests::web_fetch_tool_entry_has_correct_structure"
+
+  - id: "7c10-002"
+    name: "extract_with_selector returns text for real CSS"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_fetch::tests::extract_with_selector_returns_text_for_real_css"
+
+  - id: "7c10-003"
+    name: "extract_with_selector rejects invalid selector"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_fetch::tests::extract_with_selector_rejects_invalid_selector"
+
+  - id: "7c10-004"
+    name: "extract_article picks largest content node and ignores sidebar"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_fetch::tests::extract_article_picks_largest_content_node"
+
+  - id: "7c10-005"
+    name: "extract_article returns None when text < 200 chars"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_fetch::tests::extract_article_returns_none_for_text_too_short"
+
+  # ── Slice 7C.11: web_research compound tool ───────────────────────────────
+  - id: "7c11-001"
+    name: "web_research tool entry shape"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_research::tests::entry_has_correct_structure"
+
+  - id: "7c11-002"
+    name: "web_research max_pages clamp constant"
+    type: "unit"
+    test_fn: "modules::tools::builtin::web_research::tests::max_pages_is_clamped_to_hard_max"

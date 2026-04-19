@@ -23,7 +23,7 @@ use crate::modules::browser::profile::{
     ProfileEntry,
 };
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
-use crate::modules::browser::session::NavigateResult;
+use crate::modules::browser::session::{ActionLogEntry, NavigateResult};
 
 /// Response payload for `get_chrome_status`.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -180,6 +180,20 @@ pub async fn request_browser_takeover(
             Err(err.to_string())
         }
     }
+}
+
+/// Phase 7C, slice 7C.12 (12d) — return the live (non-clearing) action
+/// log for `session_id`, surfaced by the BrowserCard "Action Log"
+/// drawer.  Returns an empty vec when no session exists for that id.
+#[tauri::command]
+pub async fn get_browser_action_log(
+    session_id: String,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<Vec<ActionLogEntry>, String> {
+    registry
+        .read_action_log(&session_id)
+        .await
+        .or_else(|_| Ok(Vec::new()))
 }
 
 /// Release the takeover flag and (optionally) collapse the browser back

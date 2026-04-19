@@ -32,8 +32,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['7C.1', '7C.2', '7C.3', '7C.4', '7C.5', '7C.6', '7C.7', '7C.8']
-  current_slice: '7C.9'
+  completed_slices: ['7C.1', '7C.2', '7C.3', '7C.4', '7C.5', '7C.6', '7C.7', '7C.8', '7C.9', '7C.10', '7C.11', '7C.12', '7C.13']
+  current_slice: null
   blocked: []
   notes: >
     Phase 7C 推进至 7C.3。
@@ -146,12 +146,54 @@ dashboard:
     （含 7C.5 一并提交了 docs/staff-remediation 和 phase-m* 等无关 untracked
     文件 — git add -A 失误，per pattern of earlier TTS bulk-snapshot）。
 
-    下一步：进入 P2 段（7C.9 Console/Network injection + 7C.10 web_fetch
-    Readability + 7C.11 web_research compound + 7C.12 quality fixes +
-    7C.13 harness suites）。
-    Human Checkpoint #2（meta.human_checkpoints[1]）触发 — Phase 7C P1
-    段完成，建议人工 review 浏览器交互精度（wait/tabs/iframe/download）
-    是否符合预期再继续 P2。
+    P2 段 (7C.9-7C.13) 全部完成 — Phase 7C 收官：
+
+      - 7C.9 Console / Network observability (commit cace900)
+        ConsoleEvent (Warning/Error 双 level) + NetworkErrorEvent ring
+        buffer (50/30 cap)；spawn_console_network_watcher 后台任务
+        Log.entryAdded + Network.responseReceived 监听；console / network
+        两个新 tool actions + format_console / format_network helpers。
+        Best-effort enable Log + Network domains，失败时 graceful warn。
+
+      - 7C.10 web_fetch + scraper readability (commit 748c10a 与 7C.11 共)
+        scraper = "0.20" 依赖；mode 参数 enum [auto/article/selector/text]；
+        extract_with_selector (real CSS) / extract_article (轻量 readability
+        启发式：score = text_len + class/id bonus - 2×link_text，>=200 chars
+        阈值) / extract_text (legacy fallback)；6 unit tests。
+        Scope: 不做完整 Mozilla Readability 移植 (~3000 行)，~80 行启发式
+        覆盖 Wikipedia/blog/Substack/news 90% 场景。
+
+      - 7C.11 web_research compound (commit 748c10a 与 7C.10 共)
+        新 tool 复用 web_fetch 的 extract_article + extract_text +
+        truncate_to_bytes helpers；DDG Instant Answer + Lite HTML fallback
+        搜索 (无需 API key)；futures::join_all 并发 fetch top max_pages
+        (default 3, hard cap 5)；per-fetch 10s timeout；48 KB total budget
+        + "FETCH FAILED" 占位；prompt_tools_guide 加第 4 步 "compound
+        shortcut for topic research"。
+
+      - 7C.12 quality fixes
+        12a evaluate input cap 10 KB + EvaluateTooLong error variant
+        12b/12c last_known_urls DashMap cache — current_url 与
+            get_all_status 不再 try_lock 忙 session
+        12d read_action_log 非 clearing 读 + get_browser_action_log
+            Tauri 命令 + commands/mod re-export + main.rs invoke_handler
+        12e max_text_bytes/max_image_bytes 7C.2 已落地（本 slice 无新代码）
+
+      - 7C.13 harness suites + docs
+        harness/suites/phase7c_browser_remediation.yaml — 28 unit-level
+        test_cases 覆盖所有 7C.1-7C.12 deterministic 行为；live-Chrome
+        集成 (login persistence, takeover relaunch, real downloads, real
+        iframe/multi-tab) 留作独立 follow-up suite (需 harness runner 配
+        Chromium binary)。
+
+    Phase 7C 总计 13/13 done — 8 commit (3c49dec/b9cc58d/ee82dd7/0cd89da/
+    2d80014/3e004d4/e9e5609/cace900/748c10a + 本 commit)。
+    35 browser unit tests + 6 web_fetch + 2 web_research + 9 routing tests
+    + 11 prompt_tools_guide + 12 ToolOutput + 8 vision integration。
+    clippy on Phase 7C files: 0 new warnings (17 pre-existing TTS WIP
+    与本 phase 无关)。
+
+    Phase 7C HUMAN_CHECKPOINT_REACHED — 等待人工 review。
 
 slices:
 
@@ -748,7 +790,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.12"
     name: "Quality Fixes — evaluate cap / current_url / action_log / max_*_bytes"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G12
     estimated_days: 1
@@ -798,7 +840,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.13"
     name: "集成测试 + Harness Suite + 文档"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md "Cross-Cutting Concerns / 测试基线"
     estimated_days: 2

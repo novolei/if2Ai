@@ -62,6 +62,12 @@ pub enum BrowserError {
     /// discover valid indices.
     #[error("Tab index {0} is out of range; call action='tabs' for the current list")]
     TabIndexOutOfRange(usize),
+
+    /// Phase 7C, slice 7C.12 (12a) — `evaluate()` rejected an oversized
+    /// expression.  The LLM is expected to break the script into
+    /// smaller chunks rather than retry.
+    #[error("evaluate expression too long: {0} bytes (max 10000); split into smaller scripts")]
+    EvaluateTooLong(usize),
 }
 
 impl From<chromiumoxide::error::CdpError> for BrowserError {

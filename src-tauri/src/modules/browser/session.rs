@@ -229,6 +229,10 @@ const NETWORK_IDLE_QUIET_WINDOW_MS: u64 = 500;
 /// `EventStream` never starves the await.
 const NETWORK_IDLE_TICK_MS: u64 = 50;
 
+/// Phase 7C, slice 7C.12 (12a) — hard cap on input length passed to
+/// `evaluate()`.  Matches openhanako's 10 KB ceiling.
+const MAX_EVALUATE_EXPRESSION_BYTES: usize = 10_000;
+
 /// Result of a navigate operation.
 #[derive(Debug, Clone, Serialize)]
 pub struct NavigateResult {
@@ -963,7 +967,14 @@ impl BrowserSession {
 
     /// Evaluate arbitrary JavaScript in the page and return the serialised
     /// result. Output is capped at 30 000 characters.
+    ///
+    /// Phase 7C, slice 7C.12 (12a) — additionally caps the *input*
+    /// expression at 10 000 chars so the LLM cannot accidentally
+    /// (or maliciously) push a megabyte of script through CDP.
     pub async fn evaluate(&self, expression: &str) -> Result<String, BrowserError> {
+        if expression.len() > MAX_EVALUATE_EXPRESSION_BYTES {
+            return Err(BrowserError::EvaluateTooLong(expression.len()));
+        }
         let result = self
             .page
             .evaluate(expression)

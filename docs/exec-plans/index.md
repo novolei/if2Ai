@@ -2,8 +2,15 @@
 
 本目录包含 If2Ai 的执行计划。执行计划是具体工程工作的路线图，包含目标、步骤、进度追踪和决策日志。
 
-> **Executor 读取规则**：找到下方标记为 `[当前]` 的条目，使用其 `文件` 字段路径加载当前 Phase YAML。  
-> **人类操作规则**：Phase N 完成后，将 `[当前]` 移到 Phase N+1，同时把 Phase N+1 YAML 中的 `phase_status: draft` 改为 `active`。
+> **Executor 读取规则**：  
+> - 若任务属于 `docs/staff-remediation/` 蓝图与 `Phase M0~M5` 体系，先加载 [phase-m-remediation-execution-index.md](./active/phase-m-remediation-execution-index.md)，不要直接从单个 `Phase M*` YAML 开始。  
+> - 若任务属于既有产品 phase，找到下方标记为 `[当前]` 的条目，使用其 `文件` 字段路径加载当前 Phase YAML。  
+> **人类操作规则**：常规产品 phase 完成后，将 `[当前]` 移到下一个产品 phase；Staff remediation 体系则只在 `phase-m-remediation-execution-index.md` 定义的顺序下切换对应 `Phase M*`。
+>
+> **Staff remediation executor 简化规则**：  
+> - 永远只看当前 phase，不预读后续 phase。  
+> - 永远只做当前 slice，不并行追多个未完成 slice。  
+> - 若 5 分钟内仍说不清“当前要改哪个文件”，返回当前 phase 的 file-level plan，不要继续扩读蓝图。
 
 ## 📋 全部计划总览
 
@@ -25,14 +32,14 @@
 | 草案             | Phase 6G     | Onboarding & Configuration Platform                              | `docs/exec-plans/active/phase-6g-onboarding.yaml`                      | TASK-014-01~TASK-014-18 (18 tasks, 17 slices)                                                                                                                                              |
 | 草案             | Phase 6H     | Harness V2 Evaluation Control Plane                              | `docs/exec-plans/active/phase-6h-harness-v2-eval-control-plane.yaml`   | 6H.1~6H.12 (Contracts, Trace, TaskPacks, Base Graders, UX Graders, Archive, CLI, Regression, MVP Packs, Transparency UI) — 暂停，让位 Phase 8A                                             |
 | [已完成]         | Phase 7B     | Browser Control System — openhanako Parity                       | `docs/exec-plans/active/phase-7b-browser-control-system.yaml`          | 7B.1~7B.8 (chromiumoxide + AXTree + BrowserCard, 8 slices)                                                                                                                                 |
-| **[当前]**       | Phase 7C     | Browser Subsystem Remediation — 12 Gap 全量纠正                  | `docs/exec-plans/active/phase-7c-browser-subsystem-remediation.yaml`   | 7C.1~7C.13 (profile / vision / headed / routing / wait / tabs / iframe / download / console / readability / web_research / quality / harness, 13 slices, 25-30 工程日, design-ref ADR-015) |
+| [已完成]         | Phase 7C     | Browser Subsystem Remediation — 12 Gap 全量纠正                  | `docs/exec-plans/active/phase-7c-browser-subsystem-remediation.yaml`   | 7C.1~7C.13 全部完成 (profile / vision / headed / routing / wait / tabs / iframe / download / console / readability / web_research / quality / harness)                                     |
 | [已完成]         | Phase 8A     | Memory Hardening & Pinned (S1)                                   | `docs/exec-plans/active/phase-8a-memory-hardening-and-pinned.yaml`     | T-A1~T-A4, T-B1~T-B4, T-F1~T-F5 (12 slices, ~10 工程日) — Sprint 1 完成                                                                                                                    |
 | 暂停             | Phase 8B     | Memory Compiler & Ticker (S2)                                    | `docs/exec-plans/active/phase-8b-memory-compiler-and-ticker.yaml`      | T-C1~T-C5, T-D1~T-D4, T-UI-2, T-UI-3 (11 slices, ~10 工程日) — 用户主动 park，让位 Phase 7C                                                                                                |
 | 草案             | Phase 8C     | Memory Facts & Tag Search (S3)                                   | `docs/exec-plans/active/phase-8c-memory-facts-and-tag-search.yaml`     | T-E1~T-E4 + UI-3 增量 (5 slices, ~7 工程日)                                                                                                                                                |
 | 草案             | Phase 8D     | Memory Experience & Diary (S4)                                   | `docs/exec-plans/active/phase-8d-memory-experience-and-diary.yaml`     | T-G1~T-G6, T-UI-4, T-UI-5 (8 slices, ~10 工程日)                                                                                                                                           |
 | 草案             | Phase 8E     | Memory Observability & Export (S5)                               | `docs/exec-plans/active/phase-8e-memory-observability-and-export.yaml` | T-H1~T-H3, Export v3, UI-9, UI-10, UI-11, UI-12 (6 slices, ~5 工程日)                                                                                                                      |
 | 草案             | Phase 9A     | Trustworthy Foundation                                           | `docs/exec-plans/active/phase-9a-trustworthy-foundation.yaml`          | 9a.1~9a.9（可信基线：测试门、harness 启用、session persistence、文档真相、无障碍、假数据治理、Harness/Memory/UI 入口）                                                                     |
-| **执行总索引**   | Phase M      | Staff Remediation Execution Index                                | `docs/exec-plans/active/phase-m-remediation-execution-index.md`        | M0→M5 的统一顺序、禁止并行项、进入/退出条件、人工 checkpoint、失败回退                                                                                                                     |
+| **[当前-Staff]** | Phase M      | Staff Remediation Execution Index                                | `docs/exec-plans/active/phase-m-remediation-execution-index.md`        | M0→M5 的统一顺序、禁止并行项、进入/退出条件、人工 checkpoint、失败回退                                                                                                                     |
 | 草案             | Phase M0     | Canonical Contracts And Truth                                    | `docs/exec-plans/active/phase-m0-canonical-contracts-and-truth.yaml`   | m0.1~m0.7（canonical domain model、workflow truth、runtime/activation/execution-mode contracts、god-file responsibility inventory；执行前必读 `phase-m0-executor-runbook.md`）           |
 | 草案             | Phase M1     | Backend Service Extraction                                       | `docs/exec-plans/active/phase-m1-backend-service-extraction.yaml`      | m1.1~m1.8（turn/provider/prompt/memory injection/stream/request intelligence/activation service 抽离 + control-plane seam；执行前必读 `phase-m1-executor-runbook.md`）                   |
 | 草案             | Phase M2     | Frontend Runtime Projection                                      | `docs/exec-plans/active/phase-m2-frontend-runtime-projection.yaml`     | m2.1~m2.9（contracts 拆分、translator/reducer/stores、activation gate boot layer、execution-mode explainability、App.tsx/chat-ui 收口；执行前必读 `phase-m2-executor-runbook.md`）       |
@@ -41,11 +48,7 @@
 | 草案             | Phase M5     | Self Evolution And Strategy Promotion                            | `docs/exec-plans/active/phase-m5-self-evolution-and-strategy-promotion.yaml` | m5.1~m5.8（trajectory scoring、failure clustering、reflection、candidate registry、offline eval、gated promotion、rollback、self-evolution safety；执行前必读 `phase-m5-executor-runbook.md`） |
 | **统一执行序列** | —            | Phase 6B + 6E + 6F 完整执行计划                                  | `docs/exec-plans/active/phase-6b+6e-unified-execution-sequence.md`     | 26 个 slice，最优并行顺序                                                                                                                                                                  |
 
-> **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F17, F25, UI-1~UI-8, N1, N3-N12）。  
-> Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  
-> 激活方式：将对应 YAML 文件中的 `phase_status: draft` 改为 `active`，并将本表中状态改为 `[当前]`。
-
-> **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的全部修复项（F1-F25、UI-1~UI-8、N1-N12）。  
+> **Phase 5 系列说明**：Phase 5 拆分为 5 个子 Phase（5A-5E），覆盖从 BS_Gap 审计报告中发现的 Phase 5 范围修复项（F1-F25、UI-1~UI-8、N1-N12）。  
 > Phase 5A 已标记为 active，可立即由 executor 执行。Phase 5B-5E 为 draft 状态，依赖前一个 Phase 完成后激活。  
 > 激活方式：将对应 YAML 文件中的 `phase_status: draft` 改为 `active`，并将本表中状态改为 `[当前]`。
 
@@ -59,7 +62,7 @@
 > - `M3` 负责 memory coordinator
 > - `M4` 负责 policy + harness governance
 > - `M5` 负责 self-evolution 与 strategy promotion  
-> 激活方式：任一时刻只允许一个 `Phase M*` 处于 `active` 状态；切换前必须满足执行总索引中的退出条件与人工 checkpoint。
+> 激活方式：Staff remediation executor 一律从 `Phase M` 执行总索引进入；任一时刻只允许一个 `Phase M*` 处于 `active` 状态；切换前必须满足执行总索引中的退出条件与人工 checkpoint。
 
 ## ✅ 已完成计划 (Completed Plans)
 

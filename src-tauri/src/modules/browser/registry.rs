@@ -66,6 +66,12 @@ pub struct BrowserRegistry {
     /// that window so they don't fight the human input.  Cleared by
     /// [`Self::set_takeover`] when the user releases.
     takeover_flags: DashMap<String, bool>,
+
+    /// Phase 7C, slice 7C.12 (12b/12c) — last-known URL per session.
+    /// Updated synchronously after every successful `navigate` so
+    /// `current_url()` / `get_all_status()` no longer rely on
+    /// `try_lock`-ing a busy session and returning `None` mid-flight.
+    last_known_urls: DashMap<String, String>,
 }
 
 impl BrowserRegistry {
@@ -92,6 +98,7 @@ impl BrowserRegistry {
             profile_mode,
             if2ai_home,
             takeover_flags: DashMap::new(),
+            last_known_urls: DashMap::new(),
         })
     }
 
@@ -195,6 +202,9 @@ impl BrowserRegistry {
         // Remove cold-state record before closing so a subsequent restore attempt
         // does not reopen a session the user explicitly stopped.
         self.cold_state.lock().await.remove(session_id);
+        // Phase 7C, slice 7C.12 (12b/12c) — drop the cached URL too;
+        // a subsequent re-launch will repopulate it on first navigate.
+        self.last_known_urls.remove(session_id);
 
         let (_, arc) = self
             .sessions
@@ -242,6 +252,11 @@ impl BrowserRegistry {
         let result = guard.navigate(url).await?;
         // Persist the post-redirect URL so cold restore lands on the right page.
         self.cold_state.lock().await.set(session_id, &result.url);
+        // Phase 7C, slice 7C.12 (12b/12c) — record into the lock-free
+        // cache so `current_url` / `get_all_status` never have to
+        // try_lock a busy session.
+        self.last_known_urls
+            .insert(session_id.to_owned(), result.url.clone());
         Ok(result)
     }
 
@@ -517,14 +532,15 @@ impl BrowserRegistry {
 
     /// Return the current URL for `session_id`, if known.
     ///
-    /// Uses a non-blocking `try_lock`; returns `None` if the session is busy.
+    /// Phase 7C, slice 7C.12 (12b) — reads from the lock-free
+    /// [`Self::last_known_urls`] cache instead of `try_lock`-ing the
+    /// session mutex, so a navigate-in-progress no longer makes this
+    /// return `None`.
     #[must_use]
     pub fn current_url(&self, session_id: &str) -> Option<String> {
-        let arc = match self.get_arc(session_id) {
-            Ok(a) => a,
-            Err(_) => return None,
-        };
-        arc.try_lock().ok().and_then(|s| s.current_url.clone())
+        self.last_known_urls
+            .get(session_id)
+            .map(|r| r.value().clone())
     }
 
     /// Return whether a browser is currently active for `session_id`.
@@ -536,17 +552,38 @@ impl BrowserRegistry {
     /// Enumerate all active sessions and their current status.
     #[must_use]
     pub fn get_all_status(&self) -> Vec<BrowserStatusEntry> {
+        // Phase 7C, slice 7C.12 (12c) — read from `last_known_urls`
+        // instead of `try_lock`-ing every active session.
         self.sessions
             .iter()
             .map(|r| {
-                let url = r.try_lock().ok().and_then(|s| s.current_url.clone());
+                let session_id = r.key().clone();
+                let url = self
+                    .last_known_urls
+                    .get(&session_id)
+                    .map(|cached| cached.value().clone());
                 BrowserStatusEntry {
-                    session_id: r.key().clone(),
+                    session_id,
                     running: true,
                     url,
                 }
             })
             .collect()
+    }
+
+    // ── Action log read API (Phase 7C, slice 7C.12 (12d)) ───────────────────
+
+    /// Return the live `action_log` for `session_id` without clearing
+    /// it (unlike [`Self::take_action_log`]).  Used by the new
+    /// `get_browser_action_log` Tauri command so the BrowserCard can
+    /// surface live action history.
+    pub async fn read_action_log(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ActionLogEntry>, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        Ok(guard.action_log.clone())
     }
 }
 
