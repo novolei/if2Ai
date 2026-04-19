@@ -42,6 +42,7 @@ pub mod todo_write;
 pub mod tool_search;
 pub mod unpin_memory;
 pub mod web_fetch;
+pub mod web_research;
 pub mod web_search;
 pub mod web_search_config;
 
@@ -123,5 +124,7 @@ pub use todo_write::todo_write_tool_entry;
 pub use unpin_memory::entry as unpin_memory_entry;
 #[allow(unused_imports)]
 pub use web_fetch::entry as web_fetch_entry;
+#[allow(unused_imports)]
+pub use web_research::entry as web_research_entry;
 #[allow(unused_imports)]
 pub use web_search::entry as web_search_entry;

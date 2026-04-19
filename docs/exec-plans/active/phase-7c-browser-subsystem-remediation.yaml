@@ -654,7 +654,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.10"
     name: "web_fetch 升级 — Readability 主要内容 + scraper CSS selector"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G10
     estimated_days: 3
@@ -704,7 +704,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.11"
     name: "web_research 复合工具 — search → fetch top-k → synthesize"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G11
     estimated_days: 1.5

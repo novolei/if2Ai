@@ -23,7 +23,7 @@
 //! choice to make and the routing prompt would just waste tokens.
 
 /// The names this module recognises as "web tools" for routing decisions.
-const WEB_TOOL_NAMES: &[&str] = &["web_search", "web_fetch", "browser"];
+const WEB_TOOL_NAMES: &[&str] = &["web_search", "web_fetch", "browser", "web_research"];
 
 /// Build the web-access routing prompt block, or `None` when fewer than
 /// two web tools are registered (in which case the LLM has nothing to
@@ -36,8 +36,9 @@ pub fn web_tools_routing_block(registered: &[String]) -> Option<String> {
     let has_search = registered.iter().any(|n| n == "web_search");
     let has_fetch = registered.iter().any(|n| n == "web_fetch");
     let has_browser = registered.iter().any(|n| n == "browser");
+    let has_research = registered.iter().any(|n| n == "web_research");
 
-    let count = [has_search, has_fetch, has_browser]
+    let count = [has_search, has_fetch, has_browser, has_research]
         .iter()
         .filter(|x| **x)
         .count();
@@ -80,6 +81,18 @@ pub fn web_tools_routing_block(registered: &[String]) -> Option<String> {
                is a SPA / JS-rendered (Twitter, Notion, modern e-commerce),\n   \
              • the user explicitly asked you to *see* or *operate* the page.\n",
         ));
+        step += 1;
+    }
+    if has_research {
+        block.push_str(&format!(
+            "{step}. **web_research** — COMPOUND shortcut for topic research.  \
+             Use when the user asks you to *research / investigate / gather info on* \
+             a topic (not a single URL) — replaces 1×web_search + N×web_fetch in one \
+             call.  Cost: ~3-10s for 3 pages fetched in parallel.\n",
+        ));
+    } else {
+        // Suppress unused variable warning when web_research isn't registered.
+        let _ = step;
     }
 
     block.push('\n');
@@ -192,7 +205,11 @@ mod tests {
 
     #[test]
     fn web_tool_names_is_stable() {
-        assert_eq!(web_tool_names(), &["web_search", "web_fetch", "browser"]);
+        // Phase 7C, slice 7C.11 — added web_research as the fourth tool.
+        assert_eq!(
+            web_tool_names(),
+            &["web_search", "web_fetch", "browser", "web_research"]
+        );
     }
 
     #[test]

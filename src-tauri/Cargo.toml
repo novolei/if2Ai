@@ -60,6 +60,10 @@ futures = "0.3"
 serde_yaml = "0.9"
 sysinfo = "0.33"
 chromiumoxide = { version = "0.9", default-features = true }
+# Phase 7C, slice 7C.10 — proper CSS-selector based HTML parser for the
+# `web_fetch` tool's `selector` mode and the lightweight readability
+# heuristic that picks the highest-scored content node.
+scraper = "0.20"
 tiktoken-rs = "0.9.1"
 # Phase 8A §0.5 Δ-10 — anyhow used by JobRunner closure return type
 # (`Future<Output = anyhow::Result<T>>`) so callers can ?-bubble heterogeneous

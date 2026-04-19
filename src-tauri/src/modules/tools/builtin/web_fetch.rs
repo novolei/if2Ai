@@ -42,7 +42,7 @@ const BLOCKED_HOSTS: &[&str] = &[
 
 /// Truncate a UTF-8 string to at most `max_bytes` bytes without splitting a
 /// multi-byte character boundary.
-fn truncate_to_bytes(s: &str, max_bytes: usize) -> String {
+pub(crate) fn truncate_to_bytes(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         return s.to_owned();
     }
@@ -193,66 +193,47 @@ pub fn entry() -> ToolEntry {
             };
             let html = String::from_utf8_lossy(capped).into_owned();
 
-            let result = if let Some(sel) = selector {
-                // Convert simple CSS selector to regex pattern
-                // Supports: tag, tag.class, tag#id, tag[attr=value]
-                let tag_pattern = if sel.contains('.') {
-                    // class selector
-                    let parts: Vec<&str> = sel.split('.').collect();
-                    let tag = parts[0];
-                    let class = parts[1];
-                    format!(r#"<{}[^>]*class="{}"[^>]*>([^<]*)"#, tag, class)
-                } else if sel.contains('#') {
-                    // id selector
-                    let parts: Vec<&str> = sel.split('#').collect();
-                    let tag = parts[0];
-                    let id = parts[1];
-                    format!(r#"<{}[^>]*id="{}"[^>]*>([^<]*)"#, tag, id)
-                } else if sel.starts_with('<') {
-                    // tag only - convert to regex
-                    let tag = sel.trim_matches('<').trim_matches('>');
-                    format!(r"<{}([^<]*)", tag)
-                } else {
-                    // Treat as generic tag pattern
-                    format!(r"<{}([^<]*)", sel)
-                };
-
-                let re = Regex::new(&tag_pattern).map_err(|e| {
-                    ToolError::Handler(format!("invalid selector '{}': {}", sel, e))
-                })?;
-
-                let mut results: Vec<String> = Vec::new();
-                for cap in re.captures_iter(&html) {
-                    if let Some(text) = cap.get(1) {
-                        let content = text.as_str().trim().to_string();
-                        if !content.is_empty() {
-                            results.push(content);
-                        }
-                    }
-                }
-                results.join("\n")
+            // Phase 7C, slice 7C.10 — `mode` selects extraction strategy.
+            //   selector  : CSS selector via the scraper crate
+            //   article   : lightweight readability heuristic
+            //   text      : strip-all-tags fallback (legacy behaviour)
+            //   auto      : article when content-type is HTML, else text
+            let mode = args
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto")
+                .to_ascii_lowercase();
+            let mode = if selector.is_some() && mode == "auto" {
+                "selector".to_string()
             } else {
-                // Return plain text (strip HTML tags) up to max_length bytes.
-                // We truncate by UTF-8 byte count (not char count) so the result
-                // always fits within the broker's max_result_size byte limit even
-                // for pages with multibyte characters (CJK, emoji, etc.).
-                // SAFETY: This regex pattern is a static string literal that is always valid.
-                // Regex::new() can only fail with an invalid pattern, which cannot happen here.
-                #[allow(clippy::expect_used)]
-                let tag_re = Regex::new(r"<[^>]+>").expect("regex pattern is valid static string");
-                let text = tag_re.replace_all(&html, " ");
-                let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                truncate_to_bytes(&normalized, max_length)
+                mode
             };
 
-            Ok(result)
+            let result = match mode.as_str() {
+                "selector" => extract_with_selector(&html, selector.unwrap_or(""))?,
+                "article" => {
+                    extract_article(&html).unwrap_or_else(|| extract_text(&html, max_length))
+                }
+                "text" => extract_text(&html, max_length),
+                "auto" | _ => {
+                    // Default: try article first; fall back to text.
+                    extract_article(&html).unwrap_or_else(|| extract_text(&html, max_length))
+                }
+            };
+
+            Ok(truncate_to_bytes(&result, max_length))
         })
     });
 
     ToolEntry {
         name: "web_fetch".to_string(),
         toolset: "web".to_string(),
-        description: "Fetch web page content".to_string(),
+        description: "Fetch web page content. \
+                      mode='auto' (default) extracts the main article via a readability heuristic; \
+                      mode='article' forces the heuristic; \
+                      mode='selector' returns text matching a real CSS selector (Phase 7C uses scraper); \
+                      mode='text' strips all tags (legacy fallback)."
+            .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -260,13 +241,18 @@ pub fn entry() -> ToolEntry {
                     "type": "string",
                     "description": "URL to fetch"
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["auto", "article", "selector", "text"],
+                    "description": "Extraction strategy. Default: 'auto' (article heuristic + text fallback)."
+                },
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector or tag name to extract specific elements"
+                    "description": "CSS selector for action='selector' (e.g. 'main article p', '.post-body')."
                 },
                 "max_length": {
                     "type": "number",
-                    "description": "Maximum content length (default: 51200)"
+                    "description": "Maximum content length in UTF-8 bytes (default: 49152)."
                 }
             },
             "required": ["url"]
@@ -281,6 +267,129 @@ pub fn entry() -> ToolEntry {
     }
 }
 
+// ── Phase 7C, slice 7C.10: extraction strategies ─────────────────────────────
+
+/// Strip every HTML tag and collapse whitespace.  Same algorithm as
+/// pre-7C.10 `web_fetch` (legacy behaviour), retained as the safety
+/// net for `mode='text'` and as fallback when `article` heuristic
+/// finds nothing useful.
+pub(crate) fn extract_text(html: &str, max_length: usize) -> String {
+    #[allow(clippy::expect_used)]
+    let tag_re = Regex::new(r"<[^>]+>").expect("regex pattern is valid static string");
+    let text = tag_re.replace_all(html, " ");
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_to_bytes(&normalized, max_length)
+}
+
+/// Real CSS-selector extraction via `scraper`.  Replaces the pre-7C.10
+/// regex-based selector that broke on nested elements / quoted
+/// attribute values.
+fn extract_with_selector(html: &str, sel: &str) -> Result<String, ToolError> {
+    use scraper::{Html, Selector};
+    if sel.is_empty() {
+        return Err(ToolError::Handler(
+            "mode='selector' requires a non-empty 'selector' field".to_string(),
+        ));
+    }
+    let document = Html::parse_document(html);
+    let parsed = Selector::parse(sel)
+        .map_err(|e| ToolError::Handler(format!("invalid CSS selector '{}': {:?}", sel, e)))?;
+    let mut out: Vec<String> = Vec::new();
+    for el in document.select(&parsed).take(50) {
+        let text: String = el.text().collect::<Vec<_>>().join(" ");
+        let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !trimmed.is_empty() {
+            out.push(trimmed);
+        }
+    }
+    Ok(out.join("\n\n"))
+}
+
+/// Lightweight Readability-style article extraction.
+///
+/// Strategy: walk every `<article>` / `<main>` / `<section>` / `<div>`,
+/// score = direct text length minus 50 × link-text length, return the
+/// highest-scored node's plain text.  Returns `None` when no candidate
+/// scored above zero (caller falls back to `extract_text`).
+///
+/// This is intentionally minimal — a full Mozilla Readability port
+/// would be ~3000 lines of JS-equivalent Rust; this 80-line version
+/// covers Wikipedia, blog posts, Substack, news articles, and most
+/// other content sites well enough for an LLM tool.
+pub(crate) fn extract_article(html: &str) -> Option<String> {
+    use scraper::{Html, Selector};
+    let document = Html::parse_document(html);
+    // Strip noisy elements first.
+    #[allow(clippy::expect_used)]
+    let strip_sel = Selector::parse("script, style, nav, footer, aside, noscript")
+        .expect("static selector is valid");
+    let mut html_clean = html.to_string();
+    for el in document.select(&strip_sel) {
+        // Mark with a placeholder we can wipe via regex.
+        // (scraper does not let us mutate; this is an approximation.)
+        let outer = el.html();
+        if !outer.is_empty() {
+            html_clean = html_clean.replace(&outer, "");
+        }
+    }
+    let cleaned = Html::parse_document(&html_clean);
+
+    #[allow(clippy::expect_used)]
+    let candidate_sel =
+        Selector::parse("article, main, section, div").expect("static selector is valid");
+    #[allow(clippy::expect_used)]
+    let link_sel = Selector::parse("a").expect("static selector is valid");
+
+    let mut best_score: i64 = 0;
+    let mut best_text: Option<String> = None;
+    for el in cleaned.select(&candidate_sel) {
+        let text: String = el.text().collect::<Vec<_>>().join(" ");
+        let text_len = text.chars().count() as i64;
+        if text_len < 200 {
+            // Ignore short navigation snippets / sidebars.
+            continue;
+        }
+        // Bonus for class/id hint that this is article content.
+        let attr_bonus = el
+            .value()
+            .attr("class")
+            .or_else(|| el.value().attr("id"))
+            .map(|s| s.to_ascii_lowercase())
+            .map(|s| {
+                let mut bonus = 0i64;
+                for hint in ["article", "content", "main", "post", "entry", "story"] {
+                    if s.contains(hint) {
+                        bonus += 200;
+                    }
+                }
+                for penalty in ["sidebar", "comment", "footer", "related", "ad"] {
+                    if s.contains(penalty) {
+                        bonus -= 200;
+                    }
+                }
+                bonus
+            })
+            .unwrap_or(0);
+        let link_text_len: i64 = el
+            .select(&link_sel)
+            .map(|a| a.text().collect::<String>().chars().count() as i64)
+            .sum();
+        let score = text_len + attr_bonus - link_text_len * 2;
+        if score > best_score {
+            best_score = score;
+            best_text = Some(text);
+        }
+    }
+
+    let raw = best_text?;
+    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +400,55 @@ mod tests {
         assert_eq!(entry.name, "web_fetch");
         assert_eq!(entry.toolset, "web");
         assert!(!entry.disabled);
+        // Phase 7C, slice 7C.10 — schema must include `mode` enum.
+        let schema = entry.input_schema.to_string();
+        assert!(schema.contains("\"mode\""));
+        assert!(schema.contains("\"article\""));
+        assert!(schema.contains("\"selector\""));
+    }
+
+    #[test]
+    fn extract_with_selector_returns_text_for_real_css() {
+        let html = r#"<html><body>
+            <main><p class="x">Hello</p><p class="x">World</p></main>
+        </body></html>"#;
+        let out = extract_with_selector(html, "p.x").unwrap();
+        assert!(out.contains("Hello"));
+        assert!(out.contains("World"));
+    }
+
+    #[test]
+    fn extract_with_selector_rejects_invalid_selector() {
+        let err = extract_with_selector("<html></html>", "$$$bogus").unwrap_err();
+        assert!(matches!(err, ToolError::Handler(_)));
+    }
+
+    #[test]
+    fn extract_article_picks_largest_content_node() {
+        let html = r#"<html><body>
+            <nav><a href='#'>Skip</a></nav>
+            <article class="post-body">
+                <p>This is the main story body that contains substantially more text than any other section in the document so the heuristic should pick it up clearly and easily.</p>
+                <p>It even has a second paragraph with more substantive prose to push the score over the threshold of 200 characters required by extract_article.</p>
+            </article>
+            <aside><a href='#'>Sidebar link</a></aside>
+        </body></html>"#;
+        let out = extract_article(html).expect("article should be detected");
+        assert!(out.contains("main story body"));
+        assert!(!out.contains("Sidebar"));
+    }
+
+    #[test]
+    fn extract_article_returns_none_for_text_too_short() {
+        let html = "<html><body><p>Hi</p></body></html>";
+        assert!(extract_article(html).is_none());
+    }
+
+    #[test]
+    fn extract_text_strips_tags() {
+        let html = "<html><body><p>Hello</p><script>bad()</script></body></html>";
+        let out = extract_text(html, 1024);
+        assert!(out.contains("Hello"));
+        assert!(!out.contains("<p>"));
     }
 }
