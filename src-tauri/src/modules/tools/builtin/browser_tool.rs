@@ -282,6 +282,15 @@ async fn execute_screenshot_multimodal(
         .clone()
         .unwrap_or_else(|| "default".to_owned());
 
+    // Phase 7C, slice 7C.3 — symmetric guard with the legacy text path.
+    if registry.is_taken_over(&session_id) {
+        return Err(ToolError::Handler(
+            "User has taken over the browser; AI tools are paused. \
+             Wait for the next user message before retrying."
+                .to_owned(),
+        ));
+    }
+
     ensure_running_or_restore(&registry, &session_id).await?;
 
     let b64 = match registry.screenshot(&session_id).await {
@@ -338,6 +347,18 @@ async fn execute_browser_action(
         .session_id
         .clone()
         .unwrap_or_else(|| "default".to_owned());
+
+    // Phase 7C, slice 7C.3 — refuse all actions while the user has taken
+    // over the browser.  The LLM is expected to wait for the next user
+    // message rather than retry; the routing prompt block (slice 7C.4)
+    // explicitly tells it so.
+    if registry.is_taken_over(&session_id) {
+        return Err(ToolError::Handler(
+            "User has taken over the browser; AI tools are paused. \
+             Wait for the next user message before retrying."
+                .to_owned(),
+        ));
+    }
 
     match action {
         "start" => {

@@ -289,8 +289,8 @@ pub use agent::{
 #[allow(unused_imports)]
 pub use browser::{
     clear_browser_profile, close_browser_session, get_browser_sessions, get_browser_settings,
-    get_chrome_status, list_browser_profiles, request_browser_status, set_browser_settings,
-    ChromeStatusPayload,
+    get_chrome_status, list_browser_profiles, release_browser_takeover, request_browser_status,
+    request_browser_takeover, set_browser_settings, ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use harness::{

@@ -1354,6 +1354,47 @@ export async function setBrowserSettings(settings: BrowserSettings): Promise<voi
   return invoke<void>('set_browser_settings', { settings })
 }
 
+// ── Headed mode + user takeover (Phase 7C, slice 7C.3) ───────────────────────
+
+/** Result returned by `request_browser_takeover` so the UI can update its
+ *  address bar after the headed Chrome relaunch + auto-navigate.
+ */
+export interface BrowserNavigateResult {
+  url: string
+  title: string
+  snapshot: string
+}
+
+/**
+ * Hand control of the browser to the human user.
+ *
+ * Closes the headless Chromium for `sessionId` and re-launches it as a
+ * **visible** Chrome window against the same persistent profile.  While
+ * this returns successfully, every subsequent AI `browser` tool call
+ * surfaces a "paused" error until {@link releaseBrowserTakeover} is
+ * invoked.
+ */
+export async function requestBrowserTakeover(
+  sessionId: string,
+): Promise<BrowserNavigateResult> {
+  return invoke<BrowserNavigateResult>('request_browser_takeover', { sessionId })
+}
+
+/**
+ * Release the takeover flag; optionally re-launch headless so the
+ * Chrome window goes away.  Cookies / login state created by the user
+ * are preserved when the persistent profile mode is in use.
+ */
+export async function releaseBrowserTakeover(
+  sessionId: string,
+  backToHeadless = true,
+): Promise<void> {
+  return invoke<void>('release_browser_takeover', {
+    sessionId,
+    backToHeadless,
+  })
+}
+
 /**
  * Subscribe to `"browser-status"` Tauri events.
  * Returns an unlisten function — call it on component unmount to avoid memory leaks.

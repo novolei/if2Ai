@@ -23,6 +23,7 @@ use crate::modules::browser::profile::{
     ProfileEntry,
 };
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
+use crate::modules::browser::session::NavigateResult;
 
 /// Response payload for `get_chrome_status`.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -149,4 +150,60 @@ pub async fn set_browser_settings(
     settings
         .save(registry.if2ai_home())
         .map_err(|e| e.to_string())
+}
+
+// ── Headed mode + takeover (Phase 7C, slice 7C.3) ────────────────────────────
+
+/// Hand control of the browser to the human user.
+///
+/// The headless Chromium for `session_id` is closed, then a fresh
+/// **headed** Chromium is launched against the same persistent profile
+/// (so cookies / login state survive — see Phase 7C, slice 7C.1
+/// `BrowserProfileMode::PerSessionPersistent`).  While the takeover flag
+/// is set, all AI `browser` tool calls return a "paused" error so they
+/// don't fight the user's input.
+///
+/// Returns the [`NavigateResult`] of the post-relaunch navigation (back
+/// to whatever URL was active) so the UI can update its address bar.
+#[tauri::command]
+pub async fn request_browser_takeover(
+    session_id: String,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<NavigateResult, String> {
+    registry.set_takeover(&session_id, true);
+    match registry.relaunch_with_mode(&session_id, true).await {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            // Roll back the flag so the AI is not stuck "paused" if the
+            // headed launch fails (e.g. no display on a CI Linux box).
+            registry.set_takeover(&session_id, false);
+            Err(err.to_string())
+        }
+    }
+}
+
+/// Release the takeover flag and (optionally) collapse the browser back
+/// to headless so the user reclaims their screen real estate.
+///
+/// Setting `back_to_headless = true` re-launches the session against the
+/// same profile so the AI inherits whatever state the user produced
+/// (cookies, scroll position is lost — only persistent state survives).
+#[tauri::command]
+pub async fn release_browser_takeover(
+    session_id: String,
+    back_to_headless: bool,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<(), String> {
+    registry.set_takeover(&session_id, false);
+    if back_to_headless {
+        if let Err(err) = registry.relaunch_with_mode(&session_id, false).await {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %err,
+                "browser takeover released but headless relaunch failed; AI may need to call 'navigate' again"
+            );
+            return Err(err.to_string());
+        }
+    }
+    Ok(())
 }

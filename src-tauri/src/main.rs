@@ -20,7 +20,7 @@ use commands::{
     channel_list,
     channel_list_configured,
     channel_test,
-    // Browser control commands (Phase 7B + 7C profile management)
+    // Browser control commands (Phase 7B + 7C profile management + 7C.3 takeover)
     clear_browser_profile,
     close_browser_session,
     close_settings_window,
@@ -123,11 +123,13 @@ use commands::{
     provider_list_models,
     provider_test,
     read_file_preview,
+    release_browser_takeover,
     remove_web_search_provider,
     rename_project,
     rename_session,
     reorder_web_search_providers,
     request_browser_status,
+    request_browser_takeover,
     resolve_skill_slash,
     respond_permission,
     run_agent_turn,
@@ -823,7 +825,7 @@ fn main() {
             start_agent_stream,
             stop_agent_stream,
             respond_permission,
-            // Browser control commands (Phase 7B + 7C profile management)
+            // Browser control commands (Phase 7B + 7C profile management + 7C.3 takeover)
             get_browser_sessions,
             close_browser_session,
             get_chrome_status,
@@ -832,6 +834,8 @@ fn main() {
             clear_browser_profile,
             get_browser_settings,
             set_browser_settings,
+            request_browser_takeover,
+            release_browser_takeover,
             list_sessions,
             delete_session,
             rename_session,

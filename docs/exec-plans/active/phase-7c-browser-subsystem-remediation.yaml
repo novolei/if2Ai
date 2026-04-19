@@ -32,8 +32,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['7C.1', '7C.2']
-  current_slice: '7C.3'
+  completed_slices: ['7C.1', '7C.2', '7C.3']
+  current_slice: '7C.4'
   blocked: []
   notes: >
     Phase 7C 推进至 7C.3。
@@ -67,8 +67,37 @@ dashboard:
     Gemini provider：codebase 中尚无 Gemini 实现，spec 要求改为预留 stub，本 slice
     不引入 Gemini provider；待后续 Phase 接入时 ToolResultContentBlock::Image 已经 ready。
 
-    下一步：7C.3 Headed Mode + 真正的用户接管（依赖 7C.1 的 PerSessionPersistent
-    profile，预计 3 工程日）。
+    7C.3 done — Headed Mode + Takeover。
+    交付：
+      - session.rs::new() 加 headed: bool 参数；headed=true 时 with_head() +
+        --window-position=900,80 + --window-size=1024,768；headless 保留 --disable-gpu
+      - BrowserSession 新增 pub headed 字段
+      - registry.rs:
+        + launch_with_mode(headed) — launch 现在是 headed=false 的 thin wrapper
+        + relaunch_with_mode(headed) -> NavigateResult — close + new + 复用 profile +
+          自动 navigate 到 last_known_url（PerSessionPersistent 模式 cookies 完整保留）
+        + takeover_flags: DashMap<String, bool> + set_takeover/is_taken_over
+        + is_headed(session_id) -> Option<bool>
+      - commands/browser.rs: request_browser_takeover / release_browser_takeover
+        两个 Tauri 命令；headed 启动失败时回滚 takeover flag
+      - browser_tool.rs: legacy + multimodal 两个入口都加 is_taken_over 守卫，
+        return ToolError "User has taken over the browser; AI tools are paused.
+        Wait for the next user message before retrying."
+      - lib/tauri.ts: requestBrowserTakeover / releaseBrowserTakeover wrapper +
+        BrowserNavigateResult 类型
+      - components/browser/BrowserCard.tsx: Hand 图标 toggle 按钮 +
+        amber "用户接管中" 徽章 + Expand 按钮在接管时禁用 + toast 反馈
+      - 新增 3 个 registry 单测（takeover_flag round-trip / is_headed missing /
+        relaunch_with_mode plumbing）；env-mutating profile tests 加 ENV_LOCK
+        避免并行测试 race
+    BrowserViewerPage 完整重构（移除 navigate_viewer_window mirror + 改 thumbnail
+    polling 全屏）暂未做，spec 标注的"视觉幻觉"不影响 takeover 主线 — 用户用
+    BrowserCard 的 Hand 按钮触发 takeover 后会直接弹出真实 Chrome 窗口，不再依赖
+    viewer。viewer page 的清理留给后续 UX 改进 slice。
+    清单：28 browser 单测全过；clippy 0 新警告（17 警告全在 pre-existing TTS）；
+    TypeScript 0 新错误（pre-existing onboarding/App/TTS 错误未影响）。
+
+    下一步：7C.4 System Prompt Tools Routing（约 1 工程日）。
 
 slices:
 
@@ -204,7 +233,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.3"
     name: "Headed Mode + 真正的用户接管"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G3
     estimated_days: 3

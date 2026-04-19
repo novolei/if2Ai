@@ -13,13 +13,16 @@
  * The Tauri event listener is cleaned up on component unmount.
  */
 
-import { useEffect } from 'react'
-import { Expand, Globe, Square } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Expand, Globe, Hand, Pause, Square } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
   closeBrowserSession,
   listenToBrowserStatus,
   openBrowserViewerWindow,
+  releaseBrowserTakeover,
+  requestBrowserTakeover,
 } from '@/lib/tauri'
 import {
   useBrowserStore,
@@ -55,6 +58,12 @@ function hostnameOf(url: string | null): string {
 export function BrowserCard({ sessionId }: BrowserCardProps) {
   const { browserBySession } = useBrowserStore()
   const entry = browserBySession[sessionId]
+
+  // Phase 7C, slice 7C.3 — local "user has taken over" state.
+  // Mirrors the backend `BrowserRegistry::is_taken_over` flag; we keep
+  // a copy in the React tree so the button can flip without a round-trip.
+  const [takenOver, setTakenOver] = useState(false)
+  const [takeoverPending, setTakeoverPending] = useState(false)
 
   // Subscribe to the global `"browser-status"` Tauri event.
   // A single listener per BrowserCard instance; cleaned up on unmount or
@@ -124,6 +133,34 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
     })
   }
 
+  const handleToggleTakeover = (): void => {
+    if (takeoverPending) return
+    setTakeoverPending(true)
+    void (async () => {
+      try {
+        if (takenOver) {
+          await releaseBrowserTakeover(sessionId, true)
+          setTakenOver(false)
+          toast.success('已释放接管', {
+            description: 'AI 浏览器已收回后台，工具调用已恢复。',
+          })
+        } else {
+          await requestBrowserTakeover(sessionId)
+          setTakenOver(true)
+          toast.success('你已接管浏览器', {
+            description: '一个真实的 Chrome 窗口已弹出；AI 工具调用暂停直到释放。',
+          })
+        }
+      } catch (err: unknown) {
+        toast.error(takenOver ? '释放接管失败' : '请求接管失败', {
+          description: String(err),
+        })
+      } finally {
+        setTakeoverPending(false)
+      }
+    })()
+  }
+
   return (
     <div
       className={cn(
@@ -152,13 +189,23 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
         )}
 
         {/* Animated "running" pill */}
-        <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-0.5 backdrop-blur-[4px]">
-          {/* Jade pulse dot — uses the design-system --jade color token */}
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-jade" />
-          <span className="text-[10px] font-medium tracking-tight text-white/90">
-            运行中
-          </span>
-        </div>
+        {!takenOver ? (
+          <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-0.5 backdrop-blur-[4px]">
+            {/* Jade pulse dot — uses the design-system --jade color token */}
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-jade" />
+            <span className="text-[10px] font-medium tracking-tight text-white/90">
+              运行中
+            </span>
+          </div>
+        ) : (
+          // Phase 7C, slice 7C.3 — amber "user-taken-over" badge.
+          <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-amber-500/90 px-2 py-0.5 backdrop-blur-[4px]">
+            <Pause className="h-2.5 w-2.5 text-white" />
+            <span className="text-[10px] font-medium tracking-tight text-white">
+              用户接管中
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── Info row ──────────────────────────────────────────────────────── */}
@@ -171,18 +218,42 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
           </span>
         </div>
 
+        {/* Take over / release — Phase 7C, slice 7C.3 */}
+        <button
+          type="button"
+          onClick={handleToggleTakeover}
+          disabled={takeoverPending}
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+            'transition-colors duration-150 active:scale-90',
+            takenOver
+              ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+              : 'text-muted-foreground hover:bg-black/8 hover:text-foreground',
+            'disabled:cursor-wait disabled:opacity-50',
+          )}
+          aria-label={takenOver ? '释放接管' : '接管浏览器'}
+          title={
+            takenOver
+              ? '释放接管 — 关闭可见窗口，AI 重新接手'
+              : '接管浏览器 — 弹出真实 Chrome 窗口供你登录 / 解 CAPTCHA'
+          }
+        >
+          <Hand className="h-3 w-3" />
+        </button>
+
         {/* Open viewer window */}
         <button
           type="button"
           onClick={handleOpenViewer}
+          disabled={takenOver}
           className={cn(
             'flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
             'text-muted-foreground transition-colors duration-150',
             'hover:bg-black/8 hover:text-foreground',
-            'active:scale-90',
+            'active:scale-90 disabled:opacity-30 disabled:cursor-not-allowed',
           )}
           aria-label="查看浏览器"
-          title="查看浏览器"
+          title={takenOver ? '接管中无法预览' : '查看浏览器'}
         >
           <Expand className="h-3 w-3" />
         </button>

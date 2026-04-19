@@ -491,7 +491,13 @@ fn dir_size(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    /// Process-wide lock serialising every test that mutates the
+    /// `IF2AI_BROWSER_PROFILE_MODE` env var.  Without this, parallel
+    /// `cargo test` runs see each other's writes and fail flakily.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_is_per_session_persistent() {
@@ -536,8 +542,8 @@ mod tests {
 
     #[test]
     fn from_env_or_config_env_wins() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
-        // SAFETY: scoped env mutation; tests run single-threaded on this var.
         std::env::set_var(ENV_VAR, "ephemeral");
         let mode = BrowserProfileMode::from_env_or_config(tmp.path());
         std::env::remove_var(ENV_VAR);
@@ -546,6 +552,7 @@ mod tests {
 
     #[test]
     fn from_env_or_config_falls_back_to_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         std::env::remove_var(ENV_VAR);
         let mode = BrowserProfileMode::from_env_or_config(tmp.path());
@@ -643,6 +650,7 @@ mod tests {
 
     #[test]
     fn settings_load_returns_defaults_when_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         std::env::remove_var(ENV_VAR);
         let s = BrowserSettings::load(tmp.path(), BrowserProfileMode::Ephemeral);
@@ -655,6 +663,7 @@ mod tests {
 
     #[test]
     fn settings_save_then_reload_roundtrips() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         std::env::remove_var(ENV_VAR);
         let s = BrowserSettings {
@@ -673,6 +682,7 @@ mod tests {
 
     #[test]
     fn settings_load_surfaces_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         std::env::set_var(ENV_VAR, "ephemeral");
         let s = BrowserSettings::load(tmp.path(), BrowserProfileMode::PerSessionPersistent);

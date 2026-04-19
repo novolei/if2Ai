@@ -86,6 +86,11 @@ pub struct BrowserSession {
     /// when the mode is `Ephemeral`; persistent profiles survive between
     /// restarts so the AI keeps the user's login state.
     _profile: ProfileHandle,
+    /// Phase 7C, slice 7C.3 — `true` when this session was launched with
+    /// `--headed` and a visible Chromium window.  The user takes over the
+    /// browser by relaunching the session in this mode (see
+    /// [`crate::modules::browser::registry::BrowserRegistry::relaunch_with_mode`]).
+    pub headed: bool,
 }
 
 impl BrowserSession {
@@ -93,7 +98,10 @@ impl BrowserSession {
     /// from `profile_mode` and open an initial blank page.
     ///
     /// `if2ai_home` is the user-data root (typically `~/.if2ai/`); it
-    /// determines where the persistent profile directory lives.
+    /// determines where the persistent profile directory lives.  `headed`
+    /// (Phase 7C, slice 7C.3) controls whether Chromium runs visible to
+    /// the user — `false` is the production default; `true` is set by the
+    /// "request takeover" path so the user can interact with the page.
     ///
     /// Searches for an installed Chrome/Chromium binary via
     /// [`find_chrome_binary`]. Returns [`BrowserError::ChromeNotFound`] when
@@ -103,6 +111,7 @@ impl BrowserSession {
         session_id: String,
         profile_mode: BrowserProfileMode,
         if2ai_home: &Path,
+        headed: bool,
     ) -> Result<Self, BrowserError> {
         let chrome_status = find_chrome_binary();
         if !chrome_status.found {
@@ -114,7 +123,8 @@ impl BrowserSession {
             session_id = %session_id,
             chrome = %chrome_path.display(),
             mode = ?profile_mode,
-            "launching headless browser"
+            headed = headed,
+            "launching browser"
         );
 
         // Resolve the profile location.  PerSessionPersistent / Shared keep
@@ -135,12 +145,10 @@ impl BrowserSession {
         // internal sandbox layer conflicts with the host OS process-level security
         // policy and the process exits before writing its DevTools WebSocket URL,
         // which chromiumoxide surfaces as "CDP error: Browser process exit".
-        let config = BrowserConfig::builder()
+        let mut builder = BrowserConfig::builder()
             .chrome_executable(chrome_path)
             .user_data_dir(&profile.path)
             .no_sandbox()
-            // Prevent GPU-initialisation crash in headless environments.
-            .arg("--disable-gpu")
             // Skip first-run wizard and default-browser check for faster startup.
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
@@ -154,7 +162,25 @@ impl BrowserSession {
             // Remove the `--enable-automation` Chrome feature flag that is
             // added automatically by chromiumoxide. It shows an info-bar in
             // headed mode and exposes an automation flag in JS.
-            .arg("--exclude-switches=enable-automation")
+            .arg("--exclude-switches=enable-automation");
+
+        if headed {
+            // Phase 7C, slice 7C.3 — visible Chrome window so the user can
+            // take over (log in, solve CAPTCHA, fill multi-step forms).
+            // Position the window away from the If2Ai main window so both
+            // remain visible side-by-side.
+            builder = builder
+                .with_head()
+                .arg("--window-position=900,80")
+                .arg("--window-size=1024,768");
+        } else {
+            // Headless: keep the GPU disabled to avoid initialisation crashes
+            // on headless macOS / Linux runners.  In headed mode we leave
+            // Chrome's default GPU on so pages render normally.
+            builder = builder.arg("--disable-gpu");
+        }
+
+        let config = builder
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
@@ -204,6 +230,7 @@ impl BrowserSession {
             current_url: None,
             action_log: Vec::new(),
             _profile: profile,
+            headed,
         })
     }
 
@@ -224,7 +251,13 @@ impl BrowserSession {
             .prefix("if2ai-test-home-")
             .tempdir()
             .map_err(|e| BrowserError::ProfileError(e.to_string()))?;
-        Self::new(session_id, BrowserProfileMode::Ephemeral, if2ai_home.path()).await
+        Self::new(
+            session_id,
+            BrowserProfileMode::Ephemeral,
+            if2ai_home.path(),
+            false,
+        )
+        .await
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
