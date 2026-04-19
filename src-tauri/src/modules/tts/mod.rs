@@ -28,6 +28,10 @@ pub mod error;
 pub mod inference;
 pub mod manager;
 pub mod model;
+pub mod performance;
+
+#[cfg(test)]
+mod performance_tests;
 pub mod provider;
 pub mod text;
 pub mod voice;
@@ -39,6 +43,8 @@ pub use config::{AudioChunk, GenerationParams, VoicePreset};
 pub use error::TtsError;
 #[allow(unused_imports)]
 pub use model::{ensure_models_cached, ModelPaths};
+#[allow(unused_imports)]
+pub use performance::{SynthesisProfile, TtsConfig};
 #[allow(unused_imports)]
 pub use text::normalize_tts_text;
 #[allow(unused_imports)]
