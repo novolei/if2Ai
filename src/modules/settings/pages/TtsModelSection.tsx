@@ -149,9 +149,21 @@ export function TtsModelSection() {
     }
   }, [])
 
+  const loadDownloadState = useCallback(async () => {
+    try {
+      const d = await ttsModelDownloadStatus()
+      if (d.is_downloading) {
+        setDownload(d)
+      }
+    } catch {
+      // Ignore
+    }
+  }, [])
+
   useEffect(() => {
     void loadStatus()
-  }, [loadStatus])
+    void loadDownloadState()
+  }, [loadStatus, loadDownloadState])
 
   // Poll download progress
   useEffect(() => {
