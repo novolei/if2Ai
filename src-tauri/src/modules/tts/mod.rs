@@ -129,7 +129,7 @@ pub struct SynthesisParams {
 }
 
 /// Synthesis mode — determines how the voice is selected.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum SynthesisMode {
     /// Clone voice from a reference audio file.
     #[default]

@@ -376,9 +376,21 @@ fn main() {
         modules::runtime::config::set_current(cfg);
     }
 
-    // Set up cleanup hooks
-    std::panic::set_hook(Box::new(|_| {
-        cleanup_processes();
+    // Set up cleanup hooks.
+    //
+    // We chain on top of the default hook so the original panic message,
+    // location, and (with RUST_BACKTRACE=1) the stack are still surfaced
+    // to stderr / the log file before we run any cleanup.  Replacing it
+    // with `Box::new(|_| cleanup_processes())` previously swallowed the
+    // panic output entirely, leaving operators with only the cryptic
+    // "thread caused non-unwinding panic. aborting." line that comes
+    // from `pkill -f if2ai-backend` killing this very process during
+    // unwind.  We also no longer pkill ourselves on panic — abort will
+    // tear the process down on its own and pkill matches the live PID.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        tracing::error!(panic = %info, "[panic] backend panicked");
     }));
 
     // Initialize directories
@@ -859,7 +871,7 @@ fn main() {
             // async runtime so the setup closure stays synchronous.
             {
                 let ticker_for_start = app
-                    .state::<std::sync::Arc<AppState>>()
+                    .state::<AppState>()
                     .inner()
                     .memory_ticker
                     .clone();
