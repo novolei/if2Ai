@@ -110,8 +110,15 @@ fn tokenizer_files() -> &'static [&'static str] {
 }
 
 /// Build the HuggingFace download URL for a file.
+///
+/// Uses the configured mirror URL if set, otherwise defaults to
+/// `huggingface.co`.
 fn hf_file_url(repo: &str, file: &str) -> String {
-    format!("https://huggingface.co/{repo}/resolve/main/{file}")
+    let base = crate::commands::system_check::get_hf_mirror_url()
+        .unwrap_or_else(|| "https://huggingface.co".to_string());
+    // Strip trailing slash from base so the path is clean.
+    let base = base.strip_suffix('/').unwrap_or(&base);
+    format!("{base}/{repo}/resolve/main/{file}")
 }
 
 /// Check TTS model file status.

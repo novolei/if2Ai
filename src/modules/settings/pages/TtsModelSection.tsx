@@ -290,7 +290,7 @@ export function TtsModelSection() {
           <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
             <span>{download.current_file}</span>
             <span className="font-mono">
-              {formatBytes(download.downloaded_bytes)} / {formatBytes(download.total_bytes || status?.total_bytes ?? 0)}
+              {formatBytes(download.downloaded_bytes)} / {formatBytes(download.total_bytes ?? status?.total_bytes ?? 0)}
             </span>
           </div>
         </div>

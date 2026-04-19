@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { CompactInput } from '../components/CompactInput'
 import {
-  Brain, Cpu, MessageSquare, Wrench, FileText, Zap,
+  Brain, Cpu, MessageSquare, Wrench, FileText, Zap, Globe,
   ChevronDown, Check, AlertCircle, RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -14,7 +14,14 @@ const DEFAULT_MODEL_NAME = 'intfloat/multilingual-e5-small'
 
 interface ModelConfig {
   embedded_model_name: string
+  hf_mirror_url?: string | null
 }
+
+/** Known HuggingFace mirror presets */
+const MIRROR_PRESETS = [
+  { label: 'HuggingFace (官方)', value: '' },
+  { label: 'hf-mirror.com (国内)', value: 'https://hf-mirror.com' },
+]
 
 interface ModelRoleConfig {
   role: string
@@ -220,6 +227,9 @@ export function ModelSettingsPage() {
   const [savingRole, setSavingRole] = useState<string | null>(null)
   const [loadingModels, setLoadingModels] = useState(true)
 
+  /** HF mirror download source */
+  const [mirrorUrl, setMirrorUrl] = useState('')
+
   /** Which role's dropdown is open — null means all closed */
   const [openRoleId, setOpenRoleId] = useState<string | null>(null)
 
@@ -253,6 +263,7 @@ export function ModelSettingsPage() {
     try {
       const config = await invoke<ModelConfig>('get_model_config')
       setModelName(config.embedded_model_name)
+      setMirrorUrl(config.hf_mirror_url ?? '')
     } catch {
       // Use default
     }
@@ -304,7 +315,10 @@ export function ModelSettingsPage() {
     setSavingEmbedded(true)
     try {
       await invoke<ModelConfig>('set_model_config', {
-        config: { embedded_model_name: modelName.trim() },
+        config: {
+          embedded_model_name: modelName.trim(),
+          hf_mirror_url: mirrorUrl || null,
+        },
       })
       toast.success('已保存向量化模型配置')
     } catch (err) {
@@ -470,6 +484,46 @@ export function ModelSettingsPage() {
           >
             {savingEmbedded ? '保存中…' : '保存'}
           </button>
+        </div>
+      </SettingsSurface>
+
+      {/* ── Download Source (HF Mirror) ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex size-8 items-center justify-center rounded-xl bg-blue-500/9">
+            <Globe className="size-4 text-blue-600" />
+          </div>
+          <div>
+            <SectionLabel>模型下载源</SectionLabel>
+          </div>
+        </div>
+        <p className="mb-4 text-[11.5px] leading-5 text-muted-foreground">
+          选择模型下载的服务器源。国内用户可选 hf-mirror.com 以获得更快的下载速度。
+        </p>
+        <div className="flex flex-col gap-2">
+          {MIRROR_PRESETS.map((preset) => (
+            <button
+              key={preset.value}
+              type="button"
+              onClick={() => setMirrorUrl(preset.value)}
+              className={cn(
+                'flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all',
+                (mirrorUrl === preset.value)
+                  ? 'border-jade/30 bg-jade/4'
+                  : 'border-black/6 bg-black/[0.016] hover:bg-black/3',
+              )}
+            >
+              <div className={cn(
+                'flex size-4 shrink-0 items-center justify-center rounded-md border',
+                (mirrorUrl === preset.value)
+                  ? 'border-jade bg-jade text-white'
+                  : 'border-black/10',
+              )}>
+                {mirrorUrl === preset.value && <Check className="h-2.5 w-2.5" />}
+              </div>
+              <span className="text-[12px] font-medium text-foreground/80">{preset.label}</span>
+            </button>
+          ))}
         </div>
       </SettingsSurface>
 
