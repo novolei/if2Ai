@@ -105,9 +105,22 @@ impl TtsProvider for MockTtsProvider {
             return Err(TtsError::EmptyText);
         }
 
+        // Continuation mode requires prompt_text when prompt_audio is provided.
+        if params.mode == SynthesisMode::Continuation
+            && params.prompt_audio_path.is_some()
+            && params.prompt_text.is_none()
+        {
+            return Err(TtsError::InvalidParam(
+                "continuation mode with prompt_audio_path requires prompt_text".to_string(),
+            ));
+        }
+
         // Record params for test assertions.
         {
-            let mut last = self.last_params.lock().expect("last_params mutex poisoned");
+            let mut last = self
+                .last_params
+                .lock()
+                .map_err(|_| TtsError::SynthesisFailed("mutex poisoned".into()))?;
             *last = Some(params.clone());
         }
 
@@ -143,9 +156,21 @@ impl TtsProvider for MockTtsProvider {
             return Err(TtsError::EmptyText);
         }
 
+        if params.mode == SynthesisMode::Continuation
+            && params.prompt_audio_path.is_some()
+            && params.prompt_text.is_none()
+        {
+            return Err(TtsError::InvalidParam(
+                "continuation mode with prompt_audio_path requires prompt_text".to_string(),
+            ));
+        }
+
         // Record params for test assertions.
         {
-            let mut last = self.last_params.lock().expect("last_params mutex poisoned");
+            let mut last = self
+                .last_params
+                .lock()
+                .map_err(|_| TtsError::SynthesisFailed("mutex poisoned".into()))?;
             *last = Some(params.clone());
         }
 

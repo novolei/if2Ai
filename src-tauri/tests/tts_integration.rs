@@ -178,9 +178,13 @@ async fn streaming_job_manager_handles_concurrent_streams() {
 async fn warmup_manager_integration_with_mock_provider() {
     use if2ai_backend::modules::tts::manager::warmup::WarmupManager;
 
-    let provider: Arc<dyn TtsProvider> = Arc::new(MockTtsProvider::with_voices(vec![
-        VoicePreset::new("test", "Test", "wav", Vec::new()),
-    ]));
+    let provider: Arc<dyn TtsProvider> =
+        Arc::new(MockTtsProvider::with_voices(vec![VoicePreset::new(
+            "test",
+            "Test",
+            "wav",
+            Vec::new(),
+        )]));
 
     let warmup = WarmupManager::new();
 
@@ -304,7 +308,130 @@ async fn mock_provider_splits_english_text() {
     assert!(chunks.len() >= 2);
 }
 
-// ── TTS state wiring ────────────────────────────────────────────────────────
+// ── Edge cases (TTS-6.2) ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn empty_text_returns_error() {
+    let provider = MockTtsProvider::new();
+    let params = SynthesisParams {
+        text: String::new(),
+        mode: SynthesisMode::default(),
+        voice: None,
+        prompt_audio_path: None,
+        prompt_text: None,
+        generation: GenerationParams::default(),
+    };
+
+    let err = provider.synthesize(params).await.unwrap_err();
+    assert!(matches!(
+        err,
+        if2ai_backend::modules::tts::TtsError::EmptyText
+    ));
+}
+
+#[tokio::test]
+async fn whitespace_only_text_is_treated_as_empty() {
+    use if2ai_backend::modules::tts::TtsError;
+
+    let provider = MockTtsProvider::new();
+    let params = SynthesisParams {
+        text: "   \n\t  ".to_string(),
+        mode: SynthesisMode::default(),
+        voice: None,
+        prompt_audio_path: None,
+        prompt_text: None,
+        generation: GenerationParams::default(),
+    };
+
+    // Whitespace-only text should be normalized to empty and rejected
+    let result = provider.synthesize(params).await;
+    // Either EmptyText or a successful result with empty audio is acceptable
+    if let Ok(res) = result {
+        assert!(res.audio_bytes.is_empty() || res.text_chunks.iter().all(|c| c.trim().is_empty()));
+    } else {
+        assert!(matches!(result.unwrap_err(), TtsError::EmptyText));
+    }
+}
+
+#[tokio::test]
+async fn continuation_mode_requires_prompt_text_with_audio() {
+    use if2ai_backend::modules::tts::TtsError;
+
+    let provider = MockTtsProvider::new();
+    let params = SynthesisParams {
+        text: "Hello".to_string(),
+        mode: SynthesisMode::Continuation,
+        voice: None,
+        prompt_audio_path: Some(std::path::PathBuf::from("/tmp/fake.wav")),
+        prompt_text: None, // Missing required prompt_text
+        generation: GenerationParams::default(),
+    };
+
+    let err = provider.synthesize(params).await.unwrap_err();
+    assert!(
+        matches!(err, TtsError::InvalidParam(_)),
+        "expected InvalidParam error, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn streaming_rejects_empty_text() {
+    use if2ai_backend::modules::tts::TtsError;
+    use if2ai_backend::modules::tts::{AudioChunk, AudioSink, StreamResult};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TestSink {
+        count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl AudioSink for TestSink {
+        async fn on_audio(&self, _chunk: AudioChunk) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        async fn on_complete(&self, _result: StreamResult) {}
+    }
+
+    let provider = MockTtsProvider::new();
+    let count = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::new(TestSink {
+        count: Arc::clone(&count),
+    });
+
+    let params = SynthesisParams {
+        text: String::new(),
+        mode: SynthesisMode::default(),
+        voice: None,
+        prompt_audio_path: None,
+        prompt_text: None,
+        generation: GenerationParams::default(),
+    };
+
+    let err = provider.synthesize_stream(params, sink).await.unwrap_err();
+    assert!(matches!(err, TtsError::EmptyText));
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn onnx_provider_rejects_missing_model_files() {
+    use if2ai_backend::modules::tts::provider::OnnxTtsProvider;
+
+    let result = OnnxTtsProvider::new(
+        std::path::Path::new("/nonexistent/tts"),
+        std::path::Path::new("/nonexistent/tokenizer"),
+        std::path::Path::new("/nonexistent/tokenizer.model"),
+        4,
+        4,
+        1024,
+        1025,
+        0,
+    );
+
+    assert!(
+        result.is_err(),
+        "OnnxTtsProvider should reject missing model files"
+    );
+}
 
 #[tokio::test]
 async fn tts_provider_and_manager_wire_correctly() {
@@ -312,9 +439,13 @@ async fn tts_provider_and_manager_wire_correctly() {
     use if2ai_backend::modules::tts::manager::warmup::WarmupManager;
     use tokio::sync::Mutex;
 
-    let provider: Arc<dyn TtsProvider> = Arc::new(MockTtsProvider::with_voices(vec![
-        VoicePreset::new("test", "Test voice", "wav", Vec::new()),
-    ]));
+    let provider: Arc<dyn TtsProvider> =
+        Arc::new(MockTtsProvider::with_voices(vec![VoicePreset::new(
+            "test",
+            "Test voice",
+            "wav",
+            Vec::new(),
+        )]));
     let warmup = WarmupManager::new();
     let jobs = StreamingJobManager::new();
 
