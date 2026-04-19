@@ -62,6 +62,10 @@ pub enum TtsError {
     #[error("WAV decode failed: {0}")]
     WavDecode(String),
 
+    /// Invalid parameter value (e.g., negative temperature).
+    #[error("Invalid parameter: {0}")]
+    InvalidParam(String),
+
     /// Generic error with a message.
     #[error("TTS error: {0}")]
     Generic(String),
