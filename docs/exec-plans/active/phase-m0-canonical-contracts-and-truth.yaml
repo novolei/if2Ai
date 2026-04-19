@@ -1,0 +1,160 @@
+# Phase M0: Canonical Contracts And Truth
+# ─────────────────────────────────────────────────────────────────────────────
+# 建立 If2Ai 的 canonical domain model、workflow truth、runtime contract、
+# activation contract 与 execution-mode contract，为后续所有重构提供统一真相。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m0"
+  phase_status: proposed
+  title: "Canonical Contracts And Truth"
+  owner: "@executor"
+  depends_on_phase: "9a"
+  execution_runbook: "docs/exec-plans/active/phase-m0-executor-runbook.md"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md
+    - docs/staff-remediation/runtime-contracts-and-event-projection-design.md
+    - docs/staff-remediation/activation-gate-and-license-lifecycle-design.md
+    - docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md
+    - docs/exec-plans/active/phase-m0-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m0.2"
+    - after_slice: "m0.4"
+    - after_slice: "m0.7"
+
+slices:
+
+  - id: "m0.1"
+    title: "Define canonical domain model and naming map"
+    status: pending
+    design_ref: "docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md"
+    impl_targets:
+      - docs/staff-remediation/if2ai-canonical-domain-model.md
+      - docs/staff-remediation/README.md
+    must_implement:
+      - "定义 agent/session/project/run/worker/memory/automation/harness_eval/activation_license/execution_mode 的 canonical 语义"
+      - "列出当前代码中的命名漂移与迁移映射"
+      - "为后续代码与文档统一命名提供基线"
+    acceptance:
+      - type: manual
+        text: "canonical entity 表与命名迁移表人工审查通过"
+    review_checklist:
+      - "每个实体必须写清‘是什么 / 不是什么 / 生命周期 / 所属层’"
+      - "execution_mode 与 scenario profile 不得混淆"
+
+  - id: "m0.2"
+    title: "Establish workflow truth registry"
+    status: pending
+    design_ref: "docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md"
+    impl_targets:
+      - docs/staff-remediation/if2ai-workflow-truth.md
+      - docs/staff-remediation/README.md
+    must_implement:
+      - "建立 app boot / onboarding / activation gate / chat prompt / memory / harness / execution-mode routing 等 workflow truth 表"
+      - "对每条 workflow 标记 canonical / partial / not_established"
+      - "明确每条 workflow 的事实入口和依赖边界"
+    acceptance:
+      - type: manual
+        text: "主 workflow 均有状态标记且与当前代码一致"
+    review_checklist:
+      - "不能用模糊描述替代状态判定"
+      - "必须覆盖 activation 与 execution mode 两条新增主链"
+
+  - id: "m0.3"
+    title: "Define runtime contract v1 skeleton"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src-tauri/src/runtime/contracts/
+      - src/lib/
+    must_implement:
+      - "建立 canonical event envelope 顶层结构"
+      - "定义 conversation/tool/permission/memory 基础 payload 家族"
+      - "在 TS 侧建立对应 contract types 骨架"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "contract 应独立于具体 command 实现"
+      - "不得继续把 tauri.ts 当作事实契约中心"
+
+  - id: "m0.4"
+    title: "Define activation contract v1 and boot truth"
+    status: pending
+    design_ref: "docs/staff-remediation/activation-gate-and-license-lifecycle-design.md"
+    impl_targets:
+      - src-tauri/src/runtime/contracts/
+      - docs/staff-remediation/if2ai-workflow-truth.md
+      - src/
+    must_implement:
+      - "定义 activation status / refresh / revoke / deactivate 的 contract"
+      - "定义 startup -> onboarding -> activation gate -> main shell 的 boot truth"
+      - "明确 gate overlay 与失效回流语义"
+    acceptance:
+      - type: manual
+        text: "activation 状态机与 boot truth 人工审查通过"
+    review_checklist:
+      - "activation 必须作为平台门禁，而不是普通设置项"
+      - "反激活路径必须在 contract 中可表示"
+
+  - id: "m0.5"
+    title: "Define execution-mode contract v1 and reason taxonomy"
+    status: pending
+    design_ref: "docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md"
+    impl_targets:
+      - src-tauri/src/runtime/contracts/
+      - src/lib/
+      - docs/staff-remediation/if2ai-workflow-truth.md
+    must_implement:
+      - "定义 direct_execute / auto_plan_execute / plan_then_confirm / specialized_surface"
+      - "定义 risk / complexity / route_hint / requires_plan / reason_codes"
+      - "定义 classifier evidence 字段与前端投影语义"
+    acceptance:
+      - type: manual
+        text: "execution-mode contract 与 reason taxonomy 审查通过"
+    review_checklist:
+      - "四类 execution modes 必须成为 canonical runtime truth"
+      - "前端不得成为 execution mode 计算源"
+
+  - id: "m0.6"
+    title: "Document current god-file responsibility inventory"
+    status: pending
+    design_ref: "docs/staff-remediation/if2ai-staff-remediation-blueprint.md"
+    impl_targets:
+      - docs/staff-remediation/
+    must_implement:
+      - "盘点 App.tsx / chat-ui.tsx / commands/agent.rs / tauri.ts 当前责任"
+      - "输出后续 M1/M2 的拆分输入清单"
+    acceptance:
+      - type: manual
+        text: "四个关键文件的责任清单完整"
+    review_checklist:
+      - "责任清单必须可直接转成后续切片"
+      - "不得只写‘文件太大’这类空泛结论"
+
+  - id: "m0.7"
+    title: "Connect remediation docs coverage matrix to exec-plan governance"
+    status: pending
+    design_ref: "docs/staff-remediation/remediation-program-and-phase-roadmap.md"
+    impl_targets:
+      - docs/staff-remediation/README.md
+      - docs/exec-plans/index.md
+    must_implement:
+      - "将子设计与 exec-plan 的关系写入索引"
+      - "让后续 phase 执行能引用对应设计来源"
+    acceptance:
+      - type: manual
+        text: "覆盖矩阵与 exec-plan 索引人工抽查一致"
+    review_checklist:
+      - "不得再出现蓝图有要求但无下钻文档或无计划承接"
+
+notes: |
+  Phase M0 是“真相收口 phase”，不是功能开发 phase。
+  执行者必须先读取 `docs/exec-plans/active/phase-m0-executor-runbook.md`，
+  再开始任何 slice。
+  完成标准是：
+  1. canonical 实体明确
+  2. canonical workflow truth 明确
+  3. runtime / activation / execution-mode contracts 有正式入口
+  4. M1 / M2 的拆分输入已准备好

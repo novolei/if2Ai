@@ -1,0 +1,215 @@
+# Phase 9A: Trustworthy Foundation
+# ─────────────────────────────────────────────────────────────────────────────
+# 收敛当前 codebase 的可信基线：测试、文档、harness 启用、持久层鲁棒性、
+# 前端主路径语义与 seeded 假数据治理。
+# 同时为 Harness V2、Memory/Self-Evolution、前端 IA 重构建立正式落地入口。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "9a"
+  phase_status: proposed
+  title: "Trustworthy Foundation"
+  owner: "@executor"
+  depends_on_phase: "8e"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/harness-v2-governance-design.md
+    - docs/staff-remediation/memory-self-evolution-design.md
+    - docs/staff-remediation/frontend-information-architecture-ui-redesign.md
+  human_checkpoints:
+    - after_slice: "9a.3"
+    - after_slice: "9a.6"
+    - after_slice: "9a.9"
+
+slices:
+
+  - id: "9a.1"
+    title: "Restore frontend test gate and add minimum smoke coverage"
+    status: pending
+    design_ref: "docs/staff-remediation/if2ai-staff-remediation-blueprint.md"
+    impl_targets:
+      - package.json
+      - tsconfig.json
+      - src/
+      - vite.config.ts
+    must_implement:
+      - "安装并接通前端测试运行器（Vitest 或明确替代方案）"
+      - "`npm test` 在本地可运行"
+      - "至少补一个 app-shell / main chat smoke test"
+      - "文档与脚本保持一致"
+    acceptance:
+      - type: test
+        cmd: "npm test -- --run"
+    review_checklist:
+      - "测试门不是只写脚本名，必须真实安装可执行"
+      - "smoke test 覆盖主路径，而不是只测工具函数"
+
+  - id: "9a.2"
+    title: "Fix harness runtime enablement model"
+    status: pending
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src-tauri/src/main.rs
+      - src-tauri/src/commands/harness.rs
+      - src-tauri/src/modules/harness/mod.rs
+      - src/lib/tauri.ts
+      - src/components/chat/TelemetryDrawer.tsx
+    must_implement:
+      - "修正 harness 默认禁用但可在运行时启用的真实路径"
+      - "厘清 env enable 与 IPC enable 的职责"
+      - "前端录制开关状态与后端真实能力一致"
+      - "相关注释与文档同步"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "不能再出现“注释说可启用，运行时其实启不了”"
+      - "HarnessState 生命周期定义清晰"
+
+  - id: "9a.3"
+    title: "Remove panic assumptions from session persistence paths"
+    status: pending
+    design_ref: "docs/staff-remediation/if2ai-staff-remediation-blueprint.md"
+    impl_targets:
+      - src-tauri/src/modules/session/manager.rs
+      - src-tauri/src/integration_tests.rs
+    must_implement:
+      - "清理生产路径中的文件名/UTF-8 unwrap 假设"
+      - "对 stray files / invalid entries 做 graceful handling"
+      - "新增覆盖脏目录场景的测试"
+    acceptance:
+      - type: test
+        cmd: "cargo test --manifest-path src-tauri/Cargo.toml session::manager"
+    review_checklist:
+      - "桌面端持久层必须把磁盘视为不可信边界"
+      - "错误应返回 typed error 或显式 skip，不可 panic"
+
+  - id: "9a.4"
+    title: "Repair top-level architecture and harness source-of-truth docs"
+    status: pending
+    design_ref: "docs/staff-remediation/if2ai-staff-remediation-blueprint.md"
+    impl_targets:
+      - ARCHITECTURE.md
+      - DESIGN.md
+      - harness/README.md
+      - docs/staff-remediation/
+    must_implement:
+      - "更新架构文档中的前端栈、模块路径、关键职责"
+      - "修正 harness README 与真实 CLI/运行方式"
+      - "建立 staff-remediation 文档目录导航"
+    acceptance:
+      - type: manual
+        text: "文档与当前代码结构人工抽查一致"
+    review_checklist:
+      - "顶层文档必须能作为新人和 agent 的真实入口"
+      - "避免继续出现 Svelte/旧路径等历史残影"
+
+  - id: "9a.5"
+    title: "Fix main chat entry accessibility semantics"
+    status: pending
+    design_ref: "docs/staff-remediation/frontend-information-architecture-ui-redesign.md"
+    impl_targets:
+      - src/modules/chat/components/HomeScreen.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/components/ProjectRail.tsx
+    must_implement:
+      - "补齐 textarea label/aria"
+      - "补齐 icon-only button aria-label"
+      - "减少主路径中的 role=button 替代交互"
+      - "明确 focus-visible 替代方案"
+    acceptance:
+      - type: manual
+        text: "主路径键盘与 screen reader 语义抽查通过"
+    review_checklist:
+      - "主聊天入口应成为无障碍优先面，而不是只追求视觉完成"
+      - "避免新代码继续引入可点击 div"
+
+  - id: "9a.6"
+    title: "Remove seeded trust/risk fiction from skills marketplace"
+    status: pending
+    design_ref: "docs/staff-remediation/frontend-information-architecture-ui-redesign.md"
+    impl_targets:
+      - src/modules/settings/pages/SkillsSettingsPage.tsx
+      - src/lib/tauri.ts
+      - src-tauri/src/commands/skills_hub.rs
+    must_implement:
+      - "去除默认 seeded 风险评级伪装成真实数据的表达"
+      - "未拉到真实数据时使用明确 empty/loading/demo 状态"
+      - "风险/审计字段只在真实来源可用时展示"
+    acceptance:
+      - type: manual
+        text: "技能市场不再展示伪正式风险结论"
+    review_checklist:
+      - "可信度问题按产品缺陷处理，不视为 UI 装饰问题"
+      - "状态表达必须对用户诚实"
+
+  - id: "9a.7"
+    title: "Define Harness V2 core governance contracts"
+    status: pending
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    depends_on: ["9a.2"]
+    impl_targets:
+      - src-tauri/src/modules/harness/
+      - src-tauri/src/commands/harness.rs
+      - harness/runner.py
+    must_implement:
+      - "定义 run/report/blocker 基础契约"
+      - "明确 baseline/candidate compare 模型"
+      - "为后续 regression gate 提供结构化输出"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "Harness 从 recorder 走向 governor 的边界清晰"
+      - "契约先行，不先堆 UI"
+
+  - id: "9a.8"
+    title: "Define memory object model and strategy candidate pipeline"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    depends_on: ["9a.3", "9a.7"]
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/modules/learning/
+      - docs/staff-remediation/memory-self-evolution-design.md
+    must_implement:
+      - "定义 Fact / Preference / Strategy / Episode 对象边界"
+      - "建立 candidate strategy 的最小注册模型"
+      - "把 recall usefulness / policy compare 纳入后续落点"
+    acceptance:
+      - type: manual
+        text: "对象模型与现有 memory/learning 模块能一一映射"
+    review_checklist:
+      - "先定义对象与策略，不先做复杂自动改写"
+      - "自我进化必须默认走评测门"
+
+  - id: "9a.9"
+    title: "Refactor frontend IA boundaries for chat/workspace/observability"
+    status: pending
+    design_ref: "docs/staff-remediation/frontend-information-architecture-ui-redesign.md"
+    depends_on: ["9a.5", "9a.6"]
+    impl_targets:
+      - src/App.tsx
+      - src/components/ui/chat-ui.tsx
+      - src/modules/chat/
+      - src/components/chat/
+      - src/components/memory/
+    must_implement:
+      - "拆分 app-shell / conversation / workspace / observability 责任"
+      - "减少主链路 God-file 体量"
+      - "让 Telemetry 等开发者面从主路径上分层"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "不是纯文件搬家，要形成更稳定的边界"
+      - "主路径更短，调试路径更克制"
+
+notes: |
+  Phase 9A 不是功能扩张 phase，而是可信基线 phase。
+  完成标准不是“又多了几个功能页”，而是：
+  1. 顶层文档可信
+  2. 基础质量门可运行
+  3. Harness 可成为下一阶段治理骨架
+  4. Memory / Self-Evolution 有正式设计入口
+  5. 前端 IA 不再继续无序膨胀

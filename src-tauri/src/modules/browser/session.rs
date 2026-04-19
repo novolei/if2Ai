@@ -8,7 +8,7 @@
 //! - The current URL cache
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
@@ -16,7 +16,12 @@ use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
 };
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::cdp::browser_protocol::network::{
+    EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+};
+use chromiumoxide::cdp::browser_protocol::page::{
+    CaptureScreenshotFormat, EventDomContentEventFired, EventLoadEventFired,
+};
 use chromiumoxide::page::{Page, ScreenshotParams};
 use chrono::Utc;
 use futures::StreamExt as _;
@@ -36,6 +41,61 @@ pub enum ScrollDir {
     Up,
     Down,
 }
+
+/// Phase 7C, slice 7C.5 — what `wait()` should wait for.  Maps directly
+/// to the three Playwright lifecycle states the LLM already knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WaitState {
+    /// `Page.domContentEventFired` — DOM tree built (initial markup
+    /// parsed, but images / fonts may still be loading).
+    DomContentLoaded,
+    /// `Page.loadEventFired` — `window.onload` fired (all sub-resources
+    /// loaded).
+    Load,
+    /// Network has been quiet for `NETWORK_IDLE_QUIET_WINDOW_MS` —
+    /// inflight request count returned to 0 and stayed there.  Useful
+    /// for SPA route transitions whose JS finishes after `load`.
+    NetworkIdle,
+}
+
+impl WaitState {
+    /// Parse the string the LLM sends through the tool schema.  Unknown
+    /// values default to `DomContentLoaded` so a typo never causes a
+    /// hard error — matches Playwright's leniency.
+    #[must_use]
+    pub fn from_str(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "load" => Self::Load,
+            "networkidle" | "network_idle" | "network-idle" => Self::NetworkIdle,
+            _ => Self::DomContentLoaded,
+        }
+    }
+}
+
+// ── Phase 7C, slice 7C.5: post-action settle delays ───────────────────────────
+//
+// Pre-7C.5 values were 200/150/150/150ms — too short for SPA route
+// transitions, leading to AI getting the *previous* snapshot and
+// double-clicking.  openhanako uses 500-800ms; we picked slightly more
+// conservative defaults so quick pages still feel snappy.
+
+const DELAY_AFTER_CLICK_MS: u64 = 600;
+const DELAY_AFTER_TYPE_MS: u64 = 300;
+const DELAY_AFTER_TYPE_ENTER_MS: u64 = 800;
+const DELAY_AFTER_SCROLL_MS: u64 = 400;
+const DELAY_AFTER_KEY_MS: u64 = 300;
+
+/// Soft post-click navigation timeout — if a click triggers navigation
+/// we wait up to this long for it to settle, otherwise we just snapshot.
+const POST_ACTION_NAV_TIMEOUT_MS: u64 = 1500;
+
+/// Quiet window required for `NetworkIdle` to fire (inflight count
+/// must remain 0 for this duration before we return).
+const NETWORK_IDLE_QUIET_WINDOW_MS: u64 = 500;
+/// Polling cadence inside the network-idle loop.  Bounded so a stalled
+/// `EventStream` never starves the await.
+const NETWORK_IDLE_TICK_MS: u64 = 50;
 
 /// Result of a navigate operation.
 #[derive(Debug, Clone, Serialize)]
@@ -443,7 +503,15 @@ impl BrowserSession {
             return Err(BrowserError::RefNotFound(ref_num));
         }
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Phase 7C, slice 7C.5 — settle delay then opportunistic
+        // wait-for-navigation: if the click triggered a route change we
+        // catch the new page; if not the timeout falls through harmlessly.
+        tokio::time::sleep(Duration::from_millis(DELAY_AFTER_CLICK_MS)).await;
+        let _ = tokio::time::timeout(
+            Duration::from_millis(POST_ACTION_NAV_TIMEOUT_MS),
+            self.page.wait_for_navigation(),
+        )
+        .await;
         self.sync_url().await;
 
         let snapshot = self.run_snapshot().await?;
@@ -490,11 +558,20 @@ impl BrowserSession {
         // Use CDP InsertText for efficient bulk input.
         self.insert_text(text).await?;
 
+        // Phase 7C, slice 7C.5 — pressing Enter on an input usually
+        // triggers form submit / search, so we wait longer then
+        // opportunistically follow the navigation.
         if press_enter {
             self.dispatch_key("Enter").await?;
+            tokio::time::sleep(Duration::from_millis(DELAY_AFTER_TYPE_ENTER_MS)).await;
+            let _ = tokio::time::timeout(
+                Duration::from_millis(POST_ACTION_NAV_TIMEOUT_MS),
+                self.page.wait_for_navigation(),
+            )
+            .await;
+        } else {
+            tokio::time::sleep(Duration::from_millis(DELAY_AFTER_TYPE_MS)).await;
         }
-
-        tokio::time::sleep(Duration::from_millis(150)).await;
         self.sync_url().await;
 
         let snapshot = self.run_snapshot().await?;
@@ -524,7 +601,7 @@ impl BrowserSession {
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(DELAY_AFTER_SCROLL_MS)).await;
         let snapshot = self.run_snapshot().await?;
         self.log(
             "scroll",
@@ -579,7 +656,14 @@ impl BrowserSession {
     /// Dispatch a named key event to the page. Returns a fresh AXTree snapshot.
     pub async fn press_key(&mut self, key: &str) -> Result<String, BrowserError> {
         self.dispatch_key(key).await?;
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(DELAY_AFTER_KEY_MS)).await;
+        // Enter / Esc / Space / Tab can all trigger navigation; mirror
+        // the click path's opportunistic wait.
+        let _ = tokio::time::timeout(
+            Duration::from_millis(POST_ACTION_NAV_TIMEOUT_MS),
+            self.page.wait_for_navigation(),
+        )
+        .await;
         self.sync_url().await;
 
         let snapshot = self.run_snapshot().await?;
@@ -587,20 +671,96 @@ impl BrowserSession {
         Ok(snapshot)
     }
 
-    /// Wait up to `timeout_ms` for page navigation. Returns a fresh AXTree snapshot.
+    /// Wait up to `timeout_ms` for the requested lifecycle [`WaitState`]
+    /// and return a fresh AXTree snapshot.
     ///
-    /// The `_state` parameter (`"load"`, `"domcontentloaded"`, `"networkidle"`)
-    /// is reserved for future differentiated wait logic; the current
-    /// implementation always delegates to `wait_for_navigation`.
-    pub async fn wait(&mut self, timeout_ms: u64, _state: &str) -> Result<String, BrowserError> {
-        let _ = tokio::time::timeout(
-            Duration::from_millis(timeout_ms),
-            self.page.wait_for_navigation(),
-        )
-        .await;
+    /// Phase 7C, slice 7C.5 replaced the legacy "always call
+    /// `wait_for_navigation`" stub with a real CDP listener for each
+    /// state.  When the state never fires before the timeout we still
+    /// return a snapshot rather than an error — Playwright-style
+    /// best-effort.
+    pub async fn wait(
+        &mut self,
+        timeout_ms: u64,
+        state: WaitState,
+    ) -> Result<String, BrowserError> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        match state {
+            WaitState::DomContentLoaded => {
+                if let Ok(mut events) = self
+                    .page
+                    .event_listener::<EventDomContentEventFired>()
+                    .await
+                {
+                    let _ = tokio::time::timeout_at(deadline.into(), events.next()).await;
+                }
+            }
+            WaitState::Load => {
+                if let Ok(mut events) = self.page.event_listener::<EventLoadEventFired>().await {
+                    let _ = tokio::time::timeout_at(deadline.into(), events.next()).await;
+                }
+            }
+            WaitState::NetworkIdle => {
+                self.wait_network_idle(deadline).await;
+            }
+        }
 
         self.sync_url().await;
         self.run_snapshot().await
+    }
+
+    /// Watch CDP `Network.requestWillBeSent` / `loadingFinished` /
+    /// `loadingFailed` until the inflight count has been zero for at
+    /// least [`NETWORK_IDLE_QUIET_WINDOW_MS`], or until `deadline`.
+    async fn wait_network_idle(&self, deadline: Instant) {
+        // Each listener subscribe is fallible (the page may have just
+        // closed); drop the whole wait and just return on subscribe
+        // failure — caller falls through to snapshot anyway.
+        let mut started = match self.page.event_listener::<EventRequestWillBeSent>().await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut finished = match self.page.event_listener::<EventLoadingFinished>().await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut failed = match self.page.event_listener::<EventLoadingFailed>().await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        let mut inflight: i64 = 0;
+        let mut last_zero_at = Instant::now();
+        let quiet = Duration::from_millis(NETWORK_IDLE_QUIET_WINDOW_MS);
+        let tick = Duration::from_millis(NETWORK_IDLE_TICK_MS);
+
+        loop {
+            if Instant::now() >= deadline {
+                return;
+            }
+            tokio::select! {
+                evt = started.next() => {
+                    if evt.is_some() { inflight += 1; }
+                }
+                evt = finished.next() => {
+                    if evt.is_some() {
+                        inflight = (inflight - 1).max(0);
+                        if inflight == 0 { last_zero_at = Instant::now(); }
+                    }
+                }
+                evt = failed.next() => {
+                    if evt.is_some() {
+                        inflight = (inflight - 1).max(0);
+                        if inflight == 0 { last_zero_at = Instant::now(); }
+                    }
+                }
+                _ = tokio::time::sleep(tick) => {
+                    if inflight == 0 && last_zero_at.elapsed() >= quiet {
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Evaluate arbitrary JavaScript in the page and return the serialised
@@ -636,5 +796,50 @@ impl BrowserSession {
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_state_from_str_recognises_load() {
+        assert_eq!(WaitState::from_str("load"), WaitState::Load);
+        assert_eq!(WaitState::from_str("LOAD"), WaitState::Load);
+    }
+
+    #[test]
+    fn wait_state_from_str_recognises_networkidle_aliases() {
+        assert_eq!(WaitState::from_str("networkidle"), WaitState::NetworkIdle);
+        assert_eq!(WaitState::from_str("network_idle"), WaitState::NetworkIdle);
+        assert_eq!(WaitState::from_str("network-idle"), WaitState::NetworkIdle);
+        assert_eq!(WaitState::from_str("NetworkIdle"), WaitState::NetworkIdle);
+    }
+
+    #[test]
+    fn wait_state_from_str_defaults_to_dom_content_loaded() {
+        assert_eq!(
+            WaitState::from_str("domcontentloaded"),
+            WaitState::DomContentLoaded
+        );
+        // Unknown / typo -> default to DomContentLoaded (Playwright-style).
+        assert_eq!(
+            WaitState::from_str("anything-unknown"),
+            WaitState::DomContentLoaded
+        );
+        assert_eq!(WaitState::from_str(""), WaitState::DomContentLoaded);
+    }
+
+    #[test]
+    fn delay_constants_are_above_pre_7c5_baseline() {
+        // Phase 7C, slice 7C.5 raised every default delay; this guard
+        // prevents accidental regression to the old 150-200ms values
+        // that caused double-clicks on SPA pages.
+        assert!(DELAY_AFTER_CLICK_MS >= 500);
+        assert!(DELAY_AFTER_TYPE_MS >= 250);
+        assert!(DELAY_AFTER_TYPE_ENTER_MS >= 600);
+        assert!(DELAY_AFTER_SCROLL_MS >= 300);
+        assert!(DELAY_AFTER_KEY_MS >= 250);
     }
 }

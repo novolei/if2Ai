@@ -1,0 +1,105 @@
+# Staff Remediation Docs
+
+> Staff 级系统整改与演进设计文档目录。
+>
+> 最后更新: 2026-04-20
+
+## 目录
+
+- [if2ai-staff-remediation-blueprint.md](./if2ai-staff-remediation-blueprint.md)
+  - 当前 codebase 全盘 review 结论
+  - 前后端 / 架构 / harness / memory 风险
+  - 90 天整改路线图
+  - 智能体记忆、自我进化、评测治理升级方案
+- [uclaw-if2ai-architecture-migration-report.md](./uclaw-if2ai-architecture-migration-report.md)
+  - UClaw 与 If2Ai 的第二阶段横向对照实施报告
+  - 可立即迁移 / 需改造迁移 / 不建议迁移
+  - 前后端重构顺序与 phase 设计
+- [canonical-domain-model-and-workflow-truth-design.md](./canonical-domain-model-and-workflow-truth-design.md)
+  - canonical entity 定义
+  - workflow truth 机制
+  - 文档即真相约束
+- [runtime-contracts-and-event-projection-design.md](./runtime-contracts-and-event-projection-design.md)
+  - runtime contracts
+  - event envelope
+  - execution-mode / activation / memory 投影
+- [backend-application-control-plane-refactor-design.md](./backend-application-control-plane-refactor-design.md)
+  - backend application service 拆分
+  - control plane 重构
+  - request intelligence / activation / policy 归位
+- [if2ai-worker-adoption-design.md](./if2ai-worker-adoption-design.md)
+  - worker 迁移边界
+  - 统一工具执行后端抽象
+  - 首批工具接入与 phase 映射
+- [activation-gate-and-license-lifecycle-design.md](./activation-gate-and-license-lifecycle-design.md)
+  - activation gate
+  - 远端激活服务
+  - 反激活 / revoke / refresh 生命周期
+- [request-intelligence-and-execution-mode-routing-design.md](./request-intelligence-and-execution-mode-routing-design.md)
+  - 四类聊天执行场景自动匹配
+  - request intelligence
+  - execution mode routing 与 classifier evidence
+- [harness-v2-governance-design.md](./harness-v2-governance-design.md)
+  - Harness 从 trace recorder 升级为治理与发布门
+  - 回放、评测、回归、策略验证与上线规则
+- [memory-self-evolution-design.md](./memory-self-evolution-design.md)
+  - 记忆对象模型
+  - 在线 / 离线闭环
+  - 自我进化与安全上线策略
+- [frontend-information-architecture-ui-redesign.md](./frontend-information-architecture-ui-redesign.md)
+  - 前端 IA 重构
+  - Chat / Settings / Debug surface 分层
+  - UI/UX 与可信度整改原则
+- [remediation-program-and-phase-roadmap.md](./remediation-program-and-phase-roadmap.md)
+  - M0 ~ M5
+  - 90 天路线图
+  - 优先级、风险、执行计划映射
+
+## 覆盖矩阵
+
+`if2ai-staff-remediation-blueprint.md` 的各大章节与子文档覆盖关系如下：
+
+- `1-6` 总体问题定义、定位、目标
+  - 由 [if2ai-staff-remediation-blueprint.md](./if2ai-staff-remediation-blueprint.md) 继续承担总纲
+- `7-8` 目标架构蓝图、可迁移内容分级
+  - 由 [uclaw-if2ai-architecture-migration-report.md](./uclaw-if2ai-architecture-migration-report.md)
+  - 由 [canonical-domain-model-and-workflow-truth-design.md](./canonical-domain-model-and-workflow-truth-design.md)
+  - 由 [runtime-contracts-and-event-projection-design.md](./runtime-contracts-and-event-projection-design.md)
+  - 由 [backend-application-control-plane-refactor-design.md](./backend-application-control-plane-refactor-design.md)
+  - 由 [if2ai-worker-adoption-design.md](./if2ai-worker-adoption-design.md)
+  - 由 [activation-gate-and-license-lifecycle-design.md](./activation-gate-and-license-lifecycle-design.md)
+  - 由 [request-intelligence-and-execution-mode-routing-design.md](./request-intelligence-and-execution-mode-routing-design.md)
+- `9`
+  - 由 [frontend-information-architecture-ui-redesign.md](./frontend-information-architecture-ui-redesign.md)
+- `10`
+  - 由 [backend-application-control-plane-refactor-design.md](./backend-application-control-plane-refactor-design.md)
+  - 由 [if2ai-worker-adoption-design.md](./if2ai-worker-adoption-design.md)
+- `11`
+  - 由 [memory-self-evolution-design.md](./memory-self-evolution-design.md)
+- `12`
+  - 由 [harness-v2-governance-design.md](./harness-v2-governance-design.md)
+- `13`
+  - 由 [frontend-information-architecture-ui-redesign.md](./frontend-information-architecture-ui-redesign.md)
+  - 由 [backend-application-control-plane-refactor-design.md](./backend-application-control-plane-refactor-design.md)
+  - 由 [runtime-contracts-and-event-projection-design.md](./runtime-contracts-and-event-projection-design.md)
+- `14-17`
+  - 由 [remediation-program-and-phase-roadmap.md](./remediation-program-and-phase-roadmap.md)
+  - 由 [if2ai-worker-adoption-design.md](./if2ai-worker-adoption-design.md)
+  - 由所有专题子设计共同支撑
+- `18`
+  - 由 [if2ai-staff-remediation-blueprint.md](./if2ai-staff-remediation-blueprint.md) 保持总纲总结
+
+## 适用场景
+
+- Staff / Principal 级架构审查
+- 重大技术债收敛
+- Agent 平台能力升级规划
+- exec-plan 编排前的总纲设计
+
+## 使用建议
+
+1. 先读蓝图文档，统一问题定义与优先级。
+2. 再读 UClaw 对照迁移报告，明确哪些结构值得迁移、如何迁移、先迁什么。
+3. 按覆盖矩阵阅读新增子设计文档，核对蓝图各章节都有落点。
+4. 再把 program 文档下钻成 exec-plan。
+5. 每完成一个阶段，回写本目录，保持“整改现状”与“规划目标”同步。

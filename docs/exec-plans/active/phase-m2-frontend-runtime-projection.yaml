@@ -1,0 +1,206 @@
+# Phase M2: Frontend Runtime Projection
+# ─────────────────────────────────────────────────────────────────────────────
+# 建立 React 前端的 runtime projection 层，让前端从“隐性编排者”收敛为
+# “后端真相的投影与控制界面”，并引入 activation gate 与 execution-mode 投影。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m2"
+  phase_status: proposed
+  title: "Frontend Runtime Projection"
+  owner: "@executor"
+  depends_on_phase: "m1"
+  execution_runbook: "docs/exec-plans/active/phase-m2-executor-runbook.md"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/runtime-contracts-and-event-projection-design.md
+    - docs/staff-remediation/frontend-information-architecture-ui-redesign.md
+    - docs/staff-remediation/activation-gate-and-license-lifecycle-design.md
+    - docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md
+    - docs/exec-plans/active/phase-m2-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m2.3"
+    - after_slice: "m2.6"
+    - after_slice: "m2.9"
+
+slices:
+
+  - id: "m2.1"
+    title: "Split transport contracts from tauri facade"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src/lib/tauri.ts
+      - src/transport/
+    must_implement:
+      - "从 tauri facade 中拆出 contracts.ts"
+      - "把 runtime / activation / execution-mode / memory 类型迁到 transport/contracts"
+      - "tauri.ts 回归 thin bridge"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "tauri.ts 不得继续承载事实契约中心角色"
+      - "类型拆分必须兼容现有调用点"
+
+  - id: "m2.2"
+    title: "Introduce runtime event translator"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src/runtime-projection/
+      - src/lib/
+    must_implement:
+      - "新增 runtime-event-translator"
+      - "兼容 legacy payload -> canonical envelope"
+      - "让 event normalization 有单一入口"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "页面组件不得直接兼容 legacy event"
+      - "translator 必须覆盖 execution-mode / activation / memory 相关字段"
+
+  - id: "m2.3"
+    title: "Introduce runtime event queue and reducer"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src/runtime-projection/
+      - src/state/
+    must_implement:
+      - "新增 runtime-event-queue"
+      - "新增 runtime-event-reducer"
+      - "将高频流事件与普通事件进入统一 reducer 通道"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "不能只做 utils 抽取，必须形成投影入口"
+      - "为后续 store 分流打基础"
+
+  - id: "m2.4"
+    title: "Create feature stores for session/run/memory/approval"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src/state/
+      - src/modules/chat/
+      - src/components/
+    must_implement:
+      - "新增 session-store"
+      - "新增 run-store"
+      - "新增 memory-store"
+      - "新增 approval-store"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "store 只保存投影状态，不重新发明 runtime 语义"
+      - "state 划分必须服务于 Chat 主路径"
+
+  - id: "m2.5"
+    title: "Introduce execution-mode store and explainability projection"
+    status: pending
+    design_ref: "docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md"
+    impl_targets:
+      - src/state/
+      - src/modules/chat/
+      - src/components/chat/
+      - src/components/settings/
+    must_implement:
+      - "新增 execution-mode-store"
+      - "投影 execution_mode / risk / complexity / reason codes / matched rules"
+      - "支持 developer override 与 explainability surface"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "前端不得重算 execution mode"
+      - "必须在 Chat 或 Inspector 中可见，不可只藏在开发页"
+
+  - id: "m2.6"
+    title: "Introduce activation gate boot layer"
+    status: pending
+    design_ref: "docs/staff-remediation/activation-gate-and-license-lifecycle-design.md"
+    impl_targets:
+      - src/
+      - src/boot/
+      - src/modules/onboarding/
+    must_implement:
+      - "建立 AppBootGate"
+      - "把 startup / onboarding / activation gate / main shell 变成显式 boot flow"
+      - "新增 activation-store 或等价投影状态"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "activation gate 必须是硬门禁 overlay"
+      - "App.tsx 不得继续混合启动与主工作台责任"
+
+  - id: "m2.7"
+    title: "Refactor App.tsx into boot shell and main shell"
+    status: pending
+    design_ref: "docs/staff-remediation/frontend-information-architecture-ui-redesign.md"
+    impl_targets:
+      - src/App.tsx
+      - src/modules/app-shell/
+      - src/boot/
+    must_implement:
+      - "拆出 boot shell"
+      - "拆出 main shell"
+      - "App.tsx 留作根装配，不再直接承载大段业务编排"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "不是简单搬 JSX，要真正拆责任"
+      - "主路径状态应通过 stores/projection 进入 shell"
+
+  - id: "m2.8"
+    title: "Refactor chat main path to consume projection stores"
+    status: pending
+    design_ref: "docs/staff-remediation/frontend-information-architecture-ui-redesign.md"
+    impl_targets:
+      - src/components/ui/chat-ui.tsx
+      - src/modules/chat/
+      - src/components/chat/
+    must_implement:
+      - "ChatWorkspace 与 chat UI 改为读 projection stores"
+      - "减少直接理解原始流事件的逻辑"
+      - "把 telemetry / debug / observability 面板进一步与主路径分层"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "chat-ui 责任必须明显下降"
+      - "主路径优先，调试路径二级展开"
+
+  - id: "m2.9"
+    title: "Project execution-mode and activation state into user-visible surfaces"
+    status: pending
+    design_ref: "docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md"
+    impl_targets:
+      - src/modules/chat/
+      - src/components/chat/
+      - src/modules/settings/
+    must_implement:
+      - "在 Chat/Inspector/Developer Settings 中显示 execution mode、reason、matched rules、override"
+      - "在 Settings/Account 中显示 activation/license 状态与反激活入口"
+      - "保证这些信息从 projection stores 来，而不是临时读取"
+    acceptance:
+      - type: manual
+        text: "execution mode 与 activation 状态在 UI 中可解释、可核查"
+    review_checklist:
+      - "execution mode 与 activation 都是平台真相，不应隐藏"
+      - "解释性信息必须和 runtime emitted data 对齐"
+
+notes: |
+  Phase M2 的目标不是“把 React 改成另一套目录”，而是让前端从隐性编排者收敛为投影层。
+  执行者必须先读取 `docs/exec-plans/active/phase-m2-executor-runbook.md`，
+  再开始任何 slice。
+  完成标准是：
+  1. App.tsx 明显瘦身
+  2. tauri.ts 回归 thin bridge
+  3. Chat 主路径读 projection stores
+  4. activation gate 与 execution-mode explainability 进入正式 UI

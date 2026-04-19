@@ -374,7 +374,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.5"
     name: "Wait State Machine + click/type 时序修正"
-    status: pending
+    status: done
     priority: P1
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G5
     estimated_days: 2

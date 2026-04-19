@@ -1,0 +1,185 @@
+# Phase M1: Backend Service Extraction
+# ─────────────────────────────────────────────────────────────────────────────
+# 将 command-first 后端拆回 application service / control plane / runtime 边界，
+# 把 agent.rs 的主业务编排责任迁出，并引入 request intelligence 与 activation 服务。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m1"
+  phase_status: proposed
+  title: "Backend Service Extraction"
+  owner: "@executor"
+  depends_on_phase: "m0"
+  execution_runbook: "docs/exec-plans/active/phase-m1-executor-runbook.md"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/backend-application-control-plane-refactor-design.md
+    - docs/staff-remediation/if2ai-worker-adoption-design.md
+    - docs/staff-remediation/runtime-contracts-and-event-projection-design.md
+    - docs/staff-remediation/activation-gate-and-license-lifecycle-design.md
+    - docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md
+    - docs/exec-plans/active/phase-m1-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m1.2"
+    - after_slice: "m1.5"
+    - after_slice: "m1.8"
+
+slices:
+
+  - id: "m1.1"
+    title: "Create application turn service and shrink command adapter"
+    status: pending
+    design_ref: "docs/staff-remediation/backend-application-control-plane-refactor-design.md"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/application/
+    must_implement:
+      - "新增 turn_service 作为一次 turn 的编排入口"
+      - "commands/agent.rs 退化为 IPC adapter"
+      - "明确 app command -> service -> runtime 的调用路径"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "不得只是把大函数搬到另一个文件"
+      - "service 边界要能承接后续 prompt/memory/provider 拆分"
+
+  - id: "m1.2"
+    title: "Extract provider resolving into provider service"
+    status: pending
+    design_ref: "docs/staff-remediation/backend-application-control-plane-refactor-design.md"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/application/
+      - src-tauri/src/modules/runtime/config/
+    must_implement:
+      - "把 provider/model resolving 移出 agent command"
+      - "形成可独立测试的 provider service"
+      - "保留当前 provider transport policy 行为"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "provider service 不得与 command 直接耦死"
+      - "不得改变当前已存在的 provider fallback 语义"
+
+  - id: "m1.3"
+    title: "Extract prompt planning skeleton"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src-tauri/src/application/
+      - src-tauri/src/runtime/
+    must_implement:
+      - "新增 prompt plan / prompt block 基础结构"
+      - "把现有 prompt assembling 从 command 层迁出"
+      - "为后续 harness 记录 prompt composition 提供入口"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "先有结构化 plan，再谈高级优化"
+      - "不得让 memory injection 继续直接拼接在 command 内部"
+
+  - id: "m1.4"
+    title: "Extract memory injection service boundary"
+    status: pending
+    design_ref: "docs/staff-remediation/backend-application-control-plane-refactor-design.md"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/application/
+    must_implement:
+      - "建立 memory injection service 或等价入口"
+      - "把 pinned/compiled/rules 注入逻辑从 command 层分离"
+      - "为 M3 memory coordinator 预留接缝"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "memory service 应只暴露注入结果，不反向依赖 command"
+      - "为 future prepare_context/after_turn 叙事留口"
+
+  - id: "m1.5"
+    title: "Introduce stream emitter boundary"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src-tauri/src/commands/agent.rs
+      - src-tauri/src/runtime/
+    must_implement:
+      - "将 stream payload emission 从 command 中抽出"
+      - "统一 canonical envelope 与 legacy 兼容输出"
+      - "让 memory / execution-mode / activation 事件能共享发射机制"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "stream emitter 必须服务于 contracts，而不是继续固化旧 payload"
+      - "不能破坏现有前端流式主路径"
+
+  - id: "m1.6"
+    title: "Add request intelligence service"
+    status: pending
+    design_ref: "docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md"
+    impl_targets:
+      - src-tauri/src/application/
+      - src-tauri/src/control_plane/
+      - src-tauri/src/runtime/contracts/
+    must_implement:
+      - "新增 request_intelligence_service"
+      - "实现 execution mode、risk、complexity、route hint、reason codes 的基础输出"
+      - "形成 task classifier -> route decision 的正式服务入口"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "execution mode 必须由后端统一给出"
+      - "先建 deterministic + heuristic 骨架，不要求一次完成所有规则"
+
+  - id: "m1.7"
+    title: "Introduce activation and license lifecycle services"
+    status: pending
+    design_ref: "docs/staff-remediation/activation-gate-and-license-lifecycle-design.md"
+    impl_targets:
+      - src-tauri/src/application/
+      - src-tauri/src/commands/
+      - src-tauri/src/runtime/contracts/
+    must_implement:
+      - "新增 activation_service 与 license_lifecycle_service"
+      - "新增 activation commands"
+      - "建立 refresh/revoke/deactivate 的后端语义入口"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "activation 逻辑不得塞回 App.tsx 或普通 settings handler"
+      - "反激活必须与 refresh/revoke 同层治理"
+
+  - id: "m1.8"
+    title: "Introduce prepare_step_execution control-plane seam"
+    status: pending
+    design_ref: "docs/staff-remediation/backend-application-control-plane-refactor-design.md"
+    impl_targets:
+      - src-tauri/src/control_plane/
+      - src-tauri/src/modules/runtime/permissions/
+      - src-tauri/src/modules/control_plane/
+    must_implement:
+      - "建立 boundary -> permission -> sandbox 的控制面接缝"
+      - "先形成 prepare_step_execution 统一入口"
+      - "为 M4 policy/harness 联动提供正式基础"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "control plane 不能停留在概念层"
+      - "即使暂时只接入部分工具，也必须接口先行"
+
+notes: |
+  Phase M1 的核心不是“重命名文件”，而是把主脑从 commands 层迁走。
+  执行者必须先读取 `docs/exec-plans/active/phase-m1-executor-runbook.md`，
+  再开始任何 slice。
+  完成标准是：
+  1. agent.rs 显著瘦身
+  2. provider/prompt/memory/stream/request-intelligence/activation 有正式 service 边界
+  3. control plane 接缝出现

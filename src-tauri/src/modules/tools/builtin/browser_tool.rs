@@ -28,6 +28,7 @@ use serde_json::{json, Value};
 use tracing::info;
 
 use crate::modules::browser::events::emit_browser_status;
+use crate::modules::browser::session::WaitState;
 use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
 use crate::modules::tools::output::ToolOutput;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler, ToolHandlerMultimodal};
@@ -219,6 +220,12 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
                 "timeout_ms": {
                     "type": "integer",
                     "description": "Maximum milliseconds to wait (default: 5000, for 'wait')."
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["load", "domcontentloaded", "networkidle"],
+                    "description": "Lifecycle state to wait for (action='wait'). 'load' = window.onload; 'domcontentloaded' (default) = DOM tree ready; 'networkidle' = no inflight requests for 500ms (best for SPA route changes).",
+                    "default": "domcontentloaded"
                 },
                 "expression": {
                     "type": "string",
@@ -593,8 +600,15 @@ async fn execute_browser_action(
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5_000);
+            // Phase 7C, slice 7C.5 — honour the LLM's "state" choice.
+            // Defaults to `domcontentloaded` (was hard-coded "load" before).
+            let state = WaitState::from_str(
+                args.get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("domcontentloaded"),
+            );
 
-            match registry.wait(&session_id, timeout_ms, "load").await {
+            match registry.wait(&session_id, timeout_ms, state).await {
                 Ok(snapshot) => {
                     spawn_emit(Arc::clone(&registry), session_id);
                     Ok(snapshot)

@@ -1,0 +1,177 @@
+# Phase M3: Memory Coordinator
+# ─────────────────────────────────────────────────────────────────────────────
+# 将 If2Ai 的 memory 从一组分散能力收敛为统一的 MemoryCoordinator /
+# WritePolicy / QualityGate / RecallAssembler / ReflectionFeedback 体系。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m3"
+  phase_status: proposed
+  title: "Memory Coordinator"
+  owner: "@executor"
+  depends_on_phase: "m2"
+  execution_runbook: "docs/exec-plans/active/phase-m3-executor-runbook.md"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/memory-self-evolution-design.md
+    - docs/staff-remediation/runtime-contracts-and-event-projection-design.md
+    - docs/staff-remediation/backend-application-control-plane-refactor-design.md
+    - docs/exec-plans/active/phase-m3-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m3.2"
+    - after_slice: "m3.5"
+    - after_slice: "m3.8"
+
+slices:
+
+  - id: "m3.1"
+    title: "Define memory object model in code"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/modules/learning/
+    must_implement:
+      - "定义 Fact / Preference / Strategy / Episode 对象边界或等价映射"
+      - "明确每类对象的 scope、stability、evidence 约束"
+      - "为后续 write/recall/reflect 提供统一对象层"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "对象模型必须能映射当前已存在模块"
+      - "不得把所有 memory 继续视为同质文本块"
+
+  - id: "m3.2"
+    title: "Introduce memory coordinator boundary"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/application/
+    must_implement:
+      - "建立 MemoryCoordinator 或等价统一入口"
+      - "形成 prepare_context / after_turn 的主叙事"
+      - "把 scattered recall/injection/write 接缝收口"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "MemoryCoordinator 必须是流程协调器，而不是新 God-file"
+      - "为 M5 reflection/candidate pipeline 预留正式接口"
+
+  - id: "m3.3"
+    title: "Introduce write policy and typed decision model"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/runtime/contracts/
+    must_implement:
+      - "统一 write decision: allow / deny / prompt"
+      - "附带 reason_code / memory_type / scope / evidence_id"
+      - "让 memory 写入具备 explainable decision"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "写入策略必须可审计"
+      - "敏感信息必须能走 deny 或 prompt"
+
+  - id: "m3.4"
+    title: "Introduce quality gate and conflict handling"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+    must_implement:
+      - "建立 memory quality gate"
+      - "处理去重、冲突、scope 漏写、缺 evidence 等问题"
+      - "定义最小 conflict resolution 机制"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "quality gate 必须在长期写入前运行"
+      - "不得默认把含糊或不稳定信息写成长期事实"
+
+  - id: "m3.5"
+    title: "Introduce recall assembler and injection order"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/runtime/
+    must_implement:
+      - "建立 recall assembler"
+      - "落实注入顺序：rules -> pinned -> critical facts -> preferences -> compiled -> episodes"
+      - "输出 recall usefulness 基础埋点"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "召回目标是有用而不是越多越好"
+      - "注入顺序必须可观察、可比较"
+
+  - id: "m3.6"
+    title: "Project memory decisions into frontend stores"
+    status: pending
+    design_ref: "docs/staff-remediation/runtime-contracts-and-event-projection-design.md"
+    impl_targets:
+      - src/state/
+      - src/modules/chat/
+      - src/components/memory/
+    must_implement:
+      - "memory-store 接入 write decision / recall evidence"
+      - "区分 candidate / approved / recalled / pinned / compiled"
+      - "去除 seeded trust/risk fiction 的残余表达"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "前端只投影 memory truth"
+      - "不能把 memory 解释性信息藏在调试日志里"
+
+  - id: "m3.7"
+    title: "Introduce reflection feedback seam"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/modules/memory/
+    must_implement:
+      - "建立 ReflectionNote 或等价结构"
+      - "输出 issue_type / evidence / proposed_strategy / expected_gain / risk_level"
+      - "将 reflection 与 memory coordinator 接通但不直接 promote"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "reflection 先产出 candidate，不直接改默认策略"
+      - "必须和 harness gate 预留连接"
+
+  - id: "m3.8"
+    title: "Add memory regression and dirty data tests"
+    status: pending
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/memory/
+      - src-tauri/src/integration_tests.rs
+    must_implement:
+      - "补 memory object / write policy / recall order / conflict handling 测试"
+      - "覆盖 dirty or ambiguous candidate 场景"
+    acceptance:
+      - type: test
+        cmd: "cargo test --manifest-path src-tauri/Cargo.toml memory"
+    review_checklist:
+      - "memory 重构必须有回归保护"
+      - "至少覆盖一条 recall usefulness 或写入拒绝路径"
+
+notes: |
+  Phase M3 的核心是把 memory 变成正式平台能力，而不是继续堆子模块。
+  执行者必须先读取 `docs/exec-plans/active/phase-m3-executor-runbook.md`，
+  再开始任何 slice。
+  完成标准是：
+  1. MemoryCoordinator 出现
+  2. WritePolicy / QualityGate / RecallAssembler 出现
+  3. 前后端能解释 memory 为什么写、为什么不写、为什么召回

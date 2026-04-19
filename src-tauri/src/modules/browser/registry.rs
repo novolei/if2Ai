@@ -20,7 +20,9 @@ use tracing::{debug, info};
 use crate::modules::browser::cold_state::ColdState;
 use crate::modules::browser::errors::BrowserError;
 use crate::modules::browser::profile::BrowserProfileMode;
-use crate::modules::browser::session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};
+use crate::modules::browser::session::{
+    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir, WaitState,
+};
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
 /// and the `get_browser_sessions` command.
@@ -319,7 +321,7 @@ impl BrowserRegistry {
         &self,
         session_id: &str,
         timeout_ms: u64,
-        state: &str,
+        state: WaitState,
     ) -> Result<String, BrowserError> {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
