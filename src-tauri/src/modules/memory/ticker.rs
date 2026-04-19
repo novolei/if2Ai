@@ -765,7 +765,19 @@ impl TurnHook for MemoryTicker {
         session_id: &str,
         messages: &[ConversationMessage],
     ) {
+        // Phase 8B.11 fix-debug — info-level so it's visible without RUST_LOG.
+        tracing::info!(
+            session_id,
+            project_id = scope.project_id.as_deref().unwrap_or("-"),
+            messages = messages.len(),
+            "[ticker] on_turn_complete invoked"
+        );
         if session_id == "-" || messages.is_empty() {
+            tracing::info!(
+                session_id,
+                msg_count = messages.len(),
+                "[ticker] on_turn_complete SKIPPED (sentinel session_id or empty messages)"
+            );
             return;
         }
 
@@ -782,7 +794,19 @@ impl TurnHook for MemoryTicker {
         };
 
         let threshold = self.config.turns_per_summary;
+        tracing::info!(
+            session_id,
+            count,
+            threshold,
+            will_fire = (threshold > 0 && count > 0 && count % threshold == 0),
+            "[ticker] turn_count snapshot"
+        );
         if threshold > 0 && count > 0 && count % threshold == 0 {
+            tracing::info!(
+                session_id,
+                count,
+                "[ticker] threshold reached — spawning rolling_summary + compile_today"
+            );
             self.spawn_rolling_then_compile_today(
                 scope.clone(),
                 session_id.to_string(),

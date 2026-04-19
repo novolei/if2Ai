@@ -2977,10 +2977,22 @@ pub async fn start_agent_stream(
                 },
                 workdir: None,
             };
+            // Phase 8B.11 fix-debug — info log so it's visible in dev console.
+            tracing::info!(
+                session_id = %session_id,
+                project_id = updated_app_session.project_id.as_str(),
+                messages = messages_for_hook.len(),
+                "[stream] firing memory_ticker.on_turn_complete"
+            );
             memory_ticker_for_stream.on_turn_complete(
                 &scope_for_hook,
                 &session_id,
                 &messages_for_hook,
+            );
+        } else {
+            tracing::info!(
+                session_id = %session_id,
+                "[stream] SKIP memory_ticker.on_turn_complete (stream_failed=true)"
             );
         }
 
