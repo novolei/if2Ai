@@ -229,6 +229,7 @@ export function ModelSettingsPage() {
 
   /** HF mirror download source */
   const [mirrorUrl, setMirrorUrl] = useState('')
+  const [savingMirror, setSavingMirror] = useState(false)
 
   /** Which role's dropdown is open — null means all closed */
   const [openRoleId, setOpenRoleId] = useState<string | null>(null)
@@ -500,30 +501,55 @@ export function ModelSettingsPage() {
         <p className="mb-4 text-[11.5px] leading-5 text-muted-foreground">
           选择模型下载的服务器源。国内用户可选 hf-mirror.com 以获得更快的下载速度。
         </p>
-        <div className="flex flex-col gap-2">
-          {MIRROR_PRESETS.map((preset) => (
-            <button
-              key={preset.value}
-              type="button"
-              onClick={() => setMirrorUrl(preset.value)}
-              className={cn(
-                'flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all',
-                (mirrorUrl === preset.value)
-                  ? 'border-jade/30 bg-jade/4'
-                  : 'border-black/6 bg-black/[0.016] hover:bg-black/3',
-              )}
-            >
-              <div className={cn(
-                'flex size-4 shrink-0 items-center justify-center rounded-md border',
-                (mirrorUrl === preset.value)
-                  ? 'border-jade bg-jade text-white'
-                  : 'border-black/10',
-              )}>
-                {mirrorUrl === preset.value && <Check className="h-2.5 w-2.5" />}
-              </div>
-              <span className="text-[12px] font-medium text-foreground/80">{preset.label}</span>
-            </button>
-          ))}
+        <div className="flex items-end gap-3">
+          <div className="flex-1 flex flex-col gap-2">
+            {MIRROR_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                onClick={() => setMirrorUrl(preset.value)}
+                className={cn(
+                  'flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all',
+                  (mirrorUrl === preset.value)
+                    ? 'border-jade/30 bg-jade/4'
+                    : 'border-black/6 bg-black/[0.016] hover:bg-black/3',
+                )}
+              >
+                <div className={cn(
+                  'flex size-4 shrink-0 items-center justify-center rounded-md border',
+                  (mirrorUrl === preset.value)
+                    ? 'border-jade bg-jade text-white'
+                    : 'border-black/10',
+                )}>
+                  {mirrorUrl === preset.value && <Check className="h-2.5 w-2.5" />}
+                </div>
+                <span className="text-[12px] font-medium text-foreground/80">{preset.label}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              setSavingMirror(true)
+              try {
+                await invoke<ModelConfig>('set_model_config', {
+                  config: {
+                    embedded_model_name: modelName,
+                    hf_mirror_url: mirrorUrl || null,
+                  },
+                })
+                toast.success('已保存下载源配置')
+              } catch (err) {
+                toast.error('保存失败', { description: String(err) })
+              } finally {
+                setSavingMirror(false)
+              }
+            }}
+            disabled={savingMirror}
+            className="h-8 shrink-0 rounded-xl bg-jade px-4 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {savingMirror ? '保存中…' : '保存'}
+          </button>
         </div>
       </SettingsSurface>
 
