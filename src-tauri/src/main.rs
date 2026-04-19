@@ -361,6 +361,13 @@ fn main() {
         .init();
 
     tracing::info!("If2Ai backend starting, log directory: {:?}", log_dir);
+    // ⭐ Phase 8B.11 fix-debug banner — if you do NOT see this in your
+    // terminal after restarting `tauri dev`, the old binary is still
+    // running (Vite hot-reload only swaps frontend; Rust changes need
+    // a full process restart).
+    tracing::info!(
+        "⭐⭐⭐ MEMORY TICKER FIX BUILD a89eeec / 8B.11 — chat turns should fire on_turn_complete"
+    );
 
     // Surface memory feature flags at startup so operators can confirm which
     // recall / policy mode the binary actually picked up from settings.json.
