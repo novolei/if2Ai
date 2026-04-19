@@ -138,6 +138,18 @@ use commands::{
     stop_harness_recording,
     suggest_slash_commands,
     system_check_run,
+    // TTS commands (Phase TTS-5)
+    tts_demo_audio,
+    tts_health,
+    tts_list_voices,
+    tts_split_text,
+    tts_start_warmup,
+    tts_stream_close,
+    tts_stream_result,
+    tts_stream_start,
+    tts_stream_status,
+    tts_synthesize,
+    tts_warmup_status,
     upsert_web_search_provider,
     validate_web_search_key,
     write_file_contents,
@@ -690,6 +702,13 @@ fn main() {
         // Browser registry as separate managed state so browser commands can
         // access it without going through AppState.
         .manage(browser_registry)
+        .manage(commands::TtsState {
+            provider: std::sync::Arc::new(
+                modules::tts::provider::MockTtsProvider::new(),
+            ),
+            warmup: std::sync::Arc::new(modules::tts::manager::warmup::WarmupManager::new()),
+            jobs: std::sync::Arc::new(modules::tts::manager::jobs::StreamingJobManager::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             run_agent_turn,
             start_agent_stream,
@@ -843,6 +862,18 @@ fn main() {
             stop_harness_recording,
             get_session_telemetry,
             get_all_session_telemetry,
+            // TTS commands (Phase TTS-5)
+            tts_health,
+            tts_warmup_status,
+            tts_start_warmup,
+            tts_synthesize,
+            tts_stream_start,
+            tts_stream_status,
+            tts_stream_result,
+            tts_stream_close,
+            tts_demo_audio,
+            tts_list_voices,
+            tts_split_text,
         ])
         .setup(|app| {
             // Inject AppHandle into BrowserRegistry so the browser tool can emit

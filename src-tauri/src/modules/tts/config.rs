@@ -2,6 +2,7 @@
 //!
 //! Mirrors `moss_tts_nano/defaults.py` and the form field defaults in `app.py`.
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Default model paths for the TTS ONNX models.
@@ -37,7 +38,7 @@ pub const CHANNELS: u16 = 2;
 /// Generation parameters — mirrors all generation options from `app.py`.
 ///
 /// Each field maps to a form input in the web demo.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationParams {
     /// Maximum audio frames to generate. Default: 375.
     pub max_new_frames: u32,

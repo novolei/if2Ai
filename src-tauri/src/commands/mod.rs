@@ -263,6 +263,7 @@ pub mod skills_hub;
 pub mod slash;
 pub mod stream_outcome;
 pub mod tools;
+pub mod tts;
 pub mod web_search;
 pub mod window;
 
@@ -366,4 +367,10 @@ pub use provider::{
 pub use system_check::{
     embedded_model_download, embedded_model_progress, get_model_config, set_model_config,
     system_check_run,
+};
+#[allow(unused_imports)]
+pub use tts::{
+    tts_demo_audio, tts_health, tts_list_voices, tts_split_text, tts_start_warmup,
+    tts_stream_close, tts_stream_result, tts_stream_start, tts_stream_status, tts_synthesize,
+    tts_warmup_status, TtsState,
 };

@@ -369,6 +369,36 @@ And if we can see that motion—if we can understand how each life touches anoth
 /// Cached demo list.
 pub static ALL_DEMOS: std::sync::OnceLock<Vec<DemoEntry>> = std::sync::OnceLock::new();
 
+/// Get a demo entry by its ID (format: `demo-0`, `demo-1`, etc.).
+///
+/// Mirrors the Python `_resolve_demo_entry()` from `app.py`.
+pub fn get_demo_by_id(demo_id: &str) -> Option<DemoEntry> {
+    let demos = all_demos();
+    let index = demo_id.strip_prefix("demo-")?.parse::<usize>().ok()?;
+    demos.get(index).cloned()
+}
+
+/// Resolve the full audio path for a demo entry.
+///
+/// The `role` field is a relative path like `assets/audio/zh_1.wav`.
+/// This function resolves it relative to the TTS model voice directory.
+/// If the file doesn't exist, returns the role as-is.
+pub fn resolve_demo_audio_path(demo_id: &str) -> Option<std::path::PathBuf> {
+    let demo = get_demo_by_id(demo_id)?;
+    let voice_dir = crate::modules::tts::config::default_voice_dir();
+    // The role is like "assets/audio/zh_1.wav" — extract just the filename
+    let file_name = std::path::Path::new(&demo.role)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| demo.role.clone());
+    let path = voice_dir.join(&file_name);
+    if path.exists() {
+        Some(path)
+    } else {
+        Some(std::path::PathBuf::from(file_name))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
