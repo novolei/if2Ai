@@ -110,6 +110,50 @@ impl PrefillRunner {
         })
     }
 
+    /// Run prefill from a single session reference.
+    ///
+    /// Convenience method that doesn't require the full `GlobalSessions`
+    /// wrapper, used by the decode loop.
+    pub fn run_from_session(
+        session: &crate::modules::tts::model::global::OnnxSession,
+        token_ids: &[u32],
+    ) -> Result<PrefillResult, TtsError> {
+        if token_ids.is_empty() {
+            return Err(TtsError::EmptyText);
+        }
+
+        let seq_len = token_ids.len();
+
+        // Build input_ids: shape [1, seq_len, 1] as f32 (ONNX expects f32 tensors)
+        let _input_ids_data: Vec<f32> = token_ids.iter().map(|&id| id as f32).collect();
+        let _input_ids = ArrayD::<f32>::from_shape_vec(vec![1, seq_len, 1], _input_ids_data)
+            .map_err(|e| TtsError::OnnxError(format!("input_ids shape: {e}")))?;
+
+        // Build attention_mask: shape [1, seq_len] of all ones
+        let _attention_mask = Array2::<f32>::ones((1, seq_len)).into_dyn();
+
+        // TODO: Wire up actual ONNX run call (same as run() above).
+
+        // For now, return a placeholder result with the correct structure.
+        let hidden_dim = 1024;
+        let global_hidden = ArrayD::<f32>::zeros(vec![1, seq_len, hidden_dim]);
+        let kv_output_names: Vec<&str> = session
+            .output_names()
+            .iter()
+            .skip(1)
+            .map(|s| s.as_str())
+            .collect();
+        let kv_cache: Vec<ArrayD<f32>> = kv_output_names
+            .iter()
+            .map(|_| ArrayD::<f32>::zeros(vec![1, 16, 64]))
+            .collect();
+
+        Ok(PrefillResult {
+            global_hidden,
+            kv_cache,
+        })
+    }
+
     /// Build the input_ids tensor for prefill from token IDs.
     ///
     /// Shape: [1, seq_len, 1], dtype: f32.

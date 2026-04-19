@@ -2,9 +2,12 @@
 
 #![allow(dead_code)]
 
+pub mod decode;
 pub mod prefill;
 pub mod sampling;
 
+#[allow(unused_imports)]
+pub use decode::{DecodeRunner, DecodeState};
 #[allow(unused_imports)]
 pub use prefill::PrefillRunner;
 #[allow(unused_imports)]
