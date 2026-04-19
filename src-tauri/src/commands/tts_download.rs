@@ -78,44 +78,80 @@ impl Default for TtsDownloadState {
 
 /// HuggingFace file metadata with download URL and size.
 struct HfFile {
-    name: String,
+    /// Remote file name on HuggingFace (e.g. `moss_tts_prefill.onnx`).
+    remote_name: String,
+    /// Local file name in cache (e.g. `prefill.onnx`).
+    local_name: String,
     size: u64,
     url: String,
+    /// Whether this belongs to the TTS model (true) or audio tokenizer (false).
+    is_tts: bool,
 }
 
-/// List required TTS model files from HuggingFace.
-fn tts_model_files() -> &'static [&'static str] {
+/// Mapping from local cache file names to HuggingFace remote file names.
+///
+/// The MOSS-TTS-Nano repo uses `moss_tts_` prefixes and shared `.data`
+/// weight files, while our ONNX loader expects specific local names
+/// (see `GlobalSessions::load` and `LocalSessions::load`).
+fn tts_model_file_map() -> &'static [(&'static str, &'static str)] {
     &[
-        "prefill.onnx",
-        "prefill.onnx.data",
-        "decode_step.onnx",
-        "decode_step.onnx.data",
-        "decoder.onnx",
-        "decoder.onnx.data",
-        "local_cached_step.onnx",
-        "local_cached_step.onnx.data",
-        "local_fixed_sampled_frame.onnx",
-        "local_fixed_sampled_frame.onnx.data",
+        // (local_name, remote_name)
+        ("prefill.onnx", "moss_tts_prefill.onnx"),
+        ("prefill.onnx.data", "moss_tts_global_shared.data"),
+        ("decode_step.onnx", "moss_tts_decode_step.onnx"),
+        ("decode_step.onnx.data", "moss_tts_global_shared.data"),
+        ("decoder.onnx", "moss_tts_local_decoder.onnx"),
+        ("decoder.onnx.data", "moss_tts_local_shared.data"),
+        ("local_cached_step.onnx", "moss_tts_local_cached_step.onnx"),
+        ("local_cached_step.onnx.data", "moss_tts_local_shared.data"),
+        (
+            "local_fixed_sampled_frame.onnx",
+            "moss_tts_local_fixed_sampled_frame.onnx",
+        ),
+        (
+            "local_fixed_sampled_frame.onnx.data",
+            "moss_tts_local_shared.data",
+        ),
     ]
 }
 
-/// List required audio tokenizer files from HuggingFace.
-fn tokenizer_files() -> &'static [&'static str] {
+/// Audio tokenizer file mapping.
+///
+/// The MOSS-Audio-Tokenizer repo uses `moss_audio_tokenizer_` prefixes
+/// while our `CodecSessions::load` expects bare names.
+fn tokenizer_file_map() -> &'static [(&'static str, &'static str)] {
     &[
-        "encode.onnx",
-        "encode.onnx.data",
-        "decode_full.onnx",
-        "decode_full.onnx.data",
+        ("encode.onnx", "moss_audio_tokenizer_encode.onnx"),
+        ("encode.onnx.data", "moss_audio_tokenizer_encode.data"),
+        ("decode_full.onnx", "moss_audio_tokenizer_decode_full.onnx"),
+        (
+            "decode_full.onnx.data",
+            "moss_audio_tokenizer_decode_shared.data",
+        ),
+        ("decode_step.onnx", "moss_audio_tokenizer_decode_step.onnx"),
+        (
+            "decode_step.onnx.data",
+            "moss_audio_tokenizer_decode_shared.data",
+        ),
     ]
+}
+
+/// Unique remote files to download (deduplicated, preserving first local_name).
+fn unique_remote_files(map: &[(&'static str, &'static str)]) -> Vec<(&'static str, &'static str)> {
+    let mut seen = std::collections::HashSet::new();
+    map.iter()
+        .filter(|(_, remote)| seen.insert(*remote))
+        .copied()
+        .collect()
 }
 
 /// Build the HuggingFace download URL for a file.
 ///
 /// Uses the configured mirror URL if set, otherwise defaults to
-/// `huggingface.co`.
+/// `hf-mirror.com` (accessible from China).
 fn hf_file_url(repo: &str, file: &str) -> String {
     let base = crate::commands::system_check::get_hf_mirror_url()
-        .unwrap_or_else(|| "https://huggingface.co".to_string());
+        .unwrap_or_else(|| "https://hf-mirror.com".to_string());
     // Strip trailing slash from base so the path is clean.
     let base = base.strip_suffix('/').unwrap_or(&base);
     format!("{base}/{repo}/resolve/main/{file}")
@@ -130,14 +166,14 @@ pub async fn tts_model_status() -> Result<TtsModelStatusResponse, String> {
     let tts_dir = cache_root.join("tts_model");
     let tokenizer_dir = cache_root.join("audio_tokenizer");
 
-    let tts_files: Vec<ModelFileInfo> = tts_model_files()
+    let tts_files: Vec<ModelFileInfo> = tts_model_file_map()
         .iter()
-        .map(|f| file_info(&tts_dir, f))
+        .map(|(local, _)| file_info(&tts_dir, local))
         .collect();
 
-    let tokenizer_files: Vec<ModelFileInfo> = tokenizer_files()
+    let tokenizer_files: Vec<ModelFileInfo> = tokenizer_file_map()
         .iter()
-        .map(|f| file_info(&tokenizer_dir, f))
+        .map(|(local, _)| file_info(&tokenizer_dir, local))
         .collect();
 
     let total_bytes: u64 = tts_files
@@ -249,27 +285,30 @@ async fn download_models_impl(state: &Arc<Mutex<TtsDownloadState>>) -> Result<()
     std::fs::create_dir_all(&tokenizer_dir)
         .map_err(|e| format!("Failed to create tokenizer dir: {e}"))?;
 
-    // Collect all files to download with their sizes
+    // Collect all unique remote files to download, mapped to local names
     let mut all_files: Vec<HfFile> = Vec::new();
 
-    // First, query HuggingFace for file sizes via the API
-    for file in tts_model_files() {
-        let url = hf_file_url(TTS_MODEL_HF_REPO, file);
+    for (local_name, remote_name) in unique_remote_files(tts_model_file_map()) {
+        let url = hf_file_url(TTS_MODEL_HF_REPO, remote_name);
         let size = get_file_size(&url).await?;
         all_files.push(HfFile {
-            name: file.to_string(),
+            remote_name: remote_name.to_string(),
+            local_name: local_name.to_string(),
             size,
             url,
+            is_tts: true,
         });
     }
 
-    for file in tokenizer_files() {
-        let url = hf_file_url(AUDIO_TOKENIZER_HF_REPO, file);
+    for (local_name, remote_name) in unique_remote_files(tokenizer_file_map()) {
+        let url = hf_file_url(AUDIO_TOKENIZER_HF_REPO, remote_name);
         let size = get_file_size(&url).await?;
         all_files.push(HfFile {
-            name: file.to_string(),
+            remote_name: remote_name.to_string(),
+            local_name: local_name.to_string(),
             size,
             url,
+            is_tts: false,
         });
     }
 
@@ -283,12 +322,7 @@ async fn download_models_impl(state: &Arc<Mutex<TtsDownloadState>>) -> Result<()
     let mut downloaded: u64 = 0;
 
     for hf_file in &all_files {
-        // Check if already present and complete
-        let target = if hf_file.url.contains(TTS_MODEL_HF_REPO) {
-            tts_dir.join(&hf_file.name)
-        } else {
-            tokenizer_dir.join(&hf_file.name)
-        };
+        let target = tts_dir.join(&hf_file.local_name);
 
         if target.exists() {
             if let Ok(meta) = std::fs::metadata(&target) {
@@ -307,7 +341,7 @@ async fn download_models_impl(state: &Arc<Mutex<TtsDownloadState>>) -> Result<()
         // Download file with resume support
         {
             let mut s = state.lock().await;
-            s.current_file = hf_file.name.clone();
+            s.current_file = hf_file.local_name.clone();
         }
 
         download_file(
@@ -319,6 +353,25 @@ async fn download_models_impl(state: &Arc<Mutex<TtsDownloadState>>) -> Result<()
             state,
         )
         .await?;
+
+        // Copy to other local names that map to the same remote file.
+        // e.g. moss_tts_global_shared.data → prefill.onnx.data + decode_step.onnx.data
+        let (target_dir, file_map) = if hf_file.is_tts {
+            (&tts_dir, tts_model_file_map())
+        } else {
+            (&tokenizer_dir, tokenizer_file_map())
+        };
+        let other_locals = file_map
+            .iter()
+            .filter(|(_, remote)| *remote == hf_file.remote_name)
+            .map(|(local, _)| *local)
+            .filter(|local| *local != hf_file.local_name);
+        for other in other_locals {
+            let other_target = target_dir.join(other);
+            std::fs::copy(&target, &other_target)
+                .map_err(|e| format!("Failed to copy to {other_target:?}: {e}"))?;
+        }
+
         downloaded += hf_file.size;
     }
 
