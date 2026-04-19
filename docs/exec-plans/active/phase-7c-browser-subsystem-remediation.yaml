@@ -612,7 +612,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.9"
     name: "Console / Network 错误注入 Snapshot — AI 能自我诊断"
-    status: pending
+    status: done
     priority: P2
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G9
     estimated_days: 1.5

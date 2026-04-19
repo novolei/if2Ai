@@ -20,8 +20,13 @@ use chromiumoxide::cdp::browser_protocol::browser::{
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
 };
+use chromiumoxide::cdp::browser_protocol::log::{
+    EnableParams as LogEnableParams, EventEntryAdded as LogEventEntryAdded, LogEntryLevel,
+    LogEntrySource,
+};
 use chromiumoxide::cdp::browser_protocol::network::{
-    EventLoadingFailed, EventLoadingFinished, EventRequestWillBeSent,
+    EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
+    EventRequestWillBeSent, EventResponseReceived,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
     CaptureScreenshotFormat, EventDomContentEventFired, EventLoadEventFired,
@@ -123,6 +128,51 @@ pub struct DownloadEntry {
 /// Async-shared download ledger, owned by `BrowserSession` and
 /// updated by the background CDP listener task.
 pub(crate) type DownloadLedger = Arc<AsyncMutex<VecDeque<DownloadEntry>>>;
+
+// ── Phase 7C, slice 7C.9: console + network ledger ──────────────────────────
+
+/// Ring-buffer caps for the in-memory observability ledgers.
+const MAX_TRACKED_CONSOLE_EVENTS: usize = 50;
+const MAX_TRACKED_NETWORK_ERRORS: usize = 30;
+
+/// Severity classification for [`ConsoleEvent`].  Mirrors
+/// CDP `Log.LogEntry.level` minus `verbose` (which we never record).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsoleLevel {
+    Warning,
+    Error,
+}
+
+/// One console message captured from the page.  Only `warning` /
+/// `error` levels are recorded; `info` / `verbose` are dropped to keep
+/// the ledger focused on the data the LLM actually needs to debug
+/// "why didn't my click work?" style failures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsoleEvent {
+    pub level: ConsoleLevel,
+    /// e.g. "javascript", "network", "rendering", "security".
+    pub source: String,
+    pub text: String,
+    /// RFC-3339 timestamp.
+    pub ts: String,
+    /// URL of the script / resource that produced the message, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// One network failure (HTTP status >= 400) observed by the session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkErrorEvent {
+    pub url: String,
+    pub status: i64,
+    pub status_text: String,
+    pub mime_type: String,
+    pub ts: String,
+}
+
+pub(crate) type ConsoleLedger = Arc<AsyncMutex<VecDeque<ConsoleEvent>>>;
+pub(crate) type NetworkErrorLedger = Arc<AsyncMutex<VecDeque<NetworkErrorEvent>>>;
 
 /// Phase 7C, slice 7C.5 — what `wait()` should wait for.  Maps directly
 /// to the three Playwright lifecycle states the LLM already knows.
@@ -243,6 +293,14 @@ pub struct BrowserSession {
     _download_watcher: Option<JoinHandle<()>>,
     /// Absolute directory where downloads land.
     pub(crate) download_dir: std::path::PathBuf,
+    /// Phase 7C, slice 7C.9 — console errors / warnings emitted by
+    /// the page, fed by a CDP `Log.entryAdded` listener.
+    pub(crate) console_events: ConsoleLedger,
+    /// Phase 7C, slice 7C.9 — HTTP responses with status >= 400.
+    pub(crate) network_errors: NetworkErrorLedger,
+    /// Background task that fans Console + Network responses into the
+    /// ledgers above.
+    _console_network_watcher: Option<JoinHandle<()>>,
 }
 
 impl BrowserSession {
@@ -376,6 +434,11 @@ impl BrowserSession {
         let download_watcher =
             spawn_download_watcher(&browser, downloads.clone(), download_dir.clone()).await;
 
+        // Phase 7C, slice 7C.9 — observability ledgers (watcher spawned
+        // after `page` exists below).
+        let console_events: ConsoleLedger = Arc::new(AsyncMutex::new(VecDeque::new()));
+        let network_errors: NetworkErrorLedger = Arc::new(AsyncMutex::new(VecDeque::new()));
+
         // Phase 7C, slice 7C.1: opening a normal page on the default
         // browser context (no `start_incognito_context`).  Cookie /
         // localStorage isolation is now provided by the per-session profile
@@ -385,6 +448,10 @@ impl BrowserSession {
             .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
+        let console_network_watcher =
+            spawn_console_network_watcher(&page, console_events.clone(), network_errors.clone())
+                .await;
 
         // Inject stealth-mode JS patches on every new document (runs before page JS):
         // - Removes navigator.webdriver = true (most common bot detection signal)
@@ -419,6 +486,9 @@ impl BrowserSession {
             downloads,
             _download_watcher: download_watcher,
             download_dir,
+            console_events,
+            network_errors,
+            _console_network_watcher: console_network_watcher,
         })
     }
 
@@ -1106,9 +1176,28 @@ impl BrowserSession {
         &self.download_dir
     }
 
+    /// Phase 7C, slice 7C.9 — return the most recent console errors
+    /// / warnings recorded by the page.  Capped at
+    /// [`MAX_TRACKED_CONSOLE_EVENTS`].
+    pub async fn list_console_events(&self) -> Vec<ConsoleEvent> {
+        let guard = self.console_events.lock().await;
+        guard.iter().cloned().collect()
+    }
+
+    /// Phase 7C, slice 7C.9 — return the most recent HTTP responses
+    /// observed with status >= 400.  Capped at
+    /// [`MAX_TRACKED_NETWORK_ERRORS`].
+    pub async fn list_network_errors(&self) -> Vec<NetworkErrorEvent> {
+        let guard = self.network_errors.lock().await;
+        guard.iter().cloned().collect()
+    }
+
     /// Close the browser and release all resources.
     pub async fn close(mut self) -> Result<(), BrowserError> {
         if let Some(handle) = self._download_watcher.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self._console_network_watcher.take() {
             handle.abort();
         }
         self.browser
@@ -1177,6 +1266,83 @@ async fn spawn_download_watcher(
                 }
                 else => {
                     // All listener streams ended — browser detaching.
+                    break;
+                }
+            }
+        }
+    });
+    Some(handle)
+}
+
+// ── Phase 7C, slice 7C.9 — Console + Network observability watcher ───────────
+
+/// Best-effort enable + subscribe to `Log.entryAdded` and
+/// `Network.responseReceived`, then fan-in to the per-session
+/// ledgers.  Returns `None` if the subscriptions or the enable calls
+/// fail — observability is non-essential, so we never propagate the
+/// error to the session constructor.
+async fn spawn_console_network_watcher(
+    page: &Page,
+    console_ledger: ConsoleLedger,
+    network_ledger: NetworkErrorLedger,
+) -> Option<JoinHandle<()>> {
+    // Enable the relevant CDP domains.  Both calls are idempotent
+    // (Chromium accepts repeat enables), so a Drop+restart of the
+    // session safely re-arms the listener.
+    if let Err(e) = page.execute(LogEnableParams::default()).await {
+        warn!(error = %e, "browser: Log.enable failed; console events will be silent");
+    }
+    if let Err(e) = page.execute(NetworkEnableParams::default()).await {
+        warn!(error = %e, "browser: Network.enable failed; network errors will be silent");
+    }
+
+    let mut log_events = page.event_listener::<LogEventEntryAdded>().await.ok()?;
+    let mut net_events = page.event_listener::<EventResponseReceived>().await.ok()?;
+
+    let handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Some(evt) = log_events.next() => {
+                    let entry = &evt.entry;
+                    let level = match entry.level {
+                        LogEntryLevel::Error => Some(ConsoleLevel::Error),
+                        LogEntryLevel::Warning => Some(ConsoleLevel::Warning),
+                        // Drop verbose / info — they bury the signal.
+                        _ => None,
+                    };
+                    if let Some(level) = level {
+                        let mut guard = console_ledger.lock().await;
+                        if guard.len() >= MAX_TRACKED_CONSOLE_EVENTS {
+                            guard.pop_front();
+                        }
+                        guard.push_back(ConsoleEvent {
+                            level,
+                            source: entry.source.as_ref().to_owned(),
+                            text: entry.text.clone(),
+                            ts: chrono::Utc::now().to_rfc3339(),
+                            url: entry.url.clone(),
+                        });
+                    }
+                    // Silence unused warning on `LogEntrySource` pulled in for AsRef.
+                    let _ = LogEntrySource::Other;
+                }
+                Some(evt) = net_events.next() => {
+                    let resp = &evt.response;
+                    if resp.status >= 400 {
+                        let mut guard = network_ledger.lock().await;
+                        if guard.len() >= MAX_TRACKED_NETWORK_ERRORS {
+                            guard.pop_front();
+                        }
+                        guard.push_back(NetworkErrorEvent {
+                            url: resp.url.clone(),
+                            status: resp.status,
+                            status_text: resp.status_text.clone(),
+                            mime_type: resp.mime_type.clone(),
+                            ts: chrono::Utc::now().to_rfc3339(),
+                        });
+                    }
+                }
+                else => {
                     break;
                 }
             }

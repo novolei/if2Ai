@@ -176,7 +176,8 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
             "Perception: snapshot | screenshot. ",
             "Interaction: click | type | scroll | select | key | wait | evaluate. ",
             "Tabs: tabs | switch_tab | close_tab. ",
-            "Files: downloads."
+            "Files: downloads. ",
+            "Diagnostics: console | network."
         )
         .to_owned(),
         input_schema: json!({
@@ -186,7 +187,7 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
                     "type": "string",
                     "enum": ["start","stop","navigate","snapshot","screenshot",
                              "click","type","scroll","select","key","wait","evaluate",
-                             "tabs","switch_tab","close_tab","downloads"],
+                             "tabs","switch_tab","close_tab","downloads","console","network"],
                     "description": "The browser operation to perform."
                 },
                 "tab_index": {
@@ -710,13 +711,75 @@ async fn execute_browser_action(
             }
         }
 
+        // ── Console / Network observability (Phase 7C, slice 7C.9) ──
+        "console" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.list_console_events(&session_id).await {
+                Ok(events) => Ok(format_console(&events)),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
+        "network" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.list_network_errors(&session_id).await {
+                Ok(events) => Ok(format_network(&events)),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
         unknown => Err(ToolError::Handler(format!(
             "Unknown browser action '{unknown}'. Valid actions: \
              start | stop | navigate | snapshot | screenshot | \
              click | type | scroll | select | key | wait | evaluate | \
-             tabs | switch_tab | close_tab | downloads"
+             tabs | switch_tab | close_tab | downloads | console | network"
         ))),
     }
+}
+
+/// Format console events for the LLM (Phase 7C, slice 7C.9).
+fn format_console(events: &[crate::modules::browser::session::ConsoleEvent]) -> String {
+    if events.is_empty() {
+        return "(no console errors / warnings recorded)".to_string();
+    }
+    let mut out = String::new();
+    out.push_str(&format!("{} console event(s):\n", events.len()));
+    for e in events {
+        let url = e.url.as_deref().unwrap_or("");
+        let url_part = if url.is_empty() {
+            String::new()
+        } else {
+            format!(" ({url})")
+        };
+        out.push_str(&format!(
+            "[{level:?}/{source}] {text}{url_part}\n",
+            level = e.level,
+            source = e.source,
+            text = e.text,
+        ));
+    }
+    out
+}
+
+/// Format network errors for the LLM (Phase 7C, slice 7C.9).
+fn format_network(events: &[crate::modules::browser::session::NetworkErrorEvent]) -> String {
+    if events.is_empty() {
+        return "(no network errors recorded — all responses were < 400)".to_string();
+    }
+    let mut out = String::new();
+    out.push_str(&format!("{} network error(s):\n", events.len()));
+    for e in events {
+        out.push_str(&format!(
+            "{status} {status_text} — {url} ({mime})\n",
+            status = e.status,
+            status_text = e.status_text,
+            url = e.url,
+            mime = e.mime_type,
+        ));
+    }
+    out
 }
 
 /// Format a download list for the LLM (Phase 7C, slice 7C.8).

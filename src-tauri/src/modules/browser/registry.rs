@@ -21,7 +21,8 @@ use crate::modules::browser::cold_state::ColdState;
 use crate::modules::browser::errors::BrowserError;
 use crate::modules::browser::profile::BrowserProfileMode;
 use crate::modules::browser::session::{
-    ActionLogEntry, BrowserSession, DownloadEntry, NavigateResult, ScrollDir, TabInfo, WaitState,
+    ActionLogEntry, BrowserSession, ConsoleEvent, DownloadEntry, NavigateResult, NetworkErrorEvent,
+    ScrollDir, TabInfo, WaitState,
 };
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
@@ -368,6 +369,28 @@ impl BrowserRegistry {
         let arc = self.get_arc(session_id).ok()?;
         let guard = arc.try_lock().ok()?;
         Some(guard.download_dir().to_path_buf())
+    }
+
+    // ── Console + Network observability (Phase 7C, slice 7C.9) ──────────────
+
+    /// Most-recent console errors / warnings for `session_id`.
+    pub async fn list_console_events(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ConsoleEvent>, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        Ok(guard.list_console_events().await)
+    }
+
+    /// Most-recent HTTP responses with status >= 400 for `session_id`.
+    pub async fn list_network_errors(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<NetworkErrorEvent>, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let guard = arc.lock().await;
+        Ok(guard.list_network_errors().await)
     }
 
     /// Evaluate arbitrary JavaScript and return the serialised result.
