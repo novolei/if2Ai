@@ -270,9 +270,15 @@ impl TtsProvider for OnnxTtsProvider {
         // Normalize text
         let normalized = normalize_tts_text(&params.text);
 
-        // Handle voice clone mode: encode prompt audio if provided
-        let prompt_codes = if params.mode == SynthesisMode::VoiceClone {
+        // Encode prompt audio if provided (voice clone or continuation with prompt)
+        let prompt_codes = if params.prompt_audio_path.is_some() {
             if let Some(ref audio_path) = params.prompt_audio_path {
+                // Continuation mode requires prompt_text when prompt_audio is provided
+                if params.mode == SynthesisMode::Continuation && params.prompt_text.is_none() {
+                    return Err(TtsError::InvalidParam(
+                        "continuation mode with prompt_audio_path requires prompt_text".to_string(),
+                    ));
+                }
                 Some(self.encode_prompt_audio(audio_path)?)
             } else {
                 None
@@ -281,13 +287,30 @@ impl TtsProvider for OnnxTtsProvider {
             None
         };
 
-        // Run synthesis
-        let (_audio_codes, wav_bytes, elapsed) = self.run_synthesis(
-            &normalized,
-            &params.generation,
-            params.mode.clone(),
-            prompt_codes.as_deref(),
-        )?;
+        // Determine if long text auto-split is needed
+        let max_tokens = params.generation.voice_clone_max_text_tokens as usize;
+        let text_chunks = self.split_voice_clone_text(&normalized, max_tokens)?;
+        let text_chunks: Vec<String> = if text_chunks.is_empty() {
+            vec![normalized.clone()]
+        } else {
+            text_chunks
+        };
+
+        // Synthesize each chunk sequentially
+        let mut all_wav_bytes = Vec::new();
+        let mut total_elapsed = 0.0f32;
+
+        for chunk_text in &text_chunks {
+            let (chunk_codes, wav_bytes, elapsed) = self.run_synthesis(
+                chunk_text,
+                &params.generation,
+                params.mode.clone(),
+                prompt_codes.as_deref(),
+            )?;
+            all_wav_bytes.extend(wav_bytes);
+            total_elapsed += elapsed;
+            let _ = chunk_codes; // Will be used when ONNX pipeline is fully wired
+        }
 
         let voice_name = params
             .voice
@@ -295,13 +318,13 @@ impl TtsProvider for OnnxTtsProvider {
             .unwrap_or_else(|| self.default_voice().name.clone());
 
         Ok(SynthesisResult {
-            audio_bytes: wav_bytes,
+            audio_bytes: all_wav_bytes,
             sample_rate: SAMPLE_RATE,
             channels: CHANNELS,
-            duration_seconds: elapsed,
+            duration_seconds: total_elapsed,
             voice: voice_name,
-            text_chunks: vec![normalized.clone()],
-            elapsed_seconds: elapsed,
+            text_chunks: text_chunks.clone(),
+            elapsed_seconds: total_elapsed,
             normalized_text: normalized,
         })
     }
