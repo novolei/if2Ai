@@ -21,7 +21,7 @@ use crate::modules::browser::cold_state::ColdState;
 use crate::modules::browser::errors::BrowserError;
 use crate::modules::browser::profile::BrowserProfileMode;
 use crate::modules::browser::session::{
-    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir, WaitState,
+    ActionLogEntry, BrowserSession, NavigateResult, ScrollDir, TabInfo, WaitState,
 };
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
@@ -326,6 +326,29 @@ impl BrowserRegistry {
         let arc = self.get_arc(session_id)?;
         let mut guard = arc.lock().await;
         guard.wait(timeout_ms, state).await
+    }
+
+    // ── Multi-tab support (Phase 7C, slice 7C.6) ────────────────────────────
+
+    /// Return live metadata for every open tab in `session_id`.
+    pub async fn list_tabs(&self, session_id: &str) -> Result<Vec<TabInfo>, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.list_tabs().await
+    }
+
+    /// Make the tab at `idx` the active page for `session_id`.
+    pub async fn switch_tab(&self, session_id: &str, idx: usize) -> Result<String, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.switch_tab(idx).await
+    }
+
+    /// Close the tab at `idx`, returning the count of remaining tabs.
+    pub async fn close_tab(&self, session_id: &str, idx: usize) -> Result<usize, BrowserError> {
+        let arc = self.get_arc(session_id)?;
+        let mut guard = arc.lock().await;
+        guard.close_tab(idx).await
     }
 
     /// Evaluate arbitrary JavaScript and return the serialised result.

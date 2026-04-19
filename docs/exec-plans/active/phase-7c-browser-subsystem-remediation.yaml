@@ -422,7 +422,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.6"
     name: "Multi-Tab / Popup 跟踪 — target=_blank 不再丢失"
-    status: pending
+    status: done
     priority: P1
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G6
     estimated_days: 2

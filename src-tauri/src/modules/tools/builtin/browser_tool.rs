@@ -171,8 +171,11 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
             "Use 'navigate' to load a URL (auto-starts browser if needed). ",
             "For other actions, start explicitly with action='start' first. ",
             "Interact with elements using their [N] ref numbers from 'snapshot'. ",
-            "Actions: start | stop | navigate | snapshot | screenshot | ",
-            "click | type | scroll | select | key | wait | evaluate"
+            "Actions grouped: ",
+            "Lifecycle: start | stop | navigate. ",
+            "Perception: snapshot | screenshot. ",
+            "Interaction: click | type | scroll | select | key | wait | evaluate. ",
+            "Tabs: tabs | switch_tab | close_tab."
         )
         .to_owned(),
         input_schema: json!({
@@ -181,8 +184,13 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
                 "action": {
                     "type": "string",
                     "enum": ["start","stop","navigate","snapshot","screenshot",
-                             "click","type","scroll","select","key","wait","evaluate"],
+                             "click","type","scroll","select","key","wait","evaluate",
+                             "tabs","switch_tab","close_tab"],
                     "description": "The browser operation to perform."
+                },
+                "tab_index": {
+                    "type": "integer",
+                    "description": "Tab index from action='tabs' (required for 'switch_tab' / 'close_tab')."
                 },
                 "url": {
                     "type": "string",
@@ -634,12 +642,95 @@ async fn execute_browser_action(
             }
         }
 
+        // ── Tabs (Phase 7C, slice 7C.6) ──
+        "tabs" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            match registry.list_tabs(&session_id).await {
+                Ok(tabs) => Ok(format_tabs(&tabs)),
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
+        "switch_tab" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            let idx = args
+                .get("tab_index")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .ok_or_else(|| {
+                    ToolError::Handler(
+                        "'tab_index' field (integer) is required for 'switch_tab'".into(),
+                    )
+                })?;
+            match registry.switch_tab(&session_id, idx).await {
+                Ok(snapshot) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(snapshot)
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
+        "close_tab" => {
+            ensure_running_or_restore(&registry, &session_id).await?;
+            let idx = args
+                .get("tab_index")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .ok_or_else(|| {
+                    ToolError::Handler(
+                        "'tab_index' field (integer) is required for 'close_tab'".into(),
+                    )
+                })?;
+            match registry.close_tab(&session_id, idx).await {
+                Ok(remaining) => {
+                    spawn_emit(Arc::clone(&registry), session_id);
+                    Ok(format!(
+                        "ok: closed tab [{idx}], {remaining} tab(s) remaining"
+                    ))
+                }
+                Err(BrowserError::Cdp(msg)) => Err(on_cdp_crash(&registry, session_id, &msg).await),
+                Err(e) => Err(ToolError::Handler(e.to_string())),
+            }
+        }
+
         unknown => Err(ToolError::Handler(format!(
             "Unknown browser action '{unknown}'. Valid actions: \
              start | stop | navigate | snapshot | screenshot | \
-             click | type | scroll | select | key | wait | evaluate"
+             click | type | scroll | select | key | wait | evaluate | \
+             tabs | switch_tab | close_tab"
         ))),
     }
+}
+
+/// Format a `Vec<TabInfo>` for the LLM (Phase 7C, slice 7C.6).
+fn format_tabs(tabs: &[crate::modules::browser::session::TabInfo]) -> String {
+    if tabs.is_empty() {
+        return "(no open tabs)".to_string();
+    }
+    let mut out = String::new();
+    out.push_str(&format!("{} tab(s) open:\n", tabs.len()));
+    for t in tabs {
+        let marker = if t.active { " *" } else { "  " };
+        let title = if t.title.is_empty() {
+            "(no title)"
+        } else {
+            t.title.as_str()
+        };
+        let url = if t.url.is_empty() {
+            "about:blank"
+        } else {
+            t.url.as_str()
+        };
+        out.push_str(&format!("[{}]{} {} — {}\n", t.idx, marker, url, title));
+    }
+    out.push_str(
+        "\nUse action='switch_tab' with tab_index to focus a different tab, \
+         or action='close_tab' to close one.",
+    );
+    out
 }
 
 // ── Session health helpers ────────────────────────────────────────────────────

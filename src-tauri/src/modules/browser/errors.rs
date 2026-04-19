@@ -55,6 +55,13 @@ pub enum BrowserError {
     /// to `close` the session first.
     #[error("Session '{0}' must be closed before this operation")]
     SessionStillRunning(String),
+
+    /// Phase 7C, slice 7C.6 — `switch_tab` / `close_tab` received an
+    /// `idx` that does not match any open page.  The LLM should call
+    /// `list_tabs` (or `snapshot`, which appends a tab summary) to
+    /// discover valid indices.
+    #[error("Tab index {0} is out of range; call action='tabs' for the current list")]
+    TabIndexOutOfRange(usize),
 }
 
 impl From<chromiumoxide::error::CdpError> for BrowserError {

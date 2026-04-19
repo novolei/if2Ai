@@ -42,6 +42,31 @@ pub enum ScrollDir {
     Down,
 }
 
+/// Phase 7C, slice 7C.6 — short metadata for one open browser tab,
+/// returned by [`BrowserSession::list_tabs`] for the LLM and the
+/// frontend BrowserCard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabInfo {
+    /// Position in the tab list at the time of the call.  Pass this
+    /// back as `tab_index` to `switch_tab` / `close_tab`.
+    pub idx: usize,
+    /// Current URL of the page (or empty when the tab is still
+    /// loading `about:blank`).
+    pub url: String,
+    /// Page title (best effort; empty for protected / loading pages).
+    pub title: String,
+    /// `true` for the page that subsequent click / type / snapshot
+    /// actions will operate on.
+    pub active: bool,
+    /// Opaque CDP target id, kept stable across `refresh_pages` calls.
+    pub target_id: String,
+}
+
+/// Hard cap so a misbehaving site (`for(;;) window.open()`) can't
+/// drag us into OOM.  The oldest *non-active* tab is closed first
+/// when `refresh_pages` discovers we're over the limit.
+const MAX_TRACKED_TABS: usize = 10;
+
 /// Phase 7C, slice 7C.5 — what `wait()` should wait for.  Maps directly
 /// to the three Playwright lifecycle states the LLM already knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -787,6 +812,179 @@ impl BrowserSession {
         } else {
             Ok(serialised)
         }
+    }
+
+    // ── Multi-tab support (Phase 7C, slice 7C.6) ──────────────────────────────
+    //
+    // We keep `self.page` as the canonical "active" page so the 30+
+    // existing `self.page.evaluate(...)` call sites stay untouched.  Other
+    // open tabs are enumerated lazily via `browser.pages()` whenever the
+    // LLM asks (`list_tabs` / `switch_tab` / `close_tab`).  This avoids
+    // standing up a background `EventTargetCreated` listener task whose
+    // lifetime would have to be tied to the session.
+
+    /// Enumerate every page currently held by the underlying Browser
+    /// process and return a [`TabInfo`] vec ordered by discovery.  The
+    /// active page (`self.page`) is flagged with `active=true`; its
+    /// position in the returned list is also `self.tab_idx`.
+    ///
+    /// When the live tab count exceeds [`MAX_TRACKED_TABS`], the oldest
+    /// *non-active* page is force-closed before returning so the list
+    /// never grows unboundedly.
+    pub async fn list_tabs(&mut self) -> Result<Vec<TabInfo>, BrowserError> {
+        let pages = self
+            .browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
+        // Enforce hard cap by closing the oldest non-active page.
+        let active_id_string = self.page.target_id().as_ref().to_owned();
+        if pages.len() > MAX_TRACKED_TABS {
+            // Collect candidates, then take ownership of the one to close
+            // (Page::close consumes self).
+            let owned: Vec<Page> = pages.into_iter().collect();
+            for page in owned {
+                if page.target_id().as_ref() != active_id_string.as_str() {
+                    let _ = page.close().await;
+                    break;
+                }
+            }
+        }
+
+        // Re-fetch after potential cleanup.
+        let pages = self
+            .browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
+        let mut out = Vec::with_capacity(pages.len());
+        for (idx, page) in pages.iter().enumerate() {
+            let url = page.url().await.ok().flatten().unwrap_or_default();
+            let title = page.get_title().await.ok().flatten().unwrap_or_default();
+            let target_id = page.target_id().as_ref().to_owned();
+            let active = target_id == active_id_string;
+            out.push(TabInfo {
+                idx,
+                url,
+                title,
+                active,
+                target_id,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Make the page at `idx` the active one.  Returns a fresh AXTree
+    /// snapshot of the newly-active page.  Future click / type / snapshot
+    /// calls will operate on it.
+    pub async fn switch_tab(&mut self, idx: usize) -> Result<String, BrowserError> {
+        let pages = self
+            .browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        let page = pages
+            .into_iter()
+            .nth(idx)
+            .ok_or(BrowserError::TabIndexOutOfRange(idx))?;
+        // Re-inject stealth on the new page so vendor JS that reads
+        // navigator.webdriver still sees a clean slate.  Best-effort:
+        // some pages (e.g. about:blank with no document) reject the
+        // injection — that's harmless.
+        let _ = page
+            .enable_stealth_mode_with_agent(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+                 AppleWebKit/537.36 (KHTML, like Gecko) \
+                 Chrome/131.0.0.0 Safari/537.36",
+            )
+            .await;
+        self.page = page;
+        self.sync_url().await;
+        let snapshot = self.run_snapshot().await?;
+        self.log("switch_tab", serde_json::json!({ "idx": idx }), "ok");
+        Ok(snapshot)
+    }
+
+    /// Close the page at `idx`.  When the active page is closed the
+    /// next remaining page (or the previous one when none follows)
+    /// becomes active automatically; the caller can then call
+    /// `snapshot` or `switch_tab` to refresh.  Returns the count of
+    /// pages remaining.
+    pub async fn close_tab(&mut self, idx: usize) -> Result<usize, BrowserError> {
+        // Take ownership so we can `close()` (which consumes the Page).
+        let target_page = self
+            .browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?
+            .into_iter()
+            .nth(idx)
+            .ok_or(BrowserError::TabIndexOutOfRange(idx))?;
+        let target_id_string = target_page.target_id().as_ref().to_owned();
+        let was_active = target_id_string.as_str() == self.page.target_id().as_ref();
+        target_page
+            .close()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+
+        // Re-fetch the live list and pick a new active page when needed.
+        let pages_after = self
+            .browser
+            .pages()
+            .await
+            .map_err(|e| BrowserError::Cdp(e.to_string()))?;
+        if was_active {
+            if let Some(replacement) = pages_after
+                .into_iter()
+                .find(|p| p.target_id().as_ref() != target_id_string.as_str())
+            {
+                self.page = replacement;
+                self.sync_url().await;
+            }
+            // Else: no pages left.  Caller is expected to close() the
+            // session shortly thereafter; we leave self.page pointing at
+            // the (now closed) handle which will surface as a CDP error
+            // on the next operation.
+        }
+        let remaining = self.browser.pages().await.map(|p| p.len()).unwrap_or(0);
+        self.log(
+            "close_tab",
+            serde_json::json!({ "idx": idx }),
+            &format!("ok: {remaining} remaining"),
+        );
+        Ok(remaining)
+    }
+
+    /// Append a "## Other tabs" section to `snapshot` when there are
+    /// more than one live page.  Used by `run_snapshot` callers (and
+    /// the tool layer) so the LLM is always reminded which tabs exist.
+    pub async fn append_tabs_summary(&mut self, snapshot: String) -> String {
+        let tabs = match self.list_tabs().await {
+            Ok(t) => t,
+            Err(_) => return snapshot,
+        };
+        if tabs.len() <= 1 {
+            return snapshot;
+        }
+        let mut out = snapshot;
+        out.push_str("\n\n## Other tabs (use action='switch_tab' with tab_index):\n");
+        for tab in &tabs {
+            let marker = if tab.active { "*" } else { " " };
+            let title = if tab.title.is_empty() {
+                "(no title)".to_string()
+            } else {
+                tab.title.chars().take(60).collect::<String>()
+            };
+            let url = if tab.url.is_empty() {
+                "about:blank".to_string()
+            } else {
+                tab.url.chars().take(120).collect::<String>()
+            };
+            out.push_str(&format!("[{}] {} {} — {}\n", tab.idx, marker, url, title));
+        }
+        out
     }
 
     /// Close the browser and release all resources.
