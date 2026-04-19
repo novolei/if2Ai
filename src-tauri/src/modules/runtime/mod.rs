@@ -21,6 +21,7 @@ pub mod mcp_stdio;
 pub mod oauth;
 pub mod permissions;
 pub mod prompt;
+pub mod prompt_tools_guide;
 pub mod remote;
 pub mod sandbox;
 pub mod session;

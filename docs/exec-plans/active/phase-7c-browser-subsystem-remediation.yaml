@@ -32,8 +32,8 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: ['7C.1', '7C.2', '7C.3']
-  current_slice: '7C.4'
+  completed_slices: ['7C.1', '7C.2', '7C.3', '7C.4']
+  current_slice: '7C.5'
   blocked: []
   notes: >
     Phase 7C 推进至 7C.3。
@@ -97,7 +97,28 @@ dashboard:
     清单：28 browser 单测全过；clippy 0 新警告（17 警告全在 pre-existing TTS）；
     TypeScript 0 新错误（pre-existing onboarding/App/TTS 错误未影响）。
 
-    下一步：7C.4 System Prompt Tools Routing（约 1 工程日）。
+    7C.4 done — System Prompt Tools Routing。
+    交付：
+      - modules/runtime/prompt_tools_guide.rs (新) — web_tools_routing_block(&[String])
+        -> Option<String>，仅在 ≥2 个 web 工具注册时返回 Some；分段渲染：
+        cheap→expensive escalation order, browser 使用条件清单, anti-pattern 规则,
+        takeover 'paused' 错误处理；附 9 个单测覆盖 4 种组合 + 边界条件
+      - modules/runtime/prompt.rs SystemPromptBuilder 加 tool_routing_guide:
+        Option<String> 字段 + with_tool_routing_guide(Some) builder + build()
+        在 skills_index 与 SYSTEM_PROMPT_DYNAMIC_BOUNDARY 之间插入；附 2 个新测
+        (插入位置 / None 时跳过)
+      - commands/agent.rs run_agent_turn + start_agent_stream 两个入口都注入
+        web_tools_routing_block(&state.tool_registry.tool_names())；只在 ≥2 web
+        工具时插入，无浪费 token
+    Token 成本：~250 token（仅当 web_search + web_fetch + browser 全注册时）；
+    单工具时 None 不插入。
+    清单：9 prompt_tools_guide 单测 + 2 prompt builder 新测 + 现有 170 runtime
+    测全过；clippy 0 新警告（依然是 pre-existing 17 TTS WIP）。
+
+    下一步：7C.5 Wait State Machine + click/type 时序修正（P1，约 2 工程日）。
+    Phase 7C 进度 4/13 (P0 段全部完成)，进入 P1 段；前序 P0 4 个 slice 已
+    建立完整的「持久化登录态 + 多模态视觉 + 接管 + 路由提示」基础设施，下一段
+    P1 (7C.5-7C.8) 聚焦交互精度（wait/tabs/iframe/download）。
 
 slices:
 
@@ -293,7 +314,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.4"
     name: "System Prompt Tools Routing — 让 LLM 知道何时用哪个 web 工具"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G4
     estimated_days: 1

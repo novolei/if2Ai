@@ -1042,6 +1042,20 @@ pub async fn run_agent_turn(
         }
     };
 
+    // Phase 7C, slice 7C.4 — inject web-tool routing guide (`web_search` →
+    // `web_fetch` → `browser` escalation order) when at least two of those
+    // tools are registered.  Pushed before the memory sections so it sits
+    // higher in the prompt (closer to the static intro) and isn't squeezed
+    // out by long memory blocks.
+    {
+        let registered_names = state.tool_registry.tool_names();
+        if let Some(guide) =
+            crate::modules::runtime::prompt_tools_guide::web_tools_routing_block(&registered_names)
+        {
+            system_prompt.push(guide);
+        }
+    }
+
     // Phase 8A.12 (T-F5) — append pinned + compiled + rules memory sections.
     // `SystemPromptBuilder::build` is synchronous (v2 §0.5 Δ-7), so we
     // pre-fetch the [`MemoryInjection`] payload here and push the rendered
@@ -1599,6 +1613,18 @@ pub async fn start_agent_stream(
         std::env::consts::FAMILY,
     ) {
         Ok(mut prompt_lines) => {
+            // Phase 7C, slice 7C.4 — web-tool routing guide (parity with
+            // `run_agent_turn`).
+            {
+                let registered_names = state.tool_registry.tool_names();
+                if let Some(guide) =
+                    crate::modules::runtime::prompt_tools_guide::web_tools_routing_block(
+                        &registered_names,
+                    )
+                {
+                    prompt_lines.push(guide);
+                }
+            }
             // Phase 8A.12 (T-F5) — see `run_agent_turn` for rationale.
             append_memory_injection_sections(
                 &state,
