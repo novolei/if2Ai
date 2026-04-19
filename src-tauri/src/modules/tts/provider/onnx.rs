@@ -151,19 +151,27 @@ impl OnnxTtsProvider {
     fn run_synthesis(
         &self,
         text: &str,
-        _generation: &GenerationParams,
+        generation: &GenerationParams,
         mode: SynthesisMode,
         prompt_audio_codes: Option<&[Vec<u32>]>,
     ) -> Result<(Vec<Vec<u32>>, Vec<u8>, f32), TtsError> {
         let start = std::time::Instant::now();
 
         // Step 1: Tokenize text
-        let token_ids = self.tokenizer.encode(text)?;
+        let _token_ids = self.tokenizer.encode(text)?;
 
-        // Step 2: Use prompt codes as frame prefix if in voice clone mode
-        let _prompt_codes = prompt_audio_codes;
-        let _mode = mode;
-        let _token_ids = token_ids;
+        // Step 2: Determine frame budget and prefix from prompt codes
+        let max_frames = generation.max_new_frames as usize;
+        let prompt_prefix: Vec<Vec<u32>> = match (mode, prompt_audio_codes) {
+            (SynthesisMode::VoiceClone, Some(codes)) => {
+                // Use prompt codes as the starting frame prefix for voice clone.
+                // The decode loop will generate the remaining frames.
+                codes.iter().take(max_frames).cloned().collect()
+            }
+            _ => Vec::new(),
+        };
+        let prompt_frame_count = prompt_prefix.len();
+        let frames_to_generate = max_frames.saturating_sub(prompt_frame_count);
 
         // TODO: Wire up the full ONNX inference pipeline.
         // The complete flow will be:
@@ -173,7 +181,16 @@ impl OnnxTtsProvider {
         // 4. wav_encode(samples) → WAV bytes
         //
         // Currently generates placeholder frames to establish the pipeline structure.
-        let audio_codes: Vec<Vec<u32>> = vec![vec![0u32; self.n_vq]; 96]; // Placeholder: 96 frames
+        // In voice clone mode, prefix prompt codes + generated placeholder frames.
+        let mut audio_codes = prompt_prefix;
+        let placeholder_frames = if frames_to_generate > 0 {
+            frames_to_generate
+        } else {
+            max_frames
+        };
+        for _ in 0..placeholder_frames {
+            audio_codes.push(vec![0u32; self.n_vq]);
+        }
 
         // Step 3: Decode audio codes → PCM samples
         let pcm_samples = self.decode_audio_codes(&audio_codes)?;

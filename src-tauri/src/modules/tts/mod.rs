@@ -26,6 +26,7 @@ pub mod audio;
 pub mod config;
 pub mod error;
 pub mod inference;
+pub mod manager;
 pub mod model;
 pub mod provider;
 pub mod text;
