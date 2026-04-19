@@ -20,6 +20,7 @@ import { SkillsSettingsPage } from './pages/SkillsSettingsPage'
 import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 import { MemorySettingsPage } from './pages/MemorySettingsPage'
 import { ModelSettingsPage } from './pages/ModelSettingsPage'
+import { ToolSettingsPage } from './pages/ToolSettingsPage'
 import { TtsTestPage } from './pages/TtsTestPage'
 import { SttConfigPage } from './pages/SttConfigPage'
 
@@ -181,6 +182,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
             onRollbackSkill={(skill) => void handleProposalAction(skill, 'rollback')}
           />
         )
+      case 'tools':
+        return <ToolSettingsPage />
       case 'web-search':
         return <WebSearchSettingsPage />
       case 'memory':

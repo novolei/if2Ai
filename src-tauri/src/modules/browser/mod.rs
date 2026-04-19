@@ -32,6 +32,8 @@ pub mod snapshot;
 pub use chrome_finder::{find_chrome_binary, ChromeStatus};
 pub use errors::BrowserError;
 pub use events::{emit_browser_status, BrowserStatusEvent};
-pub use profile::{delete_profile, list_profiles, BrowserProfileMode, ProfileEntry, ProfileHandle};
+pub use profile::{
+    delete_profile, list_profiles, BrowserProfileMode, BrowserSettings, ProfileEntry, ProfileHandle,
+};
 pub use registry::{BrowserRegistry, BrowserStatusEntry};
 pub use session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};

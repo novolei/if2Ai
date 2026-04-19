@@ -1,4 +1,17 @@
-import { BarChart3, Brain, Cpu, Info, Link2, Mic, Radio, Search, Settings, Sparkles, Volume2 } from 'lucide-react'
+import {
+  BarChart3,
+  Brain,
+  Cpu,
+  Globe,
+  Info,
+  Link2,
+  Mic,
+  Radio,
+  Search,
+  Settings,
+  Sparkles,
+  Volume2,
+} from 'lucide-react'
 import type { SettingsSectionMeta } from './types'
 
 export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
@@ -19,6 +32,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: '技能管理',
     description: '查看状态并执行 enable/disable，含 quarantine/active 冲突说明。',
     icon: Sparkles,
+  },
+  {
+    id: 'tools',
+    label: '工具设置',
+    description: '配置 AI 可用工具的运行参数（浏览器 profile / cookies、未来更多工具）。',
+    icon: Globe,
   },
   {
     id: 'web-search',

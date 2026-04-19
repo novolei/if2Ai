@@ -19,7 +19,8 @@ use tauri::{AppHandle, State};
 use crate::modules::browser::chrome_finder::find_chrome_binary;
 use crate::modules::browser::events::emit_browser_status;
 use crate::modules::browser::profile::{
-    delete_profile as delete_profile_inner, list_profiles as list_profiles_inner, ProfileEntry,
+    delete_profile as delete_profile_inner, list_profiles as list_profiles_inner, BrowserSettings,
+    ProfileEntry,
 };
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
 
@@ -116,4 +117,36 @@ pub async fn clear_browser_profile(
         ));
     }
     delete_profile_inner(registry.if2ai_home(), &session_id).map_err(|e| e.to_string())
+}
+
+// ── Browser settings (Phase 7C, Settings UI entry point) ─────────────────────
+
+/// Read the persisted browser settings (`<if2ai_home>/browser.toml`).
+///
+/// Surfaces the *next-launch* `profile_mode`, the live `active_mode` of
+/// the running registry, and any active `IF2AI_BROWSER_PROFILE_MODE`
+/// environment override.  The Settings UI uses this to render the
+/// dropdown plus a banner when env / running mode disagree with the
+/// persisted preference.
+#[tauri::command]
+pub async fn get_browser_settings(
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<BrowserSettings, String> {
+    Ok(BrowserSettings::load(
+        registry.if2ai_home(),
+        registry.profile_mode(),
+    ))
+}
+
+/// Persist user-edited browser settings.  Takes effect on next app
+/// restart for `profile_mode`; the disk caps are reserved for future LRU
+/// cleanup but stored now so the UI is the single source of truth.
+#[tauri::command]
+pub async fn set_browser_settings(
+    settings: BrowserSettings,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<(), String> {
+    settings
+        .save(registry.if2ai_home())
+        .map_err(|e| e.to_string())
 }

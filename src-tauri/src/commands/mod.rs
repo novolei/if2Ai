@@ -288,8 +288,9 @@ pub use agent::{
 };
 #[allow(unused_imports)]
 pub use browser::{
-    clear_browser_profile, close_browser_session, get_browser_sessions, get_chrome_status,
-    list_browser_profiles, request_browser_status, ChromeStatusPayload,
+    clear_browser_profile, close_browser_session, get_browser_sessions, get_browser_settings,
+    get_chrome_status, list_browser_profiles, request_browser_status, set_browser_settings,
+    ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use harness::{

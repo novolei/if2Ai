@@ -1300,6 +1300,60 @@ export async function getChromeStatus(): Promise<ChromeStatusPayload> {
   return invoke<ChromeStatusPayload>('get_chrome_status')
 }
 
+// ── Browser profile / settings management (Phase 7C, slice 7C.1 + Settings UI) ─
+
+/** Persistent profile placement strategy.  Mirrors `BrowserProfileMode` in Rust. */
+export type BrowserProfileMode = 'per_session_persistent' | 'shared' | 'ephemeral'
+
+/** One row returned by `list_browser_profiles`. */
+export interface BrowserProfileEntry {
+  /** `session_id` portion of the directory name (or `"_shared"`). */
+  session_id: string
+  /** Absolute path on disk. */
+  path: string
+  /** Recursive directory size in bytes (best effort). */
+  size_bytes: number
+  /** RFC-3339 last modified timestamp of the directory itself. */
+  last_used: string | null
+}
+
+/** Browser settings persisted in `~/.if2ai/browser.toml`. */
+export interface BrowserSettings {
+  /** Persisted preferred mode (next launch). */
+  profile_mode: BrowserProfileMode
+  /** Soft per-profile disk cap (megabytes). */
+  max_profile_disk_mb: number
+  /** Soft total disk cap across all profiles (megabytes). */
+  max_total_disk_mb: number
+  /** Active env var override; non-null => env wins until cleared. */
+  env_override: BrowserProfileMode | null
+  /** Mode currently used by the running registry. */
+  active_mode: BrowserProfileMode
+}
+
+/** List every persistent browser profile under `~/.if2ai/browser-profiles/`. */
+export async function listBrowserProfiles(): Promise<BrowserProfileEntry[]> {
+  return invoke<BrowserProfileEntry[]>('list_browser_profiles')
+}
+
+/**
+ * Wipe the persistent profile directory for `sessionId` (cookies, localStorage…).
+ * Throws if a `BrowserSession` is still running for that id.
+ */
+export async function clearBrowserProfile(sessionId: string): Promise<void> {
+  return invoke<void>('clear_browser_profile', { sessionId })
+}
+
+/** Read persisted browser settings + diagnostics (env override, active mode). */
+export async function getBrowserSettings(): Promise<BrowserSettings> {
+  return invoke<BrowserSettings>('get_browser_settings')
+}
+
+/** Persist edited browser settings (takes effect next launch for `profile_mode`). */
+export async function setBrowserSettings(settings: BrowserSettings): Promise<void> {
+  return invoke<void>('set_browser_settings', { settings })
+}
+
 /**
  * Subscribe to `"browser-status"` Tauri events.
  * Returns an unlisten function — call it on component unmount to avoid memory leaks.
