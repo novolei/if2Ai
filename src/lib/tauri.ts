@@ -1696,3 +1696,154 @@ export async function memorySummariesList(
     sinceDays,
   })
 }
+
+// ─── TTS (Text-to-Speech) Commands ───────────────────────────────────────────
+
+/** TTS generation parameters mirroring the Rust `GenerationParams` struct. */
+export interface TtsGenerationParams {
+  max_new_frames: number
+  voice_clone_max_text_tokens: number
+  tts_max_batch_size: number
+  codec_max_batch_size: number
+  do_sample: boolean
+  text_temperature: number
+  text_top_p: number
+  text_top_k: number
+  audio_temperature: number
+  audio_top_p: number
+  audio_top_k: number
+  audio_repetition_penalty: number
+  seed: number | null
+  enable_robust_normalization: boolean
+}
+
+/** Default TTS generation parameters matching the MOSS-TTS-Nano Python reference defaults. */
+export const TTS_DEFAULT_PARAMS: TtsGenerationParams = {
+  max_new_frames: 375,
+  voice_clone_max_text_tokens: 75,
+  tts_max_batch_size: 0,
+  codec_max_batch_size: 0,
+  do_sample: true,
+  text_temperature: 1.0,
+  text_top_p: 1.0,
+  text_top_k: 50,
+  audio_temperature: 0.8,
+  audio_top_p: 0.95,
+  audio_top_k: 25,
+  audio_repetition_penalty: 1.2,
+  seed: null,
+  enable_robust_normalization: true,
+}
+
+/** TTS health check response. */
+export interface TtsHealthResponse {
+  status: string
+  warmup_state: string
+  warmup_progress: number
+  message: string
+}
+
+/** TTS warmup status response. */
+export interface TtsWarmupStatusResponse {
+  state: string
+  progress: number
+  message: string
+  error: string | null
+}
+
+/** Buffered synthesis response — WAV audio as base64. */
+export interface TtsSynthesisResponse {
+  audio_base64: string
+  sample_rate: number
+  duration_seconds: number
+  voice: string
+  text_chunks: string[]
+}
+
+/** Streaming job start response. */
+export interface TtsStreamStartResponse {
+  stream_id: string
+  sample_rate: number
+  channels: number
+}
+
+/** Demo audio response. */
+export interface TtsDemoAudioResponse {
+  audio_base64: string
+  content_type: string
+}
+
+/** Check TTS system health. */
+export async function ttsHealth(): Promise<TtsHealthResponse> {
+  return invoke<TtsHealthResponse>('tts_health')
+}
+
+/** Get current warmup status. */
+export async function ttsWarmupStatus(): Promise<TtsWarmupStatusResponse> {
+  return invoke<TtsWarmupStatusResponse>('tts_warmup_status')
+}
+
+/** Trigger TTS warmup (runs in background). */
+export async function ttsStartWarmup(): Promise<void> {
+  return invoke<void>('tts_start_warmup')
+}
+
+/** Buffered synthesis — returns complete WAV as base64. */
+export async function ttsSynthesize(
+  text: string,
+  demoId: string | null,
+  promptAudioPath: string | null,
+  params: TtsGenerationParams,
+): Promise<TtsSynthesisResponse> {
+  return invoke<TtsSynthesisResponse>('tts_synthesize', {
+    text,
+    demoId,
+    promptAudioPath,
+    params,
+  })
+}
+
+/** Start streaming synthesis — returns stream_id for tracking. */
+export async function ttsStreamStart(
+  text: string,
+  demoId: string | null,
+  promptAudioPath: string | null,
+  params: TtsGenerationParams,
+): Promise<TtsStreamStartResponse> {
+  return invoke<TtsStreamStartResponse>('tts_stream_start', {
+    text,
+    demoId,
+    promptAudioPath,
+    params,
+  })
+}
+
+/** Poll streaming job status. */
+export async function ttsStreamStatus(streamId: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('tts_stream_status', { streamId })
+}
+
+/** Get final streaming job result. */
+export async function ttsStreamResult(streamId: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('tts_stream_result', { streamId })
+}
+
+/** Close/cancel a streaming job. */
+export async function ttsStreamClose(streamId: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('tts_stream_close', { streamId })
+}
+
+/** Get demo audio by ID as base64. */
+export async function ttsDemoAudio(demoId: string): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>('tts_demo_audio', { demoId })
+}
+
+/** List available voice names. */
+export async function ttsListVoices(): Promise<string[]> {
+  return invoke<string[]>('tts_list_voices')
+}
+
+/** Split text into chunks for voice clone preview. */
+export async function ttsSplitText(text: string, maxTokens: number): Promise<string[]> {
+  return invoke<string[]>('tts_split_text', { text, maxTokens })
+}

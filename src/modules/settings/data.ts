@@ -1,4 +1,4 @@
-import { BarChart3, Brain, Cpu, Info, Link2, Radio, Search, Settings, Sparkles } from 'lucide-react'
+import { BarChart3, Brain, Cpu, Info, Link2, Radio, Search, Settings, Sparkles, Volume2 } from 'lucide-react'
 import type { SettingsSectionMeta } from './types'
 
 export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
@@ -55,6 +55,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: '关于我们',
     description: '版本、理念与项目说明。',
     icon: Info,
+  },
+  {
+    id: 'tts-test',
+    label: 'TTS 测试',
+    description: 'MOSS-TTS-Nano 语音合成测试面板。',
+    icon: Volume2,
   },
 ] as const
 

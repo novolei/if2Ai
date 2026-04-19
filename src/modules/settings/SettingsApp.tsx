@@ -20,6 +20,7 @@ import { SkillsSettingsPage } from './pages/SkillsSettingsPage'
 import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 import { MemorySettingsPage } from './pages/MemorySettingsPage'
 import { ModelSettingsPage } from './pages/ModelSettingsPage'
+import { TtsTestPage } from './pages/TtsTestPage'
 
 interface SettingsAppProps {
   onClose: () => void
@@ -191,6 +192,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <RemoteSettingsPage state={state} actions={actions} />
       case 'about':
         return <AboutSettingsPage state={state} actions={actions} />
+      case 'tts-test':
+        return <TtsTestPage />
       case 'general':
       default:
         return <GeneralSettingsPage state={state} actions={actions} />
