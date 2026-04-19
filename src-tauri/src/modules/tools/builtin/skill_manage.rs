@@ -157,9 +157,12 @@ pub fn skill_manage_tool_entry() -> ToolEntry {
             "required": ["action", "name"]
         }),
         max_result_size: Some(8 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(15),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

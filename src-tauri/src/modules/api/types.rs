@@ -82,8 +82,51 @@ pub enum InputContentBlock {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolResultContentBlock {
-    Text { text: String },
-    Json { value: Value },
+    Text {
+        text: String,
+    },
+    Json {
+        value: Value,
+    },
+    /// Image content block (Phase 7C, slice 7C.2).  Wire-compatible with
+    /// Anthropic's `{type:"image", source:{type:"base64", media_type, data}}`
+    /// shape; the OpenAI adapter re-shapes into `image_url` data-URIs and
+    /// Gemini would re-shape into `inlineData` once that provider exists.
+    Image {
+        /// Base64 envelope as expected by Anthropic.
+        source: ImageSource,
+        /// Optional alt-text caption forwarded to providers that surface
+        /// it (Anthropic accepts unknown fields silently) or used as text
+        /// fallback for vision-incapable models.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt: Option<String>,
+    },
+}
+
+/// Anthropic-shaped base64 image envelope.  Always emits
+/// `{type:"base64", media_type, data}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageSource {
+    /// Always `"base64"` for now; Anthropic also supports `"url"` but we
+    /// have no use case for remote URLs here.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// MIME type (e.g. `"image/jpeg"`).
+    pub media_type: String,
+    /// Base64-encoded image bytes (no `data:` URI prefix).
+    pub data: String,
+}
+
+impl ImageSource {
+    /// Construct a base64 image envelope with the standard `kind = "base64"`.
+    #[must_use]
+    pub fn base64(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            kind: "base64".to_string(),
+            media_type: media_type.into(),
+            data: data.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

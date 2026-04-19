@@ -108,9 +108,12 @@ pub fn bash_tool_entry() -> ToolEntry {
             "required": ["command"]
         }),
         max_result_size: Some(1024 * 1024), // 1MB limit
-        timeout_secs: Some(300),            // 5 min absolute max
+        max_text_bytes: None,
+        max_image_bytes: None,
+        timeout_secs: Some(300), // 5 min absolute max
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

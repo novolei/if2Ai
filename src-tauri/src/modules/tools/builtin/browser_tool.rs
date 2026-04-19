@@ -29,7 +29,8 @@ use tracing::info;
 
 use crate::modules::browser::events::emit_browser_status;
 use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
-use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
+use crate::modules::tools::output::ToolOutput;
+use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler, ToolHandlerMultimodal};
 use crate::modules::viewer_registry::sync_viewer_url;
 
 // ── SSRF / URL safety ─────────────────────────────────────────────────────────
@@ -145,6 +146,17 @@ fn check_ipv4_safety(ipv4: std::net::Ipv4Addr, host: &str) -> Result<(), String>
 /// The registry is captured by the handler closure; its lifetime matches the
 /// Tauri application lifetime.
 pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
+    // Phase 7C, slice 7C.2 — when action == "screenshot" we emit a real
+    // multimodal `ToolOutput` (Text caption + Image part) so vision-capable
+    // models actually see the page.  All other actions are still text-only
+    // and flow through the legacy String-returning `handler` for the rest
+    // of the agent pipeline (which expects strings today).
+    let registry_for_mm = Arc::clone(&registry);
+    let multimodal: ToolHandlerMultimodal = Arc::new(move |args: Value, ctx| {
+        let registry = Arc::clone(&registry_for_mm);
+        Box::pin(async move { execute_browser_action_multimodal(registry, args, ctx).await })
+    });
+
     let handler: ToolHandler = Arc::new(move |args: Value, ctx| {
         let registry = Arc::clone(&registry);
         Box::pin(async move { execute_browser_action(registry, args, ctx).await })
@@ -215,11 +227,84 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
             },
             "required": ["action"]
         }),
-        max_result_size: Some(64 * 1024), // 64 KB — AXTree + screenshot can be large
+        // Phase 7C, slice 7C.2 — split text vs image budgets so a screenshot
+        // (multi-MB base64 JPEG) does not blow the AXTree text budget.
+        max_result_size: None,
+        max_text_bytes: Some(64 * 1024),        // AXTree snapshots
+        max_image_bytes: Some(5 * 1024 * 1024), // up to ~5 MB JPEG/PNG
         timeout_secs: Some(60),
         disabled: false,
         handler,
+        multimodal_handler: Some(multimodal),
     }
+}
+
+// ── Multimodal dispatch (Phase 7C, slice 7C.2) ───────────────────────────────
+
+/// Multimodal entry point preferred by the registry over the legacy
+/// `execute_browser_action`.  Currently only the `screenshot` action emits
+/// a non-text part — every other action yields a single `Text` part by
+/// delegating to the legacy implementation.  This minimises the diff while
+/// giving vision-capable LLMs a real image they can reason about.
+async fn execute_browser_action_multimodal(
+    registry: Arc<BrowserRegistry>,
+    args: Value,
+    ctx: crate::modules::tools::context::SharedToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ToolError::Handler("'action' field is required".into()))?;
+
+    if action == "screenshot" {
+        return execute_screenshot_multimodal(registry, ctx).await;
+    }
+
+    // Everything else: reuse the legacy text-only path and lift the
+    // String into a single `Text` part.
+    execute_browser_action(registry, args, ctx)
+        .await
+        .map(ToolOutput::text)
+}
+
+/// Capture a screenshot and return it as a real `Image` part so vision
+/// providers (Anthropic / OpenAI vision-capable models) can actually look
+/// at the page.  The textual part summarises context (URL) so non-vision
+/// fallbacks still get something useful.
+async fn execute_screenshot_multimodal(
+    registry: Arc<BrowserRegistry>,
+    ctx: crate::modules::tools::context::SharedToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let session_id = ctx
+        .lock()
+        .map_err(|e| ToolError::Handler(format!("context lock: {e}")))?
+        .session_id
+        .clone()
+        .unwrap_or_else(|| "default".to_owned());
+
+    ensure_running_or_restore(&registry, &session_id).await?;
+
+    let b64 = match registry.screenshot(&session_id).await {
+        Ok(b64) => b64,
+        Err(BrowserError::Cdp(msg)) => {
+            return Err(on_cdp_crash(&registry, session_id, &msg).await);
+        }
+        Err(e) => return Err(ToolError::Handler(e.to_string())),
+    };
+
+    let url = registry.current_url(&session_id).unwrap_or_default();
+    let caption = if url.is_empty() {
+        "Browser screenshot (current viewport).".to_owned()
+    } else {
+        format!("Browser screenshot at {url}")
+    };
+
+    Ok(ToolOutput::text_then_image(
+        caption.clone(),
+        "image/jpeg",
+        b64,
+        Some(caption),
+    ))
 }
 
 // ── Action dispatch ───────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ use sha2::Digest;
 use tokio::time::timeout;
 
 use super::context::SharedToolContext;
+use super::output::ToolOutput;
 
 /// Skill source precedence order used by SkillsControlPlane v1.
 pub const SKILL_SOURCE_PRECEDENCE: [&str; 4] =
@@ -182,6 +183,21 @@ impl fmt::Display for ToolError {
 impl std::error::Error for ToolError {}
 
 /// ToolEntry represents a single tool with its metadata and handler.
+///
+/// # Phase 7C, slice 7C.2 — multimodal opt-in
+///
+/// Each entry now carries **two** handler slots:
+/// - [`Self::handler`] (legacy `String` return) — used by every Phase 7B
+///   tool unchanged.  When invoked the dispatch layer wraps the result in
+///   `ToolOutput::text(s)` automatically so callers see a uniform
+///   [`ToolOutput`] regardless of which handler ran.
+/// - [`Self::multimodal_handler`] (`ToolOutput` return) — populated only by
+///   tools that need to emit images / mixed content.  When `Some`, it
+///   takes precedence over `handler` for that dispatch.
+///
+/// We chose this additive shape (instead of breaking the legacy
+/// `ToolHandler` signature) so that the existing 30+ tools in
+/// `modules/tools/builtin/` require zero source changes.
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct ToolEntry {
@@ -193,24 +209,59 @@ pub struct ToolEntry {
     pub description: String,
     /// JSON schema for input validation
     pub input_schema: Value,
-    /// Maximum result size in bytes (None = unlimited)
+    /// **DEPRECATED** since Phase 7C, slice 7C.2 — use
+    /// [`Self::max_text_bytes`] / [`Self::max_image_bytes`] instead.
+    ///
+    /// Kept as a fallback for entries that have not migrated yet:
+    /// when both `max_text_bytes` and `max_image_bytes` are `None` the
+    /// dispatch layer enforces this single byte cap on the
+    /// `to_legacy_string()` projection of the output.
     pub max_result_size: Option<usize>,
+    /// Per-tool cap on textual output bytes (Phase 7C, slice 7C.2).
+    /// When `Some`, the sum of `Text` part lengths must not exceed this.
+    pub max_text_bytes: Option<usize>,
+    /// Per-tool cap on base64-encoded image bytes (Phase 7C, slice 7C.2).
+    /// Set generously (e.g. 5 MB) since one screenshot easily exceeds the
+    /// `max_text_bytes` budget.
+    pub max_image_bytes: Option<usize>,
     /// Execution timeout in seconds (None = no timeout)
     pub timeout_secs: Option<u32>,
     /// Whether this tool is disabled
     pub disabled: bool,
-    /// Handler function type
+    /// Legacy text-only handler.  Always present.
     pub handler: ToolHandler,
+    /// Optional multimodal handler that returns [`ToolOutput`] directly.
+    /// When `Some`, takes precedence over `handler`.
+    /// (Phase 7C, slice 7C.2.)
+    pub multimodal_handler: Option<ToolHandlerMultimodal>,
 }
 
-/// Async tool handler function type
-/// The handler receives the tool arguments and the shared tool context.
+/// Async tool handler function type — legacy text-only signature.
+///
+/// Most tools (file IO, memory, search, etc.) only ever produce text and
+/// keep this signature.  Tools that need to emit images additionally set
+/// [`ToolEntry::multimodal_handler`].
 #[allow(dead_code)]
 pub type ToolHandler = Arc<
     dyn Fn(
             Value,
             SharedToolContext,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Async tool handler returning [`ToolOutput`] directly (Phase 7C, 7C.2).
+///
+/// Use when the tool needs to emit non-text content (images, mixed-media)
+/// the LLM should consume via its multimodal channel.
+#[allow(dead_code)]
+pub type ToolHandlerMultimodal = Arc<
+    dyn Fn(
+            Value,
+            SharedToolContext,
+        )
+            -> Pin<Box<dyn std::future::Future<Output = Result<ToolOutput, ToolError>> + Send>>
         + Send
         + Sync,
 >;
@@ -223,10 +274,80 @@ impl fmt::Debug for ToolEntry {
             .field("description", &self.description)
             .field("input_schema", &self.input_schema)
             .field("max_result_size", &self.max_result_size)
+            .field("max_text_bytes", &self.max_text_bytes)
+            .field("max_image_bytes", &self.max_image_bytes)
             .field("timeout_secs", &self.timeout_secs)
             .field("disabled", &self.disabled)
+            .field("multimodal", &self.multimodal_handler.is_some())
             .finish()
     }
+}
+
+impl ToolEntry {
+    /// Effective text byte cap: prefers `max_text_bytes`; falls back to
+    /// the deprecated `max_result_size` for tools not yet migrated to the
+    /// 7C.2 multimodal layout.  Returns `None` when no cap is configured.
+    ///
+    /// Reserved for future call sites (provider adapters that need to
+    /// pre-trim before serialisation); currently only `enforce_size_caps`
+    /// uses the underlying fields directly.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn effective_text_cap(&self) -> Option<usize> {
+        self.max_text_bytes.or(self.max_result_size)
+    }
+
+    /// Effective image byte cap (`max_image_bytes`).  Defaults to `None`
+    /// (no cap) when the tool never produces images, which is what every
+    /// legacy entry leaves it as.
+    #[allow(dead_code)]
+    #[must_use]
+    pub const fn effective_image_cap(&self) -> Option<usize> {
+        self.max_image_bytes
+    }
+}
+
+/// Enforce per-modality byte caps on a [`ToolOutput`] (Phase 7C, slice 7C.2).
+///
+/// Resolution order, per modality:
+/// 1. Explicit `max_text_bytes` / `max_image_bytes` if set.
+/// 2. The deprecated `max_result_size` as a single combined fallback,
+///    measured against the legacy string projection.
+fn enforce_size_caps(name: &str, entry: &ToolEntry, output: &ToolOutput) -> Result<(), ToolError> {
+    if let Some(text_cap) = entry.max_text_bytes {
+        let text_size = output.text_byte_size();
+        if text_size > text_cap {
+            return Err(ToolError::OutputTooLarge {
+                size: text_size,
+                max: text_cap,
+            });
+        }
+    }
+    if let Some(image_cap) = entry.max_image_bytes {
+        let image_size = output.image_byte_size();
+        if image_size > image_cap {
+            return Err(ToolError::OutputTooLarge {
+                size: image_size,
+                max: image_cap,
+            });
+        }
+    }
+    if entry.max_text_bytes.is_none() && entry.max_image_bytes.is_none() {
+        if let Some(legacy_cap) = entry.max_result_size {
+            // Match the pre-7C.2 semantics: cap measured against the
+            // legacy stringified projection (image parts collapse to
+            // `[image: ...]` placeholders so they hardly count).
+            let legacy_size = output.to_legacy_string().len();
+            if legacy_size > legacy_cap {
+                return Err(ToolError::OutputTooLarge {
+                    size: legacy_size,
+                    max: legacy_cap,
+                });
+            }
+        }
+    }
+    let _ = name; // reserved for future telemetry; silence unused-var lint
+    Ok(())
 }
 
 /// DashMap-based ToolRegistry for high-performance concurrent access.
@@ -351,13 +472,18 @@ impl ToolRegistry {
 
     /// Dispatches a tool call with timeout protection.
     ///
+    /// Phase 7C, slice 7C.2: returns [`ToolOutput`] (a vec of
+    /// [`ToolResultPart`](super::output::ToolResultPart)) so vision-capable
+    /// tools can return images alongside text.  Legacy callers that still
+    /// want a `String` should call `.to_legacy_string()` on the result.
+    ///
     /// # Errors
     ///
     /// Returns `ToolError::NotFound` if the tool doesn't exist.
     /// Returns `ToolError::Disabled` if the tool is disabled.
     /// Returns `ToolError::Timeout` if execution exceeds the configured timeout.
-    /// Returns `ToolError::OutputTooLarge` if the result exceeds `max_result_size`.
-    pub async fn dispatch(&self, name: &str, args: Value) -> Result<String, ToolError> {
+    /// Returns `ToolError::OutputTooLarge` if any per-modality cap is exceeded.
+    pub async fn dispatch(&self, name: &str, args: Value) -> Result<ToolOutput, ToolError> {
         if requires_explicit_context(name) && !allow_shared_context_high_risk_dispatch() {
             return Err(ToolError::Handler(format!(
                 "high-risk tool '{name}' requires dispatch_with_context(session-scoped context)"
@@ -369,14 +495,20 @@ impl ToolRegistry {
 
     /// Dispatches a tool call using a provided execution context.
     ///
-    /// This is used to isolate workdir/permission context per session or per turn,
-    /// avoiding cross-session context leakage through the registry default context.
+    /// This is used to isolate workdir/permission context per session or
+    /// per turn, avoiding cross-session context leakage through the
+    /// registry default context.
+    ///
+    /// When [`ToolEntry::multimodal_handler`] is `Some`, it takes
+    /// precedence; otherwise the legacy `handler` runs and its `String`
+    /// output is wrapped in `ToolOutput::text(s)` so callers see the same
+    /// shape either way.
     pub async fn dispatch_with_context(
         &self,
         name: &str,
         args: Value,
         context: SharedToolContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<ToolOutput, ToolError> {
         let entry = self
             .get(name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
@@ -385,31 +517,41 @@ impl ToolRegistry {
             return Err(ToolError::Disabled(name.to_string()));
         }
 
-        let handler = entry.handler.clone();
-        let max_size = entry.max_result_size;
         let timeout_duration = entry.timeout_secs.unwrap_or(300);
+        let timeout_future = Duration::from_secs(timeout_duration as u64);
 
-        let result = timeout(
-            Duration::from_secs(timeout_duration as u64),
-            handler(args, context),
-        )
-        .await;
+        let exec = if let Some(mm) = entry.multimodal_handler.clone() {
+            timeout(timeout_future, mm(args, context)).await
+        } else {
+            let legacy = entry.handler.clone();
+            timeout(timeout_future, legacy(args, context))
+                .await
+                .map(|inner| inner.map(ToolOutput::text))
+        };
 
-        match result {
-            Ok(Ok(result)) => {
-                if let Some(max_size) = max_size {
-                    if result.len() > max_size {
-                        return Err(ToolError::OutputTooLarge {
-                            size: result.len(),
-                            max: max_size,
-                        });
-                    }
-                }
-                Ok(result)
+        match exec {
+            Ok(Ok(output)) => {
+                enforce_size_caps(name, &entry, &output)?;
+                Ok(output)
             }
             Ok(Err(e)) => Err(e),
             Err(_) => Err(ToolError::Timeout(name.to_string())),
         }
+    }
+
+    /// Legacy projection of [`Self::dispatch_with_context`] returning a
+    /// flat `String` via [`ToolOutput::to_legacy_string`].  Provided so the
+    /// existing `commands/agent.rs` + `tool_execution_broker.rs` call
+    /// sites can be migrated incrementally without breaking right now.
+    pub async fn dispatch_with_context_legacy(
+        &self,
+        name: &str,
+        args: Value,
+        context: SharedToolContext,
+    ) -> Result<String, ToolError> {
+        self.dispatch_with_context(name, args, context)
+            .await
+            .map(|out| out.to_legacy_string())
     }
 
     /// Validates that a tool exists and arguments are valid.
@@ -481,9 +623,12 @@ mod tests {
             description: "A test tool".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: None,
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: None,
             disabled: false,
             handler: make_test_handler("test result"),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
@@ -503,14 +648,17 @@ mod tests {
             description: "Says hello".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: None,
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: None,
             disabled: false,
             handler: make_test_handler("Hello, World!"),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
         let result = registry.dispatch("hello", json!({})).await.unwrap();
-        assert_eq!(result, "Hello, World!");
+        assert_eq!(result.to_legacy_string(), "Hello, World!");
     }
 
     #[tokio::test]
@@ -529,9 +677,12 @@ mod tests {
             description: "Disabled tool".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: None,
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: None,
             disabled: true,
             handler: make_test_handler("should not run"),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
@@ -548,6 +699,8 @@ mod tests {
             description: "Slow tool".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: None,
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: Some(1),
             disabled: false,
             handler: Arc::new(|_input: Value, _context: SharedToolContext| {
@@ -557,6 +710,7 @@ mod tests {
                 })
                     as Pin<Box<dyn std::future::Future<Output = Result<String, ToolError>> + Send>>
             }),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
@@ -573,9 +727,12 @@ mod tests {
             description: "Large output tool".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: Some(10),
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: None,
             disabled: false,
             handler: make_test_handler("this is a long output that exceeds the limit"),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
@@ -592,9 +749,12 @@ mod tests {
             description: "High risk".to_string(),
             input_schema: json!({"type": "object"}),
             max_result_size: None,
+            max_text_bytes: None,
+            max_image_bytes: None,
             timeout_secs: None,
             disabled: false,
             handler: make_test_handler("ok"),
+            multimodal_handler: None,
         };
 
         registry.register(entry).unwrap();
@@ -616,9 +776,12 @@ mod tests {
                 description: "Disabled".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: true,
                 handler: make_test_handler(""),
+                multimodal_handler: None,
             })
             .unwrap();
 
@@ -630,9 +793,12 @@ mod tests {
                 description: "Enabled".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: false,
                 handler: make_test_handler(""),
+                multimodal_handler: None,
             })
             .unwrap();
 
@@ -652,9 +818,12 @@ mod tests {
                 description: "Tool A".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: false,
                 handler: make_test_handler(""),
+                multimodal_handler: None,
             })
             .unwrap();
 
@@ -665,9 +834,12 @@ mod tests {
                 description: "Tool B".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: false,
                 handler: make_test_handler(""),
+                multimodal_handler: None,
             })
             .unwrap();
 

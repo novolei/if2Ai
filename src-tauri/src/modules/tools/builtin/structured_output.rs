@@ -34,9 +34,12 @@ pub fn structured_output_tool_entry() -> ToolEntry {
             "additionalProperties": true
         }),
         max_result_size: Some(100 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(10),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

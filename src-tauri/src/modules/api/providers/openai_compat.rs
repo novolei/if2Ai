@@ -716,12 +716,31 @@ fn translate_message(message: &InputMessage) -> Vec<Value> {
     }
 }
 
+/// Project a tool result content vec into a flat string suitable for the
+/// OpenAI `tool` message body.
+///
+/// Phase 7C, slice 7C.2 — OpenAI's tool messages currently accept only
+/// string content (vision images go on user messages, not tool messages).
+/// Image parts therefore collapse to `[image: <mime> <bytes>B — <alt>]`
+/// placeholders here.  The agent loop is expected to follow up with a
+/// dedicated user message carrying the image via `image_url` when the
+/// active model supports vision; producing that follow-up belongs to
+/// slice 7C.3+ rather than this provider helper.
 fn flatten_tool_result_content(content: &[ToolResultContentBlock]) -> String {
     content
         .iter()
         .map(|block| match block {
             ToolResultContentBlock::Text { text } => text.clone(),
             ToolResultContentBlock::Json { value } => value.to_string(),
+            ToolResultContentBlock::Image { source, alt } => {
+                let bytes = source.data.len();
+                match alt {
+                    Some(caption) if !caption.is_empty() => {
+                        format!("[image: {} {bytes}B — {caption}]", source.media_type)
+                    }
+                    _ => format!("[image: {} {bytes}B]", source.media_type),
+                }
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")

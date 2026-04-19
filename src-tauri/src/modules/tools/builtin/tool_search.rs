@@ -70,9 +70,12 @@ pub fn tool_search_tool_entry(registry: Arc<ToolRegistry>) -> ToolEntry {
             "required": ["query"]
         }),
         max_result_size: Some(5 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(5),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 
@@ -93,9 +96,12 @@ mod tests {
                 description: "Read the contents of a file".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: false,
                 handler: Arc::new(|_, _| Box::pin(async move { Ok("".to_string()) })),
+                multimodal_handler: None,
             })
             .unwrap();
         registry
@@ -105,9 +111,12 @@ mod tests {
                 description: "Write content to a file".to_string(),
                 input_schema: json!({"type": "object"}),
                 max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
                 timeout_secs: None,
                 disabled: false,
                 handler: Arc::new(|_, _| Box::pin(async move { Ok("".to_string()) })),
+                multimodal_handler: None,
             })
             .unwrap();
         registry

@@ -211,9 +211,12 @@ read_file, or any other tool; it is already complete.\n\n{}",
             "required": ["skill"]
         }),
         max_result_size: Some(50 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(10),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

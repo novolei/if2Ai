@@ -46,9 +46,12 @@ pub fn send_user_message_tool_entry() -> ToolEntry {
             "required": ["message", "status"]
         }),
         max_result_size: Some(1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(10),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

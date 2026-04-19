@@ -585,7 +585,11 @@ impl ToolRegistryExecutor {
                 tracing::warn!(
                     "[tool_executor] controlPlaneV2Enabled=false, falling back to direct dispatch_with_context"
                 );
-                handle.block_on(self.tool_registry.dispatch_with_context(
+                // Phase 7C, slice 7C.2 — registry now returns ToolOutput;
+                // collapse to legacy String here so the existing executor
+                // contract (Result<String, ToolError>) stays intact.  Slice
+                // 7C.3+ will lift the broker + executor to ToolOutput.
+                handle.block_on(self.tool_registry.dispatch_with_context_legacy(
                     tool_name,
                     args,
                     self.broker.to_tool_context(&self.execution_context),
@@ -2887,6 +2891,16 @@ pub async fn start_agent_stream(
                                             &value.to_string(),
                                         )
                                     }
+                                    // Image content blocks (Phase 7C, slice 7C.2):
+                                    // base64 payload doesn't go through the text
+                                    // tokeniser (vision providers count it on
+                                    // their own); contribute the alt text only.
+                                    crate::modules::api::ToolResultContentBlock::Image {
+                                        alt,
+                                        ..
+                                    } => alt.as_deref().map_or(0, |a| {
+                                        crate::modules::runtime::budget::estimate_tokens(a)
+                                    }),
                                 })
                                 .sum::<usize>(),
                             _ => 0,
@@ -3333,6 +3347,17 @@ impl ContextGovernor {
                                             *is_error,
                                         )
                                     }
+                                    crate::modules::api::ToolResultContentBlock::Image {
+                                        source,
+                                        alt,
+                                    } => {
+                                        let bytes = source.data.len();
+                                        let caption = alt.as_deref().unwrap_or("image");
+                                        format!(
+                                            "[image: {} {bytes}B — {caption}]",
+                                            source.media_type
+                                        )
+                                    }
                                 })
                                 .collect::<Vec<_>>()
                                 .join("\n");
@@ -3573,6 +3598,13 @@ fn estimate_messages_char_count(messages: &[InputMessage]) -> usize {
                                     crate::modules::api::ToolResultContentBlock::Json { value } => {
                                         value.to_string().chars().count()
                                     }
+                                    // Phase 7C, slice 7C.2 — base64 image bytes
+                                    // do not contribute to char-budgets used by
+                                    // the textual context summariser.
+                                    crate::modules::api::ToolResultContentBlock::Image {
+                                        alt,
+                                        ..
+                                    } => alt.as_deref().map(str::len).unwrap_or(0),
                                 })
                                 .sum::<usize>()
                     }
@@ -3616,6 +3648,18 @@ fn summarize_message_for_budget(message: &InputMessage, max_chars: usize) -> Inp
                         }
                         crate::modules::api::ToolResultContentBlock::Json { value } => {
                             truncate_middle_chars(&value.to_string(), TOOL_RESULT_PREVIEW_CHARS)
+                        }
+                        // Phase 7C, slice 7C.2 — image parts collapse to a
+                        // short placeholder so the budget summariser stays
+                        // text-only.
+                        crate::modules::api::ToolResultContentBlock::Image { source, alt } => {
+                            let alt_part = alt.as_deref().unwrap_or("image");
+                            format!(
+                                "[image:{} {}B {}]",
+                                source.media_type,
+                                source.data.len(),
+                                truncate_middle_chars(alt_part, 32)
+                            )
                         }
                     })
                     .collect::<Vec<_>>()

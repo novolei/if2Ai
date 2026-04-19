@@ -111,9 +111,12 @@ pub fn skills_list_tool_entry() -> ToolEntry {
             }
         }),
         max_result_size: Some(64 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(10),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

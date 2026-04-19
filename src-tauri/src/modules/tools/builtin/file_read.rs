@@ -88,9 +88,12 @@ pub fn file_read_tool_entry() -> ToolEntry {
             "required": ["path"]
         }),
         max_result_size: Some(MAX_FILE_SIZE),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(30),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

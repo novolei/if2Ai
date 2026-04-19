@@ -246,9 +246,11 @@ pub async fn execute_tool(
         tracing::warn!(
             "[execute_tool] controlPlaneV2Enabled=false, fallback to direct dispatch_with_context"
         );
+        // Phase 7C, slice 7C.2 — registry returns ToolOutput; flatten to
+        // legacy String for this Tauri command's existing return signature.
         state
             .tool_registry
-            .dispatch_with_context(&name, args, broker.to_tool_context(&execution_context))
+            .dispatch_with_context_legacy(&name, args, broker.to_tool_context(&execution_context))
             .await
             .map_err(|e| e.to_string())
     }

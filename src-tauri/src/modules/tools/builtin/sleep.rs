@@ -46,9 +46,12 @@ pub fn sleep_tool_entry() -> ToolEntry {
             "required": ["duration_ms"]
         }),
         max_result_size: Some(1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(300),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

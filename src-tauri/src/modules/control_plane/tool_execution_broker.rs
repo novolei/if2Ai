@@ -201,9 +201,13 @@ impl ToolExecutionBroker {
                 );
                 Err(ToolError::Handler(reason))
             } else {
+                // Phase 7C, slice 7C.2 — `dispatch_with_context` now returns
+                // `ToolOutput`; collapse to legacy String here so the broker
+                // contract stays stable.  Future slices (7C.3+) will lift this
+                // function to return ToolOutput end-to-end.
                 let execution_context = self.to_tool_context(context);
                 self.tool_registry
-                    .dispatch_with_context(tool_name, args, execution_context)
+                    .dispatch_with_context_legacy(tool_name, args, execution_context)
                     .await
             };
         if result.is_ok() && tool_name == "skill" {

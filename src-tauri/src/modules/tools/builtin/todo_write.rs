@@ -139,9 +139,12 @@ pub fn todo_write_tool_entry() -> ToolEntry {
             "required": ["todos"]
         }),
         max_result_size: Some(10_240),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(30),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

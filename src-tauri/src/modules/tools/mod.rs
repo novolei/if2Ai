@@ -7,12 +7,15 @@ use std::sync::Arc;
 pub mod builtin;
 pub mod context;
 pub mod integration_phase4;
+pub mod output;
 pub mod registry;
 pub mod toolset;
 #[allow(unused_imports)]
 pub use context::{SharedToolContext, ToolContext};
 #[allow(unused_imports)]
-pub use registry::{ToolEntry, ToolError, ToolRegistry};
+pub use output::{ToolOutput, ToolResultPart};
+#[allow(unused_imports)]
+pub use registry::{ToolEntry, ToolError, ToolHandlerMultimodal, ToolRegistry};
 #[allow(unused_imports)]
 pub use toolset::{ToolSet, ToolSetRegistry, TOOLSETS};
 

@@ -81,9 +81,12 @@ pub fn skill_search_tool_entry() -> ToolEntry {
             "required": ["query"]
         }),
         max_result_size: Some(16 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(5),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

@@ -79,9 +79,12 @@ pub fn agent_tool_entry() -> ToolEntry {
             "required": ["task"]
         }),
         max_result_size: Some(10 * 1024),
+        max_text_bytes: None,
+        max_image_bytes: None,
         timeout_secs: Some(60),
         disabled: false,
         handler,
+        multimodal_handler: None,
     }
 }
 

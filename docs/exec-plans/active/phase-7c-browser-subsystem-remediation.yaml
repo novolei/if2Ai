@@ -32,30 +32,43 @@ meta:
 
 dashboard:
   last_updated: '2026-04-19'
-  completed_slices: []
-  current_slice: '7C.1'
-  blocked:
-    - id: '7C.1'
-      reason: >
-        实现已完成且 22 个 browser 测试全部通过，但工作树里有 pre-existing 的
-        TTS/STT WIP 修改（main.rs +135 行、commands/mod.rs +18 行、若干 tts/* 文件 19 个
-        clippy 警告）与 7C.1 在同一个文件中混合存在。直接 git add 会把用户未完成的
-        TTS 改动一起提交进 7C.1 commit。
-        需要人工决策：(a) 先把 TTS WIP 单独 commit（推荐）；(b) 我用 git add -p 选择性
-        stage 7C.1 的 hunks 后提交；(c) 用 stash + reapply 走更复杂的隔离流程。
-        clippy `-D warnings` 在全 workspace 范围下因这 19 个 pre-existing 警告无法通过；
-        7C.1 自己的代码已经通过 clippy，无新增警告。
+  completed_slices: ['7C.1', '7C.2']
+  current_slice: '7C.3'
+  blocked: []
   notes: >
-    Phase 7C 已激活（status=active；index.md 标 [当前]）。
-    Slice 7C.1 (Browser Profile Persistence) IMPL 完成：
-      - 新建 modules/browser/profile.rs（BrowserProfileMode + ProfileHandle + 13 单测全过）
-      - session.rs::new() 改 3 参签名（id, profile_mode, if2ai_home）+ 移除 incognito + 加 new_for_test
-      - registry.rs::new() 改 3 参签名 + 加 for_test
-      - main.rs 接入 from_env_or_config
-      - commands/browser.rs +clear_browser_profile +list_browser_profiles 两个 Tauri 命令
-      - 测试 call sites（integration_phase4.rs ×2、agent.rs ×1）已迁移到 for_test
-      - docs/references/browser.toml.example 配置示例文件
-    阻塞 commit；等待人工决策处理 TTS WIP 后再走 17 步 SOP 的 step 8。
+    Phase 7C 推进至 7C.3。
+
+    7C.1 done — commit e099f5c（与 pre-existing TTS/STT WIP 一起 snapshot 提交，
+    per user "全量提交" instruction）。22 个 browser 单测通过，profile.rs 13 单测通过。
+
+    7C.2 done — Multimodal ToolOutput + Vision Pipeline。
+    设计偏离 spec：保留 legacy `ToolHandler` 返回 String 不变，新增
+    `multimodal_handler: Option<ToolHandlerMultimodal>` 让 browser_tool 单独 opt-in，
+    实现"零回归 + 零工具 closure 改写"。spec 的 From-wrap 方案对 30+ 工具 closure
+    要求改 Ok(s) → Box::pin(async {...ToolOutput::text(s)...})，我的方案让 builtin
+    工具只需补 3 个 None 字段（max_text_bytes / max_image_bytes / multimodal_handler），
+    零 closure 改写。
+    交付：
+      - modules/tools/output.rs (新) — ToolResultPart {Text, Image} + ToolOutput + 11 单测
+      - modules/tools/registry.rs — ToolHandlerMultimodal 类型 + ToolEntry 加 3 字段 +
+        dispatch_with_context 改返 ToolOutput + dispatch_with_context_legacy 兼容
+      - modules/api/types.rs — ToolResultContentBlock::Image{source,alt} +
+        ImageSource{kind,media_type,data} 与 Anthropic wire format 1:1 对齐
+      - modules/api/providers/openai_compat.rs — flatten_tool_result_content 处理
+        Image → "[image: <mime> <bytes>B — <alt>]" 占位（OpenAI tool 消息暂不发图，
+        slice 7C.3+ 会在 vision-capable 模型上拼 follow-up image_url 用户消息）
+      - modules/tools/builtin/browser_tool.rs — screenshot action 走 multimodal
+        路径返回 Text+Image 双 part，max_text_bytes=64KB / max_image_bytes=5MB
+      - 42 个 builtin 工具补 3 个 None 字段（脚本批量改 + 3 个手动修补）
+      - tests/tool_vision_integration.rs (新) — 8 个集成测试，含 Anthropic 序列化
+        验证、cap 独立性、legacy 折叠
+    清单：1213/1213 lib + 8/8 集成测试通过；clippy 在 7C.2 自身代码上 0 警告
+    （pre-existing TTS WIP 17 警告与 7C.2 无关，未阻塞）。
+    Gemini provider：codebase 中尚无 Gemini 实现，spec 要求改为预留 stub，本 slice
+    不引入 Gemini provider；待后续 Phase 接入时 ToolResultContentBlock::Image 已经 ready。
+
+    下一步：7C.3 Headed Mode + 真正的用户接管（依赖 7C.1 的 PerSessionPersistent
+    profile，预计 3 工程日）。
 
 slices:
 
@@ -68,7 +81,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.1"
     name: "Browser Profile Persistence — cookies/login 跨重启保留"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G1
     estimated_days: 2
@@ -128,7 +141,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.2"
     name: "Multimodal ToolOutput + Vision Pipeline — LLM 真的看见截图"
-    status: pending
+    status: done
     priority: P0
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G2
     estimated_days: 3
