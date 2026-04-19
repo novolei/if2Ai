@@ -180,6 +180,32 @@ pub const SNAPSHOT_SCRIPT: &str = r#"(function() {
 
   var tree = walk(document.body, 0);
 
+  // Phase 7C, slice 7C.7 — descend into same-origin iframes so the LLM
+  // sees their interactive elements (currently invisible: contentDocument
+  // throws SecurityError on cross-origin frames, in which case we emit
+  // a single placeholder line so the LLM at least knows the iframe
+  // exists and what its src is).
+  function walkIframes(rootDoc, depth) {
+    var out = '';
+    var iframes = rootDoc.querySelectorAll('iframe');
+    var frameIdx = 0;
+    iframes.forEach(function(frame) {
+      frameIdx += 1;
+      var src = frame.src || frame.getAttribute('src') || '<inline-srcdoc>';
+      var doc = null;
+      try { doc = frame.contentDocument; } catch (e) { doc = null; }
+      if (doc && doc.body) {
+        out += '\n--- iframe #' + frameIdx + ' (same-origin): ' + src + ' ---\n';
+        out += walk(doc.body, depth + 1);
+        out += walkIframes(doc, depth + 1);
+      } else {
+        out += '\n--- iframe #' + frameIdx + ' (cross-origin, not directly accessible): ' + src + ' ---\n';
+      }
+    });
+    return out;
+  }
+  tree += walkIframes(document, 0);
+
   // Hard limit: keep 80% head + 20% tail, truncate at line boundaries.
   if (tree.length > MAX_TREE) {
     var h = tree.lastIndexOf('\n', Math.floor(MAX_TREE * 0.8));
@@ -195,3 +221,32 @@ pub const SNAPSHOT_SCRIPT: &str = r#"(function() {
     text: 'Page: ' + document.title + '\nURL: ' + location.href + '\n\n' + tree
   };
 })()"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_script_contains_iframe_walker() {
+        // Phase 7C, slice 7C.7 — guard against accidental removal of
+        // the same-origin iframe walker.
+        assert!(SNAPSHOT_SCRIPT.contains("function walkIframes"));
+        assert!(SNAPSHOT_SCRIPT.contains("contentDocument"));
+        assert!(SNAPSHOT_SCRIPT.contains("(same-origin)"));
+        assert!(SNAPSHOT_SCRIPT.contains("(cross-origin"));
+    }
+
+    #[test]
+    fn snapshot_script_uses_data_if2ai_ref_attribute() {
+        // The ref attribute name is used by every interactive action
+        // (click / type / select); a typo here breaks the whole tool.
+        assert!(SNAPSHOT_SCRIPT.contains("data-if2ai-ref"));
+        assert!(!SNAPSHOT_SCRIPT.contains("data-hana-ref"));
+    }
+
+    #[test]
+    fn snapshot_script_enforces_max_tree_size() {
+        assert!(SNAPSHOT_SCRIPT.contains("MAX_TREE"));
+        assert!(SNAPSHOT_SCRIPT.contains("30000"));
+    }
+}

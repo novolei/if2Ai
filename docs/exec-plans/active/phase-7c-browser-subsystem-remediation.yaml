@@ -473,7 +473,7 @@ slices:
   # ─────────────────────────────────────────────────────────────
   - id: "7C.7"
     name: "Frame-Aware Snapshot — iframe 不再失明"
-    status: pending
+    status: done
     priority: P1
     design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md §G7
     estimated_days: 2.5
