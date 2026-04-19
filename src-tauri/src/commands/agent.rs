@@ -1086,6 +1086,17 @@ pub async fn run_agent_turn(
     // Create runtime with working-memory sliding window (C1 integration).
     // Each LLM call will only see the most recent turns within the token budget,
     // while full history is preserved in session for compaction / trajectory.
+    // Phase 8B.11 fix — wire MemoryTicker as TurnHook + supply
+    // session/project context so RollingSummarizer + compile_today
+    // actually fire on each turn (the 8A.7 default fired with
+    // session_id="-" which the ticker silently skipped).
+    let session_ctx_id = tool_executor.execution_context.session_id.clone();
+    let session_ctx_project = if tool_executor.execution_context.project_id.is_empty() {
+        None
+    } else {
+        Some(tool_executor.execution_context.project_id.clone())
+    };
+
     let mut runtime = ConversationRuntime::new(
         runtime_session,
         api_client,
@@ -1094,7 +1105,9 @@ pub async fn run_agent_turn(
         system_prompt,
     )
     .with_context_budget(state.context_budget.clone())
-    .with_working_memory(WorkingMemory::default());
+    .with_working_memory(WorkingMemory::default())
+    .with_turn_hook(state.memory_ticker.clone())
+    .with_session_context(session_ctx_id, session_ctx_project);
 
     tracing::info!(
         "[run_agent_turn] Runtime created, calling run_turn with message: {}",
@@ -1649,6 +1662,11 @@ pub async fn start_agent_stream(
     let trajectory_manager_for_stream = state.trajectory_manager.clone();
     let learning_module_for_stream = state.learning_module.clone();
     let memory_provider_for_stream = state.memory_provider.clone();
+    // Phase 8B.11 fix — clone the ticker so the spawned stream task can
+    // fire on_turn_complete after the LLM loop terminates (the streaming
+    // path doesn't go through ConversationRuntime where the runtime
+    // auto-fires the hook).
+    let memory_ticker_for_stream = state.memory_ticker.clone();
     // Phase 6E harness EventBus clone (zero-cost when harness disabled).
     let harness_event_bus_for_stream = state.harness.as_ref().map(|h| h.event_bus.clone());
     let turn_number_for_stream = (app_session.messages.len() as u64) + 1;
@@ -2938,6 +2956,33 @@ pub async fn start_agent_stream(
             token_count,
             stream_turn_started_at.elapsed().as_millis() as u64,
         );
+
+        // Phase 8B.11 fix — fire MemoryTicker.on_turn_complete for the
+        // streaming path.  The non-streaming run_agent_turn path goes
+        // through ConversationRuntime.with_turn_hook, but
+        // start_agent_stream streams directly so the hook needs an
+        // explicit invocation here.  Using the persisted message list
+        // ensures RollingSummarizer's incremental slice (`message_count`)
+        // matches what the user actually saw.
+        if !stream_failed {
+            use crate::modules::memory::scope::MemoryExecutionScope;
+            use crate::modules::runtime::conversation::TurnHook;
+            let messages_for_hook = updated_app_session.messages.clone();
+            let scope_for_hook = MemoryExecutionScope {
+                session_id: Some(session_id.clone()),
+                project_id: if updated_app_session.project_id.is_empty() {
+                    None
+                } else {
+                    Some(updated_app_session.project_id.clone())
+                },
+                workdir: None,
+            };
+            memory_ticker_for_stream.on_turn_complete(
+                &scope_for_hook,
+                &session_id,
+                &messages_for_hook,
+            );
+        }
 
         if is_resume_turn {
             tracing::info!(

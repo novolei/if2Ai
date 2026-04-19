@@ -197,6 +197,14 @@ pub struct ConversationRuntime<C, T> {
     /// explicit shutdown path).  Wired by `AppState` to the Phase 8B
     /// `RollingSummarizer`; tests and harness fixtures leave it `None`.
     turn_hook: Option<Arc<dyn TurnHook>>,
+    /// Phase 8B.11 fix — explicit session/project context for the
+    /// `TurnHook::on_turn_complete` invocation.  Without this the hook
+    /// fires with `session_id="-"` (and `MemoryExecutionScope::global()`)
+    /// which the [`crate::modules::memory::ticker::MemoryTicker`]
+    /// silently filters out, so RollingSummarizer never sees the turn.
+    /// Set via [`Self::with_session_context`] from `commands/agent.rs`.
+    session_id_for_hook: Option<String>,
+    project_id_for_hook: Option<String>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -249,6 +257,8 @@ where
             hook_runner: HookRunner::from_feature_config(&feature_config),
             working_memory: None,
             turn_hook: None,
+            session_id_for_hook: None,
+            project_id_for_hook: None,
         }
     }
 
@@ -261,6 +271,22 @@ where
     #[must_use]
     pub fn with_turn_hook(mut self, hook: Arc<dyn TurnHook>) -> Self {
         self.turn_hook = Some(hook);
+        self
+    }
+
+    /// Phase 8B.11 fix — supply the real session_id + project_id so
+    /// `TurnHook::on_turn_complete` can route through the
+    /// [`crate::modules::memory::scope::MemoryExecutionScope`] resolver
+    /// instead of the `"-"` / `global()` fallback.  Required when the
+    /// hook is connected to `MemoryTicker`, optional otherwise.
+    #[must_use]
+    pub fn with_session_context(
+        mut self,
+        session_id: impl Into<String>,
+        project_id: Option<String>,
+    ) -> Self {
+        self.session_id_for_hook = Some(session_id.into());
+        self.project_id_for_hook = project_id;
         self
     }
 
@@ -467,8 +493,20 @@ where
         // `project_id`, replace the global / "-" fallback with the real
         // scope so audit + dual-write attribution lines up.
         if let Some(ref hook) = self.turn_hook {
-            let scope = MemoryExecutionScope::global();
-            hook.on_turn_complete(&scope, "-", &self.session.messages);
+            // Phase 8B.11 fix — prefer with_session_context() values; fall
+            // back to "-" / global() when the runtime was built without
+            // them (test paths + legacy callers that don't yet plumb
+            // session metadata through).
+            let session_id = self
+                .session_id_for_hook
+                .as_deref()
+                .unwrap_or("-");
+            let scope = MemoryExecutionScope {
+                session_id: self.session_id_for_hook.clone(),
+                project_id: self.project_id_for_hook.clone(),
+                workdir: None,
+            };
+            hook.on_turn_complete(&scope, session_id, &self.session.messages);
         }
 
         Ok(TurnSummary {
