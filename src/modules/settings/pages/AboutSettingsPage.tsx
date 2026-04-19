@@ -5,6 +5,7 @@ import { SettingsSurface } from '../components/SettingsSurface'
 import type { SettingsPageProps } from '../types'
 import { configResetOnboarding } from '@/lib/tauri'
 import { toast } from 'sonner'
+import { broadcastChange } from '@/lib/crossWindowSync'
 
 const btnOutline =
   'window-no-drag h-7 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]'
@@ -118,7 +119,9 @@ export function AboutSettingsPage({}: SettingsPageProps) {
               if (!window.confirm('确定要重置 Onboarding 吗？所有配置将被清除。')) return
               try {
                 await configResetOnboarding()
-                toast.success('Onboarding 已重置', { description: '重新启动应用以进入引导流程' })
+                // 跨窗口通知主窗口：立即重新加载 app state，进入 Onboarding 而不需要重启
+                void broadcastChange('cross:onboarding-reset', {})
+                toast.success('Onboarding 已重置', { description: '主窗口将立即重新进入引导流程' })
               } catch (error) {
                 toast.error('重置失败', { description: String(error) })
               }

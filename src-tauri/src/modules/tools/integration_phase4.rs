@@ -50,9 +50,9 @@ mod tests {
         // Register all tools
         let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
-        let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
-            "/tmp/browser-cold-state-phase4-test.json",
-        ));
+        let test_browser = crate::modules::browser::BrowserRegistry::for_test(
+            std::path::PathBuf::from("/tmp/browser-cold-state-phase4-test.json"),
+        );
         crate::modules::tools::register_builtin_tools(
             &registry,
             memory,
@@ -220,9 +220,9 @@ mod tests {
         let registry = ToolRegistry::new(context);
         let memory = default_memory_provider().await;
         let scheduler = default_scheduler();
-        let test_browser = crate::modules::browser::BrowserRegistry::new(std::path::PathBuf::from(
-            "/tmp/browser-cold-state-phase4-test2.json",
-        ));
+        let test_browser = crate::modules::browser::BrowserRegistry::for_test(
+            std::path::PathBuf::from("/tmp/browser-cold-state-phase4-test2.json"),
+        );
         crate::modules::tools::register_builtin_tools(
             &registry,
             memory,

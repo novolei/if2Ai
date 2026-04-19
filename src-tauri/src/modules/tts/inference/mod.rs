@@ -4,8 +4,19 @@
 
 pub mod decode;
 pub mod prefill;
+pub mod request_builder;
+pub mod runner;
 pub mod sampling;
+pub mod stream_budget;
 pub mod streaming;
+
+#[allow(unused_imports)]
+pub use runner::{generate_audio_frames, OnFrameCallback};
+
+#[allow(unused_imports)]
+pub use request_builder::{build_voice_clone_request_rows, VoiceCloneRequestRows};
+#[allow(unused_imports)]
+pub use stream_budget::resolve_decode_frame_budget;
 
 #[allow(unused_imports)]
 pub use decode::{DecodeRunner, DecodeState};

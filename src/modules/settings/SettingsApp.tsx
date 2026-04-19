@@ -21,6 +21,7 @@ import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 import { MemorySettingsPage } from './pages/MemorySettingsPage'
 import { ModelSettingsPage } from './pages/ModelSettingsPage'
 import { TtsTestPage } from './pages/TtsTestPage'
+import { SttConfigPage } from './pages/SttConfigPage'
 
 interface SettingsAppProps {
   onClose: () => void
@@ -194,6 +195,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <AboutSettingsPage state={state} actions={actions} />
       case 'tts-test':
         return <TtsTestPage />
+      case 'stt-config':
+        return <SttConfigPage />
       case 'general':
       default:
         return <GeneralSettingsPage state={state} actions={actions} />

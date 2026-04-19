@@ -6,9 +6,12 @@
 
 #![allow(dead_code)]
 
+pub mod eviction;
 pub mod jobs;
 pub mod warmup;
 
+#[allow(unused_imports)]
+pub use eviction::{IdleEvictionConfig, IdleEvictor};
 #[allow(unused_imports)]
 pub use jobs::{StreamingJob, StreamingJobManager};
 #[allow(unused_imports)]

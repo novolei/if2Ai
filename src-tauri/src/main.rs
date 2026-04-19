@@ -20,7 +20,8 @@ use commands::{
     channel_list,
     channel_list_configured,
     channel_test,
-    // Browser control commands (Phase 7B)
+    // Browser control commands (Phase 7B + 7C profile management)
+    clear_browser_profile,
     close_browser_session,
     close_settings_window,
     config_load,
@@ -67,6 +68,7 @@ use commands::{
     hub_uninstall,
     hub_update,
     list_agents,
+    list_browser_profiles,
     list_directory_preview,
     list_project_sessions,
     list_projects,
@@ -136,16 +138,27 @@ use commands::{
     start_harness_recording,
     stop_agent_stream,
     stop_harness_recording,
+    // TTS commands (Phase TTS-5)
+    stt_download_openflow_model,
+    stt_download_whisper_model,
+    stt_get_settings,
+    stt_model_status,
+    stt_save_settings,
+    stt_transcribe,
     suggest_slash_commands,
     system_check_run,
-    // TTS commands (Phase TTS-5)
+    tts_cached_voice_preview,
+    tts_delete_user_voice,
     tts_demo_audio,
     tts_health,
+    tts_list_voice_assets,
     tts_list_voices,
     tts_model_download_start,
     tts_model_download_status,
     // TTS model download (Phase TTS-UX)
     tts_model_status,
+    tts_preview_voice,
+    tts_rename_user_voice,
     tts_split_text,
     tts_start_warmup,
     tts_stream_close,
@@ -153,6 +166,9 @@ use commands::{
     tts_stream_start,
     tts_stream_status,
     tts_synthesize,
+    tts_upload_user_voice,
+    tts_voice_audio,
+    tts_warm_voice_preview,
     tts_warmup_status,
     upsert_web_search_provider,
     validate_web_search_key,
@@ -590,8 +606,16 @@ fn main() {
 
     let memory_provider = create_memory_provider(threat_scanner.clone());
     let scheduler_provider = modules::scheduler::default_scheduler();
-    let browser_registry =
-        modules::browser::BrowserRegistry::new(if2ai_dir.join("browser-cold-state.json"));
+    // Phase 7C, slice 7C.1 — resolve the browser profile mode from
+    // env / ~/.if2ai/browser.toml so cookies survive across restarts.
+    // Default is `PerSessionPersistent`; tests use `Ephemeral` via
+    // `BrowserRegistry::for_test`.
+    let browser_profile_mode = modules::browser::BrowserProfileMode::from_env_or_config(&if2ai_dir);
+    let browser_registry = modules::browser::BrowserRegistry::new(
+        if2ai_dir.join("browser-cold-state.json"),
+        browser_profile_mode,
+        if2ai_dir.clone(),
+    );
     modules::tools::register_builtin_tools(
         &tool_registry,
         memory_provider.clone(),
@@ -713,12 +737,81 @@ fn main() {
         // Browser registry as separate managed state so browser commands can
         // access it without going through AppState.
         .manage(browser_registry)
-        .manage(commands::TtsState {
-            provider: std::sync::Arc::new(
-                modules::tts::provider::MockTtsProvider::new(),
-            ),
-            warmup: std::sync::Arc::new(modules::tts::manager::warmup::WarmupManager::new()),
-            jobs: std::sync::Arc::new(modules::tts::manager::jobs::StreamingJobManager::new()),
+        .manage({
+            // Phase TTS-C.1：lazy provider + IdleEvictor 接入。
+            //
+            // - 启动不再同步 load 4 个 ONNX session（节省 ~3s 冷启动）。
+            // - 第一次 tts_synthesize / tts_warmup_status 时 lazy load。
+            // - 5 分钟无请求自动 unload（释放 ~1.5GB RAM），下次请求 lazy reload。
+            // - 模型缺失时 fallback 到 MockTtsProvider。
+            let factory: std::sync::Arc<dyn Fn() -> Result<
+                std::sync::Arc<dyn modules::tts::TtsProvider>,
+                modules::tts::error::TtsError,
+            > + Send + Sync + 'static> = std::sync::Arc::new(|| {
+                let model_root = dirs::home_dir()
+                    .map(|h| h.join(".if2ai/models/tts"))
+                    .unwrap_or_else(|| std::path::PathBuf::from(".if2ai/models/tts"));
+                let manifest_present = model_root
+                    .join("MOSS-TTS-Nano-100M-ONNX/browser_poc_manifest.json")
+                    .is_file();
+                if manifest_present {
+                    let p = modules::tts::provider::OnnxTtsProvider::from_model_dir(
+                        &model_root,
+                        Some(4),
+                    )?;
+                    tracing::info!(
+                        model_dir = %model_root.display(),
+                        "TTS provider loaded (OnnxTtsProvider)"
+                    );
+                    Ok(std::sync::Arc::new(p) as std::sync::Arc<dyn modules::tts::TtsProvider>)
+                } else {
+                    tracing::info!(
+                        "TTS model not found at {}; using Mock provider",
+                        model_root.display()
+                    );
+                    Ok(std::sync::Arc::new(modules::tts::provider::MockTtsProvider::new())
+                        as std::sync::Arc<dyn modules::tts::TtsProvider>)
+                }
+            });
+            let factory_clone = factory.clone();
+            let provider_handle = std::sync::Arc::new(commands::ProviderHandle::new(
+                move || (factory_clone)(),
+                None, // 不预加载
+            ));
+
+            // 启动 idle evictor（5 分钟阈值 / 30 秒检查）
+            // Phase TTS-D.1：evict 时把 ProviderState 翻成 Evicted。
+            let (state_arc, state_changed_at) = provider_handle.state_handle();
+            let boot_for_evict = provider_handle.boot();
+            let on_evict: std::sync::Arc<dyn Fn() + Send + Sync + 'static> = std::sync::Arc::new(
+                move || {
+                    let now_ms = boot_for_evict.elapsed().as_millis() as i64;
+                    state_changed_at
+                        .store(now_ms, std::sync::atomic::Ordering::Relaxed);
+                    let state_arc = state_arc.clone();
+                    // 在调用线程里 block_on：evictor 自己的 runtime 已就位
+                    let _ = tauri::async_runtime::block_on(async move {
+                        let mut guard = state_arc.write().await;
+                        *guard = commands::tts::ProviderState::Evicted { elapsed_seconds: 0.0 };
+                    });
+                },
+            );
+            let evictor = std::sync::Arc::new(
+                modules::tts::manager::eviction::IdleEvictor::spawn(
+                    modules::tts::manager::eviction::IdleEvictionConfig::default(),
+                    provider_handle.slot(),
+                    provider_handle.last_use_millis(),
+                    provider_handle.boot(),
+                    Some(on_evict),
+                ),
+            );
+
+            commands::TtsState {
+                provider: provider_handle,
+                warmup: std::sync::Arc::new(modules::tts::manager::warmup::WarmupManager::new()),
+                jobs: std::sync::Arc::new(modules::tts::manager::jobs::StreamingJobManager::new()),
+                _evictor: Some(evictor),
+            }
         })
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             commands::tts_download::TtsDownloadState::default(),
@@ -728,11 +821,13 @@ fn main() {
             start_agent_stream,
             stop_agent_stream,
             respond_permission,
-            // Browser control commands (Phase 7B)
+            // Browser control commands (Phase 7B + 7C profile management)
             get_browser_sessions,
             close_browser_session,
             get_chrome_status,
             request_browser_status,
+            list_browser_profiles,
+            clear_browser_profile,
             list_sessions,
             delete_session,
             rename_session,
@@ -888,6 +983,24 @@ fn main() {
             tts_demo_audio,
             tts_list_voices,
             tts_split_text,
+            // TTS-D / P0：Voice asset registry + preview
+            tts_list_voice_assets,
+            tts_voice_audio,
+            tts_preview_voice,
+            // TTS-E.1：用户上传 / 删除 / 重命名 自定义声纹
+            tts_upload_user_voice,
+            tts_delete_user_voice,
+            tts_rename_user_voice,
+            // TTS-E / P2：Voice preview cache
+            tts_warm_voice_preview,
+            tts_cached_voice_preview,
+            // TTS-E / P3：STT（Whisper local + Groq cloud + OpenFlow SenseVoice local）
+            stt_model_status,
+            stt_download_whisper_model,
+            stt_download_openflow_model,
+            stt_transcribe,
+            stt_get_settings,
+            stt_save_settings,
             // TTS model download
             tts_model_status,
             tts_model_download_start,

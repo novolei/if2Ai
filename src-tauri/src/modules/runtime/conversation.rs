@@ -497,10 +497,7 @@ where
             // back to "-" / global() when the runtime was built without
             // them (test paths + legacy callers that don't yet plumb
             // session metadata through).
-            let session_id = self
-                .session_id_for_hook
-                .as_deref()
-                .unwrap_or("-");
+            let session_id = self.session_id_for_hook.as_deref().unwrap_or("-");
             let scope = MemoryExecutionScope {
                 session_id: self.session_id_for_hook.clone(),
                 project_id: self.project_id_for_hook.clone(),

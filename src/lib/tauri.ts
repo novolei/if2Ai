@@ -1736,11 +1736,21 @@ export const TTS_DEFAULT_PARAMS: TtsGenerationParams = {
 }
 
 /** TTS health check response. */
+/** Phase TTS-D.1：Provider 生命周期状态。 */
+export type TtsProviderState =
+  | { kind: 'notLoaded' }
+  | { kind: 'loading' }
+  | { kind: 'loaded'; elapsedSeconds: number }
+  | { kind: 'failed'; error: string }
+  | { kind: 'evicted'; elapsedSeconds: number }
+
 export interface TtsHealthResponse {
   status: string
   warmup_state: string
   warmup_progress: number
   message: string
+  /** Phase TTS-D.1：Provider 生命周期状态机。 */
+  provider_state: TtsProviderState
 }
 
 /** TTS warmup status response. */
@@ -1794,10 +1804,12 @@ export async function ttsSynthesize(
   demoId: string | null,
   promptAudioPath: string | null,
   params: TtsGenerationParams,
+  voiceId?: string | null,
 ): Promise<TtsSynthesisResponse> {
   return invoke<TtsSynthesisResponse>('tts_synthesize', {
     text,
     demoId,
+    voiceId: voiceId ?? null,
     promptAudioPath,
     params,
   })
@@ -1809,10 +1821,12 @@ export async function ttsStreamStart(
   demoId: string | null,
   promptAudioPath: string | null,
   params: TtsGenerationParams,
+  voiceId?: string | null,
 ): Promise<TtsStreamStartResponse> {
   return invoke<TtsStreamStartResponse>('tts_stream_start', {
     text,
     demoId,
+    voiceId: voiceId ?? null,
     promptAudioPath,
     params,
   })
@@ -1846,6 +1860,173 @@ export async function ttsListVoices(): Promise<string[]> {
 /** Split text into chunks for voice clone preview. */
 export async function ttsSplitText(text: string, maxTokens: number): Promise<string[]> {
   return invoke<string[]>('tts_split_text', { text, maxTokens })
+}
+
+// ── TTS-D / P0：Voice asset registry + Agent voice picker ────────────────
+
+export interface TtsVoiceAsset {
+  id: string
+  display_name: string
+  /** "builtin" | "bundled" | "user" */
+  kind: string
+  language: string | null
+  description: string | null
+  is_previewable: boolean
+}
+
+/** 列出所有可用 voice assets（builtin manifest 18 + bundled mp3/wav + user uploaded）。 */
+export async function ttsListVoiceAssets(): Promise<TtsVoiceAsset[]> {
+  return invoke<TtsVoiceAsset[]>('tts_list_voice_assets')
+}
+
+/** 获取某个 voice 的原始音频文件 base64（前端 <audio> 试听原始 prompt 声音）。 */
+export async function ttsVoiceAudio(voiceId: string): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>('tts_voice_audio', { voiceId })
+}
+
+/** 用某个 voice 合成预览文本（默认"你好，我是 X。"），返回 base64 WAV。 */
+export async function ttsPreviewVoice(
+  voiceId: string,
+  sampleText?: string,
+): Promise<TtsSynthesisResponse> {
+  return invoke<TtsSynthesisResponse>('tts_preview_voice', { voiceId, sampleText: sampleText ?? null })
+}
+
+// ── Phase TTS-E.1：User-uploaded custom voices ──────────────────────────
+
+export interface TtsUploadVoiceResponse {
+  asset: TtsVoiceAsset
+  saved_path: string
+}
+
+/** 上传一段自定义声纹文件（wav/mp3/flac/ogg/m4a，≤30MB）。 */
+export async function ttsUploadUserVoice(
+  fileName: string,
+  fileBytes: Uint8Array,
+  displayName?: string,
+): Promise<TtsUploadVoiceResponse> {
+  // base64 编码（浏览器原生 btoa 只能搞 ASCII，二进制要走 binary string）
+  let binary = ''
+  const len = fileBytes.byteLength
+  const chunkSize = 0x8000
+  for (let i = 0; i < len; i += chunkSize) {
+    const sub = fileBytes.subarray(i, Math.min(i + chunkSize, len))
+    binary += String.fromCharCode.apply(null, Array.from(sub))
+  }
+  const base64 = btoa(binary)
+  return invoke<TtsUploadVoiceResponse>('tts_upload_user_voice', {
+    fileName,
+    fileBytesBase64: base64,
+    displayName: displayName ?? null,
+  })
+}
+
+/** 删除用户上传的自定义声纹（仅 user kind 可删）。 */
+export async function ttsDeleteUserVoice(voiceId: string): Promise<void> {
+  return invoke<void>('tts_delete_user_voice', { voiceId })
+}
+
+/** 重命名用户上传的声纹（display_name only，voice_id 不变）。 */
+export async function ttsRenameUserVoice(voiceId: string, newDisplayName: string): Promise<void> {
+  return invoke<void>('tts_rename_user_voice', { voiceId, newDisplayName })
+}
+
+/** Phase TTS-E / P2：后台预合成 voice preview WAV（fire-and-forget）。 */
+export async function ttsWarmVoicePreview(voiceId: string): Promise<string> {
+  return invoke<string>('tts_warm_voice_preview', { voiceId })
+}
+
+/** Phase TTS-E / P2：获取 voice 的预览 WAV（优先缓存，fallback 原声）。 */
+export async function ttsCachedVoicePreview(voiceId: string): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>('tts_cached_voice_preview', { voiceId })
+}
+
+// ── Phase TTS-E / P3：Whisper STT ─────────────────────────────────────────
+
+export interface SttModelStatusResponse {
+  ready: boolean
+  model_path: string | null
+  model_name: string | null
+  download_hint: string
+  model_dir: string
+  /** SenseVoice (OpenFlow) 是否已就绪 */
+  openflow_ready: boolean
+  /** SenseVoice 模型目录 */
+  openflow_model_dir: string
+}
+
+export interface OpenFlowDownloadProgress {
+  file: string
+  downloaded: number
+  total: number | null
+  /** 0-100；total=null 时为 -1 */
+  percent: number
+}
+
+export interface DownloadOpenflowRequest {
+  /** 'quantized' | 'fp16'，默认 quantized */
+  preset?: string
+  force?: boolean
+}
+
+export interface SttTranscribeRequest {
+  audio_bytes_base64: string
+  language: string | null
+  sample_rate: number | null
+  /** 'whisper' | 'groq' — 不传则用 settings */
+  provider_override?: string | null
+}
+
+export interface SttTranscribeResponse {
+  text: string
+  language: string
+  elapsed_seconds: number
+  provider: string
+}
+
+export interface SttSettingsDto {
+  /** 'whisper' | 'groq' */
+  provider: string
+  groq_api_key_set: boolean
+  groq_model: string
+}
+
+export interface SaveSttSettingsRequest {
+  provider?: string
+  groq_api_key?: string
+  groq_model?: string
+}
+
+export async function sttModelStatus(): Promise<SttModelStatusResponse> {
+  return invoke<SttModelStatusResponse>('stt_model_status')
+}
+
+export async function sttDownloadWhisperModel(modelId?: string): Promise<string> {
+  return invoke<string>('stt_download_whisper_model', { modelId: modelId ?? null })
+}
+
+/**
+ * 下载 SenseVoice (OpenFlow) 模型。
+ *
+ * 调用前请先订阅 `stt:openflow-download-progress` 事件以接收实时进度。
+ * 量化版约 230MB，FP16 版约 450MB。
+ */
+export async function sttDownloadOpenflowModel(
+  request: DownloadOpenflowRequest = {},
+): Promise<string> {
+  return invoke<string>('stt_download_openflow_model', { request })
+}
+
+export async function sttTranscribe(request: SttTranscribeRequest): Promise<SttTranscribeResponse> {
+  return invoke<SttTranscribeResponse>('stt_transcribe', { request })
+}
+
+export async function sttGetSettings(): Promise<SttSettingsDto> {
+  return invoke<SttSettingsDto>('stt_get_settings')
+}
+
+export async function sttSaveSettings(request: SaveSttSettingsRequest): Promise<SttSettingsDto> {
+  return invoke<SttSettingsDto>('stt_save_settings', { request })
 }
 
 // ── TTS Model Download ─────────────────────────────────────────────────────

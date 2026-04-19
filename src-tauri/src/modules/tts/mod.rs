@@ -27,6 +27,7 @@ pub mod config;
 pub mod error;
 pub mod inference;
 pub mod manager;
+pub mod manifest;
 pub mod model;
 pub mod performance;
 
@@ -172,6 +173,8 @@ pub struct StreamResult {
     pub audio_path: Option<std::path::PathBuf>,
     /// Sample rate of the audio.
     pub sample_rate: u32,
+    /// Channels of the audio (1=mono, 2=stereo).
+    pub channels: u16,
     /// Voice preset name used.
     pub voice: String,
     /// Text chunks the input was split into.
@@ -182,6 +185,11 @@ pub struct StreamResult {
     pub emitted_audio_seconds: f32,
     /// Lead seconds (buffer ahead of playback).
     pub lead_seconds: f32,
+    /// Phase TTS-B.6: 首音延迟（从开始合成到第一个 audio chunk 的墙钟秒数）。
+    pub first_audio_latency_seconds: f32,
+    /// Phase TTS-B.6: 实时因子 = emitted_audio_seconds / elapsed_seconds，
+    /// > 1 表示推理速度快于实时播放。
+    pub realtime_factor: f32,
 }
 
 /// Result from [`TtsProvider::warmup`].

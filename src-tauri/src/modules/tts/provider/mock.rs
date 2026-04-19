@@ -195,14 +195,19 @@ impl TtsProvider for MockTtsProvider {
             sink.on_audio(chunk).await;
         }
 
+        let emitted_seconds = total_frames as f32 * 0.1;
+        let elapsed_seconds = 0.05f32;
         let result = StreamResult {
             audio_path: None,
             sample_rate: crate::modules::tts::config::SAMPLE_RATE,
+            channels: 2,
             voice: voice.name.clone(),
             text_chunks: vec![params.text.clone()],
-            elapsed_seconds: 0.05,
-            emitted_audio_seconds: total_frames as f32 * 0.1,
+            elapsed_seconds,
+            emitted_audio_seconds: emitted_seconds,
             lead_seconds: (total_frames - 1) as f32 * 0.05,
+            first_audio_latency_seconds: 0.01,
+            realtime_factor: emitted_seconds / elapsed_seconds,
         };
 
         sink.on_complete(result.clone()).await;

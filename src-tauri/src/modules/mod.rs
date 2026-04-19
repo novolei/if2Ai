@@ -31,6 +31,7 @@ pub mod scheduler;
 pub mod security;
 pub mod session;
 pub mod skills;
+pub mod stt;
 pub mod system_check;
 pub mod tools;
 pub mod tts;

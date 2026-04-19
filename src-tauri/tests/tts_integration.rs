@@ -416,20 +416,13 @@ async fn streaming_rejects_empty_text() {
 fn onnx_provider_rejects_missing_model_files() {
     use if2ai_backend::modules::tts::provider::OnnxTtsProvider;
 
-    let result = OnnxTtsProvider::new(
-        std::path::Path::new("/nonexistent/tts"),
-        std::path::Path::new("/nonexistent/tokenizer"),
-        std::path::Path::new("/nonexistent/tokenizer.model"),
-        4,
-        4,
-        1024,
-        1025,
-        0,
-    );
+    // Phase TTS-A.2 之后：OnnxTtsProvider 通过 manifest 解析模型路径，
+    // 缺失 manifest → ManifestNotFound；签名简化为 from_model_dir。
+    let result = OnnxTtsProvider::from_model_dir(std::path::Path::new("/nonexistent/tts"), Some(4));
 
     assert!(
         result.is_err(),
-        "OnnxTtsProvider should reject missing model files"
+        "OnnxTtsProvider should reject missing manifest"
     );
 }
 

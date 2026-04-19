@@ -47,6 +47,14 @@ import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+// Phase TTS-E：消息级语音播放按钮（lazy 加载，避免 AudioContext 在入口初始化）
+const MessageVoiceButtonLazy = React.lazy(() =>
+  import('@/modules/chat/MessageVoiceButton').then((m) => ({ default: m.MessageVoiceButton }))
+)
+// Phase TTS-E / P3：语音输入按钮（Whisper / Groq STT）
+const SttButtonLazy = React.lazy(() =>
+  import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
+)
 import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode } from "@/lib/tauri"
 import { MemoryChip } from "@/components/memory/MemoryChip"
 import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
@@ -2343,14 +2351,16 @@ const ComposerDock = React.memo(function ComposerDock({
 
               <div className="h-3.5 w-px bg-black/10" />
 
-              {/* Mic */}
-              <button
-                type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/65"
-                aria-label="语音输入"
-              >
-                <Mic className="h-[14px] w-[14px]" />
-              </button>
+              {/* Phase TTS-E / P3：语音输入按钮（Whisper / Groq STT） */}
+              <React.Suspense fallback={null}>
+                <SttButtonLazy
+                  onTranscribe={(text) => {
+                    // 把转写结果追加到现有 input 末尾
+                    const next = input ? `${input.trim()} ${text}` : text
+                    onInputChange(next)
+                  }}
+                />
+              </React.Suspense>
 
               {/* Send / Stop */}
               <button
@@ -3043,6 +3053,12 @@ const ChatMessage = React.memo(function ChatMessage({
                         visible={showCopyButton}
                         onClick={() => onCopyMessage(message)}
                       />
+                      {/* Phase TTS-E：消息级语音播放按钮（有 agent voice 时才显示） */}
+                      {!message.isStreaming ? (
+                        <React.Suspense fallback={null}>
+                          <MessageVoiceButtonLazy text={message.content} />
+                        </React.Suspense>
+                      ) : null}
                       {message.memoryContext && message.memoryContext.length > 0 ? (
                         <MemoryChip items={message.memoryContext} className="ml-1" />
                       ) : null}

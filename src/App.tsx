@@ -39,6 +39,9 @@ import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspac
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
 import type { Conversation, Message, RecentSession, SessionTitleState } from '@/modules/chat/types'
+import { useAgentVoiceBridge } from '@/modules/chat/useAgentVoiceBridge'
+import { AgentVoiceIndicator } from '@/modules/chat/AgentVoiceIndicator'
+import { useCrossWindowChange } from '@/lib/crossWindowSync'
 import { OnboardingApp } from '@/modules/onboarding/OnboardingApp'
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
 import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
@@ -79,6 +82,14 @@ function App() {
   const appWindow = getCurrentWindow()
   const [showSplash, setShowSplash] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  // Phase TTS-D / P1：Agent 语音桥接
+  const agentVoice = useAgentVoiceBridge()
+
+  // 跨窗口监听 Onboarding 重置：设置窗口点重置后，主窗口立即跳回 Onboarding 流程
+  useCrossWindowChange('cross:onboarding-reset', () => {
+    console.log('[App] cross-window: onboarding reset → re-entering onboarding flow')
+    setShowOnboarding(true)
+  })
 
   // Single coordinated startup: check onboarding during splash, then decide route
   useEffect(() => {
@@ -1476,6 +1487,9 @@ function App() {
                 accumulatedText += payload.text
                 hasPendingTextDelta = true
                 scheduleAssistantFlush()
+                // Phase TTS-D / P1：把 text_delta 喂给 voice bridge（hook 内部
+                // 自己判断 enabled / voice / sentence boundary）
+                agentVoice.feed(payload.text)
               } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
                 ensureAssistantMessage()
                 accumulatedThinking += payload.thinking
@@ -1555,6 +1569,8 @@ function App() {
               } else if (payload.event_type === 'stream_complete') {
                 cancelScheduledAssistantFlush()
                 flushAssistantDeltas()
+                // Phase TTS-D / P1：flush 残留半句让 voice bridge 合成完
+                void agentVoice.flushAndStop()
                 setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
                 setStreamAbortHandles((prev) => {
                   const { [sessionId]: _removed, ...rest } = prev
@@ -1683,6 +1699,8 @@ function App() {
           accumulatedText += payload.text
           hasPendingTextDelta = true
           scheduleAssistantFlush()
+          // Phase TTS-D / P1：第二条流路径同样喂给 voice bridge
+          agentVoice.feed(payload.text)
         } else if (payload.event_type === 'thinking_delta' && payload.thinking) {
           ensureAssistantMessage()
           if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
@@ -1811,6 +1829,8 @@ function App() {
         } else if (payload.event_type === 'stream_complete') {
           cancelScheduledAssistantFlush()
           flushAssistantDeltas()
+          // Phase TTS-D / P1：第二条流路径同样要 flush 残留半句
+          void agentVoice.flushAndStop()
           setSessionLoading((prev) => ({ ...prev, [sessionId]: false }))
           setStreamAbortHandles((prev) => {
             const { [sessionId]: _removed, ...rest } = prev
@@ -2223,9 +2243,62 @@ function App() {
     }
   }
 
+  const promptDownloadSenseVoiceAfterOnboarding = async () => {
+    // 已经下载过就跳过；通过 stt_model_status 判断
+    try {
+      const { sttModelStatus, sttDownloadOpenflowModel, sttSaveSettings } = await import('@/lib/tauri')
+      const status = await sttModelStatus()
+      if (status.openflow_ready) return
+      // 之前显式拒绝过，1 周内不再问
+      const SKIP_KEY = 'if2ai.stt.openflow.declined_at'
+      const declinedAt = Number(localStorage.getItem(SKIP_KEY) ?? 0)
+      if (declinedAt > 0 && Date.now() - declinedAt < 7 * 86400_000) return
+
+      // 用 sonner 持久 toast：行动按钮 = 立即下载 / 稍后再说
+      toast('启用本地中文语音输入？', {
+        description:
+          '推荐下载 SenseVoice 模型（约 230MB，离线、中文识别强）。也可稍后到「设置 → STT 语音输入」手动下载。',
+        duration: Infinity,
+        action: {
+          label: '立即下载',
+          onClick: () => {
+            // 立即开始后台下载并显示进度 toast
+            const id = toast.loading('SenseVoice 模型下载中…', {
+              description: '约 230MB，根据网速 1-5 分钟',
+              duration: Infinity,
+            })
+            void sttDownloadOpenflowModel({ preset: 'quantized' })
+              .then(async () => {
+                toast.success('SenseVoice 已就绪', {
+                  id,
+                  description: '麦克按钮现在可以使用本地中文转写',
+                  duration: 5000,
+                })
+                // 自动把 provider 切到 openflow
+                try { await sttSaveSettings({ provider: 'openflow' }) } catch {}
+              })
+              .catch((e) => {
+                toast.error('下载失败', { id, description: String(e), duration: 6000 })
+              })
+          },
+        },
+        cancel: {
+          label: '稍后',
+          onClick: () => {
+            localStorage.setItem(SKIP_KEY, String(Date.now()))
+          },
+        },
+      })
+    } catch (e) {
+      console.warn('[onboarding] STT prompt failed:', e)
+    }
+  }
+
   const handleOnboardingComplete = () => {
     setShowOnboarding(false)
     void loadMainAppData()
+    // Onboarding 完成后询问是否下载本地中文 STT 模型（SenseVoice 230MB）
+    void promptDownloadSenseVoiceAfterOnboarding()
   }
 
   if (showOnboarding) {
@@ -2255,6 +2328,13 @@ function App() {
         </div>
 
         <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {/* Phase TTS-E：聊天语音状态浮层（左下角） */}
+          {activeSection === 'chat' && (
+            <AgentVoiceIndicator
+              isPlaying={agentVoice.isPlaying}
+              pending={agentVoice.pending}
+            />
+          )}
           {activeSection === 'chat' ? (
             <ChatWorkspace
               projects={projects}

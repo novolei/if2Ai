@@ -262,10 +262,16 @@ pub mod settings;
 pub mod skills_hub;
 pub mod slash;
 pub mod stream_outcome;
+pub mod stt;
 pub mod tools;
 pub mod tts;
 pub mod tts_download;
 pub mod web_search;
+
+pub use stt::{
+    stt_download_openflow_model, stt_download_whisper_model, stt_get_settings, stt_model_status,
+    stt_save_settings, stt_transcribe,
+};
 pub mod window;
 
 // Onboarding & Configuration Platform (Phase 6G)
@@ -282,8 +288,8 @@ pub use agent::{
 };
 #[allow(unused_imports)]
 pub use browser::{
-    close_browser_session, get_browser_sessions, get_chrome_status, request_browser_status,
-    ChromeStatusPayload,
+    clear_browser_profile, close_browser_session, get_browser_sessions, get_chrome_status,
+    list_browser_profiles, request_browser_status, ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use harness::{
@@ -371,9 +377,11 @@ pub use system_check::{
 };
 #[allow(unused_imports)]
 pub use tts::{
-    tts_demo_audio, tts_health, tts_list_voices, tts_split_text, tts_start_warmup,
-    tts_stream_close, tts_stream_result, tts_stream_start, tts_stream_status, tts_synthesize,
-    tts_warmup_status, TtsState,
+    tts_cached_voice_preview, tts_delete_user_voice, tts_demo_audio, tts_health,
+    tts_list_voice_assets, tts_list_voices, tts_preview_voice, tts_rename_user_voice,
+    tts_split_text, tts_start_warmup, tts_stream_close, tts_stream_result, tts_stream_start,
+    tts_stream_status, tts_synthesize, tts_upload_user_voice, tts_voice_audio,
+    tts_warm_voice_preview, tts_warmup_status, ProviderHandle, ProviderState, TtsState,
 };
 
 // TTS model download commands

@@ -1,0 +1,370 @@
+# Phase TTS-A: MOSS-TTS-Nano ONNX 推理底座修复
+#
+# Design-ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md
+#             docs/design-docs/postCLI/TTS/tts_integration.md
+# Goal: 解决 Gap Analysis Report 第 11 节列出的 5 个致命 Gap，
+#       让"端到端 voice clone 真实可听"具备底座条件。
+#       本 Phase 不包含 streaming + UI 打磨，那些放在 TTS-B / TTS-C / TTS-D。
+
+meta:
+  phase: TTS-A
+  name: MOSS-TTS-Nano ONNX 推理底座修复
+  status: active
+  design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md
+  created: 2026-04-19
+  total_slices: 8
+  human_checkpoints:
+    - after_slice: "TTS-A.5"
+      reason: >
+        TTS-A.1~A.5 完成后 = 所有"无需真模型即可单测"的底座件就位
+        （manifest / tokenizer / reference audio / request_builder）。
+        人工 review：跑 `cargo test -p if2ai-backend modules::tts`，确认底座绿，
+        再决定是否进入 TTS-A.6/A.7 的真 ONNX `.run()` 与 codec streaming
+        （这两步需要把 ~700MB 模型下到本地才能完成验证）。
+
+dashboard:
+  last_updated: '2026-04-19'
+  completed_slices: []
+  current_slice: "TTS-A.1"
+  blocked: []
+  notes: >
+    本 Phase 由 Gap Analysis Report 直接派生。
+    P0 关键路径: A.1 (deps) → A.2 (manifest) → A.3 (tokenizer) → A.4 (ref audio)
+                → A.5 (request_builder) → [HUMAN_CHECKPOINT]
+                → A.6 (real prefill+decode) → A.7 (codec streaming)
+                → A.8 (provider 重构 + e2e smoke)
+
+slices:
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.1: 依赖加固 + ort 2.x KV cache 来回喂 spike
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.1"
+    name: Cargo 依赖加固 + KV cache 来回喂 50 行 POC
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §10
+    estimated_days: 0.5
+
+    current_state: |
+      src-tauri/Cargo.toml 已有 ort 2.0.0-rc.10 / ndarray / tokenizers / hound / rand。
+      缺：sentencepiece, symphonia, rubato。
+      ort 2.x 的 KV cache (present_key_* → past_key_*) 张量来回喂路径未经验证。
+
+    must_implement:
+      - "Cargo.toml: 移除 tokenizers，新增 sentencepiece = \"0.11\""
+      - "Cargo.toml: 新增 symphonia = { version = \"0.5\", features = [\"all-codecs\"] }"
+      - "Cargo.toml: 新增 rubato = \"0.16\""
+      - "src-tauri/tests/tts_ort_kv_spike.rs — 50 行集成测试，验证 ort Tensor::from_array
+         能构造 [1, kv_heads, seq, head_dim] f32 张量并通过 ort::inputs! 喂入 session"
+
+    impl_targets:
+      - src-tauri/Cargo.toml
+      - src-tauri/tests/tts_ort_kv_spike.rs
+
+    acceptance:
+      - "cargo build --workspace 通过"
+      - "cargo test -p if2ai-backend tts_ort_kv_spike 通过"
+      - "无 base64/ndarray/serde 版本冲突"
+
+    review_checklist:
+      - "sentencepiece crate 选 0.11+（FFI 到官方 C++）"
+      - "symphonia 开 all-codecs 以支持 mp3/wav/flac"
+      - "rubato 选 0.16 (高质量 SincFixedIn)"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.2: Manifest / TTS-meta / Codec-meta JSON 解析
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.2"
+    name: Manifest 三件套 JSON 解析（解决 Gap #3）
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §3.1
+    estimated_days: 1.0
+
+    current_state: |
+      OnnxTtsProvider::from_dirs hardcode N_VQ=4, AUDIO_ASSISTANT_SLOT=1024,
+      AUDIO_END=1025, AUDIO_PAD=0；ONNX 文件名也是 hardcode "prefill.onnx"。
+      Python `OrtCpuRuntime` 全部从三个 JSON 读取：
+        - browser_poc_manifest.json: generation_defaults, builtin_voices,
+          tts_config, prompt_templates, model_files
+        - tts_browser_onnx_meta.json: files.{prefill,decode_step,local_*}, model_config
+        - codec_browser_onnx_meta.json: files.{encode,decode_full,decode_step},
+          codec_config.{sample_rate,channels,num_quantizers}, streaming_decode
+
+    must_implement:
+      - "src-tauri/src/modules/tts/manifest/mod.rs — 模块入口 + ManifestBundle 聚合类型"
+      - "src-tauri/src/modules/tts/manifest/browser_poc.rs — BrowserPocManifest serde
+         结构 + load_from_dir(&Path)，支持 candidate paths fallback 与
+         MOSS-TTS-Nano-ONNX-CPU/MOSS-TTS-Nano-100M-ONNX 别名映射"
+      - "src-tauri/src/modules/tts/manifest/tts_meta.rs — TtsMeta serde 结构（files,
+         model_config: hidden, kv_heads, head_dim, local_layers, local_heads,
+         local_head_dim, audio_codebook_sizes, onnx output names）"
+      - "src-tauri/src/modules/tts/manifest/codec_meta.rs — CodecMeta serde 结构
+         （files, codec_config, streaming_decode: transformer_offsets +
+         attention_caches 元信息）"
+      - "ManifestBundle::resolve_onnx_path(key) → PathBuf：根据 meta files 拼出绝对路径"
+      - "modules/tts/mod.rs: pub mod manifest"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/manifest/mod.rs
+      - src-tauri/src/modules/tts/manifest/browser_poc.rs
+      - src-tauri/src/modules/tts/manifest/tts_meta.rs
+      - src-tauri/src/modules/tts/manifest/codec_meta.rs
+      - src-tauri/src/modules/tts/mod.rs
+
+    acceptance:
+      - "cargo test -p if2ai-backend modules::tts::manifest 全部通过"
+      - "ManifestBundle::load(&model_dir) 在缺文件时返回结构化错误（含 tried paths）"
+      - "ManifestBundle.tts_config.n_vq / audio_*_token_id 字段解析正确"
+      - "ManifestBundle.builtin_voices 含 prompt_audio_codes: Vec<Vec<i32>>"
+
+    review_checklist:
+      - "所有 serde 结构 #[serde(rename_all = \"snake_case\")] 与 Python JSON 键一致"
+      - "candidate paths fallback 完全 1:1 复刻 _resolve_manifest_path"
+      - "MODEL_DIR_ALIAS_MAP 同 Python 实现"
+      - "无 unwrap()"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.3: SentencePiece tokenizer 修复（解决 Gap #2）
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.3"
+    name: SentencePiece tokenizer 修复
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §2.3 R1
+    estimated_days: 0.5
+
+    current_state: |
+      text/tokenizer.rs 用 tokenizers::Tokenizer::from_file(model_path) 加载
+      .model 文件，HF tokenizers crate 不原生支持 SentencePiece protobuf 格式，
+      会运行时报错或编码不一致。
+
+    must_implement:
+      - "重写 text/tokenizer.rs 使用 sentencepiece::SentencePieceProcessor"
+      - "保持公开 API 不变：load(&Path), encode(&str)->Vec<u32>, decode(&[u32])->String,
+         count_tokens(&str)->usize, vocab_size()->usize"
+      - "新增 tests/data/ 多语种 fixture（中/英/日 各 3 行）做 round-trip 一致性测试"
+      - "保留 from_model_dir(&Path) 便利方法"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/text/tokenizer.rs
+      - src-tauri/tests/data/tts_tokenizer_cases.txt
+
+    acceptance:
+      - "cargo test -p if2ai-backend modules::tts::text::tokenizer 通过（含 round-trip）"
+      - "encode → decode → encode 张量级一致"
+      - "Python 同 tokenizer.model 同一文本编码完全一致（有真模型时验证）"
+
+    review_checklist:
+      - "公开 API 与原文件签名兼容（chunker.rs 调用方无需改）"
+      - "错误转换 sentencepiece::SentencePieceError → TtsError::TokenizationError"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.4: Reference audio loader（解决 Gap #4）
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.4"
+    name: Reference audio loader (symphonia + rubato)
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §3.3
+    estimated_days: 1.5
+
+    current_state: |
+      audio/wav.rs 只能解码 16-bit PCM WAV。
+      Voice clone 必须能加载任意采样率/声道/格式（wav/mp3/flac/ogg）的 prompt
+      音频，并归一化到 codec 期望的 48 kHz / stereo / f32 / [-1,1]。
+      Python: torchaudio.load + torchaudio.functional.resample + 通道处理。
+
+    must_implement:
+      - "src-tauri/src/modules/tts/audio/reference.rs — load_reference_audio(&Path,
+         target_sample_rate, target_channels) -> Result<ReferenceWaveform>"
+      - "ReferenceWaveform { samples: Vec<f32> (interleaved), sample_rate: u32,
+         channels: u16, duration_seconds: f32 }"
+      - "内部三阶段：(1) symphonia::default::get_probe() 探测格式 →
+         get_codecs() 解码任意 codec 到 f32 → (2) rubato::SincFixedIn 重采样 →
+         (3) 通道转换：mono→stereo 复制 / stereo→mono 平均 / N-ch→target 通用"
+      - "audio/mod.rs: pub mod reference"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/audio/reference.rs
+      - src-tauri/src/modules/tts/audio/mod.rs
+
+    acceptance:
+      - "cargo test -p if2ai-backend modules::tts::audio::reference 通过"
+      - "16k mono wav → 48k stereo: 样本数 ≈ 输入 × (48000/16000) × 2 ±10"
+      - "44.1k stereo wav → 48k stereo: 样本数 ≈ 输入 × (48000/44100) ±10"
+      - "测试包含 mp3 → 48k stereo（用嵌入小 mp3 fixture）"
+      - "RMS 能量重采样前后差异 < 5%"
+
+    review_checklist:
+      - "rubato 用 SincFixedIn + WindowFunction::BlackmanHarris2（接近 torchaudio 默认）"
+      - "i16/i24/f32 source samples 全部走统一 f32 [-1,1] 归一化"
+      - "Drop / 资源释放正确"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.5: build_voice_clone_request_rows 协议组装
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.5"
+    name: Voice-clone request 协议组装（解决 Gap #1 上半段）
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §1.2
+    estimated_days: 0.5
+
+    current_state: |
+      Python build_voice_clone_request_rows() 把 prompt_audio_codes 与 text_token_ids
+      按 [user_prefix + audio_start] + audio_prefix_rows + [audio_end + after_reference
+      + text_ids + assistant_prefix + audio_start] 编排成 input_ids[L, n_vq+1] +
+      attention_mask[1, L]。Rust 完全不存在。
+
+    must_implement:
+      - "src-tauri/src/modules/tts/inference/request_builder.rs"
+      - "pub fn build_voice_clone_request_rows(manifest, prompt_audio_codes,
+         text_token_ids) -> RequestRows"
+      - "RequestRows { input_ids: Vec<Vec<i32>> (L × n_vq+1), attention_mask: Vec<i32> (L) }"
+      - "build_text_rows / build_audio_prefix_rows 内部辅助，行宽 = n_vq+1，pad token
+         填充其余位"
+      - "单元测试：用 fixture manifest 跑出 rows 与 Python 同 prompt+text 逐位一致"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/inference/request_builder.rs
+      - src-tauri/src/modules/tts/inference/mod.rs
+
+    acceptance:
+      - "cargo test -p if2ai-backend modules::tts::inference::request_builder 通过"
+      - "row_width == n_vq + 1 在所有用例中保持"
+      - "attention_mask 长度 == input_ids.len()"
+
+    review_checklist:
+      - "完全 1:1 复刻 ort_cpu_runtime.py:456-476 的逻辑"
+      - "pub fn 文档注释引用 Python 行号"
+
+  # ─────────────────────────────────────────────────────────────
+  # ↑↑↑ 以上 5 个 slice 是"无需真模型可单测"的底座件 ↑↑↑
+  # HUMAN_CHECKPOINT 在此触发；下面 3 个 slice 需要先把模型下到本地
+  # ─────────────────────────────────────────────────────────────
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.6: Prefill + Decode_step 真 ONNX run + KV cache loop
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.6"
+    name: 真 ONNX prefill / decode_step / local_decoder 调用（解决 Gap #1 下半段）
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §3.1
+    estimated_days: 2.5
+
+    current_state: |
+      inference/prefill.rs 与 decode.rs 全部是 placeholder：构造 ndarray 后丢弃，
+      返回 zeros。LocalSessions 只 load() 没有 run_*。
+
+    must_implement:
+      - "model/global.rs::PrefillSession::run(&mut self, input_ids: ArrayD<i32>,
+         attention_mask: ArrayD<i32>) -> PrefillOutput { global_hidden, kv_cache }"
+      - "model/global.rs::DecodeStepSession::run(&mut self, input_ids: ArrayD<i32>,
+         past_valid_lengths: i32, past_kv: HashMap<String, ArrayD<f32>>) ->
+         DecodeStepOutput"
+      - "model/local.rs 加 run_local_decoder / run_local_cached_step /
+         run_local_fixed_sampled_frame / run_local_greedy_frame 四个方法"
+      - "inference/decode.rs::DecodeRunner::generate_audio_frames 完整实现自回归循环
+         （选 sample_mode 分支 + present_*→past_* 改名 + 重复惩罚）"
+      - "model/local.rs::LocalSessions::load 增加 local_greedy_frame.onnx 加载"
+      - "Provider 不再生成静音 placeholder frames"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/model/global.rs
+      - src-tauri/src/modules/tts/model/local.rs
+      - src-tauri/src/modules/tts/inference/prefill.rs
+      - src-tauri/src/modules/tts/inference/decode.rs
+
+    acceptance:
+      - "提供真模型时，cargo test -p if2ai-backend tts_real_inference 通过"
+      - "1 chunk 短文本生成 generated_frames.len() > 0 且非全零"
+      - "max_new_frames 边界检查触发 break"
+
+    review_checklist:
+      - "ort::inputs! 与 session.run() 错误全部转 TtsError::OnnxError"
+      - "KV cache HashMap 在循环间正确移交所有权（避免 clone 大张量）"
+      - "i32 / f32 dtype 严格匹配 Python (no f32 input_ids)"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.7: CodecStreamingDecodeSession + 自适应批量
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.7"
+    name: Codec encode/decode_full + streaming session（解决 Gap #5）
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §3.1
+    estimated_days: 2.0
+
+    current_state: |
+      model/codec.rs 只 load() session，没有 encode/decode_full/streaming 方法。
+      streaming PCM 输出当前是空字节占位。
+
+    must_implement:
+      - "model/codec.rs::CodecSessions::encode(waveform: ArrayD<f32>) -> Vec<Vec<i32>>"
+      - "model/codec.rs::CodecSessions::decode_full(audio_codes: &[Vec<i32>])
+         -> Vec<f32> (interleaved PCM)"
+      - "audio/streaming_decoder.rs::CodecStreamingDecodeSession 等价于
+         Python 的同名类：维护 transformer_specs 与 attention_specs 的
+         state_feeds，run_frames(frames) 增量返回 (PCM, length)，reset() 清状态"
+      - "inference/stream_budget.rs::resolve_decode_frame_budget(emitted_samples,
+         sample_rate, first_audio_at) -> usize（1/2/4/8）"
+      - "audio/mod.rs: pub mod streaming_decoder"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/model/codec.rs
+      - src-tauri/src/modules/tts/audio/streaming_decoder.rs
+      - src-tauri/src/modules/tts/audio/mod.rs
+      - src-tauri/src/modules/tts/inference/stream_budget.rs
+      - src-tauri/src/modules/tts/inference/mod.rs
+
+    acceptance:
+      - "cargo test -p if2ai-backend tts_codec_roundtrip 通过：encode(decode_full(c)) ≈ c"
+      - "streaming run_frames 多次调用 PCM 总长 == decode_full(同 codes) PCM 长"
+      - "首音 budget 1/2/4/8 阶梯触发逻辑命中"
+
+    review_checklist:
+      - "state_feeds 用 HashMap<String, ArrayD<f32 或 i32>> 维护，避免裸 ndarray Vec"
+      - "transformer_specs / attention_specs 从 codec_meta 反序列化，禁止 hardcode"
+
+  # ─────────────────────────────────────────────────────────────
+  # Slice TTS-A.8: provider/onnx.rs 重构 + e2e smoke
+  # ─────────────────────────────────────────────────────────────
+  - id: "TTS-A.8"
+    name: OnnxTtsProvider 重写 + e2e 静音消除验证
+    status: pending
+    priority: P0
+    design_ref: docs/design-docs/postCLI/TTS/tts_gap_analysis_report.md §6.2
+    estimated_days: 1.5
+
+    current_state: |
+      provider/onnx.rs 还有大量 // TODO + placeholder return（vec![0u32; n_vq] /
+      vec![0.0f32; …]）。需要全部替换为 A.2~A.7 的真实模块调用。
+
+    must_implement:
+      - "重写 provider/onnx.rs: 删除所有 placeholder; new() 走 ManifestBundle::load
+         读 n_vq / token ids / 文件名"
+      - "synthesize() 走完整流水线：normalize → tokenize → 切 chunk →
+         encode prompt（或读 builtin prompt_audio_codes）→ build_voice_clone_request_rows
+         → DecodeRunner.generate → CodecSessions.decode_full → wav_encode"
+      - "synthesize_stream() 走 CodecStreamingDecodeSession + AudioSink.on_audio
+         per-chunk 推送，应用 resolve_decode_frame_budget 自适应批量"
+      - "warmup() 真实跑 1 句短中文同 Python OrtCpuRuntime.warmup() 等价"
+      - "src-tauri/tests/tts_e2e_smoke.rs: 给定真模型路径时跑 voice clone，
+         断言 PCM RMS > 0.001（非静音）；模型未提供时 skip"
+
+    impl_targets:
+      - src-tauri/src/modules/tts/provider/onnx.rs
+      - src-tauri/tests/tts_e2e_smoke.rs
+
+    acceptance:
+      - "cargo test -p if2ai-backend modules::tts 全绿"
+      - "本地真模型可达时，tts_e2e_smoke 输出 wav 在系统播放器可听"
+      - "无任何 placeholder 注释 (// TODO Wire up) 残留"
+
+    review_checklist:
+      - "Provider 不再持有 Hardcoded 常量 N_VQ / AUDIO_*_TOKEN_ID"
+      - "所有错误路径返回结构化 TtsError，命令边界 String 化"
+      - "tracing::instrument 标注关键阶段（prefill/decode/local/codec）的耗时"

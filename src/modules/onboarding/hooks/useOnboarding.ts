@@ -69,6 +69,9 @@ export function useOnboarding(): UseOnboardingReturn {
   const [systemReport, setSystemReport] = useState<SystemReport | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadedBytes, setDownloadedBytes] = useState(0);
+  const [totalBytes, setTotalBytes] = useState(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, _setSelectedProvider] = useState<Provider | null>(null);
@@ -152,10 +155,14 @@ export function useOnboarding(): UseOnboardingReturn {
   const downloadEmbeddedModel = useCallback(async () => {
     setIsDownloading(true);
     setDownloadProgress(0);
+    setDownloadedBytes(0);
+    setTotalBytes(0);
+    setDownloadError(null);
     try {
       await invoke('embedded_model_download');
     } catch (err) {
       console.error('[onboarding] Model download failed:', err);
+      setDownloadError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsDownloading(false);
     }
@@ -335,6 +342,12 @@ export function useOnboarding(): UseOnboardingReturn {
             if (typeof payload.percent === 'number') {
               setDownloadProgress(payload.percent);
             }
+            if (typeof payload.downloaded_bytes === 'number') {
+              setDownloadedBytes(payload.downloaded_bytes);
+            }
+            if (typeof payload.total_bytes === 'number') {
+              setTotalBytes(payload.total_bytes);
+            }
           },
         );
         cleanup.push(unlistenProgress);
@@ -367,6 +380,9 @@ export function useOnboarding(): UseOnboardingReturn {
     systemReport,
     isChecking,
     downloadProgress,
+    downloadedBytes,
+    totalBytes,
+    downloadError,
     isDownloading,
     providers,
     selectedProvider,

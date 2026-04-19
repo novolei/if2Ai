@@ -10,6 +10,7 @@ export type SettingsSectionId =
   | 'connections'
   | 'remote'
   | 'tts-test'
+  | 'stt-config'
   | 'about'
 
 export type ThemeMode = 'system' | 'light' | 'dark'

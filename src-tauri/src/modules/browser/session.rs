@@ -7,6 +7,7 @@
 //! - An operation log for AI error recovery
 //! - The current URL cache
 
+use std::path::Path;
 use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -20,12 +21,12 @@ use chromiumoxide::page::{Page, ScreenshotParams};
 use chrono::Utc;
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use crate::modules::browser::chrome_finder::find_chrome_binary;
 use crate::modules::browser::errors::BrowserError;
+use crate::modules::browser::profile::{BrowserProfileMode, ProfileHandle};
 use crate::modules::browser::snapshot::SNAPSHOT_SCRIPT;
 
 /// Direction for scroll operations.
@@ -77,25 +78,32 @@ pub struct BrowserSession {
     /// Full log of every action taken in this session.
     /// Access via [`BrowserRegistry::take_action_log`] rather than directly.
     pub(crate) action_log: Vec<ActionLogEntry>,
-    /// Unique temporary user-data directory for this Chromium process.
+    /// User-data-dir backing this Chromium process.
     ///
-    /// chromiumoxide 0.9 defaults to a fixed `$TMPDIR/chromiumoxide-runner` path.
-    /// During Tauri hot-reloads, zombie Chrome processes from the previous run
-    /// hold a lock on that fixed path, causing the next launch to fail with
-    /// "CDP error: Browser process exit".  By creating a unique temp dir per
-    /// session we guarantee zero cross-session / cross-run conflicts.
-    /// The `TempDir` handle is kept here so the directory stays alive for the
-    /// entire session lifetime and is cleaned up automatically on drop.
-    _data_dir: TempDir,
+    /// Phase 7C, slice 7C.1 replaced the legacy unique-`tempdir` approach
+    /// (which wiped cookies on every restart) with a [`ProfileHandle`] that
+    /// honours [`BrowserProfileMode`].  `Drop` only deletes the directory
+    /// when the mode is `Ephemeral`; persistent profiles survive between
+    /// restarts so the AI keeps the user's login state.
+    _profile: ProfileHandle,
 }
 
 impl BrowserSession {
-    /// Launch a new headless Chromium process and open an initial blank page.
+    /// Launch a new Chromium process bound to a [`ProfileHandle`] derived
+    /// from `profile_mode` and open an initial blank page.
+    ///
+    /// `if2ai_home` is the user-data root (typically `~/.if2ai/`); it
+    /// determines where the persistent profile directory lives.
     ///
     /// Searches for an installed Chrome/Chromium binary via
     /// [`find_chrome_binary`]. Returns [`BrowserError::ChromeNotFound`] when
-    /// no browser is available.
-    pub async fn new(session_id: String) -> Result<Self, BrowserError> {
+    /// no browser is available, or [`BrowserError::ProfileError`] when the
+    /// profile directory cannot be created.
+    pub async fn new(
+        session_id: String,
+        profile_mode: BrowserProfileMode,
+        if2ai_home: &Path,
+    ) -> Result<Self, BrowserError> {
         let chrome_status = find_chrome_binary();
         if !chrome_status.found {
             return Err(BrowserError::ChromeNotFound);
@@ -105,24 +113,20 @@ impl BrowserSession {
         debug!(
             session_id = %session_id,
             chrome = %chrome_path.display(),
+            mode = ?profile_mode,
             "launching headless browser"
         );
 
-        // Create a unique user-data directory per session.
-        //
-        // chromiumoxide 0.9 defaults to a fixed $TMPDIR/chromiumoxide-runner path.
-        // During Tauri hot-reloads zombie Chrome processes from the prior run hold
-        // a lock on that shared directory, causing the next launch to fail with
-        // "CDP error: Browser process exit" immediately.  Unique dirs prevent this.
-        let data_dir = tempfile::Builder::new()
-            .prefix("if2ai-chrome-")
-            .tempdir()
-            .map_err(|e| BrowserError::Cdp(format!("failed to create browser data dir: {e}")))?;
+        // Resolve the profile location.  PerSessionPersistent / Shared keep
+        // cookies + localStorage on disk so login state survives restarts;
+        // Ephemeral hands back a `TempDir` that wipes itself on Drop.
+        let profile = profile_mode.resolve(if2ai_home, &session_id)?;
 
         debug!(
             session_id = %session_id,
-            data_dir = %data_dir.path().display(),
-            "created unique browser user-data-dir"
+            data_dir = %profile.path.display(),
+            mode = ?profile.mode,
+            "resolved browser user-data-dir"
         );
 
         // no_sandbox() passes --no-sandbox and --disable-setuid-sandbox to Chrome.
@@ -133,7 +137,7 @@ impl BrowserSession {
         // which chromiumoxide surfaces as "CDP error: Browser process exit".
         let config = BrowserConfig::builder()
             .chrome_executable(chrome_path)
-            .user_data_dir(data_dir.path())
+            .user_data_dir(&profile.path)
             .no_sandbox()
             // Prevent GPU-initialisation crash in headless environments.
             .arg("--disable-gpu")
@@ -154,20 +158,19 @@ impl BrowserSession {
             .build()
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
-        let (mut browser, mut handler) = Browser::launch(config)
+        let (browser, mut handler) = Browser::launch(config)
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
 
         // Handler implements Stream; it must be polled so CDP messages flow.
         let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-        // Switch to an incognito (private) browsing context so each chat session
-        // gets fully isolated cookies, localStorage, and cache — no cross-session
-        // data leakage even if multiple sessions run concurrently.
+        // Phase 7C, slice 7C.1: opening a normal page on the default
+        // browser context (no `start_incognito_context`).  Cookie /
+        // localStorage isolation is now provided by the per-session profile
+        // directory itself, not by an extra in-memory incognito layer.
+        // This is what lets `PerSessionPersistent` actually persist anything.
         let page = browser
-            .start_incognito_context()
-            .await
-            .map_err(|e| BrowserError::Cdp(e.to_string()))?
             .new_page("about:blank")
             .await
             .map_err(|e| BrowserError::Cdp(e.to_string()))?;
@@ -200,8 +203,28 @@ impl BrowserSession {
             page,
             current_url: None,
             action_log: Vec::new(),
-            _data_dir: data_dir,
+            _profile: profile,
         })
+    }
+
+    /// Test-only convenience constructor that uses
+    /// [`BrowserProfileMode::Ephemeral`] and a throw-away `if2ai_home`
+    /// (`tempfile::TempDir`).  Used by every existing unit/integration test
+    /// that previously relied on the legacy 1-argument `new(session_id)`.
+    ///
+    /// Production code MUST go through [`BrowserSession::new`] with the real
+    /// configured `profile_mode` and `if2ai_home` so cookies persist.
+    #[cfg(test)]
+    pub async fn new_for_test(session_id: String) -> Result<Self, BrowserError> {
+        // The TempDir lives long enough for `Ephemeral` to materialise
+        // its own inner tempdir before we go out of scope.  We do not
+        // need to keep it alive past `new()` because Ephemeral copies
+        // a self-owned `TempDir` into the `ProfileHandle`.
+        let if2ai_home = tempfile::Builder::new()
+            .prefix("if2ai-test-home-")
+            .tempdir()
+            .map_err(|e| BrowserError::ProfileError(e.to_string()))?;
+        Self::new(session_id, BrowserProfileMode::Ephemeral, if2ai_home.path()).await
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────

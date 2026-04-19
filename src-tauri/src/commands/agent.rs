@@ -3482,7 +3482,7 @@ mod tests {
             workdir.clone(),
         )));
         let registry = Arc::new(ToolRegistry::new(context));
-        let test_browser_registry = crate::modules::browser::BrowserRegistry::new(
+        let test_browser_registry = crate::modules::browser::BrowserRegistry::for_test(
             std::path::PathBuf::from("/tmp/browser-cold-state-test.json"),
         );
         register_builtin_tools(

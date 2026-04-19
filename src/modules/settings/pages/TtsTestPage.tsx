@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Play, Pause, Loader2, AlertCircle, CheckCircle, RefreshCw, Download } from 'lucide-react'
+import { Play, Pause, Loader2, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import {
+  ttsHealth,
   ttsWarmupStatus,
   ttsStartWarmup,
   ttsSynthesize,
@@ -10,12 +11,13 @@ import {
   ttsStreamStatus,
   ttsStreamClose,
   ttsModelStatus,
-  ttsModelDownloadStart,
-  ttsModelDownloadStatus,
+  ttsSplitText,
   type TtsGenerationParams,
-  type TtsDownloadStatusResponse,
+  type TtsProviderState,
   TTS_DEFAULT_PARAMS,
 } from '@/lib/tauri'
+import { useWebAudioStreamPlayer } from './useWebAudioStreamPlayer'
+import { AgentVoicePicker, getAgentVoiceId } from './AgentVoicePicker'
 
 // ── Demo entries (mirrors demo.jsonl from MOSS-TTS-Nano) ─────────────────────
 
@@ -107,52 +109,101 @@ interface GenerationOptionsPanelProps {
   onChange: (params: TtsGenerationParams) => void
 }
 
+// Phase TTS-C.5：参数分 Basic / Advanced 两组，默认只露 Basic 5 个，
+// 减少首次接触用户的认知负担。Advanced 有 13 个 sampling/batch 旋钮。
+type ParamSpec = [keyof TtsGenerationParams, string, number, number]
+const BASIC_NUMERIC: ParamSpec[] = [
+  ['max_new_frames', 'Max New Frames', 64, 1024],
+  ['voice_clone_max_text_tokens', 'VC Max Tokens', 25, 200],
+  ['audio_temperature', 'Audio Temp', 0.1, 2.0],
+]
+const ADVANCED_NUMERIC: ParamSpec[] = [
+  ['tts_max_batch_size', 'TTS Batch Size', 0, 10],
+  ['codec_max_batch_size', 'Codec Batch Size', 0, 10],
+  ['text_temperature', 'Text Temp', 0.1, 2.0],
+  ['text_top_p', 'Text Top P', 0.1, 1.0],
+  ['text_top_k', 'Text Top K', 1, 100],
+  ['audio_top_p', 'Audio Top P', 0.1, 1.0],
+  ['audio_top_k', 'Audio Top K', 1, 100],
+  ['audio_repetition_penalty', 'Audio Rep Penalty', 1.0, 2.0],
+]
+const FLOAT_KEYS = new Set<keyof TtsGenerationParams>([
+  'text_temperature',
+  'audio_temperature',
+  'text_top_p',
+  'audio_top_p',
+  'audio_repetition_penalty',
+])
+
+function ParamGrid({
+  specs,
+  params,
+  update,
+}: {
+  specs: ParamSpec[]
+  params: TtsGenerationParams
+  update: (k: keyof TtsGenerationParams, v: number | boolean | null) => void
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+      {specs.map(([key, label, min, max]) => (
+        <div key={key} className="flex flex-col gap-0.5">
+          <label className="text-[10px] text-muted-foreground">{label}</label>
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={FLOAT_KEYS.has(key) ? 0.1 : 1}
+            value={params[key] as number}
+            onChange={(e) => update(key, parseFloat(e.target.value) || 0)}
+            className="h-6 rounded-lg border border-black/[0.09] bg-black/[0.025] px-2 font-mono text-[10px] outline-none focus:border-jade/40"
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function GenerationOptionsPanel({ params, onChange }: GenerationOptionsPanelProps) {
-  const [open, setOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const update = (key: keyof TtsGenerationParams, value: number | boolean | null) => {
     onChange({ ...params, [key]: value })
   }
 
-  return (
-    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="cursor-pointer text-[11px] font-semibold text-black/40 hover:text-black/60 select-none">
-        Generation Options
-      </summary>
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
-        {/* Numeric params */}
-        {(
-          [
-            ['max_new_frames', 'Max New Frames', 64, 1024],
-            ['voice_clone_max_text_tokens', 'VC Max Tokens', 25, 200],
-            ['tts_max_batch_size', 'TTS Batch Size', 0, 10],
-            ['codec_max_batch_size', 'Codec Batch Size', 0, 10],
-            ['text_temperature', 'Text Temp', 0.1, 2.0],
-            ['text_top_p', 'Text Top P', 0.1, 1.0],
-            ['text_top_k', 'Text Top K', 1, 100],
-            ['audio_temperature', 'Audio Temp', 0.1, 2.0],
-            ['audio_top_p', 'Audio Top P', 0.1, 1.0],
-            ['audio_top_k', 'Audio Top K', 1, 100],
-            ['audio_repetition_penalty', 'Audio Rep Penalty', 1.0, 2.0],
-          ] as [keyof TtsGenerationParams, string, number, number][]
-        ).map(([key, label, min, max]) => (
-          <div key={key} className="flex flex-col gap-0.5">
-            <label className="text-[10px] text-muted-foreground">{label}</label>
-            <input
-              type="number"
-              min={min}
-              max={max}
-              step={key === 'text_temperature' || key === 'audio_temperature' || key === 'text_top_p' || key === 'audio_top_p' || key === 'audio_repetition_penalty' ? 0.1 : 1}
-              value={params[key] as number}
-              onChange={(e) => update(key, parseFloat(e.target.value) || 0)}
-              className="h-6 rounded-lg border border-black/9 bg-black/2.5 px-2 font-mono text-[10px] outline-none focus:border-jade/40"
-            />
-          </div>
-        ))}
+  // Phase TTS-D.3：根据 max_new_frames 实时算时长预估
+  const estimate = estimateGeneration(params)
 
-        {/* Seed */}
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Phase TTS-D.3：时长 / 首音延迟预估横条 */}
+      <div className="flex items-center gap-3 rounded-lg bg-black/[0.025] px-2.5 py-1.5 text-[10px] text-black/60">
+        <span className="font-semibold uppercase tracking-wider text-black/40">预估</span>
+        <span>
+          时长 ≤ <span className="font-mono text-foreground/80">{estimate.maxSeconds.toFixed(1)}s</span>
+        </span>
+        <span className="text-black/25">·</span>
+        <span>
+          典型 <span className="font-mono text-foreground/80">{estimate.expectedSeconds.toFixed(1)}s</span>
+        </span>
+        <span className="text-black/25">·</span>
+        <span>
+          首音 <span className="font-mono text-foreground/80">~{estimate.firstAudioMs}ms</span>
+        </span>
+      </div>
+
+      {/* Basic — 总是展开 */}
+      <div>
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-black/35">
+          Basic
+        </div>
+        <ParamGrid specs={BASIC_NUMERIC} params={params} update={update} />
+      </div>
+
+      {/* Toggles + Seed */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
         <div className="flex flex-col gap-0.5">
-          <label className="text-[10px] text-muted-foreground">Seed</label>
+          <label className="text-[10px] text-muted-foreground">Seed (0=random)</label>
           <input
             type="number"
             value={params.seed ?? 0}
@@ -163,15 +214,13 @@ function GenerationOptionsPanel({ params, onChange }: GenerationOptionsPanelProp
             className="h-6 rounded-lg border border-black/[0.09] bg-black/[0.025] px-2 font-mono text-[10px] outline-none focus:border-jade/40"
           />
         </div>
-
-        {/* Boolean toggles */}
         {(
           [
             ['do_sample', 'Do Sample'],
             ['enable_robust_normalization', 'Robust Normalization'],
           ] as [keyof TtsGenerationParams, string][]
         ).map(([key, label]) => (
-          <div key={key} className="flex items-center gap-1.5">
+          <label key={key} className="flex items-center gap-1.5">
             <input
               type="checkbox"
               checked={params[key] as boolean}
@@ -179,10 +228,20 @@ function GenerationOptionsPanel({ params, onChange }: GenerationOptionsPanelProp
               className="h-3.5 w-3.5 rounded border-black/20 text-jade focus:ring-jade/30"
             />
             <span className="text-[10px] text-muted-foreground">{label}</span>
-          </div>
+          </label>
         ))}
       </div>
-    </details>
+
+      {/* Advanced — 默认折叠 */}
+      <details open={advancedOpen} onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}>
+        <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-widest text-black/35 hover:text-black/55 select-none">
+          Advanced (sampling · batching)
+        </summary>
+        <div className="mt-2">
+          <ParamGrid specs={ADVANCED_NUMERIC} params={params} update={update} />
+        </div>
+      </details>
+    </div>
   )
 }
 
@@ -216,6 +275,66 @@ function PlaybackScript({
   )
 }
 
+// ── Phase TTS-D.1: Provider state badge ─────────────────────────────────────
+
+function ProviderStateBadge({ state }: { state: TtsProviderState | null }) {
+  if (!state) return null
+  const cfg = (() => {
+    switch (state.kind) {
+      case 'notLoaded':
+        return { label: '未加载', cls: 'bg-gray-50 text-gray-600 border-gray-200/70', icon: null }
+      case 'loading':
+        return {
+          label: '加载中…（首次约 3 秒）',
+          cls: 'bg-amber-50 text-amber-700 border-amber-200/70',
+          icon: <Loader2 className="h-3 w-3 animate-spin" />,
+        }
+      case 'loaded':
+        return {
+          label: `已就绪 · ${Math.round(state.elapsedSeconds)}s`,
+          cls: 'bg-emerald-50 text-emerald-700 border-emerald-200/70',
+          icon: <CheckCircle className="h-3 w-3" />,
+        }
+      case 'failed':
+        return {
+          label: `加载失败：${state.error.slice(0, 80)}`,
+          cls: 'bg-rose-50 text-rose-700 border-rose-200/70',
+          icon: <AlertCircle className="h-3 w-3" />,
+        }
+      case 'evicted':
+        return {
+          label: `已释放（空闲 ${Math.round(state.elapsedSeconds)}s）— 下次请求会重新加载`,
+          cls: 'bg-violet-50 text-violet-700 border-violet-200/70',
+          icon: null,
+        }
+    }
+  })()
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[10.5px] ${cfg.cls}`}>
+      {cfg.icon}
+      <span className="flex-1">{cfg.label}</span>
+    </div>
+  )
+}
+
+// ── Phase TTS-D.3: 生成时长预估 ────────────────────────────────────────────
+//
+// MOSS-TTS-Nano 12.5 frames/s → max_new_frames / 12.5 = 最长可能时长。
+// 通常实际生成在到达 audio_end_token 时提前结束，约 60-80% of 上限。
+// 首音延迟在 M-series CPU 4 核典型 ~0.3-0.6s。
+function estimateGeneration(params: TtsGenerationParams): {
+  maxSeconds: number
+  expectedSeconds: number
+  firstAudioMs: number
+} {
+  const maxSeconds = params.max_new_frames / 12.5
+  return {
+    maxSeconds,
+    expectedSeconds: maxSeconds * 0.7,
+    firstAudioMs: 400, // 经验值：M4 4 核 prefill + 首帧 codec ≈ 400ms
+  }
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export function TtsTestPage() {
@@ -226,12 +345,10 @@ export function TtsTestPage() {
   const [runStatus, setRunStatus] = useState('Idle.')
   const [normalizedText, setNormalizedText] = useState('')
 
-  // Model download status
+  // 只读模型 ready 状态；下载入口在「模型配置」页（TtsModelSection）
   const [modelsReady, setModelsReady] = useState<boolean | null>(null)
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [downloadPercent, setDownloadPercent] = useState(0)
-  const [downloadCurrentFile, setDownloadCurrentFile] = useState('')
-  const [downloadError, setDownloadError] = useState<string | null>(null)
+  // Phase TTS-D.1：Provider 生命周期状态
+  const [providerState, setProviderState] = useState<TtsProviderState | null>(null)
 
   // Demo selection
   const [selectedDemoId, setSelectedDemoId] = useState('demo-0')
@@ -256,6 +373,9 @@ export function TtsTestPage() {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
 
+  // Phase TTS-B.2: Web Audio gapless streaming player
+  const webAudio = useWebAudioStreamPlayer()
+
   // Track mount status to abort async polling on unmount
   useEffect(() => {
     mountedRef.current = true
@@ -269,6 +389,9 @@ export function TtsTestPage() {
 
   const pollWarmup = useCallback(async () => {
     try {
+      // Phase TTS-D.1：用 ttsHealth 一次拿到 warmup + provider state
+      const health = await ttsHealth()
+      setProviderState(health.provider_state)
       const status = await ttsWarmupStatus()
       if (status.state === 'ready') {
         setHealthState('ready')
@@ -305,53 +428,13 @@ export function TtsTestPage() {
     }
   }, [])
 
-  const pollDownloadProgress = useCallback(async () => {
-    try {
-      const s: TtsDownloadStatusResponse = await ttsModelDownloadStatus()
-      setDownloadPercent(s.percent)
-      setDownloadCurrentFile(s.current_file)
-      setIsDownloading(s.is_downloading)
-      if (s.error) {
-        setDownloadError(s.error)
-        setIsDownloading(false)
-      }
-      if (s.percent >= 1.0 && !s.is_downloading) {
-        setModelsReady(true)
-        setDownloadCurrentFile('Complete')
-      }
-    } catch {
-      // ignore
-    }
-  }, [])
-
   useEffect(() => {
     void pollModelStatus()
     const interval = setInterval(() => {
-      if (isDownloading) {
-        void pollDownloadProgress()
-      } else {
-        void pollModelStatus()
-      }
-    }, 500)
+      void pollModelStatus()
+    }, 2000)
     return () => clearInterval(interval)
-  }, [pollModelStatus, pollDownloadProgress, isDownloading])
-
-  // ── Start model download ──────────────────────────────────────────────
-
-  const handleDownloadModels = useCallback(async () => {
-    try {
-      setDownloadError(null)
-      setDownloadPercent(0)
-      setDownloadCurrentFile('Starting...')
-      setIsDownloading(true)
-      await ttsModelDownloadStart()
-      toast.info('TTS model download started')
-    } catch (e) {
-      setDownloadError(String(e))
-      setIsDownloading(false)
-      toast.error('Download failed', { description: String(e) })
-    }
-  }, [])
+  }, [pollModelStatus])
 
   // ── Demo selection change ───────────────────────────────────────────────
 
@@ -385,15 +468,27 @@ export function TtsTestPage() {
       return
     }
     setIsGenerating(true)
-    setRunStatus('Generating...')
     setBufferedAudioUrl(null)
     setAudioDuration(null)
     setActiveChunkIndex(null)
     setNormalizedText('')
 
+    // Phase TTS-D.2：lazy reload UI 反馈
+    const needsLoad =
+      providerState?.kind === 'notLoaded' || providerState?.kind === 'evicted'
+    if (needsLoad) {
+      setRunStatus('正在加载模型 (~3s)...')
+      toast.info('TTS 模型正在加载', {
+        description: '首次或空闲驱逐后第一次合成需要约 3 秒加载 ONNX sessions',
+      })
+    } else {
+      setRunStatus('Generating...')
+    }
+
     try {
       const demoId = selectedDemoId
-      const result = await ttsSynthesize(text, demoId, null, params)
+      const voiceId = getAgentVoiceId() // 优先用 agent voice
+      const result = await ttsSynthesize(text, voiceId ? null : demoId, null, params, voiceId)
       setRunStatus(`Done. voice=${result.voice} duration=${result.duration_seconds.toFixed(1)}s`)
 
       // Create blob URL from base64 WAV
@@ -427,17 +522,41 @@ export function TtsTestPage() {
       return
     }
     setIsGenerating(true)
-    setRunStatus('Starting stream...')
     setBufferedAudioUrl(null)
     setAudioDuration(null)
     setActiveChunkIndex(null)
     setTextChunks([])
     setStreamMetrics(null)
 
+    // Phase TTS-D.2：lazy reload UI 反馈
+    const needsLoad =
+      providerState?.kind === 'notLoaded' || providerState?.kind === 'evicted'
+    if (needsLoad) {
+      setRunStatus('正在加载模型 (~3s)...')
+      toast.info('TTS 模型正在加载', {
+        description: '首次或空闲驱逐后第一次合成需要约 3 秒加载 ONNX sessions',
+      })
+    } else {
+      setRunStatus('Starting stream...')
+    }
+
     try {
+      // Phase TTS-C.4：流式启动前先拿真实 chunks 用于高亮 / 预览
+      try {
+        const splitChunks = await ttsSplitText(text, params.voice_clone_max_text_tokens)
+        setTextChunks(splitChunks.length > 0 ? splitChunks : [text])
+      } catch {
+        setTextChunks([text])
+      }
+
+      // Phase TTS-B.2: 启动 Web Audio gapless 播放器（订阅 tts:stream-chunk）
+      await webAudio.start()
+
       const demoId = selectedDemoId
-      const result = await ttsStreamStart(text, demoId, null, params)
+      const voiceId = getAgentVoiceId()
+      const result = await ttsStreamStart(text, voiceId ? null : demoId, null, params, voiceId)
       setCurrentStreamId(result.stream_id)
+      webAudio.setExpectedStreamId(result.stream_id)
       setRunStatus(`Streaming (id=${result.stream_id.slice(0, 8)}...)`)
 
       // Poll status until done
@@ -448,21 +567,35 @@ export function TtsTestPage() {
           const state = (status.state as string) || ''
           const emitted = (status.emitted_audio_seconds as number) ?? 0
           const lead = (status.lead_seconds as number) ?? 0
+          const firstAudioSecs = status.first_audio_latency_seconds as number | null
+          const rtf = status.realtime_factor as number | null
           const chunkIdx = status.current_chunk_index as number | null
-          setStreamMetrics(`emitted=${emitted.toFixed(1)}s lead=${lead.toFixed(1)}s`)
+          // 优先使用 Web Audio 客户端测量的首音延迟（更准）
+          const firstMs = webAudio.metrics.firstAudioLatencyMs
+            ?? (firstAudioSecs != null ? Math.round(firstAudioSecs * 1000) : null)
+          const parts = [
+            `emitted=${emitted.toFixed(1)}s`,
+            `lead=${lead.toFixed(2)}s`,
+          ]
+          if (firstMs !== null) parts.push(`first_audio=${firstMs}ms`)
+          if (rtf != null && rtf > 0) parts.push(`RTF=${rtf.toFixed(2)}x`)
+          setStreamMetrics(parts.join(' · '))
           setActiveChunkIndex(chunkIdx)
 
           if (state === 'done' || state === 'failed' || state === 'closed') {
             setRunStatus(state === 'done' ? 'Stream complete.' : `Stream ${state}.`)
             setIsGenerating(false)
             setCurrentStreamId(null)
+            // 别立即 stop()，让 audio buffer 自然 drain；3s 后清理
+            setTimeout(() => { void webAudio.stop() }, 3000)
             return
           }
-          pollTimerRef.current = setTimeout(poll, 500)
+          pollTimerRef.current = setTimeout(poll, 200)
         } catch {
           if (!mountedRef.current) return
           setIsGenerating(false)
           setCurrentStreamId(null)
+          void webAudio.stop()
         }
       }
       poll()
@@ -470,8 +603,9 @@ export function TtsTestPage() {
       setRunStatus(`Stream error: ${e}`)
       toast.error('Stream failed', { description: String(e) })
       setIsGenerating(false)
+      void webAudio.stop()
     }
-  }, [text, selectedDemoId, params])
+  }, [text, selectedDemoId, params, webAudio])
 
   // ── Stop stream ─────────────────────────────────────────────────────────
 
@@ -490,31 +624,54 @@ export function TtsTestPage() {
       clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
-  }, [currentStreamId])
+    void webAudio.stop()
+  }, [currentStreamId, webAudio])
 
-  // ── Audio playback pause/resume ─────────────────────────────────────────
+  // ── Pause/Resume：同时控制 buffered <audio> 和 streaming Web Audio ──────
 
-  const handlePauseResume = useCallback(() => {
+  const handlePauseResume = useCallback(async () => {
+    // 流式播放优先（active 时）
+    if (webAudio.isActive) {
+      if (webAudio.isPaused) {
+        await webAudio.resume()
+        setIsPaused(false)
+      } else {
+        await webAudio.pause()
+        setIsPaused(true)
+      }
+      return
+    }
+    // 否则走 buffered <audio>
     if (audioRef.current) {
       if (audioRef.current.paused) {
-        audioRef.current.play()
+        await audioRef.current.play()
         setIsPaused(false)
       } else {
         audioRef.current.pause()
         setIsPaused(true)
       }
     }
-  }, [])
+  }, [webAudio])
 
   // ── Audio time update → highlight active chunk ──────────────────────────
-
+  //
+  // Phase TTS-C.4：按 chunk **字符长度加权**找到当前位置（之前是平均切分，长短
+  // 不齐时跑偏）。比如 ['你好。', '这是一段较长的文本测试用。'] 字符比是
+  // 1:8，进度 0.5 时旧逻辑高亮 chunk[1]，新逻辑高亮 chunk[0]→后段一会切到 [1]。
   const handleAudioTimeUpdate = useCallback(() => {
     if (!audioRef.current || textChunks.length === 0) return
-    const currentTime = audioRef.current.currentTime
-    const duration = audioRef.current.duration || 1
-    const ratio = currentTime / duration
-    const idx = Math.min(Math.floor(ratio * textChunks.length), textChunks.length - 1)
-    setActiveChunkIndex(idx)
+    const ratio = audioRef.current.currentTime / (audioRef.current.duration || 1)
+    const totalChars = textChunks.reduce((a, c) => a + c.length, 0) || 1
+    const target = ratio * totalChars
+    let acc = 0
+    for (let i = 0; i < textChunks.length; i++) {
+      acc += textChunks[i].length
+      if (target <= acc) {
+        setActiveChunkIndex(i)
+        return
+      }
+    }
+    setActiveChunkIndex(textChunks.length - 1)
   }, [textChunks])
 
   // ── Cleanup on unmount ──────────────────────────────────────────────────
@@ -552,6 +709,7 @@ export function TtsTestPage() {
       {/* ── Status row ── */}
       <div className="flex flex-col gap-1.5">
         <StatusBadge state={healthState} progress={warmupProgress} message={healthMessage} />
+        <ProviderStateBadge state={providerState} />
         <div className="flex items-center gap-2 rounded-xl border border-black/[0.07] bg-black/[0.016] px-3 py-2 text-[11px] text-foreground/60">
           <span className="font-semibold text-black/30">Run Status:</span>
           <span className="flex-1 truncate">{runStatus}</span>
@@ -561,55 +719,14 @@ export function TtsTestPage() {
         </div>
       </div>
 
-      {/* ── Model Download Banner ── */}
+      {/* ── Model not downloaded → 引导去「模型配置」页 ── */}
       {modelsReady === false && (
-        <SettingsSurface className="overflow-visible px-5 py-4">
-          <div className="flex items-start gap-3">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
-              <Download className="size-4 text-amber-600" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] font-semibold tracking-tight">TTS 模型未下载</div>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                MOSS-TTS-Nano 模型 (~700MB) 尚未下载。请先下载模型以启用语音合成功能。
-              </p>
-
-              {/* Download progress */}
-              {isDownloading && (
-                <div className="mt-3 flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      {downloadCurrentFile || 'Downloading...'}
-                    </span>
-                    <span className="font-mono">{Math.round(downloadPercent * 100)}%</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/5">
-                    <div
-                      className="h-full rounded-full bg-jade transition-all duration-300"
-                      style={{ width: `${Math.min(downloadPercent * 100, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {downloadError && (
-                <div className="mt-2 flex items-center gap-1.5 text-[10.5px] text-rose-600">
-                  <AlertCircle className="h-3 w-3" />
-                  <span>{downloadError}</span>
-                </div>
-              )}
-            </div>
-
-            {!isDownloading && (
-              <button
-                type="button"
-                onClick={() => void handleDownloadModels()}
-                className="shrink-0 rounded-xl bg-jade px-4 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90"
-              >
-                开始下载
-              </button>
-            )}
+        <SettingsSurface className="overflow-visible px-5 py-3">
+          <div className="flex items-center gap-3 text-[11px]">
+            <AlertCircle className="size-4 shrink-0 text-amber-600" />
+            <span className="flex-1 text-muted-foreground">
+              TTS 模型未下载。请前往「<span className="font-semibold text-foreground/80">模型配置</span>」页面下载（约 830MB），下载后重启应用即可使用真实语音合成。
+            </span>
           </div>
         </SettingsSurface>
       )}
@@ -699,11 +816,12 @@ export function TtsTestPage() {
                 Stop
               </button>
             )}
-            {bufferedAudioUrl && (
+            {(bufferedAudioUrl || webAudio.isActive) && (
               <button
                 type="button"
-                onClick={handlePauseResume}
+                onClick={() => void handlePauseResume()}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-black/9 bg-white px-3 py-2 text-[12px] font-semibold text-black/60 shadow-sm transition-all hover:text-black"
+                title={webAudio.isActive ? 'Pause/Resume streaming' : 'Pause/Resume buffered'}
               >
                 {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
               </button>
@@ -721,6 +839,11 @@ export function TtsTestPage() {
 
         {/* ── OUTPUT PANEL ── */}
         <div className="flex flex-col gap-3">
+          {/* Phase TTS-D / P0：Agent Voice Picker */}
+          <SettingsSurface className="px-5 py-4">
+            <AgentVoicePicker />
+          </SettingsSurface>
+
           {/* Normalized Text */}
           <SettingsSurface className="px-5 py-4">
             <SectionLabel>Normalized Text</SectionLabel>

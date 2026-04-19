@@ -1,0 +1,39 @@
+# If2Ai Browser Subsystem Configuration (Phase 7C, slice 7C.1)
+#
+# Copy this file to ~/.if2ai/browser.toml to take effect.  Resolution order:
+#   1. Environment variable IF2AI_BROWSER_PROFILE_MODE   (highest)
+#   2. ~/.if2ai/browser.toml [browser] profile_mode
+#   3. Default → per_session_persistent                   (lowest)
+
+[browser]
+
+# Where Chromium stores its user-data-dir (cookies, localStorage,
+# IndexedDB, disk cache).
+#
+#   per_session_persistent  Each chat session owns a dedicated persistent
+#                           profile under
+#                           ~/.if2ai/browser-profiles/<session_id>/.
+#                           Cookies survive app restarts; sessions cannot
+#                           see each other.  **Default — recommended.**
+#
+#   shared                  Every session shares
+#                           ~/.if2ai/browser-profiles/_shared/.
+#                           Useful for "personal assistant" workflows where
+#                           the AI should act as you (one Gmail login that
+#                           every session can see).  Be aware that any
+#                           session can read any other session's cookies in
+#                           this mode.
+#
+#   ephemeral               One-shot tempfile per session that is wiped on
+#                           process exit.  Reproduces the legacy Phase 7B
+#                           incognito behaviour and is the right choice for
+#                           tests / red-team / "do not save" workflows.
+profile_mode = "per_session_persistent"
+
+# Soft disk-usage cap per profile, in megabytes.  Reserved for future LRU
+# cleanup work; currently informational only.
+max_profile_disk_mb = 500
+
+# Soft disk-usage cap across all browser profiles, in megabytes.  Reserved
+# for future LRU cleanup work; currently informational only.
+max_total_disk_mb = 5000

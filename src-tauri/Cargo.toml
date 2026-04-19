@@ -13,7 +13,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 num_cpus = "1"
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "multipart"] }
+# STT-OF-1: open-flow vendor 的 SenseVoice ASR 用到的 FFT 实现
+realfft = "3.4"
 url = "2"
 urlencoding = "2"
 tracing = "0.1"
@@ -71,7 +73,17 @@ scopeguard = "1"
 # ── TTS Module (MOSS-TTS-Nano ONNX native) ──
 ort = { version = "=2.0.0-rc.10", features = ["ndarray", "half"] }
 ndarray = "0.16"
+# Phase TTS-E / P3: Whisper STT (whisper.cpp Rust FFI，Metal 加速 on macOS)
+whisper-rs = { version = "0.16", features = ["metal"] }
+# Phase TTS-A.3 → Python sidecar pivot：sentencepiece crate 链接的 libprotobuf
+# 与 onnxruntime 的 libprotobuf 在 macOS 静态符号冲突，导致 ort 无法 parse onnx
+# 文件。改走 Python sidecar 进程做 tokenization（见 text/tokenizer.rs）。
+# 保留 tokenizers 暂不删除：其他模块可能在用。
 tokenizers = "0.21"
+# Phase TTS-A.4: reference audio 多格式解码（mp3/wav/flac/ogg）
+symphonia = { version = "0.5", features = ["all-codecs", "all-formats"] }
+# Phase TTS-A.4: 高质量重采样（接近 torchaudio.functional.resample 默认）
+rubato = "0.16"
 hound = "3.5"
 rand = "0.8"
 unicode_categories = "0.1"

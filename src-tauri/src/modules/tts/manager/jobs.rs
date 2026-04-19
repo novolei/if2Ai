@@ -103,6 +103,22 @@ impl StreamingJob {
         }
     }
 
+    /// Phase TTS-B.6：实时因子 = emitted_audio_seconds / wall-clock seconds since start。
+    /// `> 1` 表示推理快于实时；`< 1` 表示落后。`None` 表示尚未开始。
+    #[must_use]
+    pub fn realtime_factor(&self) -> Option<f32> {
+        let started = self.started_at?;
+        let elapsed = match self.completed_at {
+            Some(end) => end.duration_since(started).as_secs_f32(),
+            None => started.elapsed().as_secs_f32(),
+        };
+        if elapsed > 0.0 && self.emitted_audio_seconds > 0.0 {
+            Some(self.emitted_audio_seconds / elapsed)
+        } else {
+            None
+        }
+    }
+
     /// Check if the job has completed successfully.
     #[must_use]
     pub fn is_done(&self) -> bool {
@@ -139,6 +155,7 @@ impl StreamingJob {
             "current_chunk_index": self.current_chunk_index,
             "text_chunks": self.text_chunks,
             "first_audio_latency_seconds": self.first_audio_latency(),
+            "realtime_factor": self.realtime_factor(),
             "completed_at": self.completed_at.map(|t| t.duration_since(self.created_at).as_secs_f32()),
             "ready": self.is_done(),
             "failed": self.is_failed(),

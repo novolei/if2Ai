@@ -18,6 +18,9 @@ use tauri::{AppHandle, State};
 
 use crate::modules::browser::chrome_finder::find_chrome_binary;
 use crate::modules::browser::events::emit_browser_status;
+use crate::modules::browser::profile::{
+    delete_profile as delete_profile_inner, list_profiles as list_profiles_inner, ProfileEntry,
+};
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
 
 /// Response payload for `get_chrome_status`.
@@ -77,4 +80,40 @@ pub async fn request_browser_status(
 ) -> Result<(), String> {
     emit_browser_status(&app, &session_id, &registry).await;
     Ok(())
+}
+
+// ── Profile management (Phase 7C, slice 7C.1) ────────────────────────────────
+
+/// List every persistent browser profile on disk under
+/// `<if2ai_home>/browser-profiles/`.
+///
+/// Returns the per-session id, absolute path, recursive disk usage and last
+/// modified timestamp for each profile.  An empty `Vec` is returned when no
+/// profiles exist yet (e.g. fresh install).
+#[tauri::command]
+pub async fn list_browser_profiles(
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<Vec<ProfileEntry>, String> {
+    Ok(list_profiles_inner(registry.if2ai_home()))
+}
+
+/// Wipe the persistent profile directory for `session_id` (cookies,
+/// localStorage, cache — everything Chromium stored under that user data
+/// dir).
+///
+/// **Refuses** to delete the profile while a `BrowserSession` is still
+/// running for that id; the caller must `close_browser_session` first so
+/// Chromium releases the file locks.  This is what surfaces as the
+/// `'session must be closed first'` error message in the UI.
+#[tauri::command]
+pub async fn clear_browser_profile(
+    session_id: String,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<(), String> {
+    if registry.is_running(&session_id) {
+        return Err(format!(
+            "session '{session_id}' must be closed before clearing its profile"
+        ));
+    }
+    delete_profile_inner(registry.if2ai_home(), &session_id).map_err(|e| e.to_string())
 }

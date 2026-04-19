@@ -9,8 +9,9 @@
  * model rows with right-side checkboxes, confirm button at bottom.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Check, Loader2, X, Circle, Eye, EyeOff, Shield } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Check, Loader2, X, Circle, Eye, EyeOff, Shield, Search, CheckSquare, Square } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { OnboardingLayout } from '../components/OnboardingLayout';
 import { StepNavigation } from '../components/StepNavigation';
@@ -19,17 +20,46 @@ import { RightPanelHeader } from '../components/RightPanelHeader';
 import { useOnboarding } from '../hooks/useOnboarding';
 import type { ProviderConfig, Model } from '../types';
 
-// Inject closing animation keyframe once
-if (typeof document !== 'undefined' && !document.getElementById('onboarding-slide-out')) {
+// Inject animation keyframes once (idempotent across HMR)
+if (typeof document !== 'undefined' && !document.getElementById('onboarding-provider-keyframes')) {
   const style = document.createElement('style');
-  style.id = 'onboarding-slide-out';
+  style.id = 'onboarding-provider-keyframes';
   style.textContent = `
     @keyframes slideFadeOut {
       0% { opacity: 1; transform: translateX(0); }
       100% { opacity: 0; transform: translateX(24px); }
     }
+    @keyframes slideFadeIn {
+      0% { opacity: 0; transform: translateX(16px); }
+      100% { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes successPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); }
+      50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+    }
+    @keyframes skeletonShimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
   `;
   document.head.appendChild(style);
+}
+
+/** Skeleton row for model list while it's loading (instead of just a centered spinner) */
+function ModelRowSkeleton() {
+  return (
+    <div className="flex items-center justify-between rounded-lg px-3 py-2.5">
+      <div
+        className="h-3.5 w-2/3 rounded"
+        style={{
+          background: 'linear-gradient(90deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.16) 50%, rgba(255,255,255,0.06) 100%)',
+          backgroundSize: '200% 100%',
+          animation: 'skeletonShimmer 1.4s ease-in-out infinite',
+        }}
+      />
+      <div className="h-5 w-5 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }} />
+    </div>
+  );
 }
 
 interface ProviderSetupStepProps {
@@ -719,6 +749,7 @@ function ProviderConfigPanel({
   const [showApiKey, setShowApiKey] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
   const [showShieldHint, setShowShieldHint] = useState(false);
+  const [modelFilter, setModelFilter] = useState('');
 
   const currentSubChoice = provider.subChoices?.[0] ?? null;
   const isOllama = provider.id === 'ollama';
@@ -763,6 +794,7 @@ function ProviderConfigPanel({
       setShowApiKey(false);
       setIsShaking(false);
       setShowShieldHint(false);
+      setModelFilter('');
 
       // Try to load saved config for already-configured providers
       const savedConfig = await getProviderConfig(provider.id);
@@ -933,12 +965,37 @@ function ProviderConfigPanel({
     });
   }, []);
 
+  // 搜索过滤后的模型列表（输入为空时返回全部）
+  const filteredModels = useMemo(() => {
+    const q = modelFilter.trim().toLowerCase();
+    if (!q) return models;
+    return models.filter(
+      (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
+    );
+  }, [models, modelFilter]);
+
+  // 全选/全清：只对当前可见（filtered）模型操作，不破坏隐藏的已选模型
+  const visibleAllSelected =
+    filteredModels.length > 0 &&
+    filteredModels.every((m) => selectedModelIds.has(m.id));
+  const handleToggleSelectAllVisible = useCallback(() => {
+    setSelectedModelIds((prev) => {
+      const next = new Set(prev);
+      if (visibleAllSelected) {
+        for (const m of filteredModels) next.delete(m.id);
+      } else {
+        for (const m of filteredModels) next.add(m.id);
+      }
+      return next;
+    });
+  }, [filteredModels, visibleAllSelected]);
+
   const handleConfirm = useCallback(async () => {
     if (selectedModelIds.size === 0) return;
 
     setIsSaving(true);
     try {
-      // Save provider config with all selected models in one call
+      const savedCount = selectedModelIds.size;
       const config: ProviderConfig = {
         provider_id: provider.id,
         api_key: apiKey || null,
@@ -947,22 +1004,30 @@ function ProviderConfigPanel({
       };
       await configureProviderWithModels(config, Array.from(selectedModelIds));
 
-      // Show success animation briefly
-      setJustSaved(true);
-
-      // Notify parent that this provider is now configured
+      // 通知父组件刷新已配置 provider 列表（不关面板）
       onProviderConfigured(provider.id);
 
-      // Close panel after brief animation (don't navigate — multi-provider flow)
-      setTimeout(() => {
-        setJustSaved(false);
-        onClose();
-      }, 600);
+      // 成功 toast：用户能看到清晰反馈，且不打断当前流程
+      toast.success(`已添加 ${savedCount} 个模型`, {
+        description: `${provider.displayName} · 可继续添加更多模型或切换其他服务商`,
+        duration: 3000,
+      });
+
+      // 内联成功状态：显示绿色脉冲 700ms，然后回到正常状态（保持面板开启）
+      // 用户依然能看到刚选的模型已被记住（pre-selected），可以增删后再次保存
+      setJustSaved(true);
+      setIsSaving(false);
+      // 把刚保存的 modelIds 同步到 prevConfiguredModelIds，避免下次 reset 又重新拉
+      prevConfiguredModelIds.current = Array.from(selectedModelIds);
+      setTimeout(() => setJustSaved(false), 1400);
     } catch (err) {
       console.error('[provider] Failed to save config:', err);
+      toast.error('保存失败', {
+        description: err instanceof Error ? err.message : '未知错误，请重试',
+      });
       setIsSaving(false);
     }
-  }, [provider, apiKey, baseUrl, selectedModelIds, configureProviderWithModels, onProviderConfigured, onClose]);
+  }, [provider, apiKey, baseUrl, selectedModelIds, configureProviderWithModels, onProviderConfigured]);
 
   const logoUrl = provider.logoAsset
     ? new URL(
@@ -972,7 +1037,10 @@ function ProviderConfigPanel({
     : null;
 
   return (
-    <div className="flex flex-col h-full font-sans overflow-y-auto px-3 py-4">
+    <div
+      className="flex flex-col h-full font-sans overflow-y-auto px-3 py-4"
+      style={{ animation: 'slideFadeIn 0.28s ease-out' }}
+    >
       {/* ═══ Provider Header Card ═══ */}
       <div
         className="mx-3 mt-3 rounded-2xl p-4"
@@ -1219,34 +1287,90 @@ function ProviderConfigPanel({
       {testPassed && (
         <div className="flex-1 overflow-y-auto px-3 py-4">
           {loadingModels ? (
-            <div className="flex flex-col items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin mb-3" style={{ color: 'rgba(255,255,255,0.6)' }} />
-              <span className="text-token-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                正在获取模型列表...
-              </span>
-            </div>
+            <>
+              {/* Skeleton list — same shape as real list, prevents layout jump */}
+              <div className="flex items-center justify-between px-2 mb-2">
+                <span className="text-token-xs font-medium" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  正在获取模型列表…
+                </span>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: 'rgba(255,255,255,0.5)' }} />
+              </div>
+              <div
+                className="rounded-xl px-1 py-1"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                }}
+              >
+                <div className="flex flex-col gap-0.5">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <ModelRowSkeleton key={i} />
+                  ))}
+                </div>
+              </div>
+            </>
           ) : modelError ? (
-            <div className="text-center py-6">
-              <p className="text-token-sm text-red-300 mb-2">{modelError}</p>
+            <div className="rounded-xl p-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <p className="text-token-sm text-red-300 mb-2 font-medium">获取模型列表失败</p>
+              <p className="text-[11px] mb-3" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                {modelError}
+              </p>
               <button
                 type="button"
                 onClick={() => handleTestConnection()}
-                className="text-token-xs text-[#FF6B4D] hover:underline"
+                className="rounded-lg bg-[#FF6B4D] px-3 py-1.5 text-token-xs font-semibold text-white hover:bg-[#FF5733] transition-colors"
               >
-                重试
+                重试连接
               </button>
             </div>
           ) : models.length > 0 ? (
             <div>
-              {/* Selection info — above the model list */}
-              <div className="flex items-center justify-between px-2 mb-2">
+              {/* Toolbar：选择计数 + 全选/全清 + 搜索 */}
+              <div className="flex items-center justify-between gap-2 px-1 mb-2">
                 <div className="flex items-center gap-1.5">
                   <span className="flex h-1.5 w-1.5 rounded-full bg-[#10B981]" />
-                  <span className="text-token-xs font-medium" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                    已选 {selectedModelIds.size} / {models.length} 个模型
+                  <span className="text-token-xs font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                    已选 {selectedModelIds.size} / {models.length}
                   </span>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleToggleSelectAllVisible}
+                  className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-medium transition-colors hover:bg-white/10"
+                  style={{ color: 'rgba(255,255,255,0.7)' }}
+                  title={visibleAllSelected ? '清空当前可见' : '全选当前可见'}
+                >
+                  {visibleAllSelected ? <CheckSquare className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+                  {visibleAllSelected ? '全清' : '全选'}
+                </button>
               </div>
+
+              {/* 搜索框 — 模型多于 6 个才出现，避免占用空间 */}
+              {models.length > 6 && (
+                <div className="relative mb-2">
+                  <Search
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3"
+                    style={{ color: 'rgba(255,255,255,0.4)' }}
+                  />
+                  <input
+                    type="text"
+                    value={modelFilter}
+                    onChange={(e) => setModelFilter(e.target.value)}
+                    placeholder="搜索模型名称…"
+                    className="w-full rounded-lg border border-white/15 bg-white/5 py-1.5 pl-7 pr-2 text-[11.5px] text-white placeholder-white/30 outline-none focus:border-white/30 focus:bg-white/10"
+                  />
+                  {modelFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setModelFilter('')}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-white/40 hover:text-white/80"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Fixed-height model list container — same background as header card */}
               <div
@@ -1259,14 +1383,20 @@ function ProviderConfigPanel({
                 }}
               >
                 <div className="flex flex-col gap-0.5 py-1">
-                  {models.map((model) => (
-                    <ModelRow
-                      key={model.id}
-                      model={model}
-                      isSelected={selectedModelIds.has(model.id)}
-                      onToggle={() => handleToggleModel(model.id)}
-                    />
-                  ))}
+                  {filteredModels.length === 0 ? (
+                    <div className="px-3 py-6 text-center text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                      未找到匹配「{modelFilter}」的模型
+                    </div>
+                  ) : (
+                    filteredModels.map((model) => (
+                      <ModelRow
+                        key={model.id}
+                        model={model}
+                        isSelected={selectedModelIds.has(model.id)}
+                        onToggle={() => handleToggleModel(model.id)}
+                      />
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -1274,29 +1404,75 @@ function ProviderConfigPanel({
         </div>
       )}
 
-      {/* ═══ Confirm Button (bottom) ═══ */}
-      <div className="px-3 pb-4 pt-2">
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={selectedModelIds.size === 0 || isSaving || justSaved}
-          className={cn(
-            'w-full flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-token-sm font-semibold transition-all duration-300',
-            justSaved
-              ? 'bg-[#10B981] text-white shadow-lg scale-[1.02]'
-              : isSaving
+      {/* ═══ Confirm / Success Action Bar (bottom) ═══ */}
+      <div className="px-3 pb-4 pt-2 space-y-2">
+        {justSaved ? (
+          <>
+            {/* 成功 banner — 不消失，显示已保存数量 */}
+            <div
+              className="flex items-center gap-2 rounded-xl px-4 py-2.5"
+              style={{
+                background: 'linear-gradient(135deg, rgba(16,185,129,0.18), rgba(5,150,105,0.10))',
+                border: '1px solid rgba(16,185,129,0.35)',
+                animation: 'successPulse 1.2s ease-out 1',
+              }}
+            >
+              <div
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                style={{ background: '#10B981' }}
+              >
+                <Check className="h-3.5 w-3.5 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-token-xs font-semibold text-white">
+                  已保存 {selectedModelIds.size} 个 {provider.displayName} 模型
+                </p>
+                <p className="text-[10px] mt-0.5" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                  可调整勾选后再次保存，或切换其他服务商继续
+                </p>
+              </div>
+            </div>
+            {/* 双 CTA：继续在当前 provider 选 / 切换到其他 provider */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setJustSaved(false)}
+                className="rounded-xl px-3 py-2 text-token-xs font-semibold text-white transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                }}
+              >
+                修改本服务商
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl px-3 py-2 text-token-xs font-semibold text-white transition-colors"
+                style={{
+                  background: 'rgba(16,185,129,0.18)',
+                  border: '1px solid rgba(16,185,129,0.45)',
+                }}
+              >
+                添加更多服务商 →
+              </button>
+            </div>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={selectedModelIds.size === 0 || isSaving}
+            className={cn(
+              'w-full flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-token-sm font-semibold transition-all duration-300',
+              isSaving
                 ? 'text-white/70 cursor-wait'
                 : selectedModelIds.size > 0
                   ? 'text-white active:scale-[0.98]'
                   : 'text-white/40 cursor-not-allowed',
-          )}
-          style={
-            justSaved
-              ? {
-                  background: 'linear-gradient(135deg, #10B981, #059669)',
-                  boxShadow: '0 8px 24px rgba(16, 185, 129, 0.3)',
-                }
-              : selectedModelIds.size > 0 && (isOllama || testPassed)
+            )}
+            style={
+              selectedModelIds.size > 0 && (isOllama || testPassed)
                 ? {
                     background: 'rgba(255, 255, 255, 0.12)',
                     backdropFilter: 'blur(8px)',
@@ -1306,27 +1482,23 @@ function ProviderConfigPanel({
                     background: 'rgba(255, 255, 255, 0.06)',
                     border: '1px solid rgba(255, 255, 255, 0.1)',
                   }
-          }
-        >
-          {justSaved ? (
-            <>
-              <Check className="h-5 w-5" />
-              已添加，继续 →
-            </>
-          ) : isSaving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              保存中...
-            </>
-          ) : selectedModelIds.size > 0 ? (
-            <>
-              <Check className="h-4 w-4" />
-              确认+{selectedModelIds.size}个模型
-            </>
-          ) : (
-            '选择模型'
-          )}
-        </button>
+            }
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                保存中…
+              </>
+            ) : selectedModelIds.size > 0 ? (
+              <>
+                <Check className="h-4 w-4" />
+                确认添加 {selectedModelIds.size} 个模型
+              </>
+            ) : (
+              '请勾选要使用的模型'
+            )}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1427,33 +1599,18 @@ export function ProviderSetupStep({
           ) : (
             <ProviderEmptyState modelPool={modelPool} allProviders={allProviders} />
           )}
-          {/* ═══ Closing animation overlay ═══ */}
+          {/* 关闭动画 overlay：用户主动点 X 时显示淡出 */}
           {closingPanel && (
             <div
               key={closingPanel.key}
-              className="absolute inset-0 flex flex-col items-center justify-center"
+              className="absolute inset-0 pointer-events-none"
               style={{
-                animation: 'slideFadeOut 0.35s ease-in forwards',
-                background: 'rgba(26, 26, 26, 0.95)',
-                backdropFilter: 'blur(4px)',
-                pointerEvents: 'none',
+                animation: 'slideFadeOut 0.28s ease-in forwards',
+                background: 'rgba(26, 26, 26, 0.6)',
+                backdropFilter: 'blur(2px)',
                 zIndex: 50,
               }}
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#10B981]/20">
-                  <Check className="h-6 w-6 text-[#10B981]" />
-                </div>
-                <div>
-                  <p className="text-token-base font-semibold text-white">
-                    已添加 {closingPanel.data.displayName} 模型
-                  </p>
-                  <p className="text-token-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                    正在刷新模型列表…
-                  </p>
-                </div>
-              </div>
-            </div>
+            />
           )}
         </div>
       }

@@ -21,9 +21,12 @@
 
 use std::path::Path;
 
+use ndarray::ArrayD;
 use ort::session::{builder::GraphOptimizationLevel, Session};
+use std::collections::HashMap;
 
 use crate::modules::tts::error::TtsError;
+use crate::modules::tts::model::ort_io::{extract_f32_owned, extract_last_hidden, i32_tensor};
 
 /// Name of the prefill ONNX file (without extension).
 pub const PREFILL_ONNX: &str = "prefill";
@@ -169,6 +172,33 @@ impl GlobalSessions {
         Ok(Self { prefill, decode })
     }
 
+    /// Phase TTS-A.2：从已经由 manifest 解析好的绝对路径直接加载。
+    ///
+    /// 与 [`Self::load`] 相比，本方法允许 ONNX 文件名不固定为 `prefill.onnx`
+    /// / `decode_step.onnx`，由 [`crate::modules::tts::manifest::ManifestBundle::tts_onnx_path`]
+    /// 决定。
+    pub fn load_from_paths(
+        prefill_path: &Path,
+        decode_path: &Path,
+        thread_count: usize,
+    ) -> Result<Self, TtsError> {
+        if !prefill_path.exists() {
+            return Err(TtsError::ModelNotFound(format!(
+                "prefill ONNX 不存在：{}",
+                prefill_path.display()
+            )));
+        }
+        if !decode_path.exists() {
+            return Err(TtsError::ModelNotFound(format!(
+                "decode_step ONNX 不存在：{}",
+                decode_path.display()
+            )));
+        }
+        let prefill = OnnxSession::load(prefill_path, thread_count)?;
+        let decode = OnnxSession::load(decode_path, thread_count)?;
+        Ok(Self { prefill, decode })
+    }
+
     /// Dump session I/O names for verification against Python reference.
     ///
     /// Used to verify that input/output names match the Python
@@ -218,6 +248,159 @@ impl GlobalSessions {
             .map(|s| s.as_str())
             .collect()
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Phase TTS-A.6 Spike #1：真 ONNX 调用 —— prefill + decode_step
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// 跑 prefill：把 voice-clone request rows 编码成 `global_hidden` + KV cache。
+    ///
+    /// 镜像 Python `OrtCpuRuntime.generate_audio_frames` 的 prefill 段
+    /// (`ort_cpu_runtime.py:628-644`)：
+    ///
+    /// ```text
+    /// outputs = sessions["prefill"].run(None, {
+    ///     "input_ids":      [1, L, n_vq+1] int32,
+    ///     "attention_mask": [1, L]         int32,
+    /// })
+    /// global_hidden = _extract_last_hidden(outputs["global_hidden"])
+    /// past_by_name  = { name.replace("present_", "past_"): outputs[name]
+    ///                   for name in prefill_output_names[1:] }
+    /// ```
+    ///
+    /// 返回的 KV cache 的 key 已经 rename 为 `past_*`，可以直接喂回
+    /// [`Self::run_decode_step`]。
+    pub fn run_prefill(
+        &mut self,
+        input_ids: ArrayD<i32>,
+        attention_mask: ArrayD<i32>,
+    ) -> Result<PrefillOutput, TtsError> {
+        let input_ids_t = i32_tensor("input_ids", input_ids)?;
+        let mask_t = i32_tensor("attention_mask", attention_mask)?;
+
+        // 先把 output names clone 出来；下一行 .session_mut() 会独占 self.prefill
+        // 直到 outputs 被 drop。
+        let kv_names: Vec<String> = self
+            .prefill
+            .output_names()
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect();
+
+        let inputs = ort::inputs![
+            "input_ids" => input_ids_t,
+            "attention_mask" => mask_t,
+        ];
+        let outputs = self
+            .prefill
+            .session_mut()
+            .run(inputs)
+            .map_err(|e| TtsError::OnnxError(format!("prefill.run: {e}")))?;
+
+        // 第一个输出永远是 global_hidden
+        let global_hidden_dyn = outputs
+            .get("global_hidden")
+            .ok_or_else(|| TtsError::OnnxError("prefill 输出缺 global_hidden".into()))?;
+        let global_hidden_full = extract_f32_owned(global_hidden_dyn, "global_hidden")?;
+        let global_hidden = extract_last_hidden(global_hidden_full)?;
+        let mut past_by_name: HashMap<String, ArrayD<f32>> = HashMap::with_capacity(kv_names.len());
+        for name in &kv_names {
+            let v = outputs
+                .get(name.as_str())
+                .ok_or_else(|| TtsError::OnnxError(format!("prefill 输出缺 {name}")))?;
+            let owned = extract_f32_owned(v, name)?;
+            past_by_name.insert(present_to_past(name), owned);
+        }
+
+        Ok(PrefillOutput {
+            global_hidden,
+            past_by_name,
+        })
+    }
+
+    /// 跑一次 decode_step（自回归单步）：吃当前 token + KV cache → 新 hidden +
+    /// 新 KV cache（已 rename 为 past_*）。
+    ///
+    /// 镜像 `ort_cpu_runtime.py:765-782`：
+    ///
+    /// ```text
+    /// outputs = sessions["decode"].run(None, {
+    ///     "input_ids":          [1, 1, n_vq+1]  int32,
+    ///     "past_valid_lengths": [1]              int32,
+    ///     **past_by_name,                        # f32 KV cache
+    /// })
+    /// new_global_hidden = _extract_last_hidden(outputs["global_hidden"])
+    /// past_by_name      = { name.replace("present_", "past_"): outputs[name]
+    ///                       for name in decode_output_names[1:] }
+    /// ```
+    pub fn run_decode_step(
+        &mut self,
+        input_ids: ArrayD<i32>,
+        past_valid_length: i32,
+        past_by_name: HashMap<String, ArrayD<f32>>,
+    ) -> Result<DecodeStepOutput, TtsError> {
+        let input_ids_t = i32_tensor("input_ids", input_ids)?;
+        let past_lens_arr =
+            ArrayD::<i32>::from_shape_vec(ndarray::IxDyn(&[1]), vec![past_valid_length])
+                .map_err(|e| TtsError::OnnxError(format!("past_valid_lengths shape: {e}")))?;
+        let past_lens_t = i32_tensor("past_valid_lengths", past_lens_arr)?;
+
+        // 把 past_*/past_value_* tensors 一次性塞进 inputs 列表
+        let mut inputs = ort::inputs![
+            "input_ids" => input_ids_t,
+            "past_valid_lengths" => past_lens_t,
+        ];
+        for (name, arr) in past_by_name {
+            let t = crate::modules::tts::model::ort_io::f32_tensor(&name, arr)?;
+            inputs.push((std::borrow::Cow::Owned(name), t.into()));
+        }
+
+        let kv_names: Vec<String> = self.decode.output_names().iter().skip(1).cloned().collect();
+
+        let outputs = self
+            .decode
+            .session_mut()
+            .run(inputs)
+            .map_err(|e| TtsError::OnnxError(format!("decode_step.run: {e}")))?;
+
+        let global_hidden_dyn = outputs
+            .get("global_hidden")
+            .ok_or_else(|| TtsError::OnnxError("decode_step 输出缺 global_hidden".into()))?;
+        let global_hidden_full = extract_f32_owned(global_hidden_dyn, "global_hidden")?;
+        let global_hidden = extract_last_hidden(global_hidden_full)?;
+        let mut next_past: HashMap<String, ArrayD<f32>> = HashMap::with_capacity(kv_names.len());
+        for name in &kv_names {
+            let v = outputs
+                .get(name.as_str())
+                .ok_or_else(|| TtsError::OnnxError(format!("decode_step 输出缺 {name}")))?;
+            let owned = extract_f32_owned(v, name)?;
+            next_past.insert(present_to_past(name), owned);
+        }
+
+        Ok(DecodeStepOutput {
+            global_hidden,
+            past_by_name: next_past,
+        })
+    }
+}
+
+/// [`GlobalSessions::run_prefill`] 的输出。
+///
+/// `global_hidden` 形状 `[1, hidden]`（已经取过 `[:, -1, :]`）。
+/// `past_by_name` 中的 key 都是 `past_key_<i>` / `past_value_<i>`，可直接喂入
+/// [`GlobalSessions::run_decode_step`]。
+#[derive(Debug)]
+pub struct PrefillOutput {
+    pub global_hidden: ArrayD<f32>,
+    pub past_by_name: HashMap<String, ArrayD<f32>>,
+}
+
+/// [`GlobalSessions::run_decode_step`] 的输出，结构同 [`PrefillOutput`]。
+#[derive(Debug)]
+pub struct DecodeStepOutput {
+    pub global_hidden: ArrayD<f32>,
+    pub past_by_name: HashMap<String, ArrayD<f32>>,
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 meta:
   phase: 7C
   name: Browser Subsystem Remediation — 12 Gap Closure
-  status: draft
+  status: active
   design_ref: docs/design-docs/postCLI/ADR/ADR-015-Browser-Subsystem-Remediation-Design.md
   created: 2026-04-18
   total_slices: 13
@@ -31,14 +31,31 @@ meta:
         人工 review 通过后开放 P2。
 
 dashboard:
-  last_updated: '2026-04-18'
+  last_updated: '2026-04-19'
   completed_slices: []
   current_slice: '7C.1'
-  blocked: []
+  blocked:
+    - id: '7C.1'
+      reason: >
+        实现已完成且 22 个 browser 测试全部通过，但工作树里有 pre-existing 的
+        TTS/STT WIP 修改（main.rs +135 行、commands/mod.rs +18 行、若干 tts/* 文件 19 个
+        clippy 警告）与 7C.1 在同一个文件中混合存在。直接 git add 会把用户未完成的
+        TTS 改动一起提交进 7C.1 commit。
+        需要人工决策：(a) 先把 TTS WIP 单独 commit（推荐）；(b) 我用 git add -p 选择性
+        stage 7C.1 的 hunks 后提交；(c) 用 stash + reapply 走更复杂的隔离流程。
+        clippy `-D warnings` 在全 workspace 范围下因这 19 个 pre-existing 警告无法通过；
+        7C.1 自己的代码已经通过 clippy，无新增警告。
   notes: >
-    Phase 7C 初始化（草案）。激活方式：将本 YAML phase_status 改为 active，
-    并将 docs/exec-plans/index.md 中本 phase 的状态标为 [当前]。
-    13 slices，~25-30 工程日。所有改动严格保持向后兼容（旧 API 保留 + Ephemeral 测试 fallback）。
+    Phase 7C 已激活（status=active；index.md 标 [当前]）。
+    Slice 7C.1 (Browser Profile Persistence) IMPL 完成：
+      - 新建 modules/browser/profile.rs（BrowserProfileMode + ProfileHandle + 13 单测全过）
+      - session.rs::new() 改 3 参签名（id, profile_mode, if2ai_home）+ 移除 incognito + 加 new_for_test
+      - registry.rs::new() 改 3 参签名 + 加 for_test
+      - main.rs 接入 from_env_or_config
+      - commands/browser.rs +clear_browser_profile +list_browser_profiles 两个 Tauri 命令
+      - 测试 call sites（integration_phase4.rs ×2、agent.rs ×1）已迁移到 for_test
+      - docs/references/browser.toml.example 配置示例文件
+    阻塞 commit；等待人工决策处理 TTS WIP 后再走 17 步 SOP 的 step 8。
 
 slices:
 

@@ -9,8 +9,8 @@
  */
 
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { useEffect, useRef } from 'react';
-import { Cpu, Monitor, HardDrive, Download } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Cpu, Monitor, HardDrive, Download, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InfoPanel } from '../components/InfoPanel';
 import { OnboardingLayout } from '../components/OnboardingLayout';
@@ -22,6 +22,24 @@ import type { CheckStatus } from '../types';
 /** Display name for the embedded model (matches HuggingFace). */
 const MODEL_NAME = 'intfloat/multilingual-e5-small';
 const MODEL_DETAIL = '多语言向量化模型 · 384 维';
+
+// Inject keyframes for download UI (shimmer pulse + progress stripe sweep).
+// Idempotent: only adds the <style> once even across HMR / re-renders.
+if (typeof document !== 'undefined' && !document.getElementById('onboarding-syscheck-keyframes')) {
+  const style = document.createElement('style');
+  style.id = 'onboarding-syscheck-keyframes';
+  style.textContent = `
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(300%); }
+    }
+    @keyframes progressStripes {
+      0% { background-position: 0 0; }
+      100% { background-position: 24px 0; }
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 interface SystemCheckStepProps {
   onNext: () => void;
@@ -75,11 +93,59 @@ function statusTextClass(status: CheckStatus): string {
 /** Font size for status label — smaller than body text. */
 const STATUS_FONT_SIZE = 'text-[10px]';
 
-/** Format bytes to human-readable string. */
+/** Format bytes to human-readable string with 1 decimal precision for MB. */
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 MB';
+  if (!bytes || bytes <= 0) return '0 MB';
   const mb = bytes / (1024 * 1024);
-  return `${Math.round(mb)} MB`;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  if (mb >= 10) return `${Math.round(mb)} MB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+/** Format seconds → "12s" / "1m 30s" */
+function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+  if (seconds < 60) return `${Math.ceil(seconds)} 秒`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.ceil(seconds % 60);
+  return s > 0 ? `${m}分${s}秒` : `${m}分`;
+}
+
+/**
+ * Track download speed by sampling (downloadedBytes, ts) over time.
+ * Returns smoothed bytes/sec and ETA seconds. Uses a 4-sample window so it
+ * settles quickly but doesn't flicker.
+ */
+function useDownloadMetrics(downloadedBytes: number, totalBytes: number, isDownloading: boolean) {
+  const samplesRef = useRef<Array<{ bytes: number; ts: number }>>([]);
+  const [bytesPerSec, setBytesPerSec] = useState(0);
+  const [eta, setEta] = useState(0);
+
+  useEffect(() => {
+    if (!isDownloading) {
+      samplesRef.current = [];
+      setBytesPerSec(0);
+      setEta(0);
+      return;
+    }
+    const now = performance.now();
+    const samples = samplesRef.current;
+    samples.push({ bytes: downloadedBytes, ts: now });
+    // 保留最近 4 秒的样本
+    while (samples.length > 1 && now - samples[0].ts > 4000) samples.shift();
+    if (samples.length >= 2) {
+      const first = samples[0];
+      const last = samples[samples.length - 1];
+      const dt = (last.ts - first.ts) / 1000;
+      const db = last.bytes - first.bytes;
+      const bps = dt > 0 ? db / dt : 0;
+      setBytesPerSec(bps);
+      const remaining = Math.max(0, totalBytes - downloadedBytes);
+      setEta(bps > 0 ? remaining / bps : 0);
+    }
+  }, [downloadedBytes, totalBytes, isDownloading]);
+
+  return { bytesPerSec, eta };
 }
 
 /** Render the status icon inside a badge. */
@@ -112,10 +178,14 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
   const {
     systemReport,
     downloadProgress,
+    downloadedBytes,
+    totalBytes,
+    downloadError,
     isDownloading,
     runSystemCheck,
     downloadEmbeddedModel,
   } = useOnboarding();
+  const { bytesPerSec, eta } = useDownloadMetrics(downloadedBytes, totalBytes, isDownloading);
 
   // Auto-run system check on mount
   useEffect(() => {
@@ -281,12 +351,39 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                 </div>
               </div>
 
+              {/* Live download progress mini-bar in right panel */}
+              {!modelDownloaded && (isDownloading || modelStatus?.status === 'Running') && (
+                <div className="px-4 pb-2.5">
+                  <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.18)' }}>
+                    <div
+                      className="h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+                      style={{
+                        width: `${modelPercent}%`,
+                        background: 'linear-gradient(90deg, #FF6B4D 0%, #FFAA85 100%)',
+                      }}
+                    />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[9.5px] tabular-nums" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                    <span>
+                      {totalBytes > 0
+                        ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+                        : '准备下载…'}
+                    </span>
+                    <span>{Math.round(modelPercent)}%{eta > 0 && eta < 3600 ? ` · ${formatEta(eta)}` : ''}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Footer hint */}
               <div className="px-4 py-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
                   {allPassed
-                    ? '全部检测通过，可以进入下一步'
-                    : '请等待检测完成，模型将自动下载'}
+                    ? '✓ 全部检测通过，可以进入下一步'
+                    : downloadError
+                      ? '⚠ 下载遇到问题，请在左侧重试'
+                      : isDownloading || modelStatus?.status === 'Running'
+                        ? `下载中 · ${bytesPerSec > 0 ? `${formatBytes(bytesPerSec)}/s` : '建立连接中'}`
+                        : '请等待检测完成，模型将自动下载'}
                 </span>
               </div>
             </div>
@@ -364,11 +461,32 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           ))}
 
           {/* ── Model download row ── */}
-          <div className="px-4 py-3 border-b border-border/60">
+          <div
+            className={cn(
+              'px-4 py-3 border-b border-border/60 transition-colors',
+              modelDownloaded && 'bg-status-success/[0.04]',
+              downloadError && !modelDownloaded && 'bg-status-error/[0.04]',
+            )}
+          >
             <div className="flex items-center gap-3">
-              {/* Icon */}
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground shrink-0">
-                {CHECK_ICONS.model}
+              {/* Icon — animates pulse when waiting, spin when downloading, scale when done */}
+              <div
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-lg shrink-0 transition-all duration-300',
+                  modelDownloaded
+                    ? 'bg-status-success/15 text-status-success scale-110'
+                    : isDownloading || modelStatus?.status === 'Running'
+                      ? 'bg-brand-orange/15 text-brand-orange'
+                      : downloadError
+                        ? 'bg-status-error/15 text-status-error'
+                        : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {isDownloading || modelStatus?.status === 'Running' ? (
+                  <Download className="h-4 w-4 animate-bounce" style={{ animationDuration: '1.6s' }} />
+                ) : (
+                  CHECK_ICONS.model
+                )}
               </div>
 
               {/* Label + detail */}
@@ -377,7 +495,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                   {MODEL_NAME}
                 </p>
                 <p className="text-token-xs text-muted-foreground mt-0.5">
-                  {MODEL_DETAIL}
+                  {MODEL_DETAIL} · 单次下载
                 </p>
               </div>
 
@@ -388,8 +506,9 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                 </span>
                 <div
                   className={cn(
-                    'flex h-5 w-5 items-center justify-center rounded-full',
+                    'flex h-5 w-5 items-center justify-center rounded-full transition-transform',
                     statusBadgeClass(modelRowStatus),
+                    modelDownloaded && 'scale-110',
                   )}
                 >
                   <StatusIcon status={modelRowStatus} />
@@ -397,14 +516,30 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
               </div>
             </div>
 
-            {/* Progress bar (only show when downloading or complete) */}
+            {/* Pending shimmer line — before download starts */}
+            {!isDownloading && !modelDownloaded && !downloadError && modelStatus?.status === 'Pending' && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full w-1/3 rounded-full bg-brand-orange/40"
+                  style={{
+                    animation: 'shimmer 1.6s ease-in-out infinite',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Progress bar — animated stripe while downloading; solid green when done */}
             {(isDownloading || modelStatus?.status === 'Running' || modelDownloaded) && (
               <div className="mt-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-token-xs text-muted-foreground">
-                    {modelDownloaded ? '模型已就绪' : `正在下载 · ${formatBytes(modelSizeMb * 1024 * 1024)} 总量`}
+                <div className="flex items-baseline justify-between mb-1.5 gap-2">
+                  <span className="text-token-xs text-muted-foreground tabular-nums">
+                    {modelDownloaded
+                      ? '模型已就绪 · 可继续下一步'
+                      : totalBytes > 0
+                        ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+                        : `正在下载 · ${formatBytes(modelSizeMb * 1024 * 1024)} 总量`}
                   </span>
-                  <span className={cn('text-token-xs tabular-nums', modelDownloaded && 'text-status-success')}>
+                  <span className={cn('text-token-xs tabular-nums font-medium', modelDownloaded && 'text-status-success')}>
                     {Math.round(modelPercent)}%
                   </span>
                 </div>
@@ -412,12 +547,54 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                   <div
                     className={cn(
                       'h-full rounded-full transition-all duration-300 motion-reduce:transition-none',
-                      modelDownloaded && 'bg-status-success',
-                      (isDownloading || modelStatus?.status === 'Running') && 'bg-brand-orange',
+                      modelDownloaded ? 'bg-status-success' : 'bg-brand-orange',
                     )}
-                    style={{ width: `${modelPercent}%` }}
+                    style={{
+                      width: `${modelPercent}%`,
+                      backgroundImage:
+                        !modelDownloaded && (isDownloading || modelStatus?.status === 'Running')
+                          ? 'linear-gradient(45deg, rgba(255,255,255,0.3) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0.3) 75%, transparent 75%, transparent)'
+                          : undefined,
+                      backgroundSize: '12px 12px',
+                      animation:
+                        !modelDownloaded && (isDownloading || modelStatus?.status === 'Running')
+                          ? 'progressStripes 1.2s linear infinite'
+                          : undefined,
+                    }}
                   />
                 </div>
+                {/* Live speed + ETA — only while actively downloading */}
+                {!modelDownloaded && isDownloading && bytesPerSec > 0 && (
+                  <div className="mt-1.5 flex items-center gap-3 text-[10px] text-muted-foreground tabular-nums">
+                    <span>速度 {formatBytes(bytesPerSec)}/s</span>
+                    {eta > 0 && eta < 3600 && <span>剩余约 {formatEta(eta)}</span>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Failure / retry */}
+            {(downloadError || modelStatus?.status === 'Fail') && !modelDownloaded && !isDownloading && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg bg-status-error/10 px-3 py-2">
+                <span className="mt-0.5 text-status-error">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-status-error font-medium">下载失败</p>
+                  <p className="mt-0.5 text-[10.5px] text-muted-foreground line-clamp-2">
+                    {downloadError ?? (modelStatus?.status === 'Fail' ? modelStatus.reason : '请检查网络后重试')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => downloadEmbeddedModel()}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-status-error px-2.5 py-1 text-[10.5px] font-semibold text-white hover:bg-status-error/90 transition-colors"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  重试
+                </button>
               </div>
             )}
           </div>

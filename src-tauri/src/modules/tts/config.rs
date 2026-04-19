@@ -10,13 +10,30 @@ pub const TTS_MODEL_HF_REPO: &str = "OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX";
 pub const AUDIO_TOKENIZER_HF_REPO: &str = "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX";
 
 /// Default model directory under `~/.if2ai/models/tts/`.
+/// 默认模型缓存根目录：`~/.if2ai/models/tts/`。
+///
+/// 与 HuggingFace `snapshot_download(local_dir=...)` 的实际产物路径一致：
+/// - `<root>/MOSS-TTS-Nano-100M-ONNX/moss_tts_prefill.onnx`
+/// - `<root>/MOSS-Audio-Tokenizer-Nano-ONNX/moss_audio_tokenizer_encode.onnx`
+/// - `<root>/MOSS-TTS-Nano-100M-ONNX/browser_poc_manifest.json`
+///
+/// 历史上曾用过 `dirs::data_local_dir()`，但和 main.rs lazy provider /
+/// `OnnxTtsProvider::from_model_dir` 的检测路径不一致（导致 UI 显示"未下载"
+/// 但 backend 实际能加载真模型）。统一到 home dir 下方便用户用 `~/.if2ai/`
+/// 直接 ls 查看。
 pub fn default_model_dir() -> PathBuf {
-    dirs::data_local_dir()
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".if2ai")
         .join("models")
         .join("tts")
 }
+
+/// MOSS-TTS-Nano 主模型在缓存根下的子目录（与 HF repo dir 一致）。
+pub const TTS_MODEL_SUBDIR: &str = "MOSS-TTS-Nano-100M-ONNX";
+
+/// MOSS-Audio-Tokenizer-Nano 在缓存根下的子目录。
+pub const AUDIO_TOKENIZER_SUBDIR: &str = "MOSS-Audio-Tokenizer-Nano-ONNX";
 
 /// Default voice preset audio directory under `~/.if2ai/models/tts/voices/`.
 pub fn default_voice_dir() -> PathBuf {

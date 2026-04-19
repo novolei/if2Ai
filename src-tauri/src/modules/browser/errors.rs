@@ -44,6 +44,17 @@ pub enum BrowserError {
     /// Cold-state persistence I/O error.
     #[error("Cold state I/O error: {0}")]
     ColdState(String),
+
+    /// Browser profile (Phase 7C, slice 7C.1) I/O / policy error.
+    /// Raised by `BrowserProfileMode::resolve` and `delete_profile`.
+    #[error("Profile error: {0}")]
+    ProfileError(String),
+
+    /// Operation refused because a `BrowserSession` is still running.
+    /// Currently emitted by `clear_browser_profile` when the caller forgot
+    /// to `close` the session first.
+    #[error("Session '{0}' must be closed before this operation")]
+    SessionStillRunning(String),
 }
 
 impl From<chromiumoxide::error::CdpError> for BrowserError {

@@ -145,11 +145,14 @@ mod tests {
         let result = StreamResult {
             audio_path: None,
             sample_rate: 48_000,
+            channels: 2,
             voice: "test".to_string(),
             text_chunks: vec!["test".to_string()],
             elapsed_seconds: 0.5,
             emitted_audio_seconds: 1.0,
             lead_seconds: 0.5,
+            first_audio_latency_seconds: 0.05,
+            realtime_factor: 2.0,
         };
         sink.on_complete(result.clone()).await;
         let received_result = complete_rx.recv().await.unwrap();

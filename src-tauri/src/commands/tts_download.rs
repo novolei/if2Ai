@@ -93,44 +93,56 @@ struct HfFile {
 /// The MOSS-TTS-Nano repo uses `moss_tts_` prefixes and shared `.data`
 /// weight files, while our ONNX loader expects specific local names
 /// (see `GlobalSessions::load` and `LocalSessions::load`).
+/// TTS 主模型文件清单 —— `(local_name, remote_name)` 对，本地名必须与
+/// HuggingFace `snapshot_download` 实际产物的文件名一致。
+///
+/// 注意：本地名 == 远程名（不再做 alias 重命名），与 [`OnnxTtsProvider`]
+/// 通过 manifest 解析的 ONNX 文件名 100% 一致。
 fn tts_model_file_map() -> &'static [(&'static str, &'static str)] {
     &[
-        // (local_name, remote_name)
-        ("prefill.onnx", "moss_tts_prefill.onnx"),
-        ("prefill.onnx.data", "moss_tts_global_shared.data"),
-        ("decode_step.onnx", "moss_tts_decode_step.onnx"),
-        ("decode_step.onnx.data", "moss_tts_global_shared.data"),
-        ("decoder.onnx", "moss_tts_local_decoder.onnx"),
-        ("decoder.onnx.data", "moss_tts_local_shared.data"),
-        ("local_cached_step.onnx", "moss_tts_local_cached_step.onnx"),
-        ("local_cached_step.onnx.data", "moss_tts_local_shared.data"),
+        // 顶层 manifest + 各 ONNX 文件 + 共享外部权重 + tokenizer
+        ("browser_poc_manifest.json", "browser_poc_manifest.json"),
+        ("tts_browser_onnx_meta.json", "tts_browser_onnx_meta.json"),
+        ("tokenizer.model", "tokenizer.model"),
+        ("moss_tts_prefill.onnx", "moss_tts_prefill.onnx"),
+        ("moss_tts_decode_step.onnx", "moss_tts_decode_step.onnx"),
+        ("moss_tts_local_decoder.onnx", "moss_tts_local_decoder.onnx"),
         (
-            "local_fixed_sampled_frame.onnx",
-            "moss_tts_local_fixed_sampled_frame.onnx",
+            "moss_tts_local_cached_step.onnx",
+            "moss_tts_local_cached_step.onnx",
         ),
         (
-            "local_fixed_sampled_frame.onnx.data",
-            "moss_tts_local_shared.data",
+            "moss_tts_local_fixed_sampled_frame.onnx",
+            "moss_tts_local_fixed_sampled_frame.onnx",
         ),
     ]
 }
 
-/// Audio tokenizer file mapping.
-///
-/// The MOSS-Audio-Tokenizer repo uses `moss_audio_tokenizer_` prefixes
-/// while our `CodecSessions::load` expects bare names.
+/// Audio tokenizer 文件清单（本地名 == 远程名，与 HF 实际产物一致）。
 fn tokenizer_file_map() -> &'static [(&'static str, &'static str)] {
     &[
-        ("encode.onnx", "moss_audio_tokenizer_encode.onnx"),
-        ("encode.onnx.data", "moss_audio_tokenizer_encode.data"),
-        ("decode_full.onnx", "moss_audio_tokenizer_decode_full.onnx"),
         (
-            "decode_full.onnx.data",
-            "moss_audio_tokenizer_decode_shared.data",
+            "codec_browser_onnx_meta.json",
+            "codec_browser_onnx_meta.json",
         ),
-        ("decode_step.onnx", "moss_audio_tokenizer_decode_step.onnx"),
         (
-            "decode_step.onnx.data",
+            "moss_audio_tokenizer_encode.onnx",
+            "moss_audio_tokenizer_encode.onnx",
+        ),
+        (
+            "moss_audio_tokenizer_encode.data",
+            "moss_audio_tokenizer_encode.data",
+        ),
+        (
+            "moss_audio_tokenizer_decode_full.onnx",
+            "moss_audio_tokenizer_decode_full.onnx",
+        ),
+        (
+            "moss_audio_tokenizer_decode_step.onnx",
+            "moss_audio_tokenizer_decode_step.onnx",
+        ),
+        (
+            "moss_audio_tokenizer_decode_shared.data",
             "moss_audio_tokenizer_decode_shared.data",
         ),
     ]
@@ -163,8 +175,8 @@ fn hf_file_url(repo: &str, file: &str) -> String {
 #[tauri::command]
 pub async fn tts_model_status() -> Result<TtsModelStatusResponse, String> {
     let cache_root = crate::modules::tts::config::default_model_dir();
-    let tts_dir = cache_root.join("tts_model");
-    let tokenizer_dir = cache_root.join("audio_tokenizer");
+    let tts_dir = cache_root.join(crate::modules::tts::config::TTS_MODEL_SUBDIR);
+    let tokenizer_dir = cache_root.join(crate::modules::tts::config::AUDIO_TOKENIZER_SUBDIR);
 
     let tts_files: Vec<ModelFileInfo> = tts_model_file_map()
         .iter()
@@ -276,8 +288,8 @@ pub(crate) fn spawn_tts_download(download_state: Arc<Mutex<TtsDownloadState>>) {
 /// Download TTS models from HuggingFace with progress tracking.
 async fn download_models_impl(state: &Arc<Mutex<TtsDownloadState>>) -> Result<(), String> {
     let cache_root = crate::modules::tts::config::default_model_dir();
-    let tts_dir = cache_root.join("tts_model");
-    let tokenizer_dir = cache_root.join("audio_tokenizer");
+    let tts_dir = cache_root.join(crate::modules::tts::config::TTS_MODEL_SUBDIR);
+    let tokenizer_dir = cache_root.join(crate::modules::tts::config::AUDIO_TOKENIZER_SUBDIR);
 
     // Create directories
     std::fs::create_dir_all(&tts_dir)

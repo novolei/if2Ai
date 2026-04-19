@@ -392,10 +392,30 @@ pub fn resolve_demo_audio_path(demo_id: &str) -> Option<std::path::PathBuf> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| demo.role.clone());
     let path = voice_dir.join(&file_name);
+    // **关键修复**：只在文件真实存在时才返回路径。否则返回 None，让 provider 走
+    // builtin voice 的 prebaked `prompt_audio_codes`（manifest 里 18 个 voice
+    // 都自带 codes，根本不需要 prompt audio 文件）。
+    //
+    // 旧实现遇到文件缺失时 fallback 到 `Some(PathBuf::from(file_name))`，下游
+    // `load_reference_audio` exists() → false → `PromptAudioNotFound` 错误。
     if path.exists() {
         Some(path)
     } else {
-        Some(std::path::PathBuf::from(file_name))
+        None
+    }
+}
+
+/// Phase TTS-B：把 demo_id 解析为对应的 builtin voice name（"Junhao" 等）。
+///
+/// 用于 `tts_synthesize` / `tts_stream_start`：当用户通过 demo selector 选 demo
+/// 时，让 provider 用 builtin voice 的 prebaked codes，不依赖任何 prompt audio
+/// 文件存在。
+pub fn resolve_demo_voice_name(demo_id: &str) -> Option<String> {
+    let demo = get_demo_by_id(demo_id)?;
+    if demo.voice_name.is_empty() {
+        None
+    } else {
+        Some(demo.voice_name)
     }
 }
 

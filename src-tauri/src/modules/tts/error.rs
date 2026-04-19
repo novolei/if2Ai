@@ -62,6 +62,14 @@ pub enum TtsError {
     #[error("WAV decode failed: {0}")]
     WavDecode(String),
 
+    /// Manifest / meta JSON 文件缺失或解析失败（Phase TTS-A.2）。
+    #[error("TTS manifest 解析失败: {0}")]
+    ManifestNotFound(String),
+
+    /// 音频 I/O 失败：解码、重采样、通道转换（Phase TTS-A.4）。
+    #[error("音频 I/O 失败: {0}")]
+    AudioIo(String),
+
     /// Invalid parameter value (e.g., negative temperature).
     #[error("Invalid parameter: {0}")]
     InvalidParam(String),

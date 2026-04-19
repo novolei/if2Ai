@@ -18,8 +18,8 @@ use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 use crate::modules::browser::cold_state::ColdState;
-
 use crate::modules::browser::errors::BrowserError;
+use crate::modules::browser::profile::BrowserProfileMode;
 use crate::modules::browser::session::{ActionLogEntry, BrowserSession, NavigateResult, ScrollDir};
 
 /// Snapshot of a single session's browser state, used for Tauri event payloads
@@ -50,22 +50,66 @@ pub struct BrowserRegistry {
     ///
     /// Set exactly once via [`Self::set_app_handle`]; `None` before setup.
     app_handle: OnceLock<tauri::AppHandle>,
+
+    /// Active profile mode (Phase 7C, slice 7C.1).  Stored so that every
+    /// `launch()` call hands the same policy to `BrowserSession::new`.
+    profile_mode: BrowserProfileMode,
+    /// User-data root (typically `~/.if2ai/`).  Persistent profile dirs are
+    /// created beneath `<if2ai_home>/browser-profiles/`.
+    pub(crate) if2ai_home: PathBuf,
 }
 
 impl BrowserRegistry {
     /// Create a new empty registry and load cold state from `cold_state_path`.
     ///
+    /// `profile_mode` and `if2ai_home` decide where each session's Chromium
+    /// `user-data-dir` is created.  Persistent profiles let cookies / login
+    /// state survive across app restarts (Phase 7C, slice 7C.1).
+    ///
     /// If the cold-state file does not yet exist the registry starts empty;
     /// the file is created on first [`navigate`](Self::navigate) call.
     #[must_use]
-    pub fn new(cold_state_path: PathBuf) -> Arc<Self> {
+    pub fn new(
+        cold_state_path: PathBuf,
+        profile_mode: BrowserProfileMode,
+        if2ai_home: PathBuf,
+    ) -> Arc<Self> {
         let cold = ColdState::load(&cold_state_path);
         Arc::new(Self {
             sessions: DashMap::new(),
             cold_state: Mutex::new(cold),
             cold_state_path,
             app_handle: OnceLock::new(),
+            profile_mode,
+            if2ai_home,
         })
+    }
+
+    /// Test-only convenience constructor: uses
+    /// [`BrowserProfileMode::Ephemeral`] and a throw-away `if2ai_home` so
+    /// nothing leaks onto the real disk.  Drop-in replacement for the legacy
+    /// 1-argument `new(cold_state_path)` used by Phase 7B tests.
+    #[cfg(test)]
+    #[must_use]
+    pub fn for_test(cold_state_path: PathBuf) -> Arc<Self> {
+        let if2ai_home = cold_state_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(std::env::temp_dir);
+        Self::new(cold_state_path, BrowserProfileMode::Ephemeral, if2ai_home)
+    }
+
+    /// Read-only view of the configured profile mode (used by diagnostics
+    /// and the Tauri commands that surface this in the BrowserCard).
+    #[must_use]
+    pub fn profile_mode(&self) -> BrowserProfileMode {
+        self.profile_mode
+    }
+
+    /// Read-only view of the user-data root.
+    #[must_use]
+    pub fn if2ai_home(&self) -> &std::path::Path {
+        &self.if2ai_home
     }
 
     /// Inject the Tauri `AppHandle` so the browser tool can emit frontend events.
@@ -107,7 +151,8 @@ impl BrowserRegistry {
             debug!(session_id, "browser already running — skipping launch");
             return Ok(());
         }
-        let session = BrowserSession::new(session_id.to_owned()).await?;
+        let session =
+            BrowserSession::new(session_id.to_owned(), self.profile_mode, &self.if2ai_home).await?;
         self.sessions
             .insert(session_id.to_owned(), Arc::new(Mutex::new(session)));
         info!(session_id, "browser launched");

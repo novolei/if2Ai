@@ -39,7 +39,9 @@
         "active": true,
         "resources": [
             "resources/bundled-skills",
-            "resources/bundled-skills/README.md"
+            "resources/bundled-skills/README.md",
+            "resources/voices/*.wav",
+            "resources/voices/*.mp3"
         ],
         "icon": [
             "icons/icon.png",

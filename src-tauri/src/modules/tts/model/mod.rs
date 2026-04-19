@@ -7,6 +7,7 @@ pub mod codec;
 pub mod downloader;
 pub mod global;
 pub mod local;
+pub mod ort_io;
 
 #[allow(unused_imports)]
 pub use codec::CodecSessions;
