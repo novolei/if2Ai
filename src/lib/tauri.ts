@@ -1847,3 +1847,44 @@ export async function ttsListVoices(): Promise<string[]> {
 export async function ttsSplitText(text: string, maxTokens: number): Promise<string[]> {
   return invoke<string[]>('tts_split_text', { text, maxTokens })
 }
+
+// ── TTS Model Download ─────────────────────────────────────────────────────
+
+export interface TtsModelFileInfo {
+  name: string
+  size: number
+  present: boolean
+}
+
+export interface TtsModelStatusResponse {
+  ready: boolean
+  tts_files: TtsModelFileInfo[]
+  tokenizer_files: TtsModelFileInfo[]
+  total_bytes: number
+  missing_bytes: number
+  cache_dir: string
+}
+
+export interface TtsDownloadStatusResponse {
+  is_downloading: boolean
+  percent: number
+  downloaded_bytes: number
+  total_bytes: number
+  current_file: string
+  error: string | null
+}
+
+/** Check TTS model file status. */
+export async function ttsModelStatus(): Promise<TtsModelStatusResponse> {
+  return invoke<TtsModelStatusResponse>('tts_model_status')
+}
+
+/** Start downloading missing TTS model files. */
+export async function ttsModelDownloadStart(): Promise<void> {
+  return invoke<void>('tts_model_download_start')
+}
+
+/** Get current download progress. */
+export async function ttsModelDownloadStatus(): Promise<TtsDownloadStatusResponse> {
+  return invoke<TtsDownloadStatusResponse>('tts_model_download_status')
+}

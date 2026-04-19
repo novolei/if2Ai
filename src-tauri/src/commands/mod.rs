@@ -264,6 +264,7 @@ pub mod slash;
 pub mod stream_outcome;
 pub mod tools;
 pub mod tts;
+pub mod tts_download;
 pub mod web_search;
 pub mod window;
 
@@ -374,3 +375,6 @@ pub use tts::{
     tts_stream_close, tts_stream_result, tts_stream_start, tts_stream_status, tts_synthesize,
     tts_warmup_status, TtsState,
 };
+
+// TTS model download commands
+pub use tts_download::{tts_model_download_start, tts_model_download_status, tts_model_status};

@@ -142,6 +142,10 @@ use commands::{
     tts_demo_audio,
     tts_health,
     tts_list_voices,
+    tts_model_download_start,
+    tts_model_download_status,
+    // TTS model download (Phase TTS-UX)
+    tts_model_status,
     tts_split_text,
     tts_start_warmup,
     tts_stream_close,
@@ -709,6 +713,9 @@ fn main() {
             warmup: std::sync::Arc::new(modules::tts::manager::warmup::WarmupManager::new()),
             jobs: std::sync::Arc::new(modules::tts::manager::jobs::StreamingJobManager::new()),
         })
+        .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
+            commands::tts_download::TtsDownloadState::default(),
+        )))
         .invoke_handler(tauri::generate_handler![
             run_agent_turn,
             start_agent_stream,
@@ -874,6 +881,10 @@ fn main() {
             tts_demo_audio,
             tts_list_voices,
             tts_split_text,
+            // TTS model download
+            tts_model_status,
+            tts_model_download_start,
+            tts_model_download_status,
         ])
         .setup(|app| {
             // Inject AppHandle into BrowserRegistry so the browser tool can emit

@@ -8,6 +8,7 @@ import {
   ChevronDown, Check, AlertCircle, RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TtsModelSection } from './TtsModelSection'
 
 const DEFAULT_MODEL_NAME = 'intfloat/multilingual-e5-small'
 
@@ -478,18 +479,21 @@ export function ModelSettingsPage() {
         <div className="flex flex-col gap-2 text-[11.5px] leading-[1.6] text-muted-foreground">
           <p>
             if2AI 使用{' '}
-            <code className="rounded bg-black/[0.05] px-1 text-[11px] font-mono">fastembed-rs</code>{' '}
+            <code className="rounded bg-black/5 px-1 text-[11px] font-mono">fastembed-rs</code>{' '}
             进行本地文本向量化，支持 100+ 语言（中/英/日/韩等）。
           </p>
           <p>
             模型首次运行时自动下载并缓存至{' '}
-            <code className="rounded bg-black/[0.05] px-1 text-[11px] font-mono">
+            <code className="rounded bg-black/5 px-1 text-[11px] font-mono">
               ~/.if2ai/models/fastembed/
             </code>
             ，之后离线可用。
           </p>
         </div>
       </SettingsSurface>
+
+      {/* ── TTS Model Section ── */}
+      <TtsModelSection />
     </div>
   )
 }

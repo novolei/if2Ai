@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Play, Pause, Loader2, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react'
+import { Play, Pause, Loader2, AlertCircle, CheckCircle, RefreshCw, Download } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import {
   ttsWarmupStatus,
@@ -9,7 +9,11 @@ import {
   ttsStreamStart,
   ttsStreamStatus,
   ttsStreamClose,
+  ttsModelStatus,
+  ttsModelDownloadStart,
+  ttsModelDownloadStatus,
   type TtsGenerationParams,
+  type TtsDownloadStatusResponse,
   TTS_DEFAULT_PARAMS,
 } from '@/lib/tauri'
 
@@ -222,6 +226,13 @@ export function TtsTestPage() {
   const [runStatus, setRunStatus] = useState('Idle.')
   const [normalizedText, setNormalizedText] = useState('')
 
+  // Model download status
+  const [modelsReady, setModelsReady] = useState<boolean | null>(null)
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [downloadPercent, setDownloadPercent] = useState(0)
+  const [downloadCurrentFile, setDownloadCurrentFile] = useState('')
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+
   // Demo selection
   const [selectedDemoId, setSelectedDemoId] = useState('demo-0')
 
@@ -282,6 +293,65 @@ export function TtsTestPage() {
     const interval = setInterval(pollWarmup, 2000)
     return () => clearInterval(interval)
   }, [pollWarmup])
+
+  // ── Poll TTS model status ─────────────────────────────────────────────
+
+  const pollModelStatus = useCallback(async () => {
+    try {
+      const status = await ttsModelStatus()
+      setModelsReady(status.ready)
+    } catch {
+      setModelsReady(null)
+    }
+  }, [])
+
+  const pollDownloadProgress = useCallback(async () => {
+    try {
+      const s: TtsDownloadStatusResponse = await ttsModelDownloadStatus()
+      setDownloadPercent(s.percent)
+      setDownloadCurrentFile(s.current_file)
+      setIsDownloading(s.is_downloading)
+      if (s.error) {
+        setDownloadError(s.error)
+        setIsDownloading(false)
+      }
+      if (s.percent >= 1.0 && !s.is_downloading) {
+        setModelsReady(true)
+        setDownloadCurrentFile('Complete')
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    void pollModelStatus()
+    const interval = setInterval(() => {
+      if (isDownloading) {
+        void pollDownloadProgress()
+      } else {
+        void pollModelStatus()
+      }
+    }, 500)
+    return () => clearInterval(interval)
+  }, [pollModelStatus, pollDownloadProgress, isDownloading])
+
+  // ── Start model download ──────────────────────────────────────────────
+
+  const handleDownloadModels = useCallback(async () => {
+    try {
+      setDownloadError(null)
+      setDownloadPercent(0)
+      setDownloadCurrentFile('Starting...')
+      setIsDownloading(true)
+      await ttsModelDownloadStart()
+      toast.info('TTS model download started')
+    } catch (e) {
+      setDownloadError(String(e))
+      setIsDownloading(false)
+      toast.error('Download failed', { description: String(e) })
+    }
+  }, [])
 
   // ── Demo selection change ───────────────────────────────────────────────
 
@@ -491,6 +561,59 @@ export function TtsTestPage() {
         </div>
       </div>
 
+      {/* ── Model Download Banner ── */}
+      {modelsReady === false && (
+        <SettingsSurface className="overflow-visible px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
+              <Download className="size-4 text-amber-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-semibold tracking-tight">TTS 模型未下载</div>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                MOSS-TTS-Nano 模型 (~700MB) 尚未下载。请先下载模型以启用语音合成功能。
+              </p>
+
+              {/* Download progress */}
+              {isDownloading && (
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {downloadCurrentFile || 'Downloading...'}
+                    </span>
+                    <span className="font-mono">{Math.round(downloadPercent * 100)}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/5">
+                    <div
+                      className="h-full rounded-full bg-jade transition-all duration-300"
+                      style={{ width: `${Math.min(downloadPercent * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {downloadError && (
+                <div className="mt-2 flex items-center gap-1.5 text-[10.5px] text-rose-600">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>{downloadError}</span>
+                </div>
+              )}
+            </div>
+
+            {!isDownloading && (
+              <button
+                type="button"
+                onClick={() => void handleDownloadModels()}
+                className="shrink-0 rounded-xl bg-jade px-4 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90"
+              >
+                开始下载
+              </button>
+            )}
+          </div>
+        </SettingsSurface>
+      )}
+
       {/* ── Two-column layout: Input | Output ── */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* ── INPUT PANEL ── */}
@@ -546,8 +669,9 @@ export function TtsTestPage() {
             <button
               type="button"
               onClick={() => handleGenerate()}
-              disabled={isGenerating || !text.trim()}
+              disabled={isGenerating || !text.trim() || modelsReady !== true}
               className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-jade px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition-all hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-40"
+              title={modelsReady === false ? '请先下载 TTS 模型' : undefined}
             >
               {isGenerating ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -559,8 +683,9 @@ export function TtsTestPage() {
             <button
               type="button"
               onClick={() => void handleStream()}
-              disabled={isGenerating || !text.trim()}
+              disabled={isGenerating || !text.trim() || modelsReady !== true}
               className="flex items-center justify-center gap-1.5 rounded-xl border border-black/9 bg-white px-3 py-2 text-[12px] font-semibold text-black/60 shadow-sm transition-all hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+              title={modelsReady === false ? '请先下载 TTS 模型' : undefined}
             >
               Stream
             </button>
