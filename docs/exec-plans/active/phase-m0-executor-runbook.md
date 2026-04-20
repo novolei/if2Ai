@@ -2,7 +2,7 @@
 
 > 将 `phase-m0-canonical-contracts-and-truth.yaml` 细化为 executor 可直接执行的首批切片顺序、产物模板、检查清单与风险控制规则。
 >
-> 最后更新: 2026-04-20
+> 最后更新: 2026-04-20（M0.0~M0.7 全部落地，§11 列出最终产物，executor 可基于此判定 M0 关闭）
 
 ## 1. 目的
 
@@ -147,10 +147,10 @@ rename 是 `M1/M2` 的后续工作，不是 `M0` 的主任务。
 
 放入临时工作笔记或 PR 描述，不一定要单独提交文件：
 
-| item | current_entry | status | notes |
-| --- | --- | --- | --- |
-| activation | `commands/activation.rs` + onboarding flow | partial | 还不是硬门禁 |
-| execution_mode | none | not_established | 尚无 canonical contract |
+| item           | current_entry                              | status          | notes                   |
+| -------------- | ------------------------------------------ | --------------- | ----------------------- |
+| activation     | `commands/activation.rs` + onboarding flow | partial         | 还不是硬门禁            |
+| execution_mode | none                                       | not_established | 尚无 canonical contract |
 
 ### 通过标准
 
@@ -188,15 +188,15 @@ rename 是 `M1/M2` 的后续工作，不是 `M0` 的主任务。
 
 ### 每个实体必须写的字段
 
-| field | required |
-| --- | --- |
-| canonical_name | yes |
-| definition | yes |
-| not_definition | yes |
-| lifecycle | yes |
-| owning_layers | yes |
-| current_code_entry | yes |
-| future_primary_owner | yes |
+| field                | required |
+| -------------------- | -------- |
+| canonical_name       | yes      |
+| definition           | yes      |
+| not_definition       | yes      |
+| lifecycle            | yes      |
+| owning_layers        | yes      |
+| current_code_entry   | yes      |
+| future_primary_owner | yes      |
 
 ### naming drift map 必须覆盖
 
@@ -251,15 +251,15 @@ rename 是 `M1/M2` 的后续工作，不是 `M0` 的主任务。
 
 ### 每条 workflow 必须有的列
 
-| column | meaning |
-| --- | --- |
-| workflow_name | canonical 名称 |
-| status | `canonical` / `partial` / `not_established` |
-| backend_entry | Rust 入口文件 |
-| frontend_entry | TS/React 入口文件 |
-| source_of_truth | 当前哪一层算真 |
-| blockers | 为什么没 canonical |
-| next_phase_owner | `M1` / `M2` / `M3` / `M4` / `M5` |
+| column           | meaning                                     |
+| ---------------- | ------------------------------------------- |
+| workflow_name    | canonical 名称                              |
+| status           | `canonical` / `partial` / `not_established` |
+| backend_entry    | Rust 入口文件                               |
+| frontend_entry   | TS/React 入口文件                           |
+| source_of_truth  | 当前哪一层算真                              |
+| blockers         | 为什么没 canonical                          |
+| next_phase_owner | `M1` / `M2` / `M3` / `M4` / `M5`            |
 
 ### 必须显式写清的 current-state judgement
 
@@ -464,11 +464,11 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ### 输出文件
 
-建议新增：
+正式新增（已落地，2026-04-20）：
 
-- `docs/staff-remediation/m0-god-file-responsibility-inventory.md`
+- [docs/staff-remediation/m0-god-file-responsibility-inventory.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/m0-god-file-responsibility-inventory.md:1)
 
-并在 [README.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/README.md:1) 链接。
+并在 [README.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/README.md:1) 链接（已完成）。
 
 ### 必盘点文件
 
@@ -487,9 +487,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ### 输出格式建议
 
-| file | current_responsibility | should_move_to | target_phase | extraction_risk |
-| --- | --- | --- | --- | --- |
-| `src/lib/tauri.ts` | transport + domain types + IPC helper | `src/transport/contracts.ts` + bridge adapters | `M2` | high |
+| file               | current_responsibility                | should_move_to                                 | target_phase | extraction_risk |
+| ------------------ | ------------------------------------- | ---------------------------------------------- | ------------ | --------------- |
+| `src/lib/tauri.ts` | transport + domain types + IPC helper | `src/transport/contracts.ts` + bridge adapters | `M2`         | high            |
 
 ### 不可接受的产出
 
@@ -554,4 +554,20 @@ cargo check --manifest-path src-tauri/Cargo.toml
 1. `phase-m0-canonical-contracts-and-truth.yaml` 中所有 slice 已可核验。
 2. 本 runbook 第 8 节清单全部完成。
 3. `phase-m-remediation-execution-index.md` 中 `M0` 退出条件全部满足。
-4. 人工 checkpoint 已通过，不存在“为了推进 M1/M2 而模糊化真相”的情况。
+4. 人工 checkpoint 已通过，不存在"为了推进 M1/M2 而模糊化真相"的情况。
+
+## 11. M0 最终产物清单（M1+ 必须直接消费）
+
+完成时间：2026-04-20。M0 全部 7 个 slice 已落地，以下产物即 M1 / M2 的输入源：
+
+| slice | 产物                                                                                                                                                                                                                                                                                                                                                                                         | 类别                                      |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| M0.1  | [docs/staff-remediation/if2ai-canonical-domain-model.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-canonical-domain-model.md:1)                                                                                                                                                                                                                                       | 文档真相                                  |
+| M0.2  | [docs/staff-remediation/if2ai-workflow-truth.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-workflow-truth.md:1)                                                                                                                                                                                                                                                       | 文档真相                                  |
+| M0.3  | [src-tauri/src/modules/runtime/contracts/common.rs](/Users/ryanliu/Documents/IfAI/if2Ai/src-tauri/src/modules/runtime/contracts/common.rs:1) + [src-tauri/src/modules/runtime/contracts/memory.rs](/Users/ryanliu/Documents/IfAI/if2Ai/src-tauri/src/modules/runtime/contracts/memory.rs:1) + [src/transport/contracts.ts](/Users/ryanliu/Documents/IfAI/if2Ai/src/transport/contracts.ts:1) | Rust + TS skeleton                        |
+| M0.4  | [src-tauri/src/modules/runtime/contracts/activation.rs](/Users/ryanliu/Documents/IfAI/if2Ai/src-tauri/src/modules/runtime/contracts/activation.rs:1) + [if2ai-workflow-truth.md §3.17 boot truth](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-workflow-truth.md:1)                                                                                                      | Activation contract + boot truth          |
+| M0.5  | [src-tauri/src/modules/runtime/contracts/execution_mode.rs](/Users/ryanliu/Documents/IfAI/if2Ai/src-tauri/src/modules/runtime/contracts/execution_mode.rs:1) + 对位 TS                                                                                                                                                                                                                       | Execution-mode contract + reason taxonomy |
+| M0.6  | [docs/staff-remediation/m0-god-file-responsibility-inventory.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/m0-god-file-responsibility-inventory.md:1)                                                                                                                                                                                                                       | 责任清单（M1 / M2 拆分输入）              |
+| M0.7  | 索引收口：[docs/staff-remediation/README.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/README.md:1)、[docs/exec-plans/index.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/index.md:1)、[phase-m-remediation-execution-index.md §6.1](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m-remediation-execution-index.md:1)、本 runbook §11         | 链接 / 索引                               |
+
+进入 M1 之前，executor 必须能在不读蓝图的前提下从上表直接拿到全部输入；如做不到，说明 M0.7 索引未收口完整，应回到本 phase。

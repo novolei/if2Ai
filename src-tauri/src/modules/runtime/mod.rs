@@ -7,6 +7,7 @@ pub mod bootstrap;
 pub mod budget;
 pub mod compact;
 pub mod config;
+pub mod contracts;
 pub mod conversation;
 pub mod episodic_compaction;
 pub mod file_ops;

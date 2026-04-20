@@ -2,7 +2,7 @@
 
 > If2Ai Staff 整改计划的统一执行索引。
 >
-> 最后更新: 2026-04-20
+> 最后更新: 2026-04-20（M0 全部 7 个 slice 已完成，M1 已可入场；M0 产物清单见 §6.1）
 > 用途: 指导 executor 按最低风险顺序执行 M0 ~ M5 的全部任务。
 
 ## 1. 适用范围
@@ -33,14 +33,14 @@
 
 ## 1.1 超短导航表
 
-| Phase | YAML | Runbook | File-level plans |
-| --- | --- | --- | --- |
-| `M0` | [phase-m0-canonical-contracts-and-truth.yaml](./phase-m0-canonical-contracts-and-truth.yaml) | [phase-m0-executor-runbook.md](./phase-m0-executor-runbook.md) | [phase-m0-truth-documents-file-level-plan.md](./phase-m0-truth-documents-file-level-plan.md), [phase-m0-runtime-activation-execution-contracts-file-level-plan.md](./phase-m0-runtime-activation-execution-contracts-file-level-plan.md), [phase-m0-responsibility-inventory-and-linkage-file-level-plan.md](./phase-m0-responsibility-inventory-and-linkage-file-level-plan.md) |
-| `M1` | [phase-m1-backend-service-extraction.yaml](./phase-m1-backend-service-extraction.yaml) | [phase-m1-executor-runbook.md](./phase-m1-executor-runbook.md) | [phase-m1-initial-slices-file-level-plan.md](./phase-m1-initial-slices-file-level-plan.md), [phase-m1-memory-and-stream-file-level-plan.md](./phase-m1-memory-and-stream-file-level-plan.md), [phase-m1-routing-activation-control-plane-file-level-plan.md](./phase-m1-routing-activation-control-plane-file-level-plan.md) |
-| `M2` | [phase-m2-frontend-runtime-projection.yaml](./phase-m2-frontend-runtime-projection.yaml) | [phase-m2-executor-runbook.md](./phase-m2-executor-runbook.md) | [phase-m2-runtime-projection-foundation-file-level-plan.md](./phase-m2-runtime-projection-foundation-file-level-plan.md), [phase-m2-state-boot-shell-file-level-plan.md](./phase-m2-state-boot-shell-file-level-plan.md), [phase-m2-chat-and-visible-surfaces-file-level-plan.md](./phase-m2-chat-and-visible-surfaces-file-level-plan.md) |
-| `M3` | [phase-m3-memory-coordinator.yaml](./phase-m3-memory-coordinator.yaml) | [phase-m3-executor-runbook.md](./phase-m3-executor-runbook.md) | [phase-m3-object-model-and-coordinator-file-level-plan.md](./phase-m3-object-model-and-coordinator-file-level-plan.md), [phase-m3-policy-quality-and-recall-file-level-plan.md](./phase-m3-policy-quality-and-recall-file-level-plan.md), [phase-m3-frontend-reflection-and-tests-file-level-plan.md](./phase-m3-frontend-reflection-and-tests-file-level-plan.md) |
-| `M4` | [phase-m4-policy-harness-governance.yaml](./phase-m4-policy-harness-governance.yaml) | [phase-m4-executor-runbook.md](./phase-m4-executor-runbook.md) | [phase-m4-execution-and-report-contracts-file-level-plan.md](./phase-m4-execution-and-report-contracts-file-level-plan.md), [phase-m4-graders-compare-and-corpus-file-level-plan.md](./phase-m4-graders-compare-and-corpus-file-level-plan.md), [phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md](./phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md) |
-| `M5` | [phase-m5-self-evolution-and-strategy-promotion.yaml](./phase-m5-self-evolution-and-strategy-promotion.yaml) | [phase-m5-executor-runbook.md](./phase-m5-executor-runbook.md) | [phase-m5-trajectory-failure-and-reflection-file-level-plan.md](./phase-m5-trajectory-failure-and-reflection-file-level-plan.md), [phase-m5-candidate-registry-and-offline-eval-file-level-plan.md](./phase-m5-candidate-registry-and-offline-eval-file-level-plan.md), [phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md](./phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md) |
+| Phase | YAML                                                                                                         | Runbook                                                        | File-level plans                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `M0`  | [phase-m0-canonical-contracts-and-truth.yaml](./phase-m0-canonical-contracts-and-truth.yaml)                 | [phase-m0-executor-runbook.md](./phase-m0-executor-runbook.md) | 三份完整：[truth-documents](./phase-m0-truth-documents-file-level-plan.md)（M0.0+M0.1+M0.2）, [runtime-activation-execution-contracts](./phase-m0-runtime-activation-execution-contracts-file-level-plan.md)（M0.3+M0.4+M0.5）, [responsibility-inventory-and-linkage](./phase-m0-responsibility-inventory-and-linkage-file-level-plan.md)（M0.6+M0.7）                                                    |
+| `M1`  | [phase-m1-backend-service-extraction.yaml](./phase-m1-backend-service-extraction.yaml)                       | [phase-m1-executor-runbook.md](./phase-m1-executor-runbook.md) | [phase-m1-initial-slices-file-level-plan.md](./phase-m1-initial-slices-file-level-plan.md), [phase-m1-memory-and-stream-file-level-plan.md](./phase-m1-memory-and-stream-file-level-plan.md), [phase-m1-routing-activation-control-plane-file-level-plan.md](./phase-m1-routing-activation-control-plane-file-level-plan.md)                                                                               |
+| `M2`  | [phase-m2-frontend-runtime-projection.yaml](./phase-m2-frontend-runtime-projection.yaml)                     | [phase-m2-executor-runbook.md](./phase-m2-executor-runbook.md) | [phase-m2-runtime-projection-foundation-file-level-plan.md](./phase-m2-runtime-projection-foundation-file-level-plan.md), [phase-m2-state-boot-shell-file-level-plan.md](./phase-m2-state-boot-shell-file-level-plan.md), [phase-m2-chat-and-visible-surfaces-file-level-plan.md](./phase-m2-chat-and-visible-surfaces-file-level-plan.md)                                                                 |
+| `M3`  | [phase-m3-memory-coordinator.yaml](./phase-m3-memory-coordinator.yaml)                                       | [phase-m3-executor-runbook.md](./phase-m3-executor-runbook.md) | [phase-m3-object-model-and-coordinator-file-level-plan.md](./phase-m3-object-model-and-coordinator-file-level-plan.md), [phase-m3-policy-quality-and-recall-file-level-plan.md](./phase-m3-policy-quality-and-recall-file-level-plan.md), [phase-m3-frontend-reflection-and-tests-file-level-plan.md](./phase-m3-frontend-reflection-and-tests-file-level-plan.md)                                         |
+| `M4`  | [phase-m4-policy-harness-governance.yaml](./phase-m4-policy-harness-governance.yaml)                         | [phase-m4-executor-runbook.md](./phase-m4-executor-runbook.md) | [phase-m4-execution-and-report-contracts-file-level-plan.md](./phase-m4-execution-and-report-contracts-file-level-plan.md), [phase-m4-graders-compare-and-corpus-file-level-plan.md](./phase-m4-graders-compare-and-corpus-file-level-plan.md), [phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md](./phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md)                   |
+| `M5`  | [phase-m5-self-evolution-and-strategy-promotion.yaml](./phase-m5-self-evolution-and-strategy-promotion.yaml) | [phase-m5-executor-runbook.md](./phase-m5-executor-runbook.md) | [phase-m5-trajectory-failure-and-reflection-file-level-plan.md](./phase-m5-trajectory-failure-and-reflection-file-level-plan.md), [phase-m5-candidate-registry-and-offline-eval-file-level-plan.md](./phase-m5-candidate-registry-and-offline-eval-file-level-plan.md), [phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md](./phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md) |
 
 ## 2. 执行者一页纸原则
 
@@ -182,6 +182,20 @@
 2. workflow truth 已落文档
 3. runtime / activation / execution-mode contracts 已有正式入口
 4. God-file responsibility inventory 已完成
+
+### 6.1 M0 已落地产物清单（M1+ 必须直接消费）
+
+完成时间：2026-04-20。M1 / M2 executor 不得回头改写以下文件（如需改写，必须重新打开 M0 phase）：
+
+- [docs/staff-remediation/if2ai-canonical-domain-model.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-canonical-domain-model.md:1) — M0.1 canonical 实体 / 命名映射
+- [docs/staff-remediation/if2ai-workflow-truth.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-workflow-truth.md:1) — M0.2 workflow 真相 + M0.4 boot truth 状态机
+- [src-tauri/src/modules/runtime/contracts/](/Users/ryanliu/Documents/IfAI/if2Ai/src-tauri/src/modules/runtime/contracts/mod.rs:1) — M0.3+M0.4+M0.5 Rust skeleton（`common / activation / execution_mode / memory`）
+- [src/transport/contracts.ts](/Users/ryanliu/Documents/IfAI/if2Ai/src/transport/contracts.ts:1) — M0.3+M0.4+M0.5 TS twin
+- [docs/staff-remediation/m0-god-file-responsibility-inventory.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/m0-god-file-responsibility-inventory.md:1) — M0.6 四大 god-file 责任清单（M1 / M2 拆分输入）
+
+输入指引：
+- M1 executor 入场时必须先读 §6.1 中的 canonical domain model + workflow truth + Rust contracts skeleton + god-file inventory（`commands/agent.rs` 段）。
+- M2 executor 入场时必须先读 §6.1 中的 canonical domain model + workflow truth + TS contracts twin + god-file inventory（`App.tsx / chat-ui.tsx / tauri.ts` 段）。
 
 ### M1 退出条件
 

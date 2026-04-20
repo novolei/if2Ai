@@ -2,9 +2,10 @@
 
 > If2Ai 整改计划 Phase M0.2 产出。固定当前 codebase 主 workflow 的真相状态、入口、真相归属层与下一阶段责任 phase。
 >
-> 最后更新: 2026-04-20
+> 最后更新: 2026-04-20（M0.4 接入 §3.17 boot truth 状态机）
 > 上位设计: [canonical-domain-model-and-workflow-truth-design.md](./canonical-domain-model-and-workflow-truth-design.md)
 > 配套：[if2ai-canonical-domain-model.md](./if2ai-canonical-domain-model.md)
+> contract 入口（M0.3+M0.4+M0.5）：[src-tauri/src/modules/runtime/contracts/](../../src-tauri/src/modules/runtime/contracts/)、[src/transport/contracts.ts](../../src/transport/contracts.ts)
 
 ## 1. 文档目的
 
@@ -219,6 +220,84 @@
 | source_of_truth  | 不存在；`commands/activation.rs` 仅提供 `activation_complete`，无 `deactivate / revoke` 命令；主 shell 不会因 license 失效回流到 gate                                            |
 | blockers         | 1) 无 `ActivationStatus::Revoked / Expired / Deactivated` 实际处理；2) 无 license refresh 后台 job；3) 无 gate overlay 在主 shell 内重新拦截；4) 无 “失效 → 数据保留策略” 决策。 |
 | next_phase_owner | `M0.4` contract + `M1` activation_service + `M2` boot shell gate                                                                                                                 |
+
+## 3.17 Boot Truth 详细叙事（M0.4）
+
+本节是 `app_boot / onboarding / activation_gate / main_shell` 四段的权威顺序与状态机说明，作为 [§3.1](#31-app-boot)、[§3.2](#32-onboarding)、[§3.3](#33-activation-gate) 的下钻补充。M2 boot shell 重构必须以本节为合同。
+
+### 3.17.1 顺序
+
+`startup -> onboarding -> activation_gate -> main_shell`
+
+### 3.17.2 startup 段
+
+| field              | value                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 进入条件           | 进程被 `cargo tauri dev` / 安装版二进制启动；`main()` 进入 `tauri::Builder::default().setup(...)` 之前。                                                                                                                                                                                                                                       |
+| 退出条件           | 后端：`AppState` 构造完成、所有 Tauri 命令注册完成、`setup` closure 执行完毕；前端：`App.tsx` 完成首屏 `<Splash>` 渲染并调用 `onboarding_get_state()`。                                                                                                                                                                                        |
+| 决策方             | backend `main.rs`（顺序构造各子系统） + 前端 `App.tsx` 启动 `useEffect`。                                                                                                                                                                                                                                                                      |
+| 失败回流           | 1) 单个子系统初始化失败按 main.rs 内既有 fallback 处理（VectorMemory→SQLite→InMemory；JobRunner→tempdir）；2) 整个进程级 panic 触发 `cleanup_processes` 后退出；3) 前端若 3s 内拿不到 onboarding state，按 `defaulting to no onboarding` 处理（[App.tsx](../../src/App.tsx)）——M2 必须把这个隐式回退替换为显式 `BootPhase::DegradedRecovery`。 |
+| 当前 contract 入口 | [src-tauri/src/modules/runtime/contracts/common.rs](../../src-tauri/src/modules/runtime/contracts/common.rs) `RuntimeEventEnvelope { event_type: System, payload_family: "boot_phase_changed" }`（M0.3 已建 envelope，未实际发射）。                                                                                                           |
+
+### 3.17.3 onboarding 段
+
+| field    | value                                                                                                                                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 进入条件 | startup 完成 + `onboarding_get_state()` 返回 `tag in {first_launch, onboarding}`，前端置 `showOnboarding = true`，渲染 [OnboardingApp](../../src/modules/onboarding/OnboardingApp.tsx)。                           |
+| 退出条件 | 用户走完 `onboarding.next_step → ... → onboarding.complete`（5 步），最终 `activation_complete` 把 onboarding state 标记为完成。                                                                                   |
+| 决策方   | backend [modules/onboarding/flow.rs](../../src-tauri/src/modules/onboarding/flow.rs) 是状态机权威；前端只通过 IPC `onboarding_*` 系列推动。                                                                        |
+| 失败回流 | 1) 任一步失败 → 用户停留在该步，可 `prev_step` 返回；2) 用户关窗 → 下次启动重新 `first_launch / onboarding`；3) 跨窗口接收 `cross:onboarding-reset` → 主窗口重置回 onboarding（[App.tsx:89](../../src/App.tsx)）。 |
+| 已知漂移 | `activation_complete` 当前直接写 onboarding state（[commands/activation.rs:117](../../src-tauri/src/commands/activation.rs)），二者状态机互相耦合。M0.4 contract 已把它们拆开命名，M1 必须把写路径分离。           |
+
+### 3.17.4 activation_gate 段
+
+| field                     | value                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 进入条件                  | onboarding 完成（或本机已有缓存 license）后，必须先经过 activation gate，才能进入 main shell。当前实现中本段几乎为空：`activation_complete` 调完即跳 main shell，**无独立 gate**。                                                                                                                                                                |
+| 退出条件（contract 目标） | `ActivationSnapshot { allows_main_shell: true }`（见 [contracts/activation.rs](../../src-tauri/src/modules/runtime/contracts/activation.rs) `ActivationSnapshot`）；任何其它 snapshot 都禁止进入 main shell。                                                                                                                                     |
+| 决策方（contract 目标）   | backend `activation_service`（M1 引入）持有 `ActivationStatus` 状态机；前端只投影 `ActivationSnapshot`，不得自行计算 `allows_main_shell`。                                                                                                                                                                                                        |
+| 失败回流（contract 目标） | 1) `requesting_activation → server fail` → 回到 `needs_activation` 并附 `failureReason = "other"` / `"refresh_transient"`；2) `activated → revoke check failed` → 立即转 `revoked / expired`，gate overlay 重新拦截 main shell；3) `offline_grace` 到期未恢复 → 转 `expired`；4) 用户主动 `deactivate` → 转 `deactivated`，clear cached license。 |
+| 当前 contract 入口        | [src-tauri/src/modules/runtime/contracts/activation.rs](../../src-tauri/src/modules/runtime/contracts/activation.rs) `ActivationStatus / ActivationSnapshot / ActivationAction`（M0.4 已建，未接入 commands）。                                                                                                                                   |
+| 当前实现差距              | 1) `commands/activation.rs` 只有 4 命令（validate/start/test_message/complete），无 `request / refresh / revoke_check / deactivate`；2) `ActivationStatus` 10 态在代码中不存在；3) main shell 进入后无 license 失效回流路径，状态只能单向流动。                                                                                                   |
+
+### 3.17.5 main_shell 段
+
+| field              | value                                                                                                                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 进入条件           | activation_gate 退出（`allowsMainShell == true`），前端切换到 `chat-ui.tsx` 主界面 + 各 specialized panel。                                                                                              |
+| 退出条件           | 1) 用户主动 quit 应用；2) license 失效回流（contract 目标）→ 重新进入 activation_gate overlay；3) onboarding reset（来自设置窗口）→ 回到 onboarding 段。                                                 |
+| 决策方             | 前端导航持有，backend 通过 `ActivationSnapshot` 与 `cross:onboarding-reset` 事件影响。                                                                                                                   |
+| 失败回流           | 1) session 加载失败 → fallback 到空 session 列表（M2 需显式 `RecoveryAction`）；2) provider 不可用 → 单次 turn 报错，不回退到 gate；3) `revoke_check` 命中 → contract 目标是回退到 gate（当前未实现）。  |
+| 当前 contract 入口 | 暂无统一 envelope；`chat-ui.tsx` + `App.tsx` 各持有 stream / memory / browser / harness 多源事件订阅（待 M2 收口到 [`RuntimeEventEnvelope`](../../src-tauri/src/modules/runtime/contracts/common.rs)）。 |
+
+### 3.17.6 状态机转换表（contract 目标，M1 实现）
+
+```mermaid
+stateDiagram-v2
+    [*] --> CheckingLocal
+    CheckingLocal --> Activated: local_boot_restore (有效 license)
+    CheckingLocal --> NeedsActivation: 无 license
+    CheckingLocal --> OfflineGrace: 有 license 但远端不可达
+    NeedsActivation --> RequestingActivation: action=request
+    RequestingActivation --> PendingApproval: 远端需审批
+    RequestingActivation --> Redeeming: 远端立即批准
+    RequestingActivation --> NeedsActivation: 失败
+    PendingApproval --> Redeeming: 审批通过
+    PendingApproval --> NeedsActivation: 审批拒绝
+    Redeeming --> Activated: 写入成功
+    Redeeming --> NeedsActivation: 写入失败
+    Activated --> OfflineGrace: refresh 失败 (transient)
+    Activated --> Revoked: revoke_check 命中
+    Activated --> Expired: 到期未刷新
+    Activated --> Deactivated: action=deactivate
+    OfflineGrace --> Activated: refresh 成功
+    OfflineGrace --> Expired: grace 到期
+    Expired --> Activated: 用户重新 redeem
+    Revoked --> NeedsActivation: 用户重启激活
+    Deactivated --> NeedsActivation: 用户重新激活
+```
+
+> 重要原则：`Activated` 不是终态。`Revoked / Expired / Deactivated` 必须能立即把主 shell 回流到 gate。这是 §3.16 `deactivation_revoke_fallback` 当前 `not_established` 的根因；M1 wire 完成后才能升级。
 
 ## 4. 状态汇总
 
