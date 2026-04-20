@@ -1,6 +1,6 @@
 {
     "productName": "If2Ai",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "identifier": "dev.if2ai.desktop",
     "build": {
         "beforeBuildCommand": "npm run build:web",
@@ -13,7 +13,7 @@
             {
                 "label": "main",
                 "title": "If2Ai - AI Agent Desktop",
-                "url": "http://localhost:9527",
+                "url": "index.html",
                 "width": 1280,
                 "height": 800,
                 "minWidth": 960,

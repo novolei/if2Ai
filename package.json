@@ -1,6 +1,6 @@
 {
     "name": "if2ai",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "AI智能体桌面应用 - 基于Tauri + Rust + React",
     "type": "module",
     "scripts": {
@@ -9,6 +9,7 @@
         "build": "tauri build",
         "tauri": "tauri",
         "tauri:dev": "tauri dev",
+        "release:macos": "bash scripts/release-macos.sh",
         "preview": "vite preview",
         "test": "vitest",
         "test:ui": "vitest --ui"

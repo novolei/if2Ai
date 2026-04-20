@@ -137,7 +137,10 @@ impl ManifestBundle {
         Ok(resolve_with_alias(&codec_dir, relative))
     }
 
-    /// 解析 `tokenizer.model` 路径（一般在 tts meta 同目录）。
+    /// 解析 tokenizer 路径。
+    ///
+    /// 优先返回 `tokenizer.json`（HF 格式，纯 Rust 加载），向后兼容 `tokenizer.model`
+    /// （旧 SP 格式，由 `TtsTokenizer::load` 自动 fallback 到同目录 `.json`）。
     pub fn tokenizer_path(&self) -> Result<PathBuf, TtsError> {
         let relative = self
             .manifest
@@ -145,11 +148,25 @@ impl ManifestBundle {
             .tokenizer_model
             .as_deref()
             .unwrap_or("tokenizer.model");
+
+        // 优先级：manifest_dir/tokenizer.json > tts_meta_dir/tokenizer.json
+        //       > manifest_dir/<relative> > tts_meta_dir/tokenizer.model
+        let json_candidates = [
+            self.manifest_dir.join("tokenizer.json"),
+            self.tts_meta_dir()
+                .map(|d| d.join("tokenizer.json"))
+                .unwrap_or_default(),
+        ];
+        for cand in &json_candidates {
+            if cand.exists() {
+                return Ok(cand.clone());
+            }
+        }
+
         let resolved = self.manifest_dir.join(relative);
         if resolved.exists() {
             return Ok(resolved);
         }
-        // fallback：tts_meta 所在目录
         if let Some(tts_dir) = self.tts_meta_dir() {
             let candidate = tts_dir.join("tokenizer.model");
             if candidate.exists() {
@@ -157,7 +174,7 @@ impl ManifestBundle {
             }
         }
         Err(TtsError::ModelNotFound(format!(
-            "tokenizer.model 未在 manifest_dir / tts_meta_dir 下找到: {}",
+            "tokenizer.json/tokenizer.model 未在 manifest_dir / tts_meta_dir 下找到: {}",
             relative
         )))
     }

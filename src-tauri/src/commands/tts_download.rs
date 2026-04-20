@@ -104,6 +104,10 @@ fn tts_model_file_map() -> &'static [(&'static str, &'static str)] {
         ("browser_poc_manifest.json", "browser_poc_manifest.json"),
         ("tts_browser_onnx_meta.json", "tts_browser_onnx_meta.json"),
         ("tokenizer.model", "tokenizer.model"),
+        // Phase TTS-B.6 native pivot: HF tokenizers 直接加载 tokenizer.json
+        // （由离线 `LlamaConverter + Precompiled(nmt_nfkc)` 转换而成，与 SP
+        // bit-exact）。.model 仍下载以兼容旧版本和 fallback。
+        ("tokenizer.json", "tokenizer.json"),
         ("moss_tts_prefill.onnx", "moss_tts_prefill.onnx"),
         ("moss_tts_decode_step.onnx", "moss_tts_decode_step.onnx"),
         ("moss_tts_local_decoder.onnx", "moss_tts_local_decoder.onnx"),
