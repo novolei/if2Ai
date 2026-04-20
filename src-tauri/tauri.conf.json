@@ -1,6 +1,6 @@
 {
     "productName": "If2Ai",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "identifier": "dev.if2ai.desktop",
     "build": {
         "beforeBuildCommand": "npm run build:web",
@@ -49,7 +49,8 @@
             "icons/icon.icns"
         ],
         "macOS": {
-            "minimumSystemVersion": "11.0"
+            "minimumSystemVersion": "11.0",
+            "infoPlist": "Info.plist"
         }
     }
 }

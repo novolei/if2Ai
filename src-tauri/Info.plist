@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for STT: WebView getUserMedia({audio}) triggers this -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>If2Ai 需要访问麦克风以进行语音转文字（STT）录音。</string>
+    <!-- NSCameraUsageDescription is required whenever NSMicrophoneUsageDescription
+         is declared, otherwise App Store / Notarization validation rejects the bundle -->
+    <key>NSCameraUsageDescription</key>
+    <string>If2Ai 不使用摄像头，此项为系统合规声明。</string>
+</dict>
+</plist>
