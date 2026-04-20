@@ -10,6 +10,8 @@ export type SettingsSectionId =
   | 'model'
   | 'connections'
   | 'remote'
+  | 'tts-settings'
+  | 'tts-profiles'
   | 'tts-test'
   | 'stt-config'
   | 'about'

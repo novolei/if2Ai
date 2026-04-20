@@ -13,9 +13,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Volume2, Loader2, Square, AlertCircle } from 'lucide-react'
-import { ttsStreamStart, TTS_DEFAULT_PARAMS } from '@/lib/tauri'
+import { applyTtsPostprocess, ttsStreamStart, TTS_DEFAULT_PARAMS } from '@/lib/tauri'
 import { getAgentVoiceId } from '@/modules/settings/pages/AgentVoicePicker'
 import { useWebAudioStreamPlayer } from '@/modules/settings/pages/useWebAudioStreamPlayer'
+import { resolveActiveProfile, type ResolvedActiveProfile } from './activeTtsProfile'
 import { sanitizeForTts } from './ttsSanitize'
 import { useCrossWindowChange } from '@/lib/crossWindowSync'
 
@@ -32,12 +33,30 @@ export function MessageVoiceButton({ text, className = '' }: Props) {
   const [btnState, setBtnState] = useState<State>('idle')
   const player = useWebAudioStreamPlayer()
   const abortRef = useRef(false)
-  const [voiceId, setVoiceId] = useState<string | null>(getAgentVoiceId())
+  // The active TTS profile resolves asynchronously from
+  // `~/.if2ai/tts_profiles.json`.  When null we still render (using
+  // the legacy agent voice id) so users that haven't visited the new
+  // settings page aren't broken.
+  const [resolved, setResolved] = useState<ResolvedActiveProfile | null>(null)
+  const [legacyVoiceId, setLegacyVoiceId] = useState<string | null>(getAgentVoiceId())
 
-  // 跨窗口同步：Settings 改 agent voice 后，主窗口内的播放按钮立即更新
+  const refreshProfile = useCallback(() => {
+    void resolveActiveProfile().then((r) => setResolved(r ?? null))
+  }, [])
+  useEffect(refreshProfile, [refreshProfile])
+
+  useCrossWindowChange<{ id?: string | null }>('cross:tts-profiles-changed', refreshProfile)
+  useCrossWindowChange<{ id?: string | null }>('cross:tts-active-profile-changed', refreshProfile)
   useCrossWindowChange<{ id: string | null }>('cross:agent-voice-changed', (payload) => {
-    setVoiceId(payload?.id ?? getAgentVoiceId())
+    setLegacyVoiceId(payload?.id ?? getAgentVoiceId())
   })
+
+  // Effective voice + params + postprocess: profile wins; legacy
+  // voice picker provides a fallback.
+  const effectiveVoiceId = resolved?.profile.voice_id || legacyVoiceId
+  const effectiveParams = resolved
+    ? resolved.params
+    : { ...TTS_DEFAULT_PARAMS, max_new_frames: 375, seed: null }
 
   const handlePlay = useCallback(async () => {
     if (btnState === 'playing') {
@@ -49,26 +68,28 @@ export function MessageVoiceButton({ text, className = '' }: Props) {
     }
     if (btnState === 'loading') return
 
-    const vid = voiceId
+    const vid = effectiveVoiceId
     if (!vid) {
-      // 没有 agent voice → 提示去 Settings 设置
-      alert('请先在「设置 → TTS 测试 → Agent 语音」中选择一个声音。')
+      alert('请先在「设置 → TTS Profiles」中选择一个 Profile（或在 TTS 测试中选 Agent 声音）。')
       return
     }
 
-    const clean = sanitizeForTts(text)
-    if (!clean) return
+    const baseClean = sanitizeForTts(text)
+    if (!baseClean) return
+    const clean = resolved ? applyTtsPostprocess(resolved.profile, baseClean) : baseClean
 
     abortRef.current = false
     setBtnState('loading')
     try {
+      // Apply the profile's playback rate to this player too.
+      if (resolved) player.setPlaybackRate(resolved.profile.playback_rate)
       await player.start()
       if (abortRef.current) return
       const result = await ttsStreamStart(
         clean,
         null,
         null,
-        { ...TTS_DEFAULT_PARAMS, max_new_frames: 375, seed: null },
+        effectiveParams,
         vid,
       )
       if (abortRef.current) {
@@ -92,7 +113,7 @@ export function MessageVoiceButton({ text, className = '' }: Props) {
       setBtnState('error')
       setTimeout(() => setBtnState('idle'), 1500)
     }
-  }, [btnState, voiceId, text, player])
+  }, [btnState, effectiveVoiceId, effectiveParams, resolved, text, player])
 
   useEffect(() => {
     return () => {
@@ -100,8 +121,7 @@ export function MessageVoiceButton({ text, className = '' }: Props) {
     }
   }, [])
 
-  // 不显示条件：没 agent voice
-  if (!voiceId) return null
+  if (!effectiveVoiceId) return null
 
   const icon = {
     idle: <Volume2 className="size-3.5" />,

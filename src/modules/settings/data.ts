@@ -76,9 +76,21 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     icon: Info,
   },
   {
+    id: 'tts-settings',
+    label: '语音合成 (TTS)',
+    description: '语速、音质预设、采样参数。所有 AI 朗读 / 消息播报均生效。',
+    icon: Volume2,
+  },
+  {
+    id: 'tts-profiles',
+    label: 'TTS Profiles',
+    description: '一键切换"音色 + 语速 + 文本润色"组合；聊天侧仅显示 Profile。',
+    icon: Volume2,
+  },
+  {
     id: 'tts-test',
     label: 'TTS 测试',
-    description: 'MOSS-TTS-Nano 语音合成测试面板。',
+    description: 'MOSS-TTS-Nano 合成调试面板（暴露完整参数）。',
     icon: Volume2,
   },
   {

@@ -21,6 +21,8 @@ import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
 import { MemorySettingsPage } from './pages/MemorySettingsPage'
 import { ModelSettingsPage } from './pages/ModelSettingsPage'
 import { ToolSettingsPage } from './pages/ToolSettingsPage'
+import { TtsProfilesPage } from './pages/TtsProfilesPage'
+import { TtsSettingsPage } from './pages/TtsSettingsPage'
 import { TtsTestPage } from './pages/TtsTestPage'
 import { SttConfigPage } from './pages/SttConfigPage'
 
@@ -196,6 +198,10 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <RemoteSettingsPage state={state} actions={actions} />
       case 'about':
         return <AboutSettingsPage state={state} actions={actions} />
+      case 'tts-settings':
+        return <TtsSettingsPage />
+      case 'tts-profiles':
+        return <TtsProfilesPage />
       case 'tts-test':
         return <TtsTestPage />
       case 'stt-config':

@@ -1812,6 +1812,159 @@ export interface TtsGenerationParams {
   enable_robust_normalization: boolean
 }
 
+// ── User-tunable TTS settings (Settings UI entry point) ───────────────────
+
+/** Quality preset for the audio sampler.  Maps to a tuned triple of
+ *  audio_temperature / top_p / top_k server-side. */
+export type TtsQualityPreset = 'natural' | 'balanced' | 'precise'
+
+/** Persisted TTS settings (`~/.if2ai/tts.toml`).  Mirrors the Rust
+ *  `TtsSettings` struct field-for-field. */
+export interface TtsSettings {
+  /** Frontend playback speed multiplier (0.5-2.0). 1.0 = original. */
+  playback_rate: number
+  /** Sampler quality preset. */
+  quality: TtsQualityPreset
+  /** Hard cap on generated audio frames per chunk (64-1500). */
+  max_new_frames: number
+  /** Audio repetition penalty (>= 1.0). */
+  audio_repetition_penalty: number
+  /** Optional fixed RNG seed; null = random. */
+  seed: number | null
+  /** Whether MOSS-TTS-Nano's robust text normaliser is enabled. */
+  enable_robust_normalization: boolean
+}
+
+/** Defaults matching the Rust `TtsSettings::default()` impl. */
+export const TTS_DEFAULT_SETTINGS: TtsSettings = {
+  playback_rate: 1.0,
+  quality: 'natural',
+  max_new_frames: 375,
+  audio_repetition_penalty: 1.2,
+  seed: null,
+  enable_robust_normalization: true,
+}
+
+/** Read persisted TTS settings.  Always succeeds (falls back to defaults). */
+export async function getTtsSettings(): Promise<TtsSettings> {
+  return invoke<TtsSettings>('get_tts_settings')
+}
+
+/** Persist TTS settings to `~/.if2ai/tts.toml`.  Out-of-range values
+ *  are clamped server-side. */
+export async function setTtsSettings(settings: TtsSettings): Promise<void> {
+  return invoke<void>('set_tts_settings', { settings })
+}
+
+/** Translate a `TtsSettings` payload into the
+ *  [`TtsGenerationParams`] shape `tts_synthesize` / `tts_stream_start`
+ *  expects.  Uses the `apply_to_generation_params` semantics from the
+ *  Rust `TtsSettings::apply_to_generation_params` so backend and
+ *  frontend always produce identical params for the same settings. */
+export function ttsParamsFromSettings(s: TtsSettings): TtsGenerationParams {
+  const samplerByPreset: Record<TtsQualityPreset, { t: number; p: number; k: number }> = {
+    natural: { t: 0.9, p: 0.95, k: 30 },
+    balanced: { t: 0.8, p: 0.95, k: 25 },
+    precise: { t: 0.6, p: 0.85, k: 15 },
+  }
+  const sampler = samplerByPreset[s.quality]
+  return {
+    ...TTS_DEFAULT_PARAMS,
+    max_new_frames: Math.min(Math.max(s.max_new_frames, 64), 1500),
+    audio_temperature: sampler.t,
+    audio_top_p: sampler.p,
+    audio_top_k: sampler.k,
+    audio_repetition_penalty: Math.max(s.audio_repetition_penalty, 1.0),
+    seed: s.seed,
+    enable_robust_normalization: s.enable_robust_normalization,
+  }
+}
+
+// ── TTS Profiles (named voice + settings recipes) ────────────────────────
+
+/** Lightweight text post-processing flags carried by a TTS profile. */
+export interface TtsTextPostprocess {
+  /** Replace 。/. with ，/, to soften the cadence (温柔系 profile). */
+  soften_punctuation: boolean
+  /** Append "…" to every sentence so prosody trails off (沉浸朗读). */
+  add_trailing_dots: boolean
+}
+
+/** A single named TTS recipe.  Mirrors the Rust `TtsProfile` struct
+ *  (which uses `#[serde(flatten)]` to inline `TtsSettings` fields). */
+export interface TtsProfile {
+  id: string
+  name: string
+  description: string
+  voice_id: string
+  // ── flattened TtsSettings ──
+  playback_rate: number
+  quality: TtsQualityPreset
+  max_new_frames: number
+  audio_repetition_penalty: number
+  seed: number | null
+  enable_robust_normalization: boolean
+  // ── profile-only fields ──
+  postprocess: TtsTextPostprocess
+  is_builtin: boolean
+}
+
+/** On-disk container returned by `list_tts_profiles`. */
+export interface TtsProfileBook {
+  default_profile_id: string
+  profiles: TtsProfile[]
+}
+
+/** Read the entire profile book.  Backend seeds 6 builtins on first call. */
+export async function listTtsProfiles(): Promise<TtsProfileBook> {
+  return invoke<TtsProfileBook>('list_tts_profiles')
+}
+
+/** Insert or update a single profile.  Returns the resulting profile. */
+export async function saveTtsProfile(profile: TtsProfile): Promise<TtsProfile> {
+  return invoke<TtsProfile>('save_tts_profile', { profile })
+}
+
+/** Delete a user-created profile (builtins are protected server-side). */
+export async function deleteTtsProfile(id: string): Promise<void> {
+  return invoke<void>('delete_tts_profile', { id })
+}
+
+/** Mark `id` as the active default profile. */
+export async function setDefaultTtsProfile(id: string): Promise<void> {
+  return invoke<void>('set_default_tts_profile', { id })
+}
+
+/** Project a `TtsProfile` onto a `TtsSettings` shape (for re-using
+ *  `ttsParamsFromSettings` to derive generation params). */
+export function ttsSettingsFromProfile(p: TtsProfile): TtsSettings {
+  return {
+    playback_rate: p.playback_rate,
+    quality: p.quality,
+    max_new_frames: p.max_new_frames,
+    audio_repetition_penalty: p.audio_repetition_penalty,
+    seed: p.seed,
+    enable_robust_normalization: p.enable_robust_normalization,
+  }
+}
+
+/** Frontend mirror of the Rust `apply_postprocess` — keep in sync if
+ *  you tweak the Rust impl.  Used so chat-side preview matches what
+ *  the backend will actually synthesize. */
+export function applyTtsPostprocess(p: TtsProfile, text: string): string {
+  let out = text
+  if (p.postprocess.soften_punctuation) {
+    out = out.replace(/。/g, '，').replace(/\./g, ',')
+  }
+  if (p.postprocess.add_trailing_dots) {
+    const trimmed = out.replace(/\s+$/, '')
+    if (!trimmed.endsWith('…') && !trimmed.endsWith('...')) {
+      out = `${trimmed}…`
+    }
+  }
+  return out
+}
+
 /** Default TTS generation parameters matching the MOSS-TTS-Nano Python reference defaults. */
 export const TTS_DEFAULT_PARAMS: TtsGenerationParams = {
   max_new_frames: 375,

@@ -19,12 +19,28 @@
 
 ## 3. 读取顺序
 
-1. [phase-m3-memory-coordinator.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-memory-coordinator.yaml:1)
-2. [memory-self-evolution-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/memory-self-evolution-design.md:1)
-3. [runtime-contracts-and-event-projection-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/runtime-contracts-and-event-projection-design.md:1)
-4. [phase-m3-object-model-and-coordinator-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-object-model-and-coordinator-file-level-plan.md:1)
-5. [phase-m3-policy-quality-and-recall-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-policy-quality-and-recall-file-level-plan.md:1)
-6. [phase-m3-frontend-reflection-and-tests-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-frontend-reflection-and-tests-file-level-plan.md:1)
+### 3.1 执行者最小必读
+
+执行者开工 `M3` 时，只要求先读下面 5 个入口：
+
+1. [phase-m-remediation-execution-index.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m-remediation-execution-index.md:1)
+2. [phase-m3-memory-coordinator.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-memory-coordinator.yaml:1)
+3. 本 runbook
+4. 当前 slice 对应的 file-level plan
+5. 当前 slice 明确引用的真实代码入口文件
+
+### 3.2 `M3` file-level plan 入口
+
+1. [phase-m3-object-model-and-coordinator-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-object-model-and-coordinator-file-level-plan.md:1)
+2. [phase-m3-policy-quality-and-recall-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-policy-quality-and-recall-file-level-plan.md:1)
+3. [phase-m3-frontend-reflection-and-tests-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m3-frontend-reflection-and-tests-file-level-plan.md:1)
+
+### 3.3 设计依据按需查阅
+
+只有当当前 slice 需要核对 memory 语义或投影口径时，再回查以下设计文档：
+
+1. [memory-self-evolution-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/memory-self-evolution-design.md:1)
+2. [runtime-contracts-and-event-projection-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/runtime-contracts-and-event-projection-design.md:1)
 
 ## 4. 落地决策
 

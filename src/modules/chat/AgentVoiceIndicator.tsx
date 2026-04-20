@@ -13,8 +13,9 @@
 
 import { useCallback, useState } from 'react'
 import { Volume2, VolumeX, Loader2 } from 'lucide-react'
-import { getAgentVoiceId, getAgentVoiceEnabled, setAgentVoiceEnabled } from '@/modules/settings/pages/AgentVoicePicker'
+import { getAgentVoiceEnabled, setAgentVoiceEnabled } from '@/modules/settings/pages/AgentVoicePicker'
 import { useCrossWindowChange } from '@/lib/crossWindowSync'
+import { TtsProfilePicker } from './TtsProfilePicker'
 
 interface Props {
   isPlaying: boolean
@@ -22,13 +23,8 @@ interface Props {
 }
 
 export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
-  const [voiceId, setVoiceId] = useState(getAgentVoiceId())
   const [enabled, setEnabledState] = useState(getAgentVoiceEnabled())
 
-  // 跨窗口同步：Settings 窗口里改 voice / enabled，主窗口的 indicator 立即更新
-  useCrossWindowChange<{ id: string | null }>('cross:agent-voice-changed', (payload) => {
-    setVoiceId(payload?.id ?? getAgentVoiceId())
-  })
   useCrossWindowChange<{ enabled: boolean }>('cross:agent-voice-enabled', (payload) => {
     setEnabledState(payload?.enabled ?? getAgentVoiceEnabled())
   })
@@ -39,11 +35,9 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
     setEnabledState(next)
   }, [enabled])
 
-  if (!voiceId) return null
-
   return (
-    <div className="pointer-events-none absolute bottom-[72px] left-4 z-30 flex items-center gap-1.5 rounded-xl border border-black/[0.08] bg-white/90 px-2.5 py-1.5 text-[10.5px] shadow-sm backdrop-blur-md pointer-events-auto transition-opacity">
-      {/* 状态指示 */}
+    <div className="pointer-events-auto absolute bottom-[72px] left-4 z-30 flex items-center gap-1.5 rounded-xl border border-black/[0.08] bg-white/90 px-2 py-1.5 text-[10.5px] shadow-sm backdrop-blur-md transition-opacity">
+      {/* 播放状态指示 */}
       {isPlaying ? (
         <span className="relative flex size-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-jade opacity-75" />
@@ -53,17 +47,19 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
         <Volume2 className={`size-3 ${enabled ? 'text-jade' : 'text-black/30'}`} />
       )}
 
-      {/* 文字 */}
-      <span className={enabled ? 'text-foreground/75' : 'text-black/35'}>
-        {isPlaying ? '语音回复中' : pending > 0 ? (
-          <span className="flex items-center gap-1">
-            <Loader2 className="size-2.5 animate-spin" />
-            合成中 {pending > 1 ? `(${pending})` : ''}
-          </span>
-        ) : voiceId}
-      </span>
+      {/* 状态文字 / Profile picker */}
+      {isPlaying ? (
+        <span className="text-foreground/75">语音回复中</span>
+      ) : pending > 0 ? (
+        <span className="flex items-center gap-1 text-foreground/75">
+          <Loader2 className="size-2.5 animate-spin" />
+          合成中 {pending > 1 ? `(${pending})` : ''}
+        </span>
+      ) : (
+        <TtsProfilePicker />
+      )}
 
-      {/* 快速 toggle */}
+      {/* 启用 / 禁用快捷 toggle */}
       <button
         type="button"
         onClick={toggleEnabled}

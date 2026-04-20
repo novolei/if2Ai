@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "m4"
   execution_runbook: "docs/exec-plans/active/phase-m5-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只做当前 slice 的 self-evolution 闭环；M5 当前允许 candidate / compare / promote-hold-reject / rollback，不回头重写基础层。"
+    - "优先进入对应的 phase-m5-*.md file-level plan；若 gate 或 recommendation 不完整，默认不得 promote。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/memory-self-evolution-design.md

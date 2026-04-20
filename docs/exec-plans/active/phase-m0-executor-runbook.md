@@ -21,17 +21,41 @@
 3. runtime / activation / execution-mode contracts 已有代码入口和 TS 对位类型入口。
 4. `App.tsx` / `chat-ui.tsx` / `tauri.ts` / `commands/agent.rs` 的责任清单已经能直接作为 `M1/M2` 的拆分输入。
 
+## 2.1 配套 file-level plans
+
+为和 `M1~M5` 的执行粒度保持一致，`M0` 额外拆成以下 3 份 file-level plan：
+
+1. [phase-m0-truth-documents-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-truth-documents-file-level-plan.md:1)
+2. [phase-m0-runtime-activation-execution-contracts-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-runtime-activation-execution-contracts-file-level-plan.md:1)
+3. [phase-m0-responsibility-inventory-and-linkage-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-responsibility-inventory-and-linkage-file-level-plan.md:1)
+
 ## 3. 读取顺序
 
-执行者开始前，必须按下面顺序阅读：
+### 3.1 执行者最小必读
 
-1. [phase-m0-canonical-contracts-and-truth.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-canonical-contracts-and-truth.yaml:1)
-2. [if2ai-staff-remediation-blueprint.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-staff-remediation-blueprint.md:1)
-3. [canonical-domain-model-and-workflow-truth-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md:1)
-4. [runtime-contracts-and-event-projection-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/runtime-contracts-and-event-projection-design.md:1)
-5. [activation-gate-and-license-lifecycle-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/activation-gate-and-license-lifecycle-design.md:1)
-6. [request-intelligence-and-execution-mode-routing-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md:1)
-7. [phase-m-remediation-execution-index.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m-remediation-execution-index.md:1)
+执行者开工 `M0` 时，只要求先读下面 5 个入口：
+
+1. [phase-m-remediation-execution-index.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m-remediation-execution-index.md:1)
+2. [phase-m0-canonical-contracts-and-truth.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-canonical-contracts-and-truth.yaml:1)
+3. 本 runbook
+4. 当前 slice 对应的 file-level plan
+5. 当前 slice 明确引用的真实代码入口文件
+
+### 3.2 `M0` file-level plan 入口
+
+1. [phase-m0-truth-documents-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-truth-documents-file-level-plan.md:1)
+2. [phase-m0-runtime-activation-execution-contracts-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-runtime-activation-execution-contracts-file-level-plan.md:1)
+3. [phase-m0-responsibility-inventory-and-linkage-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m0-responsibility-inventory-and-linkage-file-level-plan.md:1)
+
+### 3.3 设计依据按需查阅
+
+只有当当前 slice 需要核对定义或命名口径时，再回查以下设计文档：
+
+1. [if2ai-staff-remediation-blueprint.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-staff-remediation-blueprint.md:1)
+2. [canonical-domain-model-and-workflow-truth-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md:1)
+3. [runtime-contracts-and-event-projection-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/runtime-contracts-and-event-projection-design.md:1)
+4. [activation-gate-and-license-lifecycle-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/activation-gate-and-license-lifecycle-design.md:1)
+5. [request-intelligence-and-execution-mode-routing-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md:1)
 
 ## 4. 落地决策
 

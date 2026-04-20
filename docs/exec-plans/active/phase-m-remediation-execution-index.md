@@ -16,7 +16,13 @@
 5. [phase-m4-policy-harness-governance.yaml](./phase-m4-policy-harness-governance.yaml)
 6. [phase-m5-self-evolution-and-strategy-promotion.yaml](./phase-m5-self-evolution-and-strategy-promotion.yaml)
 
-每个 `Phase M*` 都有一份 executor 运行手册，开工前必须同时阅读：
+每个 `Phase M*` 都有一份 executor 运行手册。执行规则如下：
+
+1. 开工当前 phase 前，必须阅读对应 phase runbook。
+2. 后续 phase 的 runbook 仅在进入该 phase 前强制阅读。
+3. 若当前工作会修改跨 phase contract，再按需补读相邻 phase runbook。
+
+对应 runbook：
 
 - [phase-m0-executor-runbook.md](./phase-m0-executor-runbook.md)
 - [phase-m1-executor-runbook.md](./phase-m1-executor-runbook.md)
@@ -25,7 +31,63 @@
 - [phase-m4-executor-runbook.md](./phase-m4-executor-runbook.md)
 - [phase-m5-executor-runbook.md](./phase-m5-executor-runbook.md)
 
-## 2. 总体执行顺序
+## 1.1 超短导航表
+
+| Phase | YAML | Runbook | File-level plans |
+| --- | --- | --- | --- |
+| `M0` | [phase-m0-canonical-contracts-and-truth.yaml](./phase-m0-canonical-contracts-and-truth.yaml) | [phase-m0-executor-runbook.md](./phase-m0-executor-runbook.md) | [phase-m0-truth-documents-file-level-plan.md](./phase-m0-truth-documents-file-level-plan.md), [phase-m0-runtime-activation-execution-contracts-file-level-plan.md](./phase-m0-runtime-activation-execution-contracts-file-level-plan.md), [phase-m0-responsibility-inventory-and-linkage-file-level-plan.md](./phase-m0-responsibility-inventory-and-linkage-file-level-plan.md) |
+| `M1` | [phase-m1-backend-service-extraction.yaml](./phase-m1-backend-service-extraction.yaml) | [phase-m1-executor-runbook.md](./phase-m1-executor-runbook.md) | [phase-m1-initial-slices-file-level-plan.md](./phase-m1-initial-slices-file-level-plan.md), [phase-m1-memory-and-stream-file-level-plan.md](./phase-m1-memory-and-stream-file-level-plan.md), [phase-m1-routing-activation-control-plane-file-level-plan.md](./phase-m1-routing-activation-control-plane-file-level-plan.md) |
+| `M2` | [phase-m2-frontend-runtime-projection.yaml](./phase-m2-frontend-runtime-projection.yaml) | [phase-m2-executor-runbook.md](./phase-m2-executor-runbook.md) | [phase-m2-runtime-projection-foundation-file-level-plan.md](./phase-m2-runtime-projection-foundation-file-level-plan.md), [phase-m2-state-boot-shell-file-level-plan.md](./phase-m2-state-boot-shell-file-level-plan.md), [phase-m2-chat-and-visible-surfaces-file-level-plan.md](./phase-m2-chat-and-visible-surfaces-file-level-plan.md) |
+| `M3` | [phase-m3-memory-coordinator.yaml](./phase-m3-memory-coordinator.yaml) | [phase-m3-executor-runbook.md](./phase-m3-executor-runbook.md) | [phase-m3-object-model-and-coordinator-file-level-plan.md](./phase-m3-object-model-and-coordinator-file-level-plan.md), [phase-m3-policy-quality-and-recall-file-level-plan.md](./phase-m3-policy-quality-and-recall-file-level-plan.md), [phase-m3-frontend-reflection-and-tests-file-level-plan.md](./phase-m3-frontend-reflection-and-tests-file-level-plan.md) |
+| `M4` | [phase-m4-policy-harness-governance.yaml](./phase-m4-policy-harness-governance.yaml) | [phase-m4-executor-runbook.md](./phase-m4-executor-runbook.md) | [phase-m4-execution-and-report-contracts-file-level-plan.md](./phase-m4-execution-and-report-contracts-file-level-plan.md), [phase-m4-graders-compare-and-corpus-file-level-plan.md](./phase-m4-graders-compare-and-corpus-file-level-plan.md), [phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md](./phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md) |
+| `M5` | [phase-m5-self-evolution-and-strategy-promotion.yaml](./phase-m5-self-evolution-and-strategy-promotion.yaml) | [phase-m5-executor-runbook.md](./phase-m5-executor-runbook.md) | [phase-m5-trajectory-failure-and-reflection-file-level-plan.md](./phase-m5-trajectory-failure-and-reflection-file-level-plan.md), [phase-m5-candidate-registry-and-offline-eval-file-level-plan.md](./phase-m5-candidate-registry-and-offline-eval-file-level-plan.md), [phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md](./phase-m5-promotion-rollback-and-diagnostics-file-level-plan.md) |
+
+## 2. 执行者一页纸原则
+
+### 2.1 执行者只需要回答 3 个问题
+
+开工前，executor 必须能明确回答：
+
+1. 我现在处在哪个 phase？
+2. 这个 phase 当前唯一要完成的 slice 是什么？
+3. 这个 slice 的完成标志是什么？
+
+如果回答不了这 3 个问题，就不应开工。
+
+### 2.2 执行者的最小阅读路径
+
+对 executor 来说，文档读取顺序只能是：
+
+1. 本索引
+2. 当前 phase YAML
+3. 当前 phase runbook
+4. 当前 slice 对应的 file-level plan
+
+蓝图和子设计文档属于“查依据”层，不是“开工入口”层。  
+除非当前 slice 明确要求，executor 不应先去通读整套蓝图。
+
+### 2.3 执行者每次只允许一种思维模式
+
+1. `M0`：定真相，不做功能
+2. `M1`：拆后端，不重写前端
+3. `M2`：建前端投影，不扩 memory
+4. `M3`：收 memory，不碰治理发布
+5. `M4`：建 gate 和 governance，不做策略 promote
+6. `M5`：做 candidate / promotion / rollback，不回头重写基础骨架
+
+若某项工作同时跨越两种思维模式，默认说明 phase 边界已经被破坏，应先停下来复核。
+
+### 2.4 半成品预警信号
+
+出现以下任意 2 项，必须暂停并人工复核：
+
+1. 新旧路径同时存在，但没有明确退场计划
+2. contract 改了，但 UI、文档、脚本没有一起改
+3. 当前 phase 尚未退出，就提前做下一个 phase
+4. 为了推进进度，把 `partial` 写成 `canonical`
+5. 改动后只能说“结构更好了”，却说不清系统具体哪里更稳
+
+## 3. 总体执行顺序
 
 严格顺序如下，不允许跳 phase：
 
@@ -45,13 +107,13 @@
 5. `M4` 必须建立在 memory/policy trace 可采集的前提下。
 6. `M5` 必须建立在 harness compare 与 gate 已经具备裁决能力的前提下。
 
-## 3. 执行红线
+## 4. 执行红线
 
-### 3.1 禁止跳过
+### 4.1 禁止跳过
 
 禁止从 `M0` 直接做 `M2/M3/M4/M5`。
 
-### 3.2 禁止并行的高风险项
+### 4.2 禁止并行的高风险项
 
 以下项默认禁止并行：
 
@@ -63,7 +125,7 @@
 
 这些工作同时推进时，最容易造成 contract 漂移或双重真相。
 
-### 3.3 允许局部并行的安全项
+### 4.3 允许局部并行的安全项
 
 以下可在同一 phase 内适度并行：
 
@@ -73,7 +135,7 @@
 
 前提：写集合不冲突，且不违反上面的高风险禁并规则。
 
-## 4. 每个 Phase 的进入条件
+## 5. 每个 Phase 的进入条件
 
 ### M0 进入条件
 
@@ -112,7 +174,7 @@
 - compare / gate / recommendation 已具备基础能力
 - 已阅读 `phase-m5-executor-runbook.md`
 
-## 5. 每个 Phase 的退出条件
+## 6. 每个 Phase 的退出条件
 
 ### M0 退出条件
 
@@ -152,7 +214,7 @@
 2. reflection -> candidate -> compare -> promote/hold/reject 闭环成立
 3. rollback path 存在
 
-## 6. 推荐执行节奏
+## 7. 推荐执行节奏
 
 ### Wave 1
 
@@ -184,7 +246,7 @@
 - 做 `M5`
 - 只允许 candidate strategy 走 compare + gate，不允许直接 promote
 
-## 7. Executor 操作规则
+## 8. Executor 操作规则
 
 1. 每次只激活一个 `phase_status: active` 的 M-phase。
 2. 完成一个 phase 后，再切换到下一个。
@@ -193,8 +255,10 @@
    - acceptance 是否可运行或可人工核查
    - review checklist 是否逐项通过
 4. 若某 slice 需要改写 contract，必须回写 `M0` 产物和对应子设计文档。
+5. 不允许在同一轮执行里同时追两个 slice 的“部分完成”状态；要么完成当前 slice，要么显式标记 blocked。
+6. 若 executor 打开当前文档 5 分钟后仍说不清“下一步改哪个文件”，应退回到当前 slice 的 file-level plan，而不是继续扩读更多设计文档。
 
-## 8. 人工检查点
+## 9. 人工检查点
 
 建议的强制人工 checkpoint：
 
@@ -206,7 +270,7 @@
 6. `M4.5` 后：确认 baseline/candidate compare 可用
 7. `M5.5` 后：确认 promote/hold/reject 不会误升策略
 
-## 9. 失败回退策略
+## 10. 失败回退策略
 
 若某 phase 中途失败：
 
@@ -220,7 +284,7 @@
 - `M1` 失败时，禁止做 `M2`
 - `M4` 失败时，禁止做 `M5`
 
-## 10. 与现有文档的关系
+## 11. 与现有文档的关系
 
 本索引是执行层总导航，不替代：
 

@@ -30,6 +30,8 @@ pub mod manager;
 pub mod manifest;
 pub mod model;
 pub mod performance;
+pub mod profile;
+pub mod settings;
 
 #[cfg(test)]
 mod performance_tests;
@@ -42,6 +44,8 @@ pub use audio::{wav_decode, wav_encode};
 
 pub use config::{AudioChunk, GenerationParams, VoicePreset};
 pub use error::TtsError;
+pub use profile::{TtsProfile, TtsProfileBook, TtsTextPostprocess};
+pub use settings::{TtsQualityPreset, TtsSettings};
 #[allow(unused_imports)]
 pub use model::{ensure_models_cached, ModelPaths};
 #[allow(unused_imports)]

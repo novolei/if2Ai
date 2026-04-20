@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "m3"
   execution_runbook: "docs/exec-plans/active/phase-m4-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只做当前 slice 的治理链建设；M4 当前目标是 compare / blocker / gate / governance，不做 candidate promote。"
+    - "优先进入对应的 phase-m4-*.md file-level plan；若缺少治理规则源，先核对 docs/exec-plans/active/governance-gate-rules.md。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/backend-application-control-plane-refactor-design.md

@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "m0"
   execution_runbook: "docs/exec-plans/active/phase-m1-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只做当前 slice 的后端 service extraction；M1 不重写前端，不并行追多个未完成 slice。"
+    - "优先进入对应的 phase-m1-*.md file-level plan；若边界不清，再按需查 design docs。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/backend-application-control-plane-refactor-design.md

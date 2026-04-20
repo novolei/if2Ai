@@ -55,6 +55,12 @@ export interface WebAudioStreamPlayer {
    * 用于 `flushAndStop` 决定何时真正 close AudioContext，避免最后一句被静音。
    */
   getRemainingPlayoutSeconds: () => number
+  /**
+   * Phase TTS Settings UX — set the per-chunk `AudioBufferSourceNode.playbackRate`.
+   * Applied to every subsequently scheduled chunk; in-flight chunks continue
+   * at their previous rate.  `1.0` = original speed; clamped to `[0.5, 2.0]`.
+   */
+  setPlaybackRate: (rate: number) => void
 }
 
 const initialMetrics: WebAudioPlayerMetrics = {
@@ -100,6 +106,11 @@ export function useWebAudioStreamPlayer(): WebAudioStreamPlayer {
   const expectedStreamIdRef = useRef<string | null>(null)
   const unlistenRef = useRef<UnlistenFn | null>(null)
   const metricsRef = useRef<WebAudioPlayerMetrics>({ ...initialMetrics })
+  // Phase TTS Settings UX — playback speed multiplier (0.5-2.0).
+  // Mutated by `setPlaybackRate`; read on every chunk schedule.  Stored
+  // in a ref (not state) so reads inside `handleChunk` always see the
+  // latest value without re-binding the listener.
+  const playbackRateRef = useRef<number>(1.0)
 
   const [isPaused, setIsPaused] = useState(false)
   const [isActive, setIsActive] = useState(false)
@@ -142,10 +153,25 @@ export function useWebAudioStreamPlayer(): WebAudioStreamPlayer {
     source.buffer = buffer
     source.connect(ctx.destination)
 
+    // Phase TTS Settings UX — apply user-chosen playback speed.
+    // AudioBufferSourceNode.playbackRate is sample-rate-locked, so the
+    // effective duration shrinks to `buffer.duration / rate` when rate>1.
+    // We must use the same factor when advancing nextStartTime to keep
+    // gapless scheduling correct.
+    const rate = Math.min(Math.max(playbackRateRef.current, 0.5), 2.0)
+    if (rate !== 1.0) {
+      try {
+        source.playbackRate.value = rate
+      } catch {
+        /* ignore — older WebKit may reject the assignment */
+      }
+    }
+    const effectiveDuration = buffer.duration / rate
+
     const now = ctx.currentTime
     const startAt = Math.max(nextStartTimeRef.current, now + 0.005) // 5ms safety lead
     source.start(startAt)
-    nextStartTimeRef.current = startAt + buffer.duration
+    nextStartTimeRef.current = startAt + effectiveDuration
 
     if (firstAudioInstantRef.current === null) {
       firstAudioInstantRef.current = performance.now()
@@ -217,6 +243,12 @@ export function useWebAudioStreamPlayer(): WebAudioStreamPlayer {
     return Math.max(0, nextStartTimeRef.current - ctx.currentTime)
   }, [])
 
+  /** Phase TTS Settings UX — set the player's playback rate. */
+  const setPlaybackRate = useCallback((rate: number) => {
+    if (!Number.isFinite(rate)) return
+    playbackRateRef.current = Math.min(Math.max(rate, 0.5), 2.0)
+  }, [])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -234,5 +266,6 @@ export function useWebAudioStreamPlayer(): WebAudioStreamPlayer {
     metrics,
     setExpectedStreamId,
     getRemainingPlayoutSeconds,
+    setPlaybackRate,
   }
 }

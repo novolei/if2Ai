@@ -16,9 +16,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { ttsStreamStart, TTS_DEFAULT_PARAMS, type TtsGenerationParams } from '@/lib/tauri'
+import {
+  applyTtsPostprocess,
+  ttsStreamStart,
+  TTS_DEFAULT_PARAMS,
+  TTS_DEFAULT_SETTINGS,
+  type TtsGenerationParams,
+  type TtsProfile,
+} from '@/lib/tauri'
 import { useWebAudioStreamPlayer } from '@/modules/settings/pages/useWebAudioStreamPlayer'
 import { getAgentVoiceId, getAgentVoiceEnabled } from '@/modules/settings/pages/AgentVoicePicker'
+import { resolveActiveProfile } from './activeTtsProfile'
 import { sanitizeForTts, splitOnUnclosedFence } from './ttsSanitize'
 import { broadcastChange, useCrossWindowChange } from '@/lib/crossWindowSync'
 
@@ -43,14 +51,20 @@ export interface AgentVoiceBridge {
 export function useAgentVoiceBridge(generationParams?: Partial<TtsGenerationParams>): AgentVoiceBridge {
   const player = useWebAudioStreamPlayer()
   const [enabled, setEnabledState] = useState<boolean>(getAgentVoiceEnabled())
-  const [voiceId, setVoiceIdState] = useState<string | null>(getAgentVoiceId())
+  const [voiceId, setVoiceIdState] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [pending, setPending] = useState(0)
 
   // Refs 始终最新：彻底避免 stale closure
   const enabledRef = useRef(enabled)
-  const voiceIdRef = useRef(voiceId)
+  const voiceIdRef = useRef<string | null>(null)
   const playerRef = useRef(player)
+  // The active TTS profile resolved from `~/.if2ai/tts_profiles.json`.
+  // Drives both `voiceId` (sent to ttsStreamStart) and the per-sentence
+  // text postprocess.  Refreshed on mount and on cross-window events.
+  const activeProfileRef = useRef<TtsProfile | null>(null)
+  // generation params: start with TTS_DEFAULT_PARAMS + caller's overrides;
+  // overwritten by `applyActiveProfile` on mount / cross-window refresh.
   const generationRef = useRef<TtsGenerationParams>({
     ...TTS_DEFAULT_PARAMS,
     ...(generationParams ?? {}),
@@ -58,16 +72,60 @@ export function useAgentVoiceBridge(generationParams?: Partial<TtsGenerationPara
   })
 
   useEffect(() => { enabledRef.current = enabled }, [enabled])
-  useEffect(() => { voiceIdRef.current = voiceId }, [voiceId])
   useEffect(() => { playerRef.current = player }, [player])
 
-  // 跨窗口同步：Settings 在独立 Tauri 窗口，必须通过 Tauri events 才能通知主窗口
-  // localStorage 已经被 setter 写好了；这里只需更新 React state + ref
+  // Centralised loader: pulls the active profile from backend, threads
+  // its `voice_id` + derived params + playback_rate through all the
+  // refs that downstream synth uses.
+  const applyActiveProfile = useCallback(async () => {
+    const resolved = await resolveActiveProfile()
+    if (resolved) {
+      activeProfileRef.current = resolved.profile
+      const vid = resolved.profile.voice_id || getAgentVoiceId() // legacy fallback
+      voiceIdRef.current = vid
+      setVoiceIdState(vid)
+      generationRef.current = { ...resolved.params, ...(generationParams ?? {}) }
+      playerRef.current.setPlaybackRate(resolved.profile.playback_rate)
+    } else {
+      // No profiles → fall back to legacy voice picker so existing
+      // installs that haven't visited the new page yet still speak.
+      const legacy = getAgentVoiceId()
+      voiceIdRef.current = legacy
+      setVoiceIdState(legacy)
+      activeProfileRef.current = null
+      playerRef.current.setPlaybackRate(TTS_DEFAULT_SETTINGS.playback_rate)
+    }
+  }, [generationParams])
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        await applyActiveProfile()
+      } catch (err) {
+        if (alive) console.warn('[agent-voice] applyActiveProfile failed', err)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [applyActiveProfile])
+
+  // Cross-window: any change in profile book / active selection refreshes us.
+  useCrossWindowChange<{ id?: string | null }>('cross:tts-profiles-changed', () => {
+    void applyActiveProfile()
+  })
+  useCrossWindowChange<{ id?: string | null }>('cross:tts-active-profile-changed', () => {
+    void applyActiveProfile()
+  })
+
+  // Legacy AgentVoicePicker still around (Settings → TTS 测试) — keep
+  // listening so changes there are honoured when no profile is set.
   useCrossWindowChange<{ id: string | null }>('cross:agent-voice-changed', (payload) => {
+    if (activeProfileRef.current?.voice_id) return // profile takes precedence
     const id = payload?.id ?? getAgentVoiceId()
     setVoiceIdState(id)
     voiceIdRef.current = id
-    console.log('[agent-voice] cross-window: voiceId →', id)
   })
   useCrossWindowChange<{ enabled: boolean }>('cross:agent-voice-enabled', (payload) => {
     const v = payload?.enabled ?? getAgentVoiceEnabled()
@@ -172,11 +230,16 @@ export function useAgentVoiceBridge(generationParams?: Partial<TtsGenerationPara
 
   const synthOne = useCallback(async (sentence: string): Promise<void> => {
     // 句子级清洗：去除 emoji / Markdown / 链接等会让 TTS 念错的元素
-    const cleaned = sanitizeForTts(sentence)
-    if (!cleaned) {
+    const baseCleaned = sanitizeForTts(sentence)
+    if (!baseCleaned) {
       // 清洗后为空（比如整句都是 emoji 或代码片段）→ 静默跳过
       return
     }
+    // Apply the active profile's text postprocess (soften punctuation /
+    // trailing dots) — pure string transform so it's safe to call here
+    // every sentence rather than on the whole stream.
+    const profile = activeProfileRef.current
+    const cleaned = profile ? applyTtsPostprocess(profile, baseCleaned) : baseCleaned
     const vid = voiceIdRef.current
     if (!vid) {
       console.warn('[agent-voice] no voiceId, dropping:', cleaned.slice(0, 30))

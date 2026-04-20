@@ -378,10 +378,11 @@ pub use system_check::{
 };
 #[allow(unused_imports)]
 pub use tts::{
-    tts_cached_voice_preview, tts_delete_user_voice, tts_demo_audio, tts_health,
-    tts_list_voice_assets, tts_list_voices, tts_preview_voice, tts_rename_user_voice,
-    tts_split_text, tts_start_warmup, tts_stream_close, tts_stream_result, tts_stream_start,
-    tts_stream_status, tts_synthesize, tts_upload_user_voice, tts_voice_audio,
+    delete_tts_profile, get_tts_settings, list_tts_profiles, save_tts_profile,
+    set_default_tts_profile, set_tts_settings, tts_cached_voice_preview, tts_delete_user_voice,
+    tts_demo_audio, tts_health, tts_list_voice_assets, tts_list_voices, tts_preview_voice,
+    tts_rename_user_voice, tts_split_text, tts_start_warmup, tts_stream_close, tts_stream_result,
+    tts_stream_start, tts_stream_status, tts_synthesize, tts_upload_user_voice, tts_voice_audio,
     tts_warm_voice_preview, tts_warmup_status, ProviderHandle, ProviderState, TtsState,
 };
 

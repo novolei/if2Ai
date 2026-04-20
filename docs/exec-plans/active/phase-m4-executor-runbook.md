@@ -19,13 +19,29 @@
 
 ## 3. 读取顺序
 
-1. [phase-m4-policy-harness-governance.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-policy-harness-governance.yaml:1)
-2. [harness-v2-governance-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/harness-v2-governance-design.md:1)
-3. [backend-application-control-plane-refactor-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/backend-application-control-plane-refactor-design.md:1)
-4. [if2ai-worker-adoption-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-worker-adoption-design.md:1)
-5. [phase-m4-execution-and-report-contracts-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-execution-and-report-contracts-file-level-plan.md:1)
-6. [phase-m4-graders-compare-and-corpus-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-graders-compare-and-corpus-file-level-plan.md:1)
-7. [phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md:1)
+### 3.1 执行者最小必读
+
+执行者开工 `M4` 时，只要求先读下面 5 个入口：
+
+1. [phase-m-remediation-execution-index.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m-remediation-execution-index.md:1)
+2. [phase-m4-policy-harness-governance.yaml](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-policy-harness-governance.yaml:1)
+3. 本 runbook
+4. 当前 slice 对应的 file-level plan
+5. 当前 slice 明确引用的真实代码入口文件
+
+### 3.2 `M4` file-level plan 入口
+
+1. [phase-m4-execution-and-report-contracts-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-execution-and-report-contracts-file-level-plan.md:1)
+2. [phase-m4-graders-compare-and-corpus-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-graders-compare-and-corpus-file-level-plan.md:1)
+3. [phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/exec-plans/active/phase-m4-governance-surfaces-and-upgrade-gates-file-level-plan.md:1)
+
+### 3.3 设计依据按需查阅
+
+只有当当前 slice 需要核对治理口径或执行后端边界时，再回查以下设计文档：
+
+1. [harness-v2-governance-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/harness-v2-governance-design.md:1)
+2. [backend-application-control-plane-refactor-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/backend-application-control-plane-refactor-design.md:1)
+3. [if2ai-worker-adoption-design.md](/Users/ryanliu/Documents/IfAI/if2Ai/docs/staff-remediation/if2ai-worker-adoption-design.md:1)
 
 ## 4. 严格执行顺序
 

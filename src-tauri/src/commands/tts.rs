@@ -1281,3 +1281,90 @@ pub async fn tts_cached_voice_preview(
     // 2. Fallback：返回原始 prompt audio（等同 tts_voice_audio）
     tts_voice_audio(app, voice_id).await
 }
+
+// ── User-tunable TTS settings (Settings UI entry point) ─────────────────────
+
+/// `~/.if2ai/` resolver shared by `get_tts_settings` / `set_tts_settings`.
+/// Falls back to `.` when `dirs::home_dir()` is unavailable so the
+/// command always returns a usable path rather than an error.
+fn if2ai_home() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".if2ai")
+}
+
+/// Read the persisted TTS settings (`~/.if2ai/tts.toml`).
+///
+/// Always succeeds — a missing or malformed file is treated as
+/// "user has never opened the page" and the default settings are
+/// returned.
+#[tauri::command]
+pub async fn get_tts_settings() -> Result<crate::modules::tts::TtsSettings, String> {
+    Ok(crate::modules::tts::TtsSettings::load(&if2ai_home()))
+}
+
+/// Persist user-edited TTS settings to `~/.if2ai/tts.toml`.
+///
+/// Out-of-range values are clamped before writing.  Returns an error
+/// only on actual disk failure (permissions, full filesystem, …).
+#[tauri::command]
+pub async fn set_tts_settings(
+    settings: crate::modules::tts::TtsSettings,
+) -> Result<(), String> {
+    settings
+        .save(&if2ai_home())
+        .map_err(|e| format!("failed to write tts.toml: {e}"))
+}
+
+// ── TTS Profiles (named voice + settings recipes) ─────────────────────────
+
+/// Read the entire profile book.  On first call creates and seeds
+/// `~/.if2ai/tts_profiles.json` with 6 builtin profiles.
+#[tauri::command]
+pub async fn list_tts_profiles() -> Result<crate::modules::tts::TtsProfileBook, String> {
+    Ok(crate::modules::tts::TtsProfileBook::load(&if2ai_home()))
+}
+
+/// Insert or update a single profile (matched by `id`).  Builtin
+/// profiles are partially protected: their `id` and `is_builtin` flag
+/// stay frozen, but `name` / `voice_id` / `settings` / `postprocess`
+/// may be customised.  Returns the resulting profile.
+#[tauri::command]
+pub async fn save_tts_profile(
+    profile: crate::modules::tts::TtsProfile,
+) -> Result<crate::modules::tts::TtsProfile, String> {
+    let home = if2ai_home();
+    let mut book = crate::modules::tts::TtsProfileBook::load(&home);
+    let saved = book.upsert(profile);
+    book.save(&home)
+        .map_err(|e| format!("failed to write tts_profiles.json: {e}"))?;
+    Ok(saved)
+}
+
+/// Delete a user-created profile.  Returns an error if `id` references
+/// a builtin (which cannot be deleted).
+#[tauri::command]
+pub async fn delete_tts_profile(id: String) -> Result<(), String> {
+    let home = if2ai_home();
+    let mut book = crate::modules::tts::TtsProfileBook::load(&home);
+    if !book.delete(&id) {
+        return Err(format!(
+            "profile '{id}' does not exist or is a builtin (use duplicate to customise)"
+        ));
+    }
+    book.save(&home)
+        .map_err(|e| format!("failed to write tts_profiles.json: {e}"))
+}
+
+/// Set the active default profile id.  Returns an error if `id` is
+/// unknown.
+#[tauri::command]
+pub async fn set_default_tts_profile(id: String) -> Result<(), String> {
+    let home = if2ai_home();
+    let mut book = crate::modules::tts::TtsProfileBook::load(&home);
+    if !book.set_default(&id) {
+        return Err(format!("profile '{id}' does not exist"));
+    }
+    book.save(&home)
+        .map_err(|e| format!("failed to write tts_profiles.json: {e}"))
+}

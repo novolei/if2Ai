@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "m1"
   execution_runbook: "docs/exec-plans/active/phase-m2-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只做当前 slice 的前端 projection；M2 当前目标是 thin bridge + translator/store/shell，不扩 memory。"
+    - "优先进入对应的 phase-m2-*.md file-level plan；若 5 分钟内找不到改动落点，停止扩读蓝图并回到 file-level plan。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/runtime-contracts-and-event-projection-design.md

@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "m2"
   execution_runbook: "docs/exec-plans/active/phase-m3-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只做当前 slice 的 memory 平台化；M3 当前只收口 object model / coordinator / write-recall-quality，不推进治理发布。"
+    - "优先进入对应的 phase-m3-*.md file-level plan；若发现同时碰到 M4/M5 语义，先停下来。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/memory-self-evolution-design.md

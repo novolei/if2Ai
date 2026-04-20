@@ -39,6 +39,9 @@ export type CrossWindowChannel =
   | 'cross:agent-voice-enabled'
   | 'cross:stt-settings-changed'
   | 'cross:tts-voices-changed'
+  | 'cross:tts-settings-changed'
+  | 'cross:tts-profiles-changed'
+  | 'cross:tts-active-profile-changed'
   | 'cross:onboarding-reset'
 
 /**

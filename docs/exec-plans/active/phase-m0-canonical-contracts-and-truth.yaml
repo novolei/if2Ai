@@ -11,6 +11,10 @@ meta:
   owner: "@executor"
   depends_on_phase: "9a"
   execution_runbook: "docs/exec-plans/active/phase-m0-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "只看当前 slice；M0 当前只做真相、contracts、责任盘点，不做功能重构。"
+    - "按需进入 phase-m0-*.md file-level plans；若 5 分钟内说不清改哪个文件，回到对应 file-level plan。"
   design_docs:
     - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
     - docs/staff-remediation/canonical-domain-model-and-workflow-truth-design.md
