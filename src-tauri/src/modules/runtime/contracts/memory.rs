@@ -139,9 +139,61 @@ pub struct MemoryProjection {
     pub correlation: CorrelationIds,
 }
 
+/// Lightweight per-recall memory item projection emitted on the
+/// agent stream `stream_complete` event.
+///
+/// Distinct from [`MemoryProjection`] in that it carries only the
+/// fields the chat-side `MemoryChip` needs (id, content, scope,
+/// optional score / timestamp). The richer [`MemoryProjection`]
+/// stays for the dedicated memory browser surface.
+///
+/// Defined here (instead of inside `application::memory_injection_service`)
+/// so [`crate::modules::runtime::stream_emitter`] does not need to
+/// reach back into the application layer — the runtime layer must
+/// not depend on the application layer.
+//
+// `Eq` intentionally omitted: `relevance_score: Option<f32>` does
+// not satisfy `Eq`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryItemProjection {
+    /// Stable id of the memory item.
+    pub id: String,
+    /// Item content as surfaced to the model and the UI.
+    pub content: String,
+    /// One of `"global" | "project" | "session"`.
+    pub scope: String,
+    /// Optional retrieval relevance score (0.0..=1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance_score: Option<f32>,
+    /// RFC3339 timestamp the entry was created at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_at: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn item_projection_round_trips() {
+        let p = MemoryItemProjection {
+            id: "m-3".into(),
+            content: "hello".into(),
+            scope: "session".into(),
+            relevance_score: Some(0.7),
+            stored_at: Some("2026-04-20T00:00:00+00:00".into()),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        let back: MemoryItemProjection = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, back);
+        // Wire field names match the legacy
+        // commands/agent.rs::MemoryContextItemPayload shape so the
+        // frontend MemoryChip stays compatible.
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["id"], "m-3");
+        assert_eq!(v["scope"], "session");
+        assert!(v["relevance_score"].is_number());
+    }
 
     #[test]
     fn projection_round_trips() {

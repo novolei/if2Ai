@@ -1,0 +1,202 @@
+//! Turn service — first orchestration seam (Phase M1.1, refined in
+//! M1.4).
+//!
+//! `TurnService` is the **only** entry point that the IPC adapter
+//! [`crate::commands::agent::run_agent_turn`] /
+//! [`crate::commands::agent::start_agent_stream`] uses to compose
+//! provider resolution + memory injection + prompt planning before
+//! handing off to the existing
+//! [`crate::modules::runtime::conversation::ConversationRuntime`].
+//!
+//! What this service deliberately does NOT do in M1 (yet):
+//!
+//! - It does NOT own session restoration / `AppSession` storage.
+//! - It does NOT own runtime construction / tool loop.
+//! - It does NOT own stream emission (M1.5
+//!   [`crate::modules::runtime::stream_emitter`]).
+//! - It does NOT swallow `AppState` — the IPC adapter passes only
+//!   the dependencies the service genuinely needs.
+//! - It does NOT merge streaming and non-streaming code paths.
+//!
+//! Reference:
+//! - [`docs/exec-plans/active/phase-m1-initial-slices-file-level-plan.md`](../../../../../docs/exec-plans/active/phase-m1-initial-slices-file-level-plan.md)
+//! - [`docs/exec-plans/active/phase-m1-memory-and-stream-file-level-plan.md`](../../../../../docs/exec-plans/active/phase-m1-memory-and-stream-file-level-plan.md)
+//!   §5.2 (memory injection wiring through the service).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::modules::memory::retrieval::ActiveRetrievalManager;
+use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
+use crate::modules::tools::ToolRegistry;
+
+use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
+
+use super::memory_injection_service::{
+    prepare_memory_injection, MemoryInjectionArtifacts, MemoryInjectionDeps,
+    MemoryInjectionRequest, MemoryItemProjection,
+};
+use super::prompt_planner::{
+    build_prompt_plan, BuildPromptPlanRequest, PromptPlanResult, PromptPlannerError,
+};
+use super::provider_service::{resolve_chat_runtime_provider, RuntimeProviderResolution};
+use super::request_intelligence_service::{classify, RequestIntelligenceInput};
+
+/// Long-lived dependencies the service holds on construction.
+pub struct TurnServiceDeps {
+    pub tool_registry: Arc<ToolRegistry>,
+    pub pinned_store: Arc<dyn PinnedStore>,
+    pub memory_provider: SharedMemoryProvider,
+    pub active_retrieval_manager: Option<Arc<ActiveRetrievalManager>>,
+}
+
+impl TurnServiceDeps {
+    /// Build a [`MemoryInjectionDeps`] view from the same long-lived
+    /// handles. The memory injection service owns its own deps
+    /// struct so it stays usable independently of `TurnService`.
+    fn memory_injection_deps(&self) -> MemoryInjectionDeps {
+        MemoryInjectionDeps {
+            pinned_store: self.pinned_store.clone(),
+            memory_provider: self.memory_provider.clone(),
+            active_retrieval_manager: self.active_retrieval_manager.clone(),
+        }
+    }
+}
+
+/// First-cut application service for one chat turn.
+pub struct TurnService {
+    deps: TurnServiceDeps,
+}
+
+impl TurnService {
+    /// Construct a service from its long-lived dependencies.
+    #[must_use]
+    pub fn new(deps: TurnServiceDeps) -> Self {
+        Self { deps }
+    }
+
+    /// Borrow the service-owned tool registry. The IPC adapter
+    /// continues to need this for tool-loop wiring during the M1
+    /// transition.
+    #[must_use]
+    pub fn tool_registry(&self) -> Arc<ToolRegistry> {
+        self.deps.tool_registry.clone()
+    }
+}
+
+/// Per-turn input bundle for [`TurnService::prepare_chat_inputs`].
+pub struct PrepareChatInputsRequest {
+    /// Working directory the turn runs against.
+    pub workdir: PathBuf,
+    /// Calendar date string (`%Y-%m-%d`) used by the prompt planner.
+    pub current_date: String,
+    /// `std::env::consts::OS`.
+    pub os_name: String,
+    /// `std::env::consts::FAMILY`.
+    pub os_family: String,
+    /// Optional session id, project id, workdir path string for
+    /// memory scope resolution.
+    pub session_id: Option<String>,
+    pub project_id: Option<String>,
+    pub workdir_str: Option<String>,
+    /// User message for this turn — used as the memory retrieval
+    /// query.
+    pub user_message: String,
+    /// Caller tag for tracing (`"run_agent_turn"` /
+    /// `"start_agent_stream"`).
+    pub caller: &'static str,
+}
+
+/// Composite output produced by [`TurnService::prepare_chat_inputs`].
+pub struct PreparedChatInputs {
+    /// Resolved provider client + model + timeout.
+    pub provider: RuntimeProviderResolution,
+    /// Structured prompt plan + rendered text.
+    pub prompt: PromptPlanResult,
+    /// Frontend memory items, ready to embed in
+    /// `StreamTokenPayload.memory_context` on `stream_complete`.
+    pub memory_items: Vec<MemoryItemProjection>,
+    /// Full memory injection artefacts in case the IPC adapter
+    /// needs the typed sections (e.g. for harness traces).
+    pub memory_injection: MemoryInjectionArtifacts,
+    /// Phase M1.6 — canonical request-intelligence decision for
+    /// this turn. Currently advisory: `commands/agent.rs` logs it
+    /// but the existing single execution path keeps running.
+    /// M2 frontend projection will surface this to the chat-side
+    /// explainer chip; M4 governance will consume it as a gate
+    /// input.
+    pub execution_mode_decision: ExecutionModeDecision,
+}
+
+/// Errors surfaced by [`TurnService`].
+#[derive(Debug, thiserror::Error)]
+pub enum TurnServiceError {
+    #[error("{0}")]
+    Provider(String),
+    #[error(transparent)]
+    Prompt(#[from] PromptPlannerError),
+}
+
+impl TurnService {
+    /// Resolve provider + memory injection + prompt plan for one
+    /// chat turn.
+    ///
+    /// Provider resolution happens before memory / prompt work so a
+    /// misconfigured provider fails fast (preserves the legacy
+    /// ordering in `commands/agent.rs`).
+    pub async fn prepare_chat_inputs(
+        &self,
+        request: PrepareChatInputsRequest,
+    ) -> Result<PreparedChatInputs, TurnServiceError> {
+        let provider = resolve_chat_runtime_provider(&request.workdir)
+            .await
+            .map_err(TurnServiceError::Provider)?;
+
+        // M1.6 — request intelligence runs first so future slices
+        // can short-circuit memory + prompt work for
+        // `specialized_surface` / denied modes. Today the decision
+        // is advisory only.
+        let intelligence = classify(RequestIntelligenceInput {
+            user_message: request.user_message.clone(),
+            session_id: request.session_id.clone(),
+            project_id: request.project_id.clone(),
+            workdir: Some(request.workdir.clone()),
+        });
+
+        // M1.4 — memory injection flows through the dedicated
+        // service, not through the prompt planner internals.
+        let memory_injection = prepare_memory_injection(
+            &self.deps.memory_injection_deps(),
+            MemoryInjectionRequest {
+                session_id: request.session_id.clone(),
+                project_id: request.project_id.clone(),
+                workdir: request.workdir_str.clone(),
+                user_message: request.user_message.clone(),
+                caller: request.caller,
+            },
+        )
+        .await;
+        let memory_items = memory_injection.memory_items.clone();
+
+        let registered_tool_names = self.deps.tool_registry.tool_names();
+
+        let prompt = build_prompt_plan(BuildPromptPlanRequest {
+            workdir: request.workdir,
+            current_date: request.current_date,
+            os_name: request.os_name,
+            os_family: request.os_family,
+            registered_tool_names,
+            memory_injection: Some(memory_injection.clone()),
+            caller: request.caller,
+        })
+        .await?;
+
+        Ok(PreparedChatInputs {
+            provider,
+            prompt,
+            memory_items,
+            memory_injection,
+            execution_mode_decision: intelligence.decision,
+        })
+    }
+}

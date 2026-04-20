@@ -27,6 +27,7 @@ pub mod remote;
 pub mod sandbox;
 pub mod session;
 pub mod snapshot;
+pub mod stream_emitter;
 pub mod usage;
 
 pub use config::ProviderTransportConfig;

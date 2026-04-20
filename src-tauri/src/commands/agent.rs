@@ -14,23 +14,22 @@ use tokio::time::timeout;
 
 use crate::commands::stream_outcome::{ConversationTruth, ExecutionTruth, TaskOutcomeResolver};
 use crate::commands::AppState;
-use crate::modules::api::providers::claw_provider::AuthSource;
-use crate::modules::api::providers::claw_provider::ClawApiClient;
-use crate::modules::api::providers::openai_compat::{OpenAiCompatClient, OpenAiCompatConfig};
 use crate::modules::api::{
     InputContentBlock, InputMessage, MessageRequest, ProviderClient, ToolDefinition,
+};
+use crate::modules::application::{
+    MemoryItemProjection, PrepareChatInputsRequest, RuntimeProviderResolution, TurnService,
+    TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
 use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::learning::trajectory::TrajectoryManager;
-use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
 };
-use crate::modules::runtime::config::{ConfigLoader, ProviderTransportConfig};
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
@@ -41,141 +40,33 @@ use crate::modules::runtime::permissions::{
 };
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
+use crate::modules::runtime::stream_emitter::{
+    AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
+};
 use crate::modules::session::Session as AppSession;
 
-/// Phase 8A.12 (T-F5) — pre-fetch the [`crate::modules::memory::MemoryInjection`]
-/// payload via [`crate::modules::memory::build_memory_injection`] and append
-/// its rendered pinned + compiled + rules markdown sections onto an
-/// already-built system-prompt vector.
+/// Phase M1.1 — construct a per-call [`TurnService`] from the
+/// already-shared `AppState` handles. Held as a small helper so the
+/// IPC adapter does not have to repeat the dependency wiring at
+/// every call site.
 ///
-/// Equivalent to the synchronous
-/// [`crate::modules::runtime::prompt::SystemPromptBuilder::with_memory_injection`]
-/// flow but compatible with `load_system_prompt`'s `Vec<String>` return type
-/// (the builder is consumed by `load_system_prompt` before we get here).
-///
-/// Failures (PinnedStore errors, missing config) are logged at WARN and
-/// the system prompt is left untouched — never aborts the turn.
-async fn append_memory_injection_sections(
-    state: &AppState,
-    session_id: Option<&str>,
-    project_id: Option<&str>,
-    workdir: Option<&str>,
-    system_prompt: &mut Vec<String>,
-    caller: &'static str,
-) {
-    let memory_cfg = crate::modules::runtime::config::current().memory();
-    if !memory_cfg.inject_to_prompt() {
-        return;
-    }
-    let max_tokens = memory_cfg.max_inject_tokens() as usize;
-
-    let scope = crate::modules::memory::scope::MemoryScopeResolver::resolve(
-        session_id, project_id, workdir,
-    );
-
-    let memory_root = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("memory");
-    let compiled_path = memory_root.join("memory.md");
-
-    let is_zh = crate::modules::runtime::locale::is_zh();
-
-    match crate::modules::memory::build_memory_injection(
-        state.pinned_store.clone(),
-        &scope,
-        &compiled_path,
-        is_zh,
-        max_tokens,
-    )
-    .await
-    {
-        Ok(injection) => {
-            if let Some(section) = injection.pinned_section {
-                system_prompt.push(section);
-            }
-            if let Some(section) = injection.compiled_section {
-                system_prompt.push(section);
-            }
-            system_prompt.push(injection.rules_section);
-            tracing::debug!(
-                caller = caller,
-                tokens_estimate = injection.total_tokens_estimate,
-                "[agent] memory injection appended to system prompt"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                caller = caller,
-                error = %e,
-                "[agent] memory injection failed; continuing without"
-            );
-        }
-    }
+/// Note: [`TurnService`] is intentionally cheap to construct
+/// (`Arc` clones only); it does not need to live on `AppState`
+/// during the M1 transition.
+fn make_turn_service(state: &AppState) -> TurnService {
+    TurnService::new(TurnServiceDeps {
+        tool_registry: state.tool_registry.clone(),
+        pinned_store: state.pinned_store.clone(),
+        memory_provider: state.memory_provider.clone(),
+        active_retrieval_manager: state.active_retrieval_manager.clone(),
+    })
 }
 
-/// Token-budget breakdown emitted alongside the final `stream_complete` event
-/// so the frontend `ContextBar` can render usage without an extra IPC round-trip.
-///
-/// All values are in tokens. Mirrors the TypeScript `ContextBudgetUsage`
-/// interface in `src/lib/tauri.ts`.
-#[derive(serde::Serialize, Clone, Debug)]
-pub(crate) struct ContextBudgetUsagePayload {
-    pub(crate) total_budget: usize,
-    pub(crate) system_tokens: usize,
-    pub(crate) history_tokens: usize,
-    pub(crate) memory_tokens: usize,
-    pub(crate) output_reserve: usize,
-    pub(crate) remaining: usize,
-}
-
-/// Single recalled memory item surfaced to the frontend `MemoryChip` /
-/// `MemoryEvidencePanel` components. Mirrors the TypeScript `MemoryContextItem`.
-#[derive(serde::Serialize, Clone, Debug)]
-pub(crate) struct MemoryContextItemPayload {
-    pub(crate) id: String,
-    pub(crate) content: String,
-    /// One of `"global" | "project" | "session"`.
-    pub(crate) scope: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) relevance_score: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stored_at: Option<String>,
-}
-
-/// Event payload for streaming token updates
-#[derive(serde::Serialize, Clone)]
-struct StreamTokenPayload {
-    stream_id: String,
-    text: Option<String>,
-    thinking: Option<String>,
-    event_type: String,
-    // tool_call_update fields
-    tool_call_id: Option<String>,
-    tool_name: Option<String>,
-    tool_status: Option<String>, // "queued" | "running" | "completed" | "error"
-    tool_args: Option<serde_json::Value>,
-    tool_result: Option<String>,
-    tool_duration_ms: Option<u64>,
-    effective_workdir: Option<String>,
-    policy_decision: Option<String>,
-    evidence_id: Option<String>,
-    request_id: Option<String>,
-    task_outcome: Option<String>,
-    degraded_reason: Option<String>,
-    resume_available: Option<bool>,
-    resume_cursor: Option<String>,
-    /// Token-budget breakdown for this turn — populated on `stream_complete`
-    /// so the frontend `ContextBar` can render usage live.  Never present on
-    /// per-token `text_delta` events to avoid serialisation overhead.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context_budget_usage: Option<ContextBudgetUsagePayload>,
-    /// Memory items recalled for this turn — populated on `stream_complete`
-    /// alongside `context_budget_usage`.  Drives the `MemoryChip` /
-    /// `MemoryEvidencePanel` UI.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_context: Option<Vec<MemoryContextItemPayload>>,
-}
+// `ContextBudgetUsagePayload` / `StreamTokenPayload` moved to
+// [`crate::modules::runtime::stream_emitter`] in Phase M1.5.
+// Memory item projection moved to
+// [`crate::modules::application::memory_injection_service::MemoryItemProjection`]
+// in Phase M1.4.
 
 #[derive(Debug, Clone)]
 struct PersistedTurnOutcome {
@@ -212,68 +103,11 @@ pub struct RunAgentTurnResponse {
     pub thinking: Option<String>,
 }
 
-/// Create a runtime provider client from if2AI local configuration.
-///
-/// This path intentionally does not read `~/.claude/settings.json`.
-fn load_provider_transport_policy(workdir: &PathBuf) -> ProviderTransportConfig {
-    match ConfigLoader::default_for(workdir).load() {
-        Ok(config) => config.control_plane().provider_transport().clone(),
-        Err(error) => {
-            tracing::warn!(
-                "[agent] failed to load transport policy from runtime config, fallback to defaults: workdir={}, error={}",
-                workdir.display(),
-                error
-            );
-            ProviderTransportConfig::default()
-        }
-    }
-}
-
-async fn create_runtime_provider_client_from_config(
-    workdir: &PathBuf,
-) -> Result<(ProviderClient, String, Duration), String> {
-    let resolved =
-        crate::modules::config::model_resolver::ModelResolver::resolve_role_model("chat")
-            .await
-            .map_err(|e| format!("Failed to resolve configured chat model: {e}"))?;
-
-    let policy = load_provider_transport_policy(workdir);
-    let request_timeout = Duration::from_millis(policy.overall_timeout_ms());
-
-    let provider_client = match resolved.api.as_str() {
-        "anthropic-messages" => {
-            // Anthropic always requires an API key
-            let api_key = resolved.api_key.filter(|k| !k.is_empty()).ok_or_else(|| {
-                "Anthropic provider is missing API key. Please complete provider setup first."
-                    .to_string()
-            })?;
-            let client = ClawApiClient::from_auth(AuthSource::ApiKey(api_key))
-                .with_base_url(resolved.base_url)
-                .with_transport_policy(&policy);
-            ProviderClient::ClawApi(client)
-        }
-        "openai-completions" => {
-            // OpenAI-compatible providers: api_key may be empty for local providers
-            // (e.g. Ollama) — pass an empty string and let the client omit the header.
-            let api_key = resolved.api_key.unwrap_or_default();
-            let client = OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai())
-                .with_base_url(resolved.base_url)
-                .with_retry_policy(
-                    policy.max_retries(),
-                    Duration::from_millis(policy.initial_backoff_ms()),
-                    Duration::from_millis(policy.max_backoff_ms()),
-                );
-            ProviderClient::OpenAi(client)
-        }
-        other => {
-            return Err(format!(
-                "Configured chat model protocol '{other}' is not supported."
-            ));
-        }
-    };
-
-    Ok((provider_client, resolved.model_id, request_timeout))
-}
+// Provider runtime resolution moved to
+// `crate::modules::application::provider_service` in Phase M1.2.
+// Call sites below now go through `TurnService::prepare_chat_inputs`,
+// which delegates to
+// [`crate::modules::application::provider_service::resolve_chat_runtime_provider`].
 
 fn flush_assistant_timeline_segment(
     timeline_messages: &mut Vec<crate::modules::runtime::session::ConversationMessage>,
@@ -801,96 +635,11 @@ fn extract_skill_proposal_name(text: &str) -> Option<String> {
 }
 // harness symbol marker: skill_proposal|draft|approval
 
-/// Result of pre-LLM memory retrieval — both the formatted prompt fragment
-/// and the structured items used for `MemoryChip` / `MemoryEvidencePanel`.
-struct RetrievedMemoryContext {
-    /// Plain-text fragment to inject into the system prompt.  Empty when no
-    /// memories were recalled (or retrieval failed).
-    prompt_fragment: String,
-    /// Structured payload mirrored over IPC to the frontend.  Empty when no
-    /// memories were recalled.
-    items: Vec<MemoryContextItemPayload>,
-}
-
-/// Map a backend `MemoryEntry` (+ scored fusion result) to the IPC payload
-/// expected by the frontend.  Scope is derived from the entry's optional
-/// `session_id` / `project_id` bindings; entries without either are treated
-/// as `"global"`.
-fn map_scored_memory_to_payload(
-    sm: &crate::modules::memory::retrieval::ScoredMemory,
-) -> MemoryContextItemPayload {
-    let scope = if sm.entry.session_id.is_some() {
-        "session"
-    } else if sm.entry.project_id.is_some() {
-        "project"
-    } else {
-        "global"
-    };
-    MemoryContextItemPayload {
-        id: sm.entry.key.clone(),
-        content: sm.entry.content.clone(),
-        scope: scope.to_string(),
-        relevance_score: Some(sm.score),
-        stored_at: Some(sm.entry.created_at.to_rfc3339()),
-    }
-}
-
-/// Retrieve relevant memories and format them as context for the LLM.
-///
-/// Uses the `AppState`-level `ActiveRetrievalManager` when available to avoid
-/// re-allocating config on every turn. Falls back to a temporary manager when
-/// the AppState field is `None`.
-///
-/// Returns an empty `RetrievedMemoryContext` on any error so that retrieval
-/// failures never block the main agent loop.
-async fn retrieve_memory_context(state: &AppState, user_message: &str) -> RetrievedMemoryContext {
-    let result = if let Some(mgr) = &state.active_retrieval_manager {
-        mgr.retrieve(user_message, &*state.memory_provider).await
-    } else {
-        ActiveRetrievalManager::with_defaults()
-            .retrieve(user_message, &*state.memory_provider)
-            .await
-    };
-
-    let scored = match result {
-        Ok(scored) => scored,
-        Err(e) => {
-            tracing::warn!(
-                "[retrieve_memory_context] Retrieval failed, proceeding without memory context: {e}"
-            );
-            return RetrievedMemoryContext {
-                prompt_fragment: String::new(),
-                items: Vec::new(),
-            };
-        }
-    };
-
-    if scored.is_empty() {
-        return RetrievedMemoryContext {
-            prompt_fragment: String::new(),
-            items: Vec::new(),
-        };
-    }
-
-    // Build prompt fragment (matches the previous `retrieve_as_context` format).
-    let mut prompt_fragment = String::from("# Relevant Memories\n\n");
-    for sm in &scored {
-        prompt_fragment.push_str(&format!(
-            "- [{}] (score: {:.3}): {}\n",
-            sm.entry.category.as_str(),
-            sm.score,
-            sm.entry.content
-        ));
-    }
-
-    let items: Vec<MemoryContextItemPayload> =
-        scored.iter().map(map_scored_memory_to_payload).collect();
-
-    RetrievedMemoryContext {
-        prompt_fragment,
-        items,
-    }
-}
+// `RetrievedMemoryContext` / `map_scored_memory_to_payload` /
+// `retrieve_memory_context` moved to
+// [`crate::modules::application::memory_injection_service`] in
+// Phase M1.4. Call sites below now resolve memory through the
+// `TurnService` seam.
 
 /// Record the conversation as a trajectory for future RL training.
 ///
@@ -995,18 +744,57 @@ pub async fn run_agent_turn(
     // Convert application session to runtime session
     let runtime_session = app_session_to_runtime(&app_session);
 
-    // Create real API client from if2AI local configuration
-    let (provider_client, model, request_timeout) =
-        match create_runtime_provider_client_from_config(&execution_context.workdir).await {
-            Ok((client, model, timeout)) => {
-                tracing::info!("[run_agent_turn] API client created, model: {}", model);
-                (client, model, timeout)
+    // Phase M1.4 — memory retrieval + injection now flow through
+    // `TurnService::prepare_chat_inputs` (which delegates to
+    // `application::memory_injection_service`). This single seam
+    // produces the provider, the prompt plan, and the per-turn
+    // memory items in one await.
+    let turn_service = make_turn_service(&state);
+    let project_id_opt: Option<String> = if execution_context.project_id.is_empty() {
+        None
+    } else {
+        Some(execution_context.project_id.clone())
+    };
+    let prepared = turn_service
+        .prepare_chat_inputs(PrepareChatInputsRequest {
+            workdir: execution_context.workdir.clone(),
+            current_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+            os_name: std::env::consts::OS.to_string(),
+            os_family: std::env::consts::FAMILY.to_string(),
+            session_id: Some(execution_context.session_id.clone()),
+            project_id: project_id_opt.clone(),
+            workdir_str: execution_context.workdir.to_str().map(str::to_string),
+            user_message: user_message.clone(),
+            caller: "run_agent_turn",
+        })
+        .await
+        .map_err(|err| match err {
+            TurnServiceError::Provider(msg) => {
+                tracing::error!("[run_agent_turn] Failed to create API client: {}", msg);
+                format!("Failed to connect to AI service: {msg}")
             }
-            Err(e) => {
-                tracing::error!("[run_agent_turn] Failed to create API client: {}", e);
-                return Err(format!("Failed to connect to AI service: {e}"));
+            TurnServiceError::Prompt(p) => {
+                tracing::error!("[run_agent_turn] Prompt planning failed: {}", p);
+                p.to_string()
             }
-        };
+        })?;
+    // Phase M1.6 — log the request-intelligence decision so harness
+    // / operators can observe routing today even though the existing
+    // single execution path keeps running.
+    tracing::info!(
+        execution_mode = ?prepared.execution_mode_decision.execution_mode,
+        risk_level = ?prepared.execution_mode_decision.risk_level,
+        complexity_level = ?prepared.execution_mode_decision.complexity_level,
+        policy_version = %prepared.execution_mode_decision.classifier_policy_version,
+        rules = ?prepared.execution_mode_decision.classifier_matched_rule_ids,
+        "[run_agent_turn] request_intelligence decision (advisory)"
+    );
+    let RuntimeProviderResolution {
+        provider_client,
+        model,
+        request_timeout,
+    } = prepared.provider;
+    tracing::info!("[run_agent_turn] API client created, model: {}", model);
     let api_client = RealApiClient::new(
         provider_client,
         model,
@@ -1025,75 +813,18 @@ pub async fn run_agent_turn(
     let tool_executor =
         ToolRegistryExecutor::new_with_context(state.tool_registry.clone(), execution_context);
 
-    // Build system prompt using SystemPromptBuilder with session workdir
-    let mut system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
-        &tool_executor.execution_context.workdir,
-        chrono::Local::now().format("%Y-%m-%d").to_string(),
-        std::env::consts::OS,
-        std::env::consts::FAMILY,
-    ) {
-        Ok(prompt_lines) => prompt_lines,
-        Err(e) => {
-            tracing::warn!(
-                "[run_agent_turn] Failed to build system prompt: {}, using fallback",
-                e
-            );
-            vec![crate::modules::runtime::prompt::SystemPromptBuilder::new().render()]
-        }
-    };
-
-    // Phase 7C, slice 7C.4 — inject web-tool routing guide (`web_search` →
-    // `web_fetch` → `browser` escalation order) when at least two of those
-    // tools are registered.  Pushed before the memory sections so it sits
-    // higher in the prompt (closer to the static intro) and isn't squeezed
-    // out by long memory blocks.
-    {
-        let registered_names = state.tool_registry.tool_names();
-        if let Some(guide) =
-            crate::modules::runtime::prompt_tools_guide::web_tools_routing_block(&registered_names)
-        {
-            system_prompt.push(guide);
-        }
-    }
-
-    // Phase 8A.12 (T-F5) — append pinned + compiled + rules memory sections.
-    // `SystemPromptBuilder::build` is synchronous (v2 §0.5 Δ-7), so we
-    // pre-fetch the [`MemoryInjection`] payload here and push the rendered
-    // markdown sections directly onto the prompt vec — equivalent to the
-    // builder's `with_memory_injection` flow but compatible with the
-    // already-built `Vec<String>` returned by `load_system_prompt`.
-    {
-        let exec_ctx = &tool_executor.execution_context;
-        append_memory_injection_sections(
-            &state,
-            Some(exec_ctx.session_id.as_str()),
-            if exec_ctx.project_id.is_empty() {
-                None
-            } else {
-                Some(exec_ctx.project_id.as_str())
-            },
-            exec_ctx.workdir.to_str(),
-            &mut system_prompt,
-            "run_agent_turn",
-        )
-        .await;
-    }
-
-    // Pre-LLM-call memory retrieval: classify intent and fetch relevant memories.
-    // The retrieved items are also surfaced to the frontend on `stream_complete`
-    // (run_agent_turn does not stream, but the data is logged for parity).
-    let retrieved_memory = retrieve_memory_context(&state, &user_message).await;
-    if !retrieved_memory.prompt_fragment.is_empty() {
-        tracing::info!(
-            "[run_agent_turn] Injecting {} chars of memory context, {} items",
-            retrieved_memory.prompt_fragment.len(),
-            retrieved_memory.items.len(),
-        );
-        system_prompt.push(retrieved_memory.prompt_fragment.clone());
-    }
-
-    // Capture frozen snapshot of system prompt at session start for integrity verification
-    let system_prompt_text = system_prompt.join("\n");
+    // Phase M1.3 — prompt vec + joined text both come from the
+    // structured plan. The `Vec<String>` shape is preserved for
+    // backwards compatibility with the existing
+    // `ConversationRuntime::with_system_prompt(...)` call below.
+    let system_prompt: Vec<String> = prepared
+        .prompt
+        .plan
+        .blocks
+        .iter()
+        .map(|b| b.content.clone())
+        .collect();
+    let system_prompt_text = prepared.prompt.text;
     let frozen_snapshot = FrozenSnapshot::capture(&system_prompt_text);
     tracing::info!(
         "[run_agent_turn] Frozen snapshot captured, prompt hash={}, estimate={} tokens",
@@ -1534,15 +1265,6 @@ pub async fn start_agent_stream(
         resolve_session_execution_context(&state, &app_session, mode, "start_agent_stream").await;
     log_context_fingerprint("start_agent_stream", &execution_context);
 
-    // Create API client
-    let (provider_client, model, _request_timeout) =
-        create_runtime_provider_client_from_config(&execution_context.workdir)
-            .await
-            .map_err(|e| {
-                tracing::error!("[start_agent_stream] Failed to create API client: {}", e);
-                e
-            })?;
-
     let inbound_resume_cursor = extract_resume_cursor_marker(&user_message);
     if let Some(cursor_value) = inbound_resume_cursor.as_deref() {
         let parsed_cursor = parse_resume_cursor(cursor_value)
@@ -1605,74 +1327,63 @@ pub async fn start_agent_stream(
         })
         .collect();
 
-    // Build system prompt using SystemPromptBuilder with correct workdir
-    let system_prompt = match crate::modules::runtime::prompt::load_system_prompt(
-        &execution_context.workdir,
-        chrono::Local::now().format("%Y-%m-%d").to_string(),
-        std::env::consts::OS,
-        std::env::consts::FAMILY,
-    ) {
-        Ok(mut prompt_lines) => {
-            // Phase 7C, slice 7C.4 — web-tool routing guide (parity with
-            // `run_agent_turn`).
-            {
-                let registered_names = state.tool_registry.tool_names();
-                if let Some(guide) =
-                    crate::modules::runtime::prompt_tools_guide::web_tools_routing_block(
-                        &registered_names,
-                    )
-                {
-                    prompt_lines.push(guide);
-                }
-            }
-            // Phase 8A.12 (T-F5) — see `run_agent_turn` for rationale.
-            append_memory_injection_sections(
-                &state,
-                Some(execution_context.session_id.as_str()),
-                if execution_context.project_id.is_empty() {
-                    None
-                } else {
-                    Some(execution_context.project_id.as_str())
-                },
-                execution_context.workdir.to_str(),
-                &mut prompt_lines,
-                "start_agent_stream",
-            )
-            .await;
-            prompt_lines.join("\n")
-        }
-        Err(e) => {
-            tracing::warn!(
-                "[start_agent_stream] Failed to build system prompt: {}, using fallback",
-                e
-            );
-            crate::modules::runtime::prompt::SystemPromptBuilder::new().render()
-        }
+    // Phase M1.4 — single application service seam composes
+    // provider + memory injection (static + retrieved) + prompt
+    // plan in one await.  `memory_items` is moved into the spawned
+    // task and emitted on `stream_complete` so the frontend
+    // `MemoryChip` / `MemoryEvidencePanel` can render them.
+    let turn_service = make_turn_service(&state);
+    let stream_project_id_opt: Option<String> = if execution_context.project_id.is_empty() {
+        None
+    } else {
+        Some(execution_context.project_id.clone())
     };
-
-    // Pre-LLM memory retrieval: fetch relevant memories to inject into system prompt
-    // (mirrors the same call in run_agent_turn).  The structured `items` are
-    // moved into the spawned task and emitted on `stream_complete` so the
-    // frontend `MemoryChip` / `MemoryEvidencePanel` can render them.
-    let retrieved_stream_memory = retrieve_memory_context(&state, &normalized_user_message).await;
-    if !retrieved_stream_memory.prompt_fragment.is_empty() {
+    let prepared_stream = turn_service
+        .prepare_chat_inputs(PrepareChatInputsRequest {
+            workdir: execution_context.workdir.clone(),
+            current_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+            os_name: std::env::consts::OS.to_string(),
+            os_family: std::env::consts::FAMILY.to_string(),
+            session_id: Some(execution_context.session_id.clone()),
+            project_id: stream_project_id_opt.clone(),
+            workdir_str: execution_context.workdir.to_str().map(str::to_string),
+            user_message: normalized_user_message.clone(),
+            caller: "start_agent_stream",
+        })
+        .await
+        .map_err(|err| match err {
+            TurnServiceError::Provider(msg) => {
+                tracing::error!("[start_agent_stream] Failed to create API client: {}", msg);
+                msg
+            }
+            TurnServiceError::Prompt(p) => {
+                tracing::error!("[start_agent_stream] Prompt planning failed: {}", p);
+                p.to_string()
+            }
+        })?;
+    // Phase M1.6 — same advisory log as `run_agent_turn`.
+    tracing::info!(
+        execution_mode = ?prepared_stream.execution_mode_decision.execution_mode,
+        risk_level = ?prepared_stream.execution_mode_decision.risk_level,
+        complexity_level = ?prepared_stream.execution_mode_decision.complexity_level,
+        policy_version = %prepared_stream.execution_mode_decision.classifier_policy_version,
+        rules = ?prepared_stream.execution_mode_decision.classifier_matched_rule_ids,
+        "[start_agent_stream] request_intelligence decision (advisory)"
+    );
+    if !prepared_stream.memory_items.is_empty() {
         tracing::info!(
-            "[start_agent_stream] Injecting {} chars of memory context, {} items",
-            retrieved_stream_memory.prompt_fragment.len(),
-            retrieved_stream_memory.items.len(),
+            "[start_agent_stream] Injected {} memory items into prompt",
+            prepared_stream.memory_items.len(),
         );
     }
-    let memory_context_items_for_task = retrieved_stream_memory.items.clone();
-
-    // Build the full system prompt including memory context.
-    let system_prompt_with_memory = if retrieved_stream_memory.prompt_fragment.is_empty() {
-        system_prompt.clone()
-    } else {
-        format!(
-            "{}\n{}",
-            system_prompt, retrieved_stream_memory.prompt_fragment
-        )
-    };
+    let memory_context_items_for_task: Vec<MemoryItemProjection> =
+        prepared_stream.memory_items.clone();
+    let RuntimeProviderResolution {
+        provider_client,
+        model,
+        request_timeout: _request_timeout,
+    } = prepared_stream.provider;
+    let system_prompt_with_memory = prepared_stream.prompt.text;
 
     // Clone everything needed for the background task
     let session_manager = state.session_manager.clone();
@@ -1715,6 +1426,11 @@ pub async fn start_agent_stream(
         senders.insert(stream_id.clone(), cancel_tx);
     }
 
+    // Phase M1.5 — single boundary at which agent-loop runtime
+    // events leave the backend. Replaces the ~13 ad-hoc
+    // `window.emit("agent-token", ...)` call sites that used to be
+    // scattered through this spawned task.
+    let stream_emitter = AgentStreamEmitter::new(window);
     tokio::spawn(async move {
         tracing::info!(
             "[start_agent_stream] Spawned background task for stream_id: {}",
@@ -1814,7 +1530,7 @@ pub async fn start_agent_stream(
                     context_budget_usage: None,
                     memory_context: None,
                 };
-                let _ = window.emit("agent-token", payload);
+                stream_emitter.emit_payload(payload);
                 completion_already_emitted = true;
                 terminal_status = Some("cancelled_by_user");
                 break;
@@ -2020,7 +1736,7 @@ pub async fn start_agent_stream(
                         context_budget_usage: None,
                         memory_context: None,
                     };
-                    let _ = window.emit("agent-token", payload);
+                    stream_emitter.emit_payload(payload);
                     // Save session and emit stream_complete even on error
                     // (break from outer loop so cleanup code runs below)
                     break;
@@ -2115,7 +1831,7 @@ pub async fn start_agent_stream(
                                     context_budget_usage: None,
                                     memory_context: None,
                                 };
-                                let _ = window.emit("agent-token", payload);
+                                stream_emitter.emit_payload(payload);
                             }
                             crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
                                 accumulated_thinking.push_str(&thinking);
@@ -2142,7 +1858,7 @@ pub async fn start_agent_stream(
                                     context_budget_usage: None,
                                     memory_context: None,
                                 };
-                                let _ = window.emit("agent-token", payload);
+                                stream_emitter.emit_payload(payload);
                             }
                             crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
                             crate::modules::api::ContentBlockDelta::InputJsonDelta {
@@ -2212,7 +1928,7 @@ pub async fn start_agent_stream(
                                         context_budget_usage: None,
                                         memory_context: None,
                                     };
-                                    let _ = window.emit("agent-token", payload);
+                                    stream_emitter.emit_payload(payload);
                                 }
                                 crate::modules::api::OutputContentBlock::ToolUse {
                                     id,
@@ -2244,7 +1960,7 @@ pub async fn start_agent_stream(
                                         context_budget_usage: None,
                                         memory_context: None,
                                     };
-                                    let _ = window.emit("agent-token", payload);
+                                    stream_emitter.emit_payload(payload);
                                 }
                                 _ => {}
                             }
@@ -2340,7 +2056,7 @@ pub async fn start_agent_stream(
                                 context_budget_usage: None,
                                 memory_context: None,
                             };
-                            let _ = window.emit("agent-token", payload);
+                            stream_emitter.emit_payload(payload);
                         }
 
                         let payload = StreamTokenPayload {
@@ -2365,7 +2081,7 @@ pub async fn start_agent_stream(
                             context_budget_usage: None,
                             memory_context: None,
                         };
-                        let _ = window.emit("agent-token", payload);
+                        stream_emitter.emit_payload(payload);
                         stream_failed = true;
                         break;
                     }
@@ -2422,8 +2138,11 @@ pub async fn start_agent_stream(
                     );
                 }
             }
-            let mut prompter =
-                TauriPermissionPrompter::new(window.clone(), session_id.clone(), perm_rx);
+            let mut prompter = TauriPermissionPrompter::new(
+                stream_emitter.window().clone(),
+                session_id.clone(),
+                perm_rx,
+            );
 
             for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
                 let policy_trace_id = AuditEmitter::new_trace_id();
@@ -2442,33 +2161,30 @@ pub async fn start_agent_stream(
                     tool_name
                 );
                 // Emit running event
-                let _ = window.emit(
-                    "agent-token",
-                    StreamTokenPayload {
-                        stream_id: stream_id_for_task.clone(),
-                        text: None,
-                        thinking: None,
-                        event_type: "tool_call_update".to_string(),
-                        tool_call_id: Some(tool_id.clone()),
-                        tool_name: Some(tool_name.clone()),
-                        tool_status: Some("running".to_string()),
-                        tool_args: None,
-                        tool_result: None,
-                        tool_duration_ms: None,
-                        effective_workdir: Some(
-                            execution_context_for_policy.workdir.display().to_string(),
-                        ),
-                        policy_decision: Some("prompt".to_string()),
-                        evidence_id: Some(policy_trace_id.clone()),
-                        request_id: Some(provider_request_id.clone()),
-                        task_outcome: None,
-                        degraded_reason: None,
-                        resume_available: None,
-                        resume_cursor: None,
-                        context_budget_usage: None,
-                        memory_context: None,
-                    },
-                );
+                stream_emitter.emit_payload(StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None,
+                    thinking: None,
+                    event_type: "tool_call_update".to_string(),
+                    tool_call_id: Some(tool_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    tool_status: Some("running".to_string()),
+                    tool_args: None,
+                    tool_result: None,
+                    tool_duration_ms: None,
+                    effective_workdir: Some(
+                        execution_context_for_policy.workdir.display().to_string(),
+                    ),
+                    policy_decision: Some("prompt".to_string()),
+                    evidence_id: Some(policy_trace_id.clone()),
+                    request_id: Some(provider_request_id.clone()),
+                    task_outcome: None,
+                    degraded_reason: None,
+                    resume_available: None,
+                    resume_cursor: None,
+                    context_budget_usage: None,
+                    memory_context: None,
+                });
 
                 // Permission check: apply session-scoped remember decisions first.
                 let remembered_decision = permission_overrides
@@ -2583,33 +2299,30 @@ pub async fn start_agent_stream(
                 }
 
                 // Emit completed/error event
-                let _ = window.emit(
-                    "agent-token",
-                    StreamTokenPayload {
-                        stream_id: stream_id_for_task.clone(),
-                        text: None,
-                        thinking: None,
-                        event_type: "tool_call_update".to_string(),
-                        tool_call_id: Some(tool_id.clone()),
-                        tool_name: Some(tool_name.clone()),
-                        tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
-                        tool_args: None,
-                        tool_result: Some(result_text.clone()),
-                        tool_duration_ms: Some(duration_ms),
-                        effective_workdir: Some(
-                            execution_context_for_policy.workdir.display().to_string(),
-                        ),
-                        policy_decision: Some(policy_decision.to_string()),
-                        evidence_id: Some(policy_trace_id.clone()),
-                        request_id: Some(provider_request_id.clone()),
-                        task_outcome: None,
-                        degraded_reason: None,
-                        resume_available: None,
-                        resume_cursor: None,
-                        context_budget_usage: None,
-                        memory_context: None,
-                    },
-                );
+                stream_emitter.emit_payload(StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    text: None,
+                    thinking: None,
+                    event_type: "tool_call_update".to_string(),
+                    tool_call_id: Some(tool_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
+                    tool_args: None,
+                    tool_result: Some(result_text.clone()),
+                    tool_duration_ms: Some(duration_ms),
+                    effective_workdir: Some(
+                        execution_context_for_policy.workdir.display().to_string(),
+                    ),
+                    policy_decision: Some(policy_decision.to_string()),
+                    evidence_id: Some(policy_trace_id.clone()),
+                    request_id: Some(provider_request_id.clone()),
+                    task_outcome: None,
+                    degraded_reason: None,
+                    resume_available: None,
+                    resume_cursor: None,
+                    context_budget_usage: None,
+                    memory_context: None,
+                });
 
                 // Append tool_use as assistant message, then tool_result as user message.
                 // MiniMax requires this pairing: assistant tool_use + user tool_result.
@@ -2665,31 +2378,28 @@ pub async fn start_agent_stream(
                 "[start_agent_stream] Rewriting unverified completion claim to guarded message"
             );
             accumulated_text = guarded.clone();
-            let _ = window.emit(
-                "agent-token",
-                StreamTokenPayload {
-                    stream_id: stream_id_for_task.clone(),
-                    text: Some(guarded),
-                    thinking: None,
-                    event_type: "final_text_override".to_string(),
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_status: None,
-                    tool_args: None,
-                    tool_result: None,
-                    tool_duration_ms: None,
-                    effective_workdir: None,
-                    policy_decision: None,
-                    evidence_id: None,
-                    request_id: Some(provider_request_id.clone()),
-                    task_outcome: None,
-                    degraded_reason: None,
-                    resume_available: None,
-                    resume_cursor: None,
-                    context_budget_usage: None,
-                    memory_context: None,
-                },
-            );
+            stream_emitter.emit_payload(StreamTokenPayload {
+                stream_id: stream_id_for_task.clone(),
+                text: Some(guarded),
+                thinking: None,
+                event_type: "final_text_override".to_string(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_args: None,
+                tool_result: None,
+                tool_duration_ms: None,
+                effective_workdir: None,
+                policy_decision: None,
+                evidence_id: None,
+                request_id: Some(provider_request_id.clone()),
+                task_outcome: None,
+                degraded_reason: None,
+                resume_available: None,
+                resume_cursor: None,
+                context_budget_usage: None,
+                memory_context: None,
+            });
         }
 
         let user_visible_truth = TaskOutcomeResolver::resolve(
@@ -2979,7 +2689,7 @@ pub async fn start_agent_stream(
                 context_budget_usage: Some(usage),
                 memory_context: memory_payload,
             };
-            let _ = window.emit("agent-token", payload);
+            stream_emitter.emit_payload(payload);
             if terminal_status.is_none() {
                 terminal_status = Some("completed");
             }

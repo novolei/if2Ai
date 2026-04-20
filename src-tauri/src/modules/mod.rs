@@ -14,6 +14,7 @@
 //! - browser: Chrome/Chromium automation via CDP (chromiumoxide)
 
 pub mod api;
+pub mod application;
 pub mod browser;
 pub mod channel;
 pub mod commands;
