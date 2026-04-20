@@ -1,3 +1,29 @@
 [workspace]
 members = ["src-tauri"]
 resolver = "2"
+
+# ─────────────────────────────────────────────────────────────────────
+# [profile.test] — fast repeated `cargo test` runs
+#
+# Why separate from [profile.dev]:
+#   `cargo test` and `cargo build` produce binaries with different
+#   crate-hashes (--cfg test + --emit=link vs --emit=metadata/rlib).
+#   sccache sees them as distinct compilation units → always a cache
+#   miss on the first `cargo test` of a session.  With
+#   incremental = false (inherited from dev) this means a full
+#   recompile of all 336 source files every time.
+#
+#   [profile.test] breaks the sccache path for tests and instead uses
+#   Cargo's own per-session incremental cache.  Trade-offs:
+#     + 2nd+ `cargo test` runs in the same session are 5-10× faster
+#     - Cold first run unchanged; branch-switch builds still use sccache
+# ─────────────────────────────────────────────────────────────────────
+[profile.test]
+inherits = "dev"
+incremental = true
+debug = "line-tables-only"
+codegen-units = 256
+
+[profile.test.package."*"]
+opt-level = 1
+codegen-units = 16

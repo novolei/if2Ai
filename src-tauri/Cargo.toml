@@ -98,3 +98,54 @@ path = "src/bin/harness_cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# ─────────────────────────────────────────────────────────────────────
+# Build profile tweaks (added 2026-04-20 — cargo build acceleration)
+#
+# Why this exists:
+#   `cargo build` cold-time was ~9 min mostly because debug deps were
+#   compiled at opt-level 0 with full debuginfo.  fastembed / lancedb /
+#   datafusion / arrow at opt-level 0 are very slow at runtime AND
+#   produce huge object files that take long to link.
+#
+# Trade-offs:
+#   - First-party code stays at opt-level 0 (fast incremental builds,
+#     full debuggability).
+#   - Third-party deps compile at opt-level 1 — ~10% slower to build
+#     individually, but linker handles smaller object files much
+#     faster, and runtime perf gain is large.
+#   - debug = "line-tables-only" keeps stack traces but drops verbose
+#     local-variable debuginfo we never inspect during dev — biggest
+#     single link-time saver.
+# ─────────────────────────────────────────────────────────────────────
+[profile.dev]
+# Stack traces still work; just no full local-variable debuginfo.
+debug = "line-tables-only"
+# Default codegen-units for first-party code (lower = better
+# optimisation, higher = faster compile).  256 = same as Cargo
+# default for dev; explicit so future tweaks have an anchor.
+codegen-units = 256
+# CRITICAL — must be `false` when `sccache` is the rustc-wrapper.
+# Mozilla/sccache documented caveat: incremental compilation writes
+# per-session metadata that breaks sccache's deterministic hash, so
+# every Rust crate becomes an unconditional miss when both are on.
+# Trade-off: full crate recompile on first-party file changes
+# (instead of incremental partial), but sccache crate-level cache
+# is the bigger win here (200+ crates × repeated branch switches).
+#
+# If sccache hit rate ever drops near 0% (broken cache, env churn),
+# flip back to `true` and accept slower branch switches in exchange
+# for faster single-file edits.
+incremental = false
+
+# Apply opt-level = 1 to **all dependencies** but leave first-party
+# crates at opt-level = 0 (set below).  Heavy native deps (fastembed,
+# lancedb, datafusion, arrow, ort, whisper-rs, symphonia) get
+# noticeably faster runtime + smaller object files at opt-level 1.
+[profile.dev.package."*"]
+opt-level = 1
+codegen-units = 16
+
+# First-party crates — opt-level 0 keeps incremental rebuilds fast.
+# (No explicit overrides needed; matches profile.dev default.)
+# [profile.test] is defined in the workspace root Cargo.toml.
