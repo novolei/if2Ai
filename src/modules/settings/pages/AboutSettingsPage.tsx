@@ -6,6 +6,7 @@ import type { SettingsPageProps } from '../types'
 import { configResetOnboarding } from '@/lib/tauri'
 import { toast } from 'sonner'
 import { broadcastChange } from '@/lib/crossWindowSync'
+import { APP_VERSION_LABEL } from '@/lib/appVersion'
 
 const btnOutline =
   'window-no-drag h-7 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]'
@@ -56,7 +57,7 @@ export function AboutSettingsPage({}: SettingsPageProps) {
             <div className="space-y-0.5">
               <div className="text-[19px] font-bold tracking-tight">If2Ai</div>
               <div className="text-[11.5px] text-muted-foreground">桌面 AI 智能体工作台</div>
-              <div className="font-mono text-[10px] text-black/25">v0.1.0</div>
+              <div className="font-mono text-[10px] text-black/25">{APP_VERSION_LABEL}</div>
             </div>
           </div>
 

@@ -35,6 +35,7 @@ import {
 } from '@/lib/tauri'
 import { Toaster, toast } from 'sonner'
 import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
+import { AppVersionWatermark } from '@/components/AppVersionWatermark'
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
@@ -2311,6 +2312,7 @@ function App() {
         <If2AiLoadingScreen projectName="UClaw" stageLabel="Initializing agent workspace" onWindowDrag={startWindowDrag} />
       ) : (
       <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
+      <AppVersionWatermark />
       <GlobalNavbar
         activeSection={activeSection}
         onSelectSection={setActiveSection}
