@@ -1,6 +1,6 @@
 {
     "name": "if2ai",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "AI智能体桌面应用 - 基于Tauri + Rust + React",
     "type": "module",
     "scripts": {

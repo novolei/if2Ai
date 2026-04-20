@@ -84,16 +84,53 @@ fi
 
 VERSION="$NEW"
 
+# ── Helper: clean Tauri bundle_dmg.sh leftover state ────────────────────────
+# bundle_dmg.sh occasionally races with Finder/Spotlight on macOS, leaving
+# /Volumes/dmg.* mounted and rw.*.dmg temp files behind. Both must be cleared
+# before each dmg attempt or hdiutil refuses with cryptic "failed to run
+# bundle_dmg.sh".
+clean_dmg_state() {
+    hdiutil info | awk '/\/Volumes\/dmg\./{print $1}' | while read -r dev; do
+        [[ -n "$dev" ]] && hdiutil detach "$dev" -force >/dev/null 2>&1 || true
+    done
+    # Use find to avoid zsh "no matches found" on empty glob
+    find target/release/bundle/macos -maxdepth 1 -name 'rw.*.dmg' -delete 2>/dev/null || true
+    find target/release/bundle/dmg -maxdepth 1 -name 'rw.*.dmg' -delete 2>/dev/null || true
+}
+
 # ── Step 2: pre-clean stale dmg state ───────────────────────────────────────
-echo "==> Pre-clean stale dmg state (Tauri bundle_dmg.sh idempotency)"
-hdiutil info | awk '/\/Volumes\/dmg\./{print $1}' | while read -r dev; do
-    [[ -n "$dev" ]] && hdiutil detach "$dev" -force >/dev/null 2>&1 || true
-done
-rm -f target/release/bundle/macos/rw.*.dmg
+echo "==> Pre-clean stale dmg state"
+clean_dmg_state
 
 # ── Step 3: tauri build ─────────────────────────────────────────────────────
-echo "==> Tauri build $APP_NAME $VERSION (app + dmg)"
-npx tauri build --bundles app,dmg
+# Strategy: build .app first (so the freshly-compiled bundle is preserved
+# regardless of what dmg packaging does), then build .dmg with retry.
+echo "==> Tauri build $APP_NAME $VERSION (app)"
+npx tauri build --bundles app
+
+DMG_MAX_RETRIES=3
+dmg_attempt=1
+while (( dmg_attempt <= DMG_MAX_RETRIES )); do
+    echo "==> Tauri build $APP_NAME $VERSION (dmg) — attempt $dmg_attempt/$DMG_MAX_RETRIES"
+    if npx tauri build --bundles dmg; then
+        break
+    fi
+    if (( dmg_attempt == DMG_MAX_RETRIES )); then
+        echo "❌ DMG bundling failed after $DMG_MAX_RETRIES attempts" >&2
+        exit 1
+    fi
+    echo "==> dmg attempt $dmg_attempt failed; cleaning state and retrying in 3s"
+    clean_dmg_state
+    sleep 3
+    ((dmg_attempt++))
+done
+
+# Tauri's --bundles dmg cleans the macos/.app dir as a side-effect; rebuild it
+# so the productbuild step downstream has the .app available.
+if [[ ! -d "target/release/bundle/macos/$APP_NAME.app" ]]; then
+    echo "==> Re-stage .app (dmg pass cleaned it)"
+    npx tauri build --bundles app
+fi
 
 # ── Step 4: stage + productbuild ────────────────────────────────────────────
 echo "==> Stage to $OUT_DIR"
