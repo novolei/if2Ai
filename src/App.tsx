@@ -33,9 +33,14 @@ import {
   type SessionMeta,
   type StreamTokenPayload,
 } from '@/lib/tauri'
-import { Toaster, toast } from 'sonner'
-import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
-import { AppVersionWatermark } from '@/components/AppVersionWatermark'
+import { toast } from 'sonner'
+import {
+  useExecutionModePreview,
+  wireRuntimeProjectionListeners,
+} from '@/runtime-projection'
+import { BootShell } from '@/boot/BootShell'
+import { MainShell } from '@/shell/MainShell'
+// AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
 import { ChatWorkspace } from '@/modules/chat/components/ChatWorkspace'
@@ -43,9 +48,9 @@ import type { Conversation, Message, RecentSession, SessionTitleState } from '@/
 import { useAgentVoiceBridge } from '@/modules/chat/useAgentVoiceBridge'
 import { AgentVoiceIndicator } from '@/modules/chat/AgentVoiceIndicator'
 import { useCrossWindowChange } from '@/lib/crossWindowSync'
-import { OnboardingApp } from '@/modules/onboarding/OnboardingApp'
+// OnboardingApp moved into BootShell (Phase M2.7).
 import { MemoryBrowser } from '@/components/memory/MemoryBrowser'
-import { If2AiLoadingScreen } from '@/components/loading/If2AiLoadingScreen'
+// If2AiLoadingScreen moved into BootShell (Phase M2.7).
 import { TelemetryDrawer } from '@/components/chat/TelemetryDrawer'
 import { CreateProjectDialog } from '@/components/CreateProjectDialog'
 import type { TodoItem } from '@/components/ui/TodoPanel'
@@ -204,6 +209,12 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [input, setInput] = useState('')
+  // Phase M2.6 — opt-in classifier preview. Watches the active
+  // chat draft and dispatches the deterministic
+  // `ExecutionModeDecision` into the projection store. The
+  // <ExecutionModePill /> below renders the resulting judgment.
+  // Honest scope: pure preview, the agent loop is NOT auto-routed.
+  useExecutionModePreview(input, { sessionId: activeSessionId ?? undefined })
   const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
@@ -729,6 +740,19 @@ function App() {
     return () => {
       if (unlisten) unlisten()
     }
+  }, [])
+
+  // Phase M2.4 — wire the canonical runtime projection pipeline.
+  // The bridge subscribes broadly to `agent-token` /
+  // `permission-request` / `memory_event`, normalises each via the
+  // translator family and feeds the projection store.  Existing
+  // per-stream listeners and the legacy permission/memory wiring
+  // continue to drive the current ChatWorkspace + TelemetryDrawer
+  // surfaces in parallel — M2.5+ will swap consumers over to the
+  // projection store and retire the per-stream callbacks.
+  useEffect(() => {
+    const unwire = wireRuntimeProjectionListeners()
+    return () => unwire()
   }, [])
 
   useEffect(() => {
@@ -2302,34 +2326,30 @@ function App() {
     void promptDownloadSenseVoiceAfterOnboarding()
   }
 
-  if (showOnboarding) {
-    return <OnboardingApp onWindowDrag={startWindowDrag} onComplete={handleOnboardingComplete} />
-  }
+  // Phase M2.7 — App.tsx now composes BootShell + MainShell instead
+  // of inlining splash / onboarding / shell chrome JSX.  The shells
+  // own activation-gate overlay (BootShell) and execution-mode pill
+  // (MainShell) as projection consumers.  App.tsx remains the
+  // composition root for boot decision (`showSplash` / `showOnboarding`),
+  // session / project state, and the data passed into ChatWorkspace
+  // and friends — none of those move in this slice.
+  const bootSurface = showOnboarding ? 'onboarding' : showSplash ? 'splash' : 'main'
 
   return (
-    <>
-      {showSplash ? (
-        <If2AiLoadingScreen projectName="UClaw" stageLabel="Initializing agent workspace" onWindowDrag={startWindowDrag} />
-      ) : (
-      <div className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground" style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}>
-      <AppVersionWatermark />
-      <GlobalNavbar
-        activeSection={activeSection}
-        onSelectSection={setActiveSection}
-        onOpenSettings={() => openSettingsWindow()}
-        onStartWindowDrag={startWindowDrag}
-        appIconSrc={appIconSrc}
-      />
-
-      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#f6f7f8]">
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
-          <div className="absolute inset-0 bg-[#f6f7f8]" />
-          <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(246,247,248,0)_0%,rgba(246,247,248,0.12)_46%,rgba(246,247,248,0.76)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.76)_18%,rgba(255,255,255,0)_52%),radial-gradient(circle_at_50%_100%,rgba(242,244,246,0.94)_0%,rgba(242,244,246,0.62)_34%,rgba(242,244,246,0.18)_68%,rgba(242,244,246,0)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.5),transparent_28%),radial-gradient(circle_at_86%_90%,rgba(242,244,246,0.34),transparent_30%)]" />
-        </div>
-
-        <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <BootShell
+      surface={bootSurface}
+      onWindowDrag={startWindowDrag}
+      onOnboardingComplete={handleOnboardingComplete}
+    >
+      <MainShell
+        navbar={{
+          activeSection,
+          onSelectSection: setActiveSection,
+          onOpenSettings: () => openSettingsWindow(),
+          onStartWindowDrag: startWindowDrag,
+          appIconSrc,
+        }}
+      >
           {/* Phase TTS-E：聊天语音状态浮层（左下角） */}
           {activeSection === 'chat' && (
             <AgentVoiceIndicator
@@ -2394,80 +2414,77 @@ function App() {
           ) : (
             <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
           )}
-        </div>
-      </main>
 
-      <CreateProjectDialog
-        isOpen={isCreateProjectOpen}
-        onClose={() => setIsCreateProjectOpen(false)}
-        onSubmit={handleCreateProject}
-      />
+          <CreateProjectDialog
+            isOpen={isCreateProjectOpen}
+            onClose={() => setIsCreateProjectOpen(false)}
+            onSubmit={handleCreateProject}
+          />
 
-      <Dialog open={Boolean(permissionPrompt)}>
-        <DialogContent
-          showCloseButton={false}
-          onEscapeKeyDown={(e) => e.preventDefault()}
-          onPointerDownOutside={(e) => e.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle>权限请求</DialogTitle>
-            <DialogDescription>
-              {permissionPrompt?.message ?? '该操作需要更高权限。'}
-            </DialogDescription>
-          </DialogHeader>
-          {permissionPrompt && (
-            <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-[12px] text-black/60">
-              工具：{permissionPrompt.tool_name} · 当前模式：{permissionPrompt.current_mode}
-            </div>
-          )}
-          <DialogFooter className="sm:justify-between">
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handlePermissionDecision('deny', 'once')}
-              >
-                拒绝本次
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handlePermissionDecision('deny', 'session')}
-              >
-                本会话拒绝
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => handlePermissionDecision('allow', 'once')}
-              >
-                允许本次
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => handlePermissionDecision('allow', 'session')}
-              >
-                本会话允许
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-      )}
-      <Toaster position="bottom-right" richColors closeButton />
-      <TelemetryDrawer
-        sessionId={activeSessionId}
-        open={isTelemetryDrawerOpen}
-        onClose={() => setIsTelemetryDrawerOpen(false)}
-      />
-    </>
+          <Dialog open={Boolean(permissionPrompt)}>
+            <DialogContent
+              showCloseButton={false}
+              onEscapeKeyDown={(e) => e.preventDefault()}
+              onPointerDownOutside={(e) => e.preventDefault()}
+            >
+              <DialogHeader>
+                <DialogTitle>权限请求</DialogTitle>
+                <DialogDescription>
+                  {permissionPrompt?.message ?? '该操作需要更高权限。'}
+                </DialogDescription>
+              </DialogHeader>
+              {permissionPrompt && (
+                <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-[12px] text-black/60">
+                  工具：{permissionPrompt.tool_name} · 当前模式：{permissionPrompt.current_mode}
+                </div>
+              )}
+              <DialogFooter className="sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePermissionDecision('deny', 'once')}
+                  >
+                    拒绝本次
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePermissionDecision('deny', 'session')}
+                  >
+                    本会话拒绝
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handlePermissionDecision('allow', 'once')}
+                  >
+                    允许本次
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => handlePermissionDecision('allow', 'session')}
+                  >
+                    本会话允许
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <TelemetryDrawer
+            sessionId={activeSessionId}
+            open={isTelemetryDrawerOpen}
+            onClose={() => setIsTelemetryDrawerOpen(false)}
+          />
+      </MainShell>
+    </BootShell>
   )
 }
 

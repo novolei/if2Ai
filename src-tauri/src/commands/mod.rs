@@ -257,6 +257,7 @@ pub mod harness;
 pub mod memory;
 pub mod pinned;
 pub mod project;
+pub mod request_intelligence;
 pub mod session;
 pub mod settings;
 pub mod skills_hub;
@@ -352,9 +353,10 @@ pub use window::{
 // Onboarding commands (Phase 6G)
 #[allow(unused_imports)]
 pub use activation::{
-    activation_complete, activation_start, activation_test_message, activation_validate,
-    ActivationChecklist, ActivationResult,
+    activation_complete, activation_get_status, activation_start, activation_test_message,
+    activation_validate, ActivationChecklist, ActivationResult,
 };
+// Request intelligence (Phase M2.6)
 #[allow(unused_imports)]
 pub use channel::{channel_configure, channel_list, channel_list_configured, channel_test};
 #[allow(unused_imports)]
@@ -371,6 +373,8 @@ pub use provider::{
     provider_get_all_configured_models, provider_get_config, provider_get_configured_models,
     provider_list, provider_list_configured, provider_list_models, provider_test,
 };
+#[allow(unused_imports)]
+pub use request_intelligence::{request_intelligence_classify, RequestIntelligenceClassifyInput};
 #[allow(unused_imports)]
 pub use system_check::{
     embedded_model_download, embedded_model_progress, get_model_config, set_model_config,

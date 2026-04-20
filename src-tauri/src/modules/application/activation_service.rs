@@ -38,12 +38,11 @@
 
 use crate::modules::config::{ChannelRouting, ConfigService};
 use crate::modules::onboarding::flow::OnboardingFlow;
+use crate::modules::onboarding::state::OnboardingState;
 use crate::modules::onboarding::store::{load_state, save_state};
 use crate::modules::provider::test::{send_greeting, test_provider_connection};
 use crate::modules::provider::types::TestResult;
-use crate::modules::runtime::contracts::activation::{
-    ActivationSnapshot, ActivationStatusKind,
-};
+use crate::modules::runtime::contracts::activation::{ActivationSnapshot, ActivationStatusKind};
 
 use super::license_lifecycle_service::{snapshot_with_kind, LicenseLifecycleService};
 
@@ -102,6 +101,42 @@ impl ActivationService {
         &self.lifecycle
     }
 
+    /// Phase M2.5 — return the canonical
+    /// [`ActivationSnapshot`] the frontend boot shell consumes via
+    /// the new `activation_get_status` IPC command.
+    ///
+    /// Honest mapping today (no remote license backend yet):
+    /// - `OnboardingState.onboarding_completed == true` →
+    ///   [`ActivationStatusKind::Activated`] +
+    ///   `allows_main_shell = true`.
+    /// - Anything else (including a missing state file →
+    ///   `OnboardingState::default()`) →
+    ///   [`ActivationStatusKind::NeedsActivation`] +
+    ///   `allows_main_shell = false`.
+    ///
+    /// `license` is always `None` because
+    /// [`LicenseLifecycleService`] is a placeholder and no remote
+    /// license API is wired. When the real backend lands, this
+    /// method returns the lifecycle snapshot directly without a
+    /// contract bump — the IPC + frontend projection seam stays the
+    /// same.
+    pub async fn current_snapshot(&self) -> ActivationSnapshot {
+        let state = load_state().await.unwrap_or_else(|err| {
+            tracing::debug!(
+                "[activation_service] no onboarding state on disk ({err}); defaulting to NeedsActivation"
+            );
+            OnboardingState::default()
+        });
+
+        let kind = if state.onboarding_completed {
+            ActivationStatusKind::Activated
+        } else {
+            ActivationStatusKind::NeedsActivation
+        };
+
+        snapshot_with_kind(kind, None, None)
+    }
+
     /// Compute the precondition checklist used by the onboarding
     /// "Step 6 — Activate" UI.
     pub async fn validate_preconditions(&self) -> Result<ActivationChecklist, String> {
@@ -135,17 +170,14 @@ impl ActivationService {
         }
 
         // Greeting failure is non-fatal — activation succeeds regardless.
-        let ai_response = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            send_greeting(),
-        )
-        .await
-        .map_err(|_| {
-            tracing::warn!("[activation_service] Greeting timed out after 30s");
-        })
-        .ok()
-        .and_then(|r| r.ok())
-        .flatten();
+        let ai_response = tokio::time::timeout(std::time::Duration::from_secs(30), send_greeting())
+            .await
+            .map_err(|_| {
+                tracing::warn!("[activation_service] Greeting timed out after 30s");
+            })
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten();
 
         if ai_response.is_none() {
             tracing::info!(
@@ -174,12 +206,9 @@ impl ActivationService {
             .ok_or_else(|| "No provider configured".to_string())?;
 
         let base_url = provider.base_url.as_deref().unwrap_or_default();
-        let result = test_provider_connection(
-            &provider.provider_id,
-            base_url,
-            provider.api_key.as_deref(),
-        )
-        .await;
+        let result =
+            test_provider_connection(&provider.provider_id, base_url, provider.api_key.as_deref())
+                .await;
 
         Ok(result)
     }

@@ -23,6 +23,7 @@ use crate::modules::application::activation_service::{
     ActivationService,
 };
 use crate::modules::provider::types::TestResult;
+use crate::modules::runtime::contracts::activation::ActivationSnapshot;
 
 /// Activation checklist — IPC wire shape. Field-for-field mirror of
 /// [`ServiceChecklist`] held here so the existing TS twin in
@@ -104,4 +105,22 @@ pub async fn activation_test_message() -> Result<TestResult, String> {
 #[tauri::command]
 pub async fn activation_complete() -> Result<(), String> {
     ActivationService::new().complete_activation_legacy().await
+}
+
+/// Phase M2.5 — return the canonical
+/// [`ActivationSnapshot`] for the boot-shell projection layer.
+///
+/// `ActivationSnapshot` already carries `#[serde(rename_all =
+/// "camelCase")]` on every field (M0.4 contract), so the wire
+/// payload matches the TypeScript `ActivationSnapshot` interface in
+/// [`src/transport/contracts.ts`](../../../src/transport/contracts.ts)
+/// without any adapter struct.
+///
+/// Honest scope: today the snapshot reflects the legacy
+/// onboarding-completion truth (no remote license backend). The
+/// service mapping + every fallback is documented in
+/// [`ActivationService::current_snapshot`].
+#[tauri::command]
+pub async fn activation_get_status() -> Result<ActivationSnapshot, String> {
+    Ok(ActivationService::new().current_snapshot().await)
 }

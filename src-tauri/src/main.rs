@@ -10,6 +10,7 @@ use commands::AppState;
 use commands::{
     // Onboarding & Configuration Platform (Phase 6G)
     activation_complete,
+    activation_get_status,
     activation_start,
     activation_test_message,
     activation_validate,
@@ -134,6 +135,7 @@ use commands::{
     reorder_web_search_providers,
     request_browser_status,
     request_browser_takeover,
+    request_intelligence_classify,
     resolve_skill_slash,
     respond_permission,
     run_agent_turn,
@@ -971,11 +973,14 @@ fn main() {
             channel_configure,
             channel_test,
             channel_list_configured,
-            // activation.rs (4 commands)
+            // activation.rs (5 commands; M2.5 added activation_get_status)
             activation_validate,
             activation_start,
             activation_test_message,
             activation_complete,
+            activation_get_status,
+            // request_intelligence.rs (M2.6 — deterministic classify)
+            request_intelligence_classify,
             // config.rs (4 commands)
             config_load,
             config_save,

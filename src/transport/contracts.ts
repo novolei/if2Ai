@@ -256,6 +256,138 @@ export interface MemoryDecision {
   decidedAt: string
 }
 
+// ───────────────────────── Legacy wire DTOs ────────────────────────
+//
+// Phase M2.1 — these types are migrated verbatim from the legacy
+// `src/lib/tauri.ts` so the transport boundary owns the single
+// source of truth for IPC payload shapes.  They keep snake_case
+// because the backend still emits snake_case wire payloads (legacy
+// `agent-token` / `permission-request` / `memory_event` channels).
+//
+// Hard rules:
+// 1. Snake_case stays here. The new canonical camelCase shapes
+//    above are consumed only inside the runtime-projection
+//    pipeline (`src/runtime-projection/*`).  The translator is the
+//    only place that crosses between them.
+// 2. Adding fields here is a transport-level change. Adding fields
+//    to a canonical contract above is a contract-version bump.
+
+/** Token budget usage breakdown emitted by the backend WorkingMemory
+ * + ContextBudget components at the end of each streaming turn
+ * (event_type: 'stream_complete'). */
+export interface ContextBudgetUsage {
+  total_budget: number
+  system_tokens: number
+  history_tokens: number
+  memory_tokens: number
+  output_reserve: number
+  remaining: number
+}
+
+/** Memory lifecycle event emitted by `MemoryAuditEmitter` over the
+ * Tauri `memory_event` channel.  Mirrors `MemoryEventPayload` in
+ * `src-tauri/src/modules/memory/audit.rs`. */
+export interface MemoryEventPayload {
+  event:
+    | 'memory_captured'
+    | 'memory_write_decision'
+    | 'memory_persisted'
+    | 'memory_recall_served'
+    | 'memory_rejected'
+    | 'memory_promoted'
+    | 'memory_promotion_candidate'
+    | 'memory_demoted'
+    | 'memory_cleared'
+    | 'memory_pii_redacted'
+    | 'memory_job_failed'
+    | 'memory_job_skipped'
+    | 'memory_summary_rolled'
+    | 'memory_pinned'
+    | 'memory_unpinned'
+    | 'memory_compiled'
+    | 'memory_ticker_recovery'
+    | 'memory_assembled'
+  trace_id?: string
+  session_id?: string
+  project_id?: string
+  effective_workdir?: string
+  memory_key?: string
+  memory_category?: string
+  policy_decision?: 'allow' | 'deny' | 'prompt'
+  reason_code?: string
+  reason_message?: string
+  recall_query?: string
+  recall_category?: string
+  result_count?: number
+  from_category?: string
+  to_category?: string
+  extra?: Record<string, unknown>
+  /** ISO 8601 timestamp captured server-side at emit time. */
+  timestamp: string
+}
+
+/** Single recalled memory item surfaced by `MemoryAuditEmitter`. */
+export interface MemoryContextItem {
+  id: string
+  content: string
+  scope: 'global' | 'project' | 'session'
+  relevance_score?: number
+  stored_at?: string
+}
+
+/** Stream token payload emitted on the `agent-token` channel. */
+export interface StreamTokenPayload {
+  stream_id: string
+  text?: string
+  thinking?: string
+  event_type:
+    | 'text_delta'
+    | 'thinking_delta'
+    | 'thinking_start'
+    | 'tool_call_update'
+    | 'final_text_override'
+    | 'stream_complete'
+    | 'stream_error'
+  tool_call_id?: string
+  tool_name?: string
+  tool_status?: 'queued' | 'running' | 'completed' | 'error'
+  tool_args?: Record<string, unknown>
+  tool_result?: string
+  tool_duration_ms?: number
+  effective_workdir?: string
+  policy_decision?: 'allow' | 'deny' | 'prompt'
+  evidence_id?: string
+  request_id?: string
+  task_outcome?: 'completed' | 'partial_success' | 'failed'
+  degraded_reason?: string
+  resume_available?: boolean
+  resume_cursor?: string
+  context_budget_usage?: ContextBudgetUsage
+  memory_context?: MemoryContextItem[]
+}
+
+/** Permission prompt event emitted on the `permission-request` channel. */
+export interface PermissionRequestPayload {
+  session_id: string
+  tool_name: string
+  permission_mode: string
+  current_mode: string
+  message: string
+}
+
+/** Active agent permission mode (mirrors backend `PermissionMode`). */
+export type PermissionMode = 'readOnly' | 'workspaceWrite' | 'dangerFullAccess'
+
+/** Canonical Tauri event names used by the agent loop. Centralised
+ * here so the runtime-projection translator and any future dev
+ * inspector subscribe against the same constants instead of magic
+ * strings. */
+export const AGENT_TOKEN_EVENT = 'agent-token'
+export const PERMISSION_REQUEST_EVENT = 'permission-request'
+export const MEMORY_EVENT = 'memory_event'
+
+// ───────────────────────── Canonical projection types ──────────────
+
 /** Canonical memory item projection consumed by the frontend.
  * `bodyPreview` is a server-truncated short preview; full content
  * is fetched on expand via the existing `memory_*` IPC commands. */

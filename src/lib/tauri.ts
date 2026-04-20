@@ -1,249 +1,90 @@
-//! Tauri IPC 封装层
+//! Tauri IPC 封装层 (Phase M2.1 — thin bridge)
 //!
 //! 所有前端与 Tauri 后端的交互都通过这个模块，
 //! App.tsx 不直接调用 @tauri-apps/api。
+//!
+//! Phase M2.1 重构：runtime / memory / activation / permission /
+//! execution_mode 的 wire DTO 全部迁到 `@/transport/contracts`。
+//! 本文件不再声明 transport contract，只保留：
+//!   1. invoke / listen facade helpers
+//!   2. typed IPC helper（按 backend command 名分组）
+//! 旧的 DTO 名字通过 `export type { ... } from '@/transport/contracts'`
+//! 重新导出，调用方零迁移成本。
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
+import {
+  AGENT_TOKEN_EVENT,
+  MEMORY_EVENT,
+  PERMISSION_REQUEST_EVENT,
+} from '@/transport/contracts';
+import type {
+  ActivationSnapshot,
+  ExecutionModeDecision,
+  MemoryEventPayload,
+  PermissionMode,
+  PermissionRequestPayload,
+  StreamTokenPayload,
+} from '@/transport/contracts';
+
 // Re-export invoke for App.tsx stopAgentStream
 export { invoke };
 
-/**
- * Token budget usage breakdown emitted by the backend WorkingMemory + ContextBudget
- * components at the end of each streaming turn (event_type: 'stream_complete').
- *
- * All values are in tokens. Fields are optional — older backend versions omit them.
- */
-export interface ContextBudgetUsage {
-  /** Total context window budget for this model (e.g. 200_000). */
-  total_budget: number;
-  /** Tokens currently occupied by the system prompt (static). */
-  system_tokens: number;
-  /** Tokens occupied by the sliding-window message history. */
-  history_tokens: number;
-  /** Tokens occupied by retrieved memory context. */
-  memory_tokens: number;
-  /** Tokens reserved for the model's output generation. */
-  output_reserve: number;
-  /** Remaining tokens available for the next turn. */
-  remaining: number;
-}
+// ─── Phase M2.1 — re-export transport contracts for backward compat ─
+// New code should import directly from `@/transport/contracts` (or
+// `@/transport`); these re-exports exist purely so existing call
+// sites keep compiling unchanged during the M2 cut-over.
+export type {
+  ActivationFailureReason,
+  ActivationLicense,
+  ActivationSnapshot,
+  ActivationStatus,
+  ActivationStatusKind,
+  ClassifierEvidence,
+  ComplexityLevel,
+  ContextBudgetUsage,
+  ExecutionMode,
+  ExecutionModeDecision,
+  MemoryContextItem,
+  MemoryEventPayload,
+  PermissionMode,
+  PermissionRequestPayload,
+  ReasonCode,
+  RiskLevel,
+  RouteHint,
+  ScenarioProfileHint,
+  StreamTokenPayload,
+} from '@/transport/contracts';
+export {
+  AGENT_TOKEN_EVENT,
+  MEMORY_EVENT,
+  PERMISSION_REQUEST_EVENT,
+} from '@/transport/contracts';
+
+// ─── DTOs below this line stay in tauri.ts for now (M2.1 scope) ────
+// Slimmer M2.4 slice will progressively migrate session / project /
+// pinned / browser / harness / hub DTOs into per-feature transport
+// modules under `@/transport/<feature>.ts`.  The runtime-projection
+// pipeline in M2.2/M2.3 is the priority cut-over for this round.
+
+// `MemoryEventPayload` / `MemoryContextItem` / `StreamTokenPayload`
+// / `PermissionRequestPayload` / `PermissionMode` / `ContextBudgetUsage`
+// definitions moved to `@/transport/contracts` in Phase M2.1.
+// They remain re-exported above for backward-compat with existing
+// imports from `@/lib/tauri`.
 
 /**
- * Memory lifecycle event emitted by the backend `MemoryAuditEmitter` over
- * the Tauri `memory_event` channel.  Drives the live MemoryChip /
- * MemoryWriteCard UI feedback.
- *
- * Mirrors `MemoryEventPayload` in `src-tauri/src/modules/memory/audit.rs`.
- */
-export interface MemoryEventPayload {
-  event:
-    | 'memory_captured'
-    | 'memory_write_decision'
-    | 'memory_persisted'
-    | 'memory_recall_served'
-    | 'memory_rejected'
-    | 'memory_promoted'
-    /** Background scanner surfaced an entry that meets promotion thresholds. */
-    | 'memory_promotion_candidate'
-    /** A previously promoted entry was narrowed back down. */
-    | 'memory_demoted'
-    /** Operator wiped every memory entry from the Settings page. */
-    | 'memory_cleared'
-    /**
-     * Phase 8A §0.5 Δ-2 — `ThreatScanner.scan_and_redact` matched one or
-     * more PII / secret patterns on a candidate write and the writer
-     * substituted `[REDACTED:<kind>]` markers in place of every hit. The
-     * detected hits are forwarded under `extra.detected`.
-     */
-    | 'memory_pii_redacted'
-    /**
-     * Phase 8A T-A2 — a `JobRunner.run(...)` invocation finished with
-     * `Err(_)` but is still under the retry budget.  `extra` carries
-     * `{ job, attempt, max_retries, error }`.
-     */
-    | 'memory_job_failed'
-    /**
-     * Phase 8A T-A2 — `JobRunner.run(...)` exhausted `max_retries` and
-     * the `(kind, target)` is now quarantined until reset.  `extra`
-     * carries `{ job, total_failures, last_error }`.
-     */
-    | 'memory_job_skipped'
-    /**
-     * Phase 8A T-B3 — `RollingSummarizer.rolling_summary` wrote a new
-     * [`SessionSummaryRecord`] for the active session.  `extra` carries
-     * `{ session_id, turn_count, chars_before, chars_after, latency_ms }`
-     * so the TelemetryDrawer can render a "第 N 轮 · 已更新摘要"
-     * timeline item with the char delta and LLM latency.
-     */
-    | 'memory_summary_rolled'
-    /**
-     * Phase 8A.9 / T-F1 — `PinnedStore.add` either inserted a new
-     * pin or returned an existing one via dedup.  `extra` carries
-     * `{ scope, content_excerpt, total_pins }`; `memory_category`
-     * mirrors the scope label so the TelemetryDrawer can colour-chip
-     * "已固定 · global / project" without parsing `extra`.
-     */
-    | 'memory_pinned'
-    /**
-     * Phase 8A.9 / T-F1 — `PinnedStore.delete` removed one or more
-     * pinned items.  `extra` carries
-     * `{ scope, removed_count, keyword }` where `keyword` is either
-     * the deleted id or the search keyword that drove a future bulk
-     * unpin from the PinnedMemoryEditor UI (8A.12).
-     */
-    | 'memory_unpinned'
-    /**
-     * Phase 8B.3 / T-C3 — `compile_today` / `compile_week` /
-     * `compile_longterm` / `compile_facts` rewrote its `*.md`
-     * artifact.  `extra` carries `{ kind, result, chars_in,
-     * chars_out, latency_ms }`; `memory_category` mirrors `kind`
-     * (`"today" | "week" | "longterm" | "facts"`) so the
-     * TelemetryDrawer can colour-chip "已编译 · today / week / …"
-     * without parsing `extra`.
-     */
-    | 'memory_compiled'
-    /**
-     * Phase 8B.9 / T-D4 — `MemoryTicker.start` ran its
-     * `recover_unsummarized` scan on app boot and surfaced one or more
-     * session sidecar files whose mtime is newer than the last persisted
-     * summary (within the 24h cutoff window).  `extra` carries
-     * `{ recovered_count, recovered: [{ sessionId, mtime, summaryAt }] }`
-     * so the TelemetryDrawer can render a single "已补摘要 N 个 session"
-     * timeline item with details on hover.  The event fires once per
-     * boot (only when `recovered_count > 0`).
-     */
-    | 'memory_ticker_recovery'
-    /**
-     * Phase 8B.4 / T-C4 — `assemble` concatenated the four `*.md`
-     * artefacts (`facts → today → week → longterm`) into the
-     * top-level `memory.md`.  `extra` carries `{ chars, sections }`
-     * where `chars` is the final byte length of `memory.md` and
-     * `sections` is the four bilingual section titles in priority
-     * order.  `result_count` mirrors `chars` so the TelemetryDrawer
-     * can render "memory.md · {N} chars" without parsing `extra`.
-     */
-    | 'memory_assembled'
-  trace_id?: string
-  session_id?: string
-  project_id?: string
-  effective_workdir?: string
-  memory_key?: string
-  memory_category?: string
-  policy_decision?: 'allow' | 'deny' | 'prompt'
-  reason_code?: string
-  reason_message?: string
-  recall_query?: string
-  recall_category?: string
-  result_count?: number
-  from_category?: string
-  to_category?: string
-  /**
-   * Phase 8A §0.5 Δ-4 — variable structured metadata for events whose
-   * payload shape differs from the original 14 fixed fields (e.g. PII
-   * detection arrays for `memory_pii_redacted`, summary section counts,
-   * recovered job lists). Backward compatible: omitted on every legacy
-   * event.
-   */
-  extra?: Record<string, unknown>
-  /** ISO 8601 timestamp captured server-side at emit time. */
-  timestamp: string
-}
-
-/**
- * Subscribe to backend memory lifecycle events.  Returns an unlisten function.
+ * Subscribe to backend memory lifecycle events. Returns an unlisten
+ * function.  The event-name constant lives in `@/transport/contracts`.
  */
 export async function listenMemoryEvent(
   handler: (payload: MemoryEventPayload) => void,
 ): Promise<UnlistenFn> {
-  return await listen<MemoryEventPayload>('memory_event', (event) => {
+  return await listen<MemoryEventPayload>(MEMORY_EVENT, (event) => {
     handler(event.payload)
   })
 }
-
-/**
- * A single recalled memory item surfaced by MemoryAuditEmitter for the
- * MemoryChip / MemoryEvidencePanel UI components.
- */
-export interface MemoryContextItem {
-  /** Backend memory entry ID. */
-  id: string;
-  /** Short summary or raw content of the recalled memory. */
-  content: string;
-  /** Memory scope: global | project | session. */
-  scope: 'global' | 'project' | 'session';
-  /** Relevance score (0–1) assigned by the retrieval layer. */
-  relevance_score?: number;
-  /** ISO timestamp when this memory was originally stored. */
-  stored_at?: string;
-}
-
-/**
- * 流式 Token 事件载荷
- *
- * Phase 1 additions (2026-04-18):
- *   - `context_budget_usage`: token budget breakdown from WorkingMemory + ContextBudget
- *   - `memory_context`: recalled memory items from MemoryAuditEmitter
- *   Both fields are optional for backward compatibility with older backend builds.
- */
-export interface StreamTokenPayload {
-  stream_id: string;
-  text?: string;
-  thinking?: string;
-  event_type:
-    | 'text_delta'
-    | 'thinking_delta'
-    | 'thinking_start'
-    | 'tool_call_update'
-    | 'final_text_override'
-    | 'stream_complete'
-    | 'stream_error';
-  // tool_call_update 专用字段
-  tool_call_id?: string;
-  tool_name?: string;
-  tool_status?: 'queued' | 'running' | 'completed' | 'error';
-  tool_args?: Record<string, unknown>;
-  tool_result?: string;
-  tool_duration_ms?: number;
-  effective_workdir?: string;
-  policy_decision?: 'allow' | 'deny' | 'prompt';
-  evidence_id?: string;
-  request_id?: string;
-  task_outcome?: 'completed' | 'partial_success' | 'failed';
-  degraded_reason?: string;
-  resume_available?: boolean;
-  resume_cursor?: string;
-  // ── Phase 1: Memory + Context Budget fields ────────────────────────────────
-  /**
-   * Token budget breakdown for the current turn.
-   * Present on `stream_complete` events when the backend WorkingMemory module
-   * is active (requires memoryControlPlaneV1Enabled feature flag).
-   */
-  context_budget_usage?: ContextBudgetUsage;
-  /**
-   * Memory items recalled from episodic / semantic memory for this turn.
-   * Present on `stream_complete` events when MemoryAuditEmitter is active.
-   * Used by MemoryChip and MemoryEvidencePanel components.
-   */
-  memory_context?: MemoryContextItem[];
-}
-
-/**
- * 权限请求事件载荷（后端 permission-request 事件）
- */
-export interface PermissionRequestPayload {
-  session_id: string;
-  tool_name: string;
-  permission_mode: string;
-  current_mode: string;
-  message: string;
-}
-
-/**
- * Agent 权限模式（映射后端 PermissionMode）
- */
-export type PermissionMode = 'readOnly' | 'workspaceWrite' | 'dangerFullAccess'
 
 /**
  * 助手消息响应
@@ -376,11 +217,27 @@ export async function startAgentStream(
  * @param callback - 回调函数，接收 Token 事件
  * @returns 取消监听函数
  */
+/**
+ * 监听所有 agent-token 事件（不按 streamId 过滤）。
+ *
+ * Phase M2.4 — `runtime-projection-bridge` 用此入口把全部
+ * stream 事件喂给 canonical projection pipeline，所有 streamId
+ * 的事件都会进入同一队列。原有按 streamId 过滤的
+ * [`listenToStream`] 仍保留服务于现存 ChatWorkspace 主路径。
+ */
+export async function listenToAgentTokenStream(
+  callback: (payload: StreamTokenPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
+    callback(event.payload);
+  });
+}
+
 export async function listenToStream(
   streamId: string,
   callback: (payload: StreamTokenPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<StreamTokenPayload>('agent-token', (event) => {
+  return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
     if (event.payload.stream_id === streamId) {
       callback(event.payload);
     }
@@ -393,7 +250,7 @@ export async function listenToStream(
 export async function listenToPermissionRequests(
   callback: (payload: PermissionRequestPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<PermissionRequestPayload>('permission-request', (event) => {
+  return await listen<PermissionRequestPayload>(PERMISSION_REQUEST_EVENT, (event) => {
     callback(event.payload)
   })
 }
@@ -1256,6 +1113,47 @@ export async function configResetOnboarding(): Promise<void> {
 /** Get the current app onboarding state. */
 export async function onboarding_get_state(): Promise<Record<string, unknown>> {
   return invoke<Record<string, unknown>>('onboarding_get_state')
+}
+
+/**
+ * Phase M2.5 — fetch the canonical
+ * [`ActivationSnapshot`](`@/transport/contracts`) from the backend
+ * `activation_service`.
+ *
+ * Backed by the new `activation_get_status` Tauri command. Today
+ * the backend derives the snapshot from legacy onboarding-completion
+ * truth (no remote license API yet); the IPC payload still uses the
+ * canonical M0.4 contract shape so the boot-shell projection seam
+ * stays compatible when a real license backend lands.
+ */
+export async function activationGetStatus(): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>('activation_get_status')
+}
+
+/** Phase M2.6 — wire-shape input for the deterministic classifier. */
+export interface RequestIntelligenceClassifyInput {
+  userMessage: string
+  sessionId?: string
+  projectId?: string
+  /** Working directory (string; backend converts to `PathBuf`). */
+  workdir?: string
+}
+
+/**
+ * Phase M2.6 — run the deterministic + heuristic classifier and
+ * return the canonical [`ExecutionModeDecision`].
+ *
+ * Honest scope: this is the same decision the backend
+ * `TurnService::prepare_chat_inputs` produces, exposed as a
+ * standalone IPC so the chat UI can render an honest "current
+ * judgment" chip without waiting for a real `start_agent_stream`
+ * call.  The decision is **advisory** — it does not auto-route
+ * the agent.  The frontend MUST NOT recompute the mode locally.
+ */
+export async function requestIntelligenceClassify(
+  input: RequestIntelligenceClassifyInput
+): Promise<ExecutionModeDecision> {
+  return invoke<ExecutionModeDecision>('request_intelligence_classify', { input })
 }
 
 // ─── Browser Control (Phase 7B) ──────────────────────────────────────────────
