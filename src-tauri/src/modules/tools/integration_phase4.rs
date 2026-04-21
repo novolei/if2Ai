@@ -276,13 +276,13 @@ mod tests {
             "session-a".to_string(),
             "project-a".to_string(),
             workdir_a.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
         let context_b = SessionExecutionContext::new(
             "session-b".to_string(),
             "project-b".to_string(),
             workdir_b.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
 
         let write_a = broker.execute_with_trace(
@@ -343,7 +343,7 @@ mod tests {
             "session-a".to_string(),
             "project-a".to_string(),
             workdir_a.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
 
         let grep_task = broker.execute_with_trace(
@@ -439,13 +439,13 @@ mod tests {
             "session-a".to_string(),
             "project-a".to_string(),
             workdir_a.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
         let context_b = SessionExecutionContext::new(
             "session-b".to_string(),
             "project-b".to_string(),
             workdir_b.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
 
         let run_a = broker.execute_with_trace(
@@ -496,7 +496,7 @@ mod tests {
             "session-strict".to_string(),
             "project-strict".to_string(),
             workdir.clone(),
-            PermissionMode::WorkspaceWrite,
+            PermissionMode::DangerFullAccess,
         );
         let result = broker
             .execute_with_trace(
@@ -512,13 +512,13 @@ mod tests {
             result.is_err(),
             "strict mode should deny bash without sandbox"
         );
-        let error_text = result
-            .expect_err("bash should be denied")
-            .to_string()
-            .to_lowercase();
+        let error_text = result.expect_err("bash should be denied").to_string();
+        println!("Error text: {}", error_text);
+        let error_lower = error_text.to_lowercase();
         assert!(
-            error_text.contains("sandboxstrictmode") || error_text.contains("sandbox"),
-            "denial reason should mention sandbox strict mode"
+            error_lower.contains("sandboxstrictmode") || error_lower.contains("sandbox"),
+            "denial reason should mention sandbox strict mode, got: {}",
+            error_text
         );
 
         let _ = tokio::fs::remove_dir_all(root).await;

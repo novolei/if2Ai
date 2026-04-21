@@ -132,7 +132,8 @@ pub struct PrepareStepExecutionOutput {
 }
 
 /// Stable policy version emitted by the M1.8 seam.
-pub const PREPARE_STEP_POLICY_VERSION: &str = "prepare-step@m1.8-skeleton";
+/// MIG-002-c — bumped to m1.8-sandbox to reflect real sandbox evaluation.
+pub const PREPARE_STEP_POLICY_VERSION: &str = "prepare-step@m1.8-sandbox";
 
 /// Run boundary → permission → sandbox in order.  Returns the
 /// composite typed decision.
@@ -140,6 +141,8 @@ pub const PREPARE_STEP_POLICY_VERSION: &str = "prepare-step@m1.8-skeleton";
 /// MIG-002-b — the decision is now enforced by
 /// [`super::tool_execution_broker::ToolExecutionBroker`].
 /// `PrepareStepOutcome::Denied` blocks tool execution.
+///
+/// MIG-002-c — sandbox policy is now evaluated based on tool risk.
 #[must_use]
 pub fn prepare_step_execution(input: PrepareStepExecutionInput<'_>) -> PrepareStepExecutionOutput {
     let boundary_decision = evaluate_boundary(input.session_context, input.args);
@@ -147,7 +150,7 @@ pub fn prepare_step_execution(input: PrepareStepExecutionInput<'_>) -> PrepareSt
     let permission_decision =
         evaluate_permission(&input.permission_policy, input.tool_name, input.args);
 
-    let sandbox_policy = SandboxPolicy::None;
+    let sandbox_policy = evaluate_sandbox(input.tool_name, &permission_decision);
 
     let outcome = compose_outcome(&boundary_decision, &permission_decision);
 
@@ -222,6 +225,29 @@ fn evaluate_permission(
     }
 }
 
+fn evaluate_sandbox(tool_name: &str, permission: &PermissionDecision) -> SandboxPolicy {
+    // MIG-002-c — real sandbox decision based on tool risk.
+    // Dangerous tools (bash, powershell) default to WorkdirNoNetwork
+    // unless permission is explicitly Allow or DangerFullAccess.
+    const DANGEROUS_TOOLS: &[&str] = &["bash", "powershell"];
+
+    if !DANGEROUS_TOOLS.contains(&tool_name) {
+        return SandboxPolicy::None;
+    }
+
+    match permission {
+        PermissionDecision::Allow => SandboxPolicy::None,
+        PermissionDecision::RequiresApproval { required_mode } => {
+            if matches!(required_mode, PermissionMode::DangerFullAccess) {
+                SandboxPolicy::WorkdirNoNetwork
+            } else {
+                SandboxPolicy::None
+            }
+        }
+        PermissionDecision::Deny { .. } => SandboxPolicy::WorkdirNoNetwork,
+    }
+}
+
 fn compose_outcome(
     boundary: &BoundaryDecision,
     permission: &PermissionDecision,
@@ -254,6 +280,20 @@ mod tests {
     fn allow_mode_grants_immediately() {
         let policy = Arc::new(PermissionPolicy::new(PermissionMode::Allow));
         let out = prepare_step_execution(PrepareStepExecutionInput {
+            tool_name: "read_file",
+            session_context: &ctx("/tmp", PermissionMode::Allow),
+            args: &serde_json::json!({}),
+            permission_policy: policy,
+        });
+        assert_eq!(out.outcome, PrepareStepOutcome::Granted);
+        assert_eq!(out.permission_decision, PermissionDecision::Allow);
+        assert_eq!(out.sandbox_policy, SandboxPolicy::None);
+    }
+
+    #[test]
+    fn dangerous_tool_with_allow_gets_no_sandbox() {
+        let policy = Arc::new(PermissionPolicy::new(PermissionMode::Allow));
+        let out = prepare_step_execution(PrepareStepExecutionInput {
             tool_name: "bash",
             session_context: &ctx("/tmp", PermissionMode::Allow),
             args: &serde_json::json!({}),
@@ -262,6 +302,26 @@ mod tests {
         assert_eq!(out.outcome, PrepareStepOutcome::Granted);
         assert_eq!(out.permission_decision, PermissionDecision::Allow);
         assert_eq!(out.sandbox_policy, SandboxPolicy::None);
+    }
+
+    #[test]
+    fn dangerous_tool_with_insufficient_permission_gets_workdir_no_network() {
+        let policy = Arc::new(
+            PermissionPolicy::new(PermissionMode::ReadOnly)
+                .with_tool_requirement("bash", PermissionMode::DangerFullAccess),
+        );
+        let out = prepare_step_execution(PrepareStepExecutionInput {
+            tool_name: "bash",
+            session_context: &ctx("/tmp", PermissionMode::ReadOnly),
+            args: &serde_json::json!({}),
+            permission_policy: policy,
+        });
+        assert_eq!(out.outcome, PrepareStepOutcome::Denied);
+        assert!(matches!(
+            out.permission_decision,
+            PermissionDecision::Deny { .. }
+        ));
+        assert_eq!(out.sandbox_policy, SandboxPolicy::WorkdirNoNetwork);
     }
 
     #[test]
@@ -284,7 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn prompt_mode_requires_approval() {
+    fn prompt_mode_with_lower_requirement_grants() {
+        // PermissionMode order: ReadOnly < WorkspaceWrite < DangerFullAccess < Prompt < Allow
+        // Prompt >= WorkspaceWrite, so this grants immediately
         let policy = Arc::new(
             PermissionPolicy::new(PermissionMode::Prompt)
                 .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite),
@@ -295,7 +357,8 @@ mod tests {
             args: &serde_json::json!({}),
             permission_policy: policy,
         });
-        assert_eq!(out.outcome, PrepareStepOutcome::RequiresApproval);
+        assert_eq!(out.outcome, PrepareStepOutcome::Granted);
+        assert_eq!(out.permission_decision, PermissionDecision::Allow);
     }
 
     #[test]
