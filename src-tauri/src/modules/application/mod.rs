@@ -44,20 +44,48 @@
 
 pub mod activation_service;
 pub mod license_lifecycle_service;
+pub mod memory_candidate_extractor;
+pub mod memory_conflict_resolution;
+pub mod memory_coordinator;
 pub mod memory_injection_service;
+pub mod memory_quality_gate;
+pub mod memory_recall_assembler;
+pub mod memory_write_policy;
 pub mod prompt_planner;
 pub mod provider_service;
 pub mod request_intelligence_service;
 pub mod turn_service;
 
-pub use activation_service::{
-    ActivationCeremonyResult, ActivationChecklist, ActivationService,
-};
+pub use activation_service::{ActivationCeremonyResult, ActivationChecklist, ActivationService};
 pub use license_lifecycle_service::{snapshot_with_kind, LicenseLifecycleService};
+pub use memory_candidate_extractor::{
+    extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
+    SOURCE_MEMORY_STORE_TOOL,
+};
+pub use memory_conflict_resolution::{
+    reason_codes as memory_conflict_reason_codes, resolve_conflict, ConflictResolution,
+    ConflictResolutionOutcome, ExistingRecordRef, MEMORY_CONFLICT_RESOLVER_VERSION,
+};
+pub use memory_coordinator::{
+    AfterTurnInput, AfterTurnOutput, MemoryCoordinator, PrepareContextInput, PrepareContextOutput,
+};
 pub use memory_injection_service::{
     prepare_memory_injection, retrieve_memory_for_turn, MemoryInjectionArtifacts,
     MemoryInjectionDeps, MemoryInjectionRequest, MemoryInjectionSection,
     MemoryInjectionSectionKind, MemoryItemProjection, RetrievedMemory,
+};
+pub use memory_quality_gate::{
+    evaluate_quality_gate, reason_codes as memory_quality_reason_codes, QualityGateAccepted,
+    QualityGateContext, QualityGateRejected, QualityGateResult, QualityGateWarning,
+    MEMORY_QUALITY_GATE_VERSION,
+};
+pub use memory_recall_assembler::{
+    assemble_recall, RecallAssemblyResult, RecallDiagnostics, RecallSectionSlot, RecalledSection,
+    MEMORY_RECALL_ASSEMBLER_VERSION,
+};
+pub use memory_write_policy::{
+    reason_codes as memory_write_reason_codes, DefaultMemoryWritePolicy, MemoryWritePolicy,
+    MEMORY_WRITE_POLICY_VERSION,
 };
 pub use prompt_planner::{
     BuildPromptPlanRequest, PromptBlock, PromptBlockKind, PromptPlan, PromptPlanResult,
@@ -67,8 +95,7 @@ pub use provider_service::{
     load_provider_transport_policy, resolve_chat_runtime_provider, RuntimeProviderResolution,
 };
 pub use request_intelligence_service::{
-    classify as classify_request_intelligence, RequestIntelligenceInput,
-    RequestIntelligenceOutput,
+    classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
 };
 pub use turn_service::{
     PrepareChatInputsRequest, PreparedChatInputs, TurnService, TurnServiceDeps, TurnServiceError,

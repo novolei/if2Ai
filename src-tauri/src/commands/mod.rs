@@ -254,6 +254,7 @@ impl AppState {
 pub mod agent;
 pub mod browser;
 pub mod harness;
+pub mod learning;
 pub mod memory;
 pub mod pinned;
 pub mod project;
@@ -270,8 +271,8 @@ pub mod tts_download;
 pub mod web_search;
 
 pub use stt::{
-    stt_download_openflow_model, stt_download_whisper_model, stt_get_settings, stt_model_status,
-    stt_save_settings, stt_transcribe,
+    stt_download_openflow_model, stt_get_settings, stt_model_status, stt_save_settings,
+    stt_transcribe,
 };
 pub mod window;
 
@@ -295,8 +296,30 @@ pub use browser::{
 };
 #[allow(unused_imports)]
 pub use harness::{
-    get_all_session_telemetry, get_harness_status, get_session_telemetry, start_harness_recording,
-    stop_harness_recording, HarnessStatusResponse, HarnessTelemetryResponse,
+    get_all_session_telemetry, get_harness_status, get_session_telemetry,
+    harness_aggregate_suite_report, harness_begin_run, harness_compare_reports,
+    harness_current_run_id, harness_delete_report, harness_evaluate_compare,
+    harness_evaluate_suite, harness_finalize_and_rotate_run, harness_finalize_run,
+    harness_list_reports, harness_load_corpus, harness_load_report, harness_save_report,
+    start_harness_recording, stop_harness_recording, HarnessStatusResponse,
+    HarnessTelemetryResponse,
+};
+#[allow(unused_imports)]
+pub use learning::{
+    learning_activate_promoted_candidate, learning_apply_promotion_gate,
+    learning_attach_compare_ref, learning_attach_recommendation, learning_delete_candidate,
+    learning_evaluate_candidate, learning_evaluate_candidate_against_suite,
+    learning_evaluate_candidate_with_policy, learning_generate_reflection_for_report,
+    learning_get_active_strategies, learning_get_candidate, learning_inspect_evaluation_progress,
+    learning_list_candidates, learning_mark_promoted_candidate,
+    learning_reflect_session_and_register, learning_register_candidate_from_reflection,
+    learning_register_candidate_manual, learning_resolve_active_overlay,
+    learning_rollback_active_strategy, learning_score_run_report,
+    learning_set_candidate_compare_target, learning_set_candidate_definition,
+    learning_set_candidate_notes, learning_set_candidate_state, LearningActivateInput,
+    LearningEvaluateCandidateAgainstSuiteInput, LearningEvaluateCandidateAgainstSuiteResponse,
+    LearningEvaluateCandidateResponse, LearningPromotionGateResponse, LearningRollbackInput,
+    ReflectionGenerationResponse,
 };
 #[allow(unused_imports)]
 pub use memory::{

@@ -136,7 +136,10 @@ mod tests {
         let workdir = PathBuf::from("/nonexistent/path/for/m1-tests");
         let policy = load_provider_transport_policy(&workdir);
         let default_policy = ProviderTransportConfig::default();
-        assert_eq!(policy.overall_timeout_ms(), default_policy.overall_timeout_ms());
+        assert_eq!(
+            policy.overall_timeout_ms(),
+            default_policy.overall_timeout_ms()
+        );
         assert_eq!(policy.max_retries(), default_policy.max_retries());
     }
 }

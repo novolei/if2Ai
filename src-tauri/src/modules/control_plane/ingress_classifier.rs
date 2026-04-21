@@ -108,8 +108,15 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
     let (mode, risk, complexity, complexity_score, requires_plan) = if contains_any(
         &lower,
         &[
-            "rm -rf", " rm ", "delete all", "drop table", "truncate", "format ",
-            "nuke ", "reset --hard", "force push",
+            "rm -rf",
+            " rm ",
+            "delete all",
+            "drop table",
+            "truncate",
+            "format ",
+            "nuke ",
+            "reset --hard",
+            "force push",
         ],
     ) {
         matched_rule_ids.push(rule_ids::HIGH_RISK_MUTATION.into());
@@ -125,8 +132,14 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
     } else if contains_any(
         &lower,
         &[
-            "plan ", "design ", "architect", "refactor", "migrate", "redesign",
-            "evaluate", "review the architecture",
+            "plan ",
+            "design ",
+            "architect",
+            "refactor",
+            "migrate",
+            "redesign",
+            "evaluate",
+            "review the architecture",
         ],
     ) {
         matched_rule_ids.push(rule_ids::PLANNING_VERB.into());
@@ -141,7 +154,12 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
         )
     } else if contains_any(
         &lower,
-        &["browser ", "open the page", "search the web", "navigate to "],
+        &[
+            "browser ",
+            "open the page",
+            "search the web",
+            "navigate to ",
+        ],
     ) {
         matched_rule_ids.push(rule_ids::SPECIALIZED_SURFACE_HINT.into());
         reason_codes.push(ReasonCode::new("specialized_surface_hint"));
@@ -274,7 +292,10 @@ mod tests {
     #[test]
     fn specialized_surface_hint_carries_route_hint() {
         let out = classify("open the page https://example.com in browser");
-        assert_eq!(out.decision.execution_mode, ExecutionMode::SpecializedSurface);
+        assert_eq!(
+            out.decision.execution_mode,
+            ExecutionMode::SpecializedSurface
+        );
         assert!(out.decision.route_hint.is_some());
     }
 

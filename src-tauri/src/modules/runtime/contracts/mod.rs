@@ -48,6 +48,7 @@ pub use execution_mode::{
     RiskLevel, RouteHint, ScenarioProfileHint,
 };
 pub use memory::{
-    MemoryDecision, MemoryDecisionVerdict, MemoryItemProjection, MemoryKind, MemoryProjection,
-    MemoryScope,
+    MemoryDecision, MemoryDecisionVerdict, MemoryItemProjection, MemoryKind, MemoryObjectKind,
+    MemoryProjection, MemoryScope, MemoryWriteCandidate, MemoryWriteDecision,
+    MemoryWriteDisposition,
 };

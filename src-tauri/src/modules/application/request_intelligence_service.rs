@@ -23,9 +23,7 @@
 
 use std::path::PathBuf;
 
-use crate::modules::control_plane::ingress_classifier::{
-    classify_request, IngressClassifierInput,
-};
+use crate::modules::control_plane::ingress_classifier::{classify_request, IngressClassifierInput};
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 
 /// Per-turn input. Held as owned values so the service does not

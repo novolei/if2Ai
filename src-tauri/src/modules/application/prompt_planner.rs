@@ -66,6 +66,11 @@ pub enum PromptBlockKind {
     /// Per-turn retrieved-memory fragment produced by
     /// [`crate::modules::application::memory_injection_service::retrieve_memory_for_turn`].
     RetrievedMemory,
+    /// Phase M5 closeout — overlay rendered from every
+    /// currently `Active` candidate strategy in the M5
+    /// learning registry.  Empty when no strategy is active or
+    /// when active strategies carry only `Noop` definitions.
+    ActiveStrategyOverlay,
 }
 
 impl PromptBlockKind {
@@ -144,6 +149,12 @@ pub struct BuildPromptPlanRequest {
     /// [`web_tools_routing_block`] to decide whether to emit the
     /// guide.
     pub registered_tool_names: Vec<String>,
+    /// Phase M5 closeout — pre-resolved active-strategy overlay
+    /// text appended as a `PromptBlockKind::ActiveStrategyOverlay`
+    /// block.  `None` (or empty string) skips the block.
+    /// Resolved by [`crate::modules::learning::ActiveStrategyOverlayResolver`]
+    /// before this call.
+    pub active_strategy_overlay: Option<String>,
     /// Pre-computed memory injection artifacts. `None` skips the
     /// memory blocks entirely (useful for tests or for callers that
     /// already injected memory through another path).
@@ -217,6 +228,21 @@ pub async fn build_prompt_plan(
             title: "web_tools_routing_guide",
             content: guide,
         });
+    }
+
+    // 2b. Phase M5 closeout — active-strategy overlay block.
+    // The active strategy registry resolves to zero or one
+    // overlay text (singleton-active enforced by the rollout
+    // service); empty string means no active strategy with a
+    // runtime effect.
+    if let Some(overlay) = request.active_strategy_overlay {
+        if !overlay.trim().is_empty() {
+            blocks.push(PromptBlock {
+                kind: PromptBlockKind::ActiveStrategyOverlay,
+                title: "active_strategy_overlay",
+                content: overlay,
+            });
+        }
     }
 
     // 3. Memory injection blocks (Pinned / Compiled / Rules /
@@ -310,6 +336,7 @@ mod tests {
             os_family: "unix".into(),
             registered_tool_names: Vec::new(),
             memory_injection: Some(artifacts),
+            active_strategy_overlay: None,
             caller: "prompt_planner_test",
         };
         let result = build_prompt_plan(req).await.expect("plan builds");

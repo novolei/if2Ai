@@ -56,7 +56,7 @@ pub struct PrepareStepExecutionInput<'a> {
 /// Coarse boundary decision. `WithinWorkdir` is the only canonical
 /// "safe" answer in M1.8; future slices may add finer-grained
 /// `WithinSandbox` / `OutsideButAllowed` variants.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoundaryDecision {
     /// Tool args resolve inside the session workdir / project sandbox.
@@ -76,7 +76,7 @@ pub enum BoundaryDecision {
 /// [`crate::modules::runtime::permissions::PermissionOutcome`] but
 /// owned by the control-plane seam so the seam's contract stays
 /// independent of how the inner permission system evolves.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     /// Active mode covers required mode; tool may proceed.
@@ -96,7 +96,7 @@ pub enum PermissionDecision {
 /// sandbox lands with the `worker` adoption design (M1+ later
 /// slice). The seam carries the field so M4 governance can record
 /// "no sandbox enforcement yet" instead of guessing.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxPolicy {
     /// No sandbox; tool runs in-process. Default in M1.
@@ -108,7 +108,7 @@ pub enum SandboxPolicy {
 }
 
 /// Top-level outcome of one preflight call.  Closed in v1.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrepareStepOutcome {
     /// All three decisions cleared; caller may dispatch.
@@ -144,16 +144,11 @@ pub const PREPARE_STEP_POLICY_VERSION: &str = "prepare-step@m1.8-skeleton";
 /// caller. The IPC adapter is free to log the decision and proceed
 /// with its existing per-tool path while M4 gate rules ramp up.
 #[must_use]
-pub fn prepare_step_execution(
-    input: PrepareStepExecutionInput<'_>,
-) -> PrepareStepExecutionOutput {
+pub fn prepare_step_execution(input: PrepareStepExecutionInput<'_>) -> PrepareStepExecutionOutput {
     let boundary_decision = evaluate_boundary(input.session_context, input.args);
 
-    let permission_decision = evaluate_permission(
-        &input.permission_policy,
-        input.tool_name,
-        input.args,
-    );
+    let permission_decision =
+        evaluate_permission(&input.permission_policy, input.tool_name, input.args);
 
     let sandbox_policy = SandboxPolicy::None;
 
@@ -168,10 +163,7 @@ pub fn prepare_step_execution(
     }
 }
 
-fn evaluate_boundary(
-    ctx: &SessionExecutionContext,
-    args: &serde_json::Value,
-) -> BoundaryDecision {
+fn evaluate_boundary(ctx: &SessionExecutionContext, args: &serde_json::Value) -> BoundaryDecision {
     // Best-effort: probe the canonical "path" / "file_path" / "cwd"
     // fields. Tools that do not carry an obvious path key are
     // treated as NotApplicable. Real per-tool boundary checks live
@@ -323,10 +315,7 @@ mod tests {
         // ReadOnly < DangerFullAccess → Deny). The boundary check
         // also fires because the path leaves the workdir under a
         // non-DangerFullAccess mode.
-        assert_eq!(
-            out.boundary_decision,
-            BoundaryDecision::OutsideAndDenied
-        );
+        assert_eq!(out.boundary_decision, BoundaryDecision::OutsideAndDenied);
         assert_eq!(out.outcome, PrepareStepOutcome::Denied);
     }
 

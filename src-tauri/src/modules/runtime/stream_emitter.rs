@@ -64,6 +64,37 @@ use super::contracts::memory::MemoryItemProjection;
 /// `src/transport/events.ts`).
 pub const AGENT_TOKEN_EVENT: &str = "agent-token";
 
+/// Phase M3-C closeout — canonical Tauri event name for the
+/// **batch envelope** emitted by
+/// [`crate::modules::application::memory_coordinator::MemoryCoordinator::after_turn`]
+/// at every turn end.
+///
+/// Replaces the short-lived M3-B `memory_write_decision` event.
+/// Fires **once per turn** regardless of how many candidates the
+/// coordinator produced — even an empty batch is a real event
+/// (`after_turn ran but no candidates were extracted`), so the
+/// "empty batch is unobservable" gap from the M3-B audit is
+/// closed.
+///
+/// Payload shape (JSON, camelCase):
+///
+/// ```json
+/// {
+///   "caller": "run_agent_turn",
+///   "policyVersion": "memory-write-policy@m3.3-skeleton",
+///   "decidedAt": "2026-04-20T...",
+///   "decisions":  [/* MemoryWriteDecision */],
+///   "quality":    { "accepted":[…], "rejected":[…], "warnings":[…],
+///                   "policyVersion":"…" },
+///   "conflicts":  [/* ConflictResolution */]
+/// }
+/// ```
+///
+/// Frontend bridge fans this out into a single batch canonical
+/// event (`memory_after_turn`) plus N per-decision canonical
+/// events (`memory_write_decision`).
+pub const MEMORY_AFTER_TURN_EVENT: &str = "memory_after_turn";
+
 /// Token-budget breakdown emitted alongside the final
 /// `stream_complete` event so the frontend `ContextBar` can render
 /// usage without an extra IPC round-trip.

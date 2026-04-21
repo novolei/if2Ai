@@ -32,9 +32,9 @@ use crate::modules::tools::ToolRegistry;
 
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 
+use super::memory_coordinator::{MemoryCoordinator, PrepareContextInput};
 use super::memory_injection_service::{
-    prepare_memory_injection, MemoryInjectionArtifacts, MemoryInjectionDeps,
-    MemoryInjectionRequest, MemoryItemProjection,
+    MemoryInjectionArtifacts, MemoryInjectionDeps, MemoryItemProjection,
 };
 use super::prompt_planner::{
     build_prompt_plan, BuildPromptPlanRequest, PromptPlanResult, PromptPlannerError,
@@ -163,22 +163,46 @@ impl TurnService {
             workdir: Some(request.workdir.clone()),
         });
 
-        // M1.4 — memory injection flows through the dedicated
-        // service, not through the prompt planner internals.
-        let memory_injection = prepare_memory_injection(
-            &self.deps.memory_injection_deps(),
-            MemoryInjectionRequest {
+        // M3.2 — per-turn memory orchestration now flows through
+        // the canonical `MemoryCoordinator::prepare_context` seam.
+        // The coordinator delegates to `memory_injection_service`
+        // internally today (M3-A); M3.5 will route through the
+        // upcoming `RecallAssembler` without changing this call
+        // site.  TurnService itself no longer composes recall +
+        // injection by hand.
+        let coordinator = MemoryCoordinator::with_default_policy(self.deps.memory_injection_deps());
+        let prepared_context = coordinator
+            .prepare_context(PrepareContextInput {
                 session_id: request.session_id.clone(),
                 project_id: request.project_id.clone(),
                 workdir: request.workdir_str.clone(),
                 user_message: request.user_message.clone(),
                 caller: request.caller,
-            },
-        )
-        .await;
-        let memory_items = memory_injection.memory_items.clone();
+            })
+            .await;
+        let memory_injection = prepared_context.artifacts;
+        let memory_items = prepared_context.memory_items;
 
         let registered_tool_names = self.deps.tool_registry.tool_names();
+
+        // Phase M5 closeout — resolve any currently-Active
+        // candidate strategy overlay so the prompt planner can
+        // append it as a typed `ActiveStrategyOverlay` block.
+        // The resolver walks the registry on each turn; this is
+        // the single production hookpoint for the M5 active
+        // flip.  Failure to resolve is non-fatal: an empty
+        // overlay is rendered.
+        let active_strategy_overlay = {
+            let resolver =
+                crate::modules::learning::ActiveStrategyOverlayResolver::with_default_root();
+            let overlay = resolver.resolve().await;
+            let text = overlay.render_prompt_block();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        };
 
         let prompt = build_prompt_plan(BuildPromptPlanRequest {
             workdir: request.workdir,
@@ -187,6 +211,7 @@ impl TurnService {
             os_family: request.os_family,
             registered_tool_names,
             memory_injection: Some(memory_injection.clone()),
+            active_strategy_overlay,
             caller: request.caller,
         })
         .await?;

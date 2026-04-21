@@ -17,19 +17,27 @@ use crate::commands::AppState;
 use crate::modules::api::{
     InputContentBlock, InputMessage, MessageRequest, ProviderClient, ToolDefinition,
 };
+use crate::modules::application::memory_candidate_extractor::{
+    extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
+};
+use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
 use crate::modules::application::{
-    MemoryItemProjection, PrepareChatInputsRequest, RuntimeProviderResolution, TurnService,
-    TurnServiceDeps, TurnServiceError,
+    AfterTurnInput, ExistingRecordRef, MemoryCoordinator, MemoryItemProjection,
+    PrepareChatInputsRequest, RuntimeProviderResolution, TurnService, TurnServiceDeps,
+    TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
 };
+use crate::modules::harness::{AgentEvent, EventBus};
 use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::learning::trajectory::TrajectoryManager;
+use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
 };
+use crate::modules::runtime::contracts::memory::MemoryWriteCandidate;
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
 };
@@ -38,8 +46,10 @@ use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
 };
+use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
+use crate::modules::runtime::stream_emitter::MEMORY_AFTER_TURN_EVENT;
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
@@ -60,6 +70,107 @@ fn make_turn_service(state: &AppState) -> TurnService {
         memory_provider: state.memory_provider.clone(),
         active_retrieval_manager: state.active_retrieval_manager.clone(),
     })
+}
+
+/// Phase M4-A — stable governance trace contract version pinned
+/// onto every `memory_after_turn` envelope (Tauri event + harness
+/// `AgentEvent::MemoryAfterTurn`).  Bumping this string is a
+/// breaking governance contract change; future graders / replay
+/// MUST honor it.
+pub const MEMORY_AFTER_TURN_TRACE_VERSION: &str = "memory-after-turn-trace@m4.1";
+
+/// Phase M3-C closeout (extended in M4.1) — run the
+/// [`MemoryCoordinator::after_turn`] write-policy / quality-gate /
+/// conflict-resolver pipeline at the end of a turn and emit the
+/// **batch envelope** through both:
+///
+///   1. the frontend [`MEMORY_AFTER_TURN_EVENT`] Tauri channel
+///      (drives the runtime-projection store), and
+///   2. the harness [`EventBus`] as
+///      [`AgentEvent::MemoryAfterTurn`] (drives M4 trace sinks /
+///      future grader components).
+///
+/// M4.1 — `candidates` is now sourced from
+/// [`extract_memory_store_tool_candidates`] for `memory_store`
+/// tool calls observed during the turn; `existing_records` is now
+/// sourced from
+/// [`lookup_existing_records_for_candidates`] so the conflict
+/// resolver flips from "always NoConflict" to producing real
+/// outcomes for same-key writes.  The batch envelope still fires
+/// even when both arrays are empty — the empty case is the
+/// explicit "no candidates this turn" signal (M3-C contract).
+///
+/// Emit failure on either channel is logged at TRACE — never
+/// blocks the turn.
+fn dispatch_after_turn(
+    app_handle: &AppHandle,
+    harness_bus: Option<&EventBus>,
+    injection_deps: MemoryInjectionDeps,
+    session_id: Option<String>,
+    project_id: Option<String>,
+    candidates: Vec<MemoryWriteCandidate>,
+    existing_records: Vec<Option<ExistingRecordRef>>,
+    reflection_notes: Vec<crate::modules::learning::reflection_note::ReflectionNote>,
+    caller: &'static str,
+) {
+    debug_assert_eq!(
+        candidates.len(),
+        existing_records.len(),
+        "candidate / existing_record arrays must be parallel"
+    );
+    let coordinator = MemoryCoordinator::with_default_policy(injection_deps);
+    let output = coordinator.after_turn(AfterTurnInput {
+        session_id: session_id.clone(),
+        project_id: project_id.clone(),
+        candidates,
+        existing_records,
+        reflection_notes,
+        caller,
+    });
+    // RFC3339 timestamp for the batch envelope; per-decision
+    // `decidedAt` lives inside each `MemoryWriteDecision`.
+    let decided_at_dt = chrono::Utc::now();
+    let decided_at_rfc = decided_at_dt.to_rfc3339();
+
+    // (1) Frontend transport channel.
+    let payload = serde_json::json!({
+        "traceVersion": MEMORY_AFTER_TURN_TRACE_VERSION,
+        "caller": caller,
+        "policyVersion": output.policy_version,
+        "decidedAt": decided_at_rfc,
+        "decisions": output.decisions,
+        "quality": output.quality,
+        "conflicts": output.conflicts,
+    });
+    if let Err(err) = app_handle.emit(MEMORY_AFTER_TURN_EVENT, payload) {
+        tracing::trace!(
+            event = MEMORY_AFTER_TURN_EVENT,
+            error = %err,
+            "[after_turn] memory_after_turn emit failed (non-fatal)"
+        );
+    }
+
+    // (2) Harness EventBus — M4.2 ground-truth seam.  Zero
+    // overhead when `harness_bus` is `None` (no bus subscribed).
+    if let Some(bus) = harness_bus {
+        let event = AgentEvent::MemoryAfterTurn {
+            trace_version: MEMORY_AFTER_TURN_TRACE_VERSION,
+            caller,
+            session_id,
+            project_id,
+            policy_version: output.policy_version,
+            decided_at: decided_at_dt,
+            decisions: output.decisions,
+            quality: output.quality,
+            conflicts: output.conflicts,
+        };
+        if let Err(err) = bus.emit(event) {
+            tracing::trace!(
+                error = %err,
+                "[after_turn] harness MemoryAfterTurn emit failed (non-fatal)"
+            );
+        }
+    }
 }
 
 // `ContextBudgetUsagePayload` / `StreamTokenPayload` moved to
@@ -694,6 +805,7 @@ async fn record_trajectory_if_possible(
 #[allow(dead_code)]
 pub async fn run_agent_turn(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     session_id: String,
     user_message: String,
     permission_mode: Option<String>,
@@ -726,6 +838,10 @@ pub async fn run_agent_turn(
     // current message count to keep the API stateless.
     let harness_event_bus_run = state.harness.as_ref().map(|h| h.event_bus.clone());
     let turn_number_run = (app_session.messages.len() as u64) + 1;
+    // Phase M4.1 — capture the message-vector baseline so the
+    // turn-end candidate extractor can slice "messages added
+    // during this turn" without ambiguity.
+    let baseline_message_count_run = app_session.messages.len();
     crate::modules::harness::agent_loop_integration::emit_turn_started(
         harness_event_bus_run.as_ref(),
         &session_id,
@@ -856,7 +972,7 @@ pub async fn run_agent_turn(
     .with_context_budget(state.context_budget.clone())
     .with_working_memory(WorkingMemory::default())
     .with_turn_hook(state.memory_ticker.clone())
-    .with_session_context(session_ctx_id, session_ctx_project);
+    .with_session_context(session_ctx_id.clone(), session_ctx_project.clone());
 
     tracing::info!(
         "[run_agent_turn] Runtime created, calling run_turn with message: {}",
@@ -971,6 +1087,46 @@ pub async fn run_agent_turn(
                 state.trajectory_manager.as_ref(),
             )
             .await;
+
+            // Phase M4.1 — extract real `MemoryWriteCandidate`s
+            // from the assistant `memory_store` tool calls
+            // produced during THIS turn (slice from the captured
+            // baseline) and look up existing records so the
+            // conflict resolver renders real outcomes.
+            let new_messages_run: Vec<ConversationMessage> = updated_app_session
+                .messages
+                .iter()
+                .skip(baseline_message_count_run)
+                .cloned()
+                .collect();
+            let after_turn_scope_run = MemoryExecutionScope {
+                session_id: Some(session_ctx_id.clone()),
+                project_id: session_ctx_project.clone(),
+                workdir: None,
+            };
+            let candidates_run =
+                extract_memory_store_tool_candidates(&new_messages_run, &after_turn_scope_run);
+            let existing_run = lookup_existing_records_for_candidates(
+                &state.memory_provider,
+                &after_turn_scope_run,
+                &candidates_run,
+            )
+            .await;
+            dispatch_after_turn(
+                &app_handle,
+                harness_event_bus_run.as_ref(),
+                MemoryInjectionDeps {
+                    pinned_store: state.pinned_store.clone(),
+                    memory_provider: state.memory_provider.clone(),
+                    active_retrieval_manager: state.active_retrieval_manager.clone(),
+                },
+                Some(session_ctx_id.clone()),
+                session_ctx_project.clone(),
+                candidates_run,
+                existing_run,
+                Vec::new(),
+                "run_agent_turn",
+            );
 
             // LearningModule: record turn outcome using shared AppState instance.
             // Using AppState-level module avoids per-turn re-init and lets SelfModel
@@ -1412,6 +1568,24 @@ pub async fn start_agent_stream(
     let harness_event_bus_for_stream = state.harness.as_ref().map(|h| h.event_bus.clone());
     let turn_number_for_stream = (app_session.messages.len() as u64) + 1;
 
+    // Phase M3-B audit fix (extended in M4.1) — clone deps for
+    // the spawned-task `dispatch_after_turn` call.  All `Arc`
+    // clones; no perf cost.  Also capture the message-vector
+    // baseline so the candidate extractor can slice "messages
+    // added during this turn" inside the spawned task.
+    let app_handle_for_after_turn = app_handle.clone();
+    let pinned_store_for_after_turn = state.pinned_store.clone();
+    let memory_provider_for_after_turn = state.memory_provider.clone();
+    let active_retrieval_manager_for_after_turn = state.active_retrieval_manager.clone();
+    let stream_session_id_for_after_turn = execution_context.session_id.clone();
+    let stream_project_id_for_after_turn = if execution_context.project_id.is_empty() {
+        None
+    } else {
+        Some(execution_context.project_id.clone())
+    };
+    let baseline_message_count_stream = app_session.messages.len();
+    let harness_bus_for_after_turn = harness_event_bus_for_stream.clone();
+
     // Spawn a background task to process the stream
     let stream_id_for_task = stream_id.clone();
     let stream_id_return = stream_id.clone();
@@ -1474,7 +1648,12 @@ pub async fn start_agent_stream(
         let mut provider_request_id = format!("stream_{}", stream_id_for_task);
         let is_resume_turn = inbound_resume_cursor.is_some();
         let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
-        let permission_policy = build_permission_policy(mode);
+        // Phase M4-C P2 — wrap in `Arc` so the harness
+        // `prepare_step_execution` shadow trace can borrow the
+        // same policy without re-constructing it (re-construction
+        // would lose any per-tool requirements set on the
+        // original policy).
+        let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
         let execution_context = SessionExecutionContext::new(
             execution_context_for_task.session_id.clone(),
             execution_context_for_task.project_id.clone(),
@@ -1737,6 +1916,19 @@ pub async fn start_agent_stream(
                         memory_context: None,
                     };
                     stream_emitter.emit_payload(payload);
+                    // Phase M4-C P5 — emit harness `StreamErrored`
+                    // event so the trace aggregator records the
+                    // hard error against the run report.
+                    if let Some(bus) = harness_event_bus_for_stream.as_ref() {
+                        let _ = bus.emit(AgentEvent::StreamErrored {
+                            session_id: session_id.clone(),
+                            reason: last_stream_error_reason
+                                .clone()
+                                .unwrap_or_else(|| "unknown_stream_error".to_string()),
+                            resume_available: user_visible_truth.resume_available,
+                            at: chrono::Utc::now(),
+                        });
+                    }
                     // Save session and emit stream_complete even on error
                     // (break from outer loop so cleanup code runs below)
                     break;
@@ -2082,6 +2274,18 @@ pub async fn start_agent_stream(
                             memory_context: None,
                         };
                         stream_emitter.emit_payload(payload);
+                        // Phase M4-C P5 — emit harness `StreamErrored`
+                        // event from the inner-loop error path too.
+                        if let Some(bus) = harness_event_bus_for_stream.as_ref() {
+                            let _ = bus.emit(AgentEvent::StreamErrored {
+                                session_id: session_id.clone(),
+                                reason: last_stream_error_reason
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown_stream_error".to_string()),
+                                resume_available: user_visible_truth.resume_available,
+                                at: chrono::Utc::now(),
+                            });
+                        }
                         stream_failed = true;
                         break;
                     }
@@ -2265,6 +2469,35 @@ pub async fn start_agent_stream(
                     &tool_name,
                     &input_json.to_string(),
                 );
+                // Phase M4-C P2 — emit harness `PrepareStepExecuted`
+                // shadow trace.  Calls the typed
+                // `prepare_step_execution` seam with the actual
+                // tool args + policy and records what the seam
+                // would decide.  Production dispatch still goes
+                // through the existing `permission_policy.authorize`
+                // path above; this trace is for governance only
+                // (no enforcement until M4.8 gate work).
+                if let Some(bus) = harness_event_bus_for_stream.as_ref() {
+                    let parsed_args = parse_tool_input_json(&input_json);
+                    let prep_out = crate::modules::control_plane::prepare_step_execution::prepare_step_execution(
+                        crate::modules::control_plane::prepare_step_execution::PrepareStepExecutionInput {
+                            tool_name: &tool_name,
+                            session_context: &execution_context_for_policy,
+                            args: &parsed_args,
+                            permission_policy: permission_policy.clone(),
+                        },
+                    );
+                    let _ = bus.emit(AgentEvent::PrepareStepExecuted {
+                        session_id: session_id.clone(),
+                        tool_name: tool_name.clone(),
+                        outcome: prep_out.outcome,
+                        boundary: prep_out.boundary_decision,
+                        permission: prep_out.permission_decision,
+                        sandbox: prep_out.sandbox_policy,
+                        policy_version: prep_out.policy_version,
+                        at: chrono::Utc::now(),
+                    });
+                }
                 let (result_text, is_error) = match permission_outcome {
                     crate::modules::runtime::permissions::PermissionOutcome::Allow => {
                         match tool_executor.execute_with_trace(
@@ -2515,6 +2748,47 @@ pub async fn start_agent_stream(
             trajectory_manager_for_stream.as_ref(),
         )
         .await;
+
+        // Phase M4.1 — extract real `MemoryWriteCandidate`s from
+        // the assistant `memory_store` tool calls produced during
+        // THIS streaming turn (slice from the captured baseline)
+        // and look up existing records so the conflict resolver
+        // renders real outcomes.  Mirrors the `run_agent_turn`
+        // site exactly.
+        let new_messages_stream: Vec<ConversationMessage> = updated_app_session
+            .messages
+            .iter()
+            .skip(baseline_message_count_stream)
+            .cloned()
+            .collect();
+        let after_turn_scope_stream = MemoryExecutionScope {
+            session_id: Some(stream_session_id_for_after_turn.clone()),
+            project_id: stream_project_id_for_after_turn.clone(),
+            workdir: None,
+        };
+        let candidates_stream =
+            extract_memory_store_tool_candidates(&new_messages_stream, &after_turn_scope_stream);
+        let existing_stream = lookup_existing_records_for_candidates(
+            &memory_provider_for_after_turn,
+            &after_turn_scope_stream,
+            &candidates_stream,
+        )
+        .await;
+        dispatch_after_turn(
+            &app_handle_for_after_turn,
+            harness_bus_for_after_turn.as_ref(),
+            MemoryInjectionDeps {
+                pinned_store: pinned_store_for_after_turn.clone(),
+                memory_provider: memory_provider_for_after_turn.clone(),
+                active_retrieval_manager: active_retrieval_manager_for_after_turn.clone(),
+            },
+            Some(stream_session_id_for_after_turn.clone()),
+            stream_project_id_for_after_turn.clone(),
+            candidates_stream,
+            existing_stream,
+            Vec::new(),
+            "start_agent_stream",
+        );
 
         // LearningModule: record turn + reflection trigger.
         if let Some(lm_arc) = &learning_module_for_stream {
@@ -3743,6 +4017,20 @@ pub fn respond_permission(
     sender
         .send(decision_enum)
         .map_err(|_| "Failed to send permission decision".to_string())?;
+
+    // Phase M4-C P4 — emit harness `PermissionResolved` event so
+    // the trace aggregator pairs this resolution with the
+    // earlier `PermissionPrompted` event.  Zero-cost no-op when
+    // harness is not initialised.
+    if let Some(harness) = state.harness.as_ref() {
+        let _ = harness.event_bus.emit(AgentEvent::PermissionResolved {
+            session_id: session_id.clone(),
+            tool_name: tool_name.clone(),
+            decision: decision.clone(),
+            scope: scope.clone().unwrap_or_else(|| "once".to_string()),
+            at: chrono::Utc::now(),
+        });
+    }
 
     // Optional session-scoped remember decision
     if scope.as_deref() == Some("session") {

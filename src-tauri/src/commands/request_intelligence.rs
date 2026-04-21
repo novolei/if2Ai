@@ -24,9 +24,13 @@
 
 use std::path::PathBuf;
 
+use tauri::State;
+
+use crate::commands::AppState;
 use crate::modules::application::request_intelligence_service::{
     classify, RequestIntelligenceInput,
 };
+use crate::modules::harness::AgentEvent;
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 
 /// Wire-shape input for the IPC command. Mirrors the
@@ -56,14 +60,30 @@ pub struct RequestIntelligenceClassifyInput {
 /// without any adapter struct.
 #[tauri::command]
 pub async fn request_intelligence_classify(
+    state: State<'_, AppState>,
     input: RequestIntelligenceClassifyInput,
 ) -> Result<ExecutionModeDecision, String> {
     let workdir = input.workdir.map(PathBuf::from);
+    let session_id = input.session_id.clone();
     let out = classify(RequestIntelligenceInput {
         user_message: input.user_message,
         session_id: input.session_id,
         project_id: input.project_id,
         workdir,
     });
+    // Phase M4-C P3 — emit harness `ExecutionModeJudged` event so
+    // the trace aggregator records every advisory classifier
+    // judgment.  Zero-cost no-op when harness is not initialised.
+    if let Some(harness) = state.harness.as_ref() {
+        let d = &out.decision;
+        let _ = harness.event_bus.emit(AgentEvent::ExecutionModeJudged {
+            session_id,
+            execution_mode: format!("{:?}", d.execution_mode).to_lowercase(),
+            risk_level: format!("{:?}", d.risk_level).to_lowercase(),
+            complexity_level: format!("{:?}", d.complexity_level).to_lowercase(),
+            policy_version: d.classifier_policy_version.clone(),
+            at: chrono::Utc::now(),
+        });
+    }
     Ok(out.decision)
 }
