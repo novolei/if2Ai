@@ -65,8 +65,9 @@ SIZE_EXEMPT_PATHS = {
     # Tier 1 backend (GFR-T1-A ~ I)
     # plugins/lib.rs + commands/lib.rs deleted as orphan dead code
     # 2026-04-21 (GFR-T1-A cancelled).
-    # runtime/config.rs renamed to runtime/config/mod.rs in GFR-T1-B-1.
-    "src-tauri/src/modules/runtime/config/mod.rs",
+    # runtime/config.rs renamed to runtime/config/mod.rs in GFR-T1-B-1
+    # then sliced through GFR-T1-B-2/3/4/5/tests; mod.rs now 711 LOC
+    # (under 800 hard limit; still > 500 target — flagged as warning).
     "src-tauri/src/modules/runtime/mcp_stdio.rs",
     "src-tauri/src/modules/runtime/prompt.rs",
     "src-tauri/src/modules/runtime/conversation.rs",
