@@ -63,6 +63,10 @@ use crate::modules::memory::{MemoryTicker, PinnedStore, SharedMemoryProvider};
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
 };
+use crate::modules::runtime::budget::{
+    MAX_REQUEST_CHAR_BUDGET, MAX_REQUEST_MESSAGE_COUNT, MAX_REQUEST_TOKEN_BUDGET_ESTIMATE,
+    MAX_STREAM_RETRY_ON_TIMEOUT,
+};
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
@@ -85,10 +89,10 @@ use crate::modules::session::Session as AppSession;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
-const MAX_REQUEST_MESSAGE_COUNT: usize = 180;
-const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
-const MAX_REQUEST_TOKEN_BUDGET_ESTIMATE: usize = 30_000;
-const MAX_STREAM_RETRY_ON_TIMEOUT: usize = 1;
+// MAX_REQUEST_* / MAX_STREAM_RETRY_ON_TIMEOUT moved to
+// `crate::modules::runtime::budget` so the canonical preflight /
+// streaming budget constants live next to ContextBudget.
+// Imported above.
 
 /// All state captured by the original
 /// `tokio::spawn(async move { ... })` closure inside

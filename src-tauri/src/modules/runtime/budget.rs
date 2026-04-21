@@ -103,6 +103,39 @@ impl Slot {
     }
 }
 
+// ── Per-request preflight budget constants ──────────────────────
+// Originally defined inline next to the streaming spawn body in
+// `commands/agent.rs`, then carried along the MIG-001-c/d
+// extraction into `application/turn_service/stream_task.rs`.
+// Centralized here in budget.rs so the canonical "what limits a
+// chat request" knob set lives next to `ContextBudget` /
+// `estimate_tokens` rather than scattered across the streaming
+// task file. Consumed by `application::prompt_planner::governor`
+// (preflight trim) and by `stream_task::run_stream_task` (per-
+// iteration request budgeting).
+
+/// Hard cap on the number of messages sent to the provider in
+/// any single chat request. Anything beyond is dropped from the
+/// oldest end by the preflight governor.
+pub const MAX_REQUEST_MESSAGE_COUNT: usize = 180;
+
+/// Hard cap on the total character budget for one provider
+/// request payload. Used by the preflight governor to drop /
+/// truncate messages until the remaining payload fits.
+pub const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
+
+/// Soft estimate of the per-request output-token budget the
+/// preflight governor reserves for the model's reply. Treated
+/// as a lower-bound floor that the dynamic context budget will
+/// always honour.
+pub const MAX_REQUEST_TOKEN_BUDGET_ESTIMATE: usize = 30_000;
+
+/// Maximum number of times the streaming task will retry a
+/// `provider.stream(...)` call after a network-timeout class
+/// error before giving up and surfacing the failure to the
+/// frontend as `degraded_reason="timeout"`.
+pub const MAX_STREAM_RETRY_ON_TIMEOUT: usize = 1;
+
 /// Context budget configuration specifying how tokens are distributed
 ///
 /// Default allocation (4000 tokens total):
