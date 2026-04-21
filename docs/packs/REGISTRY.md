@@ -114,23 +114,23 @@
 
 ### Migration-Core Pipeline
 
-| 顺序 | 优先级 | Pack                                                                          | 状态   | Goal                                                     |
-| ---- | ------ | ----------------------------------------------------------------------------- | ------ | -------------------------------------------------------- |
-| 1    | P0     | [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md) | active | 把 chat turn 主链收口成 canonical orchestrator           |
-| 2    | P0     | [MIG-010](./feature/migration-core/MIG-010-local-gateway-bootstrap.md)        | draft  | 建立 local gateway bootstrap seam                        |
-| 3    | P0     | [MIG-012](./feature/migration-core/MIG-012-frontend-api-facade-and-transport-cutover.md) | draft | 建立前端 `src/api/*` facade，收缩 `tauri.ts` 业务职责    |
-| 4    | P0     | [MIG-013](./feature/migration-core/MIG-013-app-shell-router-and-bootstrap-store.md) | draft | 建立 `AppShell + ContentRouter + bootstrap store`        |
-| 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md) | draft | 建立 session/chat store 基础层                           |
-| 6    | P0     | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | draft | 让主聊天链走 gateway conversations/streaming surface     |
-| 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md) | draft | 让 execution mode / preflight 成为真实 product gate      |
-| 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)   | draft  | 把 prompt planner 升级成 traceable contract              |
-| 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)          | draft  | 打通真实 memory lifecycle 闭环                           |
-| 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)        | draft  | 把 Tauri host 收口成 desktop host thin shell             |
-| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md) | draft  | 把前端切到 canonical runtime projection 单一真相路径     |
-| 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)           | draft  | 建立统一 shell truth                                     |
-| 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md) | draft  | 建立统一 worker/tool execution contract                  |
-| 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | draft | 让 harness replay/eval 建在 canonical run report 上      |
-| 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)   | draft  | 把 activation/license 升级成真实生命周期系统             |
+| 顺序 | 优先级 | Pack                                                                                           | 状态   | Goal                                                  |
+| ---- | ------ | ---------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------- |
+| 1    | P0     | [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md)                  | active | 把 chat turn 主链收口成 canonical orchestrator        |
+| 2    | P0     | [MIG-010](./feature/migration-core/MIG-010-local-gateway-bootstrap.md)                         | draft  | 建立 local gateway bootstrap seam                     |
+| 3    | P0     | [MIG-012](./feature/migration-core/MIG-012-frontend-api-facade-and-transport-cutover.md)       | draft  | 建立前端 `src/api/*` facade，收缩 `tauri.ts` 业务职责 |
+| 4    | P0     | [MIG-013](./feature/migration-core/MIG-013-app-shell-router-and-bootstrap-store.md)            | draft  | 建立 `AppShell + ContentRouter + bootstrap store`     |
+| 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md)               | draft  | 建立 session/chat store 基础层                        |
+| 6    | P0     | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md)     | draft  | 让主聊天链走 gateway conversations/streaming surface  |
+| 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)   | draft  | 让 execution mode / preflight 成为真实 product gate   |
+| 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | draft  | 把 prompt planner 升级成 traceable contract           |
+| 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | draft  | 打通真实 memory lifecycle 闭环                        |
+| 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | draft  | 把 Tauri host 收口成 desktop host thin shell          |
+| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | draft  | 把前端切到 canonical runtime projection 单一真相路径  |
+| 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)                            | draft  | 建立统一 shell truth                                  |
+| 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md)                  | draft  | 建立统一 worker/tool execution contract               |
+| 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | draft  | 让 harness replay/eval 建在 canonical run report 上   |
+| 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)                    | draft  | 把 activation/license 升级成真实生命周期系统          |
 
 ### Migration-Core Priority Notes
 
@@ -163,32 +163,32 @@
 > 已知的"边缘 god-file"。由 `./scripts/pack scan` 维护 LOC；超过 1500 LOC 自动晋升为 Tier 1/2。
 > `lint-architecture` 把这些文件视为 baseline 已知技术债，不报 error；新增超过 800 LOC 的文件会立即报 error。
 
-| 文件                                                          |  LOC |
-| ------------------------------------------------------------- | ---: |
-| `src-tauri/src/modules/application/turn_service/stream_task.rs` | 1698 |
-| `src-tauri/src/modules/browser/session.rs`                    | 1408 |
-| `src-tauri/src/modules/memory/audit.rs`                       | 1094 |
-| `src-tauri/src/modules/api/providers/claw_provider.rs`        | 1223 |
-| `src-tauri/src/modules/api/providers/openai_compat.rs`        | 1071 |
-| `src-tauri/src/modules/memory/pinned/store.rs`                | 1009 |
-| `src-tauri/src/modules/runtime/compact.rs`                    |  962 |
-| `src-tauri/src/modules/learning/strategy_rollout.rs`          |  967 |
-| `src-tauri/src/modules/learning/candidate_evaluator.rs`       |  966 |
-| `src-tauri/src/modules/learning/strategy_registry_service.rs` |  951 |
-| `src-tauri/src/modules/learning/strategy_registry.rs`         |  845 |
-| `src-tauri/src/modules/learning/promotion_gate.rs`            |  822 |
-| `src-tauri/src/modules/harness/gate.rs`                       |  951 |
-| `src-tauri/src/modules/harness/trace_aggregator.rs`           |  803 |
-| `src-tauri/src/modules/session/manager.rs`                    |  966 |
-| `src-tauri/src/modules/tools/builtin/skill.rs`                |  985 |
-| `src-tauri/src/modules/tools/builtin/browser_tool.rs`         |  952 |
-| `src-tauri/src/modules/tools/registry.rs`                     |  850 |
-| `src-tauri/src/modules/skills/guard/threat_patterns.rs`       |  982 |
-| `src-tauri/src/modules/skills/guard/mod.rs`                   |  808 |
-| `src-tauri/src/commands/slash.rs`                             |  980 |
-| `src-tauri/src/commands/memory.rs`                            |  975 |
-| `src-tauri/src/commands/skills_hub.rs`                        |  850 |
-| `src/modules/settings/pages/TtsTestPage.tsx`                  |  921 |
+| 文件                                                            |  LOC |
+| --------------------------------------------------------------- | ---: |
+| `src-tauri/src/modules/application/turn_service/stream_task.rs` | 1249 |
+| `src-tauri/src/modules/browser/session.rs`                      | 1408 |
+| `src-tauri/src/modules/memory/audit.rs`                         | 1094 |
+| `src-tauri/src/modules/api/providers/claw_provider.rs`          | 1223 |
+| `src-tauri/src/modules/api/providers/openai_compat.rs`          | 1071 |
+| `src-tauri/src/modules/memory/pinned/store.rs`                  | 1009 |
+| `src-tauri/src/modules/runtime/compact.rs`                      |  962 |
+| `src-tauri/src/modules/learning/strategy_rollout.rs`            |  967 |
+| `src-tauri/src/modules/learning/candidate_evaluator.rs`         |  966 |
+| `src-tauri/src/modules/learning/strategy_registry_service.rs`   |  951 |
+| `src-tauri/src/modules/learning/strategy_registry.rs`           |  845 |
+| `src-tauri/src/modules/learning/promotion_gate.rs`              |  822 |
+| `src-tauri/src/modules/harness/gate.rs`                         |  951 |
+| `src-tauri/src/modules/harness/trace_aggregator.rs`             |  803 |
+| `src-tauri/src/modules/session/manager.rs`                      |  966 |
+| `src-tauri/src/modules/tools/builtin/skill.rs`                  |  985 |
+| `src-tauri/src/modules/tools/builtin/browser_tool.rs`           |  952 |
+| `src-tauri/src/modules/tools/registry.rs`                       |  850 |
+| `src-tauri/src/modules/skills/guard/threat_patterns.rs`         |  982 |
+| `src-tauri/src/modules/skills/guard/mod.rs`                     |  808 |
+| `src-tauri/src/commands/slash.rs`                               |  980 |
+| `src-tauri/src/commands/memory.rs`                              |  975 |
+| `src-tauri/src/commands/skills_hub.rs`                          |  850 |
+| `src/modules/settings/pages/TtsTestPage.tsx`                    |  921 |
 
 ---
 

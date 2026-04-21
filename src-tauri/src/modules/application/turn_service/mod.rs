@@ -24,15 +24,23 @@
 //!   `start_agent_stream` IPC command collapsed into a thin
 //!   adapter that wires per-process cross-stream coordination
 //!   state into [`stream::StreamTurnRequest`] and delegates.
-//! - MIG-001-d (this commit) — extracted the spawn-task closure
-//!   body out of `stream.rs` into the sibling
-//!   [`stream_task::run_stream_task`] free function. Captured
-//!   state is bundled into [`stream_task::StreamTaskInputs`] so
-//!   the `tokio::spawn(...)` call site is a single struct
-//!   construction. `stream.rs` shrinks back under the CHARTER §5
-//!   800-LOC hard limit; `stream_task.rs` (~1700 LOC) is on the
-//!   REGISTRY tier-3 watchlist as a follow-up split candidate
-//!   (per-iteration helpers + post-loop finalize).
+//! - MIG-001-d — extracted the spawn-task closure body out of
+//!   `stream.rs` into the sibling [`stream_task::run_stream_task`]
+//!   free function. Captured state is bundled into
+//!   [`stream_task::StreamTaskInputs`] so the `tokio::spawn(...)`
+//!   call site is a single struct construction.
+//! - MIG-001 follow-up cleanup (this commit) — extracted the
+//!   ~460-LOC post-loop finalize block (guardrail rewrite +
+//!   TaskOutcomeResolver projection + persisted-turn-outcome
+//!   synthesis + timeline-message append + app-session save +
+//!   trajectory record + after-turn dispatch + learning + emit
+//!   stream_complete + harness TurnFinished + MemoryTicker
+//!   on_turn_complete + diag log) out of `stream_task.rs` into
+//!   the sibling [`stream_finalize::finalize_stream_task`] free
+//!   function. `stream_task.rs` shrank from 1698 → 1249 LOC;
+//!   `stream_finalize.rs` is a new ~640 LOC sibling. Further
+//!   intra-loop splits (per-iteration tool-exec helpers) are
+//!   deferred to a future GFR pack with snapshot-diff coverage.
 //!
 //! Strict layering (CHARTER §2.1 hard constraint, also restated in
 //! MIG-001 §4):
@@ -63,6 +71,7 @@ use crate::modules::tools::ToolRegistry;
 
 mod run;
 mod stream;
+mod stream_finalize;
 mod stream_task;
 
 pub use run::{RunTurnRequest, RunTurnResponse};

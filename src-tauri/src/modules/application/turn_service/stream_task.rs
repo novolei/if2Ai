@@ -1165,447 +1165,28 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         );
     }
 
-    // Guardrail: do not allow "operation completed" claims without a successful
-    // mutating tool evidence in this request.
-    if contains_unverified_file_claim(&accumulated_text) && !has_successful_mutating_tool {
-        let guarded = "未执行工具，无法确认完成。".to_string();
-        tracing::warn!(
-            "[start_agent_stream] Rewriting unverified completion claim to guarded message"
-        );
-        accumulated_text = guarded.clone();
-        stream_emitter.emit_payload(StreamTokenPayload {
-            stream_id: stream_id_for_task.clone(),
-            text: Some(guarded),
-            thinking: None,
-            event_type: "final_text_override".to_string(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_status: None,
-            tool_args: None,
-            tool_result: None,
-            tool_duration_ms: None,
-            effective_workdir: None,
-            policy_decision: None,
-            evidence_id: None,
-            request_id: Some(provider_request_id.clone()),
-            task_outcome: None,
-            degraded_reason: None,
-            resume_available: None,
-            resume_cursor: None,
-            context_budget_usage: None,
-            memory_context: None,
-        });
-    }
-
-    let user_visible_truth = TaskOutcomeResolver::resolve(
-        ExecutionTruth {
-            has_successful_tool,
-            has_successful_mutating_tool,
-        },
-        &ConversationTruth {
-            stream_failed,
-            terminal_status: terminal_status.unwrap_or("unknown"),
-            last_stream_error_reason: last_stream_error_reason.clone(),
-        },
-    );
-    let resume_cursor = user_visible_truth
-        .resume_available
-        .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
-    let degraded_reason = user_visible_truth.degraded_reason.clone();
-    let persisted_turn_outcome = PersistedTurnOutcome {
-        task_outcome: user_visible_truth.task_outcome.to_string(),
-        degraded_reason: degraded_reason.clone(),
-        resume_available: user_visible_truth.resume_available,
-        resume_cursor: resume_cursor.clone(),
-        request_id: provider_request_id.clone(),
-    };
-
-    // Save session with all accumulated messages
-    let mut updated_app_session = app_session_clone;
-    let user_msg = crate::modules::runtime::session::ConversationMessage {
-        role: crate::modules::runtime::session::MessageRole::User,
-        blocks: vec![ContentBlock::Text {
-            text: user_message_clone.clone(),
-        }],
-        usage: None,
-        thinking: None,
-        task_outcome: None,
-        degraded_reason: None,
-        resume_available: None,
-        resume_cursor: None,
-        request_id: Some(provider_request_id.clone()),
-    };
-    flush_assistant_timeline_segment(
-        &mut timeline_session_messages,
-        &mut accumulated_text,
-        &mut accumulated_thinking,
-        if stream_failed || user_visible_truth.task_outcome == "partial_success" {
-            Some(&persisted_turn_outcome)
-        } else {
-            None
-        },
-    );
-    if (stream_failed || user_visible_truth.task_outcome == "partial_success")
-        && timeline_session_messages
-            .last()
-            .is_none_or(|message| message.resume_cursor.as_deref() != resume_cursor.as_deref())
-    {
-        timeline_session_messages.push(crate::modules::runtime::session::ConversationMessage {
-            role: crate::modules::runtime::session::MessageRole::Assistant,
-            blocks: vec![ContentBlock::Text {
-                text: String::new(),
-            }],
-            usage: None,
-            thinking: None,
-            task_outcome: Some(persisted_turn_outcome.task_outcome.clone()),
-            degraded_reason: persisted_turn_outcome.degraded_reason.clone(),
-            resume_available: Some(persisted_turn_outcome.resume_available),
-            resume_cursor: persisted_turn_outcome.resume_cursor.clone(),
-            request_id: Some(persisted_turn_outcome.request_id.clone()),
-        });
-    }
-    let appended_message_count = 1 + timeline_session_messages.len();
-    updated_app_session.messages.push(user_msg);
-    updated_app_session
-        .messages
-        .extend(timeline_session_messages);
-    updated_app_session.message_count =
-        updated_app_session.logical_message_count() + appended_message_count;
-
-    // Context compaction — compact if session exceeds token threshold
-    let compaction_config = CompactionConfig::default();
-    if should_compact(
-        &RuntimeSession {
-            version: 1,
-            messages: updated_app_session.messages.clone(),
-        },
-        compaction_config,
-    ) {
-        let compact_result = compact_session(
-            &RuntimeSession {
-                version: 1,
-                messages: updated_app_session.messages.clone(),
-            },
-            compaction_config,
-        );
-        updated_app_session.messages = compact_result.compacted_session.messages;
-    }
-
-    if let Err(e) = session_manager.save_session(&updated_app_session).await {
-        tracing::error!("[start_agent_stream] Failed to save session: {}", e);
-    }
-
-    // ── Post-turn streaming parity (mirrors run_agent_turn) ──
-
-    // Build a runtime session snapshot for trajectory recording.
-    let trajectory_runtime_session = RuntimeSession {
-        version: 1,
-        messages: updated_app_session.messages.clone(),
-    };
-
-    // Trajectory recording.
-    record_trajectory_if_possible(
-        &trajectory_runtime_session,
-        std::slice::from_ref(&system_prompt_for_stream),
-        trajectory_manager_for_stream.as_ref(),
-    )
-    .await;
-
-    // Phase M4.1 — extract real `MemoryWriteCandidate`s from
-    // the assistant `memory_store` tool calls produced during
-    // THIS streaming turn (slice from the captured baseline)
-    // and look up existing records so the conflict resolver
-    // renders real outcomes.  Mirrors the `run_agent_turn`
-    // site exactly.
-    let new_messages_stream: Vec<ConversationMessage> = updated_app_session
-        .messages
-        .iter()
-        .skip(baseline_message_count_stream)
-        .cloned()
-        .collect();
-    let after_turn_scope_stream = MemoryExecutionScope {
-        session_id: Some(stream_session_id_for_after_turn.clone()),
-        project_id: stream_project_id_for_after_turn.clone(),
-        workdir: None,
-    };
-    let candidates_stream =
-        extract_memory_store_tool_candidates(&new_messages_stream, &after_turn_scope_stream);
-    let existing_stream = lookup_existing_records_for_candidates(
-        &memory_provider_for_after_turn,
-        &after_turn_scope_stream,
-        &candidates_stream,
-    )
-    .await;
-    dispatch_after_turn(
-        &app_handle_for_after_turn,
-        harness_bus_for_after_turn.as_ref(),
-        MemoryInjectionDeps {
-            pinned_store: pinned_store_for_after_turn.clone(),
-            memory_provider: memory_provider_for_after_turn.clone(),
-            active_retrieval_manager: active_retrieval_manager_for_after_turn.clone(),
-        },
-        Some(stream_session_id_for_after_turn.clone()),
-        stream_project_id_for_after_turn.clone(),
-        candidates_stream,
-        existing_stream,
-        Vec::new(),
-        "start_agent_stream",
-    );
-
-    // LearningModule: record turn + reflection trigger.
-    if let Some(lm_arc) = &learning_module_for_stream {
-        let mut lm = lm_arc.lock().await;
-        lm.self_model_mut().record_turn(
-            /* success= */ !stream_failed,
-            /* response_time_ms= */ 0.0,
-        );
-
-        let turn_count = lm.self_model().performance.total_turns;
-        tracing::info!(
-            "[start_agent_stream] LearningModule: turn {} recorded",
-            turn_count
-        );
-
-        const STREAM_REFLECT_INTERVAL: u64 = 5;
-        if turn_count > 0 && turn_count % STREAM_REFLECT_INTERVAL == 0 {
-            match lm
-                .reflection_engine
-                .analyze_session(&trajectory_runtime_session)
-                .await
-            {
-                Ok(reflections) => {
-                    let count: usize = reflections.len();
-                    lm.self_model.update_from_reflections(&reflections);
-                    tracing::info!(
-                        "[start_agent_stream] Reflection: {} insights at turn {}",
-                        count,
-                        turn_count
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "[start_agent_stream] Reflection failed at turn {turn_count}: {e}"
-                    );
-                }
-            }
-        }
-    }
-
-    // WeibullDecay importance decay (non-blocking, warn-only on error).
-    {
-        use crate::modules::runtime::episodic_compaction::WeibullDecay;
-        let decay_default = WeibullDecay::default();
-        if let Err(e) = memory_provider_for_stream
-            .apply_importance_decay(decay_default.lambda, decay_default.k)
-            .await
-        {
-            tracing::warn!("[start_agent_stream] WeibullDecay: apply_importance_decay failed: {e}");
-        }
-    }
-
-    // Background memory promotion scan — throttled to once per minute
-    // (process-wide) so the cost is amortised across turns.  Surfaces
-    // candidates as `memory_promotion_candidate` audit events; never
-    // mutates the store on its own.
-    {
-        use crate::modules::memory::promotion::{MemoryPromotionEngine, PromotionThresholds};
-        let thresholds = PromotionThresholds::load_from_disk();
-        let engine =
-            MemoryPromotionEngine::with_thresholds(memory_provider_for_stream.as_ref(), thresholds);
-        match engine.evaluate_and_audit().await {
-            Ok(Some(n)) if n > 0 => {
-                tracing::info!("[start_agent_stream] PromotionEngine: surfaced {n} candidate(s)")
-            }
-            Ok(Some(_)) => {
-                tracing::debug!("[start_agent_stream] PromotionEngine: scan ran, no candidates")
-            }
-            Ok(None) => {
-                tracing::debug!("[start_agent_stream] PromotionEngine: throttled, scan skipped")
-            }
-            Err(e) => {
-                tracing::warn!("[start_agent_stream] PromotionEngine: scan failed: {e}")
-            }
-        }
-    }
-
-    // Emit stream_complete exactly once, and only after the full
-    // tool/LLM loop has finished for this request.
-    if !stream_failed && !completion_already_emitted {
-        // Compute live token-budget breakdown for the frontend ContextBar.
-        // Counts are estimates derived from tiktoken cl100k_base; the
-        // total budget mirrors the runtime ContextGovernor.
-        let system_tokens =
-            crate::modules::runtime::budget::estimate_tokens(&system_prompt_for_stream);
-        let history_tokens: usize = session_messages
-            .iter()
-            .map(|m| {
-                m.content
-                    .iter()
-                    .map(|c| match c {
-                        crate::modules::api::InputContentBlock::Text { text } => {
-                            crate::modules::runtime::budget::estimate_tokens(text)
-                        }
-                        crate::modules::api::InputContentBlock::ToolResult { content, .. } => {
-                            content
-                                .iter()
-                                .map(|b| match b {
-                                    crate::modules::api::ToolResultContentBlock::Text { text } => {
-                                        crate::modules::runtime::budget::estimate_tokens(text)
-                                    }
-                                    // JSON tool results are estimated from their serialised
-                                    // representation so structured outputs still count toward
-                                    // the per-turn history budget surfaced in `ContextBar`.
-                                    crate::modules::api::ToolResultContentBlock::Json { value } => {
-                                        crate::modules::runtime::budget::estimate_tokens(
-                                            &value.to_string(),
-                                        )
-                                    }
-                                    // Image content blocks (Phase 7C, slice 7C.2):
-                                    // base64 payload doesn't go through the text
-                                    // tokeniser (vision providers count it on
-                                    // their own); contribute the alt text only.
-                                    crate::modules::api::ToolResultContentBlock::Image {
-                                        alt,
-                                        ..
-                                    } => alt.as_deref().map_or(0, |a| {
-                                        crate::modules::runtime::budget::estimate_tokens(a)
-                                    }),
-                                })
-                                .sum::<usize>()
-                        }
-                        _ => 0,
-                    })
-                    .sum::<usize>()
-            })
-            .sum();
-        let memory_tokens: usize = memory_context_items_for_task
-            .iter()
-            .map(|i| crate::modules::runtime::budget::estimate_tokens(&i.content))
-            .sum();
-        const OUTPUT_RESERVE: usize = 4_096;
-        let total_budget = MAX_REQUEST_TOKEN_BUDGET_ESTIMATE
-            .max(system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE + 1024);
-        let used = system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE;
-        let remaining = total_budget.saturating_sub(used);
-        let usage = ContextBudgetUsagePayload {
-            total_budget,
-            system_tokens,
-            history_tokens,
-            memory_tokens,
-            output_reserve: OUTPUT_RESERVE,
-            remaining,
-        };
-        let memory_payload = if memory_context_items_for_task.is_empty() {
-            None
-        } else {
-            Some(memory_context_items_for_task.clone())
-        };
-
-        let payload = StreamTokenPayload {
-            stream_id: stream_id_for_task.clone(),
-            text: None,
-            thinking: None,
-            event_type: "stream_complete".to_string(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_status: None,
-            tool_args: None,
-            tool_result: None,
-            tool_duration_ms: None,
-            effective_workdir: None,
-            policy_decision: None,
-            evidence_id: None,
-            request_id: Some(provider_request_id.clone()),
-            task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-            degraded_reason: degraded_reason.clone(),
-            resume_available: Some(user_visible_truth.resume_available),
-            resume_cursor: resume_cursor.clone(),
-            context_budget_usage: Some(usage),
-            memory_context: memory_payload,
-        };
-        stream_emitter.emit_payload(payload);
-        if terminal_status.is_none() {
-            terminal_status = Some("completed");
-        }
-    }
-
-    // Phase 6E harness: emit TurnFinished for the streaming path.
-    // We treat any non-failed stream as success here; downstream consumers
-    // can refine via `task_outcome` if needed.
-    crate::modules::harness::agent_loop_integration::emit_turn_finished(
-        harness_event_bus_for_stream.as_ref(),
-        &session_id,
-        turn_number_for_stream,
-        !stream_failed,
-        token_count,
-        stream_turn_started_at.elapsed().as_millis() as u64,
-    );
-
-    // Phase 8B.11 fix — fire MemoryTicker.on_turn_complete for the
-    // streaming path.  The non-streaming run_agent_turn path goes
-    // through ConversationRuntime.with_turn_hook, but
-    // start_agent_stream streams directly so the hook needs an
-    // explicit invocation here.  Using the persisted message list
-    // ensures RollingSummarizer's incremental slice (`message_count`)
-    // matches what the user actually saw.
-    if !stream_failed {
-        use crate::modules::memory::scope::MemoryExecutionScope;
-        use crate::modules::runtime::conversation::TurnHook;
-        let messages_for_hook = updated_app_session.messages.clone();
-        let scope_for_hook = MemoryExecutionScope {
-            session_id: Some(session_id.clone()),
-            project_id: if updated_app_session.project_id.is_empty() {
-                None
-            } else {
-                Some(updated_app_session.project_id.clone())
-            },
-            workdir: None,
-        };
-        // Phase 8B.11 fix-debug — info log so it's visible in dev console.
-        tracing::info!(
-            session_id = %session_id,
-            project_id = updated_app_session.project_id.as_str(),
-            messages = messages_for_hook.len(),
-            "[stream] firing memory_ticker.on_turn_complete"
-        );
-        memory_ticker_for_stream.on_turn_complete(&scope_for_hook, &session_id, &messages_for_hook);
-    } else {
-        tracing::info!(
-            session_id = %session_id,
-            "[stream] SKIP memory_ticker.on_turn_complete (stream_failed=true)"
-        );
-    }
-
-    if is_resume_turn {
-        tracing::info!(
-            "[resume_outcome] session_id='{}', stream_id='{}', request_id='{}', inbound_resume_cursor='{}', task_outcome='{}', success={}",
-            session_id,
-            stream_id_for_task,
-            provider_request_id.as_str(),
-            inbound_resume_cursor.as_deref().unwrap_or("none"),
-            user_visible_truth.task_outcome,
-            user_visible_truth.task_outcome == "completed"
-        );
-    }
-
-    tracing::info!(
-        "[stream_diag_summary] stream_id='{}', session_id='{}', request_id='{}', status='{}', task_outcome='{}', degraded_reason='{}', resume_available={}, resume_cursor='{}', is_resume_turn={}, inbound_resume_cursor='{}', tool_loop_iter={}, token_count={}, stream_failed={}, completion_already_emitted={}, has_successful_tool={}, has_successful_mutating_tool={}, preflight_trim_rounds={}, preflight_dropped_messages_total={}, preflight_trimmed_chars_total={}, sanitize_rounds={}, dropped_empty_messages_total={}, dropped_orphan_tool_results_total={}, dropped_unmatched_tool_uses_total={}, dropped_invalid_tool_use_inputs_total={}, start_retry_count={}, event_retry_count={}, orphan_tool_result_samples={:?}, unmatched_tool_use_samples={:?}, invalid_tool_use_input_samples={:?}, last_stream_error={}",
-        stream_id_for_task,
+    super::stream_finalize::finalize_stream_task(super::stream_finalize::FinalizeStreamInputs {
         session_id,
-        provider_request_id.as_str(),
-        terminal_status.unwrap_or("unknown"),
-        user_visible_truth.task_outcome,
-        degraded_reason.as_deref().unwrap_or("none"),
-        user_visible_truth.resume_available,
-        resume_cursor.as_deref().unwrap_or("none"),
+        stream_id_for_task,
+        provider_request_id,
+        turn_number_for_stream,
+        stream_turn_started_at,
+        user_message_clone,
+        inbound_resume_cursor,
         is_resume_turn,
-        inbound_resume_cursor.as_deref().unwrap_or("none"),
-        tool_loop_iter,
-        token_count,
-        stream_failed,
-        completion_already_emitted,
+        accumulated_text,
+        accumulated_thinking,
         has_successful_tool,
         has_successful_mutating_tool,
+        stream_failed,
+        completion_already_emitted,
+        terminal_status,
+        last_stream_error_reason,
+        tool_loop_iter,
+        token_count,
+        timeline_session_messages,
+        session_messages,
+        system_prompt_for_stream,
         preflight_trim_rounds,
         preflight_dropped_messages_total,
         preflight_trimmed_chars_total,
@@ -1619,8 +1200,25 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         sanitize_orphan_samples,
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
-        last_stream_error_reason.as_deref().unwrap_or("none"),
-    );
+        stream_emitter,
+        session_manager,
+        app_session_clone,
+        trajectory_manager_for_stream,
+        memory_provider_for_stream,
+        memory_ticker_for_stream,
+        harness_event_bus_for_stream,
+        learning_module_for_stream,
+        memory_context_items_for_task,
+        baseline_message_count_stream,
+        app_handle_for_after_turn,
+        harness_bus_for_after_turn,
+        pinned_store_for_after_turn,
+        memory_provider_for_after_turn,
+        active_retrieval_manager_for_after_turn,
+        stream_session_id_for_after_turn,
+        stream_project_id_for_after_turn,
+    })
+    .await;
 }
 
 #[cfg(test)]
