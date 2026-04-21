@@ -480,7 +480,7 @@ mod tests {
         let lfr = apply_lfr(&input, LFR_M, LFR_N).unwrap();
         // 输出帧数 ≈ t/n（含左填充）
         let left_pad = (LFR_M - 1) / 2;
-        let expected = (t + left_pad + LFR_N - 1) / LFR_N;
+        let expected = (t + left_pad).div_ceil(LFR_N);
         assert_eq!(
             lfr.nrows(),
             expected,

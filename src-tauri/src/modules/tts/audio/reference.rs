@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(wav.sample_rate, 48_000);
         assert_eq!(wav.channels, 2);
         let frames = wav.samples.len() / 2;
-        let expected = (48_000 as f32 * 0.3) as i32; // 14_400
+        let expected = (48_000_f32 * 0.3) as i32; // 14_400
         assert!(
             (frames as i32 - expected).abs() < 1_000,
             "frames {frames}, expected {expected}"
