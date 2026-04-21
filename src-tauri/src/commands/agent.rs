@@ -23,9 +23,10 @@ use crate::modules::application::prompt_planner::{
     extend_sample_ids, sanitize_messages_for_provider, ContextGovernor, RequestPreflightStats,
 };
 use crate::modules::application::{
-    AfterTurnInput, ExistingRecordRef, MemoryCoordinator, MemoryItemProjection,
-    PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution, TauriPermissionPrompter,
-    ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
+    contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,
+    record_trajectory_if_possible, AfterTurnInput, ExistingRecordRef, MemoryCoordinator,
+    MemoryItemProjection, PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution,
+    TauriPermissionPrompter, ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
@@ -371,102 +372,7 @@ pub(crate) fn build_permission_policy(mode: PermissionMode) -> PermissionPolicy 
         .with_tool_requirement("agent", PermissionMode::DangerFullAccess)
 }
 
-fn contains_unverified_file_claim(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let patterns = [
-        "已创建",
-        "已写入",
-        "已删除",
-        "已修改",
-        "created",
-        "written",
-        "deleted",
-        "successfully created",
-        "successfully wrote",
-        "successfully deleted",
-    ];
-    patterns
-        .iter()
-        .any(|p| text.contains(p) || lower.contains(p))
-}
-
-fn is_mutating_tool_success(tool_name: &str, input_json: &str, is_error: bool) -> bool {
-    if is_error {
-        return false;
-    }
-
-    let write_tools = [
-        "file_write",
-        "write_file",
-        "file_edit",
-        "edit_file",
-        "NotebookEdit",
-        "TodoWrite",
-        "memory_store",
-        "memory_forget",
-        "memory_purge",
-        "cron_add",
-        "cron_remove",
-        "cron_run",
-    ];
-    if write_tools.contains(&tool_name) {
-        return true;
-    }
-
-    // Shell-like tools can mutate files; inspect command heuristically.
-    if ["bash", "PowerShell", "REPL"].contains(&tool_name) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(input_json) {
-            let command = value.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            return shell_command_likely_mutates_files(command);
-        }
-    }
-
-    false
-}
-
-fn shell_command_likely_mutates_files(command: &str) -> bool {
-    let normalized = command.to_lowercase();
-    let mutation_markers = [
-        "rm ",
-        "mv ",
-        "cp ",
-        "touch ",
-        "mkdir ",
-        "rmdir ",
-        "chmod ",
-        "chown ",
-        "sed -i",
-        "perl -0pi",
-        "python -c",
-        "python - <<",
-        "node -e",
-        "tee ",
-        "printf ",
-        "cat >",
-        "cat <<",
-        "echo >",
-        "echo >>",
-        ">>",
-        " > ",
-        "| tee",
-        "git add",
-        "git mv",
-        "git rm",
-        "install -d",
-    ];
-
-    mutation_markers
-        .iter()
-        .any(|marker| normalized.contains(marker))
-}
-
-fn extract_skill_proposal_name(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|line| line.trim().strip_prefix("skill_proposal:"))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-// harness symbol marker: skill_proposal|draft|approval
+// Tool result heuristics moved to crate::modules::application::tool_heuristics (GFR-006b).
 
 // `RetrievedMemoryContext` / `map_scored_memory_to_payload` /
 // `retrieve_memory_context` moved to
@@ -474,50 +380,7 @@ fn extract_skill_proposal_name(text: &str) -> Option<String> {
 // Phase M1.4. Call sites below now resolve memory through the
 // `TurnService` seam.
 
-/// Record the conversation as a trajectory for future RL training.
-///
-/// Uses the `AppState`-level `TrajectoryManager` when available to avoid
-/// re-creating the manager (and re-scanning the directory) on every turn.
-/// Falls back to constructing a one-off manager if the state-level one is
-/// absent (e.g. during tests or early startup).
-///
-/// Errors are logged as warnings and never block the main flow.
-/// Short sessions (<3 turns) are silently skipped per privacy defaults.
-async fn record_trajectory_if_possible(
-    session: &RuntimeSession,
-    system_prompt: &[String],
-    tm: Option<&std::sync::Arc<TrajectoryManager>>,
-) {
-    let system_text = system_prompt.join("\n");
-
-    // Prefer the shared AppState manager.
-    if let Some(manager) = tm {
-        match manager.record(session, &system_text, "if2ai-default").await {
-            Ok(id) => tracing::info!("[record_trajectory] Recorded trajectory {id}"),
-            Err(e) => tracing::debug!("[record_trajectory] Skipping trajectory record: {e}"),
-        }
-        return;
-    }
-
-    // Fallback: create a temporary manager.
-    let trajectories_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("trajectories");
-
-    let manager = match TrajectoryManager::new(trajectories_dir) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!("[record_trajectory] Failed to create TrajectoryManager: {e}");
-            return;
-        }
-    };
-
-    match manager.record(session, &system_text, "if2ai-default").await {
-        Ok(id) => tracing::info!("[record_trajectory] Recorded trajectory {id}"),
-        Err(e) => tracing::debug!("[record_trajectory] Skipping trajectory record: {e}"),
-    }
-}
+// record_trajectory_if_possible moved to crate::modules::application::trajectory_service (GFR-006c).
 
 /// Run a single agent turn with the given user message.
 ///

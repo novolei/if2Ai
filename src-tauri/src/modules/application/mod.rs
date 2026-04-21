@@ -56,6 +56,8 @@ pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
 pub mod tool_executor;
+pub mod tool_heuristics;
+pub mod trajectory_service;
 pub mod request_intelligence_service;
 pub mod turn_service;
 
@@ -100,6 +102,10 @@ pub use provider_service::{
 pub(crate) use permission_service::TauriPermissionPrompter;
 pub(crate) use real_api_client::RealApiClient;
 pub(crate) use tool_executor::ToolRegistryExecutor;
+pub(crate) use tool_heuristics::{
+    contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,
+};
+pub(crate) use trajectory_service::record_trajectory_if_possible;
 pub use request_intelligence_service::{
     classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
 };
