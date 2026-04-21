@@ -2,9 +2,7 @@
 //!
 //! Provides the main agent execution commands for Tauri.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono;
@@ -12,15 +10,13 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::stream_outcome::{ConversationTruth, ExecutionTruth, TaskOutcomeResolver};
 use crate::commands::AppState;
-use crate::modules::api::{
-    InputContentBlock, InputMessage, MessageRequest, ProviderClient, ToolDefinition,
-};
+use crate::modules::api::{InputContentBlock, InputMessage, MessageRequest};
 use crate::modules::application::memory_candidate_extractor::{
     extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
 };
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
 use crate::modules::application::prompt_planner::{
-    extend_sample_ids, sanitize_messages_for_provider, ContextGovernor, RequestPreflightStats,
+    extend_sample_ids, sanitize_messages_for_provider, ContextGovernor,
 };
 use crate::modules::application::{
     contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,
@@ -29,28 +25,23 @@ use crate::modules::application::{
     TauriPermissionPrompter, ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
-    AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
+    AuditEmitter, SessionContextResolver, SessionExecutionContext,
 };
 use crate::modules::harness::{AgentEvent, EventBus};
 use crate::modules::learning::reflection::ReflectionEngine;
-use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
-    TOOL_RESULT_PREVIEW_CHARS,
 };
-use crate::modules::runtime::compact::{
-    compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
-};
+use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::contracts::memory::MemoryWriteCandidate;
-use crate::modules::runtime::conversation::{
-    ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, ToolExecutor,
-};
+#[cfg(test)]
+use crate::modules::runtime::conversation::{ApiClient, ApiRequest, AssistantEvent};
+use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use crate::modules::runtime::permissions::{
-    PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
-    PermissionRequest,
+    PermissionMode, PermissionPolicy, PermissionPromptDecision,
 };
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
@@ -1247,10 +1238,8 @@ pub async fn start_agent_stream(
         );
         let execution_context_for_policy = execution_context.clone();
         log_context_fingerprint("start_agent_stream_task", &execution_context);
-        let mut tool_executor = ToolRegistryExecutor::new_with_context(
-            tool_registry_clone.clone(),
-            execution_context,
-        );
+        let mut tool_executor =
+            ToolRegistryExecutor::new_with_context(tool_registry_clone.clone(), execution_context);
         const SAVE_INTERVAL: u32 = 50;
         // Session-format timeline messages (for persistence in chronological order)
         let mut timeline_session_messages: Vec<
@@ -2776,7 +2765,7 @@ fn extract_resume_cursor_marker(message: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::modules::memory;

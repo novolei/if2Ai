@@ -141,9 +141,7 @@ impl TtsSettings {
     /// Out-of-range values are clamped before writing so the on-disk
     /// state always matches what the runtime would honour.
     pub fn save(&self, if2ai_home: &Path) -> std::io::Result<()> {
-        if let Err(e) = fs::create_dir_all(if2ai_home) {
-            return Err(e);
-        }
+        fs::create_dir_all(if2ai_home)?;
         let mut clamped = self.clone();
         clamped.clamp();
         let body = format!(

@@ -358,7 +358,7 @@ fn apply_lfr(features: &Array2<f32>, m: usize, n: usize) -> anyhow::Result<Array
         .unwrap_or(true);
     let left_pad = if use_left_pad { (m - 1) / 2 } else { 0 };
     let t_eff = t + left_pad;
-    let t_lfr = (t_eff + n - 1) / n;
+    let t_lfr = t_eff.div_ceil(n);
 
     let output_dim = feat_dim * m;
     let mut output = Array2::zeros((t_lfr, output_dim));

@@ -200,14 +200,12 @@ fn content_preview_for_candidate(key: &str, content: &str) -> String {
         preview.push_str(key);
         preview.push_str(": ");
     }
-    let mut chars = 0usize;
-    for ch in content.chars() {
+    for (chars, ch) in content.chars().enumerate() {
         if chars >= CONTENT_PREVIEW_CHARS {
             preview.push('…');
             break;
         }
         preview.push(ch);
-        chars += 1;
     }
     preview
 }
@@ -324,21 +322,22 @@ mod tests {
             session_id: None,
             workdir: None,
         };
-        let mut msgs = Vec::new();
-        msgs.push(assistant_tool_use("bash", r#"{"command":"ls"}"#));
-        msgs.push(ConversationMessage {
-            role: MessageRole::User,
-            blocks: vec![ContentBlock::Text {
-                text: "hello".into(),
-            }],
-            usage: None,
-            thinking: None,
-            task_outcome: None,
-            degraded_reason: None,
-            resume_available: None,
-            resume_cursor: None,
-            request_id: None,
-        });
+        let msgs = vec![
+            assistant_tool_use("bash", r#"{"command":"ls"}"#),
+            ConversationMessage {
+                role: MessageRole::User,
+                blocks: vec![ContentBlock::Text {
+                    text: "hello".into(),
+                }],
+                usage: None,
+                thinking: None,
+                task_outcome: None,
+                degraded_reason: None,
+                resume_available: None,
+                resume_cursor: None,
+                request_id: None,
+            },
+        ];
         assert!(extract_memory_store_tool_candidates(&msgs, &scope).is_empty());
     }
 

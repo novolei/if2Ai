@@ -153,7 +153,7 @@ impl TtsProfileBook {
                 return book;
             }
         }
-        let mut seeded = Self::seed_builtin();
+        let seeded = Self::seed_builtin();
         let _ = seeded.save(if2ai_home);
         seeded
     }

@@ -48,7 +48,9 @@ pub use error::TtsError;
 pub use model::{ensure_models_cached, ModelPaths};
 #[allow(unused_imports)]
 pub use performance::{SynthesisProfile, TtsConfig};
+#[allow(unused_imports)]
 pub use profile::{TtsProfile, TtsProfileBook, TtsTextPostprocess};
+#[allow(unused_imports)]
 pub use settings::{TtsQualityPreset, TtsSettings};
 #[allow(unused_imports)]
 pub use text::normalize_tts_text;

@@ -244,9 +244,8 @@ pub fn check_eligibility_with_basis(
         ),
         PromotionBasis::RequireBoth => match (&compare_verdict, &suite_verdict) {
             (TrackVerdict::Ready { .. }, TrackVerdict::Ready { .. }) => {
-                let summary = format!(
-                    "promotion allowed (require_both): compare + suite both promote"
-                );
+                let summary =
+                    "promotion allowed (require_both): compare + suite both promote".to_string();
                 PromotionEligibility::ready(
                     reason_codes::READY_BOTH_PROMOTE,
                     summary,

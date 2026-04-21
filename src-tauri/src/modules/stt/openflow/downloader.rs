@@ -77,7 +77,7 @@ fn model_base_candidates(base_url: &str) -> Vec<String> {
         base_url.trim_end_matches('/').to_string(),
         rewrite_huggingface_base(base_url, DEFAULT_HF_MIRROR_BASE),
     ];
-    let mut deduped = Vec::new();
+    let mut deduped: Vec<String> = Vec::new();
     for c in candidates {
         if !deduped.contains(&c) {
             deduped.push(c);

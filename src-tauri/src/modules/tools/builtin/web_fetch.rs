@@ -215,10 +215,8 @@ pub fn entry() -> ToolEntry {
                     extract_article(&html).unwrap_or_else(|| extract_text(&html, max_length))
                 }
                 "text" => extract_text(&html, max_length),
-                "auto" | _ => {
-                    // Default: try article first; fall back to text.
-                    extract_article(&html).unwrap_or_else(|| extract_text(&html, max_length))
-                }
+                // "auto" or any other value: try article first; fall back to text.
+                _ => extract_article(&html).unwrap_or_else(|| extract_text(&html, max_length)),
             };
 
             Ok(truncate_to_bytes(&result, max_length))

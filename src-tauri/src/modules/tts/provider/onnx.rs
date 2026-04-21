@@ -364,7 +364,7 @@ impl TtsProvider for OnnxTtsProvider {
                             );
                         let pause_samples =
                             (sample_rate as f32 * pause_secs).round() as usize * channels as usize;
-                        all_pcm.extend(std::iter::repeat(0.0f32).take(pause_samples));
+                        all_pcm.extend(std::iter::repeat_n(0.0f32, pause_samples));
                     }
                 }
                 let wav_bytes = wav_encode(&all_pcm, sample_rate, channels)?;

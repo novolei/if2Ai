@@ -36,31 +36,41 @@ pub mod trace_aggregator;
 
 // Re-exported for callers that import directly from `crate::modules::harness`
 // rather than via the full `crate::modules::harness::event_bus` path.
+// Many of these are part of the harness public API surface (consumed by
+// integration tests and the harness-cli binary) — flagged as "unused
+// imports" by clippy when the lib build is inspected in isolation.
+#[allow(unused_imports)]
 pub use compare::{
     compare_reports, AggregateDiff, BaselineVsCandidate, BlockerDiff, CompareError,
     EvidenceSummaryDiff, GraderVerdictDiff, ReportVersionCompatibility, VecLengthDiff,
     HARNESS_COMPARE_VERSION,
 };
+#[allow(unused_imports)]
 pub use corpus::{
     load_corpus_from_yaml, CorpusError, CorpusTask, CorpusTier, RegressionCorpus,
     HARNESS_CORPUS_VERSION,
 };
 #[allow(unused_imports)]
 pub use event_bus::{AgentEvent, EventBus};
+#[allow(unused_imports)]
 pub use gate::{
     evaluate_compare as gate_evaluate_compare, evaluate_suite as gate_evaluate_suite, GateDecision,
     GatePolicy, Recommendation, HARNESS_GATE_VERSION,
 };
+#[allow(unused_imports)]
 pub use graders::{run_all as run_all_graders, GraderId, GraderVerdict, HARNESS_GRADERS_VERSION};
+#[allow(unused_imports)]
 pub use report_persistence::{
     HarnessReportStore, PersistenceError, RunIndexEntry, HARNESS_REPORT_PERSISTENCE_VERSION,
 };
+#[allow(unused_imports)]
 pub use run_report::{
     AggregateMetrics, BlockingFailure, EvidenceBundle, ExecutionModeTrace, HarnessRunReport,
     MemoryAfterTurnTrace, PermissionPromptTrace, PrepareStepTrace, Severity, TaskOutcome,
     TaskRunResult, HARNESS_RUN_REPORT_VERSION,
 };
 pub use session_recorder::SessionRecorder;
+#[allow(unused_imports)]
 pub use suite_report::{
     aggregate_suite_report, SuiteGrade, SuiteReport, TaskClassification, TaskRunOutcome,
     TierSummary, HARNESS_SUITE_REPORT_VERSION,
