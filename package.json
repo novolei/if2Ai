@@ -11,7 +11,7 @@
         "tauri:dev": "tauri dev",
         "release:macos": "bash scripts/release-macos.sh",
         "preview": "vite preview",
-        "test": "vitest",
+        "test": "node --experimental-strip-types --import='data:text/javascript,import {register} from \"node:module\"; import {pathToFileURL} from \"node:url\"; register(\"./scripts/test-loader.mjs\", pathToFileURL(\"./\"))' --test 'src/**/*.test.ts'",
         "test:ui": "vitest --ui"
     },
     "devDependencies": {

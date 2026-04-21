@@ -1,0 +1,81 @@
+// MIG-012 — agent streaming domain facade.
+//
+// Owns every call the chat workspace makes to drive a streaming
+// agent turn: start, listen, respond to permission prompts. The
+// underlying Tauri commands (`start_agent_stream`,
+// `respond_permission`, `agent-token` event) stay hidden behind
+// this module — callers never import `invoke` / `listen`
+// directly.
+
+import type { UnlistenFn } from '@tauri-apps/api/event'
+
+import { AGENT_TOKEN_EVENT } from '@/transport/contracts'
+import type {
+  PermissionMode,
+  StreamTokenPayload,
+} from '@/transport/contracts'
+
+import { getApiClient } from './client.ts'
+
+/**
+ * Start a streaming agent turn and receive the stream id.
+ *
+ * The returned id is the correlation key for every subsequent
+ * `agent-token` event — pair it with [`listenToStream`] to
+ * project tokens into the UI.
+ */
+export async function startAgentStream(
+  sessionId: string,
+  userMessage: string,
+  permissionMode?: PermissionMode,
+): Promise<string> {
+  return getApiClient().call<string>('start_agent_stream', {
+    sessionId,
+    userMessage,
+    permissionMode,
+  })
+}
+
+/** Cancel an in-flight streaming turn. Safe to call on an
+ * already-completed stream id — the backend resolves silently. */
+export async function stopAgentStream(streamId: string): Promise<void> {
+  return getApiClient().call<void>('stop_agent_stream', { streamId })
+}
+
+/**
+ * Subscribe to token events for one specific stream id. The
+ * callback receives every [`StreamTokenPayload`] whose
+ * `stream_id` matches; events from other concurrent streams are
+ * filtered out client-side.
+ *
+ * Returns an `UnlistenFn` — callers MUST invoke it on cleanup
+ * or the subscription leaks.
+ */
+export async function listenToStream(
+  streamId: string,
+  handler: (payload: StreamTokenPayload) => void,
+): Promise<UnlistenFn> {
+  return getApiClient().subscribe<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
+    if (event.payload.stream_id === streamId) {
+      handler(event.payload)
+    }
+  })
+}
+
+/**
+ * Respond to a backend permission prompt with allow / deny and
+ * an optional scope. Used by the permission dialog glued to the
+ * `permission-request` event.
+ */
+export async function respondPermission(
+  sessionId: string,
+  decision: 'allow' | 'deny',
+  options?: { toolName?: string; scope?: 'once' | 'session' },
+): Promise<void> {
+  return getApiClient().call<void>('respond_permission', {
+    sessionId,
+    decision,
+    toolName: options?.toolName,
+    scope: options?.scope,
+  })
+}

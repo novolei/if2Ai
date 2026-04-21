@@ -1,37 +1,46 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+// MIG-012 — canonical App.tsx transport seam.
+//
+// Business helpers come from `@/api/*` domain facades;
+// `@/lib/tauri` is only kept as the `invoke` passthrough plus
+// wire-level DTO re-exports that have not yet been moved to
+// `@/transport/contracts`. Every command name in this import
+// block is now hidden behind a domain facade.
 import {
-  startAgentStream,
-  listenToStream,
-  respondPermission,
-  onboarding_get_state,
-  listProjects,
-  listProjectSessions,
   createPermanentWorktree,
   createProject,
-  deleteProject,
-  renameProject,
-  renameSession,
-  deleteSession,
-  setSessionPinned,
   createSession,
+  deleteProject,
+  deleteSession,
+  ensureDefaultWorkdir,
+  executeSlashCommand,
+  getOnboardingState,
   getSession,
+  listenToChatPrefill,
+  listenToStream,
+  listProjects,
+  listProjectSessions,
   openProjectInFinder,
   openSettingsWindow,
-  listenToChatPrefill,
   pickFolderDialog,
-  ensureDefaultWorkdir,
-  invoke,
-  executeSlashCommand,
-  suggestSlashCommands,
+  renameProject,
+  renameSession,
   resolveSkillSlash,
-  type PermissionRequestPayload,
-  type PermissionMode,
+  respondPermission,
+  setSessionPinned,
+  startAgentStream,
+  suggestSlashCommands,
   type Project,
   type ProjectMeta,
   type SessionMeta,
-  type StreamTokenPayload,
-} from '@/lib/tauri'
+} from '@/api'
+import { invoke } from '@/lib/tauri'
+import type {
+  PermissionMode,
+  PermissionRequestPayload,
+  StreamTokenPayload,
+} from '@/transport/contracts'
 import { toast } from 'sonner'
 import {
   runtimeProjectionStore,
@@ -108,7 +117,7 @@ function App() {
       const onboardingCheck = (async () => {
         try {
           const raw = await Promise.race([
-            onboarding_get_state(),
+            getOnboardingState(),
             new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error('onboarding_get_state timeout')), 3000)
             ),
