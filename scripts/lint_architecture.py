@@ -57,7 +57,11 @@ SIZE_LIMITS = {
 # scheduled refactors. When a GFR pack ships, remove its file from here.
 SIZE_EXEMPT_PATHS = {
     # Tier 0
-    "src-tauri/src/commands/agent.rs",
+    # commands/agent.rs renamed to commands/agent/mod.rs in GFR-005f
+    # (tests extraction); body still 2571 LOC (Tier 0 god-file pending
+    # CPD-001 turn-spine FEAT pack).
+    "src-tauri/src/commands/agent/mod.rs",
+    "src-tauri/src/commands/agent/tests.rs",
     "src-tauri/src/main.rs",
     "src/components/ui/chat-ui.tsx",
     "src/App.tsx",
