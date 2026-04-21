@@ -177,39 +177,136 @@ impl ToolExecutionBroker {
             request_id,
         );
         let started_at = Instant::now();
-        let result =
-            if let Some(reason) = post_skill_reload_denial_reason(request_id, tool_name, &args) {
+
+        // MIG-002-b — prepare_step_execution now acts as enforced preflight gate.
+        // Check prepare_step_execution before existing denial checks.
+        let permission_policy = Arc::new(
+            crate::modules::runtime::permissions::PermissionPolicy::new(context.permission_mode),
+        );
+        let preflight = crate::modules::control_plane::prepare_step_execution(
+            crate::modules::control_plane::PrepareStepExecutionInput {
+                tool_name,
+                session_context: context,
+                args: &args,
+                permission_policy: permission_policy.clone(),
+            },
+        );
+
+        let result = match preflight.outcome {
+            crate::modules::control_plane::PrepareStepOutcome::Denied => {
+                // MIG-002-b — Denied outcome blocks tool execution
+                let reason = match &preflight.permission_decision {
+                    crate::modules::control_plane::PermissionDecision::Deny { reason } => {
+                        reason.clone()
+                    }
+                    _ => {
+                        if matches!(
+                            preflight.boundary_decision,
+                            crate::modules::control_plane::BoundaryDecision::OutsideAndDenied
+                        ) {
+                            "Tool execution denied: path outside workdir boundary".to_string()
+                        } else {
+                            "Tool execution denied by preflight policy".to_string()
+                        }
+                    }
+                };
                 AuditEmitter::policy_decision_made(
                     trace_id,
                     &context.session_id,
                     tool_name,
                     &context.workdir,
                     context.permission_mode,
-                    "deny:skill_reload_guard",
+                    "deny:prepare_step_execution",
                     request_id,
                 );
-                Err(ToolError::Handler(reason))
-            } else if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name) {
-                AuditEmitter::policy_decision_made(
-                    trace_id,
-                    &context.session_id,
+                tracing::info!(
+                    "[tool_execution_broker] prepare_step_execution denied tool='{}', reason='{}'",
                     tool_name,
-                    &context.workdir,
-                    context.permission_mode,
-                    "deny:sandbox_strict_mode_requires_sandbox_enabled",
-                    request_id,
+                    reason
                 );
                 Err(ToolError::Handler(reason))
-            } else {
-                // Phase 7C, slice 7C.2 — `dispatch_with_context` now returns
-                // `ToolOutput`; collapse to legacy String here so the broker
-                // contract stays stable.  Future slices (7C.3+) will lift this
-                // function to return ToolOutput end-to-end.
-                let execution_context = self.to_tool_context(context);
-                self.tool_registry
-                    .dispatch_with_context_legacy(tool_name, args, execution_context)
-                    .await
-            };
+            }
+            crate::modules::control_plane::PrepareStepOutcome::RequiresApproval => {
+                // MIG-002-b — RequiresApproval continues to existing prompt path
+                // (prompt handling is outside this broker's scope)
+                tracing::info!(
+                    "[tool_execution_broker] prepare_step_execution requires approval for tool='{}'",
+                    tool_name
+                );
+                // Fall through to existing checks and dispatch
+                if let Some(reason) = post_skill_reload_denial_reason(request_id, tool_name, &args)
+                {
+                    AuditEmitter::policy_decision_made(
+                        trace_id,
+                        &context.session_id,
+                        tool_name,
+                        &context.workdir,
+                        context.permission_mode,
+                        "deny:skill_reload_guard",
+                        request_id,
+                    );
+                    Err(ToolError::Handler(reason))
+                } else if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name)
+                {
+                    AuditEmitter::policy_decision_made(
+                        trace_id,
+                        &context.session_id,
+                        tool_name,
+                        &context.workdir,
+                        context.permission_mode,
+                        "deny:sandbox_strict_mode_requires_sandbox_enabled",
+                        request_id,
+                    );
+                    Err(ToolError::Handler(reason))
+                } else {
+                    let execution_context = self.to_tool_context(context);
+                    self.tool_registry
+                        .dispatch_with_context_legacy(tool_name, args, execution_context)
+                        .await
+                }
+            }
+            crate::modules::control_plane::PrepareStepOutcome::Granted => {
+                // MIG-002-b — Granted outcome continues to existing checks and dispatch
+                tracing::info!(
+                    "[tool_execution_broker] prepare_step_execution granted tool='{}'",
+                    tool_name
+                );
+                if let Some(reason) = post_skill_reload_denial_reason(request_id, tool_name, &args)
+                {
+                    AuditEmitter::policy_decision_made(
+                        trace_id,
+                        &context.session_id,
+                        tool_name,
+                        &context.workdir,
+                        context.permission_mode,
+                        "deny:skill_reload_guard",
+                        request_id,
+                    );
+                    Err(ToolError::Handler(reason))
+                } else if let Some(reason) = strict_mode_denial_reason(&context.workdir, tool_name)
+                {
+                    AuditEmitter::policy_decision_made(
+                        trace_id,
+                        &context.session_id,
+                        tool_name,
+                        &context.workdir,
+                        context.permission_mode,
+                        "deny:sandbox_strict_mode_requires_sandbox_enabled",
+                        request_id,
+                    );
+                    Err(ToolError::Handler(reason))
+                } else {
+                    // Phase 7C, slice 7C.2 — `dispatch_with_context` now returns
+                    // `ToolOutput`; collapse to legacy String here so the broker
+                    // contract stays stable.  Future slices (7C.3+) will lift this
+                    // function to return ToolOutput end-to-end.
+                    let execution_context = self.to_tool_context(context);
+                    self.tool_registry
+                        .dispatch_with_context_legacy(tool_name, args, execution_context)
+                        .await
+                }
+            }
+        };
         if result.is_ok() && tool_name == "skill" {
             mark_skill_loaded_for_request(request_id);
         }
@@ -355,3 +452,6 @@ fn strict_mode_denial_reason(workdir: &std::path::Path, tool_name: &str) -> Opti
         )
     }
 }
+
+#[cfg(test)]
+mod tests;

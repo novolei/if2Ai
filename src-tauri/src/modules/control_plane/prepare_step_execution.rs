@@ -5,22 +5,20 @@
 //!
 //! `boundary -> permission -> sandbox`
 //!
-//! M1.8 explicitly does NOT enforce the seam by replacing the
-//! existing per-tool logic in
-//! [`crate::commands::agent::ToolRegistryExecutor`] /
-//! [`super::tool_execution_broker::ToolExecutionBroker`] /
-//! [`crate::modules::runtime::permissions::PermissionPolicy`].
-//! Doing so in a single slice would break every tool path
-//! simultaneously.  Instead this slice:
+//! MIG-002-b — this seam now enforces preflight decisions in
+//! [`super::tool_execution_broker::ToolExecutionBroker`].
+//! `PrepareStepOutcome::Denied` blocks tool execution; the broker
+//! returns `ToolError::Handler` with the denial reason.
 //!
-//! 1. Defines a typed [`PrepareStepExecutionOutput`] surface that
-//!    M4 governance + harness compare can plug into.
-//! 2. Provides a default implementation that wraps the existing
-//!    `PermissionPolicy::authorize` decision so the seam is
-//!    immediately usable in **shadow** mode (`PreflightMode::Shadow`).
-//! 3. Returns one of three canonical outcomes
-//!    (`Granted` / `RequiresApproval` / `Denied`) so future M4 gate
-//!    rules can short-circuit.
+//! The seam provides:
+//!
+//! 1. A typed [`PrepareStepExecutionOutput`] surface that M4
+//!    governance + harness compare can plug into.
+//! 2. A default implementation that wraps the existing
+//!    `PermissionPolicy::authorize` decision.
+//! 3. Three canonical outcomes (`Granted` / `RequiresApproval` /
+//!    `Denied`) that the broker consumes to short-circuit or
+//!    continue.
 //!
 //! Hard rules:
 //! 1. The output discriminator is closed in v1; adding a variant
@@ -139,10 +137,9 @@ pub const PREPARE_STEP_POLICY_VERSION: &str = "prepare-step@m1.8-skeleton";
 /// Run boundary → permission → sandbox in order.  Returns the
 /// composite typed decision.
 ///
-/// **Important**: the M1.8 default implementation runs in *shadow*
-/// mode — it computes the typed decision but does not block the
-/// caller. The IPC adapter is free to log the decision and proceed
-/// with its existing per-tool path while M4 gate rules ramp up.
+/// MIG-002-b — the decision is now enforced by
+/// [`super::tool_execution_broker::ToolExecutionBroker`].
+/// `PrepareStepOutcome::Denied` blocks tool execution.
 #[must_use]
 pub fn prepare_step_execution(input: PrepareStepExecutionInput<'_>) -> PrepareStepExecutionOutput {
     let boundary_decision = evaluate_boundary(input.session_context, input.args);
