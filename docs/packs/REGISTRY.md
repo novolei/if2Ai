@@ -16,13 +16,13 @@
 
 ## Recently Done
 
-| Pack                                                       | Type     | Goal                                                                   | Done       |
-| ---------------------------------------------------------- | -------- | ---------------------------------------------------------------------- | ---------- |
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)   | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`   | 2026-04-21 |
-| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md) | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs` | 2026-04-21 |
-| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md) | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs` | 2026-04-21 |
-| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md) | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs` | 2026-04-21 |
-| [GFR-003](./refactor/GFR-003-extract-permission-service.md) | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred) | 2026-04-21 |
+| Pack                                                        | Type     | Goal                                                                                                                | Done       |
+| ----------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)    | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
+| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)  | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                              | 2026-04-21 |
+| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md) | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                         | 2026-04-21 |
+| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)  | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs` | 2026-04-21 |
+| [GFR-003](./refactor/GFR-003-extract-permission-service.md) | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred)                                      | 2026-04-21 |
 
 ---
 

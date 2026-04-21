@@ -8,7 +8,7 @@
 use tauri::Emitter;
 
 use crate::modules::runtime::permissions::{
-    PermissionPrompter, PermissionPromptDecision, PermissionRequest,
+    PermissionPromptDecision, PermissionPrompter, PermissionRequest,
 };
 
 /// TauriPermissionPrompter — bridges the sync PermissionPrompter trait

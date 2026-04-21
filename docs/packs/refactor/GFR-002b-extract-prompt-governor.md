@@ -18,13 +18,13 @@
 
 `src-tauri/src/commands/agent.rs` (post-002a/002c, 现 3569 LOC)：
 
-| 段 | 行号 | 内容 |
-|---|---|---|
-| `struct RequestPreflightStats` | 3041–3049 | 6 字段 |
-| `impl RequestPreflightStats` | 3051–3055 | 1 helper (`has_changes`) |
-| `struct ContextGovernor` (含 harness symbol marker comment) | 3057–3059 | unit struct |
-| `impl ContextGovernor` | 3061–3200 | 4 methods (admit + 3 gates) |
-| `fn apply_request_preflight_limits` | 3350–3379 | 由 governor::message_char_budget_gate 调用 |
+| 段                                                          | 行号      | 内容                                       |
+| ----------------------------------------------------------- | --------- | ------------------------------------------ |
+| `struct RequestPreflightStats`                              | 3041–3049 | 6 字段                                     |
+| `impl RequestPreflightStats`                                | 3051–3055 | 1 helper (`has_changes`)                   |
+| `struct ContextGovernor` (含 harness symbol marker comment) | 3057–3059 | unit struct                                |
+| `impl ContextGovernor`                                      | 3061–3200 | 4 methods (admit + 3 gates)                |
+| `fn apply_request_preflight_limits`                         | 3350–3379 | 由 governor::message_char_budget_gate 调用 |
 
 调用点（必须保持外部可访问）：
 - `agent.rs:1591 / 1666` — `ContextGovernor.admit(...)`
