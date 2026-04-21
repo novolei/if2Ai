@@ -1,15 +1,25 @@
 #![allow(dead_code)]
 
 mod rpc;
+mod types;
 
 #[allow(unused_imports)]
 pub use rpc::{JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse};
+#[allow(unused_imports)]
+pub use types::{
+    ManagedMcpTool, McpInitializeClientInfo, McpInitializeParams, McpInitializeResult,
+    McpInitializeServerInfo, McpListResourcesParams, McpListResourcesResult, McpListToolsParams,
+    McpListToolsResult, McpReadResourceParams, McpReadResourceResult, McpResource,
+    McpResourceContents, McpTool, McpToolCallContent, McpToolCallParams, McpToolCallResult,
+    UnsupportedMcpServer,
+};
 
 use std::collections::BTreeMap;
 use std::io;
 use std::process::Stdio;
 
 use serde::de::DeserializeOwned;
+#[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -20,164 +30,7 @@ use super::mcp::mcp_tool_name;
 use super::mcp_client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
 
 // JSON-RPC framing types moved to rpc (GFR-T1-C-1).
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpInitializeParams {
-    pub protocol_version: String,
-    pub capabilities: JsonValue,
-    pub client_info: McpInitializeClientInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpInitializeClientInfo {
-    pub name: String,
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpInitializeResult {
-    pub protocol_version: String,
-    pub capabilities: JsonValue,
-    pub server_info: McpInitializeServerInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpInitializeServerInfo {
-    pub name: String,
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpListToolsParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpTool {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(rename = "inputSchema", skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<JsonValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<JsonValue>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpListToolsResult {
-    pub tools: Vec<McpTool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolCallParams {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<JsonValue>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpToolCallContent {
-    #[serde(rename = "type")]
-    pub kind: String,
-    #[serde(flatten)]
-    pub data: BTreeMap<String, JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolCallResult {
-    #[serde(default)]
-    pub content: Vec<McpToolCallContent>,
-    #[serde(default)]
-    pub structured_content: Option<JsonValue>,
-    #[serde(default)]
-    pub is_error: Option<bool>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpListResourcesParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpResource {
-    pub uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<JsonValue>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpListResourcesResult {
-    pub resources: Vec<McpResource>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct McpReadResourceParams {
-    pub uri: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpResourceContents {
-    pub uri: String,
-    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob: Option<String>,
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct McpReadResourceResult {
-    pub contents: Vec<McpResourceContents>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ManagedMcpTool {
-    pub server_name: String,
-    pub qualified_name: String,
-    pub raw_name: String,
-    pub tool: McpTool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsupportedMcpServer {
-    pub server_name: String,
-    pub transport: McpTransport,
-    pub reason: String,
-}
+// MCP protocol DTOs + ManagedMcpTool + UnsupportedMcpServer moved to types (GFR-T1-C-2).
 
 #[derive(Debug)]
 pub enum McpServerManagerError {

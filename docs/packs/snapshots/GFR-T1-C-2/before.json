@@ -1,0 +1,50 @@
+{
+  "files": [
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 621,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio/mod.rs",
+      "pub_symbols": [
+        "enum McpServerManagerError",
+        "fn from_runtime_config",
+        "fn from_servers",
+        "fn spawn",
+        "fn spawn_mcp_stdio_process",
+        "fn unsupported_servers",
+        "struct McpServerManager",
+        "struct McpStdioProcess"
+      ],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 171,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio/types.rs",
+      "pub_symbols": [
+        "struct ManagedMcpTool",
+        "struct McpInitializeClientInfo",
+        "struct McpInitializeParams",
+        "struct McpInitializeResult",
+        "struct McpInitializeServerInfo",
+        "struct McpListResourcesParams",
+        "struct McpListResourcesResult",
+        "struct McpListToolsParams",
+        "struct McpListToolsResult",
+        "struct McpReadResourceParams",
+        "struct McpReadResourceResult",
+        "struct McpResource",
+        "struct McpResourceContents",
+        "struct McpTool",
+        "struct McpToolCallContent",
+        "struct McpToolCallParams",
+        "struct McpToolCallResult",
+        "struct UnsupportedMcpServer"
+      ],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-T1-C-2",
+  "phase": "before"
+}
