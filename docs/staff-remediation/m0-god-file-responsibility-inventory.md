@@ -22,12 +22,34 @@ M0 后半段不再写新概念，而是把"责任"从四个 god-file 中识别�
 
 ## 2. 文件规模快照
 
-| file                                                                     | line count (M0.6 时刻) | 主要 export                                                                                                   |
-| ------------------------------------------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| [src-tauri/src/commands/agent.rs](../../src-tauri/src/commands/agent.rs) | 4060                   | `run_agent_turn` / `start_agent_stream` / `stop_agent_stream` / `respond_permission` / `RunAgentTurnResponse` |
-| [src/components/ui/chat-ui.tsx](../../src/components/ui/chat-ui.tsx)     | 4736                   | `ChatUI`（单巨型导出），含 ~15 个内部子组件 + ~50 个内部 helper                                               |
-| [src/App.tsx](../../src/App.tsx)                                         | 2472                   | `App`（单组件，41 个 hook 调用）                                                                              |
-| [src/lib/tauri.ts](../../src/lib/tauri.ts)                               | 2319                   | 130+ 个 `export`：IPC bridge functions + payload interfaces + 类型 + 事件 listener helpers                    |
+| file                                                                     | M0.6 baseline | M2 audit (2026-04-20) | Δ        | 主要 export                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------ | ------------- | --------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [src-tauri/src/commands/agent.rs](../../src-tauri/src/commands/agent.rs) | 4060          | 3770                  | **−290** | `run_agent_turn` / `start_agent_stream` / `stop_agent_stream` / `respond_permission` / `RunAgentTurnResponse`                                                                                                                 |
+| [src/components/ui/chat-ui.tsx](../../src/components/ui/chat-ui.tsx)     | 4736          | 4736                  | 0        | `ChatUI`（单巨型导出），含 ~15 个内部子组件 + ~50 个内部 helper（M2 未拆，留 m2.8）                                                                                                                                           |
+| [src/App.tsx](../../src/App.tsx)                                         | 2472          | 2514                  | **+42**  | `App`（单组件）；JSX 外迁到 BootShell+MainShell + permission prompt 切到 store + 4 态 boot route + execution-mode preview hook 接入；boot/session/project state 与 handler 仍在 App.tsx，行数净增主要来自上述 wiring + 富注释 |
+| [src/lib/tauri.ts](../../src/lib/tauri.ts)                               | 2319          | 2218                  | **−101** | 6 个 runtime/activation/execution-mode/memory DTO 已迁到 `@/transport/contracts`；30+ feature DTO 仍在                                                                                                                        |
+
+> M2 + M3 audit 时刻新增的壳层 / 投影层 / 协调层文件（脱离上面
+> 4 大 god-file，不计入 god-file 规模）：
+>
+> - `src/transport/contracts.ts` 约 460 行（含 M3.6 memory write
+>   decision wire shape）+ `src/transport/index.ts` 14 行
+> - `src/runtime-projection/*.ts` 8 文件，约 1500 行（types / queue /
+>   reducer / store / bridge / translator / hooks / preview hook /
+>   barrel；含 M3.6 memory write decision projection 字段）
+> - `src/boot/{BootShell,ActivationGateOverlay,use-boot-route}.tsx` 约 270 行
+> - `src/shell/MainShell.tsx` 85 行
+> - `src/modules/execution-mode/ExecutionModePill.tsx` 105 行
+> - 后端 `src-tauri/src/modules/application/*.rs` 12 文件，约 2700 行
+>   （M1 8 文件 + M3-A `memory_coordinator` `memory_write_policy`
+>   + M3-B `memory_quality_gate` `memory_conflict_resolution`
+>   `memory_recall_assembler`）
+> - 后端 `src-tauri/src/modules/learning/reflection_note.rs` 约 220 行
+>   (M3.7 contract types + tests)
+> - 后端 `src-tauri/src/modules/control_plane/{ingress_classifier,prepare_step_execution}.rs` 约 600 行
+> - 后端 `src-tauri/src/modules/runtime/contracts/*.rs` 约 800 行
+>   （M0.3+M0.4+M0.5 contracts + M3.3 typed write decision types）
+> - 后端 `src-tauri/src/modules/runtime/stream_emitter.rs` 282 行
 
 ## 3. 共用 destination map
 

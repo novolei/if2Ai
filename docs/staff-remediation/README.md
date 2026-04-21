@@ -15,6 +15,14 @@
   - UClaw 与 If2Ai 的第二阶段横向对照实施报告
   - 可立即迁移 / 需改造迁移 / 不建议迁移
   - 前后端重构顺序与 phase 设计
+- [gap-modules/index.md](./gap-modules/index.md)
+  - 严格参考 UClaw 前后端实现的 Agent Gap 模块化设计入口
+  - 区分 `模块存在 / phase 完成 / workflow 成立`
+  - 将“为什么做完 M1~M5 仍无产品体感”收敛为可执行的 gap 清单
+- [../implementation-packs/README.md](../implementation-packs/README.md)
+  - 新的短期执行入口层
+  - 将长期 Gap 真相压缩为单次可执行任务包
+  - 供 Cursor / Codex 作为唯一主执行入口使用
 - [canonical-domain-model-and-workflow-truth-design.md](./canonical-domain-model-and-workflow-truth-design.md)
   - canonical entity 定义
   - workflow truth 机制
