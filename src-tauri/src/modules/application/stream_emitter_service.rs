@@ -12,9 +12,7 @@
 use tauri::{AppHandle, Emitter};
 
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
-use crate::modules::application::{
-    AfterTurnInput, ExistingRecordRef, MemoryCoordinator,
-};
+use crate::modules::application::{AfterTurnInput, ExistingRecordRef, MemoryCoordinator};
 use crate::modules::harness::{AgentEvent, EventBus};
 use crate::modules::learning::reflection_note::ReflectionNote;
 use crate::modules::runtime::contracts::memory::MemoryWriteCandidate;

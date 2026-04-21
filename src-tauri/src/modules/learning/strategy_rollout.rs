@@ -225,9 +225,10 @@ impl<'a> StrategyRolloutService<'a> {
         operator: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<Option<String>, StrategyRolloutError> {
-        let entries = self.registry.store().list().await.map_err(|e| {
-            StrategyRolloutError::Registry(StrategyRegistryError::Persistence(e))
-        })?;
+        let entries =
+            self.registry.store().list().await.map_err(|e| {
+                StrategyRolloutError::Registry(StrategyRegistryError::Persistence(e))
+            })?;
         let mut superseded_ids: Vec<String> = Vec::new();
         for entry in entries {
             if entry.rollout_state != RolloutState::Active.label() {
@@ -264,11 +265,9 @@ impl<'a> StrategyRolloutService<'a> {
             });
             prior.rollout_state = RolloutState::RolledBack;
             prior.updated_at = now;
-            self.registry
-                .store()
-                .save(&prior)
-                .await
-                .map_err(|e| StrategyRolloutError::Registry(StrategyRegistryError::Persistence(e)))?;
+            self.registry.store().save(&prior).await.map_err(|e| {
+                StrategyRolloutError::Registry(StrategyRegistryError::Persistence(e))
+            })?;
             superseded_ids.push(prior.identity.strategy_id);
         }
         if superseded_ids.is_empty() {
@@ -775,7 +774,10 @@ mod tests {
         // the supersede.
         let act_audit = activated_p2.candidate_after.activation_audit.unwrap();
         let note = act_audit.note.unwrap();
-        assert!(note.contains("superseded"), "expected supersede note, got {note}");
+        assert!(
+            note.contains("superseded"),
+            "expected supersede note, got {note}"
+        );
 
         // p1 must now be RolledBack with superseded_by + a
         // matching rollback_audit.

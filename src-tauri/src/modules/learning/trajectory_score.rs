@@ -150,10 +150,7 @@ pub fn score_run_report(report: &HarnessRunReport) -> TrajectoryScore {
 /// candidate score and the delta-from-baseline so callers can
 /// detect regression / improvement directly.
 #[must_use]
-pub fn score_compare(
-    baseline: &HarnessRunReport,
-    candidate: &HarnessRunReport,
-) -> CompareScore {
+pub fn score_compare(baseline: &HarnessRunReport, candidate: &HarnessRunReport) -> CompareScore {
     let baseline_score = score_run_report(baseline);
     let candidate_score = score_run_report(candidate);
     let delta = candidate_score.composite - baseline_score.composite;
@@ -311,8 +308,8 @@ fn composite_score(axes: &[AxisBreakdown]) -> f64 {
 mod tests {
     use super::*;
     use crate::modules::harness::{
-        AggregateMetrics, BlockingFailure, EvidenceBundle, HarnessRunReport, Severity,
-        TaskOutcome, TaskRunResult, HARNESS_RUN_REPORT_VERSION,
+        AggregateMetrics, BlockingFailure, EvidenceBundle, HarnessRunReport, Severity, TaskOutcome,
+        TaskRunResult, HARNESS_RUN_REPORT_VERSION,
     };
     use chrono::Utc;
 

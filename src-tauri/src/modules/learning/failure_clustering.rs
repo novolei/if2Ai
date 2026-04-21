@@ -207,7 +207,10 @@ mod tests {
                 fail("tool_failure", Severity::Warning),
             ],
         );
-        let r2 = report("r2", vec![fail("memory_scope_violation", Severity::Blocking)]);
+        let r2 = report(
+            "r2",
+            vec![fail("memory_scope_violation", Severity::Blocking)],
+        );
         let set = cluster_failures(&[&r1, &r2]);
         assert_eq!(set.total_failures, 4);
         let mem = set

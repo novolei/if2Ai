@@ -55,11 +55,11 @@ pub mod permission_service;
 pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
+pub mod request_intelligence_service;
 pub mod stream_emitter_service;
 pub mod tool_executor;
 pub mod tool_heuristics;
 pub mod trajectory_service;
-pub mod request_intelligence_service;
 pub mod turn_service;
 
 pub use activation_service::{ActivationCeremonyResult, ActivationChecklist, ActivationService};
@@ -93,6 +93,7 @@ pub use memory_write_policy::{
     reason_codes as memory_write_reason_codes, DefaultMemoryWritePolicy, MemoryWritePolicy,
     MEMORY_WRITE_POLICY_VERSION,
 };
+pub(crate) use permission_service::TauriPermissionPrompter;
 pub use prompt_planner::{
     BuildPromptPlanRequest, PromptBlock, PromptBlockKind, PromptPlan, PromptPlanResult,
     PromptPlannerError,
@@ -100,17 +101,16 @@ pub use prompt_planner::{
 pub use provider_service::{
     load_provider_transport_policy, resolve_chat_runtime_provider, RuntimeProviderResolution,
 };
-pub(crate) use permission_service::TauriPermissionPrompter;
 pub(crate) use real_api_client::RealApiClient;
+pub use request_intelligence_service::{
+    classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
+};
 pub(crate) use stream_emitter_service::{dispatch_after_turn, MEMORY_AFTER_TURN_TRACE_VERSION};
 pub(crate) use tool_executor::ToolRegistryExecutor;
 pub(crate) use tool_heuristics::{
     contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,
 };
 pub(crate) use trajectory_service::record_trajectory_if_possible;
-pub use request_intelligence_service::{
-    classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
-};
 pub use turn_service::{
     PrepareChatInputsRequest, PreparedChatInputs, TurnService, TurnServiceDeps, TurnServiceError,
 };

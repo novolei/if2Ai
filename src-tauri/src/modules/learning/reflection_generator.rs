@@ -153,7 +153,11 @@ fn lowest_axis_label(score: &TrajectoryScore) -> Option<&'static str> {
     score
         .axes
         .iter()
-        .min_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| {
+            a.value
+                .partial_cmp(&b.value)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|a| match a.axis {
             TrajectoryAxis::Completion => "completion",
             TrajectoryAxis::RecoveryQuality => "recovery_quality",
@@ -167,8 +171,8 @@ fn lowest_axis_label(score: &TrajectoryScore) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::modules::harness::{
-        AggregateMetrics, BlockingFailure, EvidenceBundle, HarnessRunReport, Severity,
-        TaskOutcome, TaskRunResult, HARNESS_RUN_REPORT_VERSION,
+        AggregateMetrics, BlockingFailure, EvidenceBundle, HarnessRunReport, Severity, TaskOutcome,
+        TaskRunResult, HARNESS_RUN_REPORT_VERSION,
     };
     use chrono::Utc;
 

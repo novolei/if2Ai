@@ -24,11 +24,7 @@ pub(crate) fn contains_unverified_file_claim(text: &str) -> bool {
         .any(|p| text.contains(p) || lower.contains(p))
 }
 
-pub(crate) fn is_mutating_tool_success(
-    tool_name: &str,
-    input_json: &str,
-    is_error: bool,
-) -> bool {
+pub(crate) fn is_mutating_tool_success(tool_name: &str, input_json: &str, is_error: bool) -> bool {
     if is_error {
         return false;
     }

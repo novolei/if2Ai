@@ -731,12 +731,7 @@ mod tests {
     #[test]
     fn draft_record_is_well_formed_and_carries_pinned_version() {
         let now = Utc::now();
-        let s = CandidateStrategy::new_draft(
-            sample_identity(),
-            StrategySource::Manual,
-            None,
-            now,
-        );
+        let s = CandidateStrategy::new_draft(sample_identity(), StrategySource::Manual, None, now);
         assert!(s.is_well_formed());
         assert_eq!(s.registry_version, STRATEGY_REGISTRY_VERSION);
         assert_eq!(s.rollout_state, RolloutState::Draft);
@@ -775,7 +770,10 @@ mod tests {
         assert_eq!(RolloutState::Recommended.label(), "recommended");
         assert_eq!(RolloutState::PromotionReady.label(), "promotion_ready");
         assert_eq!(RolloutState::PromotionBlocked.label(), "promotion_blocked");
-        assert_eq!(RolloutState::PromotedCandidate.label(), "promoted_candidate");
+        assert_eq!(
+            RolloutState::PromotedCandidate.label(),
+            "promoted_candidate"
+        );
         assert_eq!(RolloutState::Active.label(), "active");
         assert_eq!(RolloutState::RolledBack.label(), "rolled_back");
         assert_eq!(RolloutState::Rejected.label(), "rejected");
@@ -797,7 +795,10 @@ mod tests {
             RolloutState::Rejected,
             RolloutState::Deprecated,
         ] {
-            assert!(!s.is_rollout_managed(), "{s:?} should not be rollout-managed");
+            assert!(
+                !s.is_rollout_managed(),
+                "{s:?} should not be rollout-managed"
+            );
         }
     }
 

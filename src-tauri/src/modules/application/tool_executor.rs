@@ -7,9 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::modules::control_plane::{
-    AuditEmitter, SessionExecutionContext, ToolExecutionBroker,
-};
+use crate::modules::control_plane::{AuditEmitter, SessionExecutionContext, ToolExecutionBroker};
 use crate::modules::runtime::block_conversion::parse_tool_input_json;
 use crate::modules::runtime::conversation::{ToolError, ToolExecutor};
 
@@ -20,7 +18,9 @@ pub(crate) struct ControlPlaneRuntimeSwitches {
     pub(crate) sandbox_strict_mode: bool,
 }
 
-pub(crate) fn load_control_plane_switches(workdir: &std::path::Path) -> ControlPlaneRuntimeSwitches {
+pub(crate) fn load_control_plane_switches(
+    workdir: &std::path::Path,
+) -> ControlPlaneRuntimeSwitches {
     let mut switches = crate::modules::runtime::config::ConfigLoader::default_for(workdir)
         .load()
         .map(|loaded| ControlPlaneRuntimeSwitches {
@@ -116,11 +116,7 @@ impl ToolRegistryExecutor {
 }
 
 impl ToolExecutor for ToolRegistryExecutor {
-    fn execute(
-        &mut self,
-        tool_name: &str,
-        input: &str,
-    ) -> Result<String, ToolError> {
+    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         let trace_id = AuditEmitter::new_trace_id();
         self.execute_with_trace(tool_name, input, &trace_id, None)
     }

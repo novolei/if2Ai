@@ -246,8 +246,7 @@ impl StrategyRegistryService {
             definition_ref: opts.definition_ref,
         };
         let now = Utc::now();
-        let mut record =
-            CandidateStrategy::new_draft(identity, StrategySource::Manual, None, now);
+        let mut record = CandidateStrategy::new_draft(identity, StrategySource::Manual, None, now);
         record.compare_target = opts.compare_target;
         record.notes = opts.notes;
         self.store.save(&record).await?;
@@ -407,7 +406,9 @@ impl StrategyRegistryService {
         record.last_suite_evaluation_ref = Some(new_suite_ref);
         if let Some(rec) = suite_recommendation {
             let new_rec_ref = RecommendationRef::from_recommendation(rec, now);
-            record.suite_recommendation_history.push(new_rec_ref.clone());
+            record
+                .suite_recommendation_history
+                .push(new_rec_ref.clone());
             record.last_suite_recommendation_ref = Some(new_rec_ref);
             record.rollout_state = advance_state_on_recommendation(record.rollout_state);
         }
@@ -588,10 +589,7 @@ fn derive_label(note: &ReflectionNote) -> String {
 ///   does not silently demote the active strategy.  Operators
 ///   that want to re-evaluate must explicitly rollback first.
 fn advance_state_on_compare(current: RolloutState) -> RolloutState {
-    if current.is_operator_terminal()
-        || current.is_gate_decided()
-        || current.is_rollout_managed()
-    {
+    if current.is_operator_terminal() || current.is_gate_decided() || current.is_rollout_managed() {
         return current;
     }
     match current {
@@ -726,7 +724,10 @@ mod tests {
         assert_eq!(r.rollout_state, RolloutState::Draft);
         assert_eq!(r.based_on_reflection_note.as_deref(), Some("note-svc-1"));
         assert!(matches!(r.source, StrategySource::Reflection { .. }));
-        assert_eq!(r.identity.definition_ref.as_deref(), Some("use-rg-by-default"));
+        assert_eq!(
+            r.identity.definition_ref.as_deref(),
+            Some("use-rg-by-default")
+        );
     }
 
     #[tokio::test]
@@ -795,12 +796,7 @@ mod tests {
             .await
             .unwrap();
         let after_cmp = svc
-            .attach_compare_ref(
-                &r.identity.strategy_id,
-                "b".into(),
-                "c".into(),
-                None,
-            )
+            .attach_compare_ref(&r.identity.strategy_id, "b".into(), "c".into(), None)
             .await
             .unwrap();
         assert_eq!(after_cmp.rollout_state, RolloutState::Rejected);

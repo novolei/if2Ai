@@ -70,17 +70,24 @@ impl FailureCategory {
 #[must_use]
 pub fn classify_blocking_failure(failure: &BlockingFailure) -> FailureCategory {
     let code = failure.code.to_ascii_lowercase();
-    if code.contains("permission") || code.contains("policy") || code.contains("denied")
-        || code.contains("escalat") || code.contains("boundary")
+    if code.contains("permission")
+        || code.contains("policy")
+        || code.contains("denied")
+        || code.contains("escalat")
+        || code.contains("boundary")
     {
         return FailureCategory::PolicyIssue;
     }
-    if code.contains("memory") || code.contains("recall") || code.contains("scope_violation")
+    if code.contains("memory")
+        || code.contains("recall")
+        || code.contains("scope_violation")
         || code.contains("conflict")
     {
         return FailureCategory::MemoryIssue;
     }
-    if code.contains("recovery") || code.contains("resume") || code.contains("recover")
+    if code.contains("recovery")
+        || code.contains("resume")
+        || code.contains("recover")
         || code.contains("dead_loop")
     {
         return FailureCategory::RecoveryIssue;

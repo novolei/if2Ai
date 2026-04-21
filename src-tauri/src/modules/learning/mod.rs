@@ -50,16 +50,11 @@ pub use promotion_gate::{
     PROMOTION_GATE_VERSION,
 };
 #[allow(unused_imports)]
+pub use reflection::{Reflection, ReflectionEngine};
+#[allow(unused_imports)]
 pub use reflection_generator::{
     generate_reflection_notes, ReflectionGeneration, REFLECTION_GENERATOR_VERSION,
 };
-#[allow(unused_imports)]
-pub use trajectory_score::{
-    score_compare, score_run_report, AxisBreakdown, CompareScore, TrajectoryAxis,
-    TrajectoryScore, TRAJECTORY_SCORE_VERSION,
-};
-#[allow(unused_imports)]
-pub use reflection::{Reflection, ReflectionEngine};
 #[allow(unused_imports)]
 pub use reflection_note::{
     ReflectionEvidenceRef, ReflectionIssueType, ReflectionNote, StrategyProposal,
@@ -71,7 +66,7 @@ pub use self_model::{Capability, LearnedPattern, PerformanceMetrics, SelfModel};
 pub use strategy_registry::{
     source_from_reflection, ActivationAudit, CandidateStrategy, CompareRef, CompareTarget,
     RecommendationRef, RollbackAudit, RollbackTarget, RolloutState, StrategyDefinition,
-    StrategyIdentity, StrategySource, SupersedeRecord, SuiteEvaluationRef,
+    StrategyIdentity, StrategySource, SuiteEvaluationRef, SupersedeRecord,
     STRATEGY_REGISTRY_VERSION,
 };
 #[allow(unused_imports)]
@@ -90,6 +85,11 @@ pub use strategy_rollout::{
 };
 #[allow(unused_imports)]
 pub use trajectory::{Trajectory, TrajectoryCompressor, TrajectoryManager, TrajectoryPrivacy};
+#[allow(unused_imports)]
+pub use trajectory_score::{
+    score_compare, score_run_report, AxisBreakdown, CompareScore, TrajectoryAxis, TrajectoryScore,
+    TRAJECTORY_SCORE_VERSION,
+};
 #[allow(unused_imports)]
 pub use trust_tracker::{TrustFeedback, TrustTracker};
 

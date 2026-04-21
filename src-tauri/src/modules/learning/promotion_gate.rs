@@ -246,11 +246,7 @@ pub fn check_eligibility_with_basis(
             (TrackVerdict::Ready { .. }, TrackVerdict::Ready { .. }) => {
                 let summary =
                     "promotion allowed (require_both): compare + suite both promote".to_string();
-                PromotionEligibility::ready(
-                    reason_codes::READY_BOTH_PROMOTE,
-                    summary,
-                    candidate,
-                )
+                PromotionEligibility::ready(reason_codes::READY_BOTH_PROMOTE, summary, candidate)
             }
             _ => {
                 let mut reasons: Vec<String> = Vec::new();
@@ -265,7 +261,10 @@ pub fn check_eligibility_with_basis(
                 }
                 PromotionEligibility::blocked(
                     reasons,
-                    format!("promotion blocked (require_both): {}", summary_parts.join("; ")),
+                    format!(
+                        "promotion blocked (require_both): {}",
+                        summary_parts.join("; ")
+                    ),
                     candidate,
                 )
             }
@@ -394,9 +393,11 @@ fn render_single(
             format!("promotion allowed ({track}_only): {decision_summary}"),
             candidate,
         ),
-        TrackVerdict::Blocked { codes, summary } => {
-            PromotionEligibility::blocked(codes, format!("{track}_only basis: {summary}"), candidate)
-        }
+        TrackVerdict::Blocked { codes, summary } => PromotionEligibility::blocked(
+            codes,
+            format!("{track}_only basis: {summary}"),
+            candidate,
+        ),
     }
 }
 
@@ -601,7 +602,9 @@ mod tests {
         }
     }
 
-    fn suite_eval_ref(at: chrono::DateTime<Utc>) -> crate::modules::learning::strategy_registry::SuiteEvaluationRef {
+    fn suite_eval_ref(
+        at: chrono::DateTime<Utc>,
+    ) -> crate::modules::learning::strategy_registry::SuiteEvaluationRef {
         crate::modules::learning::strategy_registry::SuiteEvaluationRef {
             suite_id: "s".into(),
             corpus_name: "c".into(),
