@@ -73,7 +73,8 @@ SIZE_EXEMPT_PATHS = {
     # remains exempt — it's the externalized #[cfg(test)] block (914 LOC,
     # 23 tests; could be split per-test-group in a follow-up if needed).
     "src-tauri/src/modules/runtime/mcp_stdio/tests.rs",
-    "src-tauri/src/modules/runtime/prompt.rs",
+    # runtime/prompt.rs sliced through GFR-T1-G-1; mod.rs now 428 LOC
+    # (under 500 target — no exempt needed; entry kept removed).
     "src-tauri/src/modules/runtime/conversation.rs",
     # sqlite_provider sliced through GFR-T1-D-1; mod.rs now 268 LOC (under 500
     # target). provider_impl.rs (594) + tests.rs (643) remain large but are
