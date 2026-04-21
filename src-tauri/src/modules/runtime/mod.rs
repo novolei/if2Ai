@@ -3,6 +3,7 @@
 //! Provides the core agent execution engine
 
 pub mod bash;
+pub mod block_conversion;
 pub mod bootstrap;
 pub mod budget;
 pub mod compact;

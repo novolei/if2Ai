@@ -3,14 +3,12 @@
 //! Provides the main agent execution commands for Tauri.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono;
 use tauri::{AppHandle, Emitter, State};
-use tokio::time::timeout;
 
 use crate::commands::stream_outcome::{ConversationTruth, ExecutionTruth, TaskOutcomeResolver};
 use crate::commands::AppState;
@@ -23,8 +21,8 @@ use crate::modules::application::memory_candidate_extractor::{
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
 use crate::modules::application::{
     AfterTurnInput, ExistingRecordRef, MemoryCoordinator, MemoryItemProjection,
-    PrepareChatInputsRequest, RuntimeProviderResolution, TurnService, TurnServiceDeps,
-    TurnServiceError,
+    PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution, TurnService,
+    TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext, ToolExecutionBroker,
@@ -34,6 +32,10 @@ use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
+use crate::modules::runtime::block_conversion::{
+    parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
+    TOOL_RESULT_PREVIEW_CHARS,
+};
 use crate::modules::runtime::compact::{
     compact_session, estimate_token_count_from_chars, should_compact, CompactionConfig,
 };
@@ -195,8 +197,9 @@ struct ResumeCursor {
     token_count: u32,
 }
 
-const MAX_TOOL_RESULT_FOR_MODEL_CHARS: usize = 8_000;
-const TOOL_RESULT_PREVIEW_CHARS: usize = 320;
+// MAX_TOOL_RESULT_FOR_MODEL_CHARS / TOOL_RESULT_PREVIEW_CHARS moved to
+// crate::modules::runtime::block_conversion (GFR-001). The latter is
+// imported above for residual call sites in this file.
 const MAX_REQUEST_MESSAGE_COUNT: usize = 180;
 const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
 const MAX_REQUEST_TOKEN_BUDGET_ESTIMATE: usize = 30_000;
@@ -326,159 +329,7 @@ fn load_control_plane_switches(workdir: &std::path::Path) -> ControlPlaneRuntime
     switches
 }
 
-/// Real API client that calls the Claw API (Claude/MiniMax).
-///
-/// This implements the `ApiClient` trait and makes real LLM API calls.
-struct RealApiClient {
-    provider: ProviderClient,
-    model: String,
-    request_timeout: Duration,
-    tool_registry: Arc<crate::modules::tools::ToolRegistry>,
-}
-
-impl RealApiClient {
-    fn new(
-        provider: ProviderClient,
-        model: String,
-        request_timeout: Duration,
-        tool_registry: Arc<crate::modules::tools::ToolRegistry>,
-    ) -> Self {
-        Self {
-            provider,
-            model,
-            request_timeout,
-            tool_registry,
-        }
-    }
-}
-
-impl ApiClient for RealApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        // Use block_in_place to run async code in a blocking context
-        // This allows us to call async functions from the sync stream method
-        let result = tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::current();
-            handle.block_on(async move {
-                let api_future = self.call_api(request);
-                timeout(self.request_timeout, api_future).await
-            })
-        });
-
-        let response = result
-            .map_err(|_| RuntimeError::ApiError("API call timed out".to_string()))?
-            .map_err(|e| RuntimeError::ApiError(e.to_string()))?;
-
-        // Convert MessageResponse to Vec<AssistantEvent>
-        let mut events = Vec::new();
-
-        for block in &response.content {
-            match block {
-                crate::modules::api::OutputContentBlock::Text { text } => {
-                    events.push(AssistantEvent::TextDelta(text.clone()));
-                }
-                crate::modules::api::OutputContentBlock::ToolUse { id, name, input } => {
-                    events.push(AssistantEvent::ToolUse {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: serde_json::to_string(input).unwrap_or_default(),
-                    });
-                }
-                crate::modules::api::OutputContentBlock::Thinking { thinking, .. } => {
-                    events.push(AssistantEvent::Thinking(thinking.clone()));
-                }
-                crate::modules::api::OutputContentBlock::RedactedThinking { .. } => {
-                    // Skip redacted thinking blocks - don't expose internal data
-                }
-            }
-        }
-
-        events.push(AssistantEvent::Usage(
-            crate::modules::runtime::usage::TokenUsage {
-                input_tokens: response.usage.input_tokens,
-                output_tokens: response.usage.output_tokens,
-                cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
-                cache_read_input_tokens: response.usage.cache_read_input_tokens,
-            },
-        ));
-
-        events.push(AssistantEvent::MessageStop);
-
-        Ok(events)
-    }
-}
-
-impl RealApiClient {
-    /// Call the API asynchronously
-    async fn call_api(
-        &self,
-        request: ApiRequest,
-    ) -> Result<crate::modules::api::MessageResponse, crate::modules::api::ApiError> {
-        // Convert ApiRequest to MessageRequest
-        let messages: Vec<InputMessage> = request
-            .messages
-            .iter()
-            .map(|msg| {
-                let content: Vec<InputContentBlock> = msg
-                    .blocks
-                    .iter()
-                    .map(runtime_block_to_input_block)
-                    .collect();
-
-                let role = match msg.role {
-                    crate::modules::runtime::session::MessageRole::System => "user".to_string(),
-                    crate::modules::runtime::session::MessageRole::User => "user".to_string(),
-                    crate::modules::runtime::session::MessageRole::Assistant => {
-                        "assistant".to_string()
-                    }
-                    crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
-                };
-
-                InputMessage { role, content }
-            })
-            .collect();
-
-        let system_prompt = if request.system_prompt.is_empty() {
-            None
-        } else {
-            Some(request.system_prompt.join("\n"))
-        };
-
-        // Prefer tool definitions from request.tools; fall back to registry
-        let tool_defs: Option<Vec<ToolDefinition>> = request.tools.clone().or_else(|| {
-            let definitions = self.tool_registry.get_definitions(None);
-            Some(
-                definitions
-                    .into_iter()
-                    .filter_map(|def| {
-                        let obj = def.as_object()?;
-                        let func = obj.get("function")?.as_object()?;
-                        Some(ToolDefinition {
-                            name: func.get("name")?.as_str()?.to_string(),
-                            description: func
-                                .get("description")
-                                .and_then(|d| d.as_str())
-                                .map(String::from),
-                            input_schema: func.get("parameters")?.clone(),
-                        })
-                    })
-                    .collect(),
-            )
-        });
-        let tools = tool_defs.filter(|t| !t.is_empty());
-
-        let api_request = MessageRequest {
-            model: self.model.clone(),
-            max_tokens: 4096,
-            messages,
-            system: system_prompt,
-            tools,
-            tool_choice: None,
-            stream: false,
-        };
-
-        self.provider.send_message(&api_request).await
-    }
-}
+// RealApiClient moved to crate::modules::application::real_api_client (GFR-001).
 
 /// Bridge from async ToolRegistry to sync ToolExecutor trait.
 ///
@@ -3099,43 +2950,11 @@ fn format_stream_error_reason(error: &impl std::fmt::Display) -> String {
     format!("{kind}: {raw}")
 }
 
-fn truncate_tool_result_for_model(result: &str) -> String {
-    let total_chars = result.chars().count();
-    if total_chars <= MAX_TOOL_RESULT_FOR_MODEL_CHARS {
-        return result.to_string();
-    }
-    let kept: String = result
-        .chars()
-        .take(MAX_TOOL_RESULT_FOR_MODEL_CHARS)
-        .collect();
-    format!(
-        "{kept}\n\n[tool_result_truncated_for_context: omitted {} chars]",
-        total_chars - MAX_TOOL_RESULT_FOR_MODEL_CHARS
-    )
-}
-
-fn summarize_tool_result_for_model(
-    tool_name: &str,
-    tool_use_id: &str,
-    result: &str,
-    is_error: bool,
-) -> String {
-    let preview: String = result.chars().take(TOOL_RESULT_PREVIEW_CHARS).collect();
-    let digest = short_text_digest(result);
-    let total_chars = result.chars().count();
-    let compact = format!(
-        "[tool_result_handle] tool={tool_name} id={tool_use_id} status={} chars={total_chars} digest={digest}\npreview:\n{}",
-        if is_error { "error" } else { "ok" },
-        preview
-    );
-    truncate_tool_result_for_model(&compact)
-}
-
-fn short_text_digest(text: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
+// truncate_tool_result_for_model / summarize_tool_result_for_model /
+// short_text_digest moved to
+// crate::modules::runtime::block_conversion (GFR-001). The latter two
+// are imported above for residual call sites in this file;
+// truncate_tool_result_for_model has no residual caller in this file.
 
 fn build_resume_cursor(stream_id: &str, tool_loop_iter: usize, token_count: u32) -> String {
     // harness symbol marker: resume_cursor\|degraded
@@ -3212,31 +3031,8 @@ fn extract_resume_cursor_marker(message: &str) -> Option<String> {
     }
 }
 
-fn runtime_block_to_input_block(block: &ContentBlock) -> InputContentBlock {
-    match block {
-        ContentBlock::Text { text } => InputContentBlock::Text { text: text.clone() },
-        ContentBlock::ToolUse { id, name, input } => {
-            let input_value = parse_tool_input_json(input);
-            InputContentBlock::ToolUse {
-                id: id.clone(),
-                name: name.clone(),
-                input: input_value,
-            }
-        }
-        ContentBlock::ToolResult {
-            tool_use_id,
-            output,
-            is_error,
-            ..
-        } => InputContentBlock::ToolResult {
-            tool_use_id: tool_use_id.clone(),
-            content: vec![crate::modules::api::ToolResultContentBlock::Text {
-                text: summarize_tool_result_for_model("history", tool_use_id, output, *is_error),
-            }],
-            is_error: *is_error,
-        },
-    }
-}
+// runtime_block_to_input_block moved to
+// crate::modules::runtime::block_conversion (GFR-001).
 
 #[derive(Debug, Default)]
 struct RequestPreflightStats {
@@ -3875,12 +3671,8 @@ fn extend_sample_ids(target: &mut Vec<String>, incoming: &[String], max_samples:
     }
 }
 
-fn parse_tool_input_json(raw_input: &str) -> serde_json::Value {
-    match serde_json::from_str::<serde_json::Value>(raw_input) {
-        Ok(value) if value.is_object() => value,
-        _ => serde_json::json!({}),
-    }
-}
+// parse_tool_input_json moved to
+// crate::modules::runtime::block_conversion (GFR-001).
 
 /// Stop an in-flight streaming agent response.
 ///

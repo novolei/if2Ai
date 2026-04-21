@@ -50,6 +50,20 @@
 - src-tauri/src/commands/agent.rs
 - src-tauri/src/modules/application/mod.rs
 - src-tauri/src/modules/application/real_api_client.rs
+- src-tauri/src/modules/runtime/mod.rs
+- src-tauri/src/modules/runtime/block_conversion.rs
+
+> Scope expanded (executor-authorised, option **b**): the original 3 files
+> were not enough — `RealApiClient.call_api` calls `runtime_block_to_input_block`
+> which transitively depends on 2 file-private helpers in `agent.rs`.
+> Importing them into `application/real_api_client.rs` would violate
+> the documented `application::* MUST NOT import from crate::commands::*`
+> rule. Solution: lower the entire helper cluster
+> (`runtime_block_to_input_block` + `summarize_tool_result_for_model` +
+> `truncate_tool_result_for_model` + `parse_tool_input_json` +
+> `short_text_digest` + 2 constants) into a new `runtime::block_conversion`
+> module so both `application::real_api_client` and the residual call
+> sites in `commands::agent` can import it cleanly downward.
 
 ---
 
@@ -120,17 +134,23 @@
 
 **已知白名单**（verify FAIL 时人工核对，确实是允许的可见性变化才放行）：
 
-- `pub_symbols` added（共 3 条，全部来自新建 destination 文件 / module 注册）：
-  - `mod real_api_client`     （来自 `application/mod.rs` 新增的 `pub mod real_api_client;`）
-  - `struct RealApiClient`    （来自 `real_api_client.rs`，对应 file-private → `pub(crate)`）
-  - `fn new`                  （来自 `real_api_client.rs`，对应 inherent `pub(crate) fn new`）
+- `pub_symbols` added（共 11 条，全部来自新建文件 / module 注册）：
+  - `mod real_api_client`                     （`application/mod.rs` 新增）
+  - `mod block_conversion`                    （`runtime/mod.rs` 新增）
+  - `struct RealApiClient`                    （`real_api_client.rs`，file-private → `pub(crate)`）
+  - `fn new`                                  （`real_api_client.rs`，inherent `pub(crate) fn new`）
+  - `const MAX_TOOL_RESULT_FOR_MODEL_CHARS`   （`block_conversion.rs`）
+  - `const TOOL_RESULT_PREVIEW_CHARS`         （`block_conversion.rs`）
+  - `fn parse_tool_input_json`                （`block_conversion.rs`）
+  - `fn short_text_digest`                    （`block_conversion.rs`）
+  - `fn truncate_tool_result_for_model`       （`block_conversion.rs`）
+  - `fn summarize_tool_result_for_model`      （`block_conversion.rs`）
+  - `fn runtime_block_to_input_block`         （`block_conversion.rs`）
 - `pub_symbols` removed: 必须为 0。
 - `event_strings` added/removed: 必须为 0。
 - `test_names` removed: 必须为 0。
 
-任何超出上面 3 条 added 的 pub 符号变化、任何 removed、任何 event_strings 变化 → **回滚**而不是"修一下"。
-
-如果 verify 报告除上述白名单外的差异，**回滚**而不是"修一下"。
+任何超出上面 11 条 added 的 pub 符号变化、任何 removed、任何 event_strings 变化 → **回滚**而不是"修一下"。
 
 ---
 

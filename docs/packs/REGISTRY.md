@@ -10,9 +10,15 @@
 
 ## Active
 
-| Pack                                                     | Type     | Goal                                    | Owner     |
-| -------------------------------------------------------- | -------- | --------------------------------------- | --------- |
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md) | refactor | Extract `RealApiClient` from `agent.rs` | @executor |
+| Pack | Type | Goal | Owner |
+|------|------|------|-------|
+| _(无 — GFR-002 待激活)_ | — | — | — |
+
+## Recently Done
+
+| Pack | Type | Goal | Done |
+|------|------|------|------|
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md) | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs` | 2026-04-21 |
 
 ---
 
@@ -22,7 +28,7 @@
 
 | GFR        | 状态       | Source                                       | Destination                                         |
 | ---------- | ---------- | -------------------------------------------- | --------------------------------------------------- |
-| GFR-001    | **active** | `commands/agent.rs` `RealApiClient`          | `application/real_api_client.rs`                    |
+| GFR-001    | **done**   | `commands/agent.rs` `RealApiClient` + `block_conversion` | `application/real_api_client.rs` + `runtime/block_conversion.rs` |
 | GFR-002    | pending    | `commands/agent.rs` prompt/sanitize/governor | `application/prompt_planner/*`                      |
 | GFR-003    | pending    | `commands/agent.rs` permission lifecycle     | `application/permission_service.rs`                 |
 | GFR-004    | pending    | `commands/agent.rs` 散点 emit                | `application/stream_emitter_service.rs`             |
