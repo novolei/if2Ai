@@ -173,6 +173,20 @@ impl TelemetryState {
             }
             // TurnStarted carries no counters; ignore.
             AgentEvent::TurnStarted { .. } => {}
+            // Phase M4.1 — MemoryAfterTurn carries governance
+            // trace data consumed by the M4.2+ trace sinks /
+            // future grader components, not by per-session
+            // telemetry counters.  Telemetry intentionally
+            // ignores it.
+            AgentEvent::MemoryAfterTurn { .. } => {}
+            // Phase M4-C — governance trace variants (consumed by
+            // TraceAggregator only; per-session telemetry counters
+            // are intentionally agnostic to them).
+            AgentEvent::PrepareStepExecuted { .. }
+            | AgentEvent::ExecutionModeJudged { .. }
+            | AgentEvent::PermissionResolved { .. }
+            | AgentEvent::StreamErrored { .. }
+            | AgentEvent::ResumeInvoked { .. } => {}
         }
     }
 }

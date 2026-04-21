@@ -237,21 +237,52 @@ UI 需要两个面：
 
 ## 8.2 结果结构
 
-建议统一：
+> 2026-04-21 更新：原稿把 `Recommendation` 嵌进 `HarnessRunReport`，
+> 实际落地时 `Recommendation` 改为 m4.8 gate 的输出，与 run/compare/suite 报告平行。
+> 下面按代码现实重写。
+
+实际落地的契约层级（M4 reconciliation 后的官方口径）：
 
 ```text
-HarnessRunReport
-  -> TaskRunResult[]
+HarnessRunReport         (run-level，src-tauri/src/modules/harness/run_report.rs)
+  -> TaskRunResult
   -> AggregateMetrics
-  -> BlockingFailures[]
-  -> Recommendation
+  -> BlockingFailure[]
+  -> EvidenceBundle (memory_after_turn / prepare_step / execution_mode /
+                     permission_prompts / permission_resolved /
+                     stream_errors / resume_invocations)
+
+BaselineVsCandidate      (compare 输出，src-tauri/src/modules/harness/compare.rs)
+  -> AggregateDiff
+  -> BlockerDiff
+  -> GraderVerdictDiff
+  -> EvidenceSummaryDiff
+  -> ReportVersionCompatibility
+
+RegressionCorpus         (语料输入，src-tauri/src/modules/harness/corpus.rs)
+  -> CorpusTask[]
+  -> CorpusTier (smoke / critical_path / memory_sensitive /
+                 tool_risk / resume_recovery)
+
+SuiteReport              (corpus/suite 聚合输出，src-tauri/src/modules/harness/suite_report.rs)
+  -> TaskRunOutcome[]
+  -> TierSummary[]
+  -> SuiteGrade
+  -> TaskClassification
+
+Recommendation           (gate 决策输出，src-tauri/src/modules/harness/gate.rs)
+  -> GateDecision (Promote / Hold / Reject)
+  -> 稳定 reason codes
+  -> 由 GatePolicy 在消费 BaselineVsCandidate 或 SuiteReport 后渲染
 ```
 
-`Recommendation` 取值建议：
+`Recommendation` 取值（gate 决策）：
 
 - `promote`
 - `hold`
 - `reject`
+
+强制默认：缺少 `Recommendation` / `BaselineVsCandidate` / `SuiteReport` 时，gate 一律不返回 `Promote`。
 
 ## 8.3 Failure Taxonomy
 
