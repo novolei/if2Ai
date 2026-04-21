@@ -3,26 +3,44 @@ members = ["src-tauri"]
 resolver = "2"
 
 # ─────────────────────────────────────────────────────────────────────
-# [profile.test] — fast repeated `cargo test` runs
+# Build profile tweaks — ALL profile config lives here at the workspace
+# root, because Cargo silently ignores [profile.*] in member crates.
 #
-# Why separate from [profile.dev]:
-#   `cargo test` and `cargo build` produce binaries with different
-#   crate-hashes (--cfg test + --emit=link vs --emit=metadata/rlib).
-#   sccache sees them as distinct compilation units → always a cache
-#   miss on the first `cargo test` of a session.  With
-#   incremental = false (inherited from dev) this means a full
-#   recompile of all 336 source files every time.
-#
-#   [profile.test] breaks the sccache path for tests and instead uses
-#   Cargo's own per-session incremental cache.  Trade-offs:
-#     + 2nd+ `cargo test` runs in the same session are 5-10× faster
-#     - Cold first run unchanged; branch-switch builds still use sccache
+# [profile.dev]  — default for `cargo build` / `cargo run` / tauri dev
+# [profile.test] — `cargo test` overrides only `incremental` (see below)
 # ─────────────────────────────────────────────────────────────────────
+
+[profile.dev]
+# Stack traces still work; just no full local-variable debuginfo.
+debug = "line-tables-only"
+codegen-units = 256
+# CRITICAL — must be `false` when `sccache` is the rustc-wrapper.
+# Mozilla/sccache documented caveat: incremental compilation writes
+# per-session metadata that breaks sccache's deterministic hash, so
+# every Rust crate becomes an unconditional miss when both are on.
+# Trade-off: full crate recompile on first-party file changes (instead
+# of incremental partial), but sccache crate-level cache is the bigger
+# win here (200+ crates × repeated branch switches).
+incremental = false
+
+# Apply opt-level = 1 to all dependencies but leave first-party crates
+# at opt-level = 0.  Heavy native deps (fastembed, lancedb, datafusion,
+# arrow, ort, symphonia) get noticeably faster runtime + smaller object
+# files at opt-level 1.
+[profile.dev.package."*"]
+opt-level = 1
+codegen-units = 16
+
+# `cargo test` produces binaries with different crate-hashes than
+# `cargo build` (--cfg test + --emit=link vs --emit=metadata/rlib),
+# so sccache always misses on the first test of a session.  With
+# incremental=false (inherited from dev) that meant full recompile of
+# all 336 source files every test run.  Override incremental=true here:
+#   + 2nd+ `cargo test` in same session are 5-10× faster
+#   - Cold first run unchanged; branch-switch builds still use sccache
 [profile.test]
 inherits = "dev"
 incremental = true
-debug = "line-tables-only"
-codegen-units = 256
 
 [profile.test.package."*"]
 opt-level = 1

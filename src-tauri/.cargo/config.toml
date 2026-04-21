@@ -1,16 +1,12 @@
 # Cargo build env overrides for native C/C++ deps.
 #
-# Why: whisper-rs-sys (whisper.cpp / ggml-backend-reg.cpp) uses
-# std::filesystem::path, which Apple's libc++ marks as
-# `unavailable: introduced in macOS 10.15`.  Without this override,
-# Tauri / cargo defaults push the deployment target down to 10.13,
-# which breaks the whisper.cpp build with errors like:
-#
-#   error: 'path' is unavailable: introduced in macOS 10.15
-#
-# Apple Silicon never shipped before Big Sur (11.0), so 11.0 is the
-# correct minimum here.  cmake-rs and cc-rs both honour
-# MACOSX_DEPLOYMENT_TARGET, so this single env var fixes every native
-# dependency at once.
+# MACOSX_DEPLOYMENT_TARGET = 11.0:
+#   - Apple Silicon never shipped before Big Sur (11.0), so this is the
+#     real minimum on aarch64-apple-darwin anyway.
+#   - Aligned with `tauri.conf.json` `bundle.macOS.minimumSystemVersion`.
+#   - Originally added because whisper-rs-sys's std::filesystem usage
+#     required >= 10.15.  whisper-rs has since been removed (Apr 2026,
+#     STT now uses ONNX-based SenseVoice via `ort`), but we keep this
+#     pin to prevent any other native dep from silently downgrading.
 [env]
 MACOSX_DEPLOYMENT_TARGET = "11.0"
