@@ -44,6 +44,10 @@ pub(crate) use preflight::{
     estimate_messages_char_count, estimate_messages_token_count, summarize_message_for_budget,
 };
 
+// Governor sub-module — extracted from `commands::agent` in GFR-002b.
+pub mod governor;
+pub(crate) use governor::{ContextGovernor, RequestPreflightStats};
+
 use crate::modules::runtime::prompt::{load_system_prompt, PromptBuildError, SystemPromptBuilder};
 use crate::modules::runtime::prompt_tools_guide::web_tools_routing_block;
 
