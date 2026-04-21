@@ -1,152 +1,84 @@
 # If2Ai 项目导航 (AGENTS.md)
 
-> **设计原则**: 本文件作为内容目录和导航地图，而不是详细说明书。使用 100 行程度的简洁指引，将详细信息从代码库其他位置链接过来。
+> 简洁导航地图。详细内容链接到对应文档，**本文件 ≤ 100 行**。
+>
+> 最后更新: 2026-04-21
 
-## 📍 快速开始导航
+## 📍 快速开始
 
 如果你是...
 
-- **新人贡献者** → 查看 [ARCHITECTURE.md](./ARCHITECTURE.md) 了解系统全景，然后选择 [docs/exec-plans/active/](./docs/exec-plans/active/) 中的任务
-- **功能开发者** → 前往 [docs/product-specs/](./docs/product-specs/) 找到你负责的模块
-- **测试/质量** → 查看 [harness/](../harness/) 目录了解测试框架
-- **架构师/决策者** → 阅读 [docs/design-docs/](./docs/design-docs/) 中的设计决策
+- **Agent / executor** → 读 [CLAUDE.md](./CLAUDE.md)（Pack 流水线 + hard rules）→ 找 active Pack → 干活
+- **新人贡献者** → 读 [docs/packs/CHARTER.md](./docs/packs/CHARTER.md) + [docs/packs/REGISTRY.md](./docs/packs/REGISTRY.md) 看当前活跃任务
+- **想重构 god-file** → 看 [docs/packs/refactor/](./docs/packs/refactor/) 的 GFR-XXX 路线图
+- **想加新功能** → 写一份 FEAT-XXX Pack，落到 `docs/packs/feature/`，模板见 CHARTER §6
+- **架构 / 决策者** → 用 `system-architect` subagent 写 Pack；参考库 [docs/design-docs/](./docs/design-docs/)、[docs/product-specs/](./docs/product-specs/)（不再启动必读）
+- **代码审查** → 用 `code-reviewer` subagent；规则在 CHARTER §3
 
 ## 🏗️ 项目核心
 
-**If2Ai** 是一个 Tauri + Rust + React（TypeScript）的智能体桌面应用，复刻 hermes-agent 框架。
-
-核心理念：
-
-- 🤖 Agent 优先的工程思维
-- 📋 代码库作为记录系统
-- 🔍 完整的可观测性和可评估性
-- 🎯 清晰的架构约束和品味规范
-
-## 📚 关键文档
-
-
-| 文档                                           | 目的           | 受众       |
-| -------------------------------------------- | ------------ | -------- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)         | 系统架构全景图和模块关系 | 所有人      |
-| [DESIGN.md](./DESIGN.md)                     | 设计原则和决策框架    | 架构师、决策者  |
-| [docs/design-docs/](./docs/design-docs/)     | 具体设计决策（分主题）  | 实现者      |
-| [docs/product-specs/](./docs/product-specs/) | 产品规范和需求      | PM、开发者   |
-| [docs/exec-plans/](./docs/exec-plans/)       | 执行计划和进度追踪    | 项目经理、开发者 |
-| [harness/README.md](../harness/README.md)    | 测试和评估框架      | 测试、QA    |
-
-
-## 🎯 当前执行计划
-
-**活跃计划** (查看 [docs/exec-plans/active/](./docs/exec-plans/active/))：
-
-1. Phase 1: 核心框架搭建
-2. Phase 2: Agent 系统实现
-3. Phase 3: 工具和命令系统
-
-**完成的计划** (查看 [docs/exec-plans/completed/](./docs/exec-plans/completed/))：
-
-- 项目初始化和目录结构
-
-## 🔧 核心模块
+**If2Ai** 是一个 Tauri + Rust + React（TypeScript）的智能体桌面应用。
 
 ```
 if2Ai/
-├── src/                    # React + TypeScript + Vite 前端
-├── src-tauri/             # Rust 后端（Tauri 2）
-│   └── src/modules/       # 核心业务逻辑（含 commands 注册）
-├── harness/               # 测试和评估框架
-└── docs/                  # 知识库和规范
+├── src/                    # React + TypeScript 前端
+├── src-tauri/              # Rust 后端（Tauri 2）
+│   └── src/modules/        # 核心业务（按 bounded context 分模块）
+├── docs/
+│   ├── packs/              # ⭐ 唯一开发流程入口
+│   │   ├── CHARTER.md      #    流水线规则
+│   │   ├── REGISTRY.md     #    Pack 一览
+│   │   ├── refactor/       #    GFR-XXX
+│   │   ├── feature/        #    FEAT-XXX / CPD-XXX
+│   │   └── snapshots/      #    refactor invariant baselines
+│   ├── design-docs/        # 参考资料（Pack 中可点名引用）
+│   ├── product-specs/      # 参考资料（同上）
+│   └── _legacy/            # ⛔ 已冷藏：exec-plans / 老 implementation-packs
+├── scripts/
+│   └── pack                # ⭐ 唯一 Pack 工具（snapshot / verify / review / scan / init）
+└── harness/                # 仅保留 suites/ + run --suite（其余子命令已废弃）
 ```
 
-详见 [ARCHITECTURE.md](./ARCHITECTURE.md)
+详见 [ARCHITECTURE.md](./ARCHITECTURE.md)（如存在）。
 
-## 📖 文档维护规范
+## 🔄 开发流水线（5 步）
 
-所有文档遵循以下规则：
-
-- ✅ 使用结构化 Markdown，保持清晰层级
-- ✅ 包含"最后更新"时间戳
-- ✅ 定期运行文档检查（linter）
-- ✅ 过时文档在 CI 中被自动标记
-- ✅ 保持与实际代码同步
-
-具体见 [DESIGN.md](./DESIGN.md) 的"文档即记录系统"部分。
-
-## 🚀 如何开始
-
-### 1. 理解整体架构
-
-```bash
-# 阅读这些文件，顺序很重要
-→ ARCHITECTURE.md         # 5 分钟：了解全景
-→ DESIGN.md               # 10 分钟：理解设计理念
-→ docs/design-docs/       # 15 分钟：深入具体设计
+```
+① PACK    人写 1 个 Pack
+② BUILD   Agent 实现
+③ VERIFY  ./scripts/pack verify <PACK-ID>
+④ REVIEW  ./scripts/pack review <PACK-ID>
+⑤ COMMIT  1 PR / 1 commit / 更新 REGISTRY 状态
 ```
 
-### 2. 查找你的任务
+完整规范：[CLAUDE.md](./CLAUDE.md) + [docs/packs/CHARTER.md](./docs/packs/CHARTER.md)
 
-```bash
-# 在活跃计划中找到相关任务
-→ docs/exec-plans/active/
-→ 选择符合你技能的任务：
-   - 前端：React/TypeScript 相关
-   - 后端：Rust/Tokio 相关
-   - 测试：harness 框架相关
-```
+## 📋 关键约束
 
-### 3. 实施和验证
+- 一个文件一个有界职责，超 800 行入 god-file watchlist
+- 跨模块用 `crate::modules::*`，不直接 `crate::xxx`
+- 非测试代码无 `unwrap()` / `expect()` / `todo!()`
+- 所有 `pub fn` 有 `///` doc
+- 异步用 tokio，不用 `std::thread`
 
-```bash
-# 按照执行计划的步骤进行开发
-# 使用 harness 框架验证你的改动
-→ harness/README.md      # 了解如何运行测试
-→ npm run test           # 运行整个测试套件
-```
+完整 lint 合约：[docs/references/coding-style-and-lint-contract.md](./docs/references/coding-style-and-lint-contract.md)
 
-## 📋 关键约束和品味规范
+## ⛔ 已退役（请勿再使用）
 
-If2Ai 工程遵循严格的架构约束（见 [DESIGN.md](./DESIGN.md)）：
-
-1. **分层架构**：类型 → 配置 → 模型 → 服务 → 运行时 → UI
-2. **依赖方向**：只能"向前"依赖
-3. **命名约定**：符合 Rust / TypeScript / React 官方与项目惯例
-4. **测试覆盖率**：核心逻辑 ≥ 80%
-5. **文档完备性**：公开 API 必须有文档和例子
-
-违反这些规则的 PR 将被 CI 自动拒绝。
-
-## 🔄 反馈循环和迭代
-
-If2Ai 使用人类-智能体协作的开发模式：
-
-- 📝 提出任务 → 智能体执行 → 人类审查
-- 🔍 发现问题 → 转化为文档/约束 → 更新系统
-- 📊 评估结果 → 使用 harness 框架度量 → 调整
-
-详见 [docs/design-docs/agent-driven-workflow.md](./docs/design-docs/agent-driven-workflow.md)
+- `docs/exec-plans/` → 迁至 `docs/_legacy/exec-plans/`，agent 禁读
+- `docs/implementation-packs/` (old README/TEMPLATE/ACTIVE) → 迁至 `docs/_legacy/implementation-packs/`
+- `docs/refactor/` (v1) → 迁至 `docs/_legacy/refactor-v1/`
+- `harness run --slice / --diff-gate / --review / --promote / --check-slice` → 已废弃
+- `.cursor/skills/if2ai-slice-runner/` → 已删除
+- 17 步 SOP → 由 5 步 Pack 流水线取代
 
 ## 💡 常见问题
 
-**Q: 我想添加一个新功能，应该从哪里开始？**
-A:
+**Q: 想加新功能从哪开始？**
+A: 让 `system-architect` subagent 帮你写一份 FEAT-XXX Pack，落到 `docs/packs/feature/`。然后让 executor agent 跑这个 Pack。
 
-1. 在 [docs/design-docs/](./docs/design-docs/) 中创建一个设计文档
-2. 在 [docs/product-specs/](./docs/product-specs/) 中创建产品规范
-3. 在 [docs/exec-plans/active/](./docs/exec-plans/active/) 中创建执行计划
-4. 开始编码并使用 harness 验证
+**Q: harness 还能用吗？**
+A: 只剩 `./scripts/pack suite <yaml>`（= `harness run --suite`）作为可选集成测试。其余子命令已退役。
 
-**Q: 如何理解当前的项目进度？**
-A: 查看 `docs/generated/QUALITY_SCORE.md` 和 `docs/exec-plans/` 中的各个计划。
-
-**Q: 遇到架构决策问题怎么办？**
-A: 查看 [DESIGN.md](./DESIGN.md) 和相应的设计文档，如无答案则创建新的设计讨论。
-
-## 📞 维护和支持
-
-- **代码质量问题** → 创建 issue 或 PR
-- **文档过时** → "doc-gardening" 自动化将处理，或手动更新
-- **架构问题** → 在 [docs/design-docs/](./docs/design-docs/) 中讨论
-
----
-
-**版本**: 0.3.1 | **最后更新**: 2026-04-18 | **修正**: 前端栈为 React+TypeScript；质量分路径 `docs/generated/QUALITY_SCORE.md`
+**Q: 看不到 design-docs 是怎么知道设计的？**
+A: 设计意图压缩在 Pack 的 Goal + Spec 段。如确需深读 design-docs，Pack 自己会在 `## Reads` 段点名某文件某章节。

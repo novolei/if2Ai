@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# pack — Unified Pack runner for If2Ai (Refactor + Feature).
+#
+# Usage:
+#   ./scripts/pack snapshot <PACK-ID> --phase before|after   # refactor only
+#   ./scripts/pack verify   <PACK-ID>                        # refactor: snapshot diff + lint
+#   ./scripts/pack review   <PACK-ID>                        # invoke code-reviewer agent on diff
+#   ./scripts/pack scan                                       # refresh REGISTRY LOC
+#   ./scripts/pack init     <PACK-ID> --type refactor|feature --slug <slug> --files <a> [<b>...]
+#   ./scripts/pack suite    <suite>                           # passthrough to harness behavior suites
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HELPER="$SCRIPT_DIR/pack_helper.py"
+PYTHON_BIN="${PYTHON:-python3}"
+
+if [[ ! -f "$HELPER" ]]; then
+    echo "pack: helper not found at $HELPER" >&2
+    exit 2
+fi
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "pack: python3 not found in PATH" >&2
+    exit 2
+fi
+
+cd "$REPO_ROOT"
+
+case "${1:-}" in
+    "")
+        echo "usage: pack <run|snapshot|verify|review|scan|init|suite> [args...]" >&2
+        exit 2
+        ;;
+    snapshot|verify|scan|init|run)
+        exec "$PYTHON_BIN" "$HELPER" "$@"
+        ;;
+    review)
+        shift
+        pack_id="${1:-}"
+        if [[ -z "$pack_id" ]]; then
+            echo "usage: pack review <PACK-ID>" >&2
+            exit 2
+        fi
+        echo "pack: code review for $pack_id"
+        echo "----------------------------------------------------------------"
+        echo "Action required: ask the code-reviewer subagent to review."
+        echo ""
+        echo "  Use the code-reviewer subagent to review pack $pack_id"
+        echo ""
+        echo "Subagent reads: docs/packs/CHARTER.md + the matching pack file +"
+        echo "                git diff. Outputs REVIEW_PASS or REVIEW_FAIL."
+        echo "----------------------------------------------------------------"
+        exit 0
+        ;;
+    suite)
+        shift
+        if [[ ! -f "harness/runner.py" ]]; then
+            echo "pack suite: harness/runner.py not present" >&2
+            exit 2
+        fi
+        exec "$PYTHON_BIN" -m harness.runner run --suite "$@"
+        ;;
+    -h|--help|help)
+        cat <<'USAGE'
+pack — Unified Pack runner
+
+Subcommands:
+  run <PACK-ID>
+      ⭐ End-to-end half-auto loop:
+        1. lint-architecture (errors block; warnings don't)
+        2. snapshot before (refactor only, idempotent)
+        3. verify (snapshot diff + cargo build/test/clippy)
+        4. print code-reviewer subagent invocation + commit msg
+      On FAIL: prints an agent-feedback block to paste back to executor.
+
+  snapshot <PACK-ID> --phase before|after
+      [refactor only] Capture pub symbols / test names / event strings / LOC
+      for files listed in the pack. Writes docs/packs/snapshots/<PACK-ID>/<phase>.json.
+
+  verify <PACK-ID>
+      [refactor] snapshot --phase after, then diff vs before per Charter
+      invariants I1/I2/I3. Also runs cargo fmt --check + clippy.
+      [feature] runs cargo build + cargo test (no snapshot diff).
+
+  review <PACK-ID>
+      Prints the exact prompt to feed to the code-reviewer subagent.
+
+  scan
+      Refresh docs/packs/REGISTRY.md LOC numbers from disk.
+
+  init <PACK-ID> --type refactor|feature --slug <slug> --files <a> [<b>...]
+      Create a stub pack at docs/packs/<type>/<PACK-ID>-<slug>.md.
+
+  suite <suite-yaml>
+      Passthrough to harness behavior suite (optional integration tests).
+      Equivalent to: python -m harness.runner run --suite <suite-yaml>.
+USAGE
+        ;;
+    *)
+        echo "pack: unknown subcommand '$1'" >&2
+        exit 2
+        ;;
+esac

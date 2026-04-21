@@ -1,5 +1,22 @@
 # If2Ai Harness 框架
 
+> ⚠️ **2026-04-21 起，harness 大部分子命令已废弃。**
+>
+> 项目执行流水线已切换到 [docs/packs/CHARTER.md](../docs/packs/CHARTER.md) 的 Pack Loop。
+>
+> | 子命令 | 状态 |
+> |---|---|
+> | `harness run --suite <yaml>` | ✅ 保留为可选集成测试，可通过 `./scripts/pack suite <yaml>` 调用 |
+> | `harness run --slice` | ⛔ 废弃（exec-plan YAML 已退役） |
+> | `harness diff-gate` | ⛔ 废弃（snapshot diff 在 `./scripts/pack verify` 替代） |
+> | `harness review` | ⛔ 废弃（由 `code-reviewer` subagent 替代） |
+> | `harness promote` | ⛔ 废弃（无 phase 概念了） |
+> | `harness check-slice` | ⛔ 废弃（无 YAML 了） |
+>
+> 旧版本完整文档保留在下方供历史参考；**agent 不要再调用废弃子命令**。
+
+---
+
 **Harness** 是用来"跑、测、评估、对比、复现" Agent 行为的一整套测试与执行框架。
 
 这个实现参考了 OpenAI 的 harness-engineering 最佳实践。

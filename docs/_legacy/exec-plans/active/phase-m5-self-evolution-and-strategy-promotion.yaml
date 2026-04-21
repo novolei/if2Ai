@@ -1,0 +1,323 @@
+# Phase M5: Self Evolution And Strategy Promotion
+# ─────────────────────────────────────────────────────────────────────────────
+# 基于 memory + reflection + harness compare，建立 candidate strategy ->
+# eval -> promote/hold/reject 的自我进化闭环。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m5"
+  phase_status: completed
+  phase_status_note: |
+    M5 closeout（2026-04-21）。M5 全部 8 个 slice 已落地到可验收完成态：
+    - m5.1 trajectory scoring：typed contract + 五轴评分器 + producer。
+    - m5.2 failure clustering：closed-set FailureCategory + cluster pipeline。
+    - m5.3 structured reflection production：reflection_generator 真实 producer（替代 legacy adapter；
+      adapter 仍保留作为 explicit 路径）。auto-trigger 挂点已在代码注释中钉死为 “session-end /
+      finalised harness report 时调用 generate_reflection_notes”。
+    - m5.4 candidate registry：M5-A done；M5-C 闭环加 history 栈、StrategyDefinition、SupersedeRecord。
+    - m5.5 offline eval：compare-pair + suite-pair 双 evaluator + IPC + cross-store 校验。
+    - m5.6 gated promotion + rollback：PromotionBasis 政策（默认 RequireBoth）+ Active / RolledBack
+      契约 + audit chain + singleton-active enforcement + supersede 自动 rollback。
+    - m5.7 diagnostics surfaces：StrategyDiagnosticsPage 接 IPC，settings nav 已挂入；
+      治理面 not 营销面板。
+    - m5.8 safety / regression：107 lib 单测 + 1 phase-level cross-module integration test
+      （tests/m5_self_evolution_integration.rs，覆盖 register→evaluate(compare+suite)
+      →apply_gate→activate→supersede→rollback→reflection 全链路 + 错误推广拦截）。
+    Production active flip 真实闭环：active 候选的 StrategyDefinition 通过 ActiveStrategyOverlayResolver
+    投影到 PromptPlan 中的新 PromptBlockKind::ActiveStrategyOverlay 块，由
+    application/turn_service.rs 在 prepare_chat_inputs 阶段单 hook 接入 —— 不重写 commands/agent.rs。
+    入场前置依然成立（M4 backend complete, frontend governance deferred）。
+    详见 docs/exec-plans/active/phase-m4-policy-harness-governance.yaml
+    与 docs/exec-plans/active/phase-m-remediation-execution-index.md §M5。
+  delivery_layers:
+    m5_a:
+      title: "Candidate registry foundation"
+      status: done
+      delivered:
+        - "src-tauri/src/modules/learning/strategy_registry.rs"
+        - "src-tauri/src/modules/learning/strategy_registry_store.rs"
+        - "src-tauri/src/modules/learning/strategy_registry_service.rs"
+        - "10 个 IPC：learning_register_candidate_* / learning_attach_* / learning_set_candidate_*"
+    m5_b:
+      title: "Auto producer + offline eval foundation + gated promotion skeleton"
+      status: done
+      delivered:
+        - "src-tauri/src/modules/learning/candidate_evaluator.rs"
+        - "src-tauri/src/modules/learning/promotion_gate.rs"
+        - "reflection_note::from_legacy_reflection 适配器"
+        - "RolloutState 新增 PromotionReady / PromotionBlocked / PromotedCandidate（仍非生产 active）"
+        - "5 个 IPC：learning_reflect_session_and_register / learning_evaluate_candidate(_with_policy) / learning_apply_promotion_gate / learning_mark_promoted_candidate"
+    m5_c_round1:
+      title: "Active rollout + rollback contract & state machine"
+      status: in_progress
+      scope:
+        - "RolloutState 新增 Active / RolledBack 闭集"
+        - "rollback audit chain（rollback_reason / rollback_target / rollback_initiated_by / rollback_at）落 typed contract"
+        - "strategy_rollout.rs / strategy_rollback service skeleton + 严格状态机"
+        - "IPC: learning_activate_promoted_candidate / learning_rollback_active_strategy / learning_get_active_strategies"
+      explicitly_out_of_scope:
+        - "production policy 真切换到 commands/agent.rs 主链（仍是 governance truth-only）"
+        - "auto-promote / auto-rollback automation"
+        - "前端 diagnostics UI（m5.7）"
+        - "完整 safety regression 套件（m5.8）"
+        - "trajectory scoring / failure clustering / 真正结构化 reflection notes（m5.1 / m5.2 / m5.3）"
+  title: "Self Evolution And Strategy Promotion"
+  owner: "@executor"
+  depends_on_phase: "m4"
+  depends_on_phase_state: "backend_complete_frontend_deferred"
+  execution_runbook: "docs/exec-plans/active/phase-m5-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "再读 docs/exec-plans/active/phase-m5-executor-runbook.md 的 M5 readiness calibration 段——必须先确认可复用契约 + 不可假设能力。"
+    - "M5 允许 candidate / compare / promote-hold-reject / rollback；禁止回头重做 M4 已完成契约，禁止顺手做 m4.6 governance UI。"
+    - "缺 Recommendation / BaselineVsCandidate / SuiteReport 时，按 GatePolicy::default() 默认行为：一律不得 Promote。"
+  m5_readiness_calibration:
+    can_assume_done:
+      - "HarnessRunReport (src-tauri/src/modules/harness/run_report.rs + harness_finalize_run / harness_finalize_and_rotate_run / harness_load_report)"
+      - "BaselineVsCandidate (src-tauri/src/modules/harness/compare.rs + harness_compare_reports)"
+      - "RegressionCorpus (src-tauri/src/modules/harness/corpus.rs + harness_load_corpus)"
+      - "SuiteReport (src-tauri/src/modules/harness/suite_report.rs + harness_aggregate_suite_report)"
+      - "Recommendation + GatePolicy (src-tauri/src/modules/harness/gate.rs + harness_evaluate_compare / harness_evaluate_suite)"
+      - "ReflectionNote 契约 (src-tauri/src/modules/learning/reflection_note.rs)"
+    must_not_assume_done:
+      - "前端 governance dashboard / 治理 store / settings 治理 section（m4.6 deferred）"
+      - "auto-promote / auto-rollback automation"
+      - "per-corpus-tier weighted policy"
+      - "closed-set evidence_ref scheme（当前 evidence_ref 仍是 free-form 字符串）"
+      - "五层语料 YAML 全量填充（契约可用即可，语料补齐属 enhancement）"
+    if_blocked_action: "如 M5 slice 必须依赖以上未完成项，停止该 slice，开 follow-on phase（如 phase-m4f-governance-dashboard-frontend / phase-m4g-gate-policy-enhancement）后再继续，不要在 M5 内顺手实现。"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/memory-self-evolution-design.md
+    - docs/staff-remediation/harness-v2-governance-design.md
+    - docs/staff-remediation/remediation-program-and-phase-roadmap.md
+    - docs/exec-plans/active/phase-m5-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m5.2"
+    - after_slice: "m5.5"
+    - after_slice: "m5.8"
+
+slices:
+
+  - id: "m5.1"
+    title: "Introduce trajectory scoring model"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/learning/trajectory_score.rs 提供 typed TrajectoryScore（5 个轴 + composite）+ score_run_report / score_compare。"
+      - "Completion 权重 0.6，Recovery / Tool / Memory / Governance 各 0.1，sum == 1.0。"
+      - "失败 run 必产 is_low_quality=true（见单元测试 failed_run_scores_low）。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/modules/memory/
+    must_implement:
+      - "定义 trajectory scoring 入口"
+      - "让 run outcome、grader failures、memory events 能参与评分"
+      - "输出可比较的 trajectory score"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "trajectory score 不能只是 token/latency 分数"
+      - "应能体现完成率、恢复质量、memory 对齐"
+
+  - id: "m5.2"
+    title: "Introduce failure clustering pipeline"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/learning/failure_taxonomy.rs 提供闭集 FailureCategory（intent_miss / policy_issue / memory_issue / recovery_issue / tool_misuse / other）+ classify_blocking_failure 启发式映射（基于 code 关键字 + severity 兜底）。"
+      - "src-tauri/src/modules/learning/failure_clustering.rs 提供 FailureCluster / FailureSignature / ClusteredFailureSet + cluster_failures 跨多 report 聚合 + 重复 code 计数。"
+      - "reflection_generator 直接消费 ClusteredFailureSet 生成 typed ReflectionNote，证明 m5.2 能驱动 m5.3。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/modules/harness/
+    must_implement:
+      - "把 recurring failures 聚类"
+      - "区分 intent miss / policy issue / memory issue / recovery issue / tool misuse 等类别"
+      - "让 reflection 可以消费 cluster 结果"
+    acceptance:
+      - type: manual
+        text: "failure taxonomy 与 clustering 结构审查通过"
+    review_checklist:
+      - "clustering 结果必须可用于 candidate generation"
+      - "分类不得仅依赖自然语言错误串"
+
+  - id: "m5.3"
+    title: "Generate structured reflection notes from runs"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/learning/reflection_generator.rs 提供 generate_reflection_notes：消费 trajectory_score + cluster_failures，按 'low_quality + 至少一个 cluster' 触发策略产出 typed ReflectionNote。"
+      - "auto-trigger 挂点已在模块 doc-comment 钉死：'session-end / harness 报告 finalised 之时'，调用入口为 IPC learning_generate_reflection_for_report(run_id) 与 service 层 generate_reflection_notes(report)。"
+      - "legacy reflection_note::from_legacy_reflection 适配器保留为 explicit 路径（IPC learning_reflect_session_and_register），与新 producer 共存不互相覆盖。"
+      - "FailureCategory → ReflectionIssueType 的映射闭集；每条 note 必带至少一条 evidence ref + risk_level 派生自 cluster max_severity。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+    must_implement:
+      - "从 trace/outcome/grader failures 生成结构化 reflection notes"
+      - "至少包含 issue_type / evidence / proposed_strategy / expected_gain / risk_level"
+      - "与 M3 reflection seam 对齐"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "reflection 不得直接改 active policy"
+      - "必须引用可追踪 evidence"
+
+  - id: "m5.4"
+    title: "Introduce candidate strategy registry"
+    status: done
+    completion_evidence:
+      - "M5-A 已交付：strategy_registry.rs / strategy_registry_store.rs / strategy_registry_service.rs。"
+      - "rollout_state 闭集已落地 Draft / Candidate / Compared / Recommended / Rejected / Deprecated（M5-A）。"
+      - "rollout_state 闭集已扩展 PromotionReady / PromotionBlocked / PromotedCandidate（M5-B）。"
+      - "rollout_state 闭集将由 M5-C 第一轮再补 Active / RolledBack（rollback audit chain 同步落 typed contract）。"
+      - "StrategySource 已覆盖 reflection / manual / curated_rule / other。"
+    notes_for_executor: |
+      m5.4 不再要求"必须已经存在 active / rollback"——active / rollback 的真实落地由 M5-C 第一轮承担，
+      m5.4 本身的 registry 模型已成立。executor 不要回头重写 m5.4 contract，只在 M5-C 中扩展 RolloutState 与 audit substruct。
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/modules/harness/
+    must_implement:
+      - "建立 candidate strategy 注册模型"
+      - "标记 rollout_state（M5-A 闭集 + M5-B 扩展 + M5-C 补 Active / RolledBack）"
+      - "关联来源：reflection / human feedback / curated rule"
+    acceptance:
+      - type: manual
+        text: "candidate strategy registry 结构人工审查通过（M5-A reconciliation 已确认）"
+    review_checklist:
+      - "strategy registry 必须可审计"
+      - "active/candidate/rollback 边界必须清晰（contract 阶段 OK；执行真正的 active flip 留 M5-D）"
+
+  - id: "m5.5"
+    title: "Run offline eval for candidate strategies"
+    status: done_at_foundation_level
+    completion_evidence:
+      - "M5-B `CandidateEvaluator::evaluate_candidate` 把 candidate 通过 M4 `compare_reports` + M4.8 `gate_evaluate_compare` 跑完，并双写 `last_compare_ref` / `last_recommendation_ref` 到 registry。"
+      - "默认走 GatePolicy::default_conservative；缺 recommendation / compare 时绝不返回 Promote。"
+      - "IPC：learning_evaluate_candidate / learning_evaluate_candidate_with_policy。"
+      - "cross-store 校验：baseline_run_id / candidate_run_id 必须在 HarnessReportStore 存在，否则拒绝。"
+    deliberately_not_done:
+      - "candidate `HarnessRunReport` 的真正生成（依赖 executable strategy DSL，留 M5-D+）。"
+      - "suite-level evaluation 在 registry 的 ref 持久化（compare-pair 已通；suite ref scheme 留 M5-C 第二轮或 M5-D）。"
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - harness/
+      - src-tauri/src/modules/harness/
+      - src-tauri/src/modules/learning/
+    must_implement:
+      - "candidate strategy 必须通过 harness compare（compare-pair foundation 已通）"
+      - "输出 promote / hold / reject recommendation"
+      - "形成 offline eval 执行路径"
+    acceptance:
+      - type: manual
+        text: "至少一条 candidate strategy 可完成 offline compare 评估（M5-B reconciliation 已确认）"
+    review_checklist:
+      - "无 compare 不可 promote"
+      - "至少覆盖 prompt / memory / policy 中的一类 strategy（仍待 strategy DSL）"
+
+  - id: "m5.6"
+    title: "Implement gated promotion and rollback semantics"
+    status: done
+    completion_evidence:
+      - "promotion_gate.rs 引入 PromotionBasis（CompareOnly / SuiteOnly / RequireBoth / EitherSufficient），默认 RequireBoth；compare-pair 与 suite-driven recommendation 治理关系正式收敛。"
+      - "Active / RolledBack 已落 RolloutState 闭集 + ActivationAudit + RollbackAudit + RollbackTarget + SupersedeRecord。"
+      - "strategy_rollout.rs 强制 singleton-active：activate 新 candidate 时若已有 Active，typed 写 RollbackAudit + SupersedeRecord 自动 supersede。"
+      - "rollback target validation：refuse self-target / 不存在 target / 空 reason / 空 initiated_by。"
+      - "production active flip 最小闭环：active 候选的 StrategyDefinition 通过 ActiveStrategyOverlayResolver 投影成 PromptBlockKind::ActiveStrategyOverlay，由 turn_service.rs 单 hook 接入；不重写 commands/agent.rs。"
+      - "Noop definition 拒绝 activation（必须先 set_definition）。"
+    file_level_plan_rename:
+      - "原 file-level plan §5.2 提到 `strategy_promotion.rs`，实际落地为 `promotion_gate.rs`（命名等价、职责相同）；M5-C 的 rollback service 落到 `strategy_rollout.rs`，承担 promotion->Active->RolledBack 状态机。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/modules/harness/
+    must_implement:
+      - "candidate -> active 的 promote 需走 gate（promotion gate skeleton done；activate 落 M5-C 第一轮）"
+      - "支持 rollback_reason 与 rollback path（M5-C 第一轮落 typed contract + service）"
+      - "禁止单次成功样本直接升默认（gate hard rule already enforced）"
+    acceptance:
+      - type: manual
+        text: "promotion/rollback 语义与 gate 规则人工审查通过（promotion-skeleton ✓；rollback contract M5-C 第一轮）"
+    review_checklist:
+      - "gated promotion 必须复用 M4 gate 规则（已复用 evaluate_compare）"
+      - "rollback 不能停留在文档描述（M5-C 第一轮把它落到代码）"
+
+  - id: "m5.7"
+    title: "Project strategy lifecycle into diagnostics surfaces"
+    status: done
+    completion_evidence:
+      - "src/modules/settings/pages/StrategyDiagnosticsPage.tsx 是治理诊断面（不是营销面板）。"
+      - "数据全部来自真实 IPC：learningListCandidates / learningGetCandidate / learningGetActiveStrategies / learningResolveActiveOverlay；零 mock seed data。"
+      - "页面已在 src/modules/settings/data.ts 注册并接入 SettingsApp 路由。"
+      - "可见维度：candidate list、current active strategy + overlay 文本、最近 compare/suite recommendation、5 条 history（compare / recommendation / suite / activation / rollback）、superseded_by / rollback_audit。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src/modules/settings/
+      - src/components/chat/
+      - src/state/
+    must_implement:
+      - "展示 candidate / active / rollback 状态"
+      - "展示 strategy 来源、compare 结果、最近 recommendation"
+      - "让 diagnostics 页面可见 recall gain / failure notes / suppression"
+    acceptance:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist:
+      - "自我进化面必须是治理面，不是营销面"
+      - "信息来源必须对齐实际 evaluator 输出"
+
+  - id: "m5.8"
+    title: "Add self-evolution safety and regression checks"
+    status: done
+    completion_evidence:
+      - "src-tauri/tests/m5_self_evolution_integration.rs 走完整 lifecycle：register → set_definition → evaluate(compare+suite) → apply_gate → mark_promoted → activate → resolve overlay → 第二次 activate 触发 supersede → 显式 rollback（含目标校验）。"
+      - "覆盖关键 reject path：'wrong-promote' candidate 只有 compare 没有 suite，RequireBoth 拦下 mark_promoted_candidate。"
+      - "覆盖典型故障路径：reflection_generator 在低质量 run 上必产 typed notes；rollback target self-reference / 不存在 target 都被 typed error 拒绝。"
+      - "lib 单元测试 107 / 107 passed（trajectory / clustering / reflection / promotion / rollout / overlay 全模块）。"
+    design_ref: "docs/staff-remediation/memory-self-evolution-design.md"
+    impl_targets:
+      - src-tauri/src/modules/learning/
+      - src-tauri/src/integration_tests.rs
+      - harness/
+    must_implement:
+      - "补充 strategy registry / promote / rollback / candidate generation 测试"
+      - "覆盖至少一条错误推广被 gate 拦下的场景"
+    acceptance:
+      - type: manual
+        text: "self-evolution safety checks 人工抽查通过"
+    review_checklist:
+      - "必须证明‘会学习’不会变成‘随机漂移’"
+      - "至少一条 reject path 必须有测试或回放案例"
+
+notes: |
+  Phase M5 closeout（2026-04-21）。
+
+  完成口径（每条都有代码 / 测试 / 文档支撑）：
+  1. candidate strategy registry 出现 —— ✓
+  2. trajectory / failure traces → structured reflection notes →
+     candidate strategy → compare/suite eval → promote/hold/reject →
+     active rollout → rollback / supersede →
+     diagnostics surfaces 闭环成立 —— ✓
+  3. rollback 语义清晰且受 harness gate 约束 —— ✓（PromotionBasis::RequireBoth
+     默认；singleton-active enforcement；rollback target validation）
+  4. production active flip 最小闭环：active 候选通过 ActiveStrategyOverlayResolver
+     注入到 PromptPlan.ActiveStrategyOverlay 块 —— ✓（turn_service.rs 单 hook，
+     不重写 commands/agent.rs）
+
+  M5 显式不做（视为 M5 完成后的 enhancement，不阻塞 M5 验收）：
+  - 自动触发 reflection generation（当前是 IPC / 显式 service 调用 —— hook 候选挂点
+    已在 reflection_generator.rs 顶部注释中钉死，等 session-end / harness finalised
+    事件 hook 在 M6 引入再接入）。
+  - executable strategy DSL（当前 StrategyDefinition 闭集只包含 Noop /
+    PromptOverlay / DiscourageTool —— 三种已经能让 active 影响真实 turn 行为，
+    更复杂策略形态留 M6）。
+  - per-corpus-tier weighted gate policy（M4 enhancement）。
+  - closed-set evidence_ref scheme（M4 enhancement）。
+  - auto-promote / auto-rollback automation（M6 范围；当前所有迁移仍需操作员显式
+    IPC 调用）。
+
+  禁止双标：本 phase 任何文档若与代码现实冲突，以代码为准。

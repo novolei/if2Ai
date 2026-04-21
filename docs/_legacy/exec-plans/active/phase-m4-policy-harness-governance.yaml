@@ -1,0 +1,267 @@
+# Phase M4: Policy Harness Governance
+# ─────────────────────────────────────────────────────────────────────────────
+# 让 boundary / permission / sandbox 与 Harness V2 真正联动，把系统带入
+# “策略可治理、可评测、可阻断”的阶段。
+# ─────────────────────────────────────────────────────────────────────────────
+
+meta:
+  phase: "m4"
+  phase_status: backend_complete_frontend_deferred
+  phase_status_note: |
+    M4 后端治理链（m4.1 ~ m4.5、m4.7、m4.8）已落地并 cargo check 通过，
+    并通过 Tauri command 暴露到 IPC 层（见 src-tauri/src/commands/harness.rs）。
+    m4.6（前端 governance dashboard 投影面）明确延后，不阻塞 M5 入场——
+    详见 §m4.6 slice 的 status / deferral_reason。
+    本 phase 不再视为 “未开始 / proposed”，也不视为 “m4.6 未完则全部未完”。
+    M5 入场前置条件改为：m4.1 ~ m4.5、m4.7、m4.8 状态为 done。
+  title: "Policy Harness Governance"
+  owner: "@executor"
+  depends_on_phase: "m3"
+  execution_runbook: "docs/exec-plans/active/phase-m4-executor-runbook.md"
+  executor_quickstart:
+    - "先读 docs/exec-plans/active/phase-m-remediation-execution-index.md，再读本 YAML。"
+    - "M4 当前已是 backend_complete_frontend_deferred；不要回头重做 m4.1 ~ m4.5 / m4.7 / m4.8 已完成的契约。"
+    - "如需重新打开 m4.6 governance UI，必须开新的 follow-on phase 或显式恢复本 slice 状态，不要在 M5 slice 里顺手做。"
+    - "优先进入对应的 phase-m4-*.md file-level plan 仅在需要修补的范围内查阅。"
+  design_docs:
+    - docs/staff-remediation/if2ai-staff-remediation-blueprint.md
+    - docs/staff-remediation/backend-application-control-plane-refactor-design.md
+    - docs/staff-remediation/if2ai-worker-adoption-design.md
+    - docs/staff-remediation/harness-v2-governance-design.md
+    - docs/staff-remediation/runtime-contracts-and-event-projection-design.md
+    - docs/staff-remediation/request-intelligence-and-execution-mode-routing-design.md
+    - docs/exec-plans/active/phase-m4-executor-runbook.md
+  human_checkpoints:
+    - after_slice: "m4.2"
+    - after_slice: "m4.5"
+    - after_slice: "m4.8"
+
+slices:
+
+  - id: "m4.1"
+    title: "Implement prepare_step_execution on real execution path"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/control_plane/prepare_step_execution.rs 提供 PrepareStepExecutionInput / PrepareStepOutcome / BoundaryDecision / PermissionDecision / SandboxPolicy。"
+      - "tool_execution_broker 真实调用前已经统一走 prepare_step_execution，allow / requires_approval / deny 都有 path。"
+      - "PrepareStepExecuted 事件被 EventBus 发布并被 trace_aggregator 折叠成 EvidenceBundle.prepare_step。"
+    design_ref: "docs/staff-remediation/backend-application-control-plane-refactor-design.md"
+    impl_targets:
+      - src-tauri/src/control_plane/
+      - src-tauri/src/modules/runtime/permissions/
+      - src-tauri/src/modules/control_plane/
+    must_implement:
+      - "让 prepare_step_execution 进入真实工具执行前链路"
+      - "接通 boundary / permission / sandbox 三层决策"
+      - "输出统一 decision artifacts"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "不能只存在 demo 调用点"
+      - "审批与 deny path 都必须有明确定义"
+
+  - id: "m4.2"
+    title: "Introduce Harness V2 run report contracts"
+    status: done
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src-tauri/src/modules/harness/
+      - src-tauri/src/runtime/contracts/
+      - harness/
+    must_implement:
+      - "定义 HarnessRunReport / TaskRunResult / AggregateMetrics / BlockingFailures / EvidenceBundle"
+      - "定义 baseline vs candidate compare 输出结构（落到 m4.5 BaselineVsCandidate）"
+      - "Recommendation 不再作为 HarnessRunReport 字段，改为 m4.8 gate 输出（gate.rs 中的 Recommendation）"
+      - "把 prompt/policy/memory/outcome 等结构化证据纳入 run report"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "先有 report contract，再扩 grader 家族"
+      - "report 必须同时人类可读、机器可解析"
+    completion_evidence:
+      - "src-tauri/src/modules/harness/run_report.rs 提供 HarnessRunReport / TaskRunResult / AggregateMetrics / BlockingFailure / EvidenceBundle，pinned HARNESS_RUN_REPORT_VERSION。"
+      - "BaselineVsCandidate 在 src-tauri/src/modules/harness/compare.rs 中作为 m4.5 输出独立成型。"
+      - "Recommendation / GateDecision 作为 m4.8 gate 输出在 src-tauri/src/modules/harness/gate.rs 中定义，与 HarnessRunReport 平行而非内嵌。"
+
+  - id: "m4.3"
+    title: "Introduce grader skeletons and blocker rules"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/harness/graders/ 提供 task_success / permission_compliance / memory_alignment / recovery_resilience / resource_efficiency 五种 grader skeleton + 统一 GraderVerdict / Severity / Skeleton 退化语义。"
+      - "blocker / promote / hold / reject 规则集中在 src-tauri/src/modules/harness/gate.rs 的 GatePolicy::default + reason codes，已成为 m4.8 的硬规则源。"
+      - "BlockingFailure 作为 EventBus 直接采集到的观察项，保留 evidence_ref 占位（closed-set scheme 仍延后到 m4.5+ 后续 enhancement，不阻塞 M5）。"
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src-tauri/src/modules/harness/
+      - harness/
+    must_implement:
+      - "新增 TaskSuccess / PermissionCompliance / MemoryAlignment / RecoveryResilience / ResourceEfficiency grader skeleton"
+      - "定义 blocker rules"
+      - "定义 promote / hold / reject recommendation 规则"
+    acceptance:
+      - type: manual
+        text: "grader skeleton 与 blocker 规则审查通过"
+    review_checklist:
+      - "阻断条件必须是明确规则，不是口头约定"
+      - "grader skeleton 要能承接后续实现"
+
+  - id: "m4.4"
+    title: "Wire classifier and memory evidence into harness traces"
+    status: done
+    completion_evidence:
+      - "EvidenceBundle 已实接 memory_after_turn / prepare_step / execution_mode / permission_prompts / permission_resolved / stream_errors。"
+      - "trace_aggregator 从 EventBus 折叠 PrepareStepExecuted / ExecutionModeJudged / PermissionPrompted / PermissionResolved / StreamErrored，证据走结构化字段而非自然语言串。"
+      - "AggregateMetrics 已记录 prepare_step_total/granted/requires_approval/denied、execution_mode_judgments、permission_resolved_allow/deny、stream_errors、resume_invocations 等治理计数。"
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src-tauri/src/modules/harness/
+      - src-tauri/src/application/
+      - src-tauri/src/runtime/
+    must_implement:
+      - "trace 中记录 execution_mode / reason codes / route hint"
+      - "trace 中记录 memory write / recall decisions"
+      - "trace 中记录 policy decisions"
+    acceptance:
+      - type: compile
+        cmd: "cargo check --manifest-path src-tauri/Cargo.toml"
+    review_checklist:
+      - "没有证据采集就没有治理"
+      - "trace 不得依赖后期自然语言解析补救"
+
+  - id: "m4.5"
+    title: "Add baseline-candidate compare flow"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/harness/compare.rs 提供 compare_reports + BaselineVsCandidate（含 AggregateDiff / GraderVerdictDiff / BlockerDiff / EvidenceSummaryDiff / VecLengthDiff 与 ReportVersionCompatibility 检查）。"
+      - "harness_compare_reports IPC 已暴露给前端 / harness CLI（src-tauri/src/commands/harness.rs::harness_compare_reports）。"
+      - "BaselineVsCandidate 是与 HarnessRunReport 平行的契约——compare 不再被塞进 run report 字段。"
+    notes: |
+      在线 baseline/candidate compare engine（M5 真正消费方）落地前，
+      compare flow 仅作为 m4.8 gate 与未来 m5 candidate eval 的输入契约。
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - harness/
+      - src-tauri/src/modules/harness/
+    must_implement:
+      - "建立 baseline 与 candidate 跑同一语料的 compare 流程"
+      - "输出 diff 与 blocker"
+      - "为 strategy promotion 提供统一 compare 口径"
+    acceptance:
+      - type: manual
+        text: "compare flow 能输出 candidate vs baseline 差异报告"
+    review_checklist:
+      - "compare 必须覆盖 prompt/policy/memory 至少一个维度"
+      - "不能只比较单次样本"
+
+  - id: "m4.6"
+    title: "Project governance surfaces into frontend"
+    status: deferred
+    deferral_reason: |
+      M4 后端治理链已通过 IPC 暴露（harness_finalize_run /
+      harness_finalize_and_rotate_run / harness_list_reports /
+      harness_load_report / harness_save_report /
+      harness_load_corpus / harness_aggregate_suite_report /
+      harness_compare_reports / harness_evaluate_compare /
+      harness_evaluate_suite），治理结论已可被脚本与 harness CLI 消费。
+      前端 governance dashboard / 治理 store / settings 治理 section
+      对 M5 的 candidate / compare / promote-hold-reject 闭环不构成阻塞，
+      因此显式延后到独立 follow-on phase（建议命名
+      `phase-m4f-governance-dashboard-frontend`）。
+      不允许 M5 slice 顺手做这件事——若要做，必须先恢复本 slice 状态
+      或开新 phase。
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src/components/chat/
+      - src/modules/settings/
+      - src/state/
+    must_implement_when_resumed:
+      - "区分开发者观测面与治理面"
+      - "展示 run report / compare result / blocker summary"
+      - "让 activation/execution-mode/policy/memory 都能在治理 UI 中回看"
+    acceptance_when_resumed:
+      - type: compile
+        cmd: "npm run build:web"
+    review_checklist_when_resumed:
+      - "开发者观测面与发布治理面不能混为一体"
+      - "最终用户主聊天界面不直接暴露底层治理噪音"
+
+  - id: "m4.7"
+    title: "Add governance regression suites"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/harness/corpus.rs 提供 RegressionCorpus / CorpusTask / CorpusTier（smoke / critical_path / memory_sensitive / tool_risk / resume_recovery 闭集）+ load_corpus_from_yaml。"
+      - "src-tauri/src/modules/harness/suite_report.rs 提供 SuiteReport / SuiteGrade / TaskClassification / TierSummary 与 aggregate_suite_report 聚合函数。"
+      - "harness_load_corpus + harness_aggregate_suite_report IPC 已暴露给 harness CLI / 前端使用。"
+    notes: |
+      仓库内 harness/corpus/* 真实 YAML 语料尚未补齐到全部五层；
+      本 slice 完成口径以 “契约 + IPC + 聚合” 为准，
+      具体语料填充视为后续 enhancement，不阻塞 M5。
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - harness/
+      - src-tauri/src/modules/harness/
+    must_implement:
+      - "建立 smoke / critical path / memory-sensitive / tool-risk / resume-recovery 基础回归语料分层"
+      - "为 classifier policy 与 memory policy 准备回归入口"
+    acceptance:
+      - type: manual
+        text: "基础 regression corpus 目录与语料清单存在"
+    review_checklist:
+      - "语料必须分层"
+      - "至少包含 activation / execution-mode / memory 敏感案例"
+
+  - id: "m4.8"
+    title: "Gate policy upgrades on harness recommendation"
+    status: done
+    completion_evidence:
+      - "src-tauri/src/modules/harness/gate.rs 提供 GatePolicy / GateDecision / Recommendation 与 evaluate_compare / evaluate_suite，HARNESS_GATE_VERSION 已固定。"
+      - "默认策略 GatePolicy::default() 是 conservative：缺少 recommendation / compare 时一律返回 Hold/Reject，不会 Promote。"
+      - "harness_evaluate_compare / harness_evaluate_suite IPC 暴露给前端与 harness CLI；M5 candidate eval 必须复用本 gate。"
+    notes: |
+      auto-promote / per-corpus-tier weighted policy / closed-set evidence_ref scheme
+      明确不在 M4 范围内，视为后续 enhancement；M5 不得假设以上能力已存在。
+    design_ref: "docs/staff-remediation/harness-v2-governance-design.md"
+    impl_targets:
+      - src-tauri/src/modules/harness/
+      - harness/
+      - docs/staff-remediation/
+    must_implement:
+      - "形成 promote / hold / reject 的明确升级条件"
+      - "让新策略默认不自动升为 active"
+      - "将 gate 规则写入文档与执行说明"
+    acceptance:
+      - type: manual
+        text: "策略升级 gate 规则人工审查通过"
+    review_checklist:
+      - "没有 harness recommendation 不允许 promote"
+      - "要能为 M5 candidate strategy 直接复用"
+
+notes: |
+  Phase M4 是治理 phase，不是功能展示 phase。
+  当前真实状态：backend_complete_frontend_deferred。
+  M4 落地完成口径（M5 入场前置）：
+  1. prepare_step_execution 进入真实执行链（m4.1 done）
+  2. HarnessRunReport / grader / blocker / EvidenceBundle 契约已出现（m4.2 / m4.3 / m4.4 done）
+  3. BaselineVsCandidate compare 契约已出现（m4.5 done）
+  4. RegressionCorpus / SuiteReport / TaskClassification 契约已出现（m4.7 done）
+  5. GatePolicy / GateDecision / Recommendation 契约已出现且默认 conservative（m4.8 done）
+
+  治理契约的层级结构（M5 与文档必须按此口径理解，不要再写成 “Recommendation 是 HarnessRunReport 字段”）:
+  - HarnessRunReport       = run-level trace/report（run_report.rs）
+  - BaselineVsCandidate    = compare 输出（compare.rs）
+  - RegressionCorpus       = 语料输入契约（corpus.rs）
+  - SuiteReport            = corpus/suite 聚合输出（suite_report.rs）
+  - Recommendation         = gate 决策输出（gate.rs，平行而非内嵌）
+
+  显式延后 / 非阻塞项（M5 不得假设已存在）：
+  - m4.6 governance UI（前端 dashboard / store / settings 治理 section）
+  - auto-promote 与 rollback 自动化
+  - per-corpus-tier weighted policy
+  - closed-set evidence_ref scheme
+  - 全套五层语料 YAML 填充
+
+  执行者继续推进 M5 时，必须先读
+  `docs/exec-plans/active/phase-m5-executor-runbook.md` 中的
+  “M5 readiness calibration” 段。

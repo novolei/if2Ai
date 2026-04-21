@@ -1,0 +1,58 @@
+{
+  "files": [
+    {
+      "event_strings": [
+        "agent-token",
+        "permission-request"
+      ],
+      "exists": true,
+      "loc": 4058,
+      "path": "src-tauri/src/commands/agent.rs",
+      "pub_symbols": [
+        "const MEMORY_AFTER_TURN_TRACE_VERSION",
+        "fn build_permission_policy",
+        "fn new",
+        "fn parse_permission_mode",
+        "fn respond_permission",
+        "fn stop_agent_stream",
+        "struct RunAgentTurnResponse",
+        "struct TauriPermissionPrompter"
+      ],
+      "test_names": [
+        "agent_loop_executes_skill_tool_end_to_end"
+      ]
+    },
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 102,
+      "path": "src-tauri/src/modules/application/mod.rs",
+      "pub_symbols": [
+        "mod activation_service",
+        "mod license_lifecycle_service",
+        "mod memory_candidate_extractor",
+        "mod memory_conflict_resolution",
+        "mod memory_coordinator",
+        "mod memory_injection_service",
+        "mod memory_quality_gate",
+        "mod memory_recall_assembler",
+        "mod memory_write_policy",
+        "mod prompt_planner",
+        "mod provider_service",
+        "mod request_intelligence_service",
+        "mod turn_service"
+      ],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/application/real_api_client.rs",
+      "pub_symbols": [],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-001",
+  "phase": "before"
+}
