@@ -30,6 +30,7 @@ pub mod sandbox;
 pub mod session;
 pub mod snapshot;
 pub mod stream_emitter;
+pub mod stream_error_reason;
 pub mod usage;
 
 pub use config::ProviderTransportConfig;

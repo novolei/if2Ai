@@ -52,6 +52,9 @@ use crate::modules::runtime::snapshot::FrozenSnapshot;
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
+use crate::modules::runtime::stream_error_reason::{
+    format_stream_error_reason, is_network_timeout_reason,
+};
 use crate::modules::session::Session as AppSession;
 
 /// Phase M1.1 — construct a per-call [`TurnService`] from the
@@ -2549,29 +2552,7 @@ pub async fn start_agent_stream(
     Ok(stream_id_return)
 }
 
-fn format_stream_error_reason(error: &impl std::fmt::Display) -> String {
-    let raw = error.to_string();
-    let lower = raw.to_ascii_lowercase();
-    let kind = if lower.contains("timed out") || lower.contains("timeout") {
-        "network_timeout"
-    } else if lower.contains("invalid_request_error")
-        || lower.contains("invalid params")
-        || lower.contains("bad request")
-    {
-        "request_validation_error"
-    } else if lower.contains("permission")
-        || lower.contains("forbidden")
-        || lower.contains("denied")
-    {
-        "permission_error"
-    } else if lower.contains("connection") || lower.contains("broken pipe") || lower.contains("eof")
-    {
-        "network_transport_error"
-    } else {
-        "model_stream_error"
-    };
-    format!("{kind}: {raw}")
-}
+// stream-error-reason cluster moved to runtime::stream_error_reason (GFR-005b).
 
 // truncate_tool_result_for_model / summarize_tool_result_for_model /
 // short_text_digest moved to
@@ -2741,9 +2722,7 @@ mod tests {
 // crate::modules::application::prompt_planner::preflight (GFR-002c).
 // apply_request_preflight_limits moved to governor (GFR-002b).
 
-fn is_network_timeout_reason(reason: &str) -> bool {
-    reason.to_ascii_lowercase().contains("network_timeout:")
-}
+// is_network_timeout_reason moved to runtime::stream_error_reason (GFR-005b).
 
 // Sanitize cluster (SanitizationStats + sanitize_messages_for_provider +
 // remove_tool_use_blocks + extend_sample_ids) moved to
