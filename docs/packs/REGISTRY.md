@@ -12,13 +12,14 @@
 
 | Pack                     | Type | Goal | Owner |
 | ------------------------ | ---- | ---- | ----- |
-| _(无 — GFR-005d 待人写)_ | —    | —    | —     |
+| _(无 — GFR-005e 待人写)_ | —    | —    | —     |
 
 ## Recently Done
 
-| Pack                                                              | Type     | Goal                                                                                                                | Done       |
-| ----------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
-| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)         | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`            | 2026-04-21 |
+| Pack                                                                | Type     | Goal                                                                                                                | Done       |
+| ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)       | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                | 2026-04-21 |
+| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)           | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`            | 2026-04-21 |
 | [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md)    | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                  | 2026-04-21 |
 | [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)          | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                    | 2026-04-21 |
 | [GFR-001](./refactor/GFR-001-extract-real-api-client.md)    | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
@@ -46,6 +47,7 @@
 | GFR-005a   | **done** | `commands/agent.rs` resume-cursor cluster (struct + 5 fns)                     | `runtime/resume_cursor.rs`                                       |
 | GFR-005b   | **done** | `commands/agent.rs` stream-error-reason classification (2 fns)                 | `runtime/stream_error_reason.rs`                                 |
 | GFR-005c   | **done** | `commands/agent.rs` timeline-flush cluster (1 struct + 1 fn)                   | `runtime/timeline_flush.rs`                                      |
+| GFR-005d   | **done** | `commands/agent.rs` permission helpers (parse_permission_mode + build_policy)  | `application/permission_service.rs` (extends existing)           |
 | GFR-006    | pending  | `commands/agent.rs` tool exec + trajectory                                     | `application/{tool_executor,trajectory_service}.rs`              |
 | GFR-007    | pending  | `chat-ui.tsx` markdown helpers                                                 | `src/modules/markdown/`                                          |
 | GFR-008    | pending  | `chat-ui.tsx` skills report                                                    | `src/modules/skills-report/`                                     |

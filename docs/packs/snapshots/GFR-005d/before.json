@@ -1,0 +1,37 @@
+{
+  "files": [
+    {
+      "event_strings": [
+        "agent-token"
+      ],
+      "exists": true,
+      "loc": 2803,
+      "path": "src-tauri/src/commands/agent.rs",
+      "pub_symbols": [
+        "fn build_permission_policy",
+        "fn parse_permission_mode",
+        "fn respond_permission",
+        "fn stop_agent_stream",
+        "struct RunAgentTurnResponse"
+      ],
+      "test_names": [
+        "agent_loop_executes_skill_tool_end_to_end"
+      ]
+    },
+    {
+      "event_strings": [
+        "permission-request"
+      ],
+      "exists": true,
+      "loc": 85,
+      "path": "src-tauri/src/modules/application/permission_service.rs",
+      "pub_symbols": [
+        "fn new",
+        "struct TauriPermissionPrompter"
+      ],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-005d",
+  "phase": "before"
+}

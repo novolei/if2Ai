@@ -8,7 +8,8 @@
 use tauri::Emitter;
 
 use crate::modules::runtime::permissions::{
-    PermissionPromptDecision, PermissionPrompter, PermissionRequest,
+    PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
+    PermissionRequest,
 };
 
 /// TauriPermissionPrompter — bridges the sync PermissionPrompter trait
@@ -82,4 +83,75 @@ impl PermissionPrompter for TauriPermissionPrompter {
             },
         }
     }
+}
+
+/// Parse a permission_mode string into PermissionMode enum.
+pub(crate) fn parse_permission_mode(mode: Option<&str>) -> PermissionMode {
+    match mode {
+        Some("readOnly") | Some("read-only") | Some("read_only") => PermissionMode::ReadOnly,
+        Some("workspaceWrite") | Some("workspace-write") | Some("workspace_write") => {
+            PermissionMode::WorkspaceWrite
+        }
+        Some("prompt") => PermissionMode::Prompt,
+        Some("dangerFullAccess")
+        | Some("danger-full-access")
+        | Some("danger_full_access")
+        | None => PermissionMode::DangerFullAccess,
+        _ => PermissionMode::DangerFullAccess,
+    }
+}
+
+/// Build tool-level permission policy for the active mode.
+///
+/// Read-only tools are allowed in all modes.
+/// Workspace-write tools require at least WorkspaceWrite.
+/// Dangerous/system tools require DangerFullAccess (or prompt escalation).
+pub(crate) fn build_permission_policy(mode: PermissionMode) -> PermissionPolicy {
+    PermissionPolicy::new(mode)
+        // Read-only tools
+        .with_tool_requirement("read_file", PermissionMode::ReadOnly)
+        .with_tool_requirement("glob_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("grep_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("content_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("web_fetch", PermissionMode::ReadOnly)
+        .with_tool_requirement("web_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("WebFetch", PermissionMode::ReadOnly)
+        .with_tool_requirement("WebSearch", PermissionMode::ReadOnly)
+        .with_tool_requirement("tool_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("ToolSearch", PermissionMode::ReadOnly)
+        .with_tool_requirement("json_parse", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill_search", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill_find", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill_view", PermissionMode::ReadOnly)
+        .with_tool_requirement("skills_categories", PermissionMode::ReadOnly)
+        .with_tool_requirement("skill_manage", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_recall", PermissionMode::ReadOnly)
+        .with_tool_requirement("memory_export", PermissionMode::ReadOnly)
+        .with_tool_requirement("cron_list", PermissionMode::ReadOnly)
+        .with_tool_requirement("sleep", PermissionMode::ReadOnly)
+        .with_tool_requirement("Sleep", PermissionMode::ReadOnly)
+        .with_tool_requirement("SendUserMessage", PermissionMode::ReadOnly)
+        .with_tool_requirement("structured_output", PermissionMode::ReadOnly)
+        .with_tool_requirement("StructuredOutput", PermissionMode::ReadOnly)
+        // Workspace-write tools
+        .with_tool_requirement("file_write", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("file_edit", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("edit_file", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("NotebookEdit", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_store", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_forget", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("memory_purge", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("TodoWrite", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("Config", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_add", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_remove", PermissionMode::WorkspaceWrite)
+        .with_tool_requirement("cron_run", PermissionMode::WorkspaceWrite)
+        // Dangerous/system tools
+        .with_tool_requirement("bash", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("PowerShell", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("REPL", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("http_request", PermissionMode::DangerFullAccess)
+        .with_tool_requirement("agent", PermissionMode::DangerFullAccess)
 }
