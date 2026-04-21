@@ -3,7 +3,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   startAgentStream,
   listenToStream,
-  listenToPermissionRequests,
   respondPermission,
   onboarding_get_state,
   listProjects,
@@ -35,10 +34,13 @@ import {
 } from '@/lib/tauri'
 import { toast } from 'sonner'
 import {
+  runtimeProjectionStore,
   useExecutionModePreview,
+  useRuntimeProjectionSelector,
   wireRuntimeProjectionListeners,
 } from '@/runtime-projection'
 import { BootShell } from '@/boot/BootShell'
+import { bootRouteToSurface, useBootRoute } from '@/boot/use-boot-route'
 import { MainShell } from '@/shell/MainShell'
 // AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
@@ -251,7 +253,25 @@ function App() {
   }
 
   const [streamAbortHandles, setStreamAbortHandles] = useState<Record<string, string>>({})
-  const [permissionPrompt, setPermissionPrompt] = useState<PermissionRequestPayload | null>(null)
+  // Phase M2.8 — permission prompt now reads from the canonical
+  // projection store (`snapshot.approvals`).  The bridge feeds the
+  // store via `translatePermissionRequestPayload`; we pick the
+  // first pending approval (single-prompt UX preserved) and
+  // dispatch `permission_resolved` after the user decides so the
+  // reducer clears the entry.  No more `useState<PermissionRequestPayload>`.
+  const approvals = useRuntimeProjectionSelector((s) => s.approvals)
+  const permissionPrompt = useMemo<PermissionRequestPayload | null>(() => {
+    const ids = Object.keys(approvals)
+    if (ids.length === 0) return null
+    const a = approvals[ids[0]]
+    return {
+      session_id: a.sessionId,
+      tool_name: a.toolName,
+      permission_mode: a.permissionMode,
+      current_mode: a.currentMode,
+      message: a.message,
+    }
+  }, [approvals])
   const sessionLoadingRef = useRef<Record<string, boolean>>({})
   const autoResumeAttemptsRef = useRef<Record<string, number>>({})
   const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set())
@@ -726,21 +746,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, activeMeaningfulUserMsgCount, activeAiReplyCount])
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-
-    listenToPermissionRequests((payload) => {
-      setPermissionPrompt(payload)
-    }).then((dispose) => {
-      unlisten = dispose
-    }).catch((err) => {
-      console.error('Failed to listen permission requests:', err)
-    })
-
-    return () => {
-      if (unlisten) unlisten()
-    }
-  }, [])
+  // Phase M2.8 — direct `listenToPermissionRequests` removed.
+  // Permission prompts now arrive via the projection bridge (see
+  // `wireRuntimeProjectionListeners`) into `snapshot.approvals`,
+  // which `permissionPrompt` (above) reads via
+  // `useRuntimeProjectionSelector`.
 
   // Phase M2.4 — wire the canonical runtime projection pipeline.
   // The bridge subscribes broadly to `agent-token` /
@@ -1278,15 +1288,24 @@ function App() {
     scope: 'once' | 'session' = 'once'
   ) => {
     if (!permissionPrompt) return
+    const sessionId = permissionPrompt.session_id
     try {
-      await respondPermission(permissionPrompt.session_id, decision, {
+      await respondPermission(sessionId, decision, {
         toolName: permissionPrompt.tool_name,
         scope,
       })
     } catch (err) {
       console.error('Failed to respond permission:', err)
     } finally {
-      setPermissionPrompt(null)
+      // Phase M2.8 — clear the projection-store approval so the
+      // dialog closes.  Local `setPermissionPrompt(null)` removed.
+      runtimeProjectionStore.dispatch({
+        kind: 'permission_resolved',
+        sessionId,
+        decision,
+        scope,
+        receivedAt: Date.now(),
+      })
     }
   }
 
@@ -2326,14 +2345,18 @@ function App() {
     void promptDownloadSenseVoiceAfterOnboarding()
   }
 
-  // Phase M2.7 — App.tsx now composes BootShell + MainShell instead
-  // of inlining splash / onboarding / shell chrome JSX.  The shells
-  // own activation-gate overlay (BootShell) and execution-mode pill
-  // (MainShell) as projection consumers.  App.tsx remains the
-  // composition root for boot decision (`showSplash` / `showOnboarding`),
-  // session / project state, and the data passed into ChatWorkspace
-  // and friends — none of those move in this slice.
-  const bootSurface = showOnboarding ? 'onboarding' : showSplash ? 'splash' : 'main'
+  // Phase M2.7 — App.tsx composes BootShell + MainShell.
+  // Phase M2.6 audit fix — boot route is computed by `useBootRoute`
+  // which derives the canonical 4-state decision from boot-local
+  // flags + the activation projection (`show_splash` /
+  // `show_onboarding` / `show_activation_gate` / `show_main_shell`).
+  // The hook returns the 4-state value; `bootRouteToSurface` maps
+  // it onto BootShell's 3-state `surface` prop (the
+  // `show_activation_gate` route renders as `'main'` so the
+  // already-mounted `<ActivationGateOverlay/>` takes over the
+  // screen — the overlay IS the activation-gate UI today).
+  const bootRoute = useBootRoute({ showSplash, showOnboarding })
+  const bootSurface = bootRouteToSurface(bootRoute)
 
   return (
     <BootShell

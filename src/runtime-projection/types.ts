@@ -15,9 +15,12 @@
 // rewriting, it only renames and groups.
 
 import type {
+  ConflictResolutionPayload,
   ContextBudgetUsage,
   MemoryContextItem,
   MemoryEventPayload,
+  MemoryWriteDecisionPayload,
+  QualityGateResultPayload,
 } from '@/transport/contracts'
 
 /** Tool-call lifecycle status, shared by every `stream_tool_call_update`. */
@@ -49,9 +52,13 @@ export type CanonicalRuntimeEvent =
   | StreamCompleteEvent
   | StreamErrorEvent
   | PermissionRequestEvent
+  | PermissionResolvedEvent
   | MemoryLifecycleEvent
+  | MemoryWriteDecisionEvent
+  | MemoryAfterTurnEvent
   | ActivationSnapshotEvent
   | ExecutionModeDecisionEvent
+  | ExecutionModeManualOverrideEvent
 
 export interface StreamTextDeltaEvent {
   kind: 'stream_text_delta'
@@ -132,12 +139,83 @@ export interface PermissionRequestEvent {
   receivedAt: number
 }
 
+/**
+ * Phase M2.8 — emitted by the IPC adapter (App.tsx permission
+ * dialog handler) **after** `respondPermission` returns. Drives
+ * the reducer to clear `snapshot.approvals[sessionId]` so the
+ * approval projection doesn't linger after the user decided.
+ *
+ * Decision payload is informational (recorded for harness traces /
+ * future telemetry surface); the reducer only uses `sessionId` to
+ * know what to clear.
+ */
+export interface PermissionResolvedEvent {
+  kind: 'permission_resolved'
+  sessionId: string
+  decision: 'allow' | 'deny'
+  scope: 'once' | 'session'
+  receivedAt: number
+}
+
 export interface MemoryLifecycleEvent {
   kind: 'memory_event'
   /** Pass-through of the backend taxonomy.  Not mapped to a closed
    * frontend enum because the backend list is itself open (new
    * memory events are added per phase). */
   payload: MemoryEventPayload
+  receivedAt: number
+}
+
+/**
+ * Phase M3.3 + M3.6 — typed pre-write decision rendered by the
+ * backend `MemoryCoordinator::after_turn` write-policy gate.
+ *
+ * Today no backend event source dispatches this — the seam exists
+ * so M3-B+ persistence + audit wiring can plug in via the
+ * translator without a contract bump.  Reducer accumulates a
+ * rolling ring under `snapshot.memory.writeDecisions` ready for
+ * UI consumption (M3.6 R2 surfaces).
+ */
+export interface MemoryWriteDecisionEvent {
+  kind: 'memory_write_decision'
+  /** Caller-supplied id linking to the originating candidate. */
+  candidateId: string
+  payload: MemoryWriteDecisionPayload
+  receivedAt: number
+}
+
+/**
+ * Phase M3-C closeout — batch envelope dispatched once per backend
+ * `MemoryCoordinator::after_turn` invocation (i.e. once per real
+ * turn end on either `run_agent_turn` or `start_agent_stream`).
+ *
+ * Fires even when the batch is empty.  The reducer projects this
+ * into `snapshot.memory.lastAfterTurn` so consumers (M4 harness,
+ * future governance UIs) can observe:
+ *
+ *   1. **That `after_turn` ran at all** (closes the M3-B "empty
+ *      batch is unobservable" audit gap).
+ *   2. **What stage 2 / stage 3 produced** — the `quality` and
+ *      `conflicts` arrays carry the gate + resolver outputs that
+ *      the per-decision `MemoryWriteDecisionEvent` does not
+ *      surface.
+ *
+ * Per-decision `MemoryWriteDecisionEvent`s are still dispatched
+ * by the bridge for non-empty batches so the existing rolling
+ * `writeDecisions` ring keeps populating.
+ */
+export interface MemoryAfterTurnEvent {
+  kind: 'memory_after_turn'
+  /** Phase M4.1 — governance trace contract version pinned by
+   * the backend.  Translator forwards verbatim; `undefined` means
+   * a pre-M4.1 emitter (legacy traces). */
+  traceVersion?: string
+  caller: string
+  policyVersion: string
+  decidedAt: string
+  decisions: MemoryWriteDecisionPayload[]
+  quality: QualityGateResultPayload
+  conflicts: ConflictResolutionPayload[]
   receivedAt: number
 }
 
@@ -180,7 +258,27 @@ export interface ExecutionModeDecisionEvent {
   riskLevel: 'low' | 'medium' | 'high'
   complexityLevel: 'trivial' | 'simple' | 'moderate' | 'complex'
   reasonCodes: string[]
+  /** Phase M2 audit fix — `classifierMatchedRuleIds` from the M0.5
+   * `ExecutionModeDecision`. Empty array if backend didn't surface
+   * any rule ids (e.g. classifier escalated to LLM fallback). */
+  matchedRules: string[]
   policyVersion: string
+  receivedAt: number
+}
+
+/**
+ * Phase M2 audit fix — UI-driven manual override of the canonical
+ * execution-mode judgment.  Dispatched by the manual-override
+ * control (future M2.9 explainability surface).  Stored in
+ * `ExecutionModeProjection.manualOverride`; pill / surface logic
+ * may render the override side-by-side with the classifier
+ * judgment but MUST NOT mutate `executionMode` itself.
+ *
+ * `null` clears the override.
+ */
+export interface ExecutionModeManualOverrideEvent {
+  kind: 'execution_mode_manual_override'
+  override: ExecutionModeDecisionEvent['executionMode'] | null
   receivedAt: number
 }
 
@@ -244,6 +342,51 @@ export interface MemoryRollingProjection {
   recentEvents: MemoryEventPayload[]
   /** Items recalled by the most recent `stream_complete`. */
   lastRecallItems: MemoryContextItem[]
+  /** Phase M3.6 — rolling ring of typed memory write decisions
+   * (oldest first, capped at 32).  Empty until a backend event
+   * source dispatches `MemoryWriteDecisionEvent`s through the
+   * bridge. */
+  writeDecisions: MemoryWriteDecisionProjection[]
+  /** Phase M3-C closeout — projection of the most recent
+   * `after_turn` batch envelope.  `null` until the first
+   * `MemoryAfterTurnEvent` arrives.  Carries `quality` /
+   * `conflicts` so M4 governance consumers can read them without
+   * a new transport seam.  Note: this is a *latest-wins* slot,
+   * not a ring — the per-decision ring lives in
+   * `writeDecisions`. */
+  lastAfterTurn: MemoryAfterTurnProjection | null
+}
+
+/** Phase M3-C closeout — per-batch projection consumed by future
+ * M4 harness inspectors and governance surfaces. */
+export interface MemoryAfterTurnProjection {
+  /** Phase M4.1 — governance trace contract version (forwarded
+   * from `MemoryAfterTurnEvent.traceVersion`). */
+  traceVersion?: string
+  caller: string
+  policyVersion: string
+  decidedAt: string
+  decisionCount: number
+  acceptedCount: number
+  rejectedCount: number
+  warningCount: number
+  conflictsCount: number
+  /** Full quality result preserved verbatim so consumers can
+   * render rejected / warning details without a re-fetch. */
+  quality: QualityGateResultPayload
+  /** Full per-candidate conflict outcomes (parallel to the
+   * decisions in the originating batch). */
+  conflicts: ConflictResolutionPayload[]
+  /** Wall-clock time the bridge dispatched this projection. */
+  receivedAt: number
+}
+
+/** Per-decision projection consumed by the future M3.6 R2
+ * MemoryWriteCard / MemoryChip / TelemetryDrawer surfaces. */
+export interface MemoryWriteDecisionProjection {
+  candidateId: string
+  decision: MemoryWriteDecisionPayload
+  receivedAt: number
 }
 
 /** Activation projection — `null` until a real source emits.  Held
@@ -261,8 +404,22 @@ export interface ExecutionModeProjection {
   riskLevel: ExecutionModeDecisionEvent['riskLevel']
   complexityLevel: ExecutionModeDecisionEvent['complexityLevel']
   reasonCodes: string[]
+  /** Phase M2 audit fix — rule ids that fired in the classifier.
+   * Mirrors `ExecutionModeDecisionEvent.matchedRules` so M2.9
+   * explainability surfaces (popover / inspector) can render rule
+   * traces without re-querying the backend. */
+  matchedRules: string[]
+  /** Phase M2 audit fix — UI-driven manual override of the
+   * classifier judgment.  `null` when the user has not overridden.
+   * The pill SHOULD render the override prominently when set, but
+   * `executionMode` (the classifier judgment) is NEVER mutated. */
+  manualOverride: ExecutionModeProjection['executionMode'] | null
   policyVersion: string
   capturedAt: number
+  /** Phase M2 audit fix — alias of `capturedAt` retained for the
+   * YAML m2.5 spec field name. Both refer to the wall-clock time
+   * the projection was last refreshed. */
+  lastUpdatedAt: number
 }
 
 /** Top-level snapshot consumed by future M2.4 stores. */
@@ -284,7 +441,12 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
   return {
     runs: {},
     approvals: {},
-    memory: { recentEvents: [], lastRecallItems: [] },
+    memory: {
+      recentEvents: [],
+      lastRecallItems: [],
+      writeDecisions: [],
+      lastAfterTurn: null,
+    },
     activation: null,
     executionMode: null,
   }

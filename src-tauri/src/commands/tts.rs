@@ -1308,9 +1308,7 @@ pub async fn get_tts_settings() -> Result<crate::modules::tts::TtsSettings, Stri
 /// Out-of-range values are clamped before writing.  Returns an error
 /// only on actual disk failure (permissions, full filesystem, …).
 #[tauri::command]
-pub async fn set_tts_settings(
-    settings: crate::modules::tts::TtsSettings,
-) -> Result<(), String> {
+pub async fn set_tts_settings(settings: crate::modules::tts::TtsSettings) -> Result<(), String> {
     settings
         .save(&if2ai_home())
         .map_err(|e| format!("failed to write tts.toml: {e}"))

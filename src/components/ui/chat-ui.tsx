@@ -51,7 +51,7 @@ import { Button } from "@/components/ui/button"
 const MessageVoiceButtonLazy = React.lazy(() =>
   import('@/modules/chat/MessageVoiceButton').then((m) => ({ default: m.MessageVoiceButton }))
 )
-// Phase TTS-E / P3：语音输入按钮（Whisper / Groq STT）
+// 语音输入按钮（SenseVoice STT）
 const SttButtonLazy = React.lazy(() =>
   import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
 )
@@ -2351,7 +2351,7 @@ const ComposerDock = React.memo(function ComposerDock({
 
               <div className="h-3.5 w-px bg-black/10" />
 
-              {/* Phase TTS-E / P3：语音输入按钮（Whisper / Groq STT） */}
+              {/* 语音输入按钮（SenseVoice STT） */}
               <React.Suspense fallback={null}>
                 <SttButtonLazy
                   onTranscribe={(text) => {

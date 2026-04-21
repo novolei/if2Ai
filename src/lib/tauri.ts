@@ -16,12 +16,14 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 import {
   AGENT_TOKEN_EVENT,
+  MEMORY_AFTER_TURN_EVENT,
   MEMORY_EVENT,
   PERMISSION_REQUEST_EVENT,
 } from '@/transport/contracts';
 import type {
   ActivationSnapshot,
   ExecutionModeDecision,
+  MemoryAfterTurnPayload,
   MemoryEventPayload,
   PermissionMode,
   PermissionRequestPayload,
@@ -84,6 +86,24 @@ export async function listenMemoryEvent(
   return await listen<MemoryEventPayload>(MEMORY_EVENT, (event) => {
     handler(event.payload)
   })
+}
+
+/**
+ * Phase M3-C closeout — subscribe to backend `memory_after_turn`
+ * Tauri events emitted by `MemoryCoordinator::after_turn` at every
+ * turn end.  Replaces the M3-B `listenMemoryWriteDecision`.  Fires
+ * once per turn end including when the batch is empty (the
+ * envelope is the "no candidates this turn" signal).
+ */
+export async function listenMemoryAfterTurn(
+  handler: (payload: MemoryAfterTurnPayload) => void,
+): Promise<UnlistenFn> {
+  return await listen<MemoryAfterTurnPayload>(
+    MEMORY_AFTER_TURN_EVENT,
+    (event) => {
+      handler(event.payload)
+    },
+  )
 }
 
 /**
@@ -2087,15 +2107,13 @@ export async function ttsCachedVoicePreview(voiceId: string): Promise<TtsDemoAud
   return invoke<TtsDemoAudioResponse>('tts_cached_voice_preview', { voiceId })
 }
 
-// ── Phase TTS-E / P3：Whisper STT ─────────────────────────────────────────
+// ── STT (OpenFlow / SenseVoice) ───────────────────────────────────────────
+//
+// Apr 2026: 精简为单 backend = OpenFlow。`whisper` / `groq` provider 字段保留
+// 仅为兼容旧 settings 文件，所有调用都会被后端归一化为 openflow。
 
 export interface SttModelStatusResponse {
-  ready: boolean
-  model_path: string | null
-  model_name: string | null
-  download_hint: string
-  model_dir: string
-  /** SenseVoice (OpenFlow) 是否已就绪 */
+  /** SenseVoice (OpenFlow) 模型是否已就绪 */
   openflow_ready: boolean
   /** SenseVoice 模型目录 */
   openflow_model_dir: string
@@ -2119,7 +2137,7 @@ export interface SttTranscribeRequest {
   audio_bytes_base64: string
   language: string | null
   sample_rate: number | null
-  /** 'whisper' | 'groq' — 不传则用 settings */
+  /** 已废弃：保留字段以兼容旧调用，后端忽略 */
   provider_override?: string | null
 }
 
@@ -2127,28 +2145,22 @@ export interface SttTranscribeResponse {
   text: string
   language: string
   elapsed_seconds: number
+  /** 始终为 "openflow" */
   provider: string
 }
 
 export interface SttSettingsDto {
-  /** 'whisper' | 'groq' */
+  /** 始终为 "openflow"（保留字段用于兼容） */
   provider: string
-  groq_api_key_set: boolean
-  groq_model: string
 }
 
 export interface SaveSttSettingsRequest {
+  /** 已废弃：后端忽略此字段 */
   provider?: string
-  groq_api_key?: string
-  groq_model?: string
 }
 
 export async function sttModelStatus(): Promise<SttModelStatusResponse> {
   return invoke<SttModelStatusResponse>('stt_model_status')
-}
-
-export async function sttDownloadWhisperModel(modelId?: string): Promise<string> {
-  return invoke<string>('stt_download_whisper_model', { modelId: modelId ?? null })
 }
 
 /**
@@ -2214,4 +2226,161 @@ export async function ttsModelDownloadStart(): Promise<void> {
 /** Get current download progress. */
 export async function ttsModelDownloadStatus(): Promise<TtsDownloadStatusResponse> {
   return invoke<TtsDownloadStatusResponse>('tts_model_download_status')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase M5 closeout — Strategy diagnostics IPC bindings
+//
+// Wire-stable shapes mirroring the Rust types in
+// `src-tauri/src/modules/learning/strategy_registry.rs` and friends.
+// Kept as plain TypeScript records (no runtime validation) — the
+// page just renders what the backend hands back.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LearningRolloutState =
+  | 'draft'
+  | 'candidate'
+  | 'compared'
+  | 'recommended'
+  | 'promotion_ready'
+  | 'promotion_blocked'
+  | 'promoted_candidate'
+  | 'active'
+  | 'rolled_back'
+  | 'rejected'
+  | 'deprecated'
+
+export interface LearningStrategyIndexEntry {
+  registryVersion: string
+  strategyId: string
+  label: string
+  sourceKind: string
+  rolloutState: LearningRolloutState
+  createdAt: string
+  updatedAt: string
+  hasCompareRef: boolean
+  hasRecommendationRef: boolean
+  sizeBytes: number
+  path: string
+}
+
+export interface LearningCompareRef {
+  baselineRunId: string
+  candidateRunId: string
+  compareVersion: string
+  recordedAt: string
+}
+
+export interface LearningRecommendationRef {
+  gateVersion: string
+  policyId: string
+  decision: string
+  reasonCodes: string[]
+  summary: string
+  recordedAt: string
+}
+
+export interface LearningSuiteEvaluationRef {
+  suiteId: string
+  corpusName: string
+  corpusVersion: string
+  suiteReportVersion: string
+  suiteGrade: string
+  taskCount: number
+  regressionCount: number
+  recordedAt: string
+}
+
+export interface LearningActivationAudit {
+  activatedAt: string
+  activatedBy: string
+  sourcePolicyId?: string | null
+  sourceGateVersion?: string | null
+  note?: string | null
+}
+
+export interface LearningRollbackAudit {
+  rolledBackAt: string
+  initiatedBy: string
+  reason: string
+  target?:
+    | { kind: 'candidate'; strategyId: string }
+    | { kind: 'baseline_policy'; policyVersion: string }
+    | { kind: 'other'; description: string }
+    | null
+}
+
+export interface LearningSupersedeRecord {
+  supersededBy: string
+  supersededAt: string
+}
+
+export type LearningStrategyDefinition =
+  | { kind: 'noop' }
+  | { kind: 'prompt_overlay'; text: string }
+  | { kind: 'discourage_tool'; toolName: string }
+
+export interface LearningCandidateStrategy {
+  registryVersion: string
+  identity: {
+    strategyId: string
+    label: string
+    policyVersion?: string | null
+    definitionRef?: string | null
+  }
+  source:
+    | { kind: 'reflection'; noteId: string }
+    | { kind: 'manual' }
+    | { kind: 'curated_rule'; ruleId?: string | null }
+    | { kind: 'other'; summary: string }
+  rolloutState: LearningRolloutState
+  createdAt: string
+  updatedAt: string
+  basedOnReflectionNote?: string | null
+  compareTarget?: { baselineRunId?: string | null; candidateRunId?: string | null } | null
+  lastCompareRef?: LearningCompareRef | null
+  lastRecommendationRef?: LearningRecommendationRef | null
+  lastSuiteEvaluationRef?: LearningSuiteEvaluationRef | null
+  lastSuiteRecommendationRef?: LearningRecommendationRef | null
+  activationAudit?: LearningActivationAudit | null
+  rollbackAudit?: LearningRollbackAudit | null
+  definition: LearningStrategyDefinition
+  supersededBy?: LearningSupersedeRecord | null
+  compareHistory?: LearningCompareRef[]
+  recommendationHistory?: LearningRecommendationRef[]
+  suiteEvaluationHistory?: LearningSuiteEvaluationRef[]
+  suiteRecommendationHistory?: LearningRecommendationRef[]
+  activationHistory?: LearningActivationAudit[]
+  rollbackHistory?: LearningRollbackAudit[]
+  notes?: string | null
+}
+
+export interface LearningActiveStrategyEffect {
+  strategyId: string
+  label: string
+  kind: string
+  promptOverlay: string
+}
+
+export interface LearningActiveStrategyOverlay {
+  overlayVersion: string
+  effects: LearningActiveStrategyEffect[]
+}
+
+export async function learningListCandidates(): Promise<LearningStrategyIndexEntry[]> {
+  return invoke<LearningStrategyIndexEntry[]>('learning_list_candidates')
+}
+
+export async function learningGetCandidate(
+  strategyId: string,
+): Promise<LearningCandidateStrategy | null> {
+  return invoke<LearningCandidateStrategy | null>('learning_get_candidate', { strategyId })
+}
+
+export async function learningGetActiveStrategies(): Promise<LearningCandidateStrategy[]> {
+  return invoke<LearningCandidateStrategy[]>('learning_get_active_strategies')
+}
+
+export async function learningResolveActiveOverlay(): Promise<LearningActiveStrategyOverlay> {
+  return invoke<LearningActiveStrategyOverlay>('learning_resolve_active_overlay')
 }

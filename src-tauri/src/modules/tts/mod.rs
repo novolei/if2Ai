@@ -44,12 +44,12 @@ pub use audio::{wav_decode, wav_encode};
 
 pub use config::{AudioChunk, GenerationParams, VoicePreset};
 pub use error::TtsError;
-pub use profile::{TtsProfile, TtsProfileBook, TtsTextPostprocess};
-pub use settings::{TtsQualityPreset, TtsSettings};
 #[allow(unused_imports)]
 pub use model::{ensure_models_cached, ModelPaths};
 #[allow(unused_imports)]
 pub use performance::{SynthesisProfile, TtsConfig};
+pub use profile::{TtsProfile, TtsProfileBook, TtsTextPostprocess};
+pub use settings::{TtsQualityPreset, TtsSettings};
 #[allow(unused_imports)]
 pub use text::normalize_tts_text;
 #[allow(unused_imports)]

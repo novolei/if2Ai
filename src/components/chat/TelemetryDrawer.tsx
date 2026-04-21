@@ -34,10 +34,10 @@ import {
   Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useRuntimeProjectionSelector } from '@/runtime-projection'
 import {
   getHarnessStatus,
   getSessionTelemetry,
-  listenMemoryEvent,
   startHarnessRecording,
   stopHarnessRecording,
   type HarnessStatusResponse,
@@ -372,21 +372,30 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
   const [memoryLog, setMemoryLog] = useState<MemoryEventLogEntry[]>([])
   const memoryUidCounter = useRef(0)
 
-  // Subscribe to backend memory events for the lifetime of the drawer
-  // being mounted (not gated on `open` — we want to keep capturing events
-  // in the background so the timeline isn't empty the next time the drawer
-  // is reopened).
-  //
-  // Two disjoint sub-streams share a single subscription:
-  //   - Promotion / demotion / candidate (prior-session work)
-  //   - Phase 8A.12 (T-UI-8) lifecycle: pin add/remove, PII redaction,
-  //     rolling-summary writes
+  // Phase M2.8 — consume canonical projection store instead of
+  // a direct `listenMemoryEvent` subscription.  The projection
+  // store buffers up to 64 most-recent memory events (see
+  // `MemoryRollingProjection.recentEvents` in the runtime-projection
+  // types); we replay the slice that arrived since the last
+  // dispatch into the existing categorised local logs so the
+  // drawer keeps its richer per-category history (lifecycle 100 /
+  // promotion 200) and existing render logic untouched.
+  const recentMemoryEvents = useRuntimeProjectionSelector(
+    (s) => s.memory.recentEvents,
+  )
+  const lastSeenMemoryEventCountRef = useRef(0)
   useEffect(() => {
-    let cancelled = false
-    let unlisten: (() => void) | undefined
-
-    void listenMemoryEvent((payload: MemoryEventPayload) => {
-      if (cancelled) return
+    const total = recentMemoryEvents.length
+    const seen = lastSeenMemoryEventCountRef.current
+    // Detect a ring rotation (older events evicted): if the
+    // counter exceeds the current array length, snap back to 0
+    // and treat the whole snapshot as fresh.  Otherwise process
+    // only the suffix that appeared since last render.
+    const newSliceStart = seen > total ? 0 : seen
+    const fresh = recentMemoryEvents.slice(newSliceStart)
+    lastSeenMemoryEventCountRef.current = total
+    if (fresh.length === 0) return
+    for (const payload of fresh) {
       if (isMemoryLifecycleEvent(payload.event)) {
         memoryLifecycleUidRef.current += 1
         const entry: MemoryLifecycleLogEntry = {
@@ -402,14 +411,14 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
             ? next.slice(0, MEMORY_LIFECYCLE_HISTORY_LIMIT)
             : next
         })
-        return
+        continue
       }
       if (
         payload.event !== 'memory_promoted' &&
         payload.event !== 'memory_demoted' &&
         payload.event !== 'memory_promotion_candidate'
       ) {
-        return
+        continue
       }
       memoryUidCounter.current += 1
       const promoEntry: MemoryEventLogEntry = {
@@ -423,18 +432,8 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
           ? next.slice(0, MEMORY_EVENT_HISTORY_LIMIT)
           : next
       })
-    }).then((fn) => {
-      if (cancelled) {
-        fn()
-      } else {
-        unlisten = fn
-      }
-    })
-    return () => {
-      cancelled = true
-      unlisten?.()
     }
-  }, [])
+  }, [recentMemoryEvents])
 
   const isRecording = harness !== null &&
     sessionId !== null &&

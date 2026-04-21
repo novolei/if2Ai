@@ -251,7 +251,11 @@ impl TtsProfileBook {
                 p.is_builtin = true;
             }
         }
-        if !self.profiles.iter().any(|p| p.id == self.default_profile_id) {
+        if !self
+            .profiles
+            .iter()
+            .any(|p| p.id == self.default_profile_id)
+        {
             self.default_profile_id = self
                 .profiles
                 .first()
@@ -305,7 +309,8 @@ impl TtsProfileBook {
             TtsProfile {
                 id: "builtin-calm-narrator".into(),
                 name: "冷静播报".into(),
-                description: "标准男声 · Precise 预设 · 1.05× 紧凑节奏，适合新闻 / 文档朗读。".into(),
+                description: "标准男声 · Precise 预设 · 1.05× 紧凑节奏，适合新闻 / 文档朗读。"
+                    .into(),
                 voice_id: "Junhao".into(),
                 settings: TtsSettings {
                     playback_rate: 1.05,

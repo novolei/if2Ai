@@ -29,6 +29,9 @@ import { emptyProjectionSnapshot } from './types'
  * unbounded.  Older events fall off the front. */
 const MEMORY_RING_CAP = 64
 
+/** Phase M3.6 — cap on the rolling memory write-decision ring. */
+const MEMORY_DECISION_RING_CAP = 32
+
 /**
  * Apply one event to the previous snapshot. Returns a new snapshot
  * (structural copy at every touched node — leaves are reference-
@@ -131,6 +134,18 @@ export function reduceRuntimeEvent(
           },
         },
       }
+    case 'permission_resolved': {
+      // Strip the resolved approval; the dialog has handed the
+      // decision back to the backend via `respondPermission`.
+      if (!(event.sessionId in prev.approvals)) {
+        return prev
+      }
+      const nextApprovals: typeof prev.approvals = {}
+      for (const [key, val] of Object.entries(prev.approvals)) {
+        if (key !== event.sessionId) nextApprovals[key] = val
+      }
+      return { ...prev, approvals: nextApprovals }
+    }
     case 'memory_event': {
       const ring = [...prev.memory.recentEvents, event.payload]
       const trimmed =
@@ -140,6 +155,58 @@ export function reduceRuntimeEvent(
       return {
         ...prev,
         memory: { ...prev.memory, recentEvents: trimmed },
+      }
+    }
+    case 'memory_after_turn': {
+      // Phase M3-C closeout — latest-wins projection of the
+      // backend batch envelope.  Fires once per turn end, even
+      // when the batch is empty (closes the M3-B "empty batch is
+      // unobservable" audit gap).  Preserves the full
+      // `quality` / `conflicts` arrays so consumers can render
+      // gate / resolver detail without re-fetching.
+      const acceptedCount = event.quality.accepted.length
+      const rejectedCount = event.quality.rejected.length
+      const warningCount = event.quality.warnings.length
+      return {
+        ...prev,
+        memory: {
+          ...prev.memory,
+          lastAfterTurn: {
+            traceVersion: event.traceVersion,
+            caller: event.caller,
+            policyVersion: event.policyVersion,
+            decidedAt: event.decidedAt,
+            decisionCount: event.decisions.length,
+            acceptedCount,
+            rejectedCount,
+            warningCount,
+            conflictsCount: event.conflicts.length,
+            quality: event.quality,
+            conflicts: event.conflicts,
+            receivedAt: event.receivedAt,
+          },
+        },
+      }
+    }
+    case 'memory_write_decision': {
+      // Phase M3.6 — rolling ring of typed write decisions.
+      // Capped at MEMORY_DECISION_RING_CAP; oldest decisions fall
+      // off the front so the snapshot stays bounded.  No backend
+      // event source dispatches this today (M3-B+ wiring); the
+      // branch exists so the seam is end-to-end.
+      const projection = {
+        candidateId: event.candidateId,
+        decision: event.payload,
+        receivedAt: event.receivedAt,
+      }
+      const ring = [...prev.memory.writeDecisions, projection]
+      const trimmed =
+        ring.length > MEMORY_DECISION_RING_CAP
+          ? ring.slice(ring.length - MEMORY_DECISION_RING_CAP)
+          : ring
+      return {
+        ...prev,
+        memory: { ...prev.memory, writeDecisions: trimmed },
       }
     }
     case 'activation_snapshot':
@@ -165,10 +232,50 @@ export function reduceRuntimeEvent(
           riskLevel: event.riskLevel,
           complexityLevel: event.complexityLevel,
           reasonCodes: event.reasonCodes,
+          matchedRules: event.matchedRules,
+          // Preserve any prior manual override the user already
+          // dispatched — the classifier judgment refresh does not
+          // clear the override.  Override is cleared explicitly via
+          // `execution_mode_manual_override { override: null }`.
+          manualOverride: prev.executionMode?.manualOverride ?? null,
           policyVersion: event.policyVersion,
           capturedAt: event.receivedAt,
+          lastUpdatedAt: event.receivedAt,
         },
       }
+    case 'execution_mode_manual_override': {
+      // Manual override may arrive before any classifier judgment
+      // (e.g. user picks a mode pre-classification).  In that case
+      // we synthesise an empty projection so the override is
+      // visible immediately; classifier-driven fields stay zero
+      // until the next decision arrives.
+      const base = prev.executionMode
+      if (!base) {
+        if (event.override === null) return prev
+        return {
+          ...prev,
+          executionMode: {
+            executionMode: event.override,
+            riskLevel: 'low',
+            complexityLevel: 'trivial',
+            reasonCodes: [],
+            matchedRules: [],
+            manualOverride: event.override,
+            policyVersion: '',
+            capturedAt: event.receivedAt,
+            lastUpdatedAt: event.receivedAt,
+          },
+        }
+      }
+      return {
+        ...prev,
+        executionMode: {
+          ...base,
+          manualOverride: event.override,
+          lastUpdatedAt: event.receivedAt,
+        },
+      }
+    }
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.

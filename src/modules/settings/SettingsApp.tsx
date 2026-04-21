@@ -25,6 +25,7 @@ import { TtsProfilesPage } from './pages/TtsProfilesPage'
 import { TtsSettingsPage } from './pages/TtsSettingsPage'
 import { TtsTestPage } from './pages/TtsTestPage'
 import { SttConfigPage } from './pages/SttConfigPage'
+import { StrategyDiagnosticsPage } from './pages/StrategyDiagnosticsPage'
 
 interface SettingsAppProps {
   onClose: () => void
@@ -206,6 +207,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <TtsTestPage />
       case 'stt-config':
         return <SttConfigPage />
+      case 'strategy-diagnostics':
+        return <StrategyDiagnosticsPage />
       case 'general':
       default:
         return <GeneralSettingsPage state={state} actions={actions} />

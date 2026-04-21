@@ -14,6 +14,7 @@ export type SettingsSectionId =
   | 'tts-profiles'
   | 'tts-test'
   | 'stt-config'
+  | 'strategy-diagnostics'
   | 'about'
 
 export type ThemeMode = 'system' | 'light' | 'dark'

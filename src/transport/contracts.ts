@@ -386,6 +386,137 @@ export const AGENT_TOKEN_EVENT = 'agent-token'
 export const PERMISSION_REQUEST_EVENT = 'permission-request'
 export const MEMORY_EVENT = 'memory_event'
 
+/** Phase M3-C closeout — Tauri event name carrying the **batch
+ * envelope** emitted by the backend `MemoryCoordinator::after_turn`
+ * pipeline at every turn end.  Replaces the short-lived M3-B
+ * `memory_write_decision` event.  Empty `decisions` array is
+ * meaningful signal — the event fires even when zero candidates
+ * were extracted, so "after_turn ran but produced nothing" is now
+ * an explicit, observable signal instead of an absence.
+ * Payload shape: `MemoryAfterTurnPayload`. */
+export const MEMORY_AFTER_TURN_EVENT = 'memory_after_turn'
+
+/** Wire-shape summary of one quality-gate accepted candidate.  Mirrors
+ * the Rust `QualityGateAccepted` (`#[serde(rename_all = "camelCase")]`). */
+export interface QualityGateAcceptedPayload {
+  candidate: MemoryWriteCandidatePayload
+  decision: MemoryWriteDecisionPayload
+}
+
+/** Wire-shape summary of one quality-gate rejected candidate. */
+export interface QualityGateRejectedPayload {
+  candidate: MemoryWriteCandidatePayload
+  decision: MemoryWriteDecisionPayload
+  gateReason: string
+}
+
+/** Wire-shape non-blocking warning emitted by the quality gate. */
+export interface QualityGateWarningPayload {
+  candidateIndex: number
+  code: string
+  message: string
+}
+
+/** Wire-shape result of running the quality gate over a batch. */
+export interface QualityGateResultPayload {
+  accepted: QualityGateAcceptedPayload[]
+  rejected: QualityGateRejectedPayload[]
+  warnings: QualityGateWarningPayload[]
+  policyVersion: string
+}
+
+/** Conflict-resolver outcome enum (mirrors Rust
+ * `ConflictResolutionOutcome`, snake_case via serde). */
+export type ConflictResolutionOutcome =
+  | 'accept_replacement'
+  | 'keep_existing'
+  | 'require_prompt'
+  | 'reject_candidate'
+  | 'no_conflict'
+
+/** Wire-shape resolver result for one candidate. */
+export interface ConflictResolutionPayload {
+  outcome: ConflictResolutionOutcome
+  reasonCodes: string[]
+  policyVersion: string
+}
+
+/** Wire-shape candidate echoed inside `QualityGateAcceptedPayload` /
+ * `QualityGateRejectedPayload` (mirrors Rust `MemoryWriteCandidate`,
+ * camelCase via serde). */
+export interface MemoryWriteCandidatePayload {
+  objectKind: MemoryObjectKind
+  scope: MemoryScope
+  contentPreview: string
+  evidenceId?: string
+  source: string
+}
+
+/** Wire-shape payload for the `memory_after_turn` Tauri event.
+ * Carries the full coordinator output for one turn:
+ *   - `decisions`  — write-policy stage 1 verdicts
+ *   - `quality`    — quality-gate stage 2 result
+ *   - `conflicts`  — conflict-resolver stage 3 outcomes (parallel
+ *                    to `decisions`, indexed by candidate position)
+ * All three arrays may be empty when the turn produced no
+ * candidates — that is the explicit no-op signal.
+ *
+ * Phase M4.1 — `traceVersion` is the **stable governance trace
+ * contract version** pinned by the backend
+ * (`MEMORY_AFTER_TURN_TRACE_VERSION`).  Future M4 graders /
+ * replay tooling MUST honor it; reading it from the wire avoids
+ * cross-version misalignment if the trace shape evolves.  Field is
+ * optional on the read side because pre-M4.1 emitters did not
+ * carry it. */
+export interface MemoryAfterTurnPayload {
+  /** Phase M4.1 — governance trace contract version (e.g.
+   * `"memory-after-turn-trace@m4.1"`). */
+  traceVersion?: string
+  caller: string
+  policyVersion: string
+  decidedAt: string
+  decisions: MemoryWriteDecisionPayload[]
+  quality: QualityGateResultPayload
+  conflicts: ConflictResolutionPayload[]
+}
+
+// ───────────────────────── M3 memory write decision ────────────────
+//
+// Phase M3.3 + M3.6 — typed pre-write decision rendered by the
+// backend `MemoryCoordinator::after_turn` write-policy gate.
+// Mirrors the Rust `MemoryWriteDecision` (camelCase via serde
+// `rename_all = "camelCase"`).  No backend event source emits this
+// to the frontend yet — the seam exists so M3-B+ persistence /
+// audit wiring can dispatch through the same translator without a
+// contract bump.  See `runtime-projection/types.ts` for the
+// `MemoryWriteDecisionEvent` variant + reducer projection.
+
+/** Canonical pre-write disposition (mirrors Rust
+ * `MemoryWriteDisposition`). */
+export type MemoryWriteDisposition = 'allow' | 'deny' | 'prompt'
+
+/** Canonical memory object kind (mirrors Rust `MemoryObjectKind`). */
+export type MemoryObjectKind =
+  | 'fact'
+  | 'preference'
+  | 'strategy'
+  | 'episode'
+  | 'unknown'
+
+/** Wire shape of one pre-write decision. */
+export interface MemoryWriteDecisionPayload {
+  disposition: MemoryWriteDisposition
+  reasonCodes: string[]
+  objectKind: MemoryObjectKind
+  scope: MemoryScope
+  /** Optional id of the originating evidence (turn id / tool trace). */
+  evidenceId?: string
+  /** Stable policy version (`"memory-write-policy@m3.3-skeleton"`). */
+  policyVersion: string
+  /** RFC3339 decision timestamp. */
+  decidedAt: string
+}
+
 // ───────────────────────── Canonical projection types ──────────────
 
 /** Canonical memory item projection consumed by the frontend.

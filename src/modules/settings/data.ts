@@ -70,6 +70,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     icon: Radio,
   },
   {
+    id: 'strategy-diagnostics',
+    label: '策略治理诊断',
+    description: 'M5 candidate registry / active strategy / rollback 审计面（治理诊断，非营销面板）。',
+    icon: BarChart3,
+  },
+  {
     id: 'about',
     label: '关于我们',
     description: '版本、理念与项目说明。',
@@ -96,7 +102,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
   {
     id: 'stt-config',
     label: 'STT 语音输入',
-    description: 'Whisper 本地 / Groq 云端语音转文字配置。',
+    description: 'SenseVoice 本地语音转文字模型管理。',
     icon: Mic,
   },
 ] as const

@@ -16,7 +16,9 @@
 import type {
   ActivationSnapshot,
   ExecutionModeDecision,
+  MemoryAfterTurnPayload,
   MemoryEventPayload,
+  MemoryWriteDecisionPayload,
   PermissionRequestPayload,
   StreamTokenPayload,
 } from '@/transport/contracts'
@@ -25,7 +27,9 @@ import type {
   ActivationSnapshotEvent,
   CanonicalRuntimeEvent,
   ExecutionModeDecisionEvent,
+  MemoryAfterTurnEvent,
   MemoryLifecycleEvent,
+  MemoryWriteDecisionEvent,
   PermissionRequestEvent,
 } from './types'
 
@@ -185,6 +189,59 @@ export function translateActivationSnapshot(
 }
 
 /**
+ * Phase M3.6 — translate one [`MemoryWriteDecisionPayload`]
+ * (returned by the backend `MemoryCoordinator::after_turn`
+ * write-policy gate) into a canonical
+ * [`MemoryWriteDecisionEvent`].
+ *
+ * NOTE — this is a fetch / dispatch seam, not an event stream.
+ * No backend event source emits memory write decisions to the
+ * frontend today; the seam exists so M3-B+ persistence + audit
+ * wiring can dispatch through the same translator without a
+ * contract bump.  The caller supplies the `candidateId` so the
+ * UI can correlate the decision with the originating candidate
+ * card.
+ */
+export function translateMemoryWriteDecision(
+  candidateId: string,
+  payload: MemoryWriteDecisionPayload,
+): MemoryWriteDecisionEvent {
+  return {
+    kind: 'memory_write_decision',
+    candidateId,
+    payload,
+    receivedAt: nowMs(),
+  }
+}
+
+/**
+ * Phase M3-C closeout — translate one [`MemoryAfterTurnPayload`]
+ * (the batch envelope emitted by the backend
+ * `MemoryCoordinator::after_turn` per turn) into a canonical
+ * [`MemoryAfterTurnEvent`].
+ *
+ * The translator is field-preserving — it does NOT strip the
+ * `quality` / `conflicts` arrays.  M4 governance / harness
+ * consumers read the full result via the canonical event without
+ * a transport seam expansion.
+ */
+export function translateMemoryAfterTurn(
+  payload: MemoryAfterTurnPayload,
+): MemoryAfterTurnEvent {
+  return {
+    kind: 'memory_after_turn',
+    traceVersion: payload.traceVersion,
+    caller: payload.caller,
+    policyVersion: payload.policyVersion,
+    decidedAt: payload.decidedAt,
+    decisions: payload.decisions,
+    quality: payload.quality,
+    conflicts: payload.conflicts,
+    receivedAt: nowMs(),
+  }
+}
+
+/**
  * Phase M2.6 — translate one [`ExecutionModeDecision`] (returned by
  * the new `request_intelligence_classify` IPC command) into a
  * canonical [`ExecutionModeDecisionEvent`].
@@ -212,6 +269,7 @@ export function translateExecutionModeDecision(
     riskLevel: payload.riskLevel,
     complexityLevel: payload.complexityLevel,
     reasonCodes: payload.reasonCodes ?? [],
+    matchedRules: payload.classifierMatchedRuleIds ?? [],
     policyVersion: payload.classifierPolicyVersion,
     receivedAt: nowMs(),
   }
