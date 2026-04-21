@@ -7,6 +7,7 @@ pub mod audit;
 pub mod boundary_resolver;
 pub mod ingress_classifier;
 pub mod prepare_step_execution;
+pub mod session_bridge;
 pub mod session_context;
 pub mod tool_execution_broker;
 

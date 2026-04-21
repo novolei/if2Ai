@@ -117,17 +117,6 @@ pub struct RunAgentTurnResponse {
 
 // flush_assistant_timeline_segment moved to runtime::timeline_flush (GFR-005c).
 
-/// Convert application session to runtime session.
-///
-/// The application session has extra metadata (id, title, etc.) that we don't need
-/// for the runtime. We only need the messages.
-fn app_session_to_runtime(app_session: &AppSession) -> RuntimeSession {
-    RuntimeSession {
-        version: 1,
-        messages: app_session.messages.clone(),
-    }
-}
-
 /// Resolve session execution context for this turn/session.
 pub(crate) async fn resolve_session_execution_context(
     state: &AppState,
@@ -142,18 +131,11 @@ pub(crate) async fn resolve_session_execution_context(
         .await
 }
 
-fn log_context_fingerprint(caller: &str, context: &SessionExecutionContext) {
-    let fingerprint =
-        crate::modules::tools::context::context_fingerprint(&context.session_id, &context.workdir);
-    tracing::info!(
-        "[{}] context fingerprint='{}', session_id='{}', workdir='{}', permission_mode='{}'",
-        caller,
-        fingerprint,
-        context.session_id,
-        context.workdir.display(),
-        context.permission_mode.as_str()
-    );
-}
+// session-bridge helpers (app_session_to_runtime + log_context_fingerprint)
+// moved to control_plane::session_bridge (GFR-005e).
+pub(crate) use crate::modules::control_plane::session_bridge::{
+    app_session_to_runtime, log_context_fingerprint,
+};
 
 // RealApiClient moved to crate::modules::application::real_api_client (GFR-001).
 // ControlPlaneRuntimeSwitches + load_control_plane_switches + ToolRegistryExecutor
