@@ -80,7 +80,9 @@ SIZE_EXEMPT_PATHS = {
     # already-isolated single-responsibility files; OK to leave on warning shelf.
     "src-tauri/src/modules/memory/providers/sqlite_provider/provider_impl.rs",
     "src-tauri/src/modules/memory/providers/sqlite_provider/tests.rs",
-    "src-tauri/src/modules/memory/ticker.rs",
+    # ticker sliced through GFR-T1-F-1; mod.rs now 526 LOC (under 800 hard
+    # limit, slightly over 500 target — kept exempt to silence warning).
+    "src-tauri/src/modules/memory/ticker/mod.rs",
     "src-tauri/src/commands/tts.rs",
     # Tier 2 frontend (GFR-T2-A ~ C)
     "src/modules/onboarding/steps/ProviderSetupStep.tsx",
