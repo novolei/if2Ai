@@ -55,6 +55,7 @@ pub mod permission_service;
 pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
+pub mod stream_emitter_service;
 pub mod tool_executor;
 pub mod tool_heuristics;
 pub mod trajectory_service;
@@ -101,6 +102,7 @@ pub use provider_service::{
 };
 pub(crate) use permission_service::TauriPermissionPrompter;
 pub(crate) use real_api_client::RealApiClient;
+pub(crate) use stream_emitter_service::{dispatch_after_turn, MEMORY_AFTER_TURN_TRACE_VERSION};
 pub(crate) use tool_executor::ToolRegistryExecutor;
 pub(crate) use tool_heuristics::{
     contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,

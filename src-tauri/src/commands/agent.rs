@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::commands::stream_outcome::{ConversationTruth, ExecutionTruth, TaskOutcomeResolver};
 use crate::commands::AppState;
@@ -19,15 +19,15 @@ use crate::modules::application::prompt_planner::{
     extend_sample_ids, sanitize_messages_for_provider, ContextGovernor,
 };
 use crate::modules::application::{
-    contains_unverified_file_claim, extract_skill_proposal_name, is_mutating_tool_success,
-    record_trajectory_if_possible, AfterTurnInput, ExistingRecordRef, MemoryCoordinator,
-    MemoryItemProjection, PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution,
-    TauriPermissionPrompter, ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
+    contains_unverified_file_claim, dispatch_after_turn, extract_skill_proposal_name,
+    is_mutating_tool_success, record_trajectory_if_possible, MemoryItemProjection,
+    PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution, TauriPermissionPrompter,
+    ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext,
 };
-use crate::modules::harness::{AgentEvent, EventBus};
+use crate::modules::harness::AgentEvent;
 use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
@@ -35,7 +35,6 @@ use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
-use crate::modules::runtime::contracts::memory::MemoryWriteCandidate;
 #[cfg(test)]
 use crate::modules::runtime::conversation::{ApiClient, ApiRequest, AssistantEvent};
 use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
@@ -46,7 +45,6 @@ use crate::modules::runtime::permissions::{
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
-use crate::modules::runtime::stream_emitter::MEMORY_AFTER_TURN_EVENT;
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
@@ -69,106 +67,8 @@ fn make_turn_service(state: &AppState) -> TurnService {
     })
 }
 
-/// Phase M4-A — stable governance trace contract version pinned
-/// onto every `memory_after_turn` envelope (Tauri event + harness
-/// `AgentEvent::MemoryAfterTurn`).  Bumping this string is a
-/// breaking governance contract change; future graders / replay
-/// MUST honor it.
-pub const MEMORY_AFTER_TURN_TRACE_VERSION: &str = "memory-after-turn-trace@m4.1";
-
-/// Phase M3-C closeout (extended in M4.1) — run the
-/// [`MemoryCoordinator::after_turn`] write-policy / quality-gate /
-/// conflict-resolver pipeline at the end of a turn and emit the
-/// **batch envelope** through both:
-///
-///   1. the frontend [`MEMORY_AFTER_TURN_EVENT`] Tauri channel
-///      (drives the runtime-projection store), and
-///   2. the harness [`EventBus`] as
-///      [`AgentEvent::MemoryAfterTurn`] (drives M4 trace sinks /
-///      future grader components).
-///
-/// M4.1 — `candidates` is now sourced from
-/// [`extract_memory_store_tool_candidates`] for `memory_store`
-/// tool calls observed during the turn; `existing_records` is now
-/// sourced from
-/// [`lookup_existing_records_for_candidates`] so the conflict
-/// resolver flips from "always NoConflict" to producing real
-/// outcomes for same-key writes.  The batch envelope still fires
-/// even when both arrays are empty — the empty case is the
-/// explicit "no candidates this turn" signal (M3-C contract).
-///
-/// Emit failure on either channel is logged at TRACE — never
-/// blocks the turn.
-fn dispatch_after_turn(
-    app_handle: &AppHandle,
-    harness_bus: Option<&EventBus>,
-    injection_deps: MemoryInjectionDeps,
-    session_id: Option<String>,
-    project_id: Option<String>,
-    candidates: Vec<MemoryWriteCandidate>,
-    existing_records: Vec<Option<ExistingRecordRef>>,
-    reflection_notes: Vec<crate::modules::learning::reflection_note::ReflectionNote>,
-    caller: &'static str,
-) {
-    debug_assert_eq!(
-        candidates.len(),
-        existing_records.len(),
-        "candidate / existing_record arrays must be parallel"
-    );
-    let coordinator = MemoryCoordinator::with_default_policy(injection_deps);
-    let output = coordinator.after_turn(AfterTurnInput {
-        session_id: session_id.clone(),
-        project_id: project_id.clone(),
-        candidates,
-        existing_records,
-        reflection_notes,
-        caller,
-    });
-    // RFC3339 timestamp for the batch envelope; per-decision
-    // `decidedAt` lives inside each `MemoryWriteDecision`.
-    let decided_at_dt = chrono::Utc::now();
-    let decided_at_rfc = decided_at_dt.to_rfc3339();
-
-    // (1) Frontend transport channel.
-    let payload = serde_json::json!({
-        "traceVersion": MEMORY_AFTER_TURN_TRACE_VERSION,
-        "caller": caller,
-        "policyVersion": output.policy_version,
-        "decidedAt": decided_at_rfc,
-        "decisions": output.decisions,
-        "quality": output.quality,
-        "conflicts": output.conflicts,
-    });
-    if let Err(err) = app_handle.emit(MEMORY_AFTER_TURN_EVENT, payload) {
-        tracing::trace!(
-            event = MEMORY_AFTER_TURN_EVENT,
-            error = %err,
-            "[after_turn] memory_after_turn emit failed (non-fatal)"
-        );
-    }
-
-    // (2) Harness EventBus — M4.2 ground-truth seam.  Zero
-    // overhead when `harness_bus` is `None` (no bus subscribed).
-    if let Some(bus) = harness_bus {
-        let event = AgentEvent::MemoryAfterTurn {
-            trace_version: MEMORY_AFTER_TURN_TRACE_VERSION,
-            caller,
-            session_id,
-            project_id,
-            policy_version: output.policy_version,
-            decided_at: decided_at_dt,
-            decisions: output.decisions,
-            quality: output.quality,
-            conflicts: output.conflicts,
-        };
-        if let Err(err) = bus.emit(event) {
-            tracing::trace!(
-                error = %err,
-                "[after_turn] harness MemoryAfterTurn emit failed (non-fatal)"
-            );
-        }
-    }
-}
+// MEMORY_AFTER_TURN_TRACE_VERSION + dispatch_after_turn moved to
+// crate::modules::application::stream_emitter_service (GFR-004).
 
 // `ContextBudgetUsagePayload` / `StreamTokenPayload` moved to
 // [`crate::modules::runtime::stream_emitter`] in Phase M1.5.
