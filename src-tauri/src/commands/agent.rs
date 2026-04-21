@@ -55,6 +55,9 @@ use crate::modules::runtime::stream_emitter::{
 use crate::modules::runtime::stream_error_reason::{
     format_stream_error_reason, is_network_timeout_reason,
 };
+use crate::modules::runtime::timeline_flush::{
+    flush_assistant_timeline_segment, PersistedTurnOutcome,
+};
 use crate::modules::session::Session as AppSession;
 
 /// Phase M1.1 — construct a per-call [`TurnService`] from the
@@ -83,14 +86,7 @@ fn make_turn_service(state: &AppState) -> TurnService {
 // [`crate::modules::application::memory_injection_service::MemoryItemProjection`]
 // in Phase M1.4.
 
-#[derive(Debug, Clone)]
-struct PersistedTurnOutcome {
-    task_outcome: String,
-    degraded_reason: Option<String>,
-    resume_available: bool,
-    resume_cursor: Option<String>,
-    request_id: String,
-}
+// PersistedTurnOutcome moved to runtime::timeline_flush (GFR-005c).
 
 // ResumeCursor + resume-cursor encoding/decoding cluster moved to
 // crate::modules::runtime::resume_cursor (GFR-005a).
@@ -121,37 +117,7 @@ pub struct RunAgentTurnResponse {
 // which delegates to
 // [`crate::modules::application::provider_service::resolve_chat_runtime_provider`].
 
-fn flush_assistant_timeline_segment(
-    timeline_messages: &mut Vec<crate::modules::runtime::session::ConversationMessage>,
-    accumulated_text: &mut String,
-    accumulated_thinking: &mut String,
-    persisted_outcome: Option<&PersistedTurnOutcome>,
-) -> bool {
-    if accumulated_text.is_empty() && accumulated_thinking.is_empty() {
-        return false;
-    }
-
-    let text = std::mem::take(accumulated_text);
-    let thinking = std::mem::take(accumulated_thinking);
-
-    timeline_messages.push(crate::modules::runtime::session::ConversationMessage {
-        role: crate::modules::runtime::session::MessageRole::Assistant,
-        blocks: vec![ContentBlock::Text { text }],
-        usage: None,
-        thinking: if thinking.is_empty() {
-            None
-        } else {
-            Some(thinking)
-        },
-        task_outcome: persisted_outcome.map(|value| value.task_outcome.clone()),
-        degraded_reason: persisted_outcome.and_then(|value| value.degraded_reason.clone()),
-        resume_available: persisted_outcome.map(|value| value.resume_available),
-        resume_cursor: persisted_outcome.and_then(|value| value.resume_cursor.clone()),
-        request_id: persisted_outcome.map(|value| value.request_id.clone()),
-    });
-
-    true
-}
+// flush_assistant_timeline_segment moved to runtime::timeline_flush (GFR-005c).
 
 /// Convert application session to runtime session.
 ///
