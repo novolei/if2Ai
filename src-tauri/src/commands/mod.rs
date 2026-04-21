@@ -263,7 +263,10 @@ pub mod session;
 pub mod settings;
 pub mod skills_hub;
 pub mod slash;
-pub mod stream_outcome;
+// stream_outcome moved to crate::modules::runtime::stream_outcome (MIG-001-c)
+// to satisfy the application/* layering constraint (CHARTER §2.1).
+// No re-export here — call sites import via the runtime module
+// path directly.
 pub mod stt;
 pub mod tools;
 pub mod tts;

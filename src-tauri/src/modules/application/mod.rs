@@ -112,6 +112,6 @@ pub(crate) use tool_heuristics::{
 };
 pub(crate) use trajectory_service::record_trajectory_if_possible;
 pub use turn_service::{
-    PrepareChatInputsRequest, PreparedChatInputs, RunTurnRequest, RunTurnResponse, TurnService,
-    TurnServiceDeps, TurnServiceError,
+    PrepareChatInputsRequest, PreparedChatInputs, RunTurnRequest, RunTurnResponse,
+    StreamTurnRequest, TurnService, TurnServiceDeps, TurnServiceError,
 };

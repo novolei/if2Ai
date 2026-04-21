@@ -31,6 +31,7 @@ pub mod session;
 pub mod snapshot;
 pub mod stream_emitter;
 pub mod stream_error_reason;
+pub mod stream_outcome;
 pub mod timeline_flush;
 pub mod usage;
 

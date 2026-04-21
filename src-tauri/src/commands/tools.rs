@@ -141,8 +141,11 @@ pub async fn execute_tool(
 
     // Apply the same permission policy used by agent streaming path,
     // so direct execute_tool cannot bypass selected sandbox mode.
-    let mode = super::agent::parse_permission_mode(permission_mode.as_deref());
-    let permission_policy = super::agent::build_permission_policy(mode);
+    let mode = crate::modules::application::permission_service::parse_permission_mode(
+        permission_mode.as_deref(),
+    );
+    let permission_policy =
+        crate::modules::application::permission_service::build_permission_policy(mode);
     let args_for_auth = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
     if session_id.is_none()
         && crate::modules::tools::registry::requires_explicit_context(name.as_str())
