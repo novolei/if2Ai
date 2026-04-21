@@ -58,20 +58,34 @@ use crate::modules::runtime::timeline_flush::{
 };
 use crate::modules::session::Session as AppSession;
 
-/// Phase M1.1 — construct a per-call [`TurnService`] from the
-/// already-shared `AppState` handles. Held as a small helper so the
-/// IPC adapter does not have to repeat the dependency wiring at
-/// every call site.
+/// Phase M1.1 / MIG-001-a — construct a per-call [`TurnService`]
+/// from the already-shared `AppState` handles. Held as a small
+/// helper so the IPC adapter does not have to repeat the
+/// dependency wiring at every call site.
+///
+/// MIG-001-a expanded the [`TurnServiceDeps`] surface with the
+/// session / harness / learning / runtime-budget / memory-ticker /
+/// trajectory / `AppHandle` dependencies the canonical turn
+/// orchestrator will own in MIG-001-b/c/d. The IPC adapter is the
+/// only place that knows how to map `AppState` into `TurnService`,
+/// because `application::*` MUST NOT import `crate::commands::*`.
 ///
 /// Note: [`TurnService`] is intentionally cheap to construct
 /// (`Arc` clones only); it does not need to live on `AppState`
 /// during the M1 transition.
-fn make_turn_service(state: &AppState) -> TurnService {
+fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnService {
     TurnService::new(TurnServiceDeps {
         tool_registry: state.tool_registry.clone(),
         pinned_store: state.pinned_store.clone(),
         memory_provider: state.memory_provider.clone(),
         active_retrieval_manager: state.active_retrieval_manager.clone(),
+        session_manager: state.session_manager.clone(),
+        harness: state.harness.clone(),
+        learning_module: state.learning_module.clone(),
+        context_budget: state.context_budget.clone(),
+        memory_ticker: state.memory_ticker.clone(),
+        trajectory_manager: state.trajectory_manager.clone(),
+        app_handle,
     })
 }
 
@@ -225,7 +239,7 @@ pub async fn run_agent_turn(
     // `application::memory_injection_service`). This single seam
     // produces the provider, the prompt plan, and the per-turn
     // memory items in one await.
-    let turn_service = make_turn_service(&state);
+    let turn_service = make_turn_service(&state, Some(app_handle.clone()));
     let project_id_opt: Option<String> = if execution_context.project_id.is_empty() {
         None
     } else {
@@ -848,7 +862,7 @@ pub async fn start_agent_stream(
     // plan in one await.  `memory_items` is moved into the spawned
     // task and emitted on `stream_complete` so the frontend
     // `MemoryChip` / `MemoryEvidencePanel` can render them.
-    let turn_service = make_turn_service(&state);
+    let turn_service = make_turn_service(&state, Some(app_handle.clone()));
     let stream_project_id_opt: Option<String> = if execution_context.project_id.is_empty() {
         None
     } else {
@@ -2449,7 +2463,6 @@ pub async fn start_agent_stream(
 // Governor cluster (RequestPreflightStats + ContextGovernor +
 // apply_request_preflight_limits) moved to
 // crate::modules::application::prompt_planner::governor (GFR-002b).
-
 
 // Preflight estimators (estimate_messages_char_count + token_count +
 // summarize_message_for_budget + truncate_middle_chars) moved to

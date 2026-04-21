@@ -1,33 +1,49 @@
-//! Turn service — first orchestration seam (Phase M1.1, refined in
-//! M1.4).
+//! Turn service — canonical chat turn orchestrator (MIG-001).
 //!
 //! `TurnService` is the **only** entry point that the IPC adapter
 //! [`crate::commands::agent::run_agent_turn`] /
 //! [`crate::commands::agent::start_agent_stream`] uses to compose
-//! provider resolution + memory injection + prompt planning before
-//! handing off to the existing
-//! [`crate::modules::runtime::conversation::ConversationRuntime`].
+//! provider resolution + memory injection + prompt planning, and (in
+//! later sub-packs of MIG-001) to drive the actual runtime
+//! `prepare -> execute -> finalize` turn lifecycle.
 //!
-//! What this service deliberately does NOT do in M1 (yet):
+//! Ownership status (tracked by the MIG-001 sub-pack arc):
 //!
-//! - It does NOT own session restoration / `AppSession` storage.
-//! - It does NOT own runtime construction / tool loop.
-//! - It does NOT own stream emission (M1.5
-//!   [`crate::modules::runtime::stream_emitter`]).
-//! - It does NOT swallow `AppState` — the IPC adapter passes only
-//!   the dependencies the service genuinely needs.
-//! - It does NOT merge streaming and non-streaming code paths.
+//! - MIG-001-a (this commit) — long-lived dependency surface
+//!   expanded so the service can own runtime construction, the tool
+//!   loop, stream emission, and finalize hooks. The deps struct now
+//!   carries `session_manager`, `harness`, `learning_module`,
+//!   `context_budget`, `memory_ticker`, `trajectory_manager`, and a
+//!   Tauri `AppHandle` channel; the IPC adapter no longer needs to
+//!   re-thread these through every call site.
+//! - MIG-001-b/c/d — owns turn lifecycle via `run_turn` and
+//!   `stream_turn`; the IPC layer collapses to a thin adapter that
+//!   parses arguments and delegates.
+//!
+//! Strict layering (CHARTER §2.1 hard constraint, also restated in
+//! MIG-001 §4):
+//!
+//! - `application::turn_service` MUST NOT import from
+//!   `crate::commands::*`. Every dependency is injected through
+//!   [`TurnServiceDeps`] so the service stays decoupled from the
+//!   `AppState` aggregate held by the IPC layer.
 //!
 //! Reference:
-//! - [`docs/exec-plans/active/phase-m1-initial-slices-file-level-plan.md`](../../../../../docs/exec-plans/active/phase-m1-initial-slices-file-level-plan.md)
-//! - [`docs/exec-plans/active/phase-m1-memory-and-stream-file-level-plan.md`](../../../../../docs/exec-plans/active/phase-m1-memory-and-stream-file-level-plan.md)
-//!   §5.2 (memory injection wiring through the service).
+//! - [`docs/packs/feature/migration-core/MIG-001-canonical-chat-execution-spine.md`](../../../../../docs/packs/feature/migration-core/MIG-001-canonical-chat-execution-spine.md)
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tauri::AppHandle;
+
+use crate::modules::harness::HarnessState;
+use crate::modules::learning::trajectory::TrajectoryManager;
+use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
+use crate::modules::memory::MemoryTicker;
 use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
+use crate::modules::runtime::budget::ContextBudget;
+use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
@@ -43,11 +59,37 @@ use super::provider_service::{resolve_chat_runtime_provider, RuntimeProviderReso
 use super::request_intelligence_service::{classify, RequestIntelligenceInput};
 
 /// Long-lived dependencies the service holds on construction.
+///
+/// The first four fields (`tool_registry`, `pinned_store`,
+/// `memory_provider`, `active_retrieval_manager`) feed the M1.1–M1.6
+/// `prepare_chat_inputs` seam (provider + prompt + memory).
+///
+/// MIG-001-a expanded this struct with seven new fields so the
+/// service can own the full chat turn lifecycle in MIG-001-b/c/d
+/// without the IPC adapter re-threading `AppState` handles into
+/// every call:
+///
+/// - `session_manager` — restore + persist `AppSession`
+/// - `harness` — emit `TurnStarted` / `TurnFinished` events
+/// - `learning_module` — record per-turn outcomes + reflection
+/// - `context_budget` — wire into `ConversationRuntime`
+/// - `memory_ticker` — `TurnHook` for rolling summary + compile
+/// - `trajectory_manager` — ShareGPT JSONL persistence after a turn
+/// - `app_handle` — Tauri channel used by the streaming path to
+///   construct the `AgentStreamEmitter`. `None` in unit tests; the
+///   IPC adapter always passes `Some(handle)` in production.
 pub struct TurnServiceDeps {
     pub tool_registry: Arc<ToolRegistry>,
     pub pinned_store: Arc<dyn PinnedStore>,
     pub memory_provider: SharedMemoryProvider,
     pub active_retrieval_manager: Option<Arc<ActiveRetrievalManager>>,
+    pub session_manager: Arc<SessionManager>,
+    pub harness: Option<Arc<HarnessState>>,
+    pub learning_module: Option<Arc<tokio::sync::Mutex<LearningModule>>>,
+    pub context_budget: ContextBudget,
+    pub memory_ticker: Arc<MemoryTicker>,
+    pub trajectory_manager: Option<Arc<TrajectoryManager>>,
+    pub app_handle: Option<AppHandle>,
 }
 
 impl TurnServiceDeps {
@@ -223,5 +265,29 @@ impl TurnService {
             memory_injection,
             execution_mode_decision: intelligence.decision,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MIG-001-a smoke test: verify the expanded `TurnServiceDeps`
+    /// surface holds all eleven fields with the trait bounds the
+    /// later sub-packs will rely on.
+    ///
+    /// MIG-001-c/d will spawn the canonical turn into a
+    /// `tokio::spawn` task closure, so every dependency reachable
+    /// from the moved closure must be `Send + Sync`. This compile-
+    /// time assertion guards that invariant before runtime
+    /// migration begins, so any future field added to the struct
+    /// that breaks `Send + Sync` is rejected at this seam rather
+    /// than deep inside the streaming path.
+    #[test]
+    fn turn_service_deps_construction_smoke() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<TurnServiceDeps>();
+        assert_send_sync::<TurnService>();
+        assert_send_sync::<Arc<TurnService>>();
     }
 }
