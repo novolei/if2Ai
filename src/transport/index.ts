@@ -7,3 +7,4 @@
 // helpers; this barrel only covers transport-level **types**.
 
 export * from './contracts'
+export * from './gateway'

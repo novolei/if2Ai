@@ -49,6 +49,9 @@ use commands::{
     get_browser_sessions,
     get_browser_settings,
     get_chrome_status,
+    // MIG-010 — Local gateway bootstrap seam (URL + readiness)
+    get_gateway_health,
+    get_gateway_url,
     get_harness_status,
     get_memory_config,
     get_model_config,
@@ -871,6 +874,11 @@ fn main() {
             start_agent_stream,
             stop_agent_stream,
             respond_permission,
+            // MIG-010 — Local gateway bootstrap seam (separate from
+            // every business command; frontend bootstrap path calls
+            // these before invoking anything else).
+            get_gateway_url,
+            get_gateway_health,
             // Browser control commands (Phase 7B + 7C profile management + 7C.3 takeover)
             get_browser_sessions,
             close_browser_session,

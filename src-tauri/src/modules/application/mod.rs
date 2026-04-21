@@ -43,6 +43,7 @@
 #![allow(unused_imports)]
 
 pub mod activation_service;
+pub mod gateway_service;
 pub mod license_lifecycle_service;
 pub mod memory_candidate_extractor;
 pub mod memory_conflict_resolution;
@@ -64,6 +65,10 @@ pub mod trajectory_service;
 pub mod turn_service;
 
 pub use activation_service::{ActivationCeremonyResult, ActivationChecklist, ActivationService};
+pub use gateway_service::{
+    compute_gateway_health, current_gateway_url, GatewayHealthInputs, GatewayHealthPayload,
+    GatewayStatus, GatewayTransport, GatewayUrlPayload, GATEWAY_SCHEMA_VERSION,
+};
 pub use license_lifecycle_service::{snapshot_with_kind, LicenseLifecycleService};
 pub use memory_candidate_extractor::{
     extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,

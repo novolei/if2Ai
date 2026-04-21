@@ -253,6 +253,7 @@ impl AppState {
 
 pub mod agent;
 pub mod browser;
+pub mod gateway;
 pub mod harness;
 pub mod learning;
 pub mod memory;
@@ -297,6 +298,7 @@ pub use browser::{
     get_browser_settings, get_chrome_status, list_browser_profiles, release_browser_takeover,
     request_browser_status, request_browser_takeover, set_browser_settings, ChromeStatusPayload,
 };
+pub use gateway::{get_gateway_health, get_gateway_url};
 #[allow(unused_imports)]
 pub use harness::{
     get_all_session_telemetry, get_harness_status, get_session_telemetry,

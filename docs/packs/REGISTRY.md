@@ -108,16 +108,16 @@
 
 ### Active
 
-| Pack                                                                          | 状态   | Goal                                           |
-| ----------------------------------------------------------------------------- | ------ | ---------------------------------------------- |
-| [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md) | active | 把 chat turn 主链收口成 canonical orchestrator |
+| Pack                                                                   | 状态   | Goal                              |
+| ---------------------------------------------------------------------- | ------ | --------------------------------- |
+| [MIG-012](./feature/migration-core/MIG-012-frontend-api-facade-and-transport-cutover.md) | draft (next) | 建立前端 `src/api/*` facade |
 
 ### Migration-Core Pipeline
 
 | 顺序 | 优先级 | Pack                                                                                           | 状态   | Goal                                                  |
 | ---- | ------ | ---------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------- |
-| 1    | P0     | [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md)                  | active | 把 chat turn 主链收口成 canonical orchestrator        |
-| 2    | P0     | [MIG-010](./feature/migration-core/MIG-010-local-gateway-bootstrap.md)                         | draft  | 建立 local gateway bootstrap seam                     |
+| 1    | P0     | [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md)                  | **done** | 把 chat turn 主链收口成 canonical orchestrator        |
+| 2    | P0     | [MIG-010](./feature/migration-core/MIG-010-local-gateway-bootstrap.md)                         | **done** | 建立 local gateway bootstrap seam                     |
 | 3    | P0     | [MIG-012](./feature/migration-core/MIG-012-frontend-api-facade-and-transport-cutover.md)       | draft  | 建立前端 `src/api/*` facade，收缩 `tauri.ts` 业务职责 |
 | 4    | P0     | [MIG-013](./feature/migration-core/MIG-013-app-shell-router-and-bootstrap-store.md)            | draft  | 建立 `AppShell + ContentRouter + bootstrap store`     |
 | 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md)               | draft  | 建立 session/chat store 基础层                        |
