@@ -34,6 +34,10 @@
 
 use std::path::PathBuf;
 
+// Sanitize sub-module — extracted from `commands::agent` in GFR-002a.
+pub mod sanitize;
+pub(crate) use sanitize::{extend_sample_ids, sanitize_messages_for_provider, SanitizationStats};
+
 use crate::modules::runtime::prompt::{load_system_prompt, PromptBuildError, SystemPromptBuilder};
 use crate::modules::runtime::prompt_tools_guide::web_tools_routing_block;
 

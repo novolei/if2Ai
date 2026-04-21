@@ -19,6 +19,7 @@
 | Pack | Type | Goal | Done |
 |------|------|------|------|
 | [GFR-001](./refactor/GFR-001-extract-real-api-client.md) | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs` | 2026-04-21 |
+| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md) | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs` | 2026-04-21 |
 
 ---
 
@@ -29,7 +30,10 @@
 | GFR        | 状态       | Source                                       | Destination                                         |
 | ---------- | ---------- | -------------------------------------------- | --------------------------------------------------- |
 | GFR-001    | **done**   | `commands/agent.rs` `RealApiClient` + `block_conversion` | `application/real_api_client.rs` + `runtime/block_conversion.rs` |
-| GFR-002    | pending    | `commands/agent.rs` prompt/sanitize/governor | `application/prompt_planner/*`                      |
+| GFR-002    | merged     | merged → GFR-002a/b/c (sliced 2026-04-21 因 700 LOC 单 pack 太大) | — |
+| GFR-002a   | **done**   | `commands/agent.rs` sanitize cluster (≈3510–3672, ~162 LOC) | `application/prompt_planner/sanitize.rs` |
+| GFR-002b   | pending    | `commands/agent.rs` governor cluster (RequestPreflightStats + ContextGovernor) | `application/prompt_planner/governor.rs` |
+| GFR-002c   | pending    | `commands/agent.rs` preflight estimators (token/char count helpers) | `application/prompt_planner/preflight.rs` |
 | GFR-003    | pending    | `commands/agent.rs` permission lifecycle     | `application/permission_service.rs`                 |
 | GFR-004    | pending    | `commands/agent.rs` 散点 emit                | `application/stream_emitter_service.rs`             |
 | GFR-005    | pending    | `commands/agent.rs` turn body                | `application/turn_service`                          |

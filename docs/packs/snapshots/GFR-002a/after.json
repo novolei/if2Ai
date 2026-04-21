@@ -1,0 +1,52 @@
+{
+  "files": [
+    {
+      "event_strings": [
+        "agent-token",
+        "permission-request"
+      ],
+      "exists": true,
+      "loc": 3694,
+      "path": "src-tauri/src/commands/agent.rs",
+      "pub_symbols": [
+        "const MEMORY_AFTER_TURN_TRACE_VERSION",
+        "fn build_permission_policy",
+        "fn new",
+        "fn parse_permission_mode",
+        "fn respond_permission",
+        "fn stop_agent_stream",
+        "struct RunAgentTurnResponse",
+        "struct TauriPermissionPrompter"
+      ],
+      "test_names": [
+        "agent_loop_executes_skill_tool_end_to_end"
+      ]
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/application/prompt_planner.rs       (deleted \u2014 moved into prompt_planner/mod.rs)",
+      "pub_symbols": [],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/application/prompt_planner/mod.rs   (new \u2014 same content as old prompt_planner.rs + 1 mod decl + 1 re-export)",
+      "pub_symbols": [],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/application/prompt_planner/sanitize.rs (new)",
+      "pub_symbols": [],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-002a",
+  "phase": "after"
+}
