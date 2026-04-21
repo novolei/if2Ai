@@ -10,24 +10,24 @@
 
 ## Active
 
-| Pack                     | Type | Goal | Owner |
-| ------------------------ | ---- | ---- | ----- |
+| Pack                                     | Type | Goal | Owner |
+| ---------------------------------------- | ---- | ---- | ----- |
 | _(无 — preamble 收口完成；下一个由人写)_ | —    | —    | —     |
 
 ## Recently Done
 
-| Pack                                                                | Type     | Goal                                                                                                                | Done       |
-| ------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
-| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)           | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                   | 2026-04-21 |
-| [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)       | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                | 2026-04-21 |
-| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)           | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`            | 2026-04-21 |
-| [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md)    | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                  | 2026-04-21 |
-| [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)          | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                    | 2026-04-21 |
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)    | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
-| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)  | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                              | 2026-04-21 |
-| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md) | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                         | 2026-04-21 |
-| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)  | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs` | 2026-04-21 |
-| [GFR-003](./refactor/GFR-003-extract-permission-service.md) | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred)                                      | 2026-04-21 |
+| Pack                                                           | Type     | Goal                                                                                                                | Done       |
+| -------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)      | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                   | 2026-04-21 |
+| [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)  | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                | 2026-04-21 |
+| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)      | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`            | 2026-04-21 |
+| [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md) | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                  | 2026-04-21 |
+| [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)       | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                    | 2026-04-21 |
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)       | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
+| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)     | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                              | 2026-04-21 |
+| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md)    | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                         | 2026-04-21 |
+| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)     | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs` | 2026-04-21 |
+| [GFR-003](./refactor/GFR-003-extract-permission-service.md)    | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred)                                      | 2026-04-21 |
 
 ---
 
@@ -63,7 +63,8 @@
 | GFR-016    | pending  | `tauri.ts` types                                                               | `src/transport/contracts.ts`                                     |
 | GFR-017    | pending  | `tauri.ts` feature wrappers                                                    | `src/transport/{browser,session,...}.ts`                         |
 | GFR-018    | pending  | `tauri.ts` listeners                                                           | `src/runtime-projection/translator/`                             |
-| GFR-T1-A~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
+| GFR-T1-A   | **cancelled** | source 是 orphan 死代码（plugins/lib+hooks + commands/lib，共 6057 LOC）；2026-04-21 整体 `chore(dead-code)` 删除 | — |
+| GFR-T1-B~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
 | GFR-T2-A   | pending  | `ProviderSetupStep.tsx`                                                        | `onboarding/steps/provider/`                                     |
 | GFR-T2-B   | pending  | `SkillsSettingsPage.tsx`                                                       | `settings/pages/skills/`                                         |
 

@@ -6,7 +6,6 @@
 //! - api: Provider management and routing
 //! - tools: Tool system and execution
 //! - commands: Command processing
-//! - plugins: Plugin system
 //! - session: Session management with JSON persistence
 //! - projects: Multi-project support
 //! - memory: Memory storage and retrieval
@@ -24,7 +23,6 @@ pub mod harness;
 pub mod learning;
 pub mod memory;
 pub mod onboarding;
-pub mod plugins;
 pub mod projects;
 pub mod provider;
 pub mod runtime;
@@ -57,8 +55,6 @@ pub use learning::*;
 pub use memory::*;
 #[allow(unused_imports)]
 pub use onboarding::*;
-#[allow(unused_imports)]
-pub use plugins::*;
 #[allow(unused_imports)]
 pub use projects::*;
 #[allow(unused_imports)]

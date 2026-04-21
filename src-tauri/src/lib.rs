@@ -16,7 +16,6 @@
 pub mod modules;
 pub use modules::api;
 pub use modules::commands;
-pub use modules::plugins;
 pub use modules::runtime;
 pub use modules::tools;
 

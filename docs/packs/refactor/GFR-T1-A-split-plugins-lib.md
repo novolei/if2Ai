@@ -1,12 +1,25 @@
 # GFR-T1-A: Split `modules/plugins/lib.rs` (2995 LOC)
 
 ## Status
-- State: `pending`
+- State: `cancelled`
 - Charter: [../CHARTER.md](../CHARTER.md)
-- Predecessor: `GFR-018（与 chat 主链解耦，可与 D 系列并行）` must be `done` first
+- Resolution: source files were dead orphan code; deleted in `chore(dead-code)` 2026-04-21
 - Last Updated: `2026-04-21`
 
-> ⚠️ STUB — Agent 禁止执行。激活前必须按 CHARTER §4.1 补 `## Execute Plan` 与 `## Verify Whitelist` 两节，并把 State 改为 `active`。
+> ❌ CANCELLED — pack is moot.
+>
+> Investigation 2026-04-21 found that `modules/plugins/mod.rs` was a
+> doc-only stub that never declared `pub mod lib;` or `pub mod hooks;`.
+> The "2995 LOC god-file" was orphan code from a workspace migration
+> ("Migrated from /rust/crates/plugins") and never compiled. The same
+> applied to `modules/commands/lib.rs` (2667 LOC). Total ~6057 LOC of
+> unreachable code was deleted in a single `chore(dead-code)` commit;
+> no GFR slice was needed.
+>
+> If a plugin system is reintroduced later, write a fresh `FEAT-` pack
+> rather than reviving the cancelled cluster — the deleted code drifted
+> from the live module conventions established in M1 and is no longer a
+> good starting point.
 
 
 ---
