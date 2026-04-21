@@ -51,6 +51,7 @@ pub mod memory_injection_service;
 pub mod memory_quality_gate;
 pub mod memory_recall_assembler;
 pub mod memory_write_policy;
+pub mod permission_service;
 pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
@@ -95,6 +96,7 @@ pub use prompt_planner::{
 pub use provider_service::{
     load_provider_transport_policy, resolve_chat_runtime_provider, RuntimeProviderResolution,
 };
+pub(crate) use permission_service::TauriPermissionPrompter;
 pub(crate) use real_api_client::RealApiClient;
 pub use request_intelligence_service::{
     classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
