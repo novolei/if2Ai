@@ -18,6 +18,7 @@
 
 | Pack                                                                       | Type     | Goal                                                                                                                | Done       |
 | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-B-2](./refactor/GFR-T1-B-2-extract-config-schema.md)               | refactor | Extract schema simple types (4 types + 5 parsers) from `runtime/config/mod.rs`                                      | 2026-04-21 |
 | [GFR-T1-B-tests](./refactor/GFR-T1-B-tests-extract.md)                     | refactor | Extract `#[cfg(test)] mod tests` block (757 LOC) into sibling `runtime/config/tests.rs`                             | 2026-04-21 |
 | [GFR-T1-B-4](./refactor/GFR-T1-B-4-extract-config-memory.md)               | refactor | Extract memory cluster (4 types + 4 impls + 4 parsers + 1 helper) from `runtime/config/mod.rs`                      | 2026-04-21 |
 | [GFR-T1-B-3](./refactor/GFR-T1-B-3-extract-config-mcp.md)                  | refactor | Extract MCP cluster (9 types + 3 impls + 4 parsers) from `runtime/config/mod.rs`                                    | 2026-04-21 |
@@ -73,6 +74,7 @@
 | GFR-T1-B-3 | **done** | `runtime/config/mod.rs` MCP cluster (9 types + 3 impls + 4 parsers, ~250 LOC)  | `runtime/config/mcp.rs`                                          |
 | GFR-T1-B-4 | **done** | `runtime/config/mod.rs` memory cluster (~440 LOC)                              | `runtime/config/memory.rs`                                       |
 | GFR-T1-B-tests | **done** | `runtime/config/mod.rs` test block (757 LOC) extracted to sibling tests.rs   | `runtime/config/tests.rs`                                        |
+| GFR-T1-B-2 | **done** | `runtime/config/mod.rs` schema simple types (4 types + 5 parsers, ~190 LOC)    | `runtime/config/schema.rs`                                       |
 | GFR-T1-C~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
 | GFR-T2-A   | pending  | `ProviderSetupStep.tsx`                                                        | `onboarding/steps/provider/`                                     |
 | GFR-T2-B   | pending  | `SkillsSettingsPage.tsx`                                                       | `settings/pages/skills/`                                         |
