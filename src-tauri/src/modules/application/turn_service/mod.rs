@@ -9,16 +9,18 @@
 //!
 //! Ownership status (tracked by the MIG-001 sub-pack arc):
 //!
-//! - MIG-001-a (this commit) — long-lived dependency surface
-//!   expanded so the service can own runtime construction, the tool
-//!   loop, stream emission, and finalize hooks. The deps struct now
-//!   carries `session_manager`, `harness`, `learning_module`,
-//!   `context_budget`, `memory_ticker`, `trajectory_manager`, and a
-//!   Tauri `AppHandle` channel; the IPC adapter no longer needs to
-//!   re-thread these through every call site.
-//! - MIG-001-b/c/d — owns turn lifecycle via `run_turn` and
-//!   `stream_turn`; the IPC layer collapses to a thin adapter that
-//!   parses arguments and delegates.
+//! - MIG-001-a — long-lived dependency surface expanded so the
+//!   service can own runtime construction, the tool loop, stream
+//!   emission, and finalize hooks. The deps struct carries
+//!   `session_manager`, `project_manager`, `harness`,
+//!   `learning_module`, `context_budget`, `memory_ticker`,
+//!   `trajectory_manager`, and a Tauri `AppHandle` channel.
+//! - MIG-001-b (this commit) — owns the non-streaming turn
+//!   lifecycle via [`TurnService::run_turn`] (see `run.rs`). The
+//!   `run_agent_turn` IPC command collapsed into a thin adapter
+//!   that parses args, delegates to `run_turn`, and returns.
+//! - MIG-001-c/d — owns the streaming turn lifecycle via
+//!   `stream_turn` (next).
 //!
 //! Strict layering (CHARTER §2.1 hard constraint, also restated in
 //! MIG-001 §4):
@@ -42,9 +44,14 @@ use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
 use crate::modules::memory::MemoryTicker;
 use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
+use crate::modules::projects::ProjectManager;
 use crate::modules::runtime::budget::ContextBudget;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
+
+mod run;
+
+pub use run::{RunTurnRequest, RunTurnResponse};
 
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 
@@ -64,26 +71,39 @@ use super::request_intelligence_service::{classify, RequestIntelligenceInput};
 /// `memory_provider`, `active_retrieval_manager`) feed the M1.1–M1.6
 /// `prepare_chat_inputs` seam (provider + prompt + memory).
 ///
-/// MIG-001-a expanded this struct with seven new fields so the
-/// service can own the full chat turn lifecycle in MIG-001-b/c/d
-/// without the IPC adapter re-threading `AppState` handles into
-/// every call:
+/// Visibility note: fields are `pub` (not `pub(crate)`) to match
+/// the established `*Deps` precedent in this layer (see
+/// [`crate::modules::application::memory_injection_service::MemoryInjectionDeps`])
+/// and so external integration tests in `src-tauri/tests/**` can
+/// construct a real [`TurnService`] without going through a
+/// dedicated test-only constructor. The struct itself is the
+/// intentional layering boundary; production callers outside the
+/// IPC adapter should not be filling these fields by hand.
+///
+/// MIG-001-a/b expanded this struct so the service can own the
+/// full chat turn lifecycle without the IPC adapter re-threading
+/// `AppState` handles into every call:
 ///
 /// - `session_manager` — restore + persist `AppSession`
+/// - `project_manager` — feeds `SessionContextResolver` so a turn
+///   resolves the same execution context the IPC layer used to
+///   resolve in `commands/agent.rs`
 /// - `harness` — emit `TurnStarted` / `TurnFinished` events
 /// - `learning_module` — record per-turn outcomes + reflection
 /// - `context_budget` — wire into `ConversationRuntime`
 /// - `memory_ticker` — `TurnHook` for rolling summary + compile
 /// - `trajectory_manager` — ShareGPT JSONL persistence after a turn
-/// - `app_handle` — Tauri channel used by the streaming path to
-///   construct the `AgentStreamEmitter`. `None` in unit tests; the
-///   IPC adapter always passes `Some(handle)` in production.
+/// - `app_handle` — Tauri channel used by the after-turn dispatch
+///   and (in MIG-001-c/d) the streaming emitter. `None` in unit
+///   tests; the IPC adapter always passes `Some(handle)` in
+///   production.
 pub struct TurnServiceDeps {
     pub tool_registry: Arc<ToolRegistry>,
     pub pinned_store: Arc<dyn PinnedStore>,
     pub memory_provider: SharedMemoryProvider,
     pub active_retrieval_manager: Option<Arc<ActiveRetrievalManager>>,
     pub session_manager: Arc<SessionManager>,
+    pub project_manager: Arc<ProjectManager>,
     pub harness: Option<Arc<HarnessState>>,
     pub learning_module: Option<Arc<tokio::sync::Mutex<LearningModule>>>,
     pub context_budget: ContextBudget,
@@ -107,7 +127,16 @@ impl TurnServiceDeps {
 
 /// First-cut application service for one chat turn.
 pub struct TurnService {
-    deps: TurnServiceDeps,
+    pub(super) deps: TurnServiceDeps,
+}
+
+impl TurnService {
+    /// Internal accessor for sibling modules in `turn_service::*`
+    /// to read the long-lived dependency bundle without exposing
+    /// it to outside callers.
+    pub(super) fn deps(&self) -> &TurnServiceDeps {
+        &self.deps
+    }
 }
 
 impl TurnService {

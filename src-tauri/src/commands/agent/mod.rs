@@ -19,10 +19,10 @@ use crate::modules::application::prompt_planner::{
     extend_sample_ids, sanitize_messages_for_provider, ContextGovernor,
 };
 use crate::modules::application::{
-    contains_unverified_file_claim, dispatch_after_turn, extract_skill_proposal_name,
-    is_mutating_tool_success, record_trajectory_if_possible, MemoryItemProjection,
-    PrepareChatInputsRequest, RealApiClient, RuntimeProviderResolution, TauriPermissionPrompter,
-    ToolRegistryExecutor, TurnService, TurnServiceDeps, TurnServiceError,
+    contains_unverified_file_claim, dispatch_after_turn, is_mutating_tool_success,
+    record_trajectory_if_possible, MemoryItemProjection, PrepareChatInputsRequest,
+    RuntimeProviderResolution, TauriPermissionPrompter, ToolRegistryExecutor, TurnService,
+    TurnServiceDeps, TurnServiceError,
 };
 use crate::modules::control_plane::{
     AuditEmitter, SessionContextResolver, SessionExecutionContext,
@@ -30,15 +30,14 @@ use crate::modules::control_plane::{
 use crate::modules::harness::AgentEvent;
 use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::memory::scope::MemoryExecutionScope;
-use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 #[cfg(test)]
-use crate::modules::runtime::conversation::{ApiClient, ApiRequest, AssistantEvent};
-use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
-use crate::modules::runtime::episodic_compaction::WeibullDecay;
+use crate::modules::runtime::conversation::{
+    ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
+};
 use crate::modules::runtime::permissions::{PermissionMode, PermissionPromptDecision};
 use crate::modules::runtime::resume_cursor::{
     build_resume_cursor, extract_resume_cursor_marker, parse_resume_cursor,
@@ -46,7 +45,6 @@ use crate::modules::runtime::resume_cursor::{
 };
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
-use crate::modules::runtime::snapshot::FrozenSnapshot;
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
@@ -80,6 +78,7 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         memory_provider: state.memory_provider.clone(),
         active_retrieval_manager: state.active_retrieval_manager.clone(),
         session_manager: state.session_manager.clone(),
+        project_manager: state.project_manager.clone(),
         harness: state.harness.clone(),
         learning_module: state.learning_module.clone(),
         context_budget: state.context_budget.clone(),
@@ -111,17 +110,12 @@ const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
 const MAX_REQUEST_TOKEN_BUDGET_ESTIMATE: usize = 30_000;
 const MAX_STREAM_RETRY_ON_TIMEOUT: usize = 1;
 
-/// Response from a run_agent_turn command.
-#[derive(serde::Serialize)]
-pub struct RunAgentTurnResponse {
-    /// The generated message/response.
-    pub message: String,
-    /// The session ID.
-    pub session_id: String,
-    /// Thinking content from the model (if any)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<String>,
-}
+// MIG-001-b: `RunAgentTurnResponse` was the legacy IPC return
+// shape owned by this module. It is now sourced from
+// `application::turn_service::RunTurnResponse` so the IPC contract
+// stays bit-identical while ownership of the type follows the
+// canonical orchestrator.
+pub use crate::modules::application::RunTurnResponse as RunAgentTurnResponse;
 
 // Provider runtime resolution moved to
 // `crate::modules::application::provider_service` in Phase M1.2.
@@ -173,8 +167,13 @@ pub(crate) use crate::modules::application::permission_service::{
 
 /// Run a single agent turn with the given user message.
 ///
-/// This is the main entry point for the frontend to interact with the agent.
-/// It calls the ConversationRuntime with the session and returns the result.
+/// MIG-001-b — this IPC command is now a thin adapter over
+/// [`crate::modules::application::TurnService::run_turn`]. It
+/// constructs a per-call `TurnService` from the shared `AppState`
+/// and delegates the entire `prepare -> execute -> finalize`
+/// lifecycle. The previous 558-line inline orchestration body now
+/// lives in `application/turn_service/run.rs` so the canonical
+/// turn ownership sits behind a single seam (CHARTER §2.1).
 #[tauri::command]
 #[allow(dead_code)]
 pub async fn run_agent_turn(
@@ -184,555 +183,14 @@ pub async fn run_agent_turn(
     user_message: String,
     permission_mode: Option<String>,
 ) -> Result<RunAgentTurnResponse, String> {
-    eprintln!(
-        "[DEBUG] run_agent_turn called with session_id: {}, message: {}",
-        session_id, user_message
-    );
-    tracing::info!(
-        "[run_agent_turn] Starting - session_id: {}, message: {}",
-        session_id,
-        user_message
-    );
-
-    // Restore the session
-    let app_session = state
-        .session_manager
-        .restore_session(&session_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    tracing::info!(
-        "[run_agent_turn] Session restored, {} messages",
-        app_session.messages.len()
-    );
-
-    // Phase 6E harness: emit TurnStarted onto the EventBus.  The bus is
-    // `None` in production unless `IF2AI_HARNESS_ENABLED=1`, so this is a
-    // zero-cost no-op for typical users.  Turn number is derived from the
-    // current message count to keep the API stateless.
-    let harness_event_bus_run = state.harness.as_ref().map(|h| h.event_bus.clone());
-    let turn_number_run = (app_session.messages.len() as u64) + 1;
-    // Phase M4.1 — capture the message-vector baseline so the
-    // turn-end candidate extractor can slice "messages added
-    // during this turn" without ambiguity.
-    let baseline_message_count_run = app_session.messages.len();
-    crate::modules::harness::agent_loop_integration::emit_turn_started(
-        harness_event_bus_run.as_ref(),
-        &session_id,
-        turn_number_run,
-    );
-    let turn_started_at_run = std::time::Instant::now();
-
-    let mode = parse_permission_mode(permission_mode.as_deref());
-
-    // Create a per-turn execution context to avoid cross-session context leakage.
-    let execution_context =
-        resolve_session_execution_context(&state, &app_session, mode, "run_agent_turn").await;
-    let proposal_workdir = execution_context.workdir.clone();
-    log_context_fingerprint("run_agent_turn", &execution_context);
-
-    // Convert application session to runtime session
-    let runtime_session = app_session_to_runtime(&app_session);
-
-    // Phase M1.4 — memory retrieval + injection now flow through
-    // `TurnService::prepare_chat_inputs` (which delegates to
-    // `application::memory_injection_service`). This single seam
-    // produces the provider, the prompt plan, and the per-turn
-    // memory items in one await.
-    let turn_service = make_turn_service(&state, Some(app_handle.clone()));
-    let project_id_opt: Option<String> = if execution_context.project_id.is_empty() {
-        None
-    } else {
-        Some(execution_context.project_id.clone())
-    };
-    let prepared = turn_service
-        .prepare_chat_inputs(PrepareChatInputsRequest {
-            workdir: execution_context.workdir.clone(),
-            current_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-            os_name: std::env::consts::OS.to_string(),
-            os_family: std::env::consts::FAMILY.to_string(),
-            session_id: Some(execution_context.session_id.clone()),
-            project_id: project_id_opt.clone(),
-            workdir_str: execution_context.workdir.to_str().map(str::to_string),
-            user_message: user_message.clone(),
-            caller: "run_agent_turn",
+    let service = make_turn_service(&state, Some(app_handle));
+    service
+        .run_turn(crate::modules::application::RunTurnRequest {
+            session_id,
+            user_message,
+            permission_mode,
         })
         .await
-        .map_err(|err| match err {
-            TurnServiceError::Provider(msg) => {
-                tracing::error!("[run_agent_turn] Failed to create API client: {}", msg);
-                format!("Failed to connect to AI service: {msg}")
-            }
-            TurnServiceError::Prompt(p) => {
-                tracing::error!("[run_agent_turn] Prompt planning failed: {}", p);
-                p.to_string()
-            }
-        })?;
-    // Phase M1.6 — log the request-intelligence decision so harness
-    // / operators can observe routing today even though the existing
-    // single execution path keeps running.
-    tracing::info!(
-        execution_mode = ?prepared.execution_mode_decision.execution_mode,
-        risk_level = ?prepared.execution_mode_decision.risk_level,
-        complexity_level = ?prepared.execution_mode_decision.complexity_level,
-        policy_version = %prepared.execution_mode_decision.classifier_policy_version,
-        rules = ?prepared.execution_mode_decision.classifier_matched_rule_ids,
-        "[run_agent_turn] request_intelligence decision (advisory)"
-    );
-    let RuntimeProviderResolution {
-        provider_client,
-        model,
-        request_timeout,
-    } = prepared.provider;
-    tracing::info!("[run_agent_turn] API client created, model: {}", model);
-    let api_client = RealApiClient::new(
-        provider_client,
-        model,
-        request_timeout,
-        state.tool_registry.clone(),
-    );
-
-    // Create permission policy from parameter (defaults to DangerFullAccess)
-    let permission_policy = build_permission_policy(mode);
-    tracing::info!(
-        "[run_agent_turn] effective permission mode: {}",
-        mode.as_str()
-    );
-
-    // Create tool executor bridge
-    let tool_executor =
-        ToolRegistryExecutor::new_with_context(state.tool_registry.clone(), execution_context);
-
-    // Phase M1.3 — prompt vec + joined text both come from the
-    // structured plan. The `Vec<String>` shape is preserved for
-    // backwards compatibility with the existing
-    // `ConversationRuntime::with_system_prompt(...)` call below.
-    let system_prompt: Vec<String> = prepared
-        .prompt
-        .plan
-        .blocks
-        .iter()
-        .map(|b| b.content.clone())
-        .collect();
-    let system_prompt_text = prepared.prompt.text;
-    let frozen_snapshot = FrozenSnapshot::capture(&system_prompt_text);
-    tracing::info!(
-        "[run_agent_turn] Frozen snapshot captured, prompt hash={}, estimate={} tokens",
-        frozen_snapshot.prompt_hash,
-        frozen_snapshot.token_estimate()
-    );
-
-    // Create runtime with working-memory sliding window (C1 integration).
-    // Each LLM call will only see the most recent turns within the token budget,
-    // while full history is preserved in session for compaction / trajectory.
-    // Phase 8B.11 fix — wire MemoryTicker as TurnHook + supply
-    // session/project context so RollingSummarizer + compile_today
-    // actually fire on each turn (the 8A.7 default fired with
-    // session_id="-" which the ticker silently skipped).
-    let session_ctx_id = tool_executor.execution_context.session_id.clone();
-    let session_ctx_project = if tool_executor.execution_context.project_id.is_empty() {
-        None
-    } else {
-        Some(tool_executor.execution_context.project_id.clone())
-    };
-
-    let mut runtime = ConversationRuntime::new(
-        runtime_session,
-        api_client,
-        tool_executor,
-        permission_policy,
-        system_prompt,
-    )
-    .with_context_budget(state.context_budget.clone())
-    .with_working_memory(WorkingMemory::default())
-    .with_turn_hook(state.memory_ticker.clone())
-    .with_session_context(session_ctx_id.clone(), session_ctx_project.clone());
-
-    tracing::info!(
-        "[run_agent_turn] Runtime created, calling run_turn with message: {}",
-        user_message
-    );
-
-    // Run the conversation turn
-    let result = runtime.run_turn(user_message.clone(), None);
-
-    tracing::info!(
-        "[run_agent_turn] run_turn completed, result: {:?}",
-        result.is_ok()
-    );
-
-    match result {
-        Ok(summary) => {
-            // Extract text from assistant messages
-            let response_text = summary
-                .assistant_messages
-                .iter()
-                .filter_map(|msg| {
-                    msg.blocks.iter().find_map(|block| {
-                        if let ContentBlock::Text { text } = block {
-                            Some(text.clone())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            // Extract thinking content from assistant messages
-            let thinking_content: Option<String> = {
-                let collected: Vec<String> = summary
-                    .assistant_messages
-                    .iter()
-                    .filter_map(|msg| msg.thinking.clone())
-                    .collect();
-                let joined = collected.join("\n\n");
-                if joined.is_empty() {
-                    None
-                } else {
-                    Some(joined)
-                }
-            };
-
-            let final_text = if response_text.is_empty() {
-                "Agent completed the request.".to_string()
-            } else {
-                response_text
-            };
-            let final_text = if let Some(proposal_name) = extract_skill_proposal_name(&final_text) {
-                match crate::modules::tools::builtin::skill::create_agent_skill_proposal_draft(
-                    &proposal_workdir,
-                    &proposal_name,
-                    &final_text,
-                ) {
-                    Ok(path) => format!(
-                        "{final_text}\n\n[skill_proposal] draft created at {} (requires approval)",
-                        path.display()
-                    ),
-                    Err(err) => {
-                        format!("{final_text}\n\n[skill_proposal] draft create failed: {err}")
-                    }
-                }
-            } else {
-                final_text
-            };
-
-            // Get the updated session from the runtime
-            let updated_runtime_session = runtime.into_session();
-            let next_message_count = app_session.logical_message_count()
-                + updated_runtime_session
-                    .messages
-                    .len()
-                    .saturating_sub(app_session.messages.len());
-
-            // Keep a clone for trajectory recording (before compaction may consume it)
-            let trajectory_session = updated_runtime_session.clone();
-
-            // Context compaction — compact if session exceeds token threshold
-            let compaction_config = CompactionConfig::default();
-            let pre_compact_message_count = updated_runtime_session.messages.len();
-            let final_runtime_session =
-                if should_compact(&updated_runtime_session, compaction_config) {
-                    let compact_result =
-                        compact_session(&updated_runtime_session, compaction_config);
-                    compact_result.compacted_session
-                } else {
-                    updated_runtime_session
-                };
-            let post_compact_message_count = final_runtime_session.messages.len();
-
-            // Update the application session with the new messages
-            let mut updated_app_session = app_session;
-            updated_app_session.messages = final_runtime_session.messages;
-            updated_app_session.message_count = next_message_count;
-
-            // Save the updated session
-            state
-                .session_manager
-                .save_session(&updated_app_session)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // Record trajectory after session save (non-blocking, warn-only).
-            // Pass the AppState-level TrajectoryManager to avoid per-turn re-init.
-            record_trajectory_if_possible(
-                &trajectory_session,
-                std::slice::from_ref(&system_prompt_text),
-                state.trajectory_manager.as_ref(),
-            )
-            .await;
-
-            // Phase M4.1 — extract real `MemoryWriteCandidate`s
-            // from the assistant `memory_store` tool calls
-            // produced during THIS turn (slice from the captured
-            // baseline) and look up existing records so the
-            // conflict resolver renders real outcomes.
-            let new_messages_run: Vec<ConversationMessage> = updated_app_session
-                .messages
-                .iter()
-                .skip(baseline_message_count_run)
-                .cloned()
-                .collect();
-            let after_turn_scope_run = MemoryExecutionScope {
-                session_id: Some(session_ctx_id.clone()),
-                project_id: session_ctx_project.clone(),
-                workdir: None,
-            };
-            let candidates_run =
-                extract_memory_store_tool_candidates(&new_messages_run, &after_turn_scope_run);
-            let existing_run = lookup_existing_records_for_candidates(
-                &state.memory_provider,
-                &after_turn_scope_run,
-                &candidates_run,
-            )
-            .await;
-            dispatch_after_turn(
-                &app_handle,
-                harness_event_bus_run.as_ref(),
-                MemoryInjectionDeps {
-                    pinned_store: state.pinned_store.clone(),
-                    memory_provider: state.memory_provider.clone(),
-                    active_retrieval_manager: state.active_retrieval_manager.clone(),
-                },
-                Some(session_ctx_id.clone()),
-                session_ctx_project.clone(),
-                candidates_run,
-                existing_run,
-                Vec::new(),
-                "run_agent_turn",
-            );
-
-            // LearningModule: record turn outcome using shared AppState instance.
-            // Using AppState-level module avoids per-turn re-init and lets SelfModel
-            // accumulate knowledge across turns.
-            if let Some(lm_arc) = &state.learning_module {
-                let mut lm = lm_arc.lock().await;
-                lm.self_model_mut()
-                    .record_turn(/* success= */ true, /* response_time_ms= */ 0.0);
-
-                let turn_count = lm.self_model().performance.total_turns;
-                tracing::info!(
-                    "[run_agent_turn] LearningModule: turn {} recorded, {} patterns tracked",
-                    turn_count,
-                    lm.self_model().learned_patterns.len(),
-                );
-
-                // Reflection trigger — every REFLECT_INTERVAL turns, analyze the session
-                // and update the self-model with new learned patterns.
-                // This is async and non-blocking: errors are warn-logged, not propagated.
-                const REFLECT_INTERVAL: u64 = 5;
-                if turn_count > 0 && turn_count % REFLECT_INTERVAL == 0 {
-                    match lm
-                        .reflection_engine
-                        .analyze_session(&trajectory_session)
-                        .await
-                    {
-                        Ok(reflections) => {
-                            let count: usize = reflections.len();
-                            lm.self_model.update_from_reflections(&reflections);
-                            tracing::info!(
-                                "[run_agent_turn] Reflection: {} insights at turn {}",
-                                count,
-                                turn_count
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "[run_agent_turn] Reflection failed at turn {turn_count}: {e}"
-                            );
-                        }
-                    }
-                }
-            } else {
-                tracing::debug!(
-                    "[run_agent_turn] LearningModule: not initialised, skipping self-model update"
-                );
-            }
-
-            // Verify system prompt integrity: detect if prompt was modified during session
-            // The prompt captured at start is compared against the current text.
-            // Since system_prompt is moved into ConversationRuntime, we compare
-            // the captured snapshot against the original text (which includes memory context).
-            // M6: use verify_detailed so failures expose actionable diagnostics
-            // (length delta or first differing byte) instead of an opaque
-            // "hash mismatch" log line.
-            let verify = frozen_snapshot.verify_detailed(&system_prompt_text);
-            if !verify.valid {
-                tracing::warn!(
-                    expected_hash = %verify.expected_hash,
-                    actual_hash = %verify.actual_hash,
-                    details = %verify.details.as_deref().unwrap_or("-"),
-                    "[run_agent_turn] System prompt integrity check FAILED",
-                );
-            } else {
-                tracing::info!(
-                    "[run_agent_turn] System prompt integrity verified: snapshot hash={}",
-                    verify.expected_hash
-                );
-            }
-
-            // WorkingMemory: check if the post-turn session fits within working memory budget
-            let working_memory = WorkingMemory::default();
-            let working_tokens: usize = trajectory_session
-                .messages
-                .iter()
-                .map(crate::modules::memory::working_memory::message_token_count)
-                .sum();
-            if working_tokens > working_memory.max_tokens {
-                tracing::warn!(
-                    "[run_agent_turn] WorkingMemory budget exceeded: {} tokens > {} max ({} messages)",
-                    working_tokens,
-                    working_memory.max_tokens,
-                    trajectory_session.messages.len()
-                );
-            } else {
-                tracing::info!(
-                    "[run_agent_turn] WorkingMemory within budget: {} tokens / {} max",
-                    working_tokens,
-                    working_memory.max_tokens
-                );
-            }
-
-            // WeibullDecay: apply importance decay to memory entries post-turn (C5).
-            // Uses the default 7-day scale (lambda=168h, k=1.2) so that entries
-            // that haven't been accessed recently gradually fade in importance.
-            let decay_default = WeibullDecay::default();
-            match state
-                .memory_provider
-                .apply_importance_decay(decay_default.lambda, decay_default.k)
-                .await
-            {
-                Ok(updated) if updated > 0 => {
-                    tracing::info!(
-                        "[run_agent_turn] WeibullDecay: applied to {updated} memory entries \
-                         (lambda={:.0}h, k={:.2})",
-                        decay_default.lambda,
-                        decay_default.k
-                    );
-                }
-                Ok(_) => {
-                    tracing::debug!(
-                        "[run_agent_turn] WeibullDecay: no entries updated (no-op or empty store)"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "[run_agent_turn] WeibullDecay: apply_importance_decay failed: {e}"
-                    );
-                }
-            }
-
-            // Background memory promotion scan (throttled).  See
-            // `start_agent_stream` for full rationale; same hook here so
-            // non-streaming turns also surface candidates.
-            {
-                use crate::modules::memory::promotion::{
-                    MemoryPromotionEngine, PromotionThresholds,
-                };
-                let thresholds = PromotionThresholds::load_from_disk();
-                let engine = MemoryPromotionEngine::with_thresholds(
-                    state.memory_provider.as_ref(),
-                    thresholds,
-                );
-                match engine.evaluate_and_audit().await {
-                    Ok(Some(n)) if n > 0 => tracing::info!(
-                        "[run_agent_turn] PromotionEngine: surfaced {n} candidate(s)"
-                    ),
-                    Ok(Some(_)) => {
-                        tracing::debug!("[run_agent_turn] PromotionEngine: scan ran, no candidates")
-                    }
-                    Ok(None) => {
-                        tracing::debug!("[run_agent_turn] PromotionEngine: throttled, scan skipped")
-                    }
-                    Err(e) => tracing::warn!("[run_agent_turn] PromotionEngine: scan failed: {e}"),
-                }
-            }
-
-            // Log compaction-related decay factor for observability.
-            let removed_count =
-                pre_compact_message_count.saturating_sub(post_compact_message_count);
-            if removed_count > 0 {
-                let decay_factor = decay_default.decay_factor(24.0); // 1-day decay factor
-                tracing::info!(
-                    "[run_agent_turn] WeibullDecay: {removed_count} msgs compacted, 1-day factor={:.3}",
-                    decay_factor
-                );
-            }
-
-            tracing::info!("[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}", final_text.len(), thinking_content.as_ref().map(|s| s.len()), session_id);
-            // Phase 6E harness: emit TurnFinished on success.
-            crate::modules::harness::agent_loop_integration::emit_turn_finished(
-                harness_event_bus_run.as_ref(),
-                &session_id,
-                turn_number_run,
-                true,
-                0,
-                turn_started_at_run.elapsed().as_millis() as u64,
-            );
-            Ok(RunAgentTurnResponse {
-                message: final_text,
-                session_id,
-                thinking: thinking_content,
-            })
-        }
-        Err(e) => {
-            // Return friendly error message
-            let error_message = match e {
-                RuntimeError::MaxIterationsExceeded => {
-                    "Maximum conversation iterations reached. Please try simplifying your question."
-                        .to_string()
-                }
-                RuntimeError::ApiError(msg) => {
-                    // Check for common network errors and provide friendly messages
-                    if msg.contains("connection refused") {
-                        "Failed to connect to AI service server. Please check your network connection.".to_string()
-                    } else if msg.contains("timeout") || msg.contains("timed out") {
-                        "AI service response timed out. Please try again later.".to_string()
-                    } else if msg.contains("dns") || msg.contains("Name or service not known") {
-                        "Failed to resolve AI service address. Please check network configuration."
-                            .to_string()
-                    } else if msg.contains("401")
-                        || msg.contains("403")
-                        || msg.contains("invalid signature")
-                    {
-                        "AI service authentication failed. Please check API configuration."
-                            .to_string()
-                    } else if msg.contains("429") {
-                        "Too many AI service requests. Please try again later.".to_string()
-                    } else if msg.contains("500") || msg.contains("502") || msg.contains("503") {
-                        "AI service temporarily unavailable. Please try again later.".to_string()
-                    } else {
-                        format!("AI service call failed: {}. Please try again later.", msg)
-                    }
-                }
-                RuntimeError::ToolError(msg) => {
-                    format!("Tool execution failed: {}. Please try again later.", msg)
-                }
-                RuntimeError::PermissionDenied(msg) => {
-                    format!("Permission denied: {}. Please check your settings.", msg)
-                }
-                RuntimeError::SessionError(msg) => {
-                    format!(
-                        "Session error: {}. Please refresh the page and try again.",
-                        msg
-                    )
-                }
-                RuntimeError::ConfigError(msg) => {
-                    format!("Configuration error: {}. Please check your settings.", msg)
-                }
-            };
-            // Phase 6E harness: emit TurnFinished on error.
-            crate::modules::harness::agent_loop_integration::emit_turn_finished(
-                harness_event_bus_run.as_ref(),
-                &session_id,
-                turn_number_run,
-                false,
-                0,
-                turn_started_at_run.elapsed().as_millis() as u64,
-            );
-            Err(error_message)
-        }
-    }
 }
 
 /// Start a streaming agent turn.
