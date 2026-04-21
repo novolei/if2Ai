@@ -18,6 +18,8 @@
 
 | Pack                                                                       | Type     | Goal                                                                                                                | Done       |
 | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-C-3](./refactor/GFR-T1-C-3-mcp-stdio-manager.md)                   | refactor | Extract McpServerManager cluster from mcp_stdio; mod.rs 621 → 270 LOC; T1-C 收尾                               | 2026-04-21 |
+| [GFR-T1-C-2](./refactor/GFR-T1-C-2-mcp-stdio-types.md)                     | refactor | Extract 16 MCP protocol DTOs from mcp_stdio; mod.rs 763 → 621 LOC                                                  | 2026-04-21 |
 | [GFR-T1-C-1](./refactor/GFR-T1-C-1-mcp-stdio-tests-and-rpc.md)             | refactor | mcp_stdio 目录化 + tests (916 LOC) + JSON-RPC framing 抽出；mod.rs 1725 → 763 LOC                                | 2026-04-21 |
 | [GFR-T1-B-5](./refactor/GFR-T1-B-5-extract-config-parsers.md)              | refactor | Extract 7 settings parsers + IO helper from `runtime/config/mod.rs`; mod.rs now 711 LOC (< 800 hard limit, T1-B 收尾) | 2026-04-21 |
 | [GFR-T1-B-2](./refactor/GFR-T1-B-2-extract-config-schema.md)               | refactor | Extract schema simple types (4 types + 5 parsers) from `runtime/config/mod.rs`                                      | 2026-04-21 |
@@ -72,6 +74,9 @@
 | GFR-018    | pending  | `tauri.ts` listeners                                                           | `src/runtime-projection/translator/`                             |
 | GFR-T1-A   | **cancelled** | source 是 orphan 死代码（plugins/lib+hooks + commands/lib，共 6057 LOC）；2026-04-21 整体 `chore(dead-code)` 删除 | — |
 | GFR-T1-C-1 | **done** | `runtime/mcp_stdio.rs` 目录化 + tests (916 LOC) + JSON-RPC framing             | `runtime/mcp_stdio/{mod,tests,rpc}.rs`                           |
+| GFR-T1-C-2 | **done** | `runtime/mcp_stdio/mod.rs` 16 MCP DTOs (~150 LOC)                              | `runtime/mcp_stdio/types.rs`                                     |
+| GFR-T1-C-3 | **done** | `runtime/mcp_stdio/mod.rs` McpServerManager cluster (~350 LOC); T1-C 收尾     | `runtime/mcp_stdio/manager.rs`                                   |
+| **GFR-T1-C** | **done** | runtime/mcp_stdio 总收尾：mod.rs 1725 → 270 LOC (-84%) 跨 3 sub-packs        | `runtime/mcp_stdio/{mod,manager,types,rpc,tests}.rs`             |
 | GFR-T1-B   | sliced   | sliced into B-1 (done) + B-2..5 (pending — 人写)                               | `runtime/config/{json_helpers,schema,permission,sandbox,merge}.rs` |
 | GFR-T1-B-1 | **done** | `runtime/config.rs` JSON parse helpers (12 fn + 2 utility, ~230 LOC)           | `runtime/config/json_helpers.rs` (+ git mv to config/mod.rs)     |
 | GFR-T1-B-3 | **done** | `runtime/config/mod.rs` MCP cluster (9 types + 3 impls + 4 parsers, ~250 LOC)  | `runtime/config/mcp.rs`                                          |
@@ -102,7 +107,7 @@
 
 | Pack                                                            | 状态            | Goal                                         |
 | --------------------------------------------------------------- | --------------- | -------------------------------------------- |
-| [CPD-001](./feature/chat-prompt-dispatch/CPD-001-turn-spine.md) | active (legacy) | 收口 chat prompt dispatch 主链到 TurnService |
+| [MIG-001](./feature/migration-core/MIG-001-canonical-chat-execution-spine.md) | active | 把 chat turn 主链收口成 canonical orchestrator |
 
 ### Bug / Perf / Dep
 
@@ -111,7 +116,7 @@
 | _(无)_ | —    | —    |
 
 > 新 Pack 用 `./scripts/pack init <PACK-ID> --type feature --slug <slug> --files <a> [<b>...]` 生成。
-> 老 CPD-001 沿用其原文档；新 FEAT-XXX 按 CHARTER §6 模板写。
+> `migration-core` 是当前优先级最高的 feature pipeline；老 `CPD-001` 保留作历史 pack，不再作为默认 active 入口。
 
 ---
 

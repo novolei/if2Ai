@@ -68,10 +68,10 @@ SIZE_EXEMPT_PATHS = {
     # runtime/config.rs renamed to runtime/config/mod.rs in GFR-T1-B-1
     # then sliced through GFR-T1-B-2/3/4/5/tests; mod.rs now 711 LOC
     # (under 800 hard limit; still > 500 target — flagged as warning).
-    # mcp_stdio.rs renamed to mcp_stdio/mod.rs in GFR-T1-C-1; tests.rs
-    # is the externalized test block from the same pack (916 LOC, will
-    # itself be split in a follow-up T1-C-tests-split if needed).
-    "src-tauri/src/modules/runtime/mcp_stdio/mod.rs",
+    # mcp_stdio sliced through GFR-T1-C-1/2/3; mod.rs now 270 LOC
+    # (under 500 target) and removed from exempt list. Only tests.rs
+    # remains exempt — it's the externalized #[cfg(test)] block (914 LOC,
+    # 23 tests; could be split per-test-group in a follow-up if needed).
     "src-tauri/src/modules/runtime/mcp_stdio/tests.rs",
     "src-tauri/src/modules/runtime/prompt.rs",
     "src-tauri/src/modules/runtime/conversation.rs",
