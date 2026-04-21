@@ -1,0 +1,38 @@
+{
+  "files": [
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio.rs (deleted via mv)",
+      "pub_symbols": [],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio/mod.rs (new dest)",
+      "pub_symbols": [],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio/rpc.rs (new)",
+      "pub_symbols": [],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/runtime/mcp_stdio/tests.rs (new)",
+      "pub_symbols": [],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-T1-C-1",
+  "phase": "before"
+}

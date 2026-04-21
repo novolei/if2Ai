@@ -18,6 +18,7 @@
 
 | Pack                                                                       | Type     | Goal                                                                                                                | Done       |
 | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-C-1](./refactor/GFR-T1-C-1-mcp-stdio-tests-and-rpc.md)             | refactor | mcp_stdio 目录化 + tests (916 LOC) + JSON-RPC framing 抽出；mod.rs 1725 → 763 LOC                                | 2026-04-21 |
 | [GFR-T1-B-5](./refactor/GFR-T1-B-5-extract-config-parsers.md)              | refactor | Extract 7 settings parsers + IO helper from `runtime/config/mod.rs`; mod.rs now 711 LOC (< 800 hard limit, T1-B 收尾) | 2026-04-21 |
 | [GFR-T1-B-2](./refactor/GFR-T1-B-2-extract-config-schema.md)               | refactor | Extract schema simple types (4 types + 5 parsers) from `runtime/config/mod.rs`                                      | 2026-04-21 |
 | [GFR-T1-B-tests](./refactor/GFR-T1-B-tests-extract.md)                     | refactor | Extract `#[cfg(test)] mod tests` block (757 LOC) into sibling `runtime/config/tests.rs`                             | 2026-04-21 |
@@ -70,6 +71,7 @@
 | GFR-017    | pending  | `tauri.ts` feature wrappers                                                    | `src/transport/{browser,session,...}.ts`                         |
 | GFR-018    | pending  | `tauri.ts` listeners                                                           | `src/runtime-projection/translator/`                             |
 | GFR-T1-A   | **cancelled** | source 是 orphan 死代码（plugins/lib+hooks + commands/lib，共 6057 LOC）；2026-04-21 整体 `chore(dead-code)` 删除 | — |
+| GFR-T1-C-1 | **done** | `runtime/mcp_stdio.rs` 目录化 + tests (916 LOC) + JSON-RPC framing             | `runtime/mcp_stdio/{mod,tests,rpc}.rs`                           |
 | GFR-T1-B   | sliced   | sliced into B-1 (done) + B-2..5 (pending — 人写)                               | `runtime/config/{json_helpers,schema,permission,sandbox,merge}.rs` |
 | GFR-T1-B-1 | **done** | `runtime/config.rs` JSON parse helpers (12 fn + 2 utility, ~230 LOC)           | `runtime/config/json_helpers.rs` (+ git mv to config/mod.rs)     |
 | GFR-T1-B-3 | **done** | `runtime/config/mod.rs` MCP cluster (9 types + 3 impls + 4 parsers, ~250 LOC)  | `runtime/config/mcp.rs`                                          |
