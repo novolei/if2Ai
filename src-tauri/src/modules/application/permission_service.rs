@@ -3,10 +3,18 @@
 //! frontend and blocking on an mpsc channel for the response.
 //!
 //! Extracted from `commands/agent.rs` in GFR-003 (pure structural move,
-//! function bodies byte-identical).
+//! function bodies byte-identical). The
+//! [`respond_to_permission_prompt`] helper at the bottom is the
+//! application-layer body for the `respond_permission` IPC
+//! command — moved out of `commands/agent.rs` as the MIG-001
+//! follow-up cleanup.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use tauri::Emitter;
 
+use crate::modules::harness::{AgentEvent, HarnessState};
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
@@ -154,4 +162,89 @@ pub(crate) fn build_permission_policy(mode: PermissionMode) -> PermissionPolicy 
         .with_tool_requirement("REPL", PermissionMode::DangerFullAccess)
         .with_tool_requirement("http_request", PermissionMode::DangerFullAccess)
         .with_tool_requirement("agent", PermissionMode::DangerFullAccess)
+}
+
+/// Application-layer body for the `respond_permission` IPC
+/// command.
+///
+/// Decodes the frontend `decision` string into a
+/// [`PermissionPromptDecision`], looks up the pending mpsc sender
+/// for `session_id`, forwards the decision, optionally records a
+/// session-scoped "remember this tool" override, and emits a
+/// harness `PermissionResolved` event when the harness is wired.
+///
+/// Extracted from `commands::agent::respond_permission` so the IPC
+/// command stays a thin adapter (CHARTER §2.1: command layer
+/// owns IPC contract, application layer owns business logic).
+pub(crate) fn respond_to_permission_prompt(
+    permission_senders: &Mutex<HashMap<String, std::sync::mpsc::Sender<PermissionPromptDecision>>>,
+    permission_overrides: &Mutex<HashMap<String, HashMap<String, PermissionPromptDecision>>>,
+    harness: Option<&Arc<HarnessState>>,
+    session_id: String,
+    decision: String,
+    tool_name: Option<String>,
+    scope: Option<String>,
+) -> Result<(), String> {
+    tracing::info!(
+        "[permission] respond session_id={}, decision={}, scope={}",
+        session_id,
+        decision,
+        scope.as_deref().unwrap_or("once")
+    );
+    let decision_enum = match decision.as_str() {
+        "allow" => PermissionPromptDecision::Allow,
+        _ => PermissionPromptDecision::Deny {
+            reason: "User denied permission".to_string(),
+        },
+    };
+
+    let senders = permission_senders
+        .lock()
+        .map_err(|e| format!("Failed to lock permission senders: {e}"))?;
+
+    let sender = senders
+        .get(&session_id)
+        .ok_or_else(|| "No pending permission request for this session".to_string())?;
+
+    sender
+        .send(decision_enum)
+        .map_err(|_| "Failed to send permission decision".to_string())?;
+
+    // Phase M4-C P4 — emit harness `PermissionResolved` event so the
+    // trace aggregator pairs this resolution with the earlier
+    // `PermissionPrompted` event. Zero-cost no-op when harness is
+    // not initialised.
+    if let Some(harness) = harness {
+        let _ = harness.event_bus.emit(AgentEvent::PermissionResolved {
+            session_id: session_id.clone(),
+            tool_name: tool_name.clone(),
+            decision: decision.clone(),
+            scope: scope.clone().unwrap_or_else(|| "once".to_string()),
+            at: chrono::Utc::now(),
+        });
+    }
+
+    // Optional session-scoped remember decision.
+    if scope.as_deref() == Some("session") {
+        // Store by latest requested tool in this session if known.
+        // We cannot extract tool_name from the mpsc payload here,
+        // so we keep a coarse fallback decision bucket under "*"
+        // to be read by the prompter side.
+        let mut overrides = permission_overrides
+            .lock()
+            .map_err(|e| format!("Failed to lock permission overrides: {e}"))?;
+        let session_map = overrides.entry(session_id).or_default();
+        let key = tool_name.unwrap_or_else(|| "*".to_string());
+        session_map.insert(
+            key,
+            match decision.as_str() {
+                "allow" => PermissionPromptDecision::Allow,
+                _ => PermissionPromptDecision::Deny {
+                    reason: "User denied permission (session policy)".to_string(),
+                },
+            },
+        );
+    }
+
+    Ok(())
 }

@@ -56,6 +56,7 @@ pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
 pub mod request_intelligence_service;
+pub mod stream_cancel_service;
 pub mod stream_emitter_service;
 pub mod tool_executor;
 pub mod tool_heuristics;

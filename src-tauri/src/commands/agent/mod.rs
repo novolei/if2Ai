@@ -14,14 +14,12 @@ use crate::modules::application::ToolRegistryExecutor;
 use crate::modules::application::{TurnService, TurnServiceDeps};
 #[cfg(test)]
 use crate::modules::control_plane::SessionExecutionContext;
-use crate::modules::harness::AgentEvent;
 #[cfg(test)]
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
 };
 #[cfg(test)]
 use crate::modules::runtime::permissions::PermissionMode;
-use crate::modules::runtime::permissions::PermissionPromptDecision;
 #[cfg(test)]
 use crate::modules::runtime::session::ContentBlock;
 
@@ -177,35 +175,26 @@ pub async fn start_agent_stream(
 
 /// Stop an in-flight streaming agent response.
 ///
-/// Sends a cancellation signal to the background task associated with
-/// the given stream_id, causing it to terminate early and emit a
-/// `stream_complete` event.
+/// Thin IPC adapter — delegates to
+/// [`crate::modules::application::stream_cancel_service::cancel_stream`]
+/// which owns the lookup-and-fire behaviour.
 #[tauri::command]
 pub fn stop_agent_stream(state: State<'_, AppState>, stream_id: String) -> Result<(), String> {
-    let mut senders = state
-        .stream_cancel_senders
-        .lock()
-        .map_err(|e| format!("Failed to lock cancel senders: {e}"))?;
-
-    let sender = senders
-        .remove(&stream_id)
-        .ok_or_else(|| format!("No active stream found for stream_id: {stream_id}"))?;
-
-    // Sending the cancel signal (if the receiver is already dropped, the task completed)
-    let _ = sender.send(());
-    tracing::info!(
-        "[stop_agent_stream] Cancel signal sent for stream_id: {}",
-        stream_id
-    );
-
-    Ok(())
+    crate::modules::application::stream_cancel_service::cancel_stream(
+        &state.stream_cancel_senders,
+        stream_id,
+    )
 }
 
 // TauriPermissionPrompter moved to
 // crate::modules::application::permission_service (GFR-003).
 
 /// Respond to a permission request from the frontend.
-/// The decision is sent to the waiting TauriPermissionPrompter via mpsc channel.
+///
+/// Thin IPC adapter — delegates to
+/// [`crate::modules::application::permission_service::respond_to_permission_prompt`]
+/// which owns the decision decoding, mpsc forwarding, harness
+/// event emission, and session-scope override bookkeeping.
 #[tauri::command]
 #[allow(dead_code)]
 pub fn respond_permission(
@@ -215,69 +204,15 @@ pub fn respond_permission(
     tool_name: Option<String>,
     scope: Option<String>,
 ) -> Result<(), String> {
-    tracing::info!(
-        "[permission] respond session_id={}, decision={}, scope={}",
+    crate::modules::application::permission_service::respond_to_permission_prompt(
+        &state.permission_senders,
+        &state.permission_overrides,
+        state.harness.as_ref(),
         session_id,
         decision,
-        scope.as_deref().unwrap_or("once")
-    );
-    let decision_enum = match decision.as_str() {
-        "allow" => PermissionPromptDecision::Allow,
-        _ => PermissionPromptDecision::Deny {
-            reason: "User denied permission".to_string(),
-        },
-    };
-
-    let senders = state
-        .permission_senders
-        .lock()
-        .map_err(|e| format!("Failed to lock permission senders: {e}"))?;
-
-    let sender = senders
-        .get(&session_id)
-        .ok_or_else(|| "No pending permission request for this session".to_string())?;
-
-    sender
-        .send(decision_enum)
-        .map_err(|_| "Failed to send permission decision".to_string())?;
-
-    // Phase M4-C P4 — emit harness `PermissionResolved` event so
-    // the trace aggregator pairs this resolution with the
-    // earlier `PermissionPrompted` event.  Zero-cost no-op when
-    // harness is not initialised.
-    if let Some(harness) = state.harness.as_ref() {
-        let _ = harness.event_bus.emit(AgentEvent::PermissionResolved {
-            session_id: session_id.clone(),
-            tool_name: tool_name.clone(),
-            decision: decision.clone(),
-            scope: scope.clone().unwrap_or_else(|| "once".to_string()),
-            at: chrono::Utc::now(),
-        });
-    }
-
-    // Optional session-scoped remember decision
-    if scope.as_deref() == Some("session") {
-        // Store by latest requested tool in this session if known from channel context.
-        // We cannot extract tool_name from the mpsc payload here, so we keep a coarse
-        // fallback decision bucket under "*" to be read by the prompter side.
-        let mut overrides = state
-            .permission_overrides
-            .lock()
-            .map_err(|e| format!("Failed to lock permission overrides: {e}"))?;
-        let session_map = overrides.entry(session_id).or_default();
-        let key = tool_name.unwrap_or_else(|| "*".to_string());
-        session_map.insert(
-            key,
-            match decision.as_str() {
-                "allow" => PermissionPromptDecision::Allow,
-                _ => PermissionPromptDecision::Deny {
-                    reason: "User denied permission (session policy)".to_string(),
-                },
-            },
-        );
-    }
-
-    Ok(())
+        tool_name,
+        scope,
+    )
 }
 
 #[cfg(test)]
