@@ -18,6 +18,7 @@
 
 | Pack                                                                       | Type     | Goal                                                                                                                | Done       |
 | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-D-1](./refactor/GFR-T1-D-1-sqlite-provider-split.md)               | refactor | sqlite_provider 单刀目录化 + tests + scope + provider_impl 抽出；mod.rs 1579 → 268 LOC (-83%); T1-D 收尾       | 2026-04-21 |
 | [GFR-T1-C-3](./refactor/GFR-T1-C-3-mcp-stdio-manager.md)                   | refactor | Extract McpServerManager cluster from mcp_stdio; mod.rs 621 → 270 LOC; T1-C 收尾                               | 2026-04-21 |
 | [GFR-T1-C-2](./refactor/GFR-T1-C-2-mcp-stdio-types.md)                     | refactor | Extract 16 MCP protocol DTOs from mcp_stdio; mod.rs 763 → 621 LOC                                                  | 2026-04-21 |
 | [GFR-T1-C-1](./refactor/GFR-T1-C-1-mcp-stdio-tests-and-rpc.md)             | refactor | mcp_stdio 目录化 + tests (916 LOC) + JSON-RPC framing 抽出；mod.rs 1725 → 763 LOC                                | 2026-04-21 |
@@ -77,6 +78,8 @@
 | GFR-T1-C-2 | **done** | `runtime/mcp_stdio/mod.rs` 16 MCP DTOs (~150 LOC)                              | `runtime/mcp_stdio/types.rs`                                     |
 | GFR-T1-C-3 | **done** | `runtime/mcp_stdio/mod.rs` McpServerManager cluster (~350 LOC); T1-C 收尾     | `runtime/mcp_stdio/manager.rs`                                   |
 | **GFR-T1-C** | **done** | runtime/mcp_stdio 总收尾：mod.rs 1725 → 270 LOC (-84%) 跨 3 sub-packs        | `runtime/mcp_stdio/{mod,manager,types,rpc,tests}.rs`             |
+| GFR-T1-D-1 | **done** | `memory/providers/sqlite_provider.rs` 单刀切 (tests + scope + provider_impl)  | `sqlite_provider/{mod,scope,provider_impl,tests}.rs`             |
+| **GFR-T1-D** | **done** | memory/sqlite_provider 总收尾：mod.rs 1579 → 268 LOC (-83%) 单刀完成         | `sqlite_provider/{mod,scope,provider_impl,tests}.rs`             |
 | GFR-T1-B   | sliced   | sliced into B-1 (done) + B-2..5 (pending — 人写)                               | `runtime/config/{json_helpers,schema,permission,sandbox,merge}.rs` |
 | GFR-T1-B-1 | **done** | `runtime/config.rs` JSON parse helpers (12 fn + 2 utility, ~230 LOC)           | `runtime/config/json_helpers.rs` (+ git mv to config/mod.rs)     |
 | GFR-T1-B-3 | **done** | `runtime/config/mod.rs` MCP cluster (9 types + 3 impls + 4 parsers, ~250 LOC)  | `runtime/config/mcp.rs`                                          |

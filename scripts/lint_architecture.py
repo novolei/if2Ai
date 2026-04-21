@@ -75,7 +75,11 @@ SIZE_EXEMPT_PATHS = {
     "src-tauri/src/modules/runtime/mcp_stdio/tests.rs",
     "src-tauri/src/modules/runtime/prompt.rs",
     "src-tauri/src/modules/runtime/conversation.rs",
-    "src-tauri/src/modules/memory/providers/sqlite_provider.rs",
+    # sqlite_provider sliced through GFR-T1-D-1; mod.rs now 268 LOC (under 500
+    # target). provider_impl.rs (594) + tests.rs (643) remain large but are
+    # already-isolated single-responsibility files; OK to leave on warning shelf.
+    "src-tauri/src/modules/memory/providers/sqlite_provider/provider_impl.rs",
+    "src-tauri/src/modules/memory/providers/sqlite_provider/tests.rs",
     "src-tauri/src/modules/memory/ticker.rs",
     "src-tauri/src/commands/tts.rs",
     # Tier 2 frontend (GFR-T2-A ~ C)
