@@ -25,6 +25,7 @@ pub mod permissions;
 pub mod prompt;
 pub mod prompt_tools_guide;
 pub mod remote;
+pub mod resume_cursor;
 pub mod sandbox;
 pub mod session;
 pub mod snapshot;

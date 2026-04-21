@@ -12,13 +12,14 @@
 
 | Pack                    | Type | Goal | Owner |
 | ----------------------- | ---- | ---- | ----- |
-| _(无 — GFR-002 待激活)_ | —    | —    | —     |
+| _(无 — GFR-005b 待人写)_ | —    | —    | —     |
 
 ## Recently Done
 
-| Pack                                                        | Type     | Goal                                                                                                                | Done       |
-| ----------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)    | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
+| Pack                                                          | Type     | Goal                                                                                                                | Done       |
+| ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)      | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                    | 2026-04-21 |
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)      | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                | 2026-04-21 |
 | [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)  | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                              | 2026-04-21 |
 | [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md) | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                         | 2026-04-21 |
 | [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)  | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs` | 2026-04-21 |
@@ -39,7 +40,8 @@
 | GFR-002c   | pending  | `commands/agent.rs` preflight estimators (token/char count helpers)            | `application/prompt_planner/preflight.rs`                        |
 | GFR-003    | pending  | `commands/agent.rs` permission lifecycle                                       | `application/permission_service.rs`                              |
 | GFR-004    | pending  | `commands/agent.rs` 散点 emit                                                  | `application/stream_emitter_service.rs`                          |
-| GFR-005    | pending  | `commands/agent.rs` turn body                                                  | `application/turn_service`                                       |
+| GFR-005    | sliced   | sliced into 005a (done) + 005b/c/d/e (pending — 人写)                          | `application/turn_service` (final destination)                   |
+| GFR-005a   | **done** | `commands/agent.rs` resume-cursor cluster (struct + 5 fns)                     | `runtime/resume_cursor.rs`                                       |
 | GFR-006    | pending  | `commands/agent.rs` tool exec + trajectory                                     | `application/{tool_executor,trajectory_service}.rs`              |
 | GFR-007    | pending  | `chat-ui.tsx` markdown helpers                                                 | `src/modules/markdown/`                                          |
 | GFR-008    | pending  | `chat-ui.tsx` skills report                                                    | `src/modules/skills-report/`                                     |

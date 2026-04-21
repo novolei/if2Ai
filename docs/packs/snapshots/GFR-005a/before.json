@@ -1,0 +1,69 @@
+{
+  "files": [
+    {
+      "event_strings": [
+        "agent-token"
+      ],
+      "exists": true,
+      "loc": 2931,
+      "path": "src-tauri/src/commands/agent.rs",
+      "pub_symbols": [
+        "fn build_permission_policy",
+        "fn parse_permission_mode",
+        "fn respond_permission",
+        "fn stop_agent_stream",
+        "struct RunAgentTurnResponse"
+      ],
+      "test_names": [
+        "agent_loop_executes_skill_tool_end_to_end"
+      ]
+    },
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 34,
+      "path": "src-tauri/src/modules/runtime/mod.rs",
+      "pub_symbols": [
+        "mod bash",
+        "mod block_conversion",
+        "mod bootstrap",
+        "mod budget",
+        "mod compact",
+        "mod config",
+        "mod contracts",
+        "mod conversation",
+        "mod episodic_compaction",
+        "mod file_ops",
+        "mod hooks",
+        "mod json",
+        "mod locale",
+        "mod logical_day",
+        "mod lsp",
+        "mod mcp",
+        "mod mcp_client",
+        "mod mcp_stdio",
+        "mod oauth",
+        "mod permissions",
+        "mod prompt",
+        "mod prompt_tools_guide",
+        "mod remote",
+        "mod sandbox",
+        "mod session",
+        "mod snapshot",
+        "mod stream_emitter",
+        "mod usage"
+      ],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": false,
+      "loc": 0,
+      "path": "src-tauri/src/modules/runtime/resume_cursor.rs",
+      "pub_symbols": [],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-005a",
+  "phase": "before"
+}

@@ -42,6 +42,10 @@ use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision,
 };
+use crate::modules::runtime::resume_cursor::{
+    build_resume_cursor, extract_resume_cursor_marker, parse_resume_cursor,
+    session_contains_resume_cursor, strip_resume_cursor_marker,
+};
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::{ContentBlock, Session as RuntimeSession};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
@@ -85,12 +89,8 @@ struct PersistedTurnOutcome {
     request_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResumeCursor {
-    stream_id: String,
-    tool_loop_iter: usize,
-    token_count: u32,
-}
+// ResumeCursor + resume-cursor encoding/decoding cluster moved to
+// crate::modules::runtime::resume_cursor (GFR-005a).
 
 // MAX_TOOL_RESULT_FOR_MODEL_CHARS / TOOL_RESULT_PREVIEW_CHARS moved to
 // crate::modules::runtime::block_conversion (GFR-001). The latter is
@@ -2579,80 +2579,7 @@ fn format_stream_error_reason(error: &impl std::fmt::Display) -> String {
 // are imported above for residual call sites in this file;
 // truncate_tool_result_for_model has no residual caller in this file.
 
-fn build_resume_cursor(stream_id: &str, tool_loop_iter: usize, token_count: u32) -> String {
-    // harness symbol marker: resume_cursor\|degraded
-    format!("resume_cursor:v1:{stream_id}:{tool_loop_iter}:{token_count}")
-}
-
-fn parse_resume_cursor(value: &str) -> Option<ResumeCursor> {
-    let mut parts = value.split(':');
-    if parts.next()? != "resume_cursor" || parts.next()? != "v1" {
-        return None;
-    }
-    let stream_id = parts.next()?.to_string();
-    let tool_loop_iter = parts.next()?.parse().ok()?;
-    let token_count = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(ResumeCursor {
-        stream_id,
-        tool_loop_iter,
-        token_count,
-    })
-}
-
-fn session_contains_resume_cursor(app_session: &AppSession, resume_cursor: &ResumeCursor) -> bool {
-    app_session.messages.iter().any(|message| {
-        message.resume_available == Some(true)
-            && message.resume_cursor.as_deref()
-                == Some(&build_resume_cursor(
-                    &resume_cursor.stream_id,
-                    resume_cursor.tool_loop_iter,
-                    resume_cursor.token_count,
-                ))
-    })
-}
-
-fn strip_resume_cursor_marker(message: &str) -> String {
-    let marker = "[resume_cursor]";
-    if let Some(start) = message.find(marker) {
-        let before = &message[..start];
-        let tail = &message[start + marker.len()..];
-        let remainder = tail
-            .split_once('\n')
-            .map(|(_, rest)| rest)
-            .unwrap_or_default()
-            .trim();
-        let merged = format!("{} {}", before.trim(), remainder)
-            .trim()
-            .to_string();
-        if merged.is_empty() {
-            "请从上一次中断处继续完成未完成部分，禁止重复已确认的副作用操作。".to_string()
-        } else {
-            merged
-        }
-    } else {
-        message.trim().to_string()
-    }
-}
-
-fn extract_resume_cursor_marker(message: &str) -> Option<String> {
-    let marker = "[resume_cursor]";
-    let start = message.find(marker)?;
-    let tail = &message[start + marker.len()..];
-    let cursor = tail
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .trim_end_matches(';');
-    if cursor.is_empty() {
-        None
-    } else {
-        Some(cursor.to_string())
-    }
-}
+// resume-cursor cluster moved to crate::modules::runtime::resume_cursor (GFR-005a).
 
 // runtime_block_to_input_block moved to
 // crate::modules::runtime::block_conversion (GFR-001).

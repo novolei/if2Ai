@@ -1,0 +1,77 @@
+{
+  "files": [
+    {
+      "event_strings": [
+        "agent-token"
+      ],
+      "exists": true,
+      "loc": 2858,
+      "path": "src-tauri/src/commands/agent.rs",
+      "pub_symbols": [
+        "fn build_permission_policy",
+        "fn parse_permission_mode",
+        "fn respond_permission",
+        "fn stop_agent_stream",
+        "struct RunAgentTurnResponse"
+      ],
+      "test_names": [
+        "agent_loop_executes_skill_tool_end_to_end"
+      ]
+    },
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 35,
+      "path": "src-tauri/src/modules/runtime/mod.rs",
+      "pub_symbols": [
+        "mod bash",
+        "mod block_conversion",
+        "mod bootstrap",
+        "mod budget",
+        "mod compact",
+        "mod config",
+        "mod contracts",
+        "mod conversation",
+        "mod episodic_compaction",
+        "mod file_ops",
+        "mod hooks",
+        "mod json",
+        "mod locale",
+        "mod logical_day",
+        "mod lsp",
+        "mod mcp",
+        "mod mcp_client",
+        "mod mcp_stdio",
+        "mod oauth",
+        "mod permissions",
+        "mod prompt",
+        "mod prompt_tools_guide",
+        "mod remote",
+        "mod resume_cursor",
+        "mod sandbox",
+        "mod session",
+        "mod snapshot",
+        "mod stream_emitter",
+        "mod usage"
+      ],
+      "test_names": []
+    },
+    {
+      "event_strings": [],
+      "exists": true,
+      "loc": 95,
+      "path": "src-tauri/src/modules/runtime/resume_cursor.rs",
+      "pub_symbols": [
+        "fn build_resume_cursor",
+        "fn extract_resume_cursor_marker",
+        "fn parse_resume_cursor",
+        "fn session_contains_resume_cursor",
+        "fn strip_resume_cursor_marker",
+        "struct ResumeCursor"
+      ],
+      "test_names": []
+    }
+  ],
+  "pack_id": "GFR-005a",
+  "phase": "after"
+}
