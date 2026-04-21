@@ -108,9 +108,9 @@
 
 ### Active
 
-| Pack                                                                                | 状态         | Goal                                              |
-| ----------------------------------------------------------------------------------- | ------------ | ------------------------------------------------- |
-| [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md) | draft (next) | 建立 session/chat store 基础层 |
+| Pack                                                                             | 状态         | Goal                           |
+| -------------------------------------------------------------------------------- | ------------ | ------------------------------ |
+| [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | draft (next) | 让主聊天链走 gateway conversations/streaming surface |
 
 ### Migration-Core Pipeline
 
@@ -120,7 +120,7 @@
 | 2    | P0     | [MIG-010](./feature/migration-core/MIG-010-local-gateway-bootstrap.md)                         | **done** | 建立 local gateway bootstrap seam                     |
 | 3    | P0     | [MIG-012](./feature/migration-core/MIG-012-frontend-api-facade-and-transport-cutover.md)       | **done** | 建立前端 `src/api/*` facade，收缩 `tauri.ts` 业务职责 |
 | 4    | P0     | [MIG-013](./feature/migration-core/MIG-013-app-shell-router-and-bootstrap-store.md)            | **done** | 建立 `AppShell + ContentRouter + bootstrap store`     |
-| 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md)               | draft    | 建立 session/chat store 基础层                        |
+| 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md)               | **done** | 建立 session/chat store 基础层                        |
 | 6    | P0     | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md)     | draft    | 让主聊天链走 gateway conversations/streaming surface  |
 | 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)   | draft    | 让 execution mode / preflight 成为真实 product gate   |
 | 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | draft    | 把 prompt planner 升级成 traceable contract           |

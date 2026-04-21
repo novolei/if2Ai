@@ -196,6 +196,27 @@ export function setTitleStage(sessionId: string, stage: SessionTitleStage): void
   })
 }
 
+/**
+ * Replace a session's title state wholesale.
+ *
+ * Use when a caller needs to update both `stage` and
+ * `autoRenameCount` in one tick — `setTitleStage` +
+ * `incrementAutoRenameCount` would otherwise emit two
+ * notifications and require interleaved reads of the
+ * intermediate state. Required by the MIG-014 App.tsx wrapper
+ * (`setSessionTitleStates`) so the diff path can sync arbitrary
+ * `SessionTitleState` shapes (e.g. `{ stage, autoRenameCount }`)
+ * via a single store mutation.
+ */
+export function setTitleState(sessionId: string, state: SessionTitleState): void {
+  _set({
+    sessionTitleStates: {
+      ..._state.sessionTitleStates,
+      [sessionId]: state,
+    },
+  })
+}
+
 /** Increment the auto-rename counter for a session. */
 export function incrementAutoRenameCount(sessionId: string): void {
   const current = _state.sessionTitleStates[sessionId] ?? {

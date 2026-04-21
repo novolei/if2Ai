@@ -55,6 +55,24 @@ import {
 import { AppShell } from '@/modules/app-shell/AppShell'
 import { runBootSequence } from '@/boot/boot-orchestrator'
 import { bootstrapStore, useBootstrapSelector } from '@/state'
+// MIG-014 — chat + session stores own per-session runtime
+// state. App.tsx no longer holds the canonical truth; the
+// `setX` wrappers below diff against the store snapshot and
+// dispatch the store's explicit actions so the React-shaped
+// `Dispatch<SetStateAction<T>>` API is preserved at every
+// existing call site.
+import {
+  removeSession,
+  setConversation,
+  setSessionLoading as setStoreSessionLoading,
+  setSessionTodos as setStoreSessionTodos,
+  setStreamAbortHandle as setStoreStreamAbortHandle,
+  clearStreamAbortHandle as clearStoreStreamAbortHandle,
+  initTitleState as initStoreTitleState,
+  setTitleState as setStoreTitleState,
+  useChatStore,
+} from '@/stores'
+import { sessionStore, useSessionSelector } from '@/stores'
 // AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
@@ -226,11 +244,67 @@ function App() {
     },
     [],
   )
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  // MIG-014 — activeSessionId moved to the canonical session
+  // store; reads via `useSessionSelector`, writes via the
+  // store-backed wrapper that keeps React's
+  // `Dispatch<SetStateAction<string | null>>` shape so existing
+  // call sites compile unchanged.
+  const activeSessionId = useSessionSelector((s) => s.activeSessionId)
+  const setActiveSessionId = useCallback(
+    (next: string | null | ((prev: string | null) => string | null)) => {
+      const value =
+        typeof next === 'function'
+          ? (next as (prev: string | null) => string | null)(
+              sessionStore.getSnapshot().activeSessionId,
+            )
+          : next
+      sessionStore.setActiveSessionId(value)
+    },
+    [],
+  )
   const [leftPaneWidth, setLeftPaneWidth] = useState(240)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [conversations, setConversations] = useState<Record<string, Conversation>>({})
+  // MIG-014 — `conversations` lives in the chat store
+  // (conversation-slice.ts). Reads go through `useChatStore`;
+  // writes go through `setConversations` wrapper that diffs
+  // against the previous record and dispatches the appropriate
+  // chat-store mutation so call sites that use
+  // `setConversations(prev => ({ ...prev, [id]: conv }))`
+  // continue to compile unchanged.
+  const chatSlice = useChatStore()
+  const conversations = chatSlice.conversations
+  const setConversations = useCallback(
+    (
+      next:
+        | Record<string, Conversation>
+        | ((prev: Record<string, Conversation>) => Record<string, Conversation>),
+    ) => {
+      const prev = chatSlice.conversations
+      const value =
+        typeof next === 'function'
+          ? (next as (p: Record<string, Conversation>) => Record<string, Conversation>)(prev)
+          : next
+      // Compute add/update/delete diff against the slice and
+      // dispatch through the canonical actions so subscribers
+      // (chat workspace, telemetry drawer, etc.) see the same
+      // events whether the call came through the wrapper or
+      // through a direct `setConversation(...)` import.
+      const prevIds = new Set(Object.keys(prev))
+      const nextIds = new Set(Object.keys(value))
+      for (const id of nextIds) {
+        if (value[id] !== prev[id]) {
+          setConversation(value[id])
+        }
+      }
+      for (const id of prevIds) {
+        if (!nextIds.has(id)) {
+          removeSession(id)
+        }
+      }
+    },
+    [chatSlice.conversations],
+  )
   const [input, setInput] = useState('')
   // Phase M2.6 — opt-in classifier preview. Watches the active
   // chat draft and dispatches the deterministic
@@ -238,7 +312,33 @@ function App() {
   // <ExecutionModePill /> below renders the resulting judgment.
   // Honest scope: pure preview, the agent loop is NOT auto-routed.
   useExecutionModePreview(input, { sessionId: activeSessionId ?? undefined })
-  const [sessionLoading, setSessionLoading] = useState<Record<string, boolean>>({})
+  // MIG-014 — sessionLoading lives in the chat store. Wrapper
+  // diffs against the previous record and dispatches the
+  // canonical `setSessionLoading(id, bool)` action per id
+  // change.
+  const sessionLoading = chatSlice.sessionLoading
+  const setSessionLoading = useCallback(
+    (
+      next:
+        | Record<string, boolean>
+        | ((prev: Record<string, boolean>) => Record<string, boolean>),
+    ) => {
+      const prev = chatSlice.sessionLoading
+      const value =
+        typeof next === 'function'
+          ? (next as (p: Record<string, boolean>) => Record<string, boolean>)(prev)
+          : next
+      const ids = new Set([...Object.keys(prev), ...Object.keys(value)])
+      for (const id of ids) {
+        const wanted = value[id] === true
+        const current = prev[id] === true
+        if (wanted !== current) {
+          setStoreSessionLoading(id, wanted)
+        }
+      }
+    },
+    [chatSlice.sessionLoading],
+  )
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
   const [isRightRailOpen, setIsRightRailOpen] = useState(false)
@@ -250,8 +350,63 @@ function App() {
     }
     return 'dangerFullAccess'
   })
-  const [sessionTodos, setSessionTodos] = useState<Record<string, TodoItem[]>>({})
-  const [sessionTitleStates, setSessionTitleStates] = useState<Record<string, SessionTitleState>>({})
+  // MIG-014 — sessionTodos + sessionTitleStates live in the
+  // chat store. Wrappers preserve `Dispatch<SetStateAction<T>>`.
+  const sessionTodos = chatSlice.sessionTodos
+  const setSessionTodos = useCallback(
+    (
+      next:
+        | Record<string, TodoItem[]>
+        | ((prev: Record<string, TodoItem[]>) => Record<string, TodoItem[]>),
+    ) => {
+      const prev = chatSlice.sessionTodos
+      const value =
+        typeof next === 'function'
+          ? (next as (p: Record<string, TodoItem[]>) => Record<string, TodoItem[]>)(prev)
+          : next
+      const ids = new Set([...Object.keys(prev), ...Object.keys(value)])
+      for (const id of ids) {
+        const wanted = value[id] ?? []
+        const current = prev[id]
+        if (wanted !== current) {
+          setStoreSessionTodos(id, wanted)
+        }
+      }
+    },
+    [chatSlice.sessionTodos],
+  )
+  const sessionTitleStates = chatSlice.sessionTitleStates
+  const setSessionTitleStates = useCallback(
+    (
+      next:
+        | Record<string, SessionTitleState>
+        | ((prev: Record<string, SessionTitleState>) => Record<string, SessionTitleState>),
+    ) => {
+      const prev = chatSlice.sessionTitleStates
+      const value =
+        typeof next === 'function'
+          ? (next as (p: Record<string, SessionTitleState>) => Record<string, SessionTitleState>)(
+              prev,
+            )
+          : next
+      const ids = new Set([...Object.keys(prev), ...Object.keys(value)])
+      for (const id of ids) {
+        const wanted = value[id]
+        const current = prev[id]
+        if (!wanted) continue
+        if (current === wanted) continue
+        // Replace wholesale via the canonical `setTitleState`
+        // action so both `stage` and `autoRenameCount` end up
+        // synced (the previous "stage-only" wrapper silently
+        // dropped autoRenameCount mutations and broke the
+        // `MAX_AUTO_RENAME_COUNT` guard in
+        // `maybeAutoRenameSession`).
+        if (!current) initStoreTitleState(id)
+        setStoreTitleState(id, wanted)
+      }
+    },
+    [chatSlice.sessionTitleStates],
+  )
   // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({})
   useEffect(() => { sessionTitleStatesRef.current = sessionTitleStates }, [sessionTitleStates])
@@ -273,7 +428,35 @@ function App() {
     })
   }
 
-  const [streamAbortHandles, setStreamAbortHandles] = useState<Record<string, string>>({})
+  // MIG-014 — streamAbortHandles live in the chat store.
+  // Wrapper diffs and dispatches `setStreamAbortHandle` /
+  // `clearStreamAbortHandle` per id.
+  const streamAbortHandles = chatSlice.streamAbortHandles
+  const setStreamAbortHandles = useCallback(
+    (
+      next:
+        | Record<string, string>
+        | ((prev: Record<string, string>) => Record<string, string>),
+    ) => {
+      const prev = chatSlice.streamAbortHandles
+      const value =
+        typeof next === 'function'
+          ? (next as (p: Record<string, string>) => Record<string, string>)(prev)
+          : next
+      const ids = new Set([...Object.keys(prev), ...Object.keys(value)])
+      for (const id of ids) {
+        const wanted = value[id]
+        const current = prev[id]
+        if (wanted === current) continue
+        if (wanted) {
+          setStoreStreamAbortHandle(id, wanted)
+        } else {
+          clearStoreStreamAbortHandle(id)
+        }
+      }
+    },
+    [chatSlice.streamAbortHandles],
+  )
   // Phase M2.8 — permission prompt now reads from the canonical
   // projection store (`snapshot.approvals`).  The bridge feeds the
   // store via `translatePermissionRequestPayload`; we pick the
