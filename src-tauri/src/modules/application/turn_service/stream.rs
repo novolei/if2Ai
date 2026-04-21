@@ -288,15 +288,35 @@ impl TurnService {
                     p.to_string()
                 }
             })?;
-        // Phase M1.6 — same advisory log as `run_agent_turn`.
-        tracing::info!(
-            execution_mode = ?prepared_stream.execution_mode_decision.execution_mode,
-            risk_level = ?prepared_stream.execution_mode_decision.risk_level,
-            complexity_level = ?prepared_stream.execution_mode_decision.complexity_level,
-            policy_version = %prepared_stream.execution_mode_decision.classifier_policy_version,
-            rules = ?prepared_stream.execution_mode_decision.classifier_matched_rule_ids,
-            "[start_agent_stream] request_intelligence decision (advisory)"
-        );
+        // MIG-002-a — request intelligence now acts as a real route gate.
+        // Short-circuit for SpecializedSurface mode.
+        use crate::modules::runtime::contracts::execution_mode::ExecutionMode;
+        match prepared_stream.execution_mode_decision.execution_mode {
+            ExecutionMode::SpecializedSurface => {
+                tracing::info!(
+                    execution_mode = ?prepared_stream.execution_mode_decision.execution_mode,
+                    route_hint = ?prepared_stream.execution_mode_decision.route_hint,
+                    "[start_agent_stream] Short-circuiting: SpecializedSurface mode"
+                );
+                return Err(format!(
+                    "Request routed to specialized surface: {:?}",
+                    prepared_stream.execution_mode_decision.route_hint
+                ));
+            }
+            ExecutionMode::DirectExecute
+            | ExecutionMode::AutoPlanExecute
+            | ExecutionMode::PlanThenConfirm => {
+                // Continue with normal execution path
+                tracing::info!(
+                    execution_mode = ?prepared_stream.execution_mode_decision.execution_mode,
+                    risk_level = ?prepared_stream.execution_mode_decision.risk_level,
+                    complexity_level = ?prepared_stream.execution_mode_decision.complexity_level,
+                    policy_version = %prepared_stream.execution_mode_decision.classifier_policy_version,
+                    rules = ?prepared_stream.execution_mode_decision.classifier_matched_rule_ids,
+                    "[start_agent_stream] request_intelligence decision (enforced route gate)"
+                );
+            }
+        }
         if !prepared_stream.memory_items.is_empty() {
             tracing::info!(
                 "[start_agent_stream] Injected {} memory items into prompt",

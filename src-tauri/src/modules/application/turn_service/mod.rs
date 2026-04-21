@@ -74,6 +74,9 @@ mod stream;
 mod stream_finalize;
 mod stream_task;
 
+#[cfg(test)]
+mod tests;
+
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
 
@@ -322,7 +325,7 @@ impl TurnService {
 }
 
 #[cfg(test)]
-mod tests {
+mod mod_tests {
     use super::*;
 
     /// MIG-001-a smoke test: verify the expanded `TurnServiceDeps`

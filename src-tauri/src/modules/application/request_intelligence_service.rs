@@ -43,9 +43,10 @@ pub struct RequestIntelligenceOutput {
 /// Run the deterministic + heuristic classifier and return a typed
 /// [`ExecutionModeDecision`].
 ///
-/// Always succeeds: the deterministic gate is total. Future LLM
-/// escalation will surface `Result<...>`; until then there is
-/// nothing to fail on.
+/// MIG-002-a — this decision now drives real route behavior at
+/// `TurnService` entry. `SpecializedSurface` mode short-circuits
+/// before entering `ConversationRuntime`. Always succeeds: the
+/// deterministic gate is total.
 #[must_use]
 pub fn classify(input: RequestIntelligenceInput) -> RequestIntelligenceOutput {
     let workdir_ref = input.workdir.as_deref();

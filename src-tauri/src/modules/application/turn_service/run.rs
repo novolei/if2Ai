@@ -184,15 +184,43 @@ impl TurnService {
                     p.to_string()
                 }
             })?;
-        // Phase M1.6 — log the request-intelligence decision.
-        tracing::info!(
-            execution_mode = ?prepared.execution_mode_decision.execution_mode,
-            risk_level = ?prepared.execution_mode_decision.risk_level,
-            complexity_level = ?prepared.execution_mode_decision.complexity_level,
-            policy_version = %prepared.execution_mode_decision.classifier_policy_version,
-            rules = ?prepared.execution_mode_decision.classifier_matched_rule_ids,
-            "[run_agent_turn] request_intelligence decision (advisory)"
-        );
+        // MIG-002-a — request intelligence now acts as a real route gate.
+        // Short-circuit for SpecializedSurface mode.
+        use crate::modules::runtime::contracts::execution_mode::ExecutionMode;
+        match prepared.execution_mode_decision.execution_mode {
+            ExecutionMode::SpecializedSurface => {
+                tracing::info!(
+                    execution_mode = ?prepared.execution_mode_decision.execution_mode,
+                    route_hint = ?prepared.execution_mode_decision.route_hint,
+                    "[run_agent_turn] Short-circuiting: SpecializedSurface mode"
+                );
+                crate::modules::harness::agent_loop_integration::emit_turn_finished(
+                    harness_event_bus_run.as_ref(),
+                    &session_id,
+                    turn_number_run,
+                    false,
+                    0,
+                    turn_started_at_run.elapsed().as_millis() as u64,
+                );
+                return Err(format!(
+                    "Request routed to specialized surface: {:?}",
+                    prepared.execution_mode_decision.route_hint
+                ));
+            }
+            ExecutionMode::DirectExecute
+            | ExecutionMode::AutoPlanExecute
+            | ExecutionMode::PlanThenConfirm => {
+                // Continue with normal execution path
+                tracing::info!(
+                    execution_mode = ?prepared.execution_mode_decision.execution_mode,
+                    risk_level = ?prepared.execution_mode_decision.risk_level,
+                    complexity_level = ?prepared.execution_mode_decision.complexity_level,
+                    policy_version = %prepared.execution_mode_decision.classifier_policy_version,
+                    rules = ?prepared.execution_mode_decision.classifier_matched_rule_ids,
+                    "[run_agent_turn] request_intelligence decision (enforced route gate)"
+                );
+            }
+        }
         let RuntimeProviderResolution {
             provider_client,
             model,
