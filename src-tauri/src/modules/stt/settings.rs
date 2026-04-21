@@ -1,9 +1,12 @@
-//! STT 设置：provider 选择 + Groq API Key 持久化。
+//! STT 设置（精简版，仅 OpenFlow）。
 //!
-//! 设置文件 `<app_data>/stt_settings.json`：
-//! ```json
-//! { "provider": "whisper" | "groq", "groq_api_key": "gsk_...", "groq_model": "whisper-large-v3-turbo" }
-//! ```
+//! 设置文件 `<app_data>/stt_settings.json`。Apr 2026 起 provider 字段实际只剩
+//! OpenFlow 一个，保留 enum/字段是为了：
+//!   1. 老用户的设置文件 (`provider: "whisper" | "groq"`) 反序列化不报错
+//!   2. 未来重新引入第二个 backend 时不需要破坏 schema
+//!
+//! 老 provider 值反序列化时会被 `From<&SttSettings> for SttSettingsDto`
+//! 静默归一化为 `"openflow"`（见 commands/stt.rs）。
 
 #![allow(dead_code)]
 
@@ -13,13 +16,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SttProvider {
-    /// 本地 whisper.cpp（Metal 加速）
+    /// 本地 SenseVoice ONNX（vendored from open-flow）
     #[default]
-    Whisper,
-    /// Groq Whisper API（云端，需 API Key）
-    Groq,
-    /// 本地 SenseVoice ONNX（vendored from open-flow，中文优势）
-    #[serde(rename = "openflow")]
+    #[serde(rename = "openflow", alias = "whisper", alias = "groq")]
     OpenFlow,
 }
 
@@ -27,10 +26,6 @@ pub enum SttProvider {
 #[serde(rename_all = "snake_case")]
 pub struct SttSettings {
     pub provider: SttProvider,
-    #[serde(default)]
-    pub groq_api_key: Option<String>,
-    #[serde(default)]
-    pub groq_model: Option<String>,
 }
 
 fn settings_path(app_data_dir: &std::path::Path) -> PathBuf {
