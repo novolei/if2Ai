@@ -19,14 +19,20 @@
 //!   [`TurnService::run_turn`] (see `run.rs`). The
 //!   `run_agent_turn` IPC command collapsed into a thin adapter
 //!   that parses args, delegates to `run_turn`, and returns.
-//! - MIG-001-c (this commit) — owns the streaming turn lifecycle
-//!   via [`TurnService::stream_turn`] (see `stream.rs`). The
+//! - MIG-001-c — owns the streaming turn lifecycle via
+//!   [`TurnService::stream_turn`] (see `stream.rs`). The
 //!   `start_agent_stream` IPC command collapsed into a thin
 //!   adapter that wires per-process cross-stream coordination
 //!   state into [`stream::StreamTurnRequest`] and delegates.
-//! - MIG-001-d — internal split of `stream.rs` (currently > 800
-//!   LOC, on the REGISTRY tier-3 watchlist) into smaller sibling
-//!   files; the `stream_turn` public signature is final.
+//! - MIG-001-d (this commit) — extracted the spawn-task closure
+//!   body out of `stream.rs` into the sibling
+//!   [`stream_task::run_stream_task`] free function. Captured
+//!   state is bundled into [`stream_task::StreamTaskInputs`] so
+//!   the `tokio::spawn(...)` call site is a single struct
+//!   construction. `stream.rs` shrinks back under the CHARTER §5
+//!   800-LOC hard limit; `stream_task.rs` (~1700 LOC) is on the
+//!   REGISTRY tier-3 watchlist as a follow-up split candidate
+//!   (per-iteration helpers + post-loop finalize).
 //!
 //! Strict layering (CHARTER §2.1 hard constraint, also restated in
 //! MIG-001 §4):
@@ -57,6 +63,7 @@ use crate::modules::tools::ToolRegistry;
 
 mod run;
 mod stream;
+mod stream_task;
 
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;

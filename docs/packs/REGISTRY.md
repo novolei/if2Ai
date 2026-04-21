@@ -165,7 +165,7 @@
 
 | 文件                                                          |  LOC |
 | ------------------------------------------------------------- | ---: |
-| `src-tauri/src/modules/application/turn_service/stream.rs`    | 1884 |
+| `src-tauri/src/modules/application/turn_service/stream_task.rs` | 1698 |
 | `src-tauri/src/modules/browser/session.rs`                    | 1408 |
 | `src-tauri/src/modules/memory/audit.rs`                       | 1094 |
 | `src-tauri/src/modules/api/providers/claw_provider.rs`        | 1223 |
