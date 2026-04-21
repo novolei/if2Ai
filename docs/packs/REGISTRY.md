@@ -18,6 +18,7 @@
 
 | Pack                                                                       | Type     | Goal                                                                                                                | Done       |
 | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-B-4](./refactor/GFR-T1-B-4-extract-config-memory.md)               | refactor | Extract memory cluster (4 types + 4 impls + 4 parsers + 1 helper) from `runtime/config/mod.rs`                      | 2026-04-21 |
 | [GFR-T1-B-3](./refactor/GFR-T1-B-3-extract-config-mcp.md)                  | refactor | Extract MCP cluster (9 types + 3 impls + 4 parsers) from `runtime/config/mod.rs`                                    | 2026-04-21 |
 | [GFR-T1-B-1](./refactor/GFR-T1-B-1-extract-config-json-helpers.md)         | refactor | Extract 14 JSON parse helpers from `runtime/config.rs` (also git mv to config/mod.rs); start of T1-B 5-slice arc    | 2026-04-21 |
 | [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)                  | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                   | 2026-04-21 |
@@ -69,6 +70,7 @@
 | GFR-T1-B   | sliced   | sliced into B-1 (done) + B-2..5 (pending — 人写)                               | `runtime/config/{json_helpers,schema,permission,sandbox,merge}.rs` |
 | GFR-T1-B-1 | **done** | `runtime/config.rs` JSON parse helpers (12 fn + 2 utility, ~230 LOC)           | `runtime/config/json_helpers.rs` (+ git mv to config/mod.rs)     |
 | GFR-T1-B-3 | **done** | `runtime/config/mod.rs` MCP cluster (9 types + 3 impls + 4 parsers, ~250 LOC)  | `runtime/config/mcp.rs`                                          |
+| GFR-T1-B-4 | **done** | `runtime/config/mod.rs` memory cluster (~440 LOC)                              | `runtime/config/memory.rs`                                       |
 | GFR-T1-C~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
 | GFR-T2-A   | pending  | `ProviderSetupStep.tsx`                                                        | `onboarding/steps/provider/`                                     |
 | GFR-T2-B   | pending  | `SkillsSettingsPage.tsx`                                                       | `settings/pages/skills/`                                         |
