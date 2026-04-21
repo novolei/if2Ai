@@ -170,6 +170,108 @@ pub struct MemoryItemProjection {
     pub stored_at: Option<String>,
 }
 
+// ───────────────────────── M3-A typed write decision ──────────────
+//
+// Phase M3.1 + M3.3 — minimal canonical types for the
+// `MemoryCoordinator::after_turn` write-policy seam. M3.4 will
+// extend with quality-gate result types; M3.6 will project these
+// to the frontend memory store.
+
+/// Canonical memory object kind (M3.1 first cut).
+///
+/// Every memory write candidate must declare a kind. The full
+/// per-kind object schemas (`FactRecord` / `PreferenceRecord` /
+/// `StrategyRecord` / `EpisodeRecord`) land in M3.4+; this enum
+/// is the closed alphabet `MemoryWriteCandidate` and any future
+/// projection commit to.
+///
+/// `Unknown` is the honest fallback for legacy / unclassified
+/// candidates (e.g. raw `memory_store` tool calls before the
+/// classification helper lands in M3.2 `O2`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryObjectKind {
+    Fact,
+    Preference,
+    Strategy,
+    Episode,
+    Unknown,
+}
+
+/// Pre-write disposition (M3.3 first cut).
+///
+/// Distinct from [`MemoryDecisionVerdict`]: that enum describes
+/// *post-write* verdicts (Persisted / Promoted / Demoted / Expired
+/// / etc.). This one describes the *gate* decision the write
+/// policy renders before any persistence happens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryWriteDisposition {
+    /// Policy permits writing without prompting the user.
+    Allow,
+    /// Policy refuses; the candidate is dropped.
+    Deny,
+    /// Policy defers to the user via a permission prompt.
+    Prompt,
+}
+
+/// One candidate the agent (or a tool / reflection pipeline) wants
+/// the memory subsystem to persist.
+///
+/// Held by value so the `MemoryCoordinator::after_turn` API does
+/// not borrow from the agent loop's stream context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryWriteCandidate {
+    /// Caller-declared kind. May be `Unknown` if the source path
+    /// hasn't classified yet (e.g. legacy `memory_store` tool).
+    pub object_kind: MemoryObjectKind,
+    /// Target scope for the persist attempt.
+    pub scope: MemoryScope,
+    /// Short preview of the content. The full content stays at
+    /// the call site; the policy / quality gate only need the
+    /// preview to decide.
+    pub content_preview: String,
+    /// Optional id of the originating evidence (turn id, tool
+    /// trace id, reflection note id, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_id: Option<String>,
+    /// Free-form source tag, e.g. `"memory_store_tool"`,
+    /// `"after_turn_extract"`, `"reflection_note"`.
+    pub source: String,
+}
+
+/// Output of the write policy — the typed pre-write decision.
+///
+/// Even when `disposition == Deny`, the decision still carries
+/// `object_kind` / `scope` / `evidence_id` so audit trails and the
+/// future M3.6 frontend projection can render an explainable
+/// rejection card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryWriteDecision {
+    pub disposition: MemoryWriteDisposition,
+    /// Stable reason codes (e.g. `"default_skeleton_allow"`,
+    /// `"sensitive_content"`, `"scope_missing"`,
+    /// `"evidence_missing"`, `"duplicate_candidate"`). Closed-set
+    /// catalogue lands with M3.4 quality gate; open string here.
+    #[serde(default)]
+    pub reason_codes: Vec<String>,
+    /// Echoed candidate kind for the audit projection.
+    pub object_kind: MemoryObjectKind,
+    /// Echoed scope.
+    pub scope: MemoryScope,
+    /// Echoed evidence id (when caller supplied one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_id: Option<String>,
+    /// Stable policy version (`"memory-write-policy@m3.3-skeleton"`
+    /// today). Pinned so M4 harness compare can correlate two
+    /// runs.
+    pub policy_version: String,
+    /// Decision timestamp, RFC3339.
+    pub decided_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
