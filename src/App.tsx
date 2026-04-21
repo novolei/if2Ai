@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 // MIG-012 — canonical App.tsx transport seam.
 //
@@ -48,9 +48,13 @@ import {
   useRuntimeProjectionSelector,
   wireRuntimeProjectionListeners,
 } from '@/runtime-projection'
-import { BootShell } from '@/boot/BootShell'
-import { bootRouteToSurface, useBootRoute } from '@/boot/use-boot-route'
-import { MainShell } from '@/shell/MainShell'
+// MIG-013 — AppShell is the canonical top-level shell container
+// (BootShell + MainShell + ContentRouter). Boot state lives in
+// the bootstrap-store; App.tsx is now a data-flow host, not a
+// render / boot orchestrator.
+import { AppShell } from '@/modules/app-shell/AppShell'
+import { runBootSequence } from '@/boot/boot-orchestrator'
+import { bootstrapStore, useBootstrapSelector } from '@/state'
 // AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from '@/modules/app-shell/components/SectionWorkspace'
 import type { AppSection } from '@/modules/app-shell/types'
@@ -97,111 +101,55 @@ const GENERIC_USER_PROMPTS = [
 
 function App() {
   const appWindow = getCurrentWindow()
-  const [showSplash, setShowSplash] = useState(true)
-  const [showOnboarding, setShowOnboarding] = useState(false)
+  // MIG-013 — boot phase / project list / active project now
+  // live in the bootstrap store. Local reads go through
+  // `useBootstrapSelector` so App.tsx re-renders on exactly the
+  // slices it consumes; writes use the store's explicit actions.
+  // MIG-013 — boot phase lives in the bootstrap store; AppShell
+  // reads it internally and re-renders when the phase changes.
+  // App.tsx itself subscribes to specific slices below
+  // (projects / activeProjectId / currentProject / projectSessions),
+  // which transition together on every phase mutation, so no
+  // separate phase subscription is needed here.
   // Phase TTS-D / P1：Agent 语音桥接
   const agentVoice = useAgentVoiceBridge()
 
   // 跨窗口监听 Onboarding 重置：设置窗口点重置后，主窗口立即跳回 Onboarding 流程
   useCrossWindowChange('cross:onboarding-reset', () => {
     console.log('[App] cross-window: onboarding reset → re-entering onboarding flow')
-    setShowOnboarding(true)
+    bootstrapStore.enterOnboarding()
   })
 
-  // Single coordinated startup: check onboarding during splash, then decide route
+  // MIG-013 — boot orchestration moved to `src/boot/boot-orchestrator.ts`.
+  // The `useEffect` below is now a thin call into the canonical
+  // runner; the store transitions own every phase change.
   useEffect(() => {
-    let cancelled = false
-
-    const boot = async () => {
-      // Run onboarding check with timeout to avoid blocking indefinitely
-      const onboardingCheck = (async () => {
-        try {
-          const raw = await Promise.race([
-            getOnboardingState(),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('onboarding_get_state timeout')), 3000)
-            ),
-          ])
-          const obj = raw as Record<string, unknown>
-          const tag = obj['state'] as string | undefined
-          return tag === 'first_launch' || tag === 'onboarding'
-        } catch (err) {
-          console.warn('[boot] onboarding check failed, defaulting to no onboarding:', err)
-          return false
-        }
-      })()
-
-      // Enforce minimum splash duration (800ms)
-      const splashTimer = new Promise<void>((resolve) => {
-        setTimeout(resolve, 800)
+    const signal = { cancelled: false }
+    void (async () => {
+      await runBootSequence(bootstrapStore, {
+        getOnboardingState,
+        ensureDefaultWorkdir,
+        listProjects,
+        listProjectSessions,
+        signal,
       })
-
-      const [isOnboarding] = await Promise.all([onboardingCheck, splashTimer])
-
-      if (cancelled) return
-
-      setShowOnboarding(isOnboarding)
-
-      if (!isOnboarding) {
-        // Not onboarding — load main app data before dismissing splash
-        try {
-          // Ensure the default workaround project exists, and get its id
-          let defaultProjectId: string | null = null
-          try {
-            const [, projId] = await ensureDefaultWorkdir()
-            defaultProjectId = projId
-          } catch {
-            // Non-fatal — continue without default project
-          }
-
-          const projectList = await listProjects()
-          setProjects(projectList)
-
-          const sessionsMap: Record<string, SessionMeta[]> = {}
-          for (const project of projectList) {
-            sessionsMap[project.id] = await listProjectSessions(project.id)
-          }
-          setProjectSessions(sessionsMap)
-
-          // Always start on the Home screen — show the default project selected
-          // (no session restored on launch, per design decision)
-          if (defaultProjectId) {
-            const project = projectList.find((item) => item.id === defaultProjectId)
-            if (project) {
-              setActiveProjectId(defaultProjectId)
-              setCurrentProject({
-                id: project.id,
-                name: project.name,
-                workdir: project.workdir,
-                created_at: project.created_at,
-                updated_at: '',
-              })
-            }
-          }
-          // activeSessionId stays null → HomeScreen is shown
-
-          // Load the real active model from config
-          try {
-            const activeModel = await invoke<{ provider_id: string; model_id: string } | null>('model_get_active')
-            if (activeModel) {
-              setSelectedModel(`${activeModel.provider_id}/${activeModel.model_id}`)
-            }
-          } catch {
-            // Fallback: leave empty so chat-ui shows first available model from list
-          }
-        } catch (err) {
-          console.error('Failed to load projects during boot:', err)
+      if (signal.cancelled) return
+      // Model bootstrap is orthogonal to project-list bootstrap;
+      // kept inline here until the future settings-store pack
+      // picks it up.
+      try {
+        const activeModel = await invoke<{ provider_id: string; model_id: string } | null>(
+          'model_get_active',
+        )
+        if (activeModel) {
+          setSelectedModel(`${activeModel.provider_id}/${activeModel.model_id}`)
         }
+      } catch {
+        // Fallback: leave empty so chat-ui shows first available model from list
       }
-
-      if (cancelled) return
-      setShowSplash(false)
-    }
-
-    void boot()
-
+    })()
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
   }, [])
 
@@ -210,10 +158,74 @@ function App() {
     const stored = localStorage.getItem('lastActiveSection')
     return stored === 'skills' || stored === 'automation' ? stored : 'chat'
   })
-  const [projects, setProjects] = useState<ProjectMeta[]>([])
-  const [projectSessions, setProjectSessions] = useState<Record<string, SessionMeta[]>>({})
-  const [currentProject, setCurrentProject] = useState<Project | null>(null)
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  // MIG-013 — these four slices live in the bootstrap store.
+  // Reads go through `useBootstrapSelector` so React re-renders
+  // only when the slice changes; writes go through store-aware
+  // setters that preserve React's `Dispatch<SetStateAction<T>>`
+  // shape so existing call sites (`setProjects(prev => ...)`,
+  // `setCurrentProject({ ... })`) compile unchanged.
+  const projects = useBootstrapSelector((s) => s.projects)
+  const setProjects = useCallback(
+    (next: ProjectMeta[] | ((prev: ProjectMeta[]) => ProjectMeta[])) => {
+      const value =
+        typeof next === 'function'
+          ? (next as (prev: ProjectMeta[]) => ProjectMeta[])(
+              bootstrapStore.getSnapshot().projects,
+            )
+          : next
+      bootstrapStore.setProjectList(value)
+    },
+    [],
+  )
+  const projectSessions = useBootstrapSelector((s) => s.projectSessions)
+  const setProjectSessions = useCallback(
+    (
+      next:
+        | Record<string, SessionMeta[]>
+        | ((prev: Record<string, SessionMeta[]>) => Record<string, SessionMeta[]>),
+    ) => {
+      const value =
+        typeof next === 'function'
+          ? (next as (prev: Record<string, SessionMeta[]>) => Record<string, SessionMeta[]>)(
+              bootstrapStore.getSnapshot().projectSessions,
+            )
+          : next
+      bootstrapStore.setProjectSessions(value)
+    },
+    [],
+  )
+  const currentProject = useBootstrapSelector((s) => s.currentProject)
+  const activeProjectId = useBootstrapSelector((s) => s.activeProjectId)
+  const setCurrentProject = useCallback(
+    (next: Project | null | ((prev: Project | null) => Project | null)) => {
+      const value =
+        typeof next === 'function'
+          ? (next as (prev: Project | null) => Project | null)(
+              bootstrapStore.getSnapshot().currentProject,
+            )
+          : next
+      bootstrapStore.selectProject({
+        projectId: bootstrapStore.getSnapshot().activeProjectId,
+        currentProject: value,
+      })
+    },
+    [],
+  )
+  const setActiveProjectId = useCallback(
+    (next: string | null | ((prev: string | null) => string | null)) => {
+      const value =
+        typeof next === 'function'
+          ? (next as (prev: string | null) => string | null)(
+              bootstrapStore.getSnapshot().activeProjectId,
+            )
+          : next
+      bootstrapStore.selectProject({
+        projectId: value,
+        currentProject: bootstrapStore.getSnapshot().currentProject,
+      })
+    },
+    [],
+  )
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [leftPaneWidth, setLeftPaneWidth] = useState(240)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
@@ -2246,55 +2258,14 @@ function App() {
     }
   }
 
-  const loadMainAppData = async () => {
-    try {
-      // Ensure default Playground project exists
-      let defaultProjectId: string | null = null
-      try {
-        const [, projId] = await ensureDefaultWorkdir()
-        defaultProjectId = projId
-      } catch {
-        // Non-fatal
-      }
-
-      const projectList = await listProjects()
-      setProjects(projectList)
-
-      const sessionsMap: Record<string, SessionMeta[]> = {}
-      for (const project of projectList) {
-        sessionsMap[project.id] = await listProjectSessions(project.id)
-      }
-      setProjectSessions(sessionsMap)
-
-      // Start on Home screen with default project pre-selected
-      if (defaultProjectId) {
-        const project = projectList.find((p) => p.id === defaultProjectId)
-        if (project) {
-          setActiveProjectId(defaultProjectId)
-          setCurrentProject({
-            id: project.id,
-            name: project.name,
-            workdir: project.workdir,
-            created_at: project.created_at,
-            updated_at: '',
-          })
-        }
-      }
-      setActiveSessionId(null)
-
-      // Sync active model after onboarding completes
-      try {
-        const activeModel = await invoke<{ provider_id: string; model_id: string } | null>('model_get_active')
-        if (activeModel) {
-          setSelectedModel(`${activeModel.provider_id}/${activeModel.model_id}`)
-        }
-      } catch {
-        // Ignore — user can select model manually
-      }
-    } catch (err) {
-      console.error('[onboarding→main] Failed to load projects:', err)
-    }
-  }
+  // MIG-013 — `loadMainAppData` removed: its responsibilities
+  // are now owned by `runBootSequence` (in
+  // `src/boot/boot-orchestrator.ts`), which is invoked both on
+  // first boot (via the `useEffect` at the top of this file) and
+  // after onboarding completes (via `handleOnboardingComplete`).
+  // Keeping a second code path would re-introduce the exact
+  // "two boot orchestrators" anti-pattern MIG-013 was designed
+  // to retire.
 
   const promptDownloadSenseVoiceAfterOnboarding = async () => {
     // 已经下载过就跳过；通过 stt_model_status 判断
@@ -2348,49 +2319,47 @@ function App() {
   }
 
   const handleOnboardingComplete = () => {
-    setShowOnboarding(false)
-    void loadMainAppData()
+    // MIG-013 — onboarding_complete resets the store to the
+    // splash state, then we re-run the canonical boot sequence
+    // so `phase` properly transitions to `'main'` (via
+    // `store.bootReady(...)`). Previously this called
+    // `loadMainAppData()` directly, which populated project
+    // state but never moved the store past `'splash'`.
+    bootstrapStore.onboardingComplete()
+    void runBootSequence(bootstrapStore, {
+      getOnboardingState,
+      ensureDefaultWorkdir,
+      listProjects,
+      listProjectSessions,
+    })
     // Onboarding 完成后询问是否下载本地中文 STT 模型（SenseVoice 230MB）
     void promptDownloadSenseVoiceAfterOnboarding()
   }
 
-  // Phase M2.7 — App.tsx composes BootShell + MainShell.
-  // Phase M2.6 audit fix — boot route is computed by `useBootRoute`
-  // which derives the canonical 4-state decision from boot-local
-  // flags + the activation projection (`show_splash` /
-  // `show_onboarding` / `show_activation_gate` / `show_main_shell`).
-  // The hook returns the 4-state value; `bootRouteToSurface` maps
-  // it onto BootShell's 3-state `surface` prop (the
-  // `show_activation_gate` route renders as `'main'` so the
-  // already-mounted `<ActivationGateOverlay/>` takes over the
-  // screen — the overlay IS the activation-gate UI today).
-  const bootRoute = useBootRoute({ showSplash, showOnboarding })
-  const bootSurface = bootRouteToSurface(bootRoute)
-
+  // MIG-013 — App.tsx renders via the canonical
+  // `<AppShell>` container. Boot phase / boot surface decision
+  // moved into `AppShell` (which reads the bootstrap store
+  // internally); AppShell reads activation-gate state via the
+  // existing `useBootRoute` hook inside its own body.
   return (
-    <BootShell
-      surface={bootSurface}
+    <AppShell
+      navbar={{
+        activeSection,
+        onSelectSection: setActiveSection,
+        onOpenSettings: () => openSettingsWindow(),
+        appIconSrc,
+      }}
       onWindowDrag={startWindowDrag}
       onOnboardingComplete={handleOnboardingComplete}
-    >
-      <MainShell
-        navbar={{
-          activeSection,
-          onSelectSection: setActiveSection,
-          onOpenSettings: () => openSettingsWindow(),
-          onStartWindowDrag: startWindowDrag,
-          appIconSrc,
-        }}
-      >
-          {/* Phase TTS-E：聊天语音状态浮层（左下角） */}
-          {activeSection === 'chat' && (
-            <AgentVoiceIndicator
-              isPlaying={agentVoice.isPlaying}
-              pending={agentVoice.pending}
-            />
-          )}
-          {activeSection === 'chat' ? (
-            <ChatWorkspace
+      chatSectionOverlay={
+        <AgentVoiceIndicator
+          isPlaying={agentVoice.isPlaying}
+          pending={agentVoice.pending}
+        />
+      }
+      router={{
+        chat: (
+          <ChatWorkspace
               projects={projects}
               projectSessions={projectSessions}
               activeProjectId={activeProjectId}
@@ -2437,16 +2406,20 @@ function App() {
               onPreviewFocusChange={handlePreviewFocusChange}
               runningSessionIds={runningSessionIds}
             />
-          ) : activeSection === 'memory' ? (
-            <MemoryBrowser
-              onStartWindowDrag={startWindowDrag}
-              activeProjectId={activeProjectId}
-              activeSessionId={activeSessionId}
-            />
-          ) : (
-            <SectionWorkspace section={activeSection} onBackToChat={() => setActiveSection('chat')} />
-          )}
-
+        ),
+        memory: (
+          <MemoryBrowser
+            onStartWindowDrag={startWindowDrag}
+            activeProjectId={activeProjectId}
+            activeSessionId={activeSessionId}
+          />
+        ),
+        sectionWorkspace: ({ section, onBackToChat }) => (
+          <SectionWorkspace section={section} onBackToChat={onBackToChat} />
+        ),
+      }}
+      overlays={
+        <>
           <CreateProjectDialog
             isOpen={isCreateProjectOpen}
             onClose={() => setIsCreateProjectOpen(false)}
@@ -2515,8 +2488,9 @@ function App() {
             open={isTelemetryDrawerOpen}
             onClose={() => setIsTelemetryDrawerOpen(false)}
           />
-      </MainShell>
-    </BootShell>
+        </>
+      }
+    />
   )
 }
 
