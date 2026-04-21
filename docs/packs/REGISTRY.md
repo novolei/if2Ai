@@ -10,16 +10,17 @@
 
 ## Active
 
-| Pack | Type | Goal | Owner |
-|------|------|------|-------|
-| _(无 — GFR-002 待激活)_ | — | — | — |
+| Pack                    | Type | Goal | Owner |
+| ----------------------- | ---- | ---- | ----- |
+| _(无 — GFR-002 待激活)_ | —    | —    | —     |
 
 ## Recently Done
 
-| Pack | Type | Goal | Done |
-|------|------|------|------|
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md) | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs` | 2026-04-21 |
+| Pack                                                       | Type     | Goal                                                                   | Done       |
+| ---------------------------------------------------------- | -------- | ---------------------------------------------------------------------- | ---------- |
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)   | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`   | 2026-04-21 |
 | [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md) | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs` | 2026-04-21 |
+| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md) | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs` | 2026-04-21 |
 
 ---
 
@@ -27,32 +28,32 @@
 
 完整 28 个 GFR 路线图：详见 [docs/packs/refactor/](./refactor/)。
 
-| GFR        | 状态       | Source                                       | Destination                                         |
-| ---------- | ---------- | -------------------------------------------- | --------------------------------------------------- |
-| GFR-001    | **done**   | `commands/agent.rs` `RealApiClient` + `block_conversion` | `application/real_api_client.rs` + `runtime/block_conversion.rs` |
-| GFR-002    | merged     | merged → GFR-002a/b/c (sliced 2026-04-21 因 700 LOC 单 pack 太大) | — |
-| GFR-002a   | **done**   | `commands/agent.rs` sanitize cluster (≈3510–3672, ~162 LOC) | `application/prompt_planner/sanitize.rs` |
-| GFR-002b   | pending    | `commands/agent.rs` governor cluster (RequestPreflightStats + ContextGovernor) | `application/prompt_planner/governor.rs` |
-| GFR-002c   | pending    | `commands/agent.rs` preflight estimators (token/char count helpers) | `application/prompt_planner/preflight.rs` |
-| GFR-003    | pending    | `commands/agent.rs` permission lifecycle     | `application/permission_service.rs`                 |
-| GFR-004    | pending    | `commands/agent.rs` 散点 emit                | `application/stream_emitter_service.rs`             |
-| GFR-005    | pending    | `commands/agent.rs` turn body                | `application/turn_service`                          |
-| GFR-006    | pending    | `commands/agent.rs` tool exec + trajectory   | `application/{tool_executor,trajectory_service}.rs` |
-| GFR-007    | pending    | `chat-ui.tsx` markdown helpers               | `src/modules/markdown/`                             |
-| GFR-008    | pending    | `chat-ui.tsx` skills report                  | `src/modules/skills-report/`                        |
-| GFR-009    | pending    | `chat-ui.tsx` tool projection                | `src/modules/tool-projection/`                      |
-| GFR-010    | pending    | `chat-ui.tsx` + `ProjectRail.tsx`            | `src/modules/project-rail/`                         |
-| GFR-011    | pending    | `chat-ui.tsx` composer                       | `src/modules/chat/composer/`                        |
-| GFR-012    | pending    | `chat-ui.tsx` transcript                     | `src/modules/chat/transcript/`                      |
-| GFR-013    | pending    | `chat-ui.tsx` shell shrink                   | `src/modules/chat/shell/`                           |
-| GFR-014    | pending    | `App.tsx` boot shell                         | `src/modules/boot-shell/`                           |
-| GFR-015    | pending    | `App.tsx` shell-router + window-bridge       | `src/modules/{shell-router,window-bridge}/`         |
-| GFR-016    | pending    | `tauri.ts` types                             | `src/transport/contracts.ts`                        |
-| GFR-017    | pending    | `tauri.ts` feature wrappers                  | `src/transport/{browser,session,...}.ts`            |
-| GFR-018    | pending    | `tauri.ts` listeners                         | `src/runtime-projection/translator/`                |
-| GFR-T1-A~I | pending    | T1 后端 god-files                            | 各自 module 子目录                                  |
-| GFR-T2-A   | pending    | `ProviderSetupStep.tsx`                      | `onboarding/steps/provider/`                        |
-| GFR-T2-B   | pending    | `SkillsSettingsPage.tsx`                     | `settings/pages/skills/`                            |
+| GFR        | 状态     | Source                                                                         | Destination                                                      |
+| ---------- | -------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| GFR-001    | **done** | `commands/agent.rs` `RealApiClient` + `block_conversion`                       | `application/real_api_client.rs` + `runtime/block_conversion.rs` |
+| GFR-002    | merged   | merged → GFR-002a/b/c (sliced 2026-04-21 因 700 LOC 单 pack 太大)              | —                                                                |
+| GFR-002a   | **done** | `commands/agent.rs` sanitize cluster (≈3510–3672, ~162 LOC)                    | `application/prompt_planner/sanitize.rs`                         |
+| GFR-002b   | pending  | `commands/agent.rs` governor cluster (RequestPreflightStats + ContextGovernor) | `application/prompt_planner/governor.rs`                         |
+| GFR-002c   | pending  | `commands/agent.rs` preflight estimators (token/char count helpers)            | `application/prompt_planner/preflight.rs`                        |
+| GFR-003    | pending  | `commands/agent.rs` permission lifecycle                                       | `application/permission_service.rs`                              |
+| GFR-004    | pending  | `commands/agent.rs` 散点 emit                                                  | `application/stream_emitter_service.rs`                          |
+| GFR-005    | pending  | `commands/agent.rs` turn body                                                  | `application/turn_service`                                       |
+| GFR-006    | pending  | `commands/agent.rs` tool exec + trajectory                                     | `application/{tool_executor,trajectory_service}.rs`              |
+| GFR-007    | pending  | `chat-ui.tsx` markdown helpers                                                 | `src/modules/markdown/`                                          |
+| GFR-008    | pending  | `chat-ui.tsx` skills report                                                    | `src/modules/skills-report/`                                     |
+| GFR-009    | pending  | `chat-ui.tsx` tool projection                                                  | `src/modules/tool-projection/`                                   |
+| GFR-010    | pending  | `chat-ui.tsx` + `ProjectRail.tsx`                                              | `src/modules/project-rail/`                                      |
+| GFR-011    | pending  | `chat-ui.tsx` composer                                                         | `src/modules/chat/composer/`                                     |
+| GFR-012    | pending  | `chat-ui.tsx` transcript                                                       | `src/modules/chat/transcript/`                                   |
+| GFR-013    | pending  | `chat-ui.tsx` shell shrink                                                     | `src/modules/chat/shell/`                                        |
+| GFR-014    | pending  | `App.tsx` boot shell                                                           | `src/modules/boot-shell/`                                        |
+| GFR-015    | pending  | `App.tsx` shell-router + window-bridge                                         | `src/modules/{shell-router,window-bridge}/`                      |
+| GFR-016    | pending  | `tauri.ts` types                                                               | `src/transport/contracts.ts`                                     |
+| GFR-017    | pending  | `tauri.ts` feature wrappers                                                    | `src/transport/{browser,session,...}.ts`                         |
+| GFR-018    | pending  | `tauri.ts` listeners                                                           | `src/runtime-projection/translator/`                             |
+| GFR-T1-A~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
+| GFR-T2-A   | pending  | `ProviderSetupStep.tsx`                                                        | `onboarding/steps/provider/`                                     |
+| GFR-T2-B   | pending  | `SkillsSettingsPage.tsx`                                                       | `settings/pages/skills/`                                         |
 
 ---
 

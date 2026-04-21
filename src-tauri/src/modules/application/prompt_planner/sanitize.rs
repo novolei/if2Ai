@@ -159,11 +159,7 @@ pub(crate) fn remove_tool_use_blocks(message: &mut InputMessage) -> Vec<String> 
     removed_ids
 }
 
-pub(crate) fn extend_sample_ids(
-    target: &mut Vec<String>,
-    incoming: &[String],
-    max_samples: usize,
-) {
+pub(crate) fn extend_sample_ids(target: &mut Vec<String>, incoming: &[String], max_samples: usize) {
     for sample in incoming {
         if target.len() >= max_samples {
             break;
