@@ -12,13 +12,14 @@
 
 | Pack                                     | Type | Goal | Owner |
 | ---------------------------------------- | ---- | ---- | ----- |
-| _(无 — preamble 收口完成；下一个由人写)_ | —    | —    | —     |
+| _(无 — 下一刀建议 GFR-T1-B-2 schema 集群)_ | —    | —    | —     |
 
 ## Recently Done
 
-| Pack                                                           | Type     | Goal                                                                                                                | Done       |
-| -------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
-| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)      | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                   | 2026-04-21 |
+| Pack                                                                       | Type     | Goal                                                                                                                | Done       |
+| -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [GFR-T1-B-1](./refactor/GFR-T1-B-1-extract-config-json-helpers.md)         | refactor | Extract 14 JSON parse helpers from `runtime/config.rs` (also git mv to config/mod.rs); start of T1-B 5-slice arc    | 2026-04-21 |
+| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)                  | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                   | 2026-04-21 |
 | [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)  | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                | 2026-04-21 |
 | [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)      | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`            | 2026-04-21 |
 | [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md) | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                  | 2026-04-21 |
@@ -64,7 +65,9 @@
 | GFR-017    | pending  | `tauri.ts` feature wrappers                                                    | `src/transport/{browser,session,...}.ts`                         |
 | GFR-018    | pending  | `tauri.ts` listeners                                                           | `src/runtime-projection/translator/`                             |
 | GFR-T1-A   | **cancelled** | source 是 orphan 死代码（plugins/lib+hooks + commands/lib，共 6057 LOC）；2026-04-21 整体 `chore(dead-code)` 删除 | — |
-| GFR-T1-B~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
+| GFR-T1-B   | sliced   | sliced into B-1 (done) + B-2..5 (pending — 人写)                               | `runtime/config/{json_helpers,schema,permission,sandbox,merge}.rs` |
+| GFR-T1-B-1 | **done** | `runtime/config.rs` JSON parse helpers (12 fn + 2 utility, ~230 LOC)           | `runtime/config/json_helpers.rs` (+ git mv to config/mod.rs)     |
+| GFR-T1-C~I | pending  | T1 后端 god-files                                                              | 各自 module 子目录                                               |
 | GFR-T2-A   | pending  | `ProviderSetupStep.tsx`                                                        | `onboarding/steps/provider/`                                     |
 | GFR-T2-B   | pending  | `SkillsSettingsPage.tsx`                                                       | `settings/pages/skills/`                                         |
 
