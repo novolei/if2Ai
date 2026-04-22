@@ -12,7 +12,7 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 GFR-T1-B-2 schema 集群)_ | —    | —    | —     |
+| _(无 — 下一刀建议 MIG-005 prompt block structure alignment)_ | —    | —    | —     |
 
 ## Recently Done
 
@@ -94,6 +94,19 @@
 | GFR-T1-C~I     | pending       | T1 后端 god-files                                                                                                 | 各自 module 子目录                                                 |
 | GFR-T2-A       | pending       | `ProviderSetupStep.tsx`                                                                                           | `onboarding/steps/provider/`                                       |
 | GFR-T2-B       | pending       | `SkillsSettingsPage.tsx`                                                                                          | `settings/pages/skills/`                                           |
+
+---
+
+## Prompt Planner Alignment Pipeline (MIG-005 ~ MIG-008)
+
+基于 [prompt-planner-gap-analysis.md](../staff-remediation/prompt-planner-gap-analysis.md) 的 UClaw 对齐路线图。
+
+| Pack    | 状态    | Phase | Goal                                                                                  | Depends On |
+| ------- | ------- | ----- | ------------------------------------------------------------------------------------- | ---------- |
+| MIG-005 | pending | P0    | PromptBlock 数据结构对齐（source + priority + is_sensitive + validation_issues）      | MIG-004    |
+| MIG-006 | pending | P1    | PromptContribution 机制 + PromptBuildMode + strict validation                         | MIG-005    |
+| MIG-007 | pending | P2    | 模块化重构（拆分为 block.rs / diagnostics.rs / build_request.rs / planner.rs）       | MIG-006    |
+| MIG-008 | pending | P2    | Coding mode 专用增强（continuation block + compaction policy + workspace augment）    | MIG-007    |
 
 ---
 
