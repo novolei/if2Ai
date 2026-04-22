@@ -1,7 +1,12 @@
 # FEAT-PCP-004: Utility And Coordinator Prompt Lanes
 
 ## Status
-- State: active
+
+- State: `done`
+- Owner: `@executor`
+- Depends On: `FEAT-PCP-001`
+- Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ## Goal
 建立 `UtilityPromptCatalog` 与 `CoordinatorPromptCatalog`，让 session-title / tool-summary / away-recap / orchestration overlays 进入统一控制面。

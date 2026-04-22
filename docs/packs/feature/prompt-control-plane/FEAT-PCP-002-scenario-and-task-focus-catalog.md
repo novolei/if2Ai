@@ -1,7 +1,12 @@
 # FEAT-PCP-002: Scenario And Task-Focus Catalog
 
 ## Status
-- State: active
+
+- State: `done`
+- Owner: `@executor`
+- Depends On: `FEAT-PCP-001`
+- Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ## Goal
 建立 `ScenarioPromptCatalog` 与 task-focus overlays，让 `chat / coding / research / planning / review` 不再只是一段内联文案。

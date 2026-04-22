@@ -2,10 +2,11 @@
 
 ## Status
 
-- State: `active`
+- State: `done`
 - Owner: `@executor`
 - Depends On: `FEAT-ID-001`
 - Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ---
 

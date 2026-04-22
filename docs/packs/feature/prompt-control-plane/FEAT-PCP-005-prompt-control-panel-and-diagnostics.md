@@ -1,7 +1,12 @@
 # FEAT-PCP-005: Prompt Control Panel And Diagnostics
 
 ## Status
-- State: active
+
+- State: `done`
+- Owner: `@executor`
+- Depends On: `FEAT-PCP-001`, `FEAT-PCP-002`, `FEAT-PCP-003`, `FEAT-PCP-004`
+- Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ## Goal
 为用户提供结构化 Prompt Control Panel，并把 activated/suppressed prompt entries 投影到 diagnostics UI。

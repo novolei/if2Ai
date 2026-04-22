@@ -1,7 +1,12 @@
 # FEAT-PCP-001: Prompt Coordinator Foundation
 
 ## Status
-- State: active
+
+- State: `done`
+- Owner: `@executor`
+- Depends On: `none`
+- Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ## Goal
 建立 `PromptCoordinator` 与 `PromptAssemblyDecision` 基础层，统一决定本 turn 该激活哪些 prompt layers / catalogs / overlays。

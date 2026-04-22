@@ -1,7 +1,12 @@
 # FEAT-PCP-003: Tool Prompt Catalog And Injection
 
 ## Status
-- State: active
+
+- State: `done`
+- Owner: `@executor`
+- Depends On: `FEAT-PCP-001`
+- Last Updated: `2026-04-22`
+- Completed Commit: `d902a06`
 
 ## Goal
 建立 `ToolPromptCatalog` 与按条件注入机制，优先覆盖 web / file / memory / ask-user 四类 tool family。

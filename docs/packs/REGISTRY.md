@@ -4,20 +4,30 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-21
+> 最后更新: 2026-04-22
 
 ---
 
 ## Active
 
-| Pack                                       | Type | Goal | Owner |
-| ------------------------------------------ | ---- | ---- | ----- |
-| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | 建立 PromptCoordinator 与 assembly decision foundation | @executor |
+| Pack   | Type | Goal | Owner |
+| ------ | ---- | ---- | ----- |
+| _(无)_ | —    | —    | —     |
 
 ## Recently Done
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | feature | Prompt control panel + diagnostics projection | 2026-04-22 |
+| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | feature | Utility / coordinator prompt lanes | 2026-04-22 |
+| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | feature | Tool prompt catalog + conditional injection | 2026-04-22 |
+| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | feature | Scenario / task-focus prompt catalog | 2026-04-22 |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | Prompt coordinator + assembly decision foundation | 2026-04-22 |
+| [FEAT-ID-005](./feature/identity-foundation/FEAT-ID-005-memory-identity-tagging-and-observability.md) | feature | Memory identity tagging + observability | 2026-04-22 |
+| [FEAT-ID-004](./feature/identity-foundation/FEAT-ID-004-settings-and-session-identity-ui.md) | feature | Settings + session identity UI | 2026-04-22 |
+| [FEAT-ID-003](./feature/identity-foundation/FEAT-ID-003-session-persistence-and-identity-commands.md) | feature | Session persistence + identity commands | 2026-04-22 |
+| [FEAT-ID-002](./feature/identity-foundation/FEAT-ID-002-prompt-planner-soul-persona-blocks.md) | feature | Prompt planner Soul / Persona blocks | 2026-04-22 |
+| [FEAT-ID-001](./feature/identity-foundation/FEAT-ID-001-identity-domain-and-resolution.md) | feature | Identity domain model + resolver | 2026-04-22 |
 | [MIG-007](./feature/prompt-planner-alignment/MIG-007-prompt-planner-modularization.md) | feature  | 将 prompt_planner/mod.rs 拆分为 block/diagnostics/build_request/planner 子模块，提升可维护性                              | 2026-04-22 |
 | [MIG-006](./feature/prompt-planner-alignment/MIG-006-prompt-contribution-mechanism.md) | feature  | 实现 PromptContribution 机制 + PromptBuildMode + strict validation，让子系统独立贡献 prompt blocks                      | 2026-04-22 |
 | [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md) | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                  | 2026-04-22 |
@@ -127,9 +137,9 @@
 
 ### Active
 
-| Pack                                       | Type | Goal | Owner |
-| ------------------------------------------ | ---- | ---- | ----- |
-| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | Prompt coordinator + assembly decision foundation | @executor |
+| Pack   | Type | Goal | Owner |
+| ------ | ---- | ---- | ----- |
+| _(无)_ | —    | —    | —     |
 
 ### Migration-Core Pipeline
 
@@ -176,11 +186,11 @@
 
 | Pack | 状态 | Goal |
 | ---- | ---- | ---- |
-| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | active | Prompt coordinator + assembly decision foundation |
-| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | active | Scenario / task-focus prompt catalog |
-| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | active | Tool prompt catalog + conditional injection |
-| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | active | Utility / coordinator prompt lanes |
-| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | active | Prompt control panel + diagnostics projection |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | **done** | Prompt coordinator + assembly decision foundation |
+| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | **done** | Scenario / task-focus prompt catalog |
+| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | **done** | Tool prompt catalog + conditional injection |
+| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | **done** | Utility / coordinator prompt lanes |
+| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | **done** | Prompt control panel + diagnostics projection |
 
 > 新 Pack 用 `./scripts/pack init <PACK-ID> --type feature --slug <slug> --files <a> [<b>...]` 生成。
 > `migration-core` 是当前优先级最高的 feature pipeline；老 `CPD-001` 保留作历史 pack，不再作为默认 active 入口。
