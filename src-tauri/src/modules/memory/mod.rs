@@ -29,46 +29,73 @@ pub mod summary;
 pub mod ticker;
 pub mod working_memory;
 
-// JobRunner module — consumed by scheduler, bootstrap and several
-// memory pipeline jobs (rolling summary, compile, fact extract).
-pub use job_runner::{JobAttempt, JobError, JobRunner, JobStatus};
+// JobRunner module — `JobRunner` itself is consumed by scheduler /
+// bootstrap; the `JobAttempt` / `JobError` / `JobStatus` enums are
+// part of the public job-status surface but no bin caller imports
+// them directly (they appear in trait signatures + tests only).
+pub use job_runner::JobRunner;
+#[allow(unused_imports)]
+pub use job_runner::{JobAttempt, JobError, JobStatus};
 
-// UtilityLlm shim — the only LLM seam visible to memory subsystems
-// (v2 §0.5 Δ-1). Active producers: rolling summary, compile,
-// extractor, diary (see modules/memory/{summary,compiler}/*).
-pub use llm::{MockUtilityLlm, ProviderUtilityLlm, UtilityLlm};
+// UtilityLlm shim — `UtilityLlm` trait + `MockUtilityLlm` are
+// consumed widely; `ProviderUtilityLlm` is the production
+// implementation held on AppState, which the bin reaches for via
+// the deep path (`llm::ProviderUtilityLlm::new`) so this re-export
+// is for external consumers only.
+pub use llm::{MockUtilityLlm, UtilityLlm};
+#[allow(unused_imports)]
+pub use llm::ProviderUtilityLlm;
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
 
-// Session summary store — consumed by RollingSummarizer, runtime
-// compaction, and turn_service stream finalize.
-pub use summary::{
-    NullSessionSummaryStore, SessionSummaryRecord, SessionSummaryStore, SqliteSessionSummaryStore,
-    SummarySource,
-};
+// Session summary store — `SessionSummaryStore` trait + the two
+// implementations are wired into AppState. `SessionSummaryRecord`
+// and `SummarySource` are part of the public schema surface; bin
+// consumers reach for them via the deeper path
+// (`summary::schema::*`) so the top-level re-export is for external
+// users / tests.
+pub use summary::{NullSessionSummaryStore, SessionSummaryStore, SqliteSessionSummaryStore};
+#[allow(unused_imports)]
+pub use summary::{SessionSummaryRecord, SummarySource};
 
-// Pinned-memory subsystem — wired into the pin_memory tool and the
-// frontend Pinned editor via commands/pinned.rs.
+// Pinned-memory subsystem — `PinnedStore` trait + impls are used.
+// The supporting DTOs (`PinScope` / `PinSource` / `PinnedItem` /
+// the two cap consts) are public for embedders + tests; bin code
+// reaches for them via `pinned::types::*` directly.
+pub use pinned::{NullPinnedStore, PinnedStore, SqlitePinnedStore};
+#[allow(unused_imports)]
 pub use pinned::{
-    NullPinnedStore, PinScope, PinSource, PinnedItem, PinnedStore, SqlitePinnedStore,
-    MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
+    PinScope, PinSource, PinnedItem, MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
 };
 
-// System-prompt memory injection — consumed by
-// application::memory_injection_service and prompt_planner.
-pub use inject::{build_memory_injection, MemoryInjection, CHARS_PER_TOKEN_ESTIMATE};
+// System-prompt memory injection — `build_memory_injection` and
+// `MemoryInjection` are consumed by application::memory_injection_service.
+// `CHARS_PER_TOKEN_ESTIMATE` is part of the public surface for the
+// occasional ad-hoc consumer (tests, external embedders), so we keep
+// it exported even though the bin doesn't reach for it directly.
+pub use inject::{build_memory_injection, MemoryInjection};
+#[allow(unused_imports)]
+pub use inject::CHARS_PER_TOKEN_ESTIMATE;
 
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
 pub use scope::MemoryExecutionScope;
 
-// MemoryCompiler — consumed by commands/memory.rs (memory_compile_now)
-// and the daily ticker pipeline.
-pub use compiler::{CompilePaths, CompileResult, MemoryCompiler};
+// MemoryCompiler — held on AppState; CompilePaths / CompileResult
+// are reached for directly via the deep path by commands/memory/compile.rs,
+// but kept re-exported here so external consumers don't need to know
+// the submodule layout.
+pub use compiler::MemoryCompiler;
+#[allow(unused_imports)]
+pub use compiler::{CompilePaths, CompileResult};
 
 // MemoryTicker — wired to AppState and triggered from runtime turn
-// hooks (notify_turn / notify_session_end → rolling-summary + compile).
-pub use ticker::{DailyStep, MemoryTicker, TickerConfig, TickerState};
+// hooks. `DailyStep` / `TickerState` are part of the public surface
+// for diagnostics consumers (TickerStatusCard etc) but no current bin
+// caller imports them — keep re-exported, allow unused.
+pub use ticker::{MemoryTicker, TickerConfig};
+#[allow(unused_imports)]
+pub use ticker::{DailyStep, TickerState};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -148,6 +175,25 @@ pub enum MemoryError {
 impl From<rusqlite::Error> for MemoryError {
     fn from(e: rusqlite::Error) -> Self {
         MemoryError::Generic(e.to_string())
+    }
+}
+
+/// Memory Audit P3 #14 — bridge `MemoryError` into the `Result<_, String>`
+/// shape that all `#[tauri::command]` IPCs return.
+///
+/// Without this, every command that touches the memory provider has to
+/// write `.map_err(|e| e.to_string())?` on every line. With it, `?`
+/// propagates a `MemoryError` directly into the IPC error payload —
+/// the `Display` impl from `thiserror::Error` produces the same
+/// human-readable message that the old `.map_err` chain produced, so
+/// the wire shape stays identical and existing frontend error handling
+/// keeps working.
+///
+/// New code should prefer the `?`-only style; the old `.map_err` calls
+/// can be migrated opportunistically without a flag day.
+impl From<MemoryError> for String {
+    fn from(e: MemoryError) -> Self {
+        e.to_string()
     }
 }
 

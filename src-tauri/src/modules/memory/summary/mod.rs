@@ -13,7 +13,10 @@ pub mod schema;
 pub mod store;
 
 // Prompt builder + budget helpers — consumed by RollingSummarizer
-// (rolling.rs) and unit tests.
+// (rolling.rs) and the prompt-budget unit tests. Bin code reaches
+// for these via the `summary::prompt::*` deep path; the top-level
+// re-export keeps the public surface stable for embedders / docs.
+#[allow(unused_imports)]
 pub use prompt::{
     build_conversation_text, build_rolling_summary_prompt, compute_budget, RollingSummaryPrompt,
     SummaryBudget, ASSISTANT_CAP, MAX_MAX_TOKENS, MAX_TOTAL_BUDGET, MIN_MAX_TOKENS,
