@@ -3,7 +3,9 @@
 //! Allows subsystems (Memory, MCP, Skills, Learning) to contribute
 //! prompt blocks without modifying the planner core.
 
+use super::planner::PromptPlannerError;
 use super::{PromptBlock, PromptBlockKind, PromptContribution, PromptValidationIssue};
+use crate::modules::runtime::prompt::PromptBuildError;
 
 /// Merge external contributions into core blocks.
 ///
@@ -21,7 +23,7 @@ pub(super) fn merge_external_contributions(
     core_blocks: Vec<PromptBlock>,
     external: Vec<PromptContribution>,
     strict_mode: bool,
-) -> Result<(Vec<PromptBlock>, Vec<PromptValidationIssue>), super::PromptPlannerError> {
+) -> Result<(Vec<PromptBlock>, Vec<PromptValidationIssue>), PromptPlannerError> {
     let mut issues: Vec<PromptValidationIssue> = Vec::new();
     let mut accepted: Vec<PromptContribution> = Vec::new();
 
@@ -29,7 +31,10 @@ pub(super) fn merge_external_contributions(
     for ext in external {
         let forbidden_sensitive = matches!(
             ext.kind,
-            PromptBlockKind::System | PromptBlockKind::Persona
+            PromptBlockKind::System
+                | PromptBlockKind::Soul
+                | PromptBlockKind::Persona
+                | PromptBlockKind::Scenario
         );
         if forbidden_sensitive {
             let issue = PromptValidationIssue {
@@ -41,12 +46,9 @@ pub(super) fn merge_external_contributions(
             };
             if strict_mode {
                 // In strict mode, return an error via PromptPlannerError directly
-                return Err(super::PromptPlannerError::Build(
-                    super::PromptBuildError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        issue.message.clone(),
-                    )),
-                ));
+                return Err(PromptPlannerError::Build(PromptBuildError::Io(
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, issue.message.clone()),
+                )));
             }
             issues.push(issue);
             continue;
@@ -73,7 +75,7 @@ pub(super) fn merge_external_contributions(
                 title: ext.title.clone(),
                 content: ext.body.clone(),
                 source: ext.source.clone(),
-                priority: 10, // External contributions have lower priority
+                priority: 10,        // External contributions have lower priority
                 is_sensitive: false, // External contributions are non-sensitive by validation
             });
             consumed[idx] = true;
@@ -102,7 +104,9 @@ pub(super) fn merge_external_contributions(
 fn kind_slug(kind: PromptBlockKind) -> &'static str {
     match kind {
         PromptBlockKind::System => "system",
+        PromptBlockKind::Soul => "soul",
         PromptBlockKind::Persona => "persona",
+        PromptBlockKind::Scenario => "scenario",
         PromptBlockKind::WebToolsRoutingGuide => "web_tools",
         PromptBlockKind::MemoryInjectionPinned => "memory_pinned",
         PromptBlockKind::MemoryInjectionCompiled => "memory_compiled",
