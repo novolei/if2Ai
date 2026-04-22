@@ -143,7 +143,7 @@
 | 6    | P0     | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md)     | **done** | 让主聊天链走 gateway conversations/streaming surface  |
 | 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)   | **done** | 让 execution mode / preflight 成为真实 product gate   |
 | 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | **done** | 把 prompt planner 升级成 traceable contract           |
-| 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | draft    | 打通真实 memory lifecycle 闭环                        |
+| 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | **done** | 打通真实 memory lifecycle 闭环                        |
 | 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | draft    | 把 Tauri host 收口成 desktop host thin shell          |
 | 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | draft    | 把前端切到 canonical runtime projection 单一真相路径  |
 | 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)                            | draft    | 建立统一 shell truth                                  |

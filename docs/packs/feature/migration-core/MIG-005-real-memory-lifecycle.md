@@ -2,10 +2,11 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [memory-write-recall-lifecycle](../../staff-remediation/gap-modules/memory-write-recall-lifecycle/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Completed: `2026-04-22`
+- Last Updated: `2026-04-22`
 
 ---
 
