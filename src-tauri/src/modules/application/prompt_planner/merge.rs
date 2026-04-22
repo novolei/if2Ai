@@ -35,6 +35,7 @@ pub(super) fn merge_external_contributions(
                 | PromptBlockKind::Soul
                 | PromptBlockKind::Persona
                 | PromptBlockKind::Scenario
+                | PromptBlockKind::DayAwareness
         );
         if forbidden_sensitive {
             let issue = PromptValidationIssue {
@@ -117,5 +118,6 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::Mcp => "mcp",
         PromptBlockKind::CodingContext => "coding_context",
         PromptBlockKind::Continuation => "continuation",
+        PromptBlockKind::DayAwareness => "day_awareness",
     }
 }

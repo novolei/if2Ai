@@ -5,6 +5,7 @@ import {
   BookOpen,
   Brain,
   Check,
+  Clock,
   Download,
   History,
   Sliders,
@@ -70,6 +71,11 @@ export function MemorySettingsPage() {
   const [policyEnforceMode, setPolicyEnforceMode] = useState<MemoryPolicyEnforceMode>('shadow')
   const [promotion, setPromotion] = useState<PromotionThresholds>(DEFAULT_PROMOTION_THRESHOLDS)
 
+  // MEM-MOD-PD0 — Day Awareness controls.
+  // Empty string means "no override" → backend falls back to UTC.
+  const [timezone, setTimezone] = useState<string>('')
+  const [cutoffHour, setCutoffHour] = useState<number>(4)
+
   // Phase 8B.10 / T-UI-2 — modal state for the compiled memory viewer.
   const [compiledViewerOpen, setCompiledViewerOpen] = useState(false)
   // Phase 8B.11 / T-UI-3 — modal state for the session-summary timeline.
@@ -95,6 +101,8 @@ export function MemorySettingsPage() {
       setRecallMode(cfg.recall_mode)
       setPolicyEnforceMode(cfg.policy_enforce_mode)
       setPromotion(cfg.promotion ?? DEFAULT_PROMOTION_THRESHOLDS)
+      setTimezone(cfg.timezone ?? '')
+      setCutoffHour(cfg.logical_day_cutoff_hour ?? 4)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -132,6 +140,8 @@ export function MemorySettingsPage() {
         recall_mode: recallMode,
         policy_enforce_mode: policyEnforceMode,
         promotion,
+        timezone: timezone.trim() === '' ? null : timezone.trim(),
+        logical_day_cutoff_hour: cutoffHour,
       }
       await setMemoryConfig(config)
       toast.success('配置已保存')
@@ -600,6 +610,84 @@ export function MemorySettingsPage() {
           <span className="font-mono text-[10.5px] text-muted-foreground">
             默认: 3/0.55 · 8/0.70
           </span>
+        </div>
+      </SettingsSurface>
+
+      {/* ── Day Awareness (MEM-MOD-PD0) ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-indigo-500/[0.1]">
+            <Clock className="h-3.5 w-3.5 text-indigo-600" />
+          </div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+            时间感知 · Day Awareness
+          </div>
+        </div>
+        <p className="mb-3 text-[11.5px] text-muted-foreground">
+          决定 Agent 心中的「今天」从几点开始：默认 04:00 LOCAL 之前算前一天，避免「我熬到凌晨 3 点」的对话被误划进新一天。
+          影响所有 daily-aggregation 记忆（compile_today / diary / 周报）。
+        </p>
+
+        <div className="mb-3 flex gap-2 rounded-lg border border-amber-300/40 bg-amber-50/50 px-3 py-2 text-[11px] leading-5 text-amber-900/85">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <div>
+            <div className="font-medium">需要重启生效</div>
+            <div className="mt-0.5 text-amber-900/65">
+              <span className="font-mono">timezone</span> /{' '}
+              <span className="font-mono">cutoff_hour</span> 由{' '}
+              <span className="font-mono">runtime::config</span> 在启动时缓存为
+              <span className="font-mono"> OnceLock</span>，下次启动时新值才会被 prompt 计划读取。
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-[11.5px] font-semibold text-foreground/85">
+              时区 (IANA)
+            </label>
+            <input
+              type="text"
+              list="if2ai-tz-suggestions"
+              value={timezone}
+              placeholder="留空 = UTC（如 Asia/Shanghai）"
+              onChange={(e) => setTimezone(e.target.value)}
+              className="h-8 w-full rounded-lg border border-black/[0.09] bg-black/[0.025] px-3 text-[12.5px] font-mono outline-none transition-all focus:border-indigo-400/40 focus:ring-[3px] focus:ring-indigo-400/15"
+            />
+            <datalist id="if2ai-tz-suggestions">
+              <option value="Asia/Shanghai" />
+              <option value="Asia/Tokyo" />
+              <option value="Asia/Singapore" />
+              <option value="Asia/Hong_Kong" />
+              <option value="America/Los_Angeles" />
+              <option value="America/New_York" />
+              <option value="Europe/London" />
+              <option value="Europe/Berlin" />
+              <option value="UTC" />
+            </datalist>
+            <div className="mt-1 text-[10.5px] text-muted-foreground">
+              输入 IANA 时区名；解析失败回退 UTC。
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-[11.5px] font-semibold text-foreground/85">
+              一天起点 ({String(cutoffHour).padStart(2, '0')}:00)
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={23}
+              step={1}
+              value={cutoffHour}
+              onChange={(e) => setCutoffHour(Number(e.target.value))}
+              className="w-full accent-indigo-500"
+            />
+            <div className="mt-1 flex items-center justify-between text-[10.5px] text-muted-foreground">
+              <span>00:00（自然日）</span>
+              <span className="font-mono">默认 04:00</span>
+              <span>23:00</span>
+            </div>
+          </div>
         </div>
       </SettingsSurface>
 

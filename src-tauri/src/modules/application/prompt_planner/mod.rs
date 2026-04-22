@@ -60,6 +60,7 @@ mod planner;
 // MIG-008: Coding mode augmentation and compaction.
 mod coding_augment;
 mod compaction;
+mod day_awareness;
 
 // Re-export public types for external callers.
 pub use block::{PromptBlock, PromptBlockKind, PromptBlockSource, PromptContribution};

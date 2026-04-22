@@ -101,6 +101,16 @@ pub struct MemoryConfig {
     /// `project→global` upgrades.  See
     /// [`crate::modules::memory::promotion::PromotionThresholds`].
     pub promotion: crate::modules::memory::promotion::PromotionThresholds,
+    /// MEM-MOD-PD0 — IANA timezone name (e.g. `"Asia/Shanghai"`) used by
+    /// the logical-day pipeline. `None` means "no override" → falls back
+    /// to UTC. Surfaced so the Memory Settings UI can let the user pick
+    /// their local zone without hand-editing JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    /// MEM-MOD-PD0 — Logical-day cutoff hour in LOCAL `timezone`
+    /// (0-23, default `4`). A 04:00 boundary keeps "I worked till 03:00
+    /// last night" rolled into yesterday's daily aggregations.
+    pub logical_day_cutoff_hour: u8,
 }
 
 /// Configuration to persist.
@@ -123,6 +133,14 @@ pub struct MemoryConfigInput {
     /// [`crate::modules::memory::promotion::PromotionThresholds::default`].
     #[serde(default)]
     pub promotion: Option<crate::modules::memory::promotion::PromotionThresholds>,
+    /// MEM-MOD-PD0 — IANA timezone override.  `None` means "do not
+    /// touch the persisted value" so older clients that don't ship the
+    /// PD0 UI keep their existing zone.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// MEM-MOD-PD0 — Logical-day cutoff hour override (0-23).
+    #[serde(default)]
+    pub logical_day_cutoff_hour: Option<u8>,
 }
 
 /// Structured prompt control settings exposed to the frontend.
@@ -385,8 +403,11 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         recall_mode: None,
         policy_enforce_mode: None,
         promotion: None,
+        timezone: None,
+        logical_day_cutoff_hour: None,
     });
 
+    let memory_runtime = crate::modules::runtime::config::current().memory();
     MemoryConfig {
         total_tokens: config.total_tokens,
         system_pct: config.system_pct,
@@ -398,6 +419,13 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         recall_mode: config.recall_mode.unwrap_or_default(),
         policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
         promotion: config.promotion.unwrap_or_default(),
+        timezone: config
+            .timezone
+            .clone()
+            .or_else(|| memory_runtime.timezone().map(str::to_string)),
+        logical_day_cutoff_hour: config
+            .logical_day_cutoff_hour
+            .unwrap_or_else(|| memory_runtime.logical_day_cutoff_hour()),
     }
 }
 
@@ -424,11 +452,33 @@ pub fn set_memory_config(
             .map_err(|msg| format!("promotion thresholds invalid: {msg}"))?;
     }
 
+    if let Some(hour) = config.logical_day_cutoff_hour {
+        if hour > 23 {
+            return Err(format!(
+                "logical_day_cutoff_hour must be in 0..=23, got {hour}"
+            ));
+        }
+    }
+    if let Some(tz) = &config.timezone {
+        if !tz.is_empty()
+            && <chrono_tz::Tz as std::str::FromStr>::from_str(tz).is_err()
+        {
+            return Err(format!("unknown IANA timezone: {tz}"));
+        }
+    }
+
     write_persisted_config(&config)?;
 
-    // Note: ContextBudget is shared via Arc so we can't replace it in-place.
-    // The runtime reads persisted config on next initialization, so the
-    // disk write above is sufficient — no in-place update needed.
+    // Note: `runtime::config::current()` is a `OnceLock` snapshot taken
+    // at boot, so timezone / cutoff_hour / feature-flag changes only take
+    // effect on the next app restart. The Memory Settings UI surfaces an
+    // amber "需要重启" banner for these fields. ContextBudget is similarly
+    // restart-bound (shared via Arc).
+
+    let normalized_tz = config
+        .timezone
+        .clone()
+        .and_then(|t| if t.is_empty() { None } else { Some(t) });
 
     Ok(MemoryConfig {
         total_tokens: config.total_tokens,
@@ -441,6 +491,8 @@ pub fn set_memory_config(
         recall_mode: config.recall_mode.unwrap_or_default(),
         policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
         promotion: config.promotion.unwrap_or_default(),
+        timezone: normalized_tz,
+        logical_day_cutoff_hour: config.logical_day_cutoff_hour.unwrap_or(4),
     })
 }
 

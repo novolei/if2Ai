@@ -213,6 +213,25 @@ pub async fn build_prompt_plan(
         });
     }
 
+    // 1d. MEM-MOD-PD0 — Day Awareness block. Always emitted (the
+    // logical-day computation falls back to UTC), so the agent never
+    // loses its "today" anchor. Priority 91 sits just below Scenario
+    // and just above Web-tools routing.
+    if let Some(day_block) = super::day_awareness::render_day_awareness_block() {
+        blocks.push(PromptBlock {
+            id: "day_awareness".to_string(),
+            kind: PromptBlockKind::DayAwareness,
+            title: "day_awareness".to_string(),
+            content: day_block.content,
+            source: PromptBlockSource {
+                subsystem: "day_awareness".to_string(),
+                reference: Some(day_block.day_slug),
+            },
+            priority: 91,
+            is_sensitive: false,
+        });
+    }
+
     // 2. Web-tool routing guide (Phase 7C, slice 7C.4 parity).
     if let Some(guide) = web_tools_routing_block(&request.registered_tool_names) {
         blocks.push(PromptBlock {
@@ -638,9 +657,14 @@ mod tests {
         assert_eq!(result.plan.blocks[0].kind, PromptBlockKind::System);
         let memory_kinds: Vec<PromptBlockKind> =
             result.plan.blocks.iter().skip(1).map(|b| b.kind).collect();
+        // MEM-MOD-PD0 — Day Awareness block sits before memory injection
+        // (priority 91 vs Pinned 80) so it appears immediately after the
+        // System block. Test now asserts the full ordered slice including
+        // the DayAwareness block.
         assert_eq!(
             memory_kinds,
             vec![
+                PromptBlockKind::DayAwareness,
                 PromptBlockKind::MemoryInjectionPinned,
                 PromptBlockKind::MemoryInjectionCompiled,
                 PromptBlockKind::MemoryInjectionRules,

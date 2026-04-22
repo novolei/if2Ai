@@ -52,6 +52,11 @@ pub enum PromptBlockKind {
     CodingContext,
     /// MIG-008: Continuation block for long coding sessions.
     Continuation,
+    /// MEM-MOD-PD0: Day Awareness — gives the agent a sense of
+    /// "today" (logical day per 04:00 cutoff), time-of-day, gap since
+    /// the last conversation, and cumulative days in the relationship.
+    /// Sits at priority 92 alongside Scenario.
+    DayAwareness,
 }
 
 impl PromptBlockKind {

@@ -268,7 +268,7 @@ impl TurnService {
         let prepared_stream = self
             .prepare_chat_inputs(PrepareChatInputsRequest {
                 workdir: execution_context.workdir.clone(),
-                current_date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                current_date: crate::modules::runtime::logical_day::get_today().display,
                 os_name: std::env::consts::OS.to_string(),
                 os_family: std::env::consts::FAMILY.to_string(),
                 session_id: Some(execution_context.session_id.clone()),

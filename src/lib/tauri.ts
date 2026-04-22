@@ -1183,6 +1183,18 @@ export interface MemoryConfig {
   recall_mode: MemoryRecallMode;
   policy_enforce_mode: MemoryPolicyEnforceMode;
   promotion: PromotionThresholds;
+  /**
+   * MEM-MOD-PD0 — IANA timezone name (e.g. "Asia/Shanghai") used by
+   * the logical-day pipeline. `null` means "no override" → falls back
+   * to UTC.
+   */
+  timezone?: string | null;
+  /**
+   * MEM-MOD-PD0 — Logical-day cutoff hour in LOCAL `timezone` (0-23).
+   * Default `4` keeps "I worked till 03:00 last night" rolled into
+   * yesterday's daily aggregations.
+   */
+  logical_day_cutoff_hour: number;
 }
 
 /** Configuration input to persist. */
@@ -1196,6 +1208,10 @@ export interface MemoryConfigInput {
   recall_mode?: MemoryRecallMode;
   policy_enforce_mode?: MemoryPolicyEnforceMode;
   promotion?: PromotionThresholds;
+  /** MEM-MOD-PD0 — see {@link MemoryConfig.timezone}. */
+  timezone?: string | null;
+  /** MEM-MOD-PD0 — see {@link MemoryConfig.logical_day_cutoff_hour}. */
+  logical_day_cutoff_hour?: number;
 }
 
 export type PromptScenarioProfile =
