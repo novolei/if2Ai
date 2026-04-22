@@ -177,7 +177,17 @@ pub async fn memory_delete(state: State<'_, AppState>, key: String) -> Result<()
         .memory_provider
         .delete(&key)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Memory Audit P1 #5 — broadcast invalidation so any open frontend
+    // view (Browser, Narrative, etc.) refetches without polling.
+    let audit_ctx = AuditContext {
+        trace_id: None,
+        session_id: None,
+        project_id: None,
+        effective_workdir: None,
+    };
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "entries");
+    Ok(())
 }
 
 /// Export all memory entries, optionally filtered by category and scope.
@@ -215,7 +225,15 @@ pub async fn memory_purge(state: State<'_, AppState>, category: String) -> Resul
         .memory_provider
         .purge_category(&category)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let audit_ctx = AuditContext {
+        trace_id: None,
+        session_id: None,
+        project_id: None,
+        effective_workdir: None,
+    };
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "entries");
+    Ok(())
 }
 
 /// Wipe **every** memory entry across all categories and scopes.
@@ -244,6 +262,7 @@ pub async fn memory_clear_all(state: State<'_, AppState>) -> Result<usize, Strin
         effective_workdir: None,
     };
     MemoryAuditEmitter::memory_cleared(&audit_ctx, removed);
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "all");
     Ok(removed)
 }
 
@@ -342,6 +361,7 @@ pub async fn memory_promote(
     // audit context so listeners see "where the entry now lives".
     let audit_ctx = AuditContext::from_scope(&target_scope);
     MemoryAuditEmitter::memory_promoted(&audit_ctx, &key, from_tier.label(), target_tier.label());
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "entries");
 
     Ok(())
 }
@@ -417,6 +437,7 @@ pub async fn memory_demote(
 
     let audit_ctx = AuditContext::from_scope(&target_scope);
     MemoryAuditEmitter::memory_demoted(&audit_ctx, &key, from_tier.label(), target_tier.label());
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "entries");
 
     Ok(())
 }
@@ -595,6 +616,8 @@ pub async fn memory_compile_now(
         .await
         .map_err(|e| e.to_string())?;
     let assembled = state.memory_compiler.assemble(&exec_scope, &paths).is_ok();
+    let audit_ctx = AuditContext::from_scope(&exec_scope);
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "compiled");
     Ok(CompileReport {
         today,
         week,
@@ -664,6 +687,13 @@ pub async fn memory_compiled_clear(
             let _ = std::fs::remove_file(&fp_path);
         }
     }
+    let audit_ctx = AuditContext {
+        trace_id: None,
+        session_id: None,
+        project_id: None,
+        effective_workdir: None,
+    };
+    MemoryAuditEmitter::memory_invalidated(&audit_ctx, "compiled");
     Ok(())
 }
 

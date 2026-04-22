@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import { useRuntimeProjectionSelector } from '@/runtime-projection'
 import { toast } from 'sonner'
 import { Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { DateGroupHeader } from './DateGroupHeader'
@@ -52,6 +53,20 @@ export function MemoryNarrativeViewer({
   const [searchQuery, setSearchQuery] = useState('')
   const [sinceDays, setSinceDays] = useState(30)
 
+  // Memory Audit P1 #5 — refresh when the backend signals summaries
+  // were modified (current writers: rolling summarizer ticker, manual
+  // wipes via memory_clear_all).
+  const invalidationVersion = useRuntimeProjectionSelector(
+    (s) => s.memory.invalidationVersion,
+  )
+  const lastInvalidationScope = useRuntimeProjectionSelector(
+    (s) => s.memory.lastInvalidationScope,
+  )
+  const summaryInvalidationKey =
+    lastInvalidationScope === 'summaries' || lastInvalidationScope === 'all'
+      ? invalidationVersion
+      : 0
+
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -70,7 +85,7 @@ export function MemoryNarrativeViewer({
     return () => {
       cancelled = true
     }
-  }, [open, scope, sinceDays])
+  }, [open, scope, sinceDays, summaryInvalidationKey])
 
   useEffect(() => {
     if (!open) return

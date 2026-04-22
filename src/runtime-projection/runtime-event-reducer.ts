@@ -154,9 +154,26 @@ export function reduceRuntimeEvent(
         ring.length > MEMORY_RING_CAP
           ? ring.slice(ring.length - MEMORY_RING_CAP)
           : ring;
+      // Memory Audit P1 #5 — `memory_invalidated` is a meta-event
+      // (carries no audit content; just a refetch hint).  Bump the
+      // monotonic version + record the scope hint so React selectors
+      // keyed on `memory.invalidationVersion` re-run their fetch.
+      const isInvalidation = event.payload.event === "memory_invalidated";
+      const nextScope = isInvalidation
+        ? (typeof event.payload.extra?.scope_kind === "string"
+            ? event.payload.extra.scope_kind
+            : "entries")
+        : prev.memory.lastInvalidationScope;
       return {
         ...prev,
-        memory: { ...prev.memory, recentEvents: trimmed },
+        memory: {
+          ...prev.memory,
+          recentEvents: trimmed,
+          invalidationVersion: isInvalidation
+            ? prev.memory.invalidationVersion + 1
+            : prev.memory.invalidationVersion,
+          lastInvalidationScope: nextScope,
+        },
       };
     }
     case "memory_after_turn": {

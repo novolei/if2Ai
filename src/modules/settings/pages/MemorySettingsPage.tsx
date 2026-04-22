@@ -277,9 +277,27 @@ export function MemorySettingsPage() {
             Token 预算
           </div>
         </div>
-        <p className="mb-4 text-[11.5px] text-muted-foreground">
+        <p className="mb-3 text-[11.5px] text-muted-foreground">
           配置 Agent 上下文的 Token 分配比例
         </p>
+        {/* Honest disclaimer (Memory Audit P0 #1): set_memory_config
+            persists to memory_config.json but does NOT hot-reload the
+            in-process ContextBudget — that's loaded once from
+            ~/.if2ai/budget.yaml at startup. So changes here only take
+            effect after the next App restart. */}
+        <div className="mb-4 flex gap-2 rounded-lg border border-amber-300/40 bg-amber-50/50 px-3 py-2 text-[11px] leading-5 text-amber-900/85">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <div>
+            <div className="font-semibold">改动需重启 App 后生效</div>
+            <div className="mt-0.5 text-amber-900/65">
+              此处的 Token 总数与槽位百分比会保存到
+              <span className="mx-0.5 font-mono">~/.if2ai/memory_config.json</span>，
+              但运行时的 ContextBudget 在 App 启动时从
+              <span className="ml-0.5 font-mono">~/.if2ai/budget.yaml</span> 一次性加载，
+              不支持热更新。当前会话仍按启动时的预算执行。
+            </div>
+          </div>
+        </div>
 
         {/* Total tokens */}
         <div className="mb-4 flex items-center gap-3">
@@ -355,9 +373,28 @@ export function MemorySettingsPage() {
             记忆控制平面 V1
           </div>
         </div>
-        <p className="mb-4 text-[11.5px] text-muted-foreground">
+        <p className="mb-3 text-[11.5px] text-muted-foreground">
           控制混合检索、策略执行模式与新一代记忆管线总开关
         </p>
+        {/* Honest disclaimer (Memory Audit P0 #1): the V1 toggle and
+            recall_mode radio are persisted but the runtime currently
+            ignores them — VectorMemoryProvider is always preferred and
+            ActiveRetrievalManager always runs the 3-fold RRF pipeline.
+            This banner exists so the UI stops "lying"; we'll either
+            wire them up in P1 or remove the fields. */}
+        <div className="mb-4 flex gap-2 rounded-lg border border-amber-300/40 bg-amber-50/50 px-3 py-2 text-[11px] leading-5 text-amber-900/85">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+          <div>
+            <div className="font-semibold">实验字段 · 当前未参与运行时分支</div>
+            <div className="mt-0.5 text-amber-900/65">
+              下方 <span className="font-mono">Control Plane V1</span> 开关与
+              <span className="mx-0.5 font-mono">recall_mode</span> 选择会持久化到
+              <span className="ml-0.5 font-mono">~/.if2ai/memory_config.json</span>，
+              但当前运行时固定走「VectorMemoryProvider 优先 + 3-fold RRF 召回」路径，
+              此设置仅作记录。计划在后续 slice 中真正接入或下架。
+            </div>
+          </div>
+        </div>
 
         {/* Master kill-switch */}
         <div className="mb-4 flex items-center justify-between rounded-xl border border-black/[0.06] bg-black/[0.015] px-3 py-2.5">

@@ -441,6 +441,18 @@ export interface MemoryRollingProjection {
    * not a ring — the per-decision ring lives in
    * `writeDecisions`. */
   lastAfterTurn: MemoryAfterTurnProjection | null;
+  /** Memory Audit P1 #5 — monotonic counter bumped whenever the
+   * backend emits a `memory_invalidated` event.  Frontend views
+   * (Browser, CompiledViewer, NarrativeViewer, PinnedEditor) key
+   * their refetch effects off this so a write in one surface
+   * propagates to all open views without per-component polling.
+   *
+   * Optional companion `lastInvalidationScope` carries the coarse
+   * scope hint (`"entries" | "pinned" | "compiled" | "summaries" |
+   * "all"`) so a view can decide whether the invalidation is
+   * relevant to it. */
+  invalidationVersion: number;
+  lastInvalidationScope: string | null;
 }
 
 /** Phase M3-C closeout — per-batch projection consumed by future
@@ -533,6 +545,8 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     approvals: {},
     memory: {
       recentEvents: [],
+      invalidationVersion: 0,
+      lastInvalidationScope: null,
       lastRecallItems: [],
       writeDecisions: [],
       lastAfterTurn: null,

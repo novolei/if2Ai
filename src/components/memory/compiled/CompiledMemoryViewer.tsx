@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Loader2, RefreshCw, Trash2, X } from 'lucide-react'
 import { CompiledSectionPanel } from './CompiledSectionPanel'
+import { useRuntimeProjectionSelector } from '@/runtime-projection'
 import {
   memoryCompileNow,
   memoryCompiledClear,
@@ -74,9 +75,23 @@ export function CompiledMemoryViewer({
     }
   }, [scope])
 
+  // Memory Audit P1 #5 — only react to invalidations whose scope hint
+  // matches "compiled" or "all"; refetch otherwise gives noisy load
+  // (e.g. unrelated entry deletes shouldn't re-read all 4 markdowns).
+  const invalidationVersion = useRuntimeProjectionSelector(
+    (s) => s.memory.invalidationVersion,
+  )
+  const lastInvalidationScope = useRuntimeProjectionSelector(
+    (s) => s.memory.lastInvalidationScope,
+  )
+  const compiledInvalidationKey =
+    lastInvalidationScope === 'compiled' || lastInvalidationScope === 'all'
+      ? invalidationVersion
+      : 0
+
   useEffect(() => {
     if (open) void refresh()
-  }, [open, refresh])
+  }, [open, refresh, compiledInvalidationKey])
 
   // Close on Escape.
   useEffect(() => {

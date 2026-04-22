@@ -12,9 +12,8 @@ pub mod rolling;
 pub mod schema;
 pub mod store;
 
-// First production consumer lands in 8A.7 (RollingSummarizer); re-exports are
-// pre-wired to keep the public surface stable.
-#[allow(unused_imports)]
+// Prompt builder + budget helpers — consumed by RollingSummarizer
+// (rolling.rs) and unit tests.
 pub use prompt::{
     build_conversation_text, build_rolling_summary_prompt, compute_budget, RollingSummaryPrompt,
     SummaryBudget, ASSISTANT_CAP, MAX_MAX_TOKENS, MAX_TOTAL_BUDGET, MIN_MAX_TOKENS,
@@ -23,8 +22,6 @@ pub use prompt::{
 pub use schema::{SessionSummaryRecord, SummarySource};
 pub use store::{NullSessionSummaryStore, SessionSummaryStore, SqliteSessionSummaryStore};
 
-// Phase 8A.7 — RollingSummarizer is the first production consumer of
-// every other item in this module.  Re-exported so `AppState` can hold
-// `Arc<RollingSummarizer>` without reaching into the submodule path.
-#[allow(unused_imports)]
+// RollingSummarizer — held on AppState as Arc<RollingSummarizer>;
+// triggered from turn finalize and runtime compaction paths.
 pub use rolling::RollingSummarizer;

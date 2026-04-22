@@ -14,6 +14,7 @@
 import { useState, useEffect } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { Search, TrendingUp } from 'lucide-react'
+import { useRuntimeProjectionSelector } from '@/runtime-projection'
 import { MemoryCard, type MemoryEntryDto } from './MemoryCard'
 import { MemoryCategoryNav } from './MemoryCategoryNav'
 import { Button } from '@/components/ui/button'
@@ -102,11 +103,26 @@ export function MemoryBrowser({
     (scopeFilter === 'project' && !activeProjectId) ||
     (scopeFilter === 'session' && !activeSessionId)
 
-  // Reload whenever the filter dimensions that affect server response change.
+  // Memory Audit P1 #5 — listen for any backend `memory_invalidated`
+  // event so deletes / promotes / clears performed in *another* surface
+  // (e.g. the agent's memory_purge tool) propagate into this list
+  // without a manual refresh.
+  const invalidationVersion = useRuntimeProjectionSelector(
+    (s) => s.memory.invalidationVersion,
+  )
+
+  // Reload whenever the filter dimensions that affect server response
+  // change, or when the backend signals invalidation.
   useEffect(() => {
     loadEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, scopeFilter, activeProjectId, activeSessionId])
+  }, [
+    activeCategory,
+    scopeFilter,
+    activeProjectId,
+    activeSessionId,
+    invalidationVersion,
+  ])
 
   const loadEntries = async () => {
     setLoading(true)

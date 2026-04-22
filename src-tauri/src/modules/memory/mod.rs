@@ -29,61 +29,45 @@ pub mod summary;
 pub mod ticker;
 pub mod working_memory;
 
-// Re-exports for the JobRunner module.  `JobAttempt` / `JobStatus` /
-// `JobError` are part of the surface consumed by 8A.7+ slices
-// (rolling summary, compile, fact extract) and the future
-// MemoryJobsStatusCard UI; tagged `allow(unused_imports)` while those
-// callers land in subsequent slices so the bin build stays warning-free.
-#[allow(unused_imports)]
+// JobRunner module — consumed by scheduler, bootstrap and several
+// memory pipeline jobs (rolling summary, compile, fact extract).
 pub use job_runner::{JobAttempt, JobError, JobRunner, JobStatus};
-// Phase 8A.5 — UtilityLlm shim is the only LLM seam visible to memory
-// subsystems (v2 §0.5 Δ-1).  Producers (rolling summary, compile,
-// extractor, diary) land in 8A.6+; tagged `allow(unused_imports)` until
-// then so the bin build stays warning-free.
-#[allow(unused_imports)]
+
+// UtilityLlm shim — the only LLM seam visible to memory subsystems
+// (v2 §0.5 Δ-1). Active producers: rolling summary, compile,
+// extractor, diary (see modules/memory/{summary,compiler}/*).
 pub use llm::{MockUtilityLlm, ProviderUtilityLlm, UtilityLlm};
+
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
-// Phase 8A.5 — session summary store (T-B1).  Consumers land in 8A.6
-// (RollingSummaryPrompt) and 8A.7 (RollingSummarizer); held on
-// `AppState` from this slice so subsequent slices only need to read
-// `state.summary_store`.
-#[allow(unused_imports)]
+
+// Session summary store — consumed by RollingSummarizer, runtime
+// compaction, and turn_service stream finalize.
 pub use summary::{
     NullSessionSummaryStore, SessionSummaryRecord, SessionSummaryStore, SqliteSessionSummaryStore,
     SummarySource,
 };
-// Phase 8A.9 — pinned-memory subsystem (T-F1).  First production
-// consumer (pin_memory tool) lands in 8A.10; held on `AppState` from
-// this slice so subsequent slices only need to read
-// `state.pinned_store`.
-#[allow(unused_imports)]
+
+// Pinned-memory subsystem — wired into the pin_memory tool and the
+// frontend Pinned editor via commands/pinned.rs.
 pub use pinned::{
     NullPinnedStore, PinScope, PinSource, PinnedItem, PinnedStore, SqlitePinnedStore,
     MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
 };
-// Phase 8A.11 — system-prompt memory injection (T-F4).  First
-// production wiring (commands/agent.rs un-stash) lands in 8A.12 or a
-// subsequent slice; tagged `allow(unused_imports)` until then so the
-// bin build stays warning-free.
-#[allow(unused_imports)]
+
+// System-prompt memory injection — consumed by
+// application::memory_injection_service and prompt_planner.
 pub use inject::{build_memory_injection, MemoryInjection, CHARS_PER_TOKEN_ESTIMATE};
+
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
 pub use scope::MemoryExecutionScope;
 
-// Phase 8B.1 — MemoryCompiler skeleton (T-C1).  First production
-// consumer lands in 8B.3 (compile_today / week / longterm); held on
-// `AppState` from this slice so subsequent slices only need to read
-// `state.memory_compiler` instead of re-threading the constructor.
-#[allow(unused_imports)]
+// MemoryCompiler — consumed by commands/memory.rs (memory_compile_now)
+// and the daily ticker pipeline.
 pub use compiler::{CompilePaths, CompileResult, MemoryCompiler};
 
-// Phase 8B.6 — MemoryTicker skeleton (Sprint 2 / T-D1).  The
-// `TurnHook` impl is a no-op stub until 8B.7 wires
-// `notify_turn` / `notify_session_end` to the real
-// rolling-summary + compile pipeline; held on `AppState` from this
-// slice so subsequent slices only need to read `state.memory_ticker`.
-#[allow(unused_imports)]
+// MemoryTicker — wired to AppState and triggered from runtime turn
+// hooks (notify_turn / notify_session_end → rolling-summary + compile).
 pub use ticker::{DailyStep, MemoryTicker, TickerConfig, TickerState};
 
 use async_trait::async_trait;

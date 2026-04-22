@@ -307,6 +307,7 @@ export interface MemoryEventPayload {
     | 'memory_compiled'
     | 'memory_ticker_recovery'
     | 'memory_assembled'
+    | 'memory_invalidated'
   trace_id?: string
   session_id?: string
   project_id?: string

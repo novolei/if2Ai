@@ -192,6 +192,51 @@ pub struct RecoveredSummary {
 pub struct MemoryAuditEmitter;
 
 impl MemoryAuditEmitter {
+    /// Emit a lightweight `memory_invalidated` hint after any successful
+    /// memory write so the frontend can refetch open views (Browser,
+    /// CompiledViewer, NarrativeViewer, PinnedEditor) without each one
+    /// running its own polling loop.
+    ///
+    /// `scope_kind` is a coarse hint of what changed:
+    ///   - `"entries"`     — generic memory entry was deleted/promoted/demoted
+    ///   - `"pinned"`      — pinned memory was added/removed/reordered
+    ///   - `"compiled"`    — compiled summaries were regenerated/cleared
+    ///   - `"summaries"`   — session summary store was modified
+    ///   - `"all"`         — wholesale wipe (memory_clear_all)
+    ///
+    /// Memory Audit P1 #5 — frontend listens via `memory_event` channel
+    /// and bumps `memory.invalidationVersion`; React selectors keyed off
+    /// that version refetch automatically.
+    pub fn memory_invalidated(ctx: &AuditContext<'_>, scope_kind: &str) {
+        tracing::debug!(
+            event = "memory_invalidated",
+            trace_id = ctx.trace_id.unwrap_or("-"),
+            session_id = ctx.session_id.unwrap_or("-"),
+            project_id = ctx.project_id.unwrap_or("-"),
+            scope_kind = scope_kind,
+        );
+        let extra = serde_json::json!({ "scope_kind": scope_kind });
+        emit_to_frontend(MemoryEventPayload {
+            event: "memory_invalidated",
+            trace_id: ctx.trace_id,
+            session_id: ctx.session_id,
+            project_id: ctx.project_id,
+            effective_workdir: ctx.effective_workdir,
+            memory_key: None,
+            memory_category: None,
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            extra: Some(extra),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
     /// Emit a `memory_captured` event.
     ///
     /// Call this when an agent or tool has identified new information worth remembering,
