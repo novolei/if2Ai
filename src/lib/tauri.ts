@@ -1245,6 +1245,8 @@ export interface PromptControlPersonaOption {
   tone_rules: string[];
   collaboration_rules: string[];
   output_preferences: string[];
+  /** Avatar id (matches `src/lib/persona-avatars.ts`); `null` for built-in personas. */
+  avatar_id?: string | null;
 }
 
 export interface PromptControlCatalog {
@@ -1267,9 +1269,23 @@ export interface PersonaCustomization {
   output_preferences?: string[] | null;
 }
 
+/** Fully user-defined persona — injected into the catalog alongside built-ins. */
+export interface CustomPersonaDefinition {
+  soul_id: string;
+  name: string;
+  summary: string;
+  /** Avatar id (matches `src/lib/persona-avatars.ts`); optional. */
+  avatar_id?: string | null;
+  tone_rules?: string[];
+  collaboration_rules?: string[];
+  output_preferences?: string[];
+}
+
 export interface IdentityCustomizationPack {
   souls: Record<string, SoulCustomization>;
   personas: Record<string, PersonaCustomization>;
+  /** User-defined personas (added in pack v1.1; omit for legacy clients). */
+  custom_personas?: Record<string, CustomPersonaDefinition>;
 }
 
 /** Get the current memory configuration. */

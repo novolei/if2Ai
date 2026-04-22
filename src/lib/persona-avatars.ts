@@ -80,8 +80,26 @@ export const PERSONA_AVATAR_LIBRARY: Array<{
   },
 ];
 
-/** Get the avatar src for a persona id, or null if no bundled avatar exists. */
-export function getPersonaAvatarSrc(personaId: string | null | undefined): string | null {
-  if (!personaId) return null;
-  return PERSONA_AVATAR_BY_ID[personaId] ?? null;
+/**
+ * Resolve the avatar src for a persona.
+ *
+ * Lookup order:
+ *   1. `avatarId` (carried by user-defined personas in their `avatar_id`
+ *      field, or by built-ins that explicitly set one)
+ *   2. `personaId` (built-ins use their own id as the implicit avatar id)
+ *
+ * Returns `null` when nothing matches — callers should render a fallback
+ * (e.g. the procedural `PersonaPortrait` SVG or a Sparkles icon).
+ */
+export function getPersonaAvatarSrc(
+  personaId: string | null | undefined,
+  avatarId?: string | null,
+): string | null {
+  if (avatarId && PERSONA_AVATAR_BY_ID[avatarId]) {
+    return PERSONA_AVATAR_BY_ID[avatarId];
+  }
+  if (personaId && PERSONA_AVATAR_BY_ID[personaId]) {
+    return PERSONA_AVATAR_BY_ID[personaId];
+  }
+  return null;
 }

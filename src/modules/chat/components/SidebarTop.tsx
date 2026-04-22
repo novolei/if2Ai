@@ -198,7 +198,7 @@ export function SidebarTop({
   const activePersona: PromptControlPersonaOption | null = personaId
     ? (catalog?.personas.find((p) => p.id === personaId) ?? null)
     : null
-  const avatarSrc = getPersonaAvatarSrc(personaId)
+  const avatarSrc = getPersonaAvatarSrc(personaId, activePersona?.avatar_id)
   const agentName = resolveAgentDisplayName(settings)
 
   // Personas eligible for the *active session*: those under whichever
@@ -415,7 +415,7 @@ export function SidebarTop({
                       key={persona.id}
                       active={effectiveSessionMeta?.persona_id === persona.id}
                       onClick={() => void handleSelectPersona(persona.id)}
-                      avatarSrc={getPersonaAvatarSrc(persona.id)}
+                      avatarSrc={getPersonaAvatarSrc(persona.id, persona.avatar_id)}
                       title={persona.name}
                       subtitle={persona.summary}
                     />

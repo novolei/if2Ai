@@ -10,9 +10,10 @@ use tauri::State;
 
 use crate::commands::AppState;
 use crate::modules::identity::{
-    normalize_identity_customization_pack, read_identity_customization_pack,
-    write_identity_customization_pack, IdentityCustomizationPack, IdentityRegistry,
-    PersonaCustomization, SoulCustomization,
+    apply_identity_customization_pack, normalize_identity_customization_pack,
+    read_identity_customization_pack, write_identity_customization_pack,
+    CustomPersonaDefinition, IdentityCustomizationPack, IdentityRegistry, PersonaCustomization,
+    SoulCustomization,
 };
 use crate::modules::runtime::config::{default_prompt_control_config_path, ConfigLoader};
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
@@ -181,6 +182,11 @@ pub struct PromptControlPersonaOption {
     pub tone_rules: Vec<String>,
     pub collaboration_rules: Vec<String>,
     pub output_preferences: Vec<String>,
+    /// Avatar id for user-defined personas (matches the bundled
+    /// portrait library on the frontend). `None` for built-in personas
+    /// — frontend falls back to lookup by persona id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +201,8 @@ pub struct IdentityCustomizationPackDto {
     pub souls: BTreeMap<String, SoulCustomization>,
     #[serde(default)]
     pub personas: BTreeMap<String, PersonaCustomization>,
+    #[serde(default)]
+    pub custom_personas: BTreeMap<String, CustomPersonaDefinition>,
 }
 
 fn default_prompt_diagnostics_enabled() -> bool {
@@ -491,10 +499,18 @@ pub fn set_prompt_control_settings(
     write_prompt_control_settings_file(&request)
 }
 
-/// Return the built-in Soul / Persona catalog for the prompt control panel.
+/// Return the effective Soul / Persona catalog for the prompt control
+/// panel. This includes built-in entries plus any user-defined personas
+/// from `~/.if2ai/prompt/identity-pack.json` (custom_personas section)
+/// so newly created personas surface in the UI without needing a
+/// separate listing endpoint.
 #[tauri::command]
 pub fn get_prompt_control_catalog() -> PromptControlCatalog {
-    let registry = IdentityRegistry::builtin();
+    let builtin = IdentityRegistry::builtin();
+    // Best-effort: a malformed pack must not blank the catalog —
+    // fall back to built-in only on read error.
+    let pack = read_identity_customization_pack().unwrap_or_default();
+    let registry = apply_identity_customization_pack(&builtin, &pack);
     PromptControlCatalog {
         souls: registry
             .souls()
@@ -520,6 +536,7 @@ pub fn get_prompt_control_catalog() -> PromptControlCatalog {
                 tone_rules: persona.tone_rules.clone(),
                 collaboration_rules: persona.collaboration_rules.clone(),
                 output_preferences: persona.output_preferences.clone(),
+                avatar_id: persona.avatar_id.clone(),
             })
             .collect(),
     }
@@ -532,6 +549,7 @@ pub fn get_identity_customization_pack() -> Result<IdentityCustomizationPackDto,
     Ok(IdentityCustomizationPackDto {
         souls: pack.souls,
         personas: pack.personas,
+        custom_personas: pack.custom_personas,
     })
 }
 
@@ -551,15 +569,32 @@ pub fn set_identity_customization_pack(
             return Err(format!("unknown persona id: {persona_id}"));
         }
     }
+    // Validate user-defined personas: their id must not collide with
+    // built-in ones, and the soul they hang under must exist.
+    for (persona_id, custom) in &request.custom_personas {
+        if registry.persona(persona_id).is_some() {
+            return Err(format!(
+                "custom persona id `{persona_id}` collides with a built-in persona"
+            ));
+        }
+        if registry.soul(&custom.soul_id).is_none() {
+            return Err(format!(
+                "custom persona `{persona_id}` references unknown soul `{}`",
+                custom.soul_id
+            ));
+        }
+    }
 
     let normalized = normalize_identity_customization_pack(IdentityCustomizationPack {
         souls: request.souls,
         personas: request.personas,
+        custom_personas: request.custom_personas,
     });
     let saved = write_identity_customization_pack(&normalized)?;
     Ok(IdentityCustomizationPackDto {
         souls: saved.souls,
         personas: saved.personas,
+        custom_personas: saved.custom_personas,
     })
 }
 

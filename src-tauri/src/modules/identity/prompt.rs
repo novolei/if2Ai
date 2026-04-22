@@ -93,9 +93,7 @@ pub fn render_identity_naming_block(
     match user {
         Some(user) => {
             lines.push(format!("- 你叫 {agent}，是 {user} 的个人助手。"));
-            lines.push(format!(
-                "- You are {agent}, {user}'s personal assistant."
-            ));
+            lines.push(format!("- You are {agent}, {user}'s personal assistant."));
         }
         None => {
             lines.push(format!("- 你叫 {agent}。"));
@@ -187,6 +185,7 @@ mod tests {
             tone_rules: vec!["Be calm".to_string()],
             collaboration_rules: vec!["Name tradeoffs".to_string()],
             output_preferences: vec!["Recommendation first".to_string()],
+            avatar_id: None,
         };
 
         let rendered = render_persona_block(&persona);

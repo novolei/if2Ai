@@ -80,6 +80,7 @@ impl IdentityRegistry {
                 "权衡按主题归组，不做穷举式分类；3 个关键 tradeoff 胜过 12 条碎片。/ Group tradeoffs by theme rather than enumerating exhaustively — 3 key tradeoffs beat 12 fragments.".to_string(),
                 "复杂决策用结构化清单 / 表格呈现；纯描述性内容用短段落，不要长 bullet。/ Use structured lists or tables for complex decisions; use short paragraphs (not long bullet chains) for narrative content.".to_string(),
             ],
+            avatar_id: Some(STAFF_ARCHITECT_PERSONA_ID.to_string()),
         };
 
         let execution_partner = PersonaDefinition {
@@ -105,6 +106,7 @@ impl IdentityRegistry {
                 "结尾给出 outcome 摘要 + verification 状态（通过 / 未通过 / 未验证）。/ End with an outcome summary plus verification status (passed / failed / not yet verified).".to_string(),
                 "代码改动直接给 diff 或可执行命令，不要重复贴整段未改动的代码。/ For code changes, give diffs or executable commands — don't re-paste large untouched blocks.".to_string(),
             ],
+            avatar_id: Some(EXECUTION_PARTNER_PERSONA_ID.to_string()),
         };
 
         let mut souls = BTreeMap::new();

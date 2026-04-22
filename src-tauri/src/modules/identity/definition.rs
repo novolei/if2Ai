@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Stable, durable agent identity describing long-lived behavior.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoulDefinition {
     pub id: String,
     pub version: String,
@@ -14,7 +14,7 @@ pub struct SoulDefinition {
 }
 
 /// Session- or task-level interaction layer attached to a single soul.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersonaDefinition {
     pub id: String,
     pub soul_id: String,
@@ -24,6 +24,14 @@ pub struct PersonaDefinition {
     pub tone_rules: Vec<String>,
     pub collaboration_rules: Vec<String>,
     pub output_preferences: Vec<String>,
+    /// Optional avatar identifier matching one of the bundled persona
+    /// portrait illustrations under `src/assets/personas/`. The frontend
+    /// uses this to render the right portrait; built-in personas leave
+    /// it `None` and the frontend falls back to lookup by persona id.
+    /// User-defined personas set this to whichever avatar the user
+    /// picked in the create-persona dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_id: Option<String>,
 }
 
 /// Where the effective identity came from after resolution.
@@ -72,6 +80,7 @@ mod tests {
             tone_rules: vec!["clear".to_string()],
             collaboration_rules: vec!["name risks".to_string()],
             output_preferences: vec!["summary first".to_string()],
+            avatar_id: None,
         };
         let resolved = ResolvedIdentity {
             soul_id: soul.id.clone(),

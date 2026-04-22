@@ -19,7 +19,7 @@ pub use custom_pack::{
     apply_identity_customization_pack, default_identity_customization_pack_path,
     normalize_identity_customization_pack, persona_has_customization,
     read_identity_customization_pack, soul_has_customization, write_identity_customization_pack,
-    IdentityCustomizationPack, PersonaCustomization, SoulCustomization,
+    CustomPersonaDefinition, IdentityCustomizationPack, PersonaCustomization, SoulCustomization,
 };
 #[allow(unused_imports)]
 pub use definition::{IdentitySource, PersonaDefinition, ResolvedIdentity, SoulDefinition};

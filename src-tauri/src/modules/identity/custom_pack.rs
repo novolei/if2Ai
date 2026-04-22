@@ -14,6 +14,13 @@ pub struct IdentityCustomizationPack {
     pub souls: BTreeMap<String, SoulCustomization>,
     #[serde(default)]
     pub personas: BTreeMap<String, PersonaCustomization>,
+    /// Fully user-defined personas (not overrides of built-ins).
+    /// Added in pack v1.1; older packs simply omit this field and
+    /// serde fills it with an empty map. The map key is the persona id;
+    /// the value carries everything the registry needs to materialize
+    /// a `PersonaDefinition` at runtime.
+    #[serde(default)]
+    pub custom_personas: BTreeMap<String, CustomPersonaDefinition>,
 }
 
 pub const IDENTITY_CUSTOMIZATION_PACK_SCHEMA: &str = "if2ai.identity-pack";
@@ -47,6 +54,27 @@ pub struct PersonaCustomization {
     pub output_preferences: Option<Vec<String>>,
 }
 
+/// Fully user-defined persona — not an override, but a brand-new
+/// persona that gets injected into the registry alongside built-ins.
+/// Persisted as values inside `IdentityCustomizationPack.custom_personas`
+/// (the persona id is the map key, hence absent here).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomPersonaDefinition {
+    pub soul_id: String,
+    pub name: String,
+    pub summary: String,
+    /// Optional avatar id matching one of the bundled persona portraits
+    /// (see frontend `src/lib/persona-avatars.ts`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_id: Option<String>,
+    #[serde(default)]
+    pub tone_rules: Vec<String>,
+    #[serde(default)]
+    pub collaboration_rules: Vec<String>,
+    #[serde(default)]
+    pub output_preferences: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedIdentityCustomizationPack {
@@ -56,6 +84,8 @@ struct PersistedIdentityCustomizationPack {
     pub souls: BTreeMap<String, SoulCustomization>,
     #[serde(default)]
     pub personas: BTreeMap<String, PersonaCustomization>,
+    #[serde(default)]
+    pub custom_personas: BTreeMap<String, CustomPersonaDefinition>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +95,8 @@ struct LegacyIdentityCustomizationPack {
     pub souls: BTreeMap<String, SoulCustomization>,
     #[serde(default)]
     pub personas: BTreeMap<String, PersonaCustomization>,
+    #[serde(default)]
+    pub custom_personas: BTreeMap<String, CustomPersonaDefinition>,
 }
 
 impl SoulCustomization {
@@ -131,6 +163,7 @@ pub fn write_identity_customization_pack(
         version: IDENTITY_CUSTOMIZATION_PACK_VERSION,
         souls: normalized.souls.clone(),
         personas: normalized.personas.clone(),
+        custom_personas: normalized.custom_personas.clone(),
     };
     let json = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
@@ -138,12 +171,21 @@ pub fn write_identity_customization_pack(
 }
 
 /// Merge built-in definitions with the saved customization pack.
+///
+/// Two kinds of merge happen here:
+///   1. **Override** — entries in `pack.souls` / `pack.personas` patch
+///      individual fields of the matching built-in definition.
+///   2. **Inject** — entries in `pack.custom_personas` are brand-new
+///      personas (not overrides) that get added alongside built-ins.
+///
+/// Custom personas whose `soul_id` doesn't match any known soul are
+/// silently dropped so a stale pack never crashes the registry build.
 #[must_use]
 pub fn apply_identity_customization_pack(
     registry: &IdentityRegistry,
     pack: &IdentityCustomizationPack,
 ) -> IdentityRegistry {
-    let souls = registry
+    let souls: BTreeMap<String, SoulDefinition> = registry
         .souls()
         .map(|soul| {
             let customized = pack.souls.get(&soul.id).map_or_else(
@@ -153,7 +195,8 @@ pub fn apply_identity_customization_pack(
             (customized.id.clone(), customized)
         })
         .collect();
-    let personas = registry
+
+    let mut personas: BTreeMap<String, PersonaDefinition> = registry
         .personas()
         .map(|persona| {
             let customized = pack.personas.get(&persona.id).map_or_else(
@@ -163,6 +206,33 @@ pub fn apply_identity_customization_pack(
             (customized.id.clone(), customized)
         })
         .collect();
+
+    for (persona_id, custom) in &pack.custom_personas {
+        // Skip user-defined personas pointing at unknown souls; same
+        // policy as resolver — never let bad pack data crash registry.
+        if !souls.contains_key(&custom.soul_id) {
+            continue;
+        }
+        // User-defined ids must not silently shadow built-ins.
+        if personas.contains_key(persona_id) {
+            continue;
+        }
+        personas.insert(
+            persona_id.clone(),
+            PersonaDefinition {
+                id: persona_id.clone(),
+                soul_id: custom.soul_id.clone(),
+                version: "user".to_string(),
+                name: custom.name.clone(),
+                summary: custom.summary.clone(),
+                tone_rules: custom.tone_rules.clone(),
+                collaboration_rules: custom.collaboration_rules.clone(),
+                output_preferences: custom.output_preferences.clone(),
+                avatar_id: custom.avatar_id.clone(),
+            },
+        );
+    }
+
     IdentityRegistry::from_parts(souls, personas)
 }
 
@@ -206,6 +276,7 @@ fn parse_identity_customization_pack_json(raw: &str) -> Result<IdentityCustomiza
             IdentityCustomizationPack {
                 souls: persisted.souls,
                 personas: persisted.personas,
+                custom_personas: persisted.custom_personas,
             },
         ));
     }
@@ -219,6 +290,7 @@ fn parse_identity_customization_pack_json(raw: &str) -> Result<IdentityCustomiza
         IdentityCustomizationPack {
             souls: legacy.souls,
             personas: legacy.personas,
+            custom_personas: legacy.custom_personas,
         },
     ))
 }
@@ -277,6 +349,49 @@ pub fn normalize_identity_customization_pack(
             (!item.is_empty()).then_some((id, item))
         })
         .collect();
+    pack.custom_personas = pack
+        .custom_personas
+        .into_iter()
+        .filter_map(|(id, mut item)| {
+            // Custom personas need a non-empty soul_id and name to be
+            // useful at all; trim everything and drop incomplete entries
+            // so a half-filled save doesn't silently materialize as a
+            // broken persona at runtime.
+            item.soul_id = item.soul_id.trim().to_string();
+            item.name = item.name.trim().to_string();
+            item.summary = item.summary.trim().to_string();
+            item.avatar_id = item
+                .avatar_id
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            item.tone_rules = item
+                .tone_rules
+                .into_iter()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect();
+            item.collaboration_rules = item
+                .collaboration_rules
+                .into_iter()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect();
+            item.output_preferences = item
+                .output_preferences
+                .into_iter()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect();
+            let trimmed_id = id.trim().to_string();
+            if trimmed_id.is_empty()
+                || item.soul_id.is_empty()
+                || item.name.is_empty()
+            {
+                return None;
+            }
+            Some((trimmed_id, item))
+        })
+        .collect();
     pack
 }
 
@@ -333,6 +448,9 @@ fn apply_persona_override(
             .output_preferences
             .clone()
             .unwrap_or_else(|| base.output_preferences.clone()),
+        // Built-in personas don't carry avatar_id; the frontend looks
+        // them up by id. Customization can't change that here.
+        avatar_id: base.avatar_id.clone(),
     }
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, RotateCcw, Shield, Sparkles } from "lucide-react";
+import { Bot, Check, Plus, RotateCcw, Shield, Sparkles, Trash2 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ import type { Session } from "@/lib/tauri";
 import { broadcastChange, useCrossWindowChange } from "@/lib/crossWindowSync";
 import { cn } from "@/lib/utils";
 import { PERSONA_AVATAR_BY_ID } from "@/lib/persona-avatars";
+import { CreatePersonaDialog } from "@/components/identity/CreatePersonaDialog";
 
 function readLastActiveSessionId(): string | null {
   if (typeof window === "undefined") return null;
@@ -241,14 +242,20 @@ function PersonaPortrait({
   label,
   index,
   personaId,
+  avatarId,
   size = 96,
 }: {
   label: string;
   index: number;
   personaId?: string;
+  avatarId?: string | null;
   size?: number;
 }) {
-  const avatarSrc = personaId ? PERSONA_AVATAR_BY_ID[personaId] : undefined;
+  // Avatar lookup: avatar_id (custom personas / explicit override)
+  // wins over personaId (built-in implicit lookup).
+  const avatarSrc =
+    (avatarId && PERSONA_AVATAR_BY_ID[avatarId]) ||
+    (personaId ? PERSONA_AVATAR_BY_ID[personaId] : undefined);
   const accent = personaAccent(index);
 
   if (avatarSrc) {
@@ -357,6 +364,7 @@ export function AgentIdentitySettingsPage() {
   const [savingPack, setSavingPack] = useState(false);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
 
+  const [createPersonaOpen, setCreatePersonaOpen] = useState(false);
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [userNameDraft, setUserNameDraft] = useState("");
   const [bioDraft, setBioDraft] = useState("");
@@ -609,6 +617,40 @@ export function AgentIdentitySettingsPage() {
   const handleClearPersona = () => {
     setSelectedPersonaId("auto");
     void persistDefaults(selectedSoulId, "auto");
+  };
+
+  const handleDeleteCustomPersona = async (personaId: string) => {
+    if (
+      !window.confirm(
+        `确定删除自定义 Persona「${personaId}」吗？此操作不可撤销。`,
+      )
+    ) {
+      return;
+    }
+    const nextPack: IdentityCustomizationPack = {
+      souls: { ...identityPack.souls },
+      personas: { ...identityPack.personas },
+      custom_personas: { ...(identityPack.custom_personas ?? {}) },
+    };
+    delete nextPack.custom_personas![personaId];
+    setSavingPack(true);
+    try {
+      const saved = await setIdentityPack(nextPack);
+      setLocalIdentityPack(saved);
+      // If the deleted persona was the active default, drop it.
+      if (selectedPersonaId === personaId) {
+        setSelectedPersonaId("auto");
+        void persistDefaults(selectedSoulId, "auto");
+      }
+      // Reload catalog so the deleted persona disappears from cards.
+      const nextCatalog = await getIdentityCatalog();
+      setCatalog(nextCatalog);
+      toast.success("自定义 Persona 已删除");
+    } catch (error) {
+      toast.error("删除 Persona 失败", { description: String(error) });
+    } finally {
+      setSavingPack(false);
+    }
   };
 
   const handleSaveIdentityPack = async () => {
@@ -1035,20 +1077,38 @@ export function AgentIdentitySettingsPage() {
               切的是「状态」，不是「身份」—— 同一个 Soul 下挂多个 Persona。
             </p>
           </div>
-          {selectedPersonaId !== "auto" ? (
-            <button
+          <div className="flex items-center gap-3">
+            {selectedPersonaId !== "auto" ? (
+              <button
+                type="button"
+                className="text-[10.5px] font-medium text-black/45 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:opacity-40"
+                onClick={handleClearPersona}
+                disabled={savingDefaults}
+              >
+                清除 · 跟随默认
+              </button>
+            ) : null}
+            <Button
               type="button"
-              className="text-[10.5px] font-medium text-black/45 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:opacity-40"
-              onClick={handleClearPersona}
-              disabled={savingDefaults}
+              size="sm"
+              variant="outline"
+              className="h-7 rounded-lg border-jade/40 bg-jade/[0.06] px-2.5 text-[11.5px] font-semibold text-jade hover:bg-jade/[0.12] hover:text-jade"
+              onClick={() => setCreatePersonaOpen(true)}
+              disabled={!catalog}
             >
-              清除 · 跟随默认
-            </button>
-          ) : null}
+              <Plus className="mr-1 h-3 w-3" strokeWidth={2.5} />
+              新建 Persona
+            </Button>
+          </div>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {effectivePersonas.map((persona, index) => {
             const active = selectedPersona?.id === persona.id;
+            // Custom persona = lives in the pack's custom_personas map.
+            // Built-in personas can't be deleted from this UI.
+            const isCustom = Boolean(
+              identityPack.custom_personas?.[persona.id],
+            );
             // 把「Execution Partner / 执行伙伴」拆成中英两行，让卡片更工整
             const [primaryName, ...rest] = persona.name.split(" / ");
             const secondaryName = rest.join(" / ").trim();
@@ -1057,18 +1117,46 @@ export function AgentIdentitySettingsPage() {
             const primarySummary = summarySplit[0]?.trim() ?? "";
 
             return (
-              <button
+              <div
                 key={persona.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => handlePersonaSelect(persona)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    handlePersonaSelect(persona);
+                  }
+                }}
                 title={persona.summary}
                 className={cn(
-                  "group relative flex flex-col items-center overflow-hidden rounded-2xl border bg-white px-5 pb-5 pt-6 text-center transition-all duration-300",
+                  "group relative flex cursor-pointer flex-col items-center overflow-hidden rounded-2xl border bg-white px-5 pb-5 pt-6 text-center outline-none transition-all duration-300 focus-visible:ring-[3px] focus-visible:ring-jade/20",
                   active
                     ? "border-jade/40 shadow-[0_0_0_4px_rgba(16,185,129,0.07),0_10px_28px_rgba(15,23,42,0.07)]"
                     : "border-black/[0.06] hover:-translate-y-0.5 hover:border-black/[0.1] hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)]",
                 )}
               >
+                {/* Delete affordance (custom only, fade in on hover) */}
+                {isCustom ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handleDeleteCustomPersona(persona.id);
+                    }}
+                    title="删除自定义 Persona"
+                    aria-label="删除自定义 Persona"
+                    className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md text-black/35 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                ) : null}
+                {/* Custom badge */}
+                {isCustom ? (
+                  <span className="absolute right-2 top-2 rounded-md bg-amber-50/90 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                    Custom
+                  </span>
+                ) : null}
                 {/* Active indicator: jade halo behind avatar (subtle) */}
                 {active ? (
                   <span
@@ -1087,6 +1175,7 @@ export function AgentIdentitySettingsPage() {
                     label={persona.name}
                     index={index}
                     personaId={persona.id}
+                    avatarId={persona.avatar_id}
                     size={108}
                   />
                   {active ? (
@@ -1118,7 +1207,7 @@ export function AgentIdentitySettingsPage() {
                     active ? "bg-jade" : "bg-transparent",
                   )}
                 />
-              </button>
+              </div>
             );
           })}
         </div>
@@ -1449,6 +1538,24 @@ export function AgentIdentitySettingsPage() {
           }}
         />
       </SettingsSurface>
+
+      <CreatePersonaDialog
+        open={createPersonaOpen}
+        onOpenChange={setCreatePersonaOpen}
+        catalog={catalog}
+        defaultSoulId={selectedSoulId === "auto" ? null : selectedSoulId}
+        currentPack={identityPack}
+        onSaved={async (saved) => {
+          setLocalIdentityPack(saved);
+          // Reload catalog so the new persona shows up in the cards.
+          try {
+            const nextCatalog = await getIdentityCatalog();
+            setCatalog(nextCatalog);
+          } catch {
+            // best-effort; the page will catch up on next manual reload
+          }
+        }}
+      />
     </div>
   );
 }

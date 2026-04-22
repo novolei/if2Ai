@@ -10,6 +10,7 @@ import {
   getPromptControlSettings,
   setIdentityCustomizationPack,
   setPromptControlSettings,
+  type CustomPersonaDefinition,
   type IdentityCustomizationPack,
   type PersonaCustomization,
   type PromptControlCatalog,
@@ -31,6 +32,7 @@ export type {
   IdentityCustomizationPack,
   SoulCustomization,
   PersonaCustomization,
+  CustomPersonaDefinition,
   PromptControlSoulOption,
   PromptControlPersonaOption,
 };

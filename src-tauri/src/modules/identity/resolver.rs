@@ -169,6 +169,7 @@ mod tests {
                 tone_rules: Vec::new(),
                 collaboration_rules: Vec::new(),
                 output_preferences: Vec::new(),
+                avatar_id: None,
             },
         )]);
         let registry = IdentityRegistry::from_parts(souls, personas);
