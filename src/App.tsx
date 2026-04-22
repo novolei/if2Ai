@@ -96,6 +96,7 @@ import type {
   SessionTitleState,
 } from "@/modules/chat/types";
 import { useAgentVoiceBridge } from "@/modules/chat/useAgentVoiceBridge";
+import { useMemoryWriteToasts } from "@/components/memory/useMemoryWriteToasts";
 import { AgentVoiceIndicator } from "@/modules/chat/AgentVoiceIndicator";
 import { broadcastChange, useCrossWindowChange } from "@/lib/crossWindowSync";
 import {
@@ -152,6 +153,11 @@ function App() {
   // separate phase subscription is needed here.
   // Phase TTS-D / P1：Agent 语音桥接
   const agentVoice = useAgentVoiceBridge();
+
+  // Memory System Audit P2 #10 — surface memory writes as a subtle
+  // sonner toast on the chat surface so the user can see "AI 记住了
+  // X 件事" without opening Settings.
+  useMemoryWriteToasts();
 
   // 跨窗口监听 Onboarding 重置：设置窗口点重置后，主窗口立即跳回 Onboarding 流程
   useCrossWindowChange("cross:onboarding-reset", () => {

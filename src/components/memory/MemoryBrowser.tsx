@@ -73,6 +73,12 @@ export function MemoryBrowser({
   const [promotionOpen, setPromotionOpen] = useState(false)
   const [candidates, setCandidates] = useState<MemoryPromotionCandidateDto[]>([])
   const [promotionLoading, setPromotionLoading] = useState(false)
+  // Memory Audit P2 #11 — pagination. Today this is client-side
+  // (slice the full export); when the library grows past a few
+  // thousand entries we should swap the IPC for a paged
+  // memory_export_paged command with SQL LIMIT/OFFSET. The UX
+  // surface stays the same.
+  const [pageIndex, setPageIndex] = useState(0)
 
   // Some scopes need extra ids; if the caller hasn't supplied them we fall
   // back to "all" rather than silently returning an empty list.
@@ -115,6 +121,7 @@ export function MemoryBrowser({
   // change, or when the backend signals invalidation.
   useEffect(() => {
     loadEntries()
+    setPageIndex(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeCategory,
@@ -482,28 +489,74 @@ export function MemoryBrowser({
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {entries.map((entry) => {
-              // Demote target depends on the entry's *current* tier:
-              //   global  -> needs activeProjectId
-              //   project -> needs both activeSessionId AND activeProjectId
-              //   session -> demote not applicable (already lowest)
-              const isProjectTier = entry.session_id === null && entry.project_id !== null
-              const isGlobalTier = entry.session_id === null && entry.project_id === null
-              const canDemote =
-                (isGlobalTier && Boolean(activeProjectId)) ||
-                (isProjectTier && Boolean(activeProjectId) && Boolean(activeSessionId))
-              return (
-                <MemoryCard
-                  key={entry.key}
-                  entry={entry}
-                  onDelete={handleDelete}
-                  onDemote={handleDemote}
-                  canDemote={canDemote}
-                />
-              )
-            })}
-          </div>
+          (() => {
+            // Memory Audit P2 #11 — paginate the rendered slice.
+            // Keep the count helpers local so the JSX above doesn't
+            // change shape and the conditional structure stays
+            // readable.
+            const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE))
+            const safePageIndex = Math.min(pageIndex, totalPages - 1)
+            const start = safePageIndex * PAGE_SIZE
+            const pagedEntries = entries.slice(start, start + PAGE_SIZE)
+            return (
+              <>
+                <div className="flex flex-col gap-2">
+                  {pagedEntries.map((entry) => {
+                    const isProjectTier =
+                      entry.session_id === null && entry.project_id !== null
+                    const isGlobalTier =
+                      entry.session_id === null && entry.project_id === null
+                    const canDemote =
+                      (isGlobalTier && Boolean(activeProjectId)) ||
+                      (isProjectTier &&
+                        Boolean(activeProjectId) &&
+                        Boolean(activeSessionId))
+                    return (
+                      <MemoryCard
+                        key={entry.key}
+                        entry={entry}
+                        onDelete={handleDelete}
+                        onDemote={handleDemote}
+                        canDemote={canDemote}
+                      />
+                    )
+                  })}
+                </div>
+                {totalPages > 1 ? (
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-black/[0.06] bg-black/[0.02] px-3 py-2 text-[11.5px]">
+                    <span className="text-muted-foreground">
+                      第 <strong className="font-semibold tabular-nums text-foreground/85">{safePageIndex + 1}</strong>
+                      <span className="mx-0.5 text-black/30">/</span>
+                      <strong className="font-semibold tabular-nums text-foreground/85">{totalPages}</strong> 页
+                      <span className="ml-2 text-black/40">
+                        共 {entries.length} 条 · 每页 {PAGE_SIZE}
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
+                        disabled={safePageIndex === 0}
+                        className="rounded-md border border-black/[0.08] bg-white px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        上一页
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPageIndex((i) => Math.min(totalPages - 1, i + 1))
+                        }
+                        disabled={safePageIndex >= totalPages - 1}
+                        className="rounded-md border border-black/[0.08] bg-white px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        下一页
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )
+          })()
         )}
       </div>
     </div>
