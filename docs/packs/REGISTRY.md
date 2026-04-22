@@ -12,12 +12,13 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 MIG-007 prompt planner modularization)_ | —    | —    | —     |
+| _(无 — 下一刀建议 MIG-008 Coding mode specialized augmentation)_ | —    | —    | —     |
 
 ## Recently Done
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [MIG-007](./feature/prompt-planner-alignment/MIG-007-prompt-planner-modularization.md) | feature  | 将 prompt_planner/mod.rs 拆分为 block/diagnostics/build_request/planner 子模块，提升可维护性                              | 2026-04-22 |
 | [MIG-006](./feature/prompt-planner-alignment/MIG-006-prompt-contribution-mechanism.md) | feature  | 实现 PromptContribution 机制 + PromptBuildMode + strict validation，让子系统独立贡献 prompt blocks                      | 2026-04-22 |
 | [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md) | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                  | 2026-04-22 |
 | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md) | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                      | 2026-04-22 |
