@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use crate::modules::application::prompt_coordinator::PromptAssemblyDecision;
 use crate::modules::identity::ResolvedIdentity;
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
@@ -48,12 +49,19 @@ impl PromptBuildMode {
 /// Options controlling prompt plan construction.
 ///
 /// MIG-006: Enables strict validation mode and future extensions.
+/// MIG-008: Added coding compaction fields.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PromptBuildOptions {
     /// Whether to include full diagnostics in the plan.
     pub include_diagnostics: bool,
     /// Whether to fail on validation issues (strict mode).
     pub strict_block_validation: bool,
+    /// MIG-008: Estimated token count threshold for coding compaction.
+    pub coding_compaction_estimated_tokens: Option<usize>,
+    /// MIG-008: Message count threshold for coding compaction.
+    pub coding_compaction_message_count: Option<usize>,
+    /// MIG-008: Session snapshot for continuation block generation.
+    pub coding_session_snapshot: Option<String>,
 }
 
 impl Default for PromptBuildOptions {
@@ -61,6 +69,9 @@ impl Default for PromptBuildOptions {
         Self {
             include_diagnostics: true,
             strict_block_validation: false,
+            coding_compaction_estimated_tokens: None,
+            coding_compaction_message_count: None,
+            coding_session_snapshot: None,
         }
     }
 }
@@ -102,6 +113,8 @@ pub struct BuildPromptPlanRequest {
     pub resolved_identity: Option<ResolvedIdentity>,
     /// Advisory scenario profile surfaced by request intelligence.
     pub scenario_profile: Option<ScenarioProfileHint>,
+    /// Explainable control-plane decision produced by the prompt coordinator.
+    pub prompt_assembly_decision: Option<PromptAssemblyDecision>,
     /// MIG-006: Active skill identifiers.
     pub active_skill_ids: Vec<String>,
     /// MIG-006: Build options (diagnostics, strict validation).

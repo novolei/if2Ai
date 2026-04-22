@@ -266,6 +266,32 @@ pub async fn build_prompt_plan(
         });
     }
 
+    // 3c. MIG-008: Coding mode augmentation blocks.
+    if matches!(request.mode, super::build_request::PromptBuildMode::Coding) {
+        let coding_blocks = super::coding_augment::build_coding_augment_blocks(
+            &request.workdir,
+            &request.registered_tool_names,
+        );
+        blocks.extend(coding_blocks);
+
+        // Check if continuation block should be generated
+        let policy = super::compaction::CompactionPolicy::new(
+            request.options.coding_compaction_estimated_tokens,
+            request.options.coding_compaction_message_count,
+        );
+
+        if policy.should_compact(
+            request.options.coding_compaction_estimated_tokens,
+            request.options.coding_compaction_message_count,
+        ) {
+            if let Some(ref snapshot) = request.options.coding_session_snapshot {
+                let continuation_block =
+                    super::compaction::build_coding_continuation_block(snapshot);
+                blocks.push(continuation_block);
+            }
+        }
+    }
+
     // 4. MIG-006: Merge external contributions.
     let (blocks, validation_issues) = merge_external_contributions(
         blocks,
@@ -276,7 +302,12 @@ pub async fn build_prompt_plan(
     // Compute trace metadata
     let block_hash = compute_block_hash(&blocks);
     let trace_id = compute_trace_id(&request.session_id, &request.user_message, &block_hash);
-    let diagnostics = build_diagnostics(trace_id.clone(), &blocks, validation_issues);
+    let diagnostics = build_diagnostics(
+        trace_id.clone(),
+        &blocks,
+        validation_issues,
+        request.prompt_assembly_decision.as_ref(),
+    );
 
     let plan = PromptPlan {
         trace_id,
@@ -383,6 +414,9 @@ fn build_diagnostics(
     trace_id: String,
     blocks: &[PromptBlock],
     validation_issues: Vec<PromptValidationIssue>,
+    prompt_assembly_decision: Option<
+        &crate::modules::application::prompt_coordinator::PromptAssemblyDecision,
+    >,
 ) -> PromptPlanDiagnostics {
     let redacted_preview = blocks
         .iter()
@@ -406,6 +440,30 @@ fn build_diagnostics(
         block_count: blocks.len(),
         redacted_preview,
         validation_issues,
+        lane_decisions: prompt_assembly_decision
+            .map(|decision| decision.lane_decisions.clone())
+            .unwrap_or_default(),
+        activated_entry_ids: prompt_assembly_decision
+            .map(|decision| {
+                decision
+                    .activated_entries
+                    .iter()
+                    .map(|entry| entry.entry_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        suppressed_entry_ids: prompt_assembly_decision
+            .map(|decision| {
+                decision
+                    .suppressed_entries
+                    .iter()
+                    .map(|entry| entry.entry_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        activation_reasons: prompt_assembly_decision
+            .map(|decision| decision.activation_reasons.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -416,6 +474,10 @@ mod tests {
     use super::*;
     use crate::modules::application::memory_injection_service::{
         MemoryInjectionArtifacts, MemoryInjectionSection,
+    };
+    use crate::modules::application::prompt_coordinator::{
+        ActivatedPromptEntry, PromptActivationReason, PromptAssemblyDecision, PromptAssemblyLane,
+        PromptLaneDecision, PromptLaneStatus, SuppressedPromptEntry,
     };
     use crate::modules::identity::{IdentitySource, ResolvedIdentity};
     use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
@@ -431,6 +493,10 @@ mod tests {
                 block_count: 2,
                 redacted_preview: vec![],
                 validation_issues: vec![],
+                lane_decisions: vec![],
+                activated_entry_ids: vec![],
+                suppressed_entry_ids: vec![],
+                activation_reasons: vec![],
             },
             blocks: vec![
                 PromptBlock {
@@ -520,6 +586,7 @@ mod tests {
             mode: super::super::PromptBuildMode::default(),
             resolved_identity: None,
             scenario_profile: None,
+            prompt_assembly_decision: None,
             active_skill_ids: Vec::new(),
             options: super::super::PromptBuildOptions::default(),
         };
@@ -562,6 +629,7 @@ mod tests {
                 source: IdentitySource::GlobalDefault,
             }),
             scenario_profile: Some(ScenarioProfileHint::Planning),
+            prompt_assembly_decision: None,
             active_skill_ids: vec!["skill1".to_string()],
             options: super::super::PromptBuildOptions::default(),
         };
@@ -588,5 +656,74 @@ mod tests {
             .blocks
             .iter()
             .any(|b| b.kind == PromptBlockKind::Skill));
+    }
+
+    #[tokio::test]
+    async fn diagnostics_include_prompt_assembly_entries() {
+        let req = BuildPromptPlanRequest {
+            session_id: "diag-session".to_string(),
+            user_message: "help me plan identity".to_string(),
+            workdir: PathBuf::from("/nonexistent"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: vec!["web_search".to_string()],
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: super::super::PromptBuildMode::Planning,
+            resolved_identity: None,
+            scenario_profile: Some(ScenarioProfileHint::Planning),
+            prompt_assembly_decision: Some(PromptAssemblyDecision {
+                lane_decisions: vec![
+                    PromptLaneDecision {
+                        lane: PromptAssemblyLane::Identity,
+                        status: PromptLaneStatus::Active,
+                        entry_count: 2,
+                    },
+                    PromptLaneDecision {
+                        lane: PromptAssemblyLane::Utility,
+                        status: PromptLaneStatus::Suppressed,
+                        entry_count: 0,
+                    },
+                ],
+                activated_entries: vec![ActivatedPromptEntry {
+                    entry_id: "identity:persona@staff-architect".to_string(),
+                    lane: PromptAssemblyLane::Identity,
+                    source: "resolved_identity".to_string(),
+                }],
+                suppressed_entries: vec![SuppressedPromptEntry {
+                    entry_id: "utility:none".to_string(),
+                    lane: PromptAssemblyLane::Utility,
+                    reason_code: "utility_lane_not_used_for_chat_turn".to_string(),
+                }],
+                activation_reasons: vec![PromptActivationReason {
+                    entry_id: "identity:persona@staff-architect".to_string(),
+                    lane: PromptAssemblyLane::Identity,
+                    reason_code: "resolved_persona_present".to_string(),
+                    detail: "resolved persona was available for this turn".to_string(),
+                }],
+            }),
+            active_skill_ids: Vec::new(),
+            options: super::super::PromptBuildOptions::default(),
+        };
+
+        let result = build_prompt_plan(req, Vec::new())
+            .await
+            .expect("plan builds");
+
+        assert_eq!(result.plan.diagnostics.lane_decisions.len(), 2);
+        assert_eq!(
+            result.plan.diagnostics.activated_entry_ids,
+            vec!["identity:persona@staff-architect".to_string()]
+        );
+        assert_eq!(
+            result.plan.diagnostics.suppressed_entry_ids,
+            vec!["utility:none".to_string()]
+        );
+        assert_eq!(
+            result.plan.diagnostics.activation_reasons[0].reason_code,
+            "resolved_persona_present"
+        );
     }
 }

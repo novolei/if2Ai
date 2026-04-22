@@ -115,5 +115,7 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::ActiveStrategyOverlay => "active_strategy",
         PromptBlockKind::Skill => "skill",
         PromptBlockKind::Mcp => "mcp",
+        PromptBlockKind::CodingContext => "coding_context",
+        PromptBlockKind::Continuation => "continuation",
     }
 }

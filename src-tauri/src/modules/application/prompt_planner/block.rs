@@ -48,6 +48,10 @@ pub enum PromptBlockKind {
     Skill,
     /// MCP (Model Context Protocol) contribution block.
     Mcp,
+    /// MIG-008: Coding context block (workspace + tool surface).
+    CodingContext,
+    /// MIG-008: Continuation block for long coding sessions.
+    Continuation,
 }
 
 impl PromptBlockKind {

@@ -57,6 +57,10 @@ mod build_request;
 mod diagnostics;
 mod planner;
 
+// MIG-008: Coding mode augmentation and compaction.
+mod coding_augment;
+mod compaction;
+
 // Re-export public types for external callers.
 pub use block::{PromptBlock, PromptBlockKind, PromptBlockSource, PromptContribution};
 pub use build_request::{BuildPromptPlanRequest, PromptBuildMode, PromptBuildOptions};
@@ -66,10 +70,10 @@ pub use planner::{build_prompt_plan, PromptPlan, PromptPlanResult, PromptPlanner
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use crate::modules::application::memory_injection_service::{
         MemoryInjectionArtifacts, MemoryInjectionSection, MemoryInjectionSectionKind,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn join_into_text_uses_legacy_newline_separator() {
@@ -82,6 +86,10 @@ mod tests {
                 block_count: 2,
                 redacted_preview: vec![],
                 validation_issues: vec![],
+                lane_decisions: vec![],
+                activated_entry_ids: vec![],
+                suppressed_entry_ids: vec![],
+                activation_reasons: vec![],
             },
             blocks: vec![
                 PromptBlock {
@@ -112,5 +120,34 @@ mod tests {
         };
         assert_eq!(plan.join_into_text(), "a\nb");
         assert_eq!(plan.block_count(), 2);
+    }
+    #[tokio::test]
+    async fn coding_mode_includes_coding_context_blocks() {
+        let req = BuildPromptPlanRequest {
+            session_id: "test".to_string(),
+            user_message: "test".to_string(),
+            workdir: PathBuf::from("/test/workspace"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: vec!["read".to_string()],
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: PromptBuildMode::Coding,
+            resolved_identity: None,
+            scenario_profile: None,
+            prompt_assembly_decision: None,
+            active_skill_ids: Vec::new(),
+            options: PromptBuildOptions::default(),
+        };
+        let result = build_prompt_plan(req, Vec::new())
+            .await
+            .expect("plan builds");
+        assert!(result
+            .plan
+            .blocks
+            .iter()
+            .any(|b| b.kind == PromptBlockKind::CodingContext));
     }
 }
