@@ -12,12 +12,13 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 MIG-005 prompt block structure alignment)_ | —    | —    | —     |
+| _(无 — 下一刀建议 MIG-006 prompt contribution mechanism)_ | —    | —    | —     |
 
 ## Recently Done
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md) | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                  | 2026-04-22 |
 | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md) | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                      | 2026-04-22 |
 | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | feature  | 让主聊天链走 gateway conversations/streaming surface (App.tsx 已完成 cutover)                                          | 2026-04-22 |
 | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md) | feature  | 把 execution mode 与 step preflight 从 advisory 升级成真实 product gate (4 sub-packs: a/b/c/d)                          | 2026-04-22 |
