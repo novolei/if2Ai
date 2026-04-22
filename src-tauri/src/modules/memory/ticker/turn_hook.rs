@@ -84,6 +84,52 @@ impl TurnHook for MemoryTicker {
         // logical day hasn't rolled over since the last completed
         // daily run.
         self.maybe_run_daily(scope);
+
+        // MEM-MOD-P5 — reflection pulse.  Fires only when (a) the
+        // ticker was built with `with_reflection_runtime(...)`,
+        // (b) `reflection_threshold` is non-zero, and (c) the current
+        // turn count is a positive multiple of the threshold.  All
+        // three conditions are off in tests / legacy configs so this
+        // is a true zero-cost addition for those paths.
+        let reflection_threshold = self.config.reflection_threshold;
+        if reflection_threshold > 0
+            && count > 0
+            && count % reflection_threshold == 0
+        {
+            if let Some((llm, memory)) = self.reflection_runtime() {
+                let scope_owned = scope.clone();
+                let session_owned = session_id.to_string();
+                let messages_owned = messages.to_vec();
+                tracing::info!(
+                    session_id,
+                    count,
+                    reflection_threshold,
+                    "[ticker] reflection pulse fired — spawning synthesis task"
+                );
+                tokio::spawn(async move {
+                    match crate::modules::memory::reflection_loop::synthesize_and_persist(
+                        llm.as_ref(),
+                        &memory,
+                        &scope_owned,
+                        &session_owned,
+                        &messages_owned,
+                    )
+                    .await
+                    {
+                        Ok(key) => tracing::info!(
+                            session_id = %session_owned,
+                            key = %key,
+                            "[ticker] reflection persisted"
+                        ),
+                        Err(err) => tracing::warn!(
+                            session_id = %session_owned,
+                            error = %err,
+                            "[ticker] reflection synthesis failed (non-fatal)"
+                        ),
+                    }
+                });
+            }
+        }
     }
 
     /// Spawn a background task that runs the full session-flush

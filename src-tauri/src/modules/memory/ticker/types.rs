@@ -22,6 +22,11 @@ pub struct TickerConfig {
     /// session experiences via the future
     /// `experience::extractor` (Phase 8D).
     pub experience_enabled: bool,
+    /// MEM-MOD-P5 — fire a self-reflection LLM call every N user turns
+    /// (default `10`, set `0` to disable).  Each pulse persists a
+    /// `Reflection`-category memory.  No-op unless the ticker was
+    /// constructed with [`crate::modules::memory::MemoryTicker::with_reflection_runtime`].
+    pub reflection_threshold: u32,
 }
 
 impl Default for TickerConfig {
@@ -30,6 +35,7 @@ impl Default for TickerConfig {
             turns_per_summary: 6,
             daily_check_interval_secs: 3600,
             experience_enabled: true,
+            reflection_threshold: 10,
         }
     }
 }

@@ -23,6 +23,7 @@ pub mod llm;
 pub mod pinned;
 pub mod policy;
 pub mod promotion;
+pub mod reflection_loop;
 mod providers;
 pub mod retrieval;
 pub mod scope;

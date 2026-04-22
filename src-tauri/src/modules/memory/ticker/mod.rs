@@ -82,6 +82,20 @@ pub struct MemoryTicker {
     /// `on_session_end` can `clone` the handle and continue to mark
     /// `summary_in_progress` after the ticker reference is dropped.
     state: Arc<Mutex<TickerState>>,
+    /// MEM-MOD-P5 — optional reflection runtime.  When `None`, the
+    /// reflection pulse short-circuits and `on_turn_complete` behaves
+    /// exactly like pre-P5.  Tests + legacy callers therefore stay
+    /// compile-clean without touching the constructor.
+    reflection_runtime: Option<ReflectionRuntime>,
+}
+
+/// MEM-MOD-P5 — bundle of runtime dependencies the reflection pulse
+/// needs.  Held inside the ticker via `Option<…>` so disabling the
+/// loop is a matter of *not* attaching a runtime, not a hidden flag.
+#[derive(Clone)]
+struct ReflectionRuntime {
+    llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+    memory: crate::modules::memory::SharedMemoryProvider,
 }
 
 impl std::fmt::Debug for MemoryTicker {
@@ -107,7 +121,35 @@ impl MemoryTicker {
             summary_store,
             config,
             state: Arc::new(Mutex::new(TickerState::default())),
+            reflection_runtime: None,
         }
+    }
+
+    /// MEM-MOD-P5 — attach a utility LLM + memory provider so the
+    /// reflection pulse fires every `TickerConfig::reflection_threshold`
+    /// turns.  Builder method (consumes `self`) so existing call sites
+    /// can opt in without changing the [`Self::new`] signature.
+    #[must_use]
+    pub fn with_reflection_runtime(
+        mut self,
+        llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+        memory: crate::modules::memory::SharedMemoryProvider,
+    ) -> Self {
+        self.reflection_runtime = Some(ReflectionRuntime { llm, memory });
+        self
+    }
+
+    /// MEM-MOD-P5 — internal accessor used by `turn_hook.rs` to spawn
+    /// the reflection task without exposing the field publicly.
+    pub(super) fn reflection_runtime(
+        &self,
+    ) -> Option<(
+        Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+        crate::modules::memory::SharedMemoryProvider,
+    )> {
+        self.reflection_runtime
+            .as_ref()
+            .map(|rt| (rt.llm.clone(), rt.memory.clone()))
     }
 
     /// Read-only access to the runtime config.
