@@ -455,3 +455,6 @@ fn strict_mode_denial_reason(workdir: &std::path::Path, tool_name: &str) -> Opti
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod integration_tests;
