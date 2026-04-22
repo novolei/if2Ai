@@ -22,6 +22,7 @@ pub mod json_parse;
 pub mod memory_export;
 pub mod memory_feedback_signal;
 pub mod memory_forget;
+pub mod memory_letta_tools;
 pub mod memory_purge;
 pub mod memory_recall;
 pub mod memory_store;
@@ -87,6 +88,11 @@ pub use memory_export::entry as memory_export_entry;
 pub use memory_feedback_signal::entry as memory_feedback_signal_entry;
 #[allow(unused_imports)]
 pub use memory_forget::entry as memory_forget_entry;
+#[allow(unused_imports)]
+pub use memory_letta_tools::{
+    consolidate_entry as memory_consolidate_entry, link_entry as memory_link_entry,
+    recall_explicit_entry as memory_recall_explicit_entry, update_entry as memory_update_entry,
+};
 #[allow(unused_imports)]
 pub use memory_purge::entry as memory_purge_entry;
 #[allow(unused_imports)]

@@ -95,6 +95,18 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::memory_feedback_signal_entry(memory.clone())) {
         eprintln!("Failed to register memory_feedback_signal tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::memory_recall_explicit_entry(memory.clone())) {
+        eprintln!("Failed to register memory_recall_explicit tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_update_entry(memory.clone())) {
+        eprintln!("Failed to register memory_update tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_link_entry(memory.clone())) {
+        eprintln!("Failed to register memory_link tool: {}", e);
+    }
+    if let Err(e) = registry.register(builtin::memory_consolidate_entry(memory.clone())) {
+        eprintln!("Failed to register memory_consolidate tool: {}", e);
+    }
     if let Err(e) = registry.register(builtin::pin_memory_entry(pinned.clone())) {
         eprintln!("Failed to register pin_memory tool: {}", e);
     }

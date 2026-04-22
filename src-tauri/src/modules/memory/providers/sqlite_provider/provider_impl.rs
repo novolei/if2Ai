@@ -604,6 +604,137 @@ impl MemoryProvider for SqliteMemoryProvider {
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
     }
 
+    /// MEM-MOD-P3 — O(1) primary-key lookup.
+    async fn get_by_key(&self, key: &str) -> Result<Option<MemoryEntry>, MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut stmt = c.prepare(
+                "SELECT key, content, category, created_at, updated_at, importance,
+                        access_count, trust_score, session_id, project_id
+                 FROM memory_entries
+                 WHERE key = ?1",
+            )?;
+            let mut rows = stmt.query_map(params![key], SqliteMemoryProvider::row_to_entry)?;
+            match rows.next() {
+                Some(Ok(entry)) => Ok(Some(entry)),
+                Some(Err(err)) => Err(MemoryError::Generic(err.to_string())),
+                None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// MEM-MOD-P3 — partial UPDATE preserving stats columns.
+    async fn update_content(&self, key: &str, content: &str) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let content = content.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let rows = c
+                .execute(
+                    "UPDATE memory_entries SET content = ?1, updated_at = ?2 WHERE key = ?3",
+                    params![content, chrono::Utc::now().to_rfc3339(), key],
+                )
+                .map_err(|e| MemoryError::Generic(format!("update_content failed: {e}")))?;
+            if rows == 0 {
+                Err(MemoryError::KeyNotFound(key))
+            } else {
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// MEM-MOD-P3 — INSERT OR IGNORE (UNIQUE on (source, target, type)).
+    async fn create_link(
+        &self,
+        source_key: &str,
+        target_key: &str,
+        link_type: &str,
+    ) -> Result<(), MemoryError> {
+        let source_key = source_key.to_string();
+        let target_key = target_key.to_string();
+        let link_type = link_type.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            c.execute(
+                "INSERT OR IGNORE INTO memory_links
+                    (source_key, target_key, link_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    source_key,
+                    target_key,
+                    link_type,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(|e| MemoryError::Generic(format!("create_link failed: {e}")))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// MEM-MOD-P3 — store the consolidated entry, link each source.
+    async fn consolidate(
+        &self,
+        source_keys: &[String],
+        consolidated_key: &str,
+        consolidated_content: &str,
+        category: MemoryCategory,
+    ) -> Result<usize, MemoryError> {
+        let source_keys: Vec<String> = source_keys.to_vec();
+        let consolidated_key = consolidated_key.to_string();
+        let consolidated_content = consolidated_content.to_string();
+        let category_str = category.as_str().to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            // 1) upsert the consolidated entry itself.
+            c.execute(
+                "INSERT INTO memory_entries
+                    (key, content, category, created_at, updated_at,
+                     importance, access_count, trust_score)
+                 VALUES (?1, ?2, ?3, ?4, ?4, 0.6, 0, 0.0)
+                 ON CONFLICT(key) DO UPDATE SET
+                    content = excluded.content,
+                    category = excluded.category,
+                    updated_at = excluded.updated_at",
+                params![
+                    consolidated_key,
+                    consolidated_content,
+                    category_str,
+                    now
+                ],
+            )
+            .map_err(|e| MemoryError::Generic(format!("consolidate upsert failed: {e}")))?;
+
+            // 2) link every source → consolidated.
+            let mut linked = 0usize;
+            for src in &source_keys {
+                let n = c
+                    .execute(
+                        "INSERT OR IGNORE INTO memory_links
+                            (source_key, target_key, link_type, created_at)
+                         VALUES (?1, ?2, 'consolidated_into', ?3)",
+                        params![src, consolidated_key, now],
+                    )
+                    .map_err(|e| MemoryError::Generic(format!("link failed: {e}")))?;
+                linked += n;
+            }
+            Ok(linked)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
     /// MEM-MOD-P1 — clamp `trust_score + delta` into `[-1.0, 1.0]` and
     /// persist the result.  Single-row UPDATE — cheap enough to be
     /// invoked from a per-turn LLM tool without batching.

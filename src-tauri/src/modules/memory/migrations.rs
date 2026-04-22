@@ -211,11 +211,18 @@ pub fn memory_migrations() -> &'static [Migration] {
     &MEMORY_MIGRATIONS
 }
 
-const MEMORY_MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "memory_entries_initial",
-    up: memory_v1_initial,
-}];
+const MEMORY_MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "memory_entries_initial",
+        up: memory_v1_initial,
+    },
+    Migration {
+        version: 2,
+        name: "memory_links_table",
+        up: memory_v2_links,
+    },
+];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
 /// idempotent so re-running it on a populated DB is a no-op.
@@ -261,6 +268,38 @@ fn memory_v1_initial(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// MEM-MOD-P3 — v2: lightweight typed adjacency table for the
+/// `memory_link` / `memory_consolidate` tools.
+///
+/// Schema is intentionally minimal — `link_type` is a free-form
+/// string so future tools (Mem0-style "supersedes", Letta-style
+/// "evidence_for") can co-exist without a schema bump.  ON DELETE
+/// CASCADE keeps the table clean when a memory is removed.
+fn memory_v2_links(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memory_links (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_key  TEXT NOT NULL,
+            target_key  TEXT NOT NULL,
+            link_type   TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            FOREIGN KEY (source_key) REFERENCES memory_entries(key) ON DELETE CASCADE,
+            FOREIGN KEY (target_key) REFERENCES memory_entries(key) ON DELETE CASCADE,
+            UNIQUE (source_key, target_key, link_type)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_key)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_key)",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,15 +313,16 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1]);
+        assert_eq!(report.applied, vec![1, 2]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
         assert!(table_exists(&c, "memory_entries").unwrap());
+        assert!(table_exists(&c, "memory_links").unwrap());
     }
 
     #[test]
-    fn upgrade_backfills_v1_for_legacy_db() {
+    fn upgrade_backfills_v1_for_legacy_db_and_runs_v2() {
         let c = open();
         // Simulate a pre-P0 install: the table exists but the
         // schema_migrations bookkeeping does not.
@@ -295,8 +335,9 @@ mod tests {
 
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.v1_backfilled);
-        assert!(report.applied.is_empty(), "v1 must NOT re-run");
+        assert_eq!(report.applied, vec![2], "v1 backfilled, v2 fresh");
         assert_eq!(report.skipped, vec![1]);
+        assert!(table_exists(&c, "memory_links").unwrap());
     }
 
     #[test]
@@ -305,7 +346,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1]);
+        assert_eq!(report.skipped, vec![1, 2]);
     }
 
     #[test]
@@ -336,6 +377,6 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1]);
+        assert_eq!(report.applied, vec![1, 2]);
     }
 }

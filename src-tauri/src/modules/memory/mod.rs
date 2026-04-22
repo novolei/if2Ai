@@ -435,6 +435,61 @@ pub trait MemoryProvider: Send + Sync {
         Ok(0)
     }
 
+    /// MEM-MOD-P3 — Fetch a single memory entry by exact key match. Returns
+    /// `Ok(None)` when the key does not exist (preferred over `KeyNotFound`
+    /// because callers commonly probe optional keys). Default implementation
+    /// scans the result of an unscoped recall — providers with a primary-key
+    /// index should override for O(1) lookup.
+    async fn get_by_key(&self, key: &str) -> Result<Option<MemoryEntry>, MemoryError> {
+        let entries = self.recall(key, None, 50).await?;
+        Ok(entries.into_iter().find(|e| e.key == key))
+    }
+
+    /// MEM-MOD-P3 — Replace the `content` of an existing entry, leaving
+    /// `created_at`, `importance`, `access_count`, `trust_score` untouched.
+    /// `updated_at` is set to `now`. Returns `KeyNotFound` if the key
+    /// does not exist.
+    ///
+    /// Default impl is a no-op that returns `KeyNotFound` so providers
+    /// that do not yet support partial updates remain compile-clean.
+    async fn update_content(&self, key: &str, content: &str) -> Result<(), MemoryError> {
+        let _ = (key, content);
+        Err(MemoryError::KeyNotFound(
+            "update_content not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// MEM-MOD-P3 — Create a typed link `source → target` (e.g.
+    /// `"supersedes"`, `"evidence_for"`, `"contradicts"`).  Idempotent:
+    /// the underlying SQLite table has a UNIQUE constraint on
+    /// `(source_key, target_key, link_type)`.  Default impl is a no-op.
+    async fn create_link(
+        &self,
+        source_key: &str,
+        target_key: &str,
+        link_type: &str,
+    ) -> Result<(), MemoryError> {
+        let _ = (source_key, target_key, link_type);
+        Ok(())
+    }
+
+    /// MEM-MOD-P3 — Merge several existing entries into a new
+    /// `consolidated_key` containing `consolidated_content`, then create
+    /// `"consolidated_into"` links from each source key to the new entry.
+    /// The source entries are NOT deleted (preserves provenance for P6
+    /// temporal versioning); use `memory_forget` if true deletion is
+    /// desired.  Returns the number of source links created.
+    async fn consolidate(
+        &self,
+        source_keys: &[String],
+        consolidated_key: &str,
+        consolidated_content: &str,
+        category: MemoryCategory,
+    ) -> Result<usize, MemoryError> {
+        let _ = (source_keys, consolidated_key, consolidated_content, category);
+        Ok(0)
+    }
+
     /// MEM-MOD-P1 — Adjust the persisted `trust_score` of a memory entry by
     /// `delta`, clamping the resulting value to `[-1.0, 1.0]`. Returns the
     /// new `trust_score` so callers (LLM tools, audit emitter) can echo it
