@@ -169,6 +169,12 @@ pub struct MemoryFeatureConfig {
     // `u32` so the parent `Eq` derive holds.  Source-of-truth is
     // `~/.if2ai/memory_config.json::compiler` per v2 §0.5 Δ-9.
     compiler: CompilerConfig,
+    // MEM-MOD-P4 — Mem0-style memory update decision tree.  When `true`,
+    // `memory_store` consults a small utility-LLM classifier before
+    // persisting a new fact and may turn the write into NOOP / UPDATE /
+    // DELETE instead of always ADD.  Default `false` (gated rollout):
+    // turn on per-user when the LLM you have wired is reliable enough.
+    decision_tree_enabled: bool,
 }
 
 impl Default for MemoryFeatureConfig {
@@ -182,6 +188,7 @@ impl Default for MemoryFeatureConfig {
             inject_to_prompt: true,
             max_inject_tokens: 2000,
             compiler: CompilerConfig::default(),
+            decision_tree_enabled: false,
         }
     }
 }
@@ -253,6 +260,14 @@ impl MemoryFeatureConfig {
     #[must_use]
     pub fn compiler(&self) -> &CompilerConfig {
         &self.compiler
+    }
+
+    /// MEM-MOD-P4 — `true` when `memory_store` is allowed to consult
+    /// the Mem0-style update decision tree before persisting.  Default
+    /// `false`; flip on per-user once the wired LLM is trustworthy.
+    #[must_use]
+    pub fn decision_tree_enabled(&self) -> bool {
+        self.decision_tree_enabled
     }
 }
 
@@ -332,6 +347,9 @@ pub(super) fn parse_optional_memory_feature_config(
         if let Some(compiler) = overrides.compiler {
             config.compiler = compiler;
         }
+        if let Some(flag) = overrides.decision_tree_enabled {
+            config.decision_tree_enabled = flag;
+        }
     }
 
     Ok(config)
@@ -369,6 +387,9 @@ pub(super) struct If2AiMemoryOverrides {
     /// Memory Settings UI is the single source of truth.
     #[serde(default)]
     pub(super) compiler: Option<CompilerConfig>,
+    /// MEM-MOD-P4 — Mem0-style update decision tree feature flag.
+    #[serde(default)]
+    pub(super) decision_tree_enabled: Option<bool>,
 }
 
 pub(super) fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {

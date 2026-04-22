@@ -12,6 +12,7 @@
 pub mod audit;
 pub mod compat;
 pub mod compiler;
+pub mod decision_tree;
 pub mod embedding;
 pub mod hrr;
 pub mod inject;
