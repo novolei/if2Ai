@@ -287,6 +287,9 @@ fn scored_to_entry(scored: &ScoredMemory) -> MemoryEntry {
         "core" => MemoryCategory::Core,
         "daily" => MemoryCategory::Daily,
         "conversation" => MemoryCategory::Conversation,
+        "working" => MemoryCategory::Working,
+        "procedural" => MemoryCategory::Procedural,
+        "reflection" => MemoryCategory::Reflection,
         other => MemoryCategory::Custom(other.to_string()),
     };
 

@@ -251,6 +251,10 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                         "core" => MemoryCategory::Core,
                         "daily" => MemoryCategory::Daily,
                         "conversation" => MemoryCategory::Conversation,
+                        // MEM-MOD-P2 — three new built-in facets surfaced to LLMs.
+                        "working" => MemoryCategory::Working,
+                        "procedural" => MemoryCategory::Procedural,
+                        "reflection" => MemoryCategory::Reflection,
                         other => MemoryCategory::Custom(other.to_string()),
                     })
                     .unwrap_or(MemoryCategory::Conversation);
@@ -416,7 +420,7 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                 },
                 "category": {
                     "type": "string",
-                    "description": "Category: core, daily, conversation, or custom string"
+                    "description": "Category: core (durable identity / preferences), daily (logical-day rollups), conversation (per-turn scratch), working (active-task scratch), procedural (how-to recipes), reflection (meta-observations), or any custom string."
                 }
             },
             "required": ["key", "content"]

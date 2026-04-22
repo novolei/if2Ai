@@ -105,6 +105,11 @@ pub(super) fn parse_category(s: &str) -> MemoryCategory {
         "core" => MemoryCategory::Core,
         "daily" => MemoryCategory::Daily,
         "conversation" => MemoryCategory::Conversation,
+        // MEM-MOD-P2 — three new built-in facets.  Order kept matching
+        // `MemoryCategory::as_str` so a round-trip is byte-stable.
+        "working" => MemoryCategory::Working,
+        "procedural" => MemoryCategory::Procedural,
+        "reflection" => MemoryCategory::Reflection,
         other => MemoryCategory::Custom(other.to_string()),
     }
 }

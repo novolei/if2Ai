@@ -279,7 +279,14 @@ impl TurnService {
             system_prompt,
         )
         .with_context_budget(self.deps.context_budget.clone())
-        .with_working_memory(WorkingMemory::default())
+        // MEM-MOD-P2 — wire WorkingMemory's max_tokens to the user-tunable
+        // ContextBudget instead of the hard-coded 1600 default.  `max_turns`
+        // stays at the historical 8 because turn-count eviction has not had
+        // a budget knob yet (a future Pack can add one).
+        .with_working_memory(WorkingMemory::new(
+            8,
+            self.deps.context_budget.working_tokens(),
+        ))
         .with_turn_hook(self.deps.memory_ticker.clone())
         .with_session_context(session_ctx_id.clone(), session_ctx_project.clone());
 
@@ -492,8 +499,12 @@ impl TurnService {
                     );
                 }
 
-                // WorkingMemory budget audit.
-                let working_memory = WorkingMemory::default();
+                // WorkingMemory budget audit. MEM-MOD-P2 — the audit
+                // limit now mirrors the ContextBudget setting so the
+                // "exceeded" warning fires against the same number we
+                // built the runtime with.
+                let working_memory =
+                    WorkingMemory::new(8, self.deps.context_budget.working_tokens());
                 let working_tokens: usize = trajectory_session
                     .messages
                     .iter()

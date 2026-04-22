@@ -1,12 +1,12 @@
 /**
  * MemoryCategoryNav — 分类标签导航组件
  *
- * 提供 Core / Daily / Conversation / Custom 四个分类标签页，
- * 用户点击后触发 onCategoryChange 回调。
+ * 提供 Core / Daily / Conversation / Working / Procedural / Reflection
+ * 六个内置分类 + Custom（其他用户自定义字符串），用户点击后触发
+ * onCategoryChange 回调。
  *
- * Props:
- * - activeCategory: 当前选中的分类
- * - onCategoryChange: 分类切换回调
+ * MEM-MOD-P2 — Working / Procedural / Reflection 三个新分类与后端
+ * `MemoryCategory` enum 一一对应（src-tauri/src/modules/memory/mod.rs）。
  */
 
 import { cn } from '@/lib/utils'
@@ -16,6 +16,9 @@ const CATEGORIES = [
   { value: 'core', label: 'Core' },
   { value: 'daily', label: 'Daily' },
   { value: 'conversation', label: 'Conversation' },
+  { value: 'working', label: 'Working' },
+  { value: 'procedural', label: 'Procedural' },
+  { value: 'reflection', label: 'Reflection' },
 ] as const
 
 export interface MemoryCategoryNavProps {

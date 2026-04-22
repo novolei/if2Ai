@@ -128,12 +128,37 @@ pub struct MemoryEntry {
     pub project_id: Option<String>,
 }
 
-/// Memory category for organizing memory entries
+/// Memory category for organizing memory entries.
+///
+/// MEM-MOD-P2 added three new built-in categories so the agent has a
+/// shared vocabulary for the four memory facets the post-Letta /
+/// post-Mem0 designs converge on:
+///
+/// | category       | lifetime              | examples                            |
+/// |----------------|-----------------------|-------------------------------------|
+/// | `core`         | persistent identity   | "我叫 RL", "I prefer concise replies" |
+/// | `daily`        | logical-day rollups   | today's compile target              |
+/// | `conversation` | per-turn scratch      | last user query, intermediate tool out |
+/// | `working`      | active-task scratch   | "currently refactoring foo.rs"       |
+/// | `procedural`   | how-to recipes        | "to deploy: bun build && rsync ..."  |
+/// | `reflection`   | meta-observations    | "user dislikes follow-up questions"  |
+/// | `custom`       | escape hatch          | anything else                        |
+///
+/// Adding a new variant ONLY requires a matching arm here + in
+/// [`crate::modules::memory::providers::sqlite_provider::scope::parse_category`];
+/// the storage layer treats the string opaquely so no schema migration
+/// is needed (the column is already `TEXT`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MemoryCategory {
     Core,
     Daily,
     Conversation,
+    /// MEM-MOD-P2 — short-lived task context (cleared when task ends).
+    Working,
+    /// MEM-MOD-P2 — durable how-to recipes ("when X happens, do Y").
+    Procedural,
+    /// MEM-MOD-P2 — agent's meta-observations about the user / itself.
+    Reflection,
     Custom(String),
 }
 
@@ -144,6 +169,9 @@ impl MemoryCategory {
             MemoryCategory::Core => "core",
             MemoryCategory::Daily => "daily",
             MemoryCategory::Conversation => "conversation",
+            MemoryCategory::Working => "working",
+            MemoryCategory::Procedural => "procedural",
+            MemoryCategory::Reflection => "reflection",
             MemoryCategory::Custom(s) => s,
         }
     }
