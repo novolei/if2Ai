@@ -126,6 +126,11 @@ pub async fn assemble_recall(
     deps: &MemoryInjectionDeps,
     request: MemoryInjectionRequest,
 ) -> RecallAssemblyResult {
+    // MIG-005: Save request fields before moving request into prepare_memory_injection
+    let session_id = request.session_id.clone();
+    let project_id = request.project_id.clone();
+    let workdir = request.workdir.clone();
+
     let artifacts = prepare_memory_injection(deps, request).await;
     let memory_items = artifacts.memory_items.clone();
 
@@ -144,16 +149,78 @@ pub async fn assemble_recall(
     }
 
     // Canonical 6-slot ordering. Critical facts and preferences are
-    // empty placeholders today; M3-B+ persistence wiring will fill
-    // them from the typed object store.
+    // now recalled from the typed object store (MIG-005).
+
+    // MIG-005: Recall critical facts from memory provider
+    let critical_facts = {
+        let scope = crate::modules::memory::scope::MemoryExecutionScope {
+            session_id: session_id.clone(),
+            project_id: project_id.clone(),
+            workdir: workdir.clone(),
+        };
+        match deps
+            .memory_provider
+            .recall_scoped("", Some("core"), 10, &scope)
+            .await
+        {
+            Ok(entries) => {
+                let facts: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| e.key.starts_with("Fact:"))
+                    .map(|e| e.content)
+                    .collect();
+                if facts.is_empty() {
+                    None
+                } else {
+                    Some(format!("# Critical Facts\n\n{}", facts.join("\n")))
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to recall critical facts");
+                None
+            }
+        }
+    };
+
+    // MIG-005: Recall preferences from memory provider
+    let preferences = {
+        let scope = crate::modules::memory::scope::MemoryExecutionScope {
+            session_id,
+            project_id,
+            workdir,
+        };
+        match deps
+            .memory_provider
+            .recall_scoped("", Some("core"), 10, &scope)
+            .await
+        {
+            Ok(entries) => {
+                let prefs: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| e.key.starts_with("Preference:"))
+                    .map(|e| e.content)
+                    .collect();
+                if prefs.is_empty() {
+                    None
+                } else {
+                    Some(format!("# Preferences\n\n{}", prefs.join("\n")))
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to recall preferences");
+                None
+            }
+        }
+    };
+
     let sections: Vec<RecalledSection> = RecallSectionSlot::canonical_order()
         .into_iter()
         .map(|slot| {
             let content = match slot {
                 RecallSectionSlot::Rules => rules.clone(),
                 RecallSectionSlot::Pinned => pinned.clone(),
-                RecallSectionSlot::CriticalFacts => None,
-                RecallSectionSlot::Preferences => None,
+                RecallSectionSlot::CriticalFacts => critical_facts.clone(),
+                RecallSectionSlot::Preferences => preferences.clone(),
                 RecallSectionSlot::Compiled => compiled.clone(),
                 RecallSectionSlot::Episodes => retrieved.clone(),
             };

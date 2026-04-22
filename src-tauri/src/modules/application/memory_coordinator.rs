@@ -44,7 +44,9 @@
 use std::sync::Arc;
 
 use crate::modules::learning::reflection_note::ReflectionNote;
-use crate::modules::runtime::contracts::memory::{MemoryWriteCandidate, MemoryWriteDecision};
+use crate::modules::runtime::contracts::memory::{
+    MemoryWriteCandidate, MemoryWriteDecision, MemoryWriteDisposition,
+};
 
 use super::memory_conflict_resolution::{resolve_conflict, ConflictResolution, ExistingRecordRef};
 use super::memory_injection_service::{
@@ -142,10 +144,8 @@ impl MemoryCoordinator {
     /// `AfterTurnOutput.reflection_notes`; the coordinator does
     /// NOT promote them to active strategy (M5 territory).
     ///
-    /// **Does not persist anything.**  Persistence wiring lands in
-    /// a follow-up slice.
-    #[must_use]
-    pub fn after_turn(&self, request: AfterTurnInput) -> AfterTurnOutput {
+    /// MIG-005: Now performs real persistence for `Allow` decisions.
+    pub async fn after_turn(&self, request: AfterTurnInput) -> AfterTurnOutput {
         let decisions: Vec<MemoryWriteDecision> = request
             .candidates
             .iter()
@@ -168,6 +168,73 @@ impl MemoryCoordinator {
                 resolve_conflict(candidate, existing)
             })
             .collect();
+
+        // MIG-005: Persist allowed candidates to memory provider.
+        // Only persist decisions with `Allow` disposition and no blocking conflicts.
+        for (idx, (candidate, decision)) in request.candidates.iter().zip(&decisions).enumerate() {
+            if decision.disposition == MemoryWriteDisposition::Allow {
+                let conflict = &conflicts[idx];
+                // Skip if conflict requires user prompt
+                if matches!(
+                    conflict.outcome,
+                    super::memory_conflict_resolution::ConflictResolutionOutcome::NoConflict
+                        | super::memory_conflict_resolution::ConflictResolutionOutcome::AcceptReplacement
+                ) {
+                    // Build memory key from object_kind and scope
+                    let key = format!(
+                        "{:?}:{:?}:{}",
+                        decision.object_kind,
+                        decision.scope,
+                        candidate
+                            .content_preview
+                            .chars()
+                            .take(50)
+                            .collect::<String>()
+                    );
+
+                    // Map MemoryObjectKind to MemoryCategory
+                    let category = match decision.object_kind {
+                        crate::modules::runtime::contracts::memory::MemoryObjectKind::Fact => {
+                            crate::modules::memory::MemoryCategory::Core
+                        }
+                        crate::modules::runtime::contracts::memory::MemoryObjectKind::Preference => {
+                            crate::modules::memory::MemoryCategory::Core
+                        }
+                        crate::modules::runtime::contracts::memory::MemoryObjectKind::Strategy => {
+                            crate::modules::memory::MemoryCategory::Core
+                        }
+                        crate::modules::runtime::contracts::memory::MemoryObjectKind::Episode => {
+                            crate::modules::memory::MemoryCategory::Conversation
+                        }
+                        crate::modules::runtime::contracts::memory::MemoryObjectKind::Unknown => {
+                            continue; // Skip unknown kinds
+                        }
+                    };
+
+                    // Build execution scope for scoped storage
+                    let scope = crate::modules::memory::scope::MemoryExecutionScope {
+                        session_id: request.session_id.clone(),
+                        project_id: request.project_id.clone(),
+                        workdir: None,
+                    };
+
+                    // Persist via provider
+                    if let Err(e) = self
+                        .injection_deps
+                        .memory_provider
+                        .store_scoped(&key, &candidate.content_preview, category, &scope)
+                        .await
+                    {
+                        tracing::warn!(
+                            key = %key,
+                            error = %e,
+                            "failed to persist memory candidate"
+                        );
+                    }
+                }
+            }
+        }
+
         AfterTurnOutput {
             decisions,
             quality,

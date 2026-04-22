@@ -38,6 +38,7 @@ use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryTicker, PinnedStore, SharedMemoryProvider};
 use crate::modules::runtime::budget::MAX_REQUEST_TOKEN_BUDGET_ESTIMATE;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
     ContentBlock, ConversationMessage, Session as RuntimeSession,
@@ -109,6 +110,8 @@ pub(super) struct FinalizeStreamInputs {
     pub harness_event_bus_for_stream: Option<EventBus>,
     pub learning_module_for_stream: Option<Arc<tokio::sync::Mutex<LearningModule>>>,
     pub memory_context_items_for_task: Vec<MemoryItemProjection>,
+    pub prompt_diagnostics_for_task: PromptDiagnosticsSummary,
+    pub prompt_diagnostics_enabled_for_task: bool,
     pub baseline_message_count_stream: usize,
 
     // ── after-turn dispatch ──
@@ -177,6 +180,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         harness_event_bus_for_stream,
         learning_module_for_stream,
         memory_context_items_for_task,
+        prompt_diagnostics_for_task,
+        prompt_diagnostics_enabled_for_task,
         baseline_message_count_stream,
         app_handle_for_after_turn,
         harness_bus_for_after_turn,
@@ -216,6 +221,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             resume_cursor: None,
             context_budget_usage: None,
             memory_context: None,
+            prompt_diagnostics: None,
         });
     }
 
@@ -372,7 +378,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         existing_stream,
         Vec::new(),
         "start_agent_stream",
-    );
+    )
+    .await;
 
     // LearningModule: record turn + reflection trigger.
     if let Some(lm_arc) = &learning_module_for_stream {
@@ -544,6 +551,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             resume_cursor: resume_cursor.clone(),
             context_budget_usage: Some(usage),
             memory_context: memory_payload,
+            prompt_diagnostics: prompt_diagnostics_enabled_for_task
+                .then_some(prompt_diagnostics_for_task),
         };
         stream_emitter.emit_payload(payload);
         if terminal_status.is_none() {

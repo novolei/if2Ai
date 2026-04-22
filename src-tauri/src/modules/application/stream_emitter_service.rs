@@ -49,7 +49,7 @@ pub const MEMORY_AFTER_TURN_TRACE_VERSION: &str = "memory-after-turn-trace@m4.1"
 /// Emit failure on either channel is logged at TRACE — never
 /// blocks the turn.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn dispatch_after_turn(
+pub(crate) async fn dispatch_after_turn(
     app_handle: &AppHandle,
     harness_bus: Option<&EventBus>,
     injection_deps: MemoryInjectionDeps,
@@ -66,14 +66,16 @@ pub(crate) fn dispatch_after_turn(
         "candidate / existing_record arrays must be parallel"
     );
     let coordinator = MemoryCoordinator::with_default_policy(injection_deps);
-    let output = coordinator.after_turn(AfterTurnInput {
-        session_id: session_id.clone(),
-        project_id: project_id.clone(),
-        candidates,
-        existing_records,
-        reflection_notes,
-        caller,
-    });
+    let output = coordinator
+        .after_turn(AfterTurnInput {
+            session_id: session_id.clone(),
+            project_id: project_id.clone(),
+            candidates,
+            existing_records,
+            reflection_notes,
+            caller,
+        })
+        .await;
     // RFC3339 timestamp for the batch envelope; per-decision
     // `decidedAt` lives inside each `MemoryWriteDecision`.
     let decided_at_dt = chrono::Utc::now();

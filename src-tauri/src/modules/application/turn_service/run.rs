@@ -426,7 +426,8 @@ impl TurnService {
                         existing_run,
                         Vec::new(),
                         "run_agent_turn",
-                    );
+                    )
+                    .await;
                 } else {
                     tracing::debug!(
                         "[run_agent_turn] dispatch_after_turn skipped (no AppHandle in deps)"
