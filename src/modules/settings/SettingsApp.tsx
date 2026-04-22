@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   approveSkillProposal,
   focusMainWindowAndPrefillPrompt,
@@ -8,133 +8,151 @@ import {
   rollbackSkillProposal,
   setSkillEnabled,
   type SkillInfo,
-} from '@/lib/tauri'
-import type { SettingsActions, SettingsSectionId, SettingsState, ThemeMode, FontMode } from './types'
-import { SettingsShell } from './components/SettingsShell'
-import { GeneralSettingsPage } from './pages/GeneralSettingsPage'
-import { UsageSettingsPage } from './pages/UsageSettingsPage'
-import { ConnectionsSettingsPage } from './pages/ConnectionsSettingsPage'
-import { RemoteSettingsPage } from './pages/RemoteSettingsPage'
-import { AboutSettingsPage } from './pages/AboutSettingsPage'
-import { SkillsSettingsPage } from './pages/SkillsSettingsPage'
-import { WebSearchSettingsPage } from './pages/WebSearchSettingsPage'
-import { MemorySettingsPage } from './pages/MemorySettingsPage'
-import { ModelSettingsPage } from './pages/ModelSettingsPage'
-import { ToolSettingsPage } from './pages/ToolSettingsPage'
-import { TtsProfilesPage } from './pages/TtsProfilesPage'
-import { TtsSettingsPage } from './pages/TtsSettingsPage'
-import { TtsTestPage } from './pages/TtsTestPage'
-import { SttConfigPage } from './pages/SttConfigPage'
-import { StrategyDiagnosticsPage } from './pages/StrategyDiagnosticsPage'
+} from "@/lib/tauri";
+import type {
+  SettingsActions,
+  SettingsSectionId,
+  SettingsState,
+  ThemeMode,
+  FontMode,
+} from "./types";
+import { SettingsShell } from "./components/SettingsShell";
+import { GeneralSettingsPage } from "./pages/GeneralSettingsPage";
+import { UsageSettingsPage } from "./pages/UsageSettingsPage";
+import { ConnectionsSettingsPage } from "./pages/ConnectionsSettingsPage";
+import { RemoteSettingsPage } from "./pages/RemoteSettingsPage";
+import { AboutSettingsPage } from "./pages/AboutSettingsPage";
+import { SkillsSettingsPage } from "./pages/SkillsSettingsPage";
+import { WebSearchSettingsPage } from "./pages/WebSearchSettingsPage";
+import { MemorySettingsPage } from "./pages/MemorySettingsPage";
+import { ModelSettingsPage } from "./pages/ModelSettingsPage";
+import { ToolSettingsPage } from "./pages/ToolSettingsPage";
+import { TtsProfilesPage } from "./pages/TtsProfilesPage";
+import { TtsSettingsPage } from "./pages/TtsSettingsPage";
+import { TtsTestPage } from "./pages/TtsTestPage";
+import { SttConfigPage } from "./pages/SttConfigPage";
+import { StrategyDiagnosticsPage } from "./pages/StrategyDiagnosticsPage";
+import { PromptDiagnosticsPage } from "./pages/PromptDiagnosticsPage";
+import { AgentIdentitySettingsPage } from "./pages/AgentIdentitySettingsPage";
 
 interface SettingsAppProps {
-  onClose: () => void
+  onClose: () => void;
 }
 
-const DEFAULT_FONT_MODE: FontMode = 'sans'
+const DEFAULT_FONT_MODE: FontMode = "sans";
 
 export function SettingsApp({ onClose }: SettingsAppProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('general')
-  const [theme, setTheme] = useState<ThemeMode>('system')
-  const [fontMode, setFontMode] = useState<FontMode>(DEFAULT_FONT_MODE)
-  const [language, setLanguage] = useState('zh-CN')
-  const [startupMode, setStartupMode] = useState('last')
-  const [density, setDensity] = useState('comfortable')
-  const [autoScroll, setAutoScroll] = useState(true)
-  const [notifications, setNotifications] = useState(true)
-  const [username, setUsername] = useState('')
-  const [email, setEmail] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [skills, setSkills] = useState<SkillInfo[]>([])
-  const [skillsLoading, setSkillsLoading] = useState(false)
-  const [skillsError, setSkillsError] = useState<string | null>(null)
+  const [activeSection, setActiveSection] =
+    useState<SettingsSectionId>("general");
+  const [theme, setTheme] = useState<ThemeMode>("system");
+  const [fontMode, setFontMode] = useState<FontMode>(DEFAULT_FONT_MODE);
+  const [language, setLanguage] = useState("zh-CN");
+  const [startupMode, setStartupMode] = useState("last");
+  const [density, setDensity] = useState("comfortable");
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [notifications, setNotifications] = useState(true);
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
 
   const refreshSkills = async () => {
-    setSkillsLoading(true)
-    setSkillsError(null)
+    setSkillsLoading(true);
+    setSkillsError(null);
     try {
-      setSkills(await listSkills())
+      setSkills(await listSkills());
     } catch (error) {
-      setSkillsError(String(error))
+      setSkillsError(String(error));
     } finally {
-      setSkillsLoading(false)
+      setSkillsLoading(false);
     }
-  }
+  };
 
   const handleSkillToggle = async (skill: SkillInfo, enabled: boolean) => {
-    const action = enabled ? '启用' : '禁用'
-    if (!window.confirm(`确认${action}技能「${skill.name}」吗？`)) return
+    const action = enabled ? "启用" : "禁用";
+    if (!window.confirm(`确认${action}技能「${skill.name}」吗？`)) return;
     try {
-      await setSkillEnabled(skill.path, enabled)
-      toast.success(`已${enabled ? '启用' : '禁用'}「${skill.name}」`)
-      await refreshSkills()
+      await setSkillEnabled(skill.path, enabled);
+      toast.success(`已${enabled ? "启用" : "禁用"}「${skill.name}」`);
+      await refreshSkills();
     } catch (error) {
-      toast.error(`操作失败：${skill.name}`, { description: String(error) })
+      toast.error(`操作失败：${skill.name}`, { description: String(error) });
     }
-  }
+  };
 
   const handleReviewSkill = async (skill: SkillInfo): Promise<string> => {
-    const toastId = `review-${skill.path}`
-    toast.loading(`正在 Review「${skill.name}」…`, { id: toastId })
+    const toastId = `review-${skill.path}`;
+    toast.loading(`正在 Review「${skill.name}」…`, { id: toastId });
     try {
-      const msg = await reviewSkillDraft(skill.path)
-      toast.success(`「${skill.name}」Review 完成`, { id: toastId, description: msg })
-      await refreshSkills()
-      return msg
+      const msg = await reviewSkillDraft(skill.path);
+      toast.success(`「${skill.name}」Review 完成`, {
+        id: toastId,
+        description: msg,
+      });
+      await refreshSkills();
+      return msg;
     } catch (error) {
-      toast.error(`Review 失败：${skill.name}`, { id: toastId, description: String(error) })
-      throw error
+      toast.error(`Review 失败：${skill.name}`, {
+        id: toastId,
+        description: String(error),
+      });
+      throw error;
     }
-  }
+  };
 
-  const handleProposalAction = async (skill: SkillInfo, action: 'approval' | 'rollback') => {
+  const handleProposalAction = async (
+    skill: SkillInfo,
+    action: "approval" | "rollback",
+  ) => {
     try {
-      if (action === 'approval') {
+      if (action === "approval") {
         // draft 状态先自动 review 一次，再执行 approve，实现"一键批准"
-        if (skill.review_status === 'draft') {
-          await reviewSkillDraft(skill.path)
+        if (skill.review_status === "draft") {
+          await reviewSkillDraft(skill.path);
         }
-        const msg = await approveSkillProposal(skill.path)
-        toast.success(`「${skill.name}」已批准`, { description: msg })
+        const msg = await approveSkillProposal(skill.path);
+        toast.success(`「${skill.name}」已批准`, { description: msg });
       } else {
-        const msg = await rollbackSkillProposal(skill.path)
-        toast.info(`「${skill.name}」已回滚`, { description: msg })
+        const msg = await rollbackSkillProposal(skill.path);
+        toast.info(`「${skill.name}」已回滚`, { description: msg });
       }
-      await refreshSkills()
+      await refreshSkills();
     } catch (error) {
-      toast.error(`操作失败：${skill.name}`, { description: String(error) })
+      toast.error(`操作失败：${skill.name}`, { description: String(error) });
     }
-  }
+  };
 
   const handleStartConversationCreate = async () => {
     const prompt =
-      '跟我一起用/skill-creator 创建一个技能，并且加入我的技能文档/列表 ~/.qclaw/skills 里。现在，你先问我技能应该做什么吧。'
+      "跟我一起用/skill-creator 创建一个技能，并且加入我的技能文档/列表 ~/.qclaw/skills 里。现在，你先问我技能应该做什么吧。";
     try {
-      await focusMainWindowAndPrefillPrompt(prompt)
-      toast.success('已跳转到主窗口', { description: '开始创建技能对话' })
+      await focusMainWindowAndPrefillPrompt(prompt);
+      toast.success("已跳转到主窗口", { description: "开始创建技能对话" });
     } catch (error) {
-      toast.error('跳转失败', { description: String(error) })
+      toast.error("跳转失败", { description: String(error) });
     }
-  }
+  };
 
   useEffect(() => {
-    const savedFontMode = localStorage.getItem('fontMode') as FontMode | null
+    const savedFontMode = localStorage.getItem("fontMode") as FontMode | null;
     if (savedFontMode) {
-      setFontMode(savedFontMode)
+      setFontMode(savedFontMode);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('fontMode', fontMode)
-    document.body.classList.toggle('font-serif-mode', fontMode === 'serif')
-  }, [fontMode])
+    localStorage.setItem("fontMode", fontMode);
+    document.body.classList.toggle("font-serif-mode", fontMode === "serif");
+  }, [fontMode]);
 
   useEffect(() => {
-    if (activeSection === 'skills') {
-      void refreshSkills()
+    if (activeSection === "skills") {
+      void refreshSkills();
     }
-  }, [activeSection])
+  }, [activeSection]);
 
   const state: SettingsState = {
     theme,
@@ -148,7 +166,7 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
     email,
     apiKey,
     baseUrl,
-  }
+  };
 
   const actions: SettingsActions = useMemo(
     () => ({
@@ -165,55 +183,67 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
       setBaseUrl,
     }),
     [],
-  )
+  );
 
   const content = (() => {
     switch (activeSection) {
-      case 'usage':
-        return <UsageSettingsPage state={state} actions={actions} />
-      case 'skills':
+      case "agent-identity":
+        return <AgentIdentitySettingsPage />;
+      case "usage":
+        return <UsageSettingsPage state={state} actions={actions} />;
+      case "skills":
         return (
           <SkillsSettingsPage
             skills={skills}
             loading={skillsLoading}
             error={skillsError}
             onRefresh={() => void refreshSkills()}
-            onToggleSkill={(skill, enabled) => void handleSkillToggle(skill, enabled)}
-            onStartConversationCreate={() => void handleStartConversationCreate()}
+            onToggleSkill={(skill, enabled) =>
+              void handleSkillToggle(skill, enabled)
+            }
+            onStartConversationCreate={() =>
+              void handleStartConversationCreate()
+            }
             onReviewSkill={(skill) => handleReviewSkill(skill)}
-            onApproveSkill={(skill) => void handleProposalAction(skill, 'approval')}
-            onRollbackSkill={(skill) => void handleProposalAction(skill, 'rollback')}
+            onApproveSkill={(skill) =>
+              void handleProposalAction(skill, "approval")
+            }
+            onRollbackSkill={(skill) =>
+              void handleProposalAction(skill, "rollback")
+            }
           />
-        )
-      case 'tools':
-        return <ToolSettingsPage />
-      case 'web-search':
-        return <WebSearchSettingsPage />
-      case 'memory':
-        return <MemorySettingsPage />
-      case 'model':
-        return <ModelSettingsPage />
-      case 'connections':
-        return <ConnectionsSettingsPage state={state} actions={actions} />
-      case 'remote':
-        return <RemoteSettingsPage state={state} actions={actions} />
-      case 'about':
-        return <AboutSettingsPage state={state} actions={actions} />
-      case 'tts-settings':
-        return <TtsSettingsPage />
-      case 'tts-profiles':
-        return <TtsProfilesPage />
-      case 'tts-test':
-        return <TtsTestPage />
-      case 'stt-config':
-        return <SttConfigPage />
-      case 'strategy-diagnostics':
-        return <StrategyDiagnosticsPage />
-      case 'general':
+        );
+      case "tools":
+        return <ToolSettingsPage />;
+      case "web-search":
+        return <WebSearchSettingsPage />;
+      case "memory":
+        return <MemorySettingsPage />;
+      case "model":
+        return <ModelSettingsPage />;
+      case "connections":
+        return <ConnectionsSettingsPage state={state} actions={actions} />;
+      case "remote":
+        return <RemoteSettingsPage state={state} actions={actions} />;
+      case "about":
+        return <AboutSettingsPage state={state} actions={actions} />;
+      case "tts-settings":
+        return <TtsSettingsPage />;
+      case "tts-profiles":
+        return <TtsProfilesPage />;
+      case "tts-test":
+        return <TtsTestPage />;
+      case "stt-config":
+        return <SttConfigPage />;
+      case "strategy-diagnostics":
+        return <StrategyDiagnosticsPage />;
+      case "prompt-diagnostics":
+        return <PromptDiagnosticsPage />;
+      case "general":
       default:
-        return <GeneralSettingsPage state={state} actions={actions} />
+        return <GeneralSettingsPage state={state} actions={actions} />;
     }
-  })()
+  })();
 
   return (
     <SettingsShell
@@ -223,7 +253,7 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
     >
       {content}
     </SettingsShell>
-  )
+  );
 }
 
-export type { SettingsAppProps }
+export type { SettingsAppProps };

@@ -85,6 +85,12 @@ pub struct SessionMeta {
     /// with [`SessionMeta::memory_disabled_since`]).
     #[serde(default)]
     pub memory_reenabled_at: Option<DateTime<Utc>>,
+    /// Session-level Soul override.
+    #[serde(default)]
+    pub soul_id: Option<String>,
+    /// Session-level Persona override.
+    #[serde(default)]
+    pub persona_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -102,6 +108,8 @@ impl SessionMeta {
             memory_enabled: session.memory_enabled,
             memory_disabled_since: session.memory_disabled_since,
             memory_reenabled_at: session.memory_reenabled_at,
+            soul_id: session.soul_id.clone(),
+            persona_id: session.persona_id.clone(),
         }
     }
 }
@@ -163,6 +171,12 @@ pub struct Session {
     /// Wall-clock UTC instant when memory was last re-enabled.
     #[serde(default)]
     pub memory_reenabled_at: Option<DateTime<Utc>>,
+    /// Session-scoped Soul override applied on top of global defaults.
+    #[serde(default)]
+    pub soul_id: Option<String>,
+    /// Session-scoped Persona override applied on top of global defaults.
+    #[serde(default)]
+    pub persona_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -189,6 +203,8 @@ impl Session {
             memory_enabled: None,
             memory_disabled_since: None,
             memory_reenabled_at: None,
+            soul_id: None,
+            persona_id: None,
         }
     }
 
@@ -354,7 +370,7 @@ impl SessionManager {
 
     /// Create a new session with the given title (legacy, no project).
     pub async fn create_session(&self, title: impl Into<String>) -> Result<Session, SessionError> {
-        self._create_session_impl(title, String::new()).await
+        self._create_session_impl(title, String::new(), None).await
     }
 
     /// Create a new session within a specific project.
@@ -363,7 +379,19 @@ impl SessionManager {
         project_id: &str,
         title: String,
     ) -> Result<Session, SessionError> {
-        self._create_session_impl(title, project_id.to_string())
+        self._create_session_impl(title, project_id.to_string(), None)
+            .await
+    }
+
+    /// Create a new session with an optional identity override.
+    pub async fn create_session_with_identity(
+        &self,
+        title: impl Into<String>,
+        project_id: String,
+        soul_id: Option<String>,
+        persona_id: Option<String>,
+    ) -> Result<Session, SessionError> {
+        self._create_session_impl(title, project_id, Some((soul_id, persona_id)))
             .await
     }
 
@@ -372,6 +400,7 @@ impl SessionManager {
         &self,
         title: impl Into<String>,
         project_id: String,
+        identity: Option<(Option<String>, Option<String>)>,
     ) -> Result<Session, SessionError> {
         if project_id.is_empty() {
             self.init().await?;
@@ -384,7 +413,11 @@ impl SessionManager {
         }
 
         let title = title.into();
-        let session = Session::new(title, project_id.clone());
+        let mut session = Session::new(title, project_id.clone());
+        if let Some((soul_id, persona_id)) = identity {
+            session.soul_id = soul_id;
+            session.persona_id = persona_id;
+        }
 
         if self.session_path(&session.id, &project_id).exists() {
             return Err(SessionError::AlreadyExists(session.id.clone()));
@@ -608,6 +641,21 @@ impl SessionManager {
         } else {
             session.memory_disabled_since = Some(now);
         }
+        session.updated_at = format_time(SystemTime::now());
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
+    /// Update session-scoped Soul / Persona override and persist.
+    pub async fn set_session_identity(
+        &self,
+        session_id: &str,
+        soul_id: Option<String>,
+        persona_id: Option<String>,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        session.soul_id = soul_id;
+        session.persona_id = persona_id;
         session.updated_at = format_time(SystemTime::now());
         self.save_session(&session).await?;
         Ok(session)
@@ -856,6 +904,8 @@ mod tests {
             memory_enabled,
             memory_disabled_since: None,
             memory_reenabled_at: None,
+            soul_id: None,
+            persona_id: None,
         }
     }
 
@@ -900,6 +950,8 @@ mod tests {
         assert_eq!(meta.memory_enabled, None);
         assert!(meta.memory_disabled_since.is_none());
         assert!(meta.memory_reenabled_at.is_none());
+        assert_eq!(meta.soul_id, None);
+        assert_eq!(meta.persona_id, None);
         assert!(!meta.pinned);
     }
 
@@ -916,6 +968,8 @@ mod tests {
             memory_enabled: Some(false),
             memory_disabled_since: Some(when),
             memory_reenabled_at: None,
+            soul_id: Some("if2ai-core".into()),
+            persona_id: Some("staff-architect".into()),
         };
         let json = serde_json::to_string(&meta).expect("serialise");
         // chrono serialises DateTime<Utc> as RFC3339 by default.
@@ -926,6 +980,63 @@ mod tests {
         let back: SessionMeta = serde_json::from_str(&json).expect("deserialise");
         assert_eq!(back.memory_enabled, Some(false));
         assert_eq!(back.memory_disabled_since, Some(when));
+        assert_eq!(back.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(back.persona_id.as_deref(), Some("staff-architect"));
+    }
+
+    #[tokio::test]
+    async fn create_session_with_identity_persists_fields() {
+        let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
+
+        let session = manager
+            .create_session_with_identity(
+                "Identity Session",
+                "project-1".to_string(),
+                Some("if2ai-core".to_string()),
+                Some("staff-architect".to_string()),
+            )
+            .await
+            .expect("create session with identity");
+
+        assert_eq!(session.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(session.persona_id.as_deref(), Some("staff-architect"));
+
+        let restored = manager.restore_session(&session.id).await.expect("restore");
+        assert_eq!(restored.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(restored.persona_id.as_deref(), Some("staff-architect"));
+
+        let _ = fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn set_session_identity_updates_metadata() {
+        let temp_dir = temp_dir().join(format!("if2ai_test_{}", Uuid::new_v4()));
+        let projects_dir = temp_dir.join("projects");
+        let manager = SessionManager::new(temp_dir.clone(), projects_dir);
+
+        let session = manager
+            .create_session("Identity Session")
+            .await
+            .expect("create");
+        let updated = manager
+            .set_session_identity(
+                &session.id,
+                Some("if2ai-core".to_string()),
+                Some("execution-partner".to_string()),
+            )
+            .await
+            .expect("set session identity");
+
+        assert_eq!(updated.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(updated.persona_id.as_deref(), Some("execution-partner"));
+
+        let restored = manager.restore_session(&session.id).await.expect("restore");
+        assert_eq!(restored.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(restored.persona_id.as_deref(), Some("execution-partner"));
+
+        let _ = fs::remove_dir_all(&temp_dir).await;
     }
 
     #[tokio::test]

@@ -18,8 +18,9 @@ use memory::{parse_optional_memory_feature_config, If2AiMemoryOverrides};
 #[allow(unused_imports)]
 pub use memory::{CompilerConfig, MemoryFeatureConfig, MemoryPolicyEnforceMode, MemoryRecallMode};
 use parsers::{
-    parse_optional_control_plane_config, parse_optional_hooks_config, parse_optional_model,
-    parse_optional_plugin_config, parse_optional_sandbox_config, read_optional_json_object,
+    parse_optional_control_plane_config, parse_optional_hooks_config,
+    parse_optional_identity_settings, parse_optional_model, parse_optional_plugin_config,
+    parse_optional_sandbox_config, read_optional_json_object,
 };
 use schema::{parse_optional_oauth_config, parse_optional_permission_mode};
 #[allow(unused_imports)]
@@ -32,6 +33,8 @@ use std::path::{Path, PathBuf};
 use self::json_helpers::*;
 use super::json::JsonValue;
 use super::sandbox::SandboxConfig;
+use crate::modules::identity::IdentitySettings;
+use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
 pub const CLAW_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 
@@ -49,6 +52,8 @@ pub struct ControlPlaneGovernanceConfig {
     pub(super) control_plane_v2_enabled: bool,
     pub(super) boundary_enforce_mode: BoundaryEnforceMode,
     pub(super) sandbox_strict_mode: bool,
+    pub(super) default_scenario_profile: Option<ScenarioProfileHint>,
+    pub(super) prompt_diagnostics_enabled: bool,
     pub(super) provider_transport: ProviderTransportConfig,
 }
 
@@ -86,6 +91,8 @@ impl Default for ControlPlaneGovernanceConfig {
             control_plane_v2_enabled: true,
             boundary_enforce_mode: BoundaryEnforceMode::Enforce,
             sandbox_strict_mode: true,
+            default_scenario_profile: None,
+            prompt_diagnostics_enabled: true,
             provider_transport: ProviderTransportConfig::default(),
         }
     }
@@ -154,6 +161,7 @@ pub struct RuntimeFeatureConfig {
     plugins: RuntimePluginConfig,
     mcp: McpConfigCollection,
     oauth: Option<OAuthConfig>,
+    identity: IdentitySettings,
     model: Option<String>,
     permission_mode: Option<ResolvedPermissionMode>,
     sandbox: SandboxConfig,
@@ -270,6 +278,15 @@ impl ConfigLoader {
             loaded_entries.push(entry);
         }
 
+        let prompt_control_path = default_prompt_control_config_path();
+        if let Some(value) = read_optional_json_object(&prompt_control_path)? {
+            deep_merge_objects(&mut merged, &value);
+            loaded_entries.push(ConfigEntry {
+                source: ConfigSource::User,
+                path: prompt_control_path,
+            });
+        }
+
         let merged_value = JsonValue::Object(merged.clone());
 
         let feature_config = RuntimeFeatureConfig {
@@ -279,6 +296,7 @@ impl ConfigLoader {
                 servers: mcp_servers,
             },
             oauth: parse_optional_oauth_config(&merged_value, "merged settings.oauth")?,
+            identity: parse_optional_identity_settings(&merged_value)?,
             model: parse_optional_model(&merged_value),
             permission_mode: parse_optional_permission_mode(&merged_value)?,
             sandbox: parse_optional_sandbox_config(&merged_value)?,
@@ -363,6 +381,12 @@ impl RuntimeConfig {
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.feature_config.model.as_deref()
+    }
+
+    /// Global default Soul / Persona ids resolved from settings.
+    #[must_use]
+    pub fn identity(&self) -> &IdentitySettings {
+        &self.feature_config.identity
     }
 
     /// Default permission mode resolved from settings, if explicitly set.
@@ -496,6 +520,12 @@ impl RuntimeFeatureConfig {
         self.oauth.as_ref()
     }
 
+    /// Global default Soul / Persona ids resolved from settings.
+    #[must_use]
+    pub fn identity(&self) -> &IdentitySettings {
+        &self.identity
+    }
+
     /// Configured model override.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
@@ -544,6 +574,19 @@ impl ControlPlaneGovernanceConfig {
     #[must_use]
     pub fn sandbox_strict_mode(&self) -> bool {
         self.sandbox_strict_mode
+    }
+
+    /// Optional scenario profile used when the classifier does not
+    /// surface an explicit scenario hint for the turn.
+    #[must_use]
+    pub fn default_scenario_profile(&self) -> Option<ScenarioProfileHint> {
+        self.default_scenario_profile
+    }
+
+    /// Whether prompt diagnostics should be projected to the frontend.
+    #[must_use]
+    pub fn prompt_diagnostics_enabled(&self) -> bool {
+        self.prompt_diagnostics_enabled
     }
 
     #[must_use]
@@ -644,6 +687,23 @@ pub fn default_config_home() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claw")))
         .unwrap_or_else(|| PathBuf::from(".claw"))
+}
+
+/// Resolve the dedicated prompt-control config path.
+#[must_use]
+pub fn default_prompt_control_config_path() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join(".if2ai")
+                .join("prompt")
+                .join("control-plane.json")
+        })
+        .unwrap_or_else(|| {
+            PathBuf::from(".if2ai")
+                .join("prompt")
+                .join("control-plane.json")
+        })
 }
 
 impl RuntimeHookConfig {

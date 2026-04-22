@@ -16,6 +16,8 @@
  * - `cross:agent-voice-enabled`     — 自动 TTS 开关变更
  * - `cross:stt-settings-changed`    — STT provider/key 变更
  * - `cross:tts-voices-changed`      — 用户自定义 voice 列表变更（上传/删除/重命名）
+ * - `cross:prompt-diagnostics-changed` — 最新 prompt diagnostics 摘要更新
+ * - `cross:session-identity-changed` — 当前 session 的 soul/persona override 变更
  * - `cross:onboarding-reset`        — 重置 Onboarding，主窗口需要重新加载 app state
  *
  * ## 示例
@@ -31,18 +33,21 @@
  * ```
  */
 
-import { useEffect } from 'react'
-import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useEffect } from "react";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type CrossWindowChannel =
-  | 'cross:agent-voice-changed'
-  | 'cross:agent-voice-enabled'
-  | 'cross:stt-settings-changed'
-  | 'cross:tts-voices-changed'
-  | 'cross:tts-settings-changed'
-  | 'cross:tts-profiles-changed'
-  | 'cross:tts-active-profile-changed'
-  | 'cross:onboarding-reset'
+  | "cross:agent-voice-changed"
+  | "cross:agent-voice-enabled"
+  | "cross:stt-settings-changed"
+  | "cross:tts-voices-changed"
+  | "cross:tts-settings-changed"
+  | "cross:tts-profiles-changed"
+  | "cross:tts-active-profile-changed"
+  | "cross:prompt-diagnostics-changed"
+  | "cross:session-identity-changed"
+  | "cross:prompt-control-changed"
+  | "cross:onboarding-reset";
 
 /**
  * 把变更广播到所有窗口（包括当前窗口）。
@@ -55,12 +60,15 @@ export async function broadcastChange<T = unknown>(
   payload?: T,
 ): Promise<void> {
   try {
-    await emit(channel, payload)
+    await emit(channel, payload);
   } catch (err) {
     // Tauri runtime 不可用时（例如本地测试 / Storybook）退化为本窗口 CustomEvent
-    console.warn('[crossWindowSync] emit failed, fallback to local CustomEvent:', err)
+    console.warn(
+      "[crossWindowSync] emit failed, fallback to local CustomEvent:",
+      err,
+    );
     try {
-      window.dispatchEvent(new CustomEvent(channel, { detail: payload }))
+      window.dispatchEvent(new CustomEvent(channel, { detail: payload }));
     } catch {
       /* ignore */
     }
@@ -81,31 +89,33 @@ export function useCrossWindowChange<T = unknown>(
   handler: (payload: T) => void,
 ): void {
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null
-    let mounted = true
+    let unlisten: UnlistenFn | null = null;
+    let mounted = true;
 
     void listen<T>(channel, (event) => {
-      handler(event.payload)
-    }).then((un) => {
-      if (mounted) unlisten = un
-      else un()
-    }).catch((err) => {
-      console.warn('[crossWindowSync] listen failed:', err)
+      handler(event.payload);
     })
+      .then((un) => {
+        if (mounted) unlisten = un;
+        else un();
+      })
+      .catch((err) => {
+        console.warn("[crossWindowSync] listen failed:", err);
+      });
 
     // CustomEvent fallback（Tauri 不可用时的退化路径）
     const customHandler = (e: Event) => {
-      const detail = (e as CustomEvent<T>).detail
-      handler(detail)
-    }
-    window.addEventListener(channel, customHandler as EventListener)
+      const detail = (e as CustomEvent<T>).detail;
+      handler(detail);
+    };
+    window.addEventListener(channel, customHandler as EventListener);
 
     return () => {
-      mounted = false
-      unlisten?.()
-      window.removeEventListener(channel, customHandler as EventListener)
-    }
+      mounted = false;
+      unlisten?.();
+      window.removeEventListener(channel, customHandler as EventListener);
+    };
     // 故意省略 handler — 调用方应包成 useCallback 或允许任意闭包
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel])
+  }, [channel]);
 }

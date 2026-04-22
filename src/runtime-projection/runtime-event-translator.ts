@@ -21,7 +21,7 @@ import type {
   MemoryWriteDecisionPayload,
   PermissionRequestPayload,
   StreamTokenPayload,
-} from '@/transport/contracts'
+} from "@/transport/contracts";
 
 import type {
   ActivationSnapshotEvent,
@@ -31,10 +31,11 @@ import type {
   MemoryLifecycleEvent,
   MemoryWriteDecisionEvent,
   PermissionRequestEvent,
-} from './types'
+} from "./types";
+import { translatePromptDiagnosticsSummary } from "./types";
 
 function nowMs(): number {
-  return Date.now()
+  return Date.now();
 }
 
 /**
@@ -45,34 +46,34 @@ function nowMs(): number {
 export function translateAgentTokenPayload(
   payload: StreamTokenPayload,
 ): CanonicalRuntimeEvent | null {
-  const runId = payload.stream_id
-  const receivedAt = nowMs()
+  const runId = payload.stream_id;
+  const receivedAt = nowMs();
 
   switch (payload.event_type) {
-    case 'text_delta':
+    case "text_delta":
       return {
-        kind: 'stream_text_delta',
+        kind: "stream_text_delta",
         runId,
-        text: payload.text ?? '',
+        text: payload.text ?? "",
         receivedAt,
-      }
-    case 'thinking_start':
-      return { kind: 'stream_thinking_start', runId, receivedAt }
-    case 'thinking_delta':
+      };
+    case "thinking_start":
+      return { kind: "stream_thinking_start", runId, receivedAt };
+    case "thinking_delta":
       return {
-        kind: 'stream_thinking_delta',
+        kind: "stream_thinking_delta",
         runId,
-        thinking: payload.thinking ?? '',
+        thinking: payload.thinking ?? "",
         receivedAt,
-      }
-    case 'tool_call_update': {
+      };
+    case "tool_call_update": {
       // Defensive: backend always sets these on tool_call_update,
       // but stay null-safe so the translator does not throw.
       if (!payload.tool_call_id || !payload.tool_name || !payload.tool_status) {
-        return null
+        return null;
       }
       return {
-        kind: 'stream_tool_call_update',
+        kind: "stream_tool_call_update",
         runId,
         toolCallId: payload.tool_call_id,
         toolName: payload.tool_name,
@@ -85,19 +86,19 @@ export function translateAgentTokenPayload(
         evidenceId: payload.evidence_id,
         requestId: payload.request_id,
         receivedAt,
-      }
+      };
     }
-    case 'final_text_override':
+    case "final_text_override":
       return {
-        kind: 'stream_final_text_override',
+        kind: "stream_final_text_override",
         runId,
-        text: payload.text ?? '',
+        text: payload.text ?? "",
         requestId: payload.request_id,
         receivedAt,
-      }
-    case 'stream_complete':
+      };
+    case "stream_complete":
       return {
-        kind: 'stream_complete',
+        kind: "stream_complete",
         runId,
         taskOutcome: payload.task_outcome,
         degradedReason: payload.degraded_reason,
@@ -106,27 +107,33 @@ export function translateAgentTokenPayload(
         requestId: payload.request_id,
         contextBudgetUsage: payload.context_budget_usage,
         memoryItems: payload.memory_context,
+        promptDiagnostics: payload.prompt_diagnostics
+          ? translatePromptDiagnosticsSummary(payload.prompt_diagnostics)
+          : undefined,
         receivedAt,
-      }
-    case 'stream_error':
+      };
+    case "stream_error":
       return {
-        kind: 'stream_error',
+        kind: "stream_error",
         runId,
-        reason: payload.tool_result ?? payload.degraded_reason ?? 'unknown stream error',
+        reason:
+          payload.tool_result ??
+          payload.degraded_reason ??
+          "unknown stream error",
         taskOutcome: payload.task_outcome,
         degradedReason: payload.degraded_reason,
         resumeAvailable: payload.resume_available,
         resumeCursor: payload.resume_cursor,
         requestId: payload.request_id,
         receivedAt,
-      }
+      };
     default: {
       // Exhaustiveness assertion. The cast preserves type safety
       // when a new variant is added — TS will flag the missing
       // case at compile time.
-      const _exhaustive: never = payload.event_type
-      void _exhaustive
-      return null
+      const _exhaustive: never = payload.event_type;
+      void _exhaustive;
+      return null;
     }
   }
 }
@@ -139,14 +146,14 @@ export function translatePermissionRequestPayload(
   payload: PermissionRequestPayload,
 ): PermissionRequestEvent {
   return {
-    kind: 'permission_request',
+    kind: "permission_request",
     sessionId: payload.session_id,
     toolName: payload.tool_name,
     permissionMode: payload.permission_mode,
     currentMode: payload.current_mode,
     message: payload.message,
     receivedAt: nowMs(),
-  }
+  };
 }
 
 /**
@@ -158,10 +165,10 @@ export function translateMemoryEventPayload(
   payload: MemoryEventPayload,
 ): MemoryLifecycleEvent {
   return {
-    kind: 'memory_event',
+    kind: "memory_event",
     payload,
     receivedAt: nowMs(),
-  }
+  };
 }
 
 /**
@@ -181,11 +188,11 @@ export function translateActivationSnapshot(
   payload: ActivationSnapshot,
 ): ActivationSnapshotEvent {
   return {
-    kind: 'activation_snapshot',
+    kind: "activation_snapshot",
     statusKind: payload.status.kind,
     allowsMainShell: payload.allowsMainShell,
     receivedAt: nowMs(),
-  }
+  };
 }
 
 /**
@@ -207,11 +214,11 @@ export function translateMemoryWriteDecision(
   payload: MemoryWriteDecisionPayload,
 ): MemoryWriteDecisionEvent {
   return {
-    kind: 'memory_write_decision',
+    kind: "memory_write_decision",
     candidateId,
     payload,
     receivedAt: nowMs(),
-  }
+  };
 }
 
 /**
@@ -229,7 +236,7 @@ export function translateMemoryAfterTurn(
   payload: MemoryAfterTurnPayload,
 ): MemoryAfterTurnEvent {
   return {
-    kind: 'memory_after_turn',
+    kind: "memory_after_turn",
     traceVersion: payload.traceVersion,
     caller: payload.caller,
     policyVersion: payload.policyVersion,
@@ -238,7 +245,7 @@ export function translateMemoryAfterTurn(
     quality: payload.quality,
     conflicts: payload.conflicts,
     receivedAt: nowMs(),
-  }
+  };
 }
 
 /**
@@ -263,14 +270,18 @@ export function translateExecutionModeDecision(
   runId?: string,
 ): ExecutionModeDecisionEvent {
   return {
-    kind: 'execution_mode_decision',
+    kind: "execution_mode_decision",
     runId,
     executionMode: payload.executionMode,
     riskLevel: payload.riskLevel,
     complexityLevel: payload.complexityLevel,
     reasonCodes: payload.reasonCodes ?? [],
+    scenarioProfileHint: payload.scenarioProfileHint,
     matchedRules: payload.classifierMatchedRuleIds ?? [],
+    slotSummary: payload.classifierSlotSummary ?? null,
+    ambiguousEscalated: payload.classifierAmbiguousEscalated ?? false,
+    escalationSource: payload.classifierEscalationSource,
     policyVersion: payload.classifierPolicyVersion,
     receivedAt: nowMs(),
-  }
+  };
 }

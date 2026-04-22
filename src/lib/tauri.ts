@@ -11,15 +11,15 @@
 //! 旧的 DTO 名字通过 `export type { ... } from '@/transport/contracts'`
 //! 重新导出，调用方零迁移成本。
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   AGENT_TOKEN_EVENT,
   MEMORY_AFTER_TURN_EVENT,
   MEMORY_EVENT,
   PERMISSION_REQUEST_EVENT,
-} from '@/transport/contracts';
+} from "@/transport/contracts";
 import type {
   ActivationSnapshot,
   ExecutionModeDecision,
@@ -28,7 +28,7 @@ import type {
   PermissionMode,
   PermissionRequestPayload,
   StreamTokenPayload,
-} from '@/transport/contracts';
+} from "@/transport/contracts";
 
 // Re-export invoke for App.tsx stopAgentStream
 export { invoke };
@@ -52,17 +52,18 @@ export type {
   MemoryEventPayload,
   PermissionMode,
   PermissionRequestPayload,
+  PromptDiagnosticsSummary,
   ReasonCode,
   RiskLevel,
   RouteHint,
   ScenarioProfileHint,
   StreamTokenPayload,
-} from '@/transport/contracts';
+} from "@/transport/contracts";
 export {
   AGENT_TOKEN_EVENT,
   MEMORY_EVENT,
   PERMISSION_REQUEST_EVENT,
-} from '@/transport/contracts';
+} from "@/transport/contracts";
 
 // ─── DTOs below this line stay in tauri.ts for now (M2.1 scope) ────
 // Slimmer M2.4 slice will progressively migrate session / project /
@@ -84,8 +85,8 @@ export async function listenMemoryEvent(
   handler: (payload: MemoryEventPayload) => void,
 ): Promise<UnlistenFn> {
   return await listen<MemoryEventPayload>(MEMORY_EVENT, (event) => {
-    handler(event.payload)
-  })
+    handler(event.payload);
+  });
 }
 
 /**
@@ -101,9 +102,9 @@ export async function listenMemoryAfterTurn(
   return await listen<MemoryAfterTurnPayload>(
     MEMORY_AFTER_TURN_EVENT,
     (event) => {
-      handler(event.payload)
+      handler(event.payload);
     },
-  )
+  );
 }
 
 /**
@@ -150,6 +151,8 @@ export interface SessionMeta {
   updated_at: string;
   pinned: boolean;
   message_count: number;
+  soul_id?: string | null;
+  persona_id?: string | null;
 }
 
 /**
@@ -177,14 +180,14 @@ export interface ProjectMeta {
 export interface DirectoryEntryPreview {
   name: string;
   path: string;
-  kind: 'folder' | 'file';
+  kind: "folder" | "file";
   modified_ms?: number | null;
 }
 
 export interface FilePreviewPayload {
   name: string;
   path: string;
-  kind: 'markdown' | 'code' | 'image' | 'pdf' | 'video' | 'html';
+  kind: "markdown" | "code" | "image" | "pdf" | "video" | "html";
   mime_type?: string | null;
   content?: string | null;
   data_base64?: string | null;
@@ -202,9 +205,9 @@ export interface FilePreviewPayload {
 export async function runAgentTurn(
   sessionId: string,
   userMessage: string,
-  permissionMode?: PermissionMode
+  permissionMode?: PermissionMode,
 ): Promise<AgentTurnResponse> {
-  return await invoke<AgentTurnResponse>('run_agent_turn', {
+  return await invoke<AgentTurnResponse>("run_agent_turn", {
     sessionId,
     userMessage,
     permissionMode,
@@ -221,9 +224,9 @@ export async function runAgentTurn(
 export async function startAgentStream(
   sessionId: string,
   userMessage: string,
-  permissionMode?: PermissionMode
+  permissionMode?: PermissionMode,
 ): Promise<string> {
-  return await invoke<string>('start_agent_stream', {
+  return await invoke<string>("start_agent_stream", {
     sessionId,
     userMessage,
     permissionMode,
@@ -246,7 +249,7 @@ export async function startAgentStream(
  * [`listenToStream`] 仍保留服务于现存 ChatWorkspace 主路径。
  */
 export async function listenToAgentTokenStream(
-  callback: (payload: StreamTokenPayload) => void
+  callback: (payload: StreamTokenPayload) => void,
 ): Promise<UnlistenFn> {
   return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
     callback(event.payload);
@@ -255,7 +258,7 @@ export async function listenToAgentTokenStream(
 
 export async function listenToStream(
   streamId: string,
-  callback: (payload: StreamTokenPayload) => void
+  callback: (payload: StreamTokenPayload) => void,
 ): Promise<UnlistenFn> {
   return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
     if (event.payload.stream_id === streamId) {
@@ -268,11 +271,14 @@ export async function listenToStream(
  * 监听后端权限请求事件
  */
 export async function listenToPermissionRequests(
-  callback: (payload: PermissionRequestPayload) => void
+  callback: (payload: PermissionRequestPayload) => void,
 ): Promise<UnlistenFn> {
-  return await listen<PermissionRequestPayload>(PERMISSION_REQUEST_EVENT, (event) => {
-    callback(event.payload)
-  })
+  return await listen<PermissionRequestPayload>(
+    PERMISSION_REQUEST_EVENT,
+    (event) => {
+      callback(event.payload);
+    },
+  );
 }
 
 /**
@@ -280,15 +286,15 @@ export async function listenToPermissionRequests(
  */
 export async function respondPermission(
   sessionId: string,
-  decision: 'allow' | 'deny',
-  options?: { toolName?: string; scope?: 'once' | 'session' }
+  decision: "allow" | "deny",
+  options?: { toolName?: string; scope?: "once" | "session" },
 ): Promise<void> {
-  return await invoke<void>('respond_permission', {
+  return await invoke<void>("respond_permission", {
     sessionId,
     decision,
     toolName: options?.toolName,
     scope: options?.scope,
-  })
+  });
 }
 
 /**
@@ -297,7 +303,7 @@ export async function respondPermission(
  * @returns 会话列表
  */
 export async function listSessions(): Promise<SessionMeta[]> {
-  return await invoke<SessionMeta[]>('list_sessions');
+  return await invoke<SessionMeta[]>("list_sessions");
 }
 
 /**
@@ -306,7 +312,7 @@ export async function listSessions(): Promise<SessionMeta[]> {
  * @param id - 要删除的会话 ID
  */
 export async function deleteSession(id: string): Promise<void> {
-  return await invoke<void>('delete_session', { id });
+  return await invoke<void>("delete_session", { id });
 }
 
 /**
@@ -315,8 +321,11 @@ export async function deleteSession(id: string): Promise<void> {
  * @param id - 会话 ID
  * @param pinned - 是否置顶
  */
-export async function setSessionPinned(id: string, pinned: boolean): Promise<void> {
-  return await invoke<void>('set_session_pinned', { id, pinned });
+export async function setSessionPinned(
+  id: string,
+  pinned: boolean,
+): Promise<void> {
+  return await invoke<void>("set_session_pinned", { id, pinned });
 }
 
 /**
@@ -332,9 +341,9 @@ export async function setSessionPinned(id: string, pinned: boolean): Promise<voi
  */
 export async function memorySessionSetEnabled(
   sessionId: string,
-  enabled: boolean
+  enabled: boolean,
 ): Promise<void> {
-  await invoke<void>('memory_session_set_enabled', { id: sessionId, enabled });
+  await invoke<void>("memory_session_set_enabled", { id: sessionId, enabled });
 }
 
 /**
@@ -349,10 +358,10 @@ export async function memorySessionSetEnabled(
 export interface PinnedItemDto {
   id: string;
   content: string;
-  scope: 'project' | 'global';
+  scope: "project" | "global";
   projectId?: string;
   createdAt: string;
-  createdByKind: 'user' | 'tool';
+  createdByKind: "user" | "tool";
   toolName?: string;
   sessionId?: string;
 }
@@ -365,10 +374,10 @@ export interface PinnedItemDto {
  * @param projectId - 当前 project_id; `scope='global'` 时忽略.
  */
 export async function pinnedGet(
-  scope: 'project' | 'global' | 'both',
-  projectId?: string
+  scope: "project" | "global" | "both",
+  projectId?: string,
 ): Promise<PinnedItemDto[]> {
-  return await invoke<PinnedItemDto[]>('pinned_get', { scope, projectId });
+  return await invoke<PinnedItemDto[]>("pinned_get", { scope, projectId });
 }
 
 /**
@@ -380,10 +389,10 @@ export async function pinnedGet(
  */
 export async function pinnedAdd(
   content: string,
-  scope: 'project' | 'global',
-  projectId?: string
+  scope: "project" | "global",
+  projectId?: string,
 ): Promise<PinnedItemDto> {
-  return await invoke<PinnedItemDto>('pinned_add', {
+  return await invoke<PinnedItemDto>("pinned_add", {
     content,
     scope,
     projectId,
@@ -394,7 +403,7 @@ export async function pinnedAdd(
  * 删除一条 pin (幂等 - 已不存在时返回 `false`, 不报错).
  */
 export async function pinnedDelete(id: string): Promise<boolean> {
-  return await invoke<boolean>('pinned_delete', { id });
+  return await invoke<boolean>("pinned_delete", { id });
 }
 
 /**
@@ -402,7 +411,7 @@ export async function pinnedDelete(id: string): Promise<boolean> {
  * 不在 store 中的 id 静默跳过.
  */
 export async function pinnedReorder(ids: string[]): Promise<void> {
-  await invoke<void>('pinned_reorder', { ids });
+  await invoke<void>("pinned_reorder", { ids });
 }
 
 /**
@@ -414,9 +423,9 @@ export async function pinnedReorder(ids: string[]): Promise<void> {
  */
 export async function createProject(
   name: string,
-  workdir: string
+  workdir: string,
 ): Promise<Project> {
-  return await invoke<Project>('create_project', { name, workdir });
+  return await invoke<Project>("create_project", { name, workdir });
 }
 
 /**
@@ -425,7 +434,7 @@ export async function createProject(
  * @returns 项目列表
  */
 export async function listProjects(): Promise<ProjectMeta[]> {
-  return await invoke<ProjectMeta[]>('list_projects');
+  return await invoke<ProjectMeta[]>("list_projects");
 }
 
 /**
@@ -435,7 +444,7 @@ export async function listProjects(): Promise<ProjectMeta[]> {
  * @returns 项目信息
  */
 export async function getProject(id: string): Promise<Project> {
-  return await invoke<Project>('get_project', { id });
+  return await invoke<Project>("get_project", { id });
 }
 
 /**
@@ -447,9 +456,9 @@ export async function getProject(id: string): Promise<Project> {
  */
 export async function renameProject(
   id: string,
-  newName: string
+  newName: string,
 ): Promise<Project> {
-  return await invoke<Project>('rename_project', { id, newName });
+  return await invoke<Project>("rename_project", { id, newName });
 }
 
 /**
@@ -458,7 +467,7 @@ export async function renameProject(
  * @param id - 要删除的项目 ID
  */
 export async function deleteProject(id: string): Promise<void> {
-  return await invoke<void>('delete_project', { id });
+  return await invoke<void>("delete_project", { id });
 }
 
 /**
@@ -467,11 +476,11 @@ export async function deleteProject(id: string): Promise<void> {
  * @param id - 项目 ID
  */
 export async function openProjectInFinder(id: string): Promise<void> {
-  return await invoke<void>('open_project_in_finder', { id });
+  return await invoke<void>("open_project_in_finder", { id });
 }
 
 export async function openDirectoryPath(path: string): Promise<void> {
-  return await invoke<void>('open_directory_path', { path });
+  return await invoke<void>("open_directory_path", { path });
 }
 
 /**
@@ -479,7 +488,7 @@ export async function openDirectoryPath(path: string): Promise<void> {
  * 用户取消时返回 null。
  */
 export async function pickFolderDialog(): Promise<string | null> {
-  return await invoke<string | null>('pick_folder_dialog');
+  return await invoke<string | null>("pick_folder_dialog");
 }
 
 /**
@@ -487,28 +496,34 @@ export async function pickFolderDialog(): Promise<string | null> {
  * 返回 [workdir_path, project_id]。
  */
 export async function ensureDefaultWorkdir(): Promise<[string, string]> {
-  return await invoke<[string, string]>('ensure_default_workdir');
+  return await invoke<[string, string]>("ensure_default_workdir");
 }
 
 export async function listDirectoryPreview(
   path: string,
-  limit = 32
+  limit = 32,
 ): Promise<DirectoryEntryPreview[]> {
-  return await invoke<DirectoryEntryPreview[]>('list_directory_preview', { path, limit });
+  return await invoke<DirectoryEntryPreview[]>("list_directory_preview", {
+    path,
+    limit,
+  });
 }
 
 export async function readFilePreview(
   path: string,
-  maxBytes = 128 * 1024
+  maxBytes = 128 * 1024,
 ): Promise<FilePreviewPayload> {
-  return await invoke<FilePreviewPayload>('read_file_preview', { path, maxBytes });
+  return await invoke<FilePreviewPayload>("read_file_preview", {
+    path,
+    maxBytes,
+  });
 }
 
 export async function writeFileContents(
   path: string,
-  content: string
+  content: string,
 ): Promise<void> {
-  return await invoke<void>('write_file_contents', { path, content });
+  return await invoke<void>("write_file_contents", { path, content });
 }
 
 /**
@@ -518,7 +533,7 @@ export async function writeFileContents(
  * @returns 创建后的工作树路径
  */
 export async function createPermanentWorktree(id: string): Promise<string> {
-  return await invoke<string>('create_permanent_worktree', { id });
+  return await invoke<string>("create_permanent_worktree", { id });
 }
 
 /**
@@ -530,9 +545,14 @@ export async function createPermanentWorktree(id: string): Promise<string> {
  */
 export async function createSession(
   projectId: string,
-  title: string
+  title: string,
+  identity?: SessionIdentityInput | null,
 ): Promise<SessionMeta> {
-  return await invoke<SessionMeta>('create_session', { projectId, title });
+  return await invoke<SessionMeta>("create_session", {
+    projectId,
+    title,
+    identity,
+  });
 }
 
 /**
@@ -540,9 +560,16 @@ export async function createSession(
  */
 export async function renameSession(
   id: string,
-  title: string
+  title: string,
 ): Promise<SessionMeta> {
-  return await invoke<SessionMeta>('rename_session', { id, title });
+  return await invoke<SessionMeta>("rename_session", { id, title });
+}
+
+export async function setSessionIdentity(
+  id: string,
+  identity: SessionIdentityInput,
+): Promise<SessionMeta> {
+  return await invoke<SessionMeta>("set_session_identity", { id, identity });
 }
 
 /**
@@ -552,39 +579,41 @@ export async function renameSession(
  * @returns 会话列表
  */
 export async function listProjectSessions(
-  projectId: string
+  projectId: string,
 ): Promise<SessionMeta[]> {
-  return await invoke<SessionMeta[]>('list_project_sessions', { projectId });
+  return await invoke<SessionMeta[]>("list_project_sessions", { projectId });
 }
 
 /**
  * 打开设置窗口
  */
 export async function openSettingsWindow(): Promise<void> {
-  return await invoke<void>('open_settings_window');
+  return await invoke<void>("open_settings_window");
 }
 
 /**
  * 关闭设置窗口
  */
 export async function closeSettingsWindow(): Promise<void> {
-  return await invoke<void>('close_settings_window');
+  return await invoke<void>("close_settings_window");
 }
 
 export interface ChatPrefillPayload {
-  prompt: string
+  prompt: string;
 }
 
-export async function focusMainWindowAndPrefillPrompt(prompt: string): Promise<void> {
-  return await invoke<void>('focus_main_window_and_prefill_prompt', { prompt })
+export async function focusMainWindowAndPrefillPrompt(
+  prompt: string,
+): Promise<void> {
+  return await invoke<void>("focus_main_window_and_prefill_prompt", { prompt });
 }
 
 export async function listenToChatPrefill(
-  callback: (payload: ChatPrefillPayload) => void
+  callback: (payload: ChatPrefillPayload) => void,
 ): Promise<UnlistenFn> {
-  return await listen<ChatPrefillPayload>('if2ai-chat-prefill', (event) => {
-    callback(event.payload)
-  })
+  return await listen<ChatPrefillPayload>("if2ai-chat-prefill", (event) => {
+    callback(event.payload);
+  });
 }
 
 /**
@@ -593,65 +622,70 @@ export async function listenToChatPrefill(
  * @param id - 会话 ID
  * @returns 完整的会话信息
  */
-export async function getSession(
-  id: string
-): Promise<Session> {
-  return await invoke<Session>('get_session', { id });
+export async function getSession(id: string): Promise<Session> {
+  return await invoke<Session>("get_session", { id });
 }
 
 /**
  * 会话信息（包含消息）
  */
 export interface Session {
-  id: string
-  project_id: string
-  title: string
-  messages: ConversationMessage[]
-  created_at: string
-  updated_at: string
-  token_count: number
+  id: string;
+  project_id: string;
+  title: string;
+  messages: ConversationMessage[];
+  created_at: string;
+  updated_at: string;
+  token_count: number;
+  soul_id?: string | null;
+  persona_id?: string | null;
+}
+
+export interface SessionIdentityInput {
+  soul_id?: string | null;
+  persona_id?: string | null;
 }
 
 /**
  * 对话消息
  */
 export interface ConversationMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  blocks: ContentBlock[]
-  usage?: TokenUsage
-  thinking?: string
-  task_outcome?: 'completed' | 'partial_success' | 'failed'
-  degraded_reason?: string
-  resume_available?: boolean
-  resume_cursor?: string
-  request_id?: string
+  role: "system" | "user" | "assistant" | "tool";
+  blocks: ContentBlock[];
+  usage?: TokenUsage;
+  thinking?: string;
+  task_outcome?: "completed" | "partial_success" | "failed";
+  degraded_reason?: string;
+  resume_available?: boolean;
+  resume_cursor?: string;
+  request_id?: string;
 }
 
 /**
  * 内容块
  */
 export interface ContentBlock {
-  type: 'text' | 'tool_use' | 'tool_result'
-  text?: string
-  tool_use_id?: string
-  tool_name?: string
-  input?: string
-  output?: string
+  type: "text" | "tool_use" | "tool_result";
+  text?: string;
+  tool_use_id?: string;
+  tool_name?: string;
+  input?: string;
+  output?: string;
   tool_use_block?: {
-    id: string
-    name: string
-    input: Record<string, unknown>
-  }
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  };
 }
 
 /**
  * Token 使用量
  */
 export interface TokenUsage {
-  input_tokens: number
-  output_tokens: number
-  cache_creation_input_tokens?: number
-  cache_read_input_tokens?: number
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 /**
@@ -683,10 +717,10 @@ export async function executeTool(
   name: string,
   args: Record<string, unknown>,
   permissionMode?: PermissionMode,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<ToolCallResult> {
   try {
-    const result = await invoke<string>('execute_tool', {
+    const result = await invoke<string>("execute_tool", {
       name,
       args: JSON.stringify(args),
       permissionMode,
@@ -704,7 +738,7 @@ export async function executeTool(
  * @returns 工具定义列表
  */
 export async function listTools(): Promise<ToolDefinition[]> {
-  return invoke<ToolDefinition[]>('list_tools');
+  return invoke<ToolDefinition[]>("list_tools");
 }
 
 /**
@@ -714,9 +748,9 @@ export async function listTools(): Promise<ToolDefinition[]> {
  * @returns 工具定义列表
  */
 export async function getToolDefinitions(
-  allowed?: string[]
+  allowed?: string[],
 ): Promise<object[]> {
-  return invoke<object[]>('get_tool_definitions', { allowed });
+  return invoke<object[]>("get_tool_definitions", { allowed });
 }
 
 /**
@@ -735,7 +769,7 @@ export interface ToolSet {
  * @returns 工具集列表
  */
 export async function listToolsets(): Promise<ToolSet[]> {
-  return invoke<ToolSet[]>('list_toolsets');
+  return invoke<ToolSet[]>("list_toolsets");
 }
 
 /**
@@ -745,8 +779,11 @@ export async function listToolsets(): Promise<ToolSet[]> {
  * @param limit - Maximum number of suggestions
  * @returns List of full command strings
  */
-export async function suggestSlashCommands(input: string, limit = 8): Promise<string[]> {
-  return invoke<string[]>('suggest_slash_commands', { input, limit });
+export async function suggestSlashCommands(
+  input: string,
+  limit = 8,
+): Promise<string[]> {
+  return invoke<string[]>("suggest_slash_commands", { input, limit });
 }
 
 /**
@@ -756,8 +793,11 @@ export async function suggestSlashCommands(input: string, limit = 8): Promise<st
  * @param sessionId - Current session ID
  * @returns Result message from command execution
  */
-export async function executeSlashCommand(input: string, sessionId: string): Promise<string> {
-  return invoke<string>('execute_slash_command', { input, sessionId });
+export async function executeSlashCommand(
+  input: string,
+  sessionId: string,
+): Promise<string> {
+  return invoke<string>("execute_slash_command", { input, sessionId });
 }
 
 /**
@@ -767,242 +807,284 @@ export async function executeSlashCommand(input: string, sessionId: string): Pro
  */
 export async function resolveSkillSlash(
   input: string,
-  cwd?: string
+  cwd?: string,
 ): Promise<string | null> {
-  return invoke<string | null>('resolve_skill_slash', { input, cwd: cwd ?? null })
+  return invoke<string | null>("resolve_skill_slash", {
+    input,
+    cwd: cwd ?? null,
+  });
 }
 
 export interface SkillInfo {
-  name: string
-  description: string
-  path: string
-  source: 'workspace' | 'user' | 'builtin' | 'remote-quarantine'
-  review_status: 'draft' | 'quarantine' | 'review_passed' | 'active' | 'disabled'
-  status: 'draft' | 'quarantine' | 'review_passed' | 'active' | 'disabled'
-  enabled: boolean
-  read_only: boolean
-  shadowed_by?: string
+  name: string;
+  description: string;
+  path: string;
+  source: "workspace" | "user" | "builtin" | "remote-quarantine";
+  review_status:
+    | "draft"
+    | "quarantine"
+    | "review_passed"
+    | "active"
+    | "disabled";
+  status: "draft" | "quarantine" | "review_passed" | "active" | "disabled";
+  enabled: boolean;
+  read_only: boolean;
+  shadowed_by?: string;
 }
 
 export async function listSkills(cwd?: string): Promise<SkillInfo[]> {
-  return invoke<SkillInfo[]>('list_skills', { cwd })
+  return invoke<SkillInfo[]>("list_skills", { cwd });
 }
 
 export async function setSkillEnabled(
   skillPath: string,
   enabled: boolean,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  const action = enabled ? 'enable-path' : 'disable-path'
-  return executeSlashCommand(`/skills ${action} ${skillPath}`, sessionId)
+  const action = enabled ? "enable-path" : "disable-path";
+  return executeSlashCommand(`/skills ${action} ${skillPath}`, sessionId);
 }
 
 export async function createSkillDraft(
   skillName: string,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  return executeSlashCommand(`/skills create ${skillName}`, sessionId)
+  return executeSlashCommand(`/skills create ${skillName}`, sessionId);
 }
 
 export async function reviewSkillDraft(
   skillPath: string,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  return executeSlashCommand(`/skills review-path ${skillPath}`, sessionId)
+  return executeSlashCommand(`/skills review-path ${skillPath}`, sessionId);
 }
 
 export async function approveSkillProposal(
   skillPath: string,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  return executeSlashCommand(`/skills approve-path ${skillPath}`, sessionId)
+  return executeSlashCommand(`/skills approve-path ${skillPath}`, sessionId);
 }
 
 export async function rollbackSkillProposal(
   skillPath: string,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  return executeSlashCommand(`/skills rollback-path ${skillPath}`, sessionId)
+  return executeSlashCommand(`/skills rollback-path ${skillPath}`, sessionId);
 }
 
 export interface SkillDistributionRequest {
-  skillName: string
-  url: string
-  channel: 'stable' | 'canary'
-  checksum: string
-  signature: string
+  skillName: string;
+  url: string;
+  channel: "stable" | "canary";
+  checksum: string;
+  signature: string;
 }
 
 export interface SkillsMarketAuditItem {
-  skill: string
-  repo: string
-  gen: string
-  socketAlerts: string
-  snykRisk: string
+  skill: string;
+  repo: string;
+  gen: string;
+  socketAlerts: string;
+  snykRisk: string;
 }
 
-export async function fetchSkillsMarketAudits(): Promise<SkillsMarketAuditItem[]> {
-  return invoke<SkillsMarketAuditItem[]>('fetch_skills_market_audits')
+export async function fetchSkillsMarketAudits(): Promise<
+  SkillsMarketAuditItem[]
+> {
+  return invoke<SkillsMarketAuditItem[]>("fetch_skills_market_audits");
 }
 
 export interface HubInstallResult {
-  success: boolean
-  message: string
-  skill_name?: string
+  success: boolean;
+  message: string;
+  skill_name?: string;
 }
 
 /** One skill result from hub_browse / hub_search. */
 export interface HubSkillResult {
-  name: string
-  description: string
-  source: string
-  identifier: string
-  trust_level: string
-  tags: string[]
+  name: string;
+  description: string;
+  source: string;
+  identifier: string;
+  trust_level: string;
+  tags: string[];
 }
 
 export interface HubCommandResult {
-  success: boolean
-  message: string
-  data?: HubSkillResult[]
+  success: boolean;
+  message: string;
+  data?: HubSkillResult[];
 }
 
 /** Install a skill from any hub source via the Rust pipeline. */
 export async function hubInstall(
   sourceId: string,
   identifier: string,
-  skillsDir?: string
+  skillsDir?: string,
 ): Promise<HubInstallResult> {
-  return invoke<HubInstallResult>('hub_install', {
+  return invoke<HubInstallResult>("hub_install", {
     sourceId,
     identifier,
     skillsDir: skillsDir ?? null,
-  })
+  });
 }
 
 /** Browse skills from all hub sources (empty query returns defaults per source). */
 export async function hubBrowse(
   sourceFilter?: string,
-  limit?: number
+  limit?: number,
 ): Promise<HubCommandResult> {
-  const result = await invoke<{ success: boolean; message: string; data?: unknown }>(
-    'hub_browse',
-    { sourceFilter: sourceFilter ?? null, limit: limit ?? 50 }
-  )
+  const result = await invoke<{
+    success: boolean;
+    message: string;
+    data?: unknown;
+  }>("hub_browse", { sourceFilter: sourceFilter ?? null, limit: limit ?? 50 });
   return {
     success: result.success,
     message: result.message,
     data: Array.isArray(result.data) ? (result.data as HubSkillResult[]) : [],
-  }
+  };
 }
 
 /** Search skills across all hub sources. */
 export async function hubSearch(
   query: string,
   sourceFilter?: string,
-  limit?: number
+  limit?: number,
 ): Promise<HubCommandResult> {
-  const result = await invoke<{ success: boolean; message: string; data?: unknown }>(
-    'hub_search',
-    { query, sourceFilter: sourceFilter ?? null, limit: limit ?? 30 }
-  )
+  const result = await invoke<{
+    success: boolean;
+    message: string;
+    data?: unknown;
+  }>("hub_search", {
+    query,
+    sourceFilter: sourceFilter ?? null,
+    limit: limit ?? 30,
+  });
   return {
     success: result.success,
     message: result.message,
     data: Array.isArray(result.data) ? (result.data as HubSkillResult[]) : [],
-  }
+  };
 }
 
 async function sha256Hex(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text)
-  const hash = await crypto.subtle.digest('SHA-256', data)
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export async function installSkillFromDistribution(
   request: SkillDistributionRequest,
-  sessionId = '__settings__'
+  sessionId = "__settings__",
 ): Promise<string> {
-  let effectiveSessionId = sessionId
-  if (effectiveSessionId === '__settings__') {
-    const projects = await listProjects()
+  let effectiveSessionId = sessionId;
+  if (effectiveSessionId === "__settings__") {
+    const projects = await listProjects();
     if (projects.length === 0) {
-      throw new Error('No project available. Please create a project first.')
+      throw new Error("No project available. Please create a project first.");
     }
-    const tempSession = await createSession(projects[0].id, 'Skills Market Install')
-    effectiveSessionId = tempSession.id
+    const tempSession = await createSession(
+      projects[0].id,
+      "Skills Market Install",
+    );
+    effectiveSessionId = tempSession.id;
   }
   // Fail-closed: signature and checksum are required for remote installs
   // When empty, the skill will be placed in quarantine for review
-  const requiresQuarantine = !request.signature.trim() || !request.checksum.trim();
+  const requiresQuarantine =
+    !request.signature.trim() || !request.checksum.trim();
   if (requiresQuarantine) {
-    console.warn('[Skills Market] No signature/checksum provided, will install to quarantine for review')
+    console.warn(
+      "[Skills Market] No signature/checksum provided, will install to quarantine for review",
+    );
   }
-  const fetched = await executeTool('web_fetch', { url: request.url }, undefined, effectiveSessionId)
+  const fetched = await executeTool(
+    "web_fetch",
+    { url: request.url },
+    undefined,
+    effectiveSessionId,
+  );
   if (!fetched.success || !fetched.output) {
-    throw new Error(fetched.error ?? 'download failed')
+    throw new Error(fetched.error ?? "download failed");
   }
-  const safeName = request.skillName.replace(/[^a-zA-Z0-9_-]/g, '-')
-  const basePath = `.if2ai/skills-quarantine/${safeName}`
-  const writeSkill = await executeTool('file_write', {
-    path: `${basePath}/SKILL.md`,
-    content: fetched.output,
-  }, undefined, effectiveSessionId)
+  const safeName = request.skillName.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const basePath = `.if2ai/skills-quarantine/${safeName}`;
+  const writeSkill = await executeTool(
+    "file_write",
+    {
+      path: `${basePath}/SKILL.md`,
+      content: fetched.output,
+    },
+    undefined,
+    effectiveSessionId,
+  );
   if (!writeSkill.success) {
-    throw new Error(writeSkill.error ?? 'write SKILL.md failed')
+    throw new Error(writeSkill.error ?? "write SKILL.md failed");
   }
-  const actualChecksum = await sha256Hex(fetched.output)
+  const actualChecksum = await sha256Hex(fetched.output);
   // Only verify checksum if one was provided
-  if (request.checksum.trim() && request.checksum.toLowerCase() !== actualChecksum.toLowerCase()) {
-    throw new Error(`checksum mismatch: expected ${request.checksum}, actual ${actualChecksum}`)
+  if (
+    request.checksum.trim() &&
+    request.checksum.toLowerCase() !== actualChecksum.toLowerCase()
+  ) {
+    throw new Error(
+      `checksum mismatch: expected ${request.checksum}, actual ${actualChecksum}`,
+    );
   }
-  const writeManifest = await executeTool('file_write', {
-    path: `${basePath}/skill.json`,
-    content: JSON.stringify(
-      {
-        id: safeName,
-        version: '0.1.0',
-        apiVersion: 'v1',
-        minAppVersion: '0.1.0',
-        capabilities: ['custom'],
-        distribution: {
-          channel: request.channel,
-          checksum: actualChecksum,
-          signature: request.signature,
+  const writeManifest = await executeTool(
+    "file_write",
+    {
+      path: `${basePath}/skill.json`,
+      content: JSON.stringify(
+        {
+          id: safeName,
+          version: "0.1.0",
+          apiVersion: "v1",
+          minAppVersion: "0.1.0",
+          capabilities: ["custom"],
+          distribution: {
+            channel: request.channel,
+            checksum: actualChecksum,
+            signature: request.signature,
+          },
+          review: {
+            status: "quarantine",
+            riskLevel: "high",
+            lastReviewedAt: "",
+          },
         },
-        review: {
-          status: 'quarantine',
-          riskLevel: 'high',
-          lastReviewedAt: '',
-        },
-      },
-      null,
-      2
-    ),
-  }, undefined, effectiveSessionId)
+        null,
+        2,
+      ),
+    },
+    undefined,
+    effectiveSessionId,
+  );
   if (!writeManifest.success) {
-    throw new Error(writeManifest.error ?? 'write skill.json failed')
+    throw new Error(writeManifest.error ?? "write skill.json failed");
   }
-  return `downloaded to quarantine: ${basePath}`
+  return `downloaded to quarantine: ${basePath}`;
 }
 
 // ─── Web Search Configuration ──────────────────────────────────────────────
 
 /** A configured web search provider entry returned by the backend. */
 export interface WebSearchProviderEntry {
-  id: string
-  name: string
+  id: string;
+  name: string;
   /** Redacted key preview shown in the UI, e.g. "tvly-abc…xyz". */
-  key_preview: string | null
-  base_url: string | null
-  enabled: boolean
+  key_preview: string | null;
+  base_url: string | null;
+  enabled: boolean;
 }
 
 /** Return all configured providers (keys are redacted). */
 export async function getWebSearchConfig(): Promise<WebSearchProviderEntry[]> {
-  return invoke<WebSearchProviderEntry[]>('get_web_search_config')
+  return invoke<WebSearchProviderEntry[]>("get_web_search_config");
 }
 
 /** Add or update a provider.  `api_key` and `base_url` are optional. */
@@ -1011,38 +1093,46 @@ export async function upsertWebSearchProvider(
   name: string,
   apiKey?: string,
   baseUrl?: string,
-  enabled?: boolean
+  enabled?: boolean,
 ): Promise<WebSearchProviderEntry[]> {
-  return invoke<WebSearchProviderEntry[]>('upsert_web_search_provider', {
-    provider: { id, name, api_key: apiKey ?? null, base_url: baseUrl ?? null, enabled: enabled ?? true },
-  })
+  return invoke<WebSearchProviderEntry[]>("upsert_web_search_provider", {
+    provider: {
+      id,
+      name,
+      api_key: apiKey ?? null,
+      base_url: baseUrl ?? null,
+      enabled: enabled ?? true,
+    },
+  });
 }
 
 /** Remove a provider by id. */
-export async function removeWebSearchProvider(id: string): Promise<WebSearchProviderEntry[]> {
-  return invoke<WebSearchProviderEntry[]>('remove_web_search_provider', { id })
+export async function removeWebSearchProvider(
+  id: string,
+): Promise<WebSearchProviderEntry[]> {
+  return invoke<WebSearchProviderEntry[]>("remove_web_search_provider", { id });
 }
 
 /** Reorder providers by supplying the new ordered list of ids. */
 export async function reorderWebSearchProviders(
-  orderedIds: string[]
+  orderedIds: string[],
 ): Promise<WebSearchProviderEntry[]> {
-  return invoke<WebSearchProviderEntry[]>('reorder_web_search_providers', {
+  return invoke<WebSearchProviderEntry[]>("reorder_web_search_providers", {
     orderedIds,
-  })
+  });
 }
 
 /** Validate an API key / base URL for the given provider. Returns a success message or throws. */
 export async function validateWebSearchKey(
   providerId: string,
   apiKey?: string,
-  baseUrl?: string
+  baseUrl?: string,
 ): Promise<string> {
-  return invoke<string>('validate_web_search_key', {
+  return invoke<string>("validate_web_search_key", {
     providerId,
     apiKey: apiKey ?? null,
     baseUrl: baseUrl ?? null,
-  })
+  });
 }
 
 // ─── Memory Settings Configuration ─────────────────────────────────────────
@@ -1051,13 +1141,13 @@ export async function validateWebSearchKey(
  * Memory recall mode — `lexical` keeps the legacy SQL search; `hybrid`
  * enables vector + FTS + episodic fusion.
  */
-export type MemoryRecallMode = 'lexical' | 'hybrid'
+export type MemoryRecallMode = "lexical" | "hybrid";
 
 /**
  * Memory write policy enforce mode — `shadow` audits decisions without
  * blocking, `enforce` rejects denied writes.
  */
-export type MemoryPolicyEnforceMode = 'shadow' | 'enforce'
+export type MemoryPolicyEnforceMode = "shadow" | "enforce";
 
 /**
  * Promotion thresholds — gating values for when the background scanner
@@ -1066,10 +1156,10 @@ export type MemoryPolicyEnforceMode = 'shadow' | 'enforce'
  * Mirrors the Rust `PromotionThresholds` struct (camelCase serde).
  */
 export interface PromotionThresholds {
-  sessionToProjectAccess: number
-  sessionToProjectImportance: number
-  projectToGlobalAccess: number
-  projectToGlobalImportance: number
+  sessionToProjectAccess: number;
+  sessionToProjectImportance: number;
+  projectToGlobalAccess: number;
+  projectToGlobalImportance: number;
 }
 
 /** Backend-supplied default thresholds (kept in sync with `PromotionThresholds::default`). */
@@ -1078,61 +1168,168 @@ export const DEFAULT_PROMOTION_THRESHOLDS: PromotionThresholds = {
   sessionToProjectImportance: 0.55,
   projectToGlobalAccess: 8,
   projectToGlobalImportance: 0.7,
-}
+};
 
 /** Memory configuration returned by the backend. */
 export interface MemoryConfig {
-  total_tokens: number
-  system_pct: number
-  episodic_pct: number
-  semantic_pct: number
-  working_pct: number
-  trajectory_count: number
+  total_tokens: number;
+  system_pct: number;
+  episodic_pct: number;
+  semantic_pct: number;
+  working_pct: number;
+  trajectory_count: number;
   /** Memory Control Plane V1 master kill-switch. */
-  control_plane_v1_enabled: boolean
-  recall_mode: MemoryRecallMode
-  policy_enforce_mode: MemoryPolicyEnforceMode
-  promotion: PromotionThresholds
+  control_plane_v1_enabled: boolean;
+  recall_mode: MemoryRecallMode;
+  policy_enforce_mode: MemoryPolicyEnforceMode;
+  promotion: PromotionThresholds;
 }
 
 /** Configuration input to persist. */
 export interface MemoryConfigInput {
-  total_tokens: number
-  system_pct: number
-  episodic_pct: number
-  semantic_pct: number
-  working_pct: number
-  control_plane_v1_enabled?: boolean
-  recall_mode?: MemoryRecallMode
-  policy_enforce_mode?: MemoryPolicyEnforceMode
-  promotion?: PromotionThresholds
+  total_tokens: number;
+  system_pct: number;
+  episodic_pct: number;
+  semantic_pct: number;
+  working_pct: number;
+  control_plane_v1_enabled?: boolean;
+  recall_mode?: MemoryRecallMode;
+  policy_enforce_mode?: MemoryPolicyEnforceMode;
+  promotion?: PromotionThresholds;
+}
+
+export type PromptScenarioProfile =
+  | "chat"
+  | "coding"
+  | "research"
+  | "planning"
+  | "review";
+
+export interface PromptControlSettings {
+  default_scenario_profile: PromptScenarioProfile | null;
+  default_soul_id: string | null;
+  default_persona_id: string | null;
+  /** Optional global agent name; persists across persona switches. */
+  agent_name: string | null;
+  /** Optional name the user wants the agent to call them. */
+  user_name: string | null;
+  prompt_diagnostics_enabled: boolean;
+}
+
+export interface PromptControlSettingsInput {
+  default_scenario_profile?: PromptScenarioProfile | null;
+  default_soul_id?: string | null;
+  default_persona_id?: string | null;
+  agent_name?: string | null;
+  user_name?: string | null;
+  prompt_diagnostics_enabled: boolean;
+}
+
+export interface PromptControlSoulOption {
+  id: string;
+  version: string;
+  name: string;
+  summary: string;
+  mission: string;
+  core_principles: string[];
+  decision_contract: string;
+  non_negotiables: string[];
+}
+
+export interface PromptControlPersonaOption {
+  id: string;
+  soul_id: string;
+  version: string;
+  name: string;
+  summary: string;
+  tone_rules: string[];
+  collaboration_rules: string[];
+  output_preferences: string[];
+}
+
+export interface PromptControlCatalog {
+  souls: PromptControlSoulOption[];
+  personas: PromptControlPersonaOption[];
+}
+
+export interface SoulCustomization {
+  summary?: string | null;
+  mission?: string | null;
+  core_principles?: string[] | null;
+  decision_contract?: string | null;
+  non_negotiables?: string[] | null;
+}
+
+export interface PersonaCustomization {
+  summary?: string | null;
+  tone_rules?: string[] | null;
+  collaboration_rules?: string[] | null;
+  output_preferences?: string[] | null;
+}
+
+export interface IdentityCustomizationPack {
+  souls: Record<string, SoulCustomization>;
+  personas: Record<string, PersonaCustomization>;
 }
 
 /** Get the current memory configuration. */
 export async function getMemoryConfig(): Promise<MemoryConfig> {
-  return invoke<MemoryConfig>('get_memory_config')
+  return invoke<MemoryConfig>("get_memory_config");
 }
 
 /** Save memory configuration. */
 export async function setMemoryConfig(
-  config: MemoryConfigInput
+  config: MemoryConfigInput,
 ): Promise<MemoryConfig> {
-  return invoke<MemoryConfig>('set_memory_config', { config })
+  return invoke<MemoryConfig>("set_memory_config", { config });
+}
+
+/** Get effective prompt control settings. */
+export async function getPromptControlSettings(): Promise<PromptControlSettings> {
+  return invoke<PromptControlSettings>("get_prompt_control_settings");
+}
+
+/** Load the built-in Soul / Persona catalog for the prompt control panel. */
+export async function getPromptControlCatalog(): Promise<PromptControlCatalog> {
+  return invoke<PromptControlCatalog>("get_prompt_control_catalog");
+}
+
+/** Load the editable identity customization pack persisted under `~/.if2ai/prompt/`. */
+export async function getIdentityCustomizationPack(): Promise<IdentityCustomizationPack> {
+  return invoke<IdentityCustomizationPack>("get_identity_customization_pack");
+}
+
+/** Persist the editable identity customization pack. */
+export async function setIdentityCustomizationPack(
+  pack: IdentityCustomizationPack,
+): Promise<IdentityCustomizationPack> {
+  return invoke<IdentityCustomizationPack>("set_identity_customization_pack", {
+    request: pack,
+  });
+}
+
+/** Save prompt control settings to the dedicated prompt config directory. */
+export async function setPromptControlSettings(
+  request: PromptControlSettingsInput,
+): Promise<PromptControlSettings> {
+  return invoke<PromptControlSettings>("set_prompt_control_settings", {
+    request,
+  });
 }
 
 /** Export trajectories to a user-selected directory. */
 export async function exportTrajectories(): Promise<string> {
-  return invoke<string>('export_trajectories')
+  return invoke<string>("export_trajectories");
 }
 
 /** Reset onboarding state and return to Step 1. */
 export async function configResetOnboarding(): Promise<void> {
-  return invoke<void>('config_reset_onboarding')
+  return invoke<void>("config_reset_onboarding");
 }
 
 /** Get the current app onboarding state. */
 export async function onboarding_get_state(): Promise<Record<string, unknown>> {
-  return invoke<Record<string, unknown>>('onboarding_get_state')
+  return invoke<Record<string, unknown>>("onboarding_get_state");
 }
 
 /**
@@ -1147,16 +1344,16 @@ export async function onboarding_get_state(): Promise<Record<string, unknown>> {
  * stays compatible when a real license backend lands.
  */
 export async function activationGetStatus(): Promise<ActivationSnapshot> {
-  return invoke<ActivationSnapshot>('activation_get_status')
+  return invoke<ActivationSnapshot>("activation_get_status");
 }
 
 /** Phase M2.6 — wire-shape input for the deterministic classifier. */
 export interface RequestIntelligenceClassifyInput {
-  userMessage: string
-  sessionId?: string
-  projectId?: string
+  userMessage: string;
+  sessionId?: string;
+  projectId?: string;
   /** Working directory (string; backend converts to `PathBuf`). */
-  workdir?: string
+  workdir?: string;
 }
 
 /**
@@ -1171,38 +1368,40 @@ export interface RequestIntelligenceClassifyInput {
  * the agent.  The frontend MUST NOT recompute the mode locally.
  */
 export async function requestIntelligenceClassify(
-  input: RequestIntelligenceClassifyInput
+  input: RequestIntelligenceClassifyInput,
 ): Promise<ExecutionModeDecision> {
-  return invoke<ExecutionModeDecision>('request_intelligence_classify', { input })
+  return invoke<ExecutionModeDecision>("request_intelligence_classify", {
+    input,
+  });
 }
 
 // ─── Browser Control (Phase 7B) ──────────────────────────────────────────────
 
 /** Payload of the `"browser-status"` Tauri event emitted after each browser action. */
 export interface BrowserStatusEvent {
-  session_id: string
-  running: boolean
-  url: string | null
+  session_id: string;
+  running: boolean;
+  url: string | null;
   /** Base-64 JPEG thumbnail of the current viewport, or null when unavailable. */
-  thumbnail: string | null
+  thumbnail: string | null;
 }
 
 /** Snapshot of a single active browser session returned by `get_browser_sessions`. */
 export interface BrowserSessionEntry {
-  session_id: string
-  running: boolean
-  url: string | null
+  session_id: string;
+  running: boolean;
+  url: string | null;
 }
 
 /** Response from `get_chrome_status` — reports whether Chrome is installed. */
 export interface ChromeStatusPayload {
-  found: boolean
-  path: string | null
+  found: boolean;
+  path: string | null;
 }
 
 /** List all currently active AI-controlled browser sessions. */
 export async function getBrowserSessions(): Promise<BrowserSessionEntry[]> {
-  return invoke<BrowserSessionEntry[]>('get_browser_sessions')
+  return invoke<BrowserSessionEntry[]>("get_browser_sessions");
 }
 
 /**
@@ -1210,48 +1409,51 @@ export async function getBrowserSessions(): Promise<BrowserSessionEntry[]> {
  * The AI's browser process is terminated and the session is removed from the registry.
  */
 export async function closeBrowserSession(sessionId: string): Promise<void> {
-  return invoke<void>('close_browser_session', { sessionId })
+  return invoke<void>("close_browser_session", { sessionId });
 }
 
 /** Check whether a Chrome or Chromium binary is available on this machine. */
 export async function getChromeStatus(): Promise<ChromeStatusPayload> {
-  return invoke<ChromeStatusPayload>('get_chrome_status')
+  return invoke<ChromeStatusPayload>("get_chrome_status");
 }
 
 // ── Browser profile / settings management (Phase 7C, slice 7C.1 + Settings UI) ─
 
 /** Persistent profile placement strategy.  Mirrors `BrowserProfileMode` in Rust. */
-export type BrowserProfileMode = 'per_session_persistent' | 'shared' | 'ephemeral'
+export type BrowserProfileMode =
+  | "per_session_persistent"
+  | "shared"
+  | "ephemeral";
 
 /** One row returned by `list_browser_profiles`. */
 export interface BrowserProfileEntry {
   /** `session_id` portion of the directory name (or `"_shared"`). */
-  session_id: string
+  session_id: string;
   /** Absolute path on disk. */
-  path: string
+  path: string;
   /** Recursive directory size in bytes (best effort). */
-  size_bytes: number
+  size_bytes: number;
   /** RFC-3339 last modified timestamp of the directory itself. */
-  last_used: string | null
+  last_used: string | null;
 }
 
 /** Browser settings persisted in `~/.if2ai/browser.toml`. */
 export interface BrowserSettings {
   /** Persisted preferred mode (next launch). */
-  profile_mode: BrowserProfileMode
+  profile_mode: BrowserProfileMode;
   /** Soft per-profile disk cap (megabytes). */
-  max_profile_disk_mb: number
+  max_profile_disk_mb: number;
   /** Soft total disk cap across all profiles (megabytes). */
-  max_total_disk_mb: number
+  max_total_disk_mb: number;
   /** Active env var override; non-null => env wins until cleared. */
-  env_override: BrowserProfileMode | null
+  env_override: BrowserProfileMode | null;
   /** Mode currently used by the running registry. */
-  active_mode: BrowserProfileMode
+  active_mode: BrowserProfileMode;
 }
 
 /** List every persistent browser profile under `~/.if2ai/browser-profiles/`. */
 export async function listBrowserProfiles(): Promise<BrowserProfileEntry[]> {
-  return invoke<BrowserProfileEntry[]>('list_browser_profiles')
+  return invoke<BrowserProfileEntry[]>("list_browser_profiles");
 }
 
 /**
@@ -1259,17 +1461,19 @@ export async function listBrowserProfiles(): Promise<BrowserProfileEntry[]> {
  * Throws if a `BrowserSession` is still running for that id.
  */
 export async function clearBrowserProfile(sessionId: string): Promise<void> {
-  return invoke<void>('clear_browser_profile', { sessionId })
+  return invoke<void>("clear_browser_profile", { sessionId });
 }
 
 /** Read persisted browser settings + diagnostics (env override, active mode). */
 export async function getBrowserSettings(): Promise<BrowserSettings> {
-  return invoke<BrowserSettings>('get_browser_settings')
+  return invoke<BrowserSettings>("get_browser_settings");
 }
 
 /** Persist edited browser settings (takes effect next launch for `profile_mode`). */
-export async function setBrowserSettings(settings: BrowserSettings): Promise<void> {
-  return invoke<void>('set_browser_settings', { settings })
+export async function setBrowserSettings(
+  settings: BrowserSettings,
+): Promise<void> {
+  return invoke<void>("set_browser_settings", { settings });
 }
 
 // ── Headed mode + user takeover (Phase 7C, slice 7C.3) ───────────────────────
@@ -1278,9 +1482,9 @@ export async function setBrowserSettings(settings: BrowserSettings): Promise<voi
  *  address bar after the headed Chrome relaunch + auto-navigate.
  */
 export interface BrowserNavigateResult {
-  url: string
-  title: string
-  snapshot: string
+  url: string;
+  title: string;
+  snapshot: string;
 }
 
 /**
@@ -1295,7 +1499,9 @@ export interface BrowserNavigateResult {
 export async function requestBrowserTakeover(
   sessionId: string,
 ): Promise<BrowserNavigateResult> {
-  return invoke<BrowserNavigateResult>('request_browser_takeover', { sessionId })
+  return invoke<BrowserNavigateResult>("request_browser_takeover", {
+    sessionId,
+  });
 }
 
 /**
@@ -1307,10 +1513,10 @@ export async function releaseBrowserTakeover(
   sessionId: string,
   backToHeadless = true,
 ): Promise<void> {
-  return invoke<void>('release_browser_takeover', {
+  return invoke<void>("release_browser_takeover", {
     sessionId,
     backToHeadless,
-  })
+  });
 }
 
 /**
@@ -1318,11 +1524,11 @@ export async function releaseBrowserTakeover(
  * Returns an unlisten function — call it on component unmount to avoid memory leaks.
  */
 export async function listenToBrowserStatus(
-  handler: (payload: BrowserStatusEvent) => void
+  handler: (payload: BrowserStatusEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<BrowserStatusEvent>('browser-status', (event) =>
-    handler(event.payload)
-  )
+  return listen<BrowserStatusEvent>("browser-status", (event) =>
+    handler(event.payload),
+  );
 }
 
 /**
@@ -1330,8 +1536,10 @@ export async function listenToBrowserStatus(
  * The window renders an independent web view of the URL the AI is currently
  * visiting — note it does NOT share the chromiumoxide session state.
  */
-export async function openBrowserViewerWindow(sessionId: string): Promise<void> {
-  return invoke<void>('open_browser_viewer_window', { sessionId })
+export async function openBrowserViewerWindow(
+  sessionId: string,
+): Promise<void> {
+  return invoke<void>("open_browser_viewer_window", { sessionId });
 }
 
 /**
@@ -1340,27 +1548,30 @@ export async function openBrowserViewerWindow(sessionId: string): Promise<void> 
  * display state without waiting for the next AI browser action.
  */
 export async function requestBrowserStatus(sessionId: string): Promise<void> {
-  return invoke<void>('request_browser_status', { sessionId })
+  return invoke<void>("request_browser_status", { sessionId });
 }
 
 /** Navigate the embedded live WKWebView in the viewer window to `url`. */
-export async function navigateViewerWindow(sessionId: string, url: string): Promise<void> {
-  return invoke<void>('navigate_viewer_window', { sessionId, url })
+export async function navigateViewerWindow(
+  sessionId: string,
+  url: string,
+): Promise<void> {
+  return invoke<void>("navigate_viewer_window", { sessionId, url });
 }
 
 /** Go back in the viewer WKWebView's navigation history. */
 export async function browserViewerGoBack(sessionId: string): Promise<void> {
-  return invoke<void>('browser_viewer_go_back', { sessionId })
+  return invoke<void>("browser_viewer_go_back", { sessionId });
 }
 
 /** Go forward in the viewer WKWebView's navigation history. */
 export async function browserViewerGoForward(sessionId: string): Promise<void> {
-  return invoke<void>('browser_viewer_go_forward', { sessionId })
+  return invoke<void>("browser_viewer_go_forward", { sessionId });
 }
 
 /** Reload the current page in the viewer WKWebView. */
 export async function browserViewerReload(sessionId: string): Promise<void> {
-  return invoke<void>('browser_viewer_reload', { sessionId })
+  return invoke<void>("browser_viewer_reload", { sessionId });
 }
 
 // ── Harness Control IPC ────────────────────────────────────────────────────────
@@ -1404,27 +1615,31 @@ export interface HarnessTelemetryResponse {
 
 /** Return the current harness status (whether recording, which sessions). */
 export async function getHarnessStatus(): Promise<HarnessStatusResponse> {
-  return invoke<HarnessStatusResponse>('get_harness_status')
+  return invoke<HarnessStatusResponse>("get_harness_status");
 }
 
 /** Start recording agent events for `sessionId` to a JSONL trace file. */
 export async function startHarnessRecording(sessionId: string): Promise<void> {
-  return invoke<void>('start_harness_recording', { sessionId })
+  return invoke<void>("start_harness_recording", { sessionId });
 }
 
 /** Stop recording for `sessionId` and flush the trace file. */
 export async function stopHarnessRecording(sessionId: string): Promise<void> {
-  return invoke<void>('stop_harness_recording', { sessionId })
+  return invoke<void>("stop_harness_recording", { sessionId });
 }
 
 /** Fetch the telemetry snapshot for `sessionId`. */
-export async function getSessionTelemetry(sessionId: string): Promise<HarnessTelemetryResponse> {
-  return invoke<HarnessTelemetryResponse>('get_session_telemetry', { sessionId })
+export async function getSessionTelemetry(
+  sessionId: string,
+): Promise<HarnessTelemetryResponse> {
+  return invoke<HarnessTelemetryResponse>("get_session_telemetry", {
+    sessionId,
+  });
 }
 
 /** Fetch telemetry snapshots for all sessions tracked by the harness. */
 export async function getAllSessionTelemetry(): Promise<SessionTelemetry[]> {
-  return invoke<SessionTelemetry[]>('get_all_session_telemetry')
+  return invoke<SessionTelemetry[]>("get_all_session_telemetry");
 }
 
 // ---------------------------------------------------------------------------
@@ -1437,28 +1652,28 @@ export async function getAllSessionTelemetry(): Promise<SessionTelemetry[]> {
 
 /** Persisted memory entry as returned by Tauri commands. */
 export interface MemoryEntryDto {
-  key: string
-  content: string
-  category: string
-  created_at: string
-  updated_at: string
-  importance: number
-  access_count: number
-  trust_score: number
+  key: string;
+  content: string;
+  category: string;
+  created_at: string;
+  updated_at: string;
+  importance: number;
+  access_count: number;
+  trust_score: number;
   /** Persisted session scope tag; null = entry not session-scoped. */
-  session_id: string | null
+  session_id: string | null;
   /** Persisted project scope tag; null = entry not project-scoped. */
-  project_id: string | null
+  project_id: string | null;
 }
 
 /** Three-tier memory scope kind matching `MemoryScopeKind` on the backend. */
-export type MemoryScopeKind = 'global' | 'project' | 'session'
+export type MemoryScopeKind = "global" | "project" | "session";
 
 /** Optional scope filter for `memoryRecall` / `memoryExport`. */
 export interface MemoryScopeArgs {
-  scopeKind?: MemoryScopeKind
-  sessionId?: string
-  projectId?: string
+  scopeKind?: MemoryScopeKind;
+  sessionId?: string;
+  projectId?: string;
 }
 
 /**
@@ -1466,54 +1681,56 @@ export interface MemoryScopeArgs {
  * the legacy unscoped recall path.
  */
 export async function memoryRecall(args: {
-  query: string
-  category?: string | null
-  limit?: number
-  scope?: MemoryScopeArgs
+  query: string;
+  category?: string | null;
+  limit?: number;
+  scope?: MemoryScopeArgs;
 }): Promise<MemoryEntryDto[]> {
-  return invoke<MemoryEntryDto[]>('memory_recall', {
+  return invoke<MemoryEntryDto[]>("memory_recall", {
     query: args.query,
     category: args.category ?? null,
     limit: args.limit ?? null,
     scopeKind: args.scope?.scopeKind ?? null,
     sessionId: args.scope?.sessionId ?? null,
     projectId: args.scope?.projectId ?? null,
-  })
+  });
 }
 
 /**
  * Export memory entries.  When `scopeKind` is omitted the call falls back to
  * the legacy full-library export.
  */
-export async function memoryExport(args: {
-  category?: string | null
-  scope?: MemoryScopeArgs
-} = {}): Promise<MemoryEntryDto[]> {
-  return invoke<MemoryEntryDto[]>('memory_export', {
+export async function memoryExport(
+  args: {
+    category?: string | null;
+    scope?: MemoryScopeArgs;
+  } = {},
+): Promise<MemoryEntryDto[]> {
+  return invoke<MemoryEntryDto[]>("memory_export", {
     category: args.category ?? null,
     scopeKind: args.scope?.scopeKind ?? null,
     sessionId: args.scope?.sessionId ?? null,
     projectId: args.scope?.projectId ?? null,
-  })
+  });
 }
 
 /** Delete a memory entry by key. */
 export async function memoryDelete(key: string): Promise<void> {
-  return invoke<void>('memory_delete', { key })
+  return invoke<void>("memory_delete", { key });
 }
 
 /** A single promotion recommendation surfaced to the Memory Browser. */
 export interface MemoryPromotionCandidateDto {
-  key: string
-  category: string
+  key: string;
+  category: string;
   /** `'session'` / `'project'` / `'global'` — the entry's tier today. */
-  current_tier: string
+  current_tier: string;
   /** `'project'` / `'global'` — where the engine recommends moving it. */
-  target_tier: string
-  access_count: number
-  importance: number
+  target_tier: string;
+  access_count: number;
+  importance: number;
   /** Human-readable rationale (Chinese). */
-  reason: string
+  reason: string;
 }
 
 /**
@@ -1524,7 +1741,7 @@ export interface MemoryPromotionCandidateDto {
 export async function memoryPromotionCandidates(): Promise<
   MemoryPromotionCandidateDto[]
 > {
-  return invoke<MemoryPromotionCandidateDto[]>('memory_promotion_candidates')
+  return invoke<MemoryPromotionCandidateDto[]>("memory_promotion_candidates");
 }
 
 /**
@@ -1535,15 +1752,15 @@ export async function memoryPromotionCandidates(): Promise<
  * `projectId` is required.
  */
 export async function memoryPromote(args: {
-  key: string
-  targetScopeKind: Exclude<MemoryScopeKind, 'session'>
-  projectId?: string
+  key: string;
+  targetScopeKind: Exclude<MemoryScopeKind, "session">;
+  projectId?: string;
 }): Promise<void> {
-  return invoke<void>('memory_promote', {
+  return invoke<void>("memory_promote", {
     key: args.key,
     targetScopeKind: args.targetScopeKind,
     projectId: args.projectId ?? null,
-  })
+  });
 }
 
 /**
@@ -1560,17 +1777,17 @@ export async function memoryPromote(args: {
  * `memoryPromote` for that direction instead.
  */
 export async function memoryDemote(args: {
-  key: string
-  targetScopeKind: Exclude<MemoryScopeKind, 'global'>
-  sessionId?: string
-  projectId?: string
+  key: string;
+  targetScopeKind: Exclude<MemoryScopeKind, "global">;
+  sessionId?: string;
+  projectId?: string;
 }): Promise<void> {
-  return invoke<void>('memory_demote', {
+  return invoke<void>("memory_demote", {
     key: args.key,
     targetScopeKind: args.targetScopeKind,
     sessionId: args.sessionId ?? null,
     projectId: args.projectId ?? null,
-  })
+  });
 }
 
 /**
@@ -1587,7 +1804,7 @@ export async function memoryDemote(args: {
  * action.
  */
 export async function memoryClearAll(): Promise<number> {
-  return invoke<number>('memory_clear_all')
+  return invoke<number>("memory_clear_all");
 }
 
 // ─── Memory Compile Pipeline (Phase 8B.5 / T-C5) ────────────────────────────
@@ -1607,35 +1824,35 @@ export async function memoryClearAll(): Promise<number> {
 // project / session sidecars.
 
 /** Single-stage compile verdict mirroring Rust `CompileResult`. */
-export type CompileResultKind = 'compiled' | 'skipped'
+export type CompileResultKind = "compiled" | "skipped";
 
 /** Frontend mirror of the backend `CompileReport`. */
 export interface CompileReport {
-  today: CompileResultKind
-  week: CompileResultKind
-  longterm: CompileResultKind
-  facts: CompileResultKind
-  assembled: boolean
-  elapsed_ms: number
+  today: CompileResultKind;
+  week: CompileResultKind;
+  longterm: CompileResultKind;
+  facts: CompileResultKind;
+  assembled: boolean;
+  elapsed_ms: number;
 }
 
 /** Frontend mirror of the backend `CompiledSection`. */
 export interface CompiledSection {
   /** Raw markdown contents; empty string when the section is missing. */
-  content: string
+  content: string;
   /** ISO-8601 file mtime, or null when the section has never been compiled. */
-  last_compiled_at: string | null
+  last_compiled_at: string | null;
   /** Character count of `content` (Unicode scalars, not bytes). */
-  chars: number
+  chars: number;
 }
 
 /** Frontend mirror of the backend `CompiledMemoryDto`. */
 export interface CompiledMemoryDto {
-  memory_md: string
-  today: CompiledSection
-  week: CompiledSection
-  longterm: CompiledSection
-  facts: CompiledSection
+  memory_md: string;
+  today: CompiledSection;
+  week: CompiledSection;
+  longterm: CompiledSection;
+  facts: CompiledSection;
 }
 
 /**
@@ -1644,9 +1861,9 @@ export interface CompiledMemoryDto {
  * cache so repeated calls without changes are cheap.
  */
 export async function memoryCompileNow(
-  scope: 'current' | 'all' | 'project' | 'global'
+  scope: "current" | "all" | "project" | "global",
 ): Promise<CompileReport> {
-  return invoke<CompileReport>('memory_compile_now', { scope })
+  return invoke<CompileReport>("memory_compile_now", { scope });
 }
 
 /**
@@ -1654,9 +1871,9 @@ export async function memoryCompileNow(
  * `memory.md`.  Read-only — never invokes the LLM.
  */
 export async function memoryCompiledRead(
-  scope: 'current' | 'all' | 'project' | 'global'
+  scope: "current" | "all" | "project" | "global",
 ): Promise<CompiledMemoryDto> {
-  return invoke<CompiledMemoryDto>('memory_compiled_read', { scope })
+  return invoke<CompiledMemoryDto>("memory_compiled_read", { scope });
 }
 
 /**
@@ -1665,9 +1882,9 @@ export async function memoryCompiledRead(
  * the next [`memoryCompileNow`] is guaranteed to re-run the LLM.
  */
 export async function memoryCompiledClear(
-  scope: 'current' | 'all' | 'project' | 'global'
+  scope: "current" | "all" | "project" | "global",
 ): Promise<void> {
-  await invoke<void>('memory_compiled_clear', { scope })
+  await invoke<void>("memory_compiled_clear", { scope });
 }
 
 // ─── Phase 8B.11 / T-UI-3 — session-summary timeline ──────────────────
@@ -1678,16 +1895,16 @@ export async function memoryCompiledClear(
  * rolling-summary table, surfaced to MemoryNarrativeViewer.
  */
 export interface SessionSummaryDto {
-  session_id: string
-  project_id: string | null
-  summary: string
+  session_id: string;
+  project_id: string | null;
+  summary: string;
   /** RFC-3339 / ISO-8601 timestamp of first save. */
-  created_at: string
+  created_at: string;
   /** RFC-3339 / ISO-8601 timestamp of latest save. */
-  updated_at: string
-  message_count: number
+  updated_at: string;
+  message_count: number;
   /** `'rolling'` = scheduled summary update; `'compact'` = T-B5 context-window compaction. */
-  source: 'rolling' | 'compact'
+  source: "rolling" | "compact";
 }
 
 /**
@@ -1699,79 +1916,79 @@ export interface SessionSummaryDto {
  * defaults to 90.
  */
 export async function memorySummariesList(
-  scope: 'current' | 'all' | 'project' | 'global',
+  scope: "current" | "all" | "project" | "global",
   limit?: number,
   sinceDays?: number,
 ): Promise<SessionSummaryDto[]> {
-  return invoke<SessionSummaryDto[]>('memory_summaries_list', {
+  return invoke<SessionSummaryDto[]>("memory_summaries_list", {
     scope,
     limit,
     sinceDays,
-  })
+  });
 }
 
 // ─── TTS (Text-to-Speech) Commands ───────────────────────────────────────────
 
 /** TTS generation parameters mirroring the Rust `GenerationParams` struct. */
 export interface TtsGenerationParams {
-  max_new_frames: number
-  voice_clone_max_text_tokens: number
-  tts_max_batch_size: number
-  codec_max_batch_size: number
-  do_sample: boolean
-  text_temperature: number
-  text_top_p: number
-  text_top_k: number
-  audio_temperature: number
-  audio_top_p: number
-  audio_top_k: number
-  audio_repetition_penalty: number
-  seed: number | null
-  enable_robust_normalization: boolean
+  max_new_frames: number;
+  voice_clone_max_text_tokens: number;
+  tts_max_batch_size: number;
+  codec_max_batch_size: number;
+  do_sample: boolean;
+  text_temperature: number;
+  text_top_p: number;
+  text_top_k: number;
+  audio_temperature: number;
+  audio_top_p: number;
+  audio_top_k: number;
+  audio_repetition_penalty: number;
+  seed: number | null;
+  enable_robust_normalization: boolean;
 }
 
 // ── User-tunable TTS settings (Settings UI entry point) ───────────────────
 
 /** Quality preset for the audio sampler.  Maps to a tuned triple of
  *  audio_temperature / top_p / top_k server-side. */
-export type TtsQualityPreset = 'natural' | 'balanced' | 'precise'
+export type TtsQualityPreset = "natural" | "balanced" | "precise";
 
 /** Persisted TTS settings (`~/.if2ai/tts.toml`).  Mirrors the Rust
  *  `TtsSettings` struct field-for-field. */
 export interface TtsSettings {
   /** Frontend playback speed multiplier (0.5-2.0). 1.0 = original. */
-  playback_rate: number
+  playback_rate: number;
   /** Sampler quality preset. */
-  quality: TtsQualityPreset
+  quality: TtsQualityPreset;
   /** Hard cap on generated audio frames per chunk (64-1500). */
-  max_new_frames: number
+  max_new_frames: number;
   /** Audio repetition penalty (>= 1.0). */
-  audio_repetition_penalty: number
+  audio_repetition_penalty: number;
   /** Optional fixed RNG seed; null = random. */
-  seed: number | null
+  seed: number | null;
   /** Whether MOSS-TTS-Nano's robust text normaliser is enabled. */
-  enable_robust_normalization: boolean
+  enable_robust_normalization: boolean;
 }
 
 /** Defaults matching the Rust `TtsSettings::default()` impl. */
 export const TTS_DEFAULT_SETTINGS: TtsSettings = {
   playback_rate: 1.0,
-  quality: 'natural',
+  quality: "natural",
   max_new_frames: 375,
   audio_repetition_penalty: 1.2,
   seed: null,
   enable_robust_normalization: true,
-}
+};
 
 /** Read persisted TTS settings.  Always succeeds (falls back to defaults). */
 export async function getTtsSettings(): Promise<TtsSettings> {
-  return invoke<TtsSettings>('get_tts_settings')
+  return invoke<TtsSettings>("get_tts_settings");
 }
 
 /** Persist TTS settings to `~/.if2ai/tts.toml`.  Out-of-range values
  *  are clamped server-side. */
 export async function setTtsSettings(settings: TtsSettings): Promise<void> {
-  return invoke<void>('set_tts_settings', { settings })
+  return invoke<void>("set_tts_settings", { settings });
 }
 
 /** Translate a `TtsSettings` payload into the
@@ -1780,12 +1997,15 @@ export async function setTtsSettings(settings: TtsSettings): Promise<void> {
  *  Rust `TtsSettings::apply_to_generation_params` so backend and
  *  frontend always produce identical params for the same settings. */
 export function ttsParamsFromSettings(s: TtsSettings): TtsGenerationParams {
-  const samplerByPreset: Record<TtsQualityPreset, { t: number; p: number; k: number }> = {
+  const samplerByPreset: Record<
+    TtsQualityPreset,
+    { t: number; p: number; k: number }
+  > = {
     natural: { t: 0.9, p: 0.95, k: 30 },
     balanced: { t: 0.8, p: 0.95, k: 25 },
     precise: { t: 0.6, p: 0.85, k: 15 },
-  }
-  const sampler = samplerByPreset[s.quality]
+  };
+  const sampler = samplerByPreset[s.quality];
   return {
     ...TTS_DEFAULT_PARAMS,
     max_new_frames: Math.min(Math.max(s.max_new_frames, 64), 1500),
@@ -1795,7 +2015,7 @@ export function ttsParamsFromSettings(s: TtsSettings): TtsGenerationParams {
     audio_repetition_penalty: Math.max(s.audio_repetition_penalty, 1.0),
     seed: s.seed,
     enable_robust_normalization: s.enable_robust_normalization,
-  }
+  };
 }
 
 // ── TTS Profiles (named voice + settings recipes) ────────────────────────
@@ -1803,54 +2023,54 @@ export function ttsParamsFromSettings(s: TtsSettings): TtsGenerationParams {
 /** Lightweight text post-processing flags carried by a TTS profile. */
 export interface TtsTextPostprocess {
   /** Replace 。/. with ，/, to soften the cadence (温柔系 profile). */
-  soften_punctuation: boolean
+  soften_punctuation: boolean;
   /** Append "…" to every sentence so prosody trails off (沉浸朗读). */
-  add_trailing_dots: boolean
+  add_trailing_dots: boolean;
 }
 
 /** A single named TTS recipe.  Mirrors the Rust `TtsProfile` struct
  *  (which uses `#[serde(flatten)]` to inline `TtsSettings` fields). */
 export interface TtsProfile {
-  id: string
-  name: string
-  description: string
-  voice_id: string
+  id: string;
+  name: string;
+  description: string;
+  voice_id: string;
   // ── flattened TtsSettings ──
-  playback_rate: number
-  quality: TtsQualityPreset
-  max_new_frames: number
-  audio_repetition_penalty: number
-  seed: number | null
-  enable_robust_normalization: boolean
+  playback_rate: number;
+  quality: TtsQualityPreset;
+  max_new_frames: number;
+  audio_repetition_penalty: number;
+  seed: number | null;
+  enable_robust_normalization: boolean;
   // ── profile-only fields ──
-  postprocess: TtsTextPostprocess
-  is_builtin: boolean
+  postprocess: TtsTextPostprocess;
+  is_builtin: boolean;
 }
 
 /** On-disk container returned by `list_tts_profiles`. */
 export interface TtsProfileBook {
-  default_profile_id: string
-  profiles: TtsProfile[]
+  default_profile_id: string;
+  profiles: TtsProfile[];
 }
 
 /** Read the entire profile book.  Backend seeds 6 builtins on first call. */
 export async function listTtsProfiles(): Promise<TtsProfileBook> {
-  return invoke<TtsProfileBook>('list_tts_profiles')
+  return invoke<TtsProfileBook>("list_tts_profiles");
 }
 
 /** Insert or update a single profile.  Returns the resulting profile. */
 export async function saveTtsProfile(profile: TtsProfile): Promise<TtsProfile> {
-  return invoke<TtsProfile>('save_tts_profile', { profile })
+  return invoke<TtsProfile>("save_tts_profile", { profile });
 }
 
 /** Delete a user-created profile (builtins are protected server-side). */
 export async function deleteTtsProfile(id: string): Promise<void> {
-  return invoke<void>('delete_tts_profile', { id })
+  return invoke<void>("delete_tts_profile", { id });
 }
 
 /** Mark `id` as the active default profile. */
 export async function setDefaultTtsProfile(id: string): Promise<void> {
-  return invoke<void>('set_default_tts_profile', { id })
+  return invoke<void>("set_default_tts_profile", { id });
 }
 
 /** Project a `TtsProfile` onto a `TtsSettings` shape (for re-using
@@ -1863,24 +2083,24 @@ export function ttsSettingsFromProfile(p: TtsProfile): TtsSettings {
     audio_repetition_penalty: p.audio_repetition_penalty,
     seed: p.seed,
     enable_robust_normalization: p.enable_robust_normalization,
-  }
+  };
 }
 
 /** Frontend mirror of the Rust `apply_postprocess` — keep in sync if
  *  you tweak the Rust impl.  Used so chat-side preview matches what
  *  the backend will actually synthesize. */
 export function applyTtsPostprocess(p: TtsProfile, text: string): string {
-  let out = text
+  let out = text;
   if (p.postprocess.soften_punctuation) {
-    out = out.replace(/。/g, '，').replace(/\./g, ',')
+    out = out.replace(/。/g, "，").replace(/\./g, ",");
   }
   if (p.postprocess.add_trailing_dots) {
-    const trimmed = out.replace(/\s+$/, '')
-    if (!trimmed.endsWith('…') && !trimmed.endsWith('...')) {
-      out = `${trimmed}…`
+    const trimmed = out.replace(/\s+$/, "");
+    if (!trimmed.endsWith("…") && !trimmed.endsWith("...")) {
+      out = `${trimmed}…`;
     }
   }
-  return out
+  return out;
 }
 
 /** Default TTS generation parameters matching the MOSS-TTS-Nano Python reference defaults. */
@@ -1899,69 +2119,69 @@ export const TTS_DEFAULT_PARAMS: TtsGenerationParams = {
   audio_repetition_penalty: 1.2,
   seed: null,
   enable_robust_normalization: true,
-}
+};
 
 /** TTS health check response. */
 /** Phase TTS-D.1：Provider 生命周期状态。 */
 export type TtsProviderState =
-  | { kind: 'notLoaded' }
-  | { kind: 'loading' }
-  | { kind: 'loaded'; elapsedSeconds: number }
-  | { kind: 'failed'; error: string }
-  | { kind: 'evicted'; elapsedSeconds: number }
+  | { kind: "notLoaded" }
+  | { kind: "loading" }
+  | { kind: "loaded"; elapsedSeconds: number }
+  | { kind: "failed"; error: string }
+  | { kind: "evicted"; elapsedSeconds: number };
 
 export interface TtsHealthResponse {
-  status: string
-  warmup_state: string
-  warmup_progress: number
-  message: string
+  status: string;
+  warmup_state: string;
+  warmup_progress: number;
+  message: string;
   /** Phase TTS-D.1：Provider 生命周期状态机。 */
-  provider_state: TtsProviderState
+  provider_state: TtsProviderState;
 }
 
 /** TTS warmup status response. */
 export interface TtsWarmupStatusResponse {
-  state: string
-  progress: number
-  message: string
-  error: string | null
+  state: string;
+  progress: number;
+  message: string;
+  error: string | null;
 }
 
 /** Buffered synthesis response — WAV audio as base64. */
 export interface TtsSynthesisResponse {
-  audio_base64: string
-  sample_rate: number
-  duration_seconds: number
-  voice: string
-  text_chunks: string[]
+  audio_base64: string;
+  sample_rate: number;
+  duration_seconds: number;
+  voice: string;
+  text_chunks: string[];
 }
 
 /** Streaming job start response. */
 export interface TtsStreamStartResponse {
-  stream_id: string
-  sample_rate: number
-  channels: number
+  stream_id: string;
+  sample_rate: number;
+  channels: number;
 }
 
 /** Demo audio response. */
 export interface TtsDemoAudioResponse {
-  audio_base64: string
-  content_type: string
+  audio_base64: string;
+  content_type: string;
 }
 
 /** Check TTS system health. */
 export async function ttsHealth(): Promise<TtsHealthResponse> {
-  return invoke<TtsHealthResponse>('tts_health')
+  return invoke<TtsHealthResponse>("tts_health");
 }
 
 /** Get current warmup status. */
 export async function ttsWarmupStatus(): Promise<TtsWarmupStatusResponse> {
-  return invoke<TtsWarmupStatusResponse>('tts_warmup_status')
+  return invoke<TtsWarmupStatusResponse>("tts_warmup_status");
 }
 
 /** Trigger TTS warmup (runs in background). */
 export async function ttsStartWarmup(): Promise<void> {
-  return invoke<void>('tts_start_warmup')
+  return invoke<void>("tts_start_warmup");
 }
 
 /** Buffered synthesis — returns complete WAV as base64. */
@@ -1972,13 +2192,13 @@ export async function ttsSynthesize(
   params: TtsGenerationParams,
   voiceId?: string | null,
 ): Promise<TtsSynthesisResponse> {
-  return invoke<TtsSynthesisResponse>('tts_synthesize', {
+  return invoke<TtsSynthesisResponse>("tts_synthesize", {
     text,
     demoId,
     voiceId: voiceId ?? null,
     promptAudioPath,
     params,
-  })
+  });
 }
 
 /** Start streaming synthesis — returns stream_id for tracking. */
@@ -1989,65 +2209,78 @@ export async function ttsStreamStart(
   params: TtsGenerationParams,
   voiceId?: string | null,
 ): Promise<TtsStreamStartResponse> {
-  return invoke<TtsStreamStartResponse>('tts_stream_start', {
+  return invoke<TtsStreamStartResponse>("tts_stream_start", {
     text,
     demoId,
     voiceId: voiceId ?? null,
     promptAudioPath,
     params,
-  })
+  });
 }
 
 /** Poll streaming job status. */
-export async function ttsStreamStatus(streamId: string): Promise<Record<string, unknown>> {
-  return invoke<Record<string, unknown>>('tts_stream_status', { streamId })
+export async function ttsStreamStatus(
+  streamId: string,
+): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>("tts_stream_status", { streamId });
 }
 
 /** Get final streaming job result. */
-export async function ttsStreamResult(streamId: string): Promise<Record<string, unknown>> {
-  return invoke<Record<string, unknown>>('tts_stream_result', { streamId })
+export async function ttsStreamResult(
+  streamId: string,
+): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>("tts_stream_result", { streamId });
 }
 
 /** Close/cancel a streaming job. */
-export async function ttsStreamClose(streamId: string): Promise<Record<string, unknown>> {
-  return invoke<Record<string, unknown>>('tts_stream_close', { streamId })
+export async function ttsStreamClose(
+  streamId: string,
+): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>("tts_stream_close", { streamId });
 }
 
 /** Get demo audio by ID as base64. */
-export async function ttsDemoAudio(demoId: string): Promise<TtsDemoAudioResponse> {
-  return invoke<TtsDemoAudioResponse>('tts_demo_audio', { demoId })
+export async function ttsDemoAudio(
+  demoId: string,
+): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>("tts_demo_audio", { demoId });
 }
 
 /** List available voice names. */
 export async function ttsListVoices(): Promise<string[]> {
-  return invoke<string[]>('tts_list_voices')
+  return invoke<string[]>("tts_list_voices");
 }
 
 /** Split text into chunks for voice clone preview. */
-export async function ttsSplitText(text: string, maxTokens: number): Promise<string[]> {
-  return invoke<string[]>('tts_split_text', { text, maxTokens })
+export async function ttsSplitText(
+  text: string,
+  maxTokens: number,
+): Promise<string[]> {
+  return invoke<string[]>("tts_split_text", { text, maxTokens });
 }
 
 // ── TTS-D / P0：Voice asset registry + Agent voice picker ────────────────
 
 export interface TtsVoiceAsset {
-  id: string
-  display_name: string
+  id: string;
+  display_name: string;
   /** "builtin" | "bundled" | "user" */
-  kind: string
-  language: string | null
-  description: string | null
-  is_previewable: boolean
+  kind: string;
+  language: string | null;
+  description: string | null;
+  is_previewable: boolean;
 }
 
 /** 列出所有可用 voice assets（builtin manifest 18 + bundled mp3/wav + user uploaded）。 */
 export async function ttsListVoiceAssets(): Promise<TtsVoiceAsset[]> {
-  return invoke<TtsVoiceAsset[]>('tts_list_voice_assets')
+  return invoke<TtsVoiceAsset[]>("tts_list_voice_assets");
 }
 
 /** 获取某个 voice 的原始音频文件 base64（前端 <audio> 试听原始 prompt 声音）。 */
-export async function ttsVoiceAudio(voiceId: string): Promise<TtsDemoAudioResponse> {
-  return invoke<TtsDemoAudioResponse>('tts_voice_audio', { voiceId })
+export async function ttsVoiceAudio(
+  voiceId: string,
+): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>("tts_voice_audio", { voiceId });
 }
 
 /** 用某个 voice 合成预览文本（默认"你好，我是 X。"），返回 base64 WAV。 */
@@ -2055,14 +2288,17 @@ export async function ttsPreviewVoice(
   voiceId: string,
   sampleText?: string,
 ): Promise<TtsSynthesisResponse> {
-  return invoke<TtsSynthesisResponse>('tts_preview_voice', { voiceId, sampleText: sampleText ?? null })
+  return invoke<TtsSynthesisResponse>("tts_preview_voice", {
+    voiceId,
+    sampleText: sampleText ?? null,
+  });
 }
 
 // ── Phase TTS-E.1：User-uploaded custom voices ──────────────────────────
 
 export interface TtsUploadVoiceResponse {
-  asset: TtsVoiceAsset
-  saved_path: string
+  asset: TtsVoiceAsset;
+  saved_path: string;
 }
 
 /** 上传一段自定义声纹文件（wav/mp3/flac/ogg/m4a，≤30MB）。 */
@@ -2072,39 +2308,44 @@ export async function ttsUploadUserVoice(
   displayName?: string,
 ): Promise<TtsUploadVoiceResponse> {
   // base64 编码（浏览器原生 btoa 只能搞 ASCII，二进制要走 binary string）
-  let binary = ''
-  const len = fileBytes.byteLength
-  const chunkSize = 0x8000
+  let binary = "";
+  const len = fileBytes.byteLength;
+  const chunkSize = 0x8000;
   for (let i = 0; i < len; i += chunkSize) {
-    const sub = fileBytes.subarray(i, Math.min(i + chunkSize, len))
-    binary += String.fromCharCode.apply(null, Array.from(sub))
+    const sub = fileBytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, Array.from(sub));
   }
-  const base64 = btoa(binary)
-  return invoke<TtsUploadVoiceResponse>('tts_upload_user_voice', {
+  const base64 = btoa(binary);
+  return invoke<TtsUploadVoiceResponse>("tts_upload_user_voice", {
     fileName,
     fileBytesBase64: base64,
     displayName: displayName ?? null,
-  })
+  });
 }
 
 /** 删除用户上传的自定义声纹（仅 user kind 可删）。 */
 export async function ttsDeleteUserVoice(voiceId: string): Promise<void> {
-  return invoke<void>('tts_delete_user_voice', { voiceId })
+  return invoke<void>("tts_delete_user_voice", { voiceId });
 }
 
 /** 重命名用户上传的声纹（display_name only，voice_id 不变）。 */
-export async function ttsRenameUserVoice(voiceId: string, newDisplayName: string): Promise<void> {
-  return invoke<void>('tts_rename_user_voice', { voiceId, newDisplayName })
+export async function ttsRenameUserVoice(
+  voiceId: string,
+  newDisplayName: string,
+): Promise<void> {
+  return invoke<void>("tts_rename_user_voice", { voiceId, newDisplayName });
 }
 
 /** Phase TTS-E / P2：后台预合成 voice preview WAV（fire-and-forget）。 */
 export async function ttsWarmVoicePreview(voiceId: string): Promise<string> {
-  return invoke<string>('tts_warm_voice_preview', { voiceId })
+  return invoke<string>("tts_warm_voice_preview", { voiceId });
 }
 
 /** Phase TTS-E / P2：获取 voice 的预览 WAV（优先缓存，fallback 原声）。 */
-export async function ttsCachedVoicePreview(voiceId: string): Promise<TtsDemoAudioResponse> {
-  return invoke<TtsDemoAudioResponse>('tts_cached_voice_preview', { voiceId })
+export async function ttsCachedVoicePreview(
+  voiceId: string,
+): Promise<TtsDemoAudioResponse> {
+  return invoke<TtsDemoAudioResponse>("tts_cached_voice_preview", { voiceId });
 }
 
 // ── STT (OpenFlow / SenseVoice) ───────────────────────────────────────────
@@ -2114,53 +2355,53 @@ export async function ttsCachedVoicePreview(voiceId: string): Promise<TtsDemoAud
 
 export interface SttModelStatusResponse {
   /** SenseVoice (OpenFlow) 模型是否已就绪 */
-  openflow_ready: boolean
+  openflow_ready: boolean;
   /** SenseVoice 模型目录 */
-  openflow_model_dir: string
+  openflow_model_dir: string;
 }
 
 export interface OpenFlowDownloadProgress {
-  file: string
-  downloaded: number
-  total: number | null
+  file: string;
+  downloaded: number;
+  total: number | null;
   /** 0-100；total=null 时为 -1 */
-  percent: number
+  percent: number;
 }
 
 export interface DownloadOpenflowRequest {
   /** 'quantized' | 'fp16'，默认 quantized */
-  preset?: string
-  force?: boolean
+  preset?: string;
+  force?: boolean;
 }
 
 export interface SttTranscribeRequest {
-  audio_bytes_base64: string
-  language: string | null
-  sample_rate: number | null
+  audio_bytes_base64: string;
+  language: string | null;
+  sample_rate: number | null;
   /** 已废弃：保留字段以兼容旧调用，后端忽略 */
-  provider_override?: string | null
+  provider_override?: string | null;
 }
 
 export interface SttTranscribeResponse {
-  text: string
-  language: string
-  elapsed_seconds: number
+  text: string;
+  language: string;
+  elapsed_seconds: number;
   /** 始终为 "openflow" */
-  provider: string
+  provider: string;
 }
 
 export interface SttSettingsDto {
   /** 始终为 "openflow"（保留字段用于兼容） */
-  provider: string
+  provider: string;
 }
 
 export interface SaveSttSettingsRequest {
   /** 已废弃：后端忽略此字段 */
-  provider?: string
+  provider?: string;
 }
 
 export async function sttModelStatus(): Promise<SttModelStatusResponse> {
-  return invoke<SttModelStatusResponse>('stt_model_status')
+  return invoke<SttModelStatusResponse>("stt_model_status");
 }
 
 /**
@@ -2172,60 +2413,64 @@ export async function sttModelStatus(): Promise<SttModelStatusResponse> {
 export async function sttDownloadOpenflowModel(
   request: DownloadOpenflowRequest = {},
 ): Promise<string> {
-  return invoke<string>('stt_download_openflow_model', { request })
+  return invoke<string>("stt_download_openflow_model", { request });
 }
 
-export async function sttTranscribe(request: SttTranscribeRequest): Promise<SttTranscribeResponse> {
-  return invoke<SttTranscribeResponse>('stt_transcribe', { request })
+export async function sttTranscribe(
+  request: SttTranscribeRequest,
+): Promise<SttTranscribeResponse> {
+  return invoke<SttTranscribeResponse>("stt_transcribe", { request });
 }
 
 export async function sttGetSettings(): Promise<SttSettingsDto> {
-  return invoke<SttSettingsDto>('stt_get_settings')
+  return invoke<SttSettingsDto>("stt_get_settings");
 }
 
-export async function sttSaveSettings(request: SaveSttSettingsRequest): Promise<SttSettingsDto> {
-  return invoke<SttSettingsDto>('stt_save_settings', { request })
+export async function sttSaveSettings(
+  request: SaveSttSettingsRequest,
+): Promise<SttSettingsDto> {
+  return invoke<SttSettingsDto>("stt_save_settings", { request });
 }
 
 // ── TTS Model Download ─────────────────────────────────────────────────────
 
 export interface TtsModelFileInfo {
-  name: string
-  size: number
-  present: boolean
+  name: string;
+  size: number;
+  present: boolean;
 }
 
 export interface TtsModelStatusResponse {
-  ready: boolean
-  tts_files: TtsModelFileInfo[]
-  tokenizer_files: TtsModelFileInfo[]
-  total_bytes: number
-  missing_bytes: number
-  cache_dir: string
+  ready: boolean;
+  tts_files: TtsModelFileInfo[];
+  tokenizer_files: TtsModelFileInfo[];
+  total_bytes: number;
+  missing_bytes: number;
+  cache_dir: string;
 }
 
 export interface TtsDownloadStatusResponse {
-  is_downloading: boolean
-  percent: number
-  downloaded_bytes: number
-  total_bytes: number
-  current_file: string
-  error: string | null
+  is_downloading: boolean;
+  percent: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  current_file: string;
+  error: string | null;
 }
 
 /** Check TTS model file status. */
 export async function ttsModelStatus(): Promise<TtsModelStatusResponse> {
-  return invoke<TtsModelStatusResponse>('tts_model_status')
+  return invoke<TtsModelStatusResponse>("tts_model_status");
 }
 
 /** Start downloading missing TTS model files. */
 export async function ttsModelDownloadStart(): Promise<void> {
-  return invoke<void>('tts_model_download_start')
+  return invoke<void>("tts_model_download_start");
 }
 
 /** Get current download progress. */
 export async function ttsModelDownloadStatus(): Promise<TtsDownloadStatusResponse> {
-  return invoke<TtsDownloadStatusResponse>('tts_model_download_status')
+  return invoke<TtsDownloadStatusResponse>("tts_model_download_status");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2238,149 +2483,160 @@ export async function ttsModelDownloadStatus(): Promise<TtsDownloadStatusRespons
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type LearningRolloutState =
-  | 'draft'
-  | 'candidate'
-  | 'compared'
-  | 'recommended'
-  | 'promotion_ready'
-  | 'promotion_blocked'
-  | 'promoted_candidate'
-  | 'active'
-  | 'rolled_back'
-  | 'rejected'
-  | 'deprecated'
+  | "draft"
+  | "candidate"
+  | "compared"
+  | "recommended"
+  | "promotion_ready"
+  | "promotion_blocked"
+  | "promoted_candidate"
+  | "active"
+  | "rolled_back"
+  | "rejected"
+  | "deprecated";
 
 export interface LearningStrategyIndexEntry {
-  registryVersion: string
-  strategyId: string
-  label: string
-  sourceKind: string
-  rolloutState: LearningRolloutState
-  createdAt: string
-  updatedAt: string
-  hasCompareRef: boolean
-  hasRecommendationRef: boolean
-  sizeBytes: number
-  path: string
+  registryVersion: string;
+  strategyId: string;
+  label: string;
+  sourceKind: string;
+  rolloutState: LearningRolloutState;
+  createdAt: string;
+  updatedAt: string;
+  hasCompareRef: boolean;
+  hasRecommendationRef: boolean;
+  sizeBytes: number;
+  path: string;
 }
 
 export interface LearningCompareRef {
-  baselineRunId: string
-  candidateRunId: string
-  compareVersion: string
-  recordedAt: string
+  baselineRunId: string;
+  candidateRunId: string;
+  compareVersion: string;
+  recordedAt: string;
 }
 
 export interface LearningRecommendationRef {
-  gateVersion: string
-  policyId: string
-  decision: string
-  reasonCodes: string[]
-  summary: string
-  recordedAt: string
+  gateVersion: string;
+  policyId: string;
+  decision: string;
+  reasonCodes: string[];
+  summary: string;
+  recordedAt: string;
 }
 
 export interface LearningSuiteEvaluationRef {
-  suiteId: string
-  corpusName: string
-  corpusVersion: string
-  suiteReportVersion: string
-  suiteGrade: string
-  taskCount: number
-  regressionCount: number
-  recordedAt: string
+  suiteId: string;
+  corpusName: string;
+  corpusVersion: string;
+  suiteReportVersion: string;
+  suiteGrade: string;
+  taskCount: number;
+  regressionCount: number;
+  recordedAt: string;
 }
 
 export interface LearningActivationAudit {
-  activatedAt: string
-  activatedBy: string
-  sourcePolicyId?: string | null
-  sourceGateVersion?: string | null
-  note?: string | null
+  activatedAt: string;
+  activatedBy: string;
+  sourcePolicyId?: string | null;
+  sourceGateVersion?: string | null;
+  note?: string | null;
 }
 
 export interface LearningRollbackAudit {
-  rolledBackAt: string
-  initiatedBy: string
-  reason: string
+  rolledBackAt: string;
+  initiatedBy: string;
+  reason: string;
   target?:
-    | { kind: 'candidate'; strategyId: string }
-    | { kind: 'baseline_policy'; policyVersion: string }
-    | { kind: 'other'; description: string }
-    | null
+    | { kind: "candidate"; strategyId: string }
+    | { kind: "baseline_policy"; policyVersion: string }
+    | { kind: "other"; description: string }
+    | null;
 }
 
 export interface LearningSupersedeRecord {
-  supersededBy: string
-  supersededAt: string
+  supersededBy: string;
+  supersededAt: string;
 }
 
 export type LearningStrategyDefinition =
-  | { kind: 'noop' }
-  | { kind: 'prompt_overlay'; text: string }
-  | { kind: 'discourage_tool'; toolName: string }
+  | { kind: "noop" }
+  | { kind: "prompt_overlay"; text: string }
+  | { kind: "discourage_tool"; toolName: string };
 
 export interface LearningCandidateStrategy {
-  registryVersion: string
+  registryVersion: string;
   identity: {
-    strategyId: string
-    label: string
-    policyVersion?: string | null
-    definitionRef?: string | null
-  }
+    strategyId: string;
+    label: string;
+    policyVersion?: string | null;
+    definitionRef?: string | null;
+  };
   source:
-    | { kind: 'reflection'; noteId: string }
-    | { kind: 'manual' }
-    | { kind: 'curated_rule'; ruleId?: string | null }
-    | { kind: 'other'; summary: string }
-  rolloutState: LearningRolloutState
-  createdAt: string
-  updatedAt: string
-  basedOnReflectionNote?: string | null
-  compareTarget?: { baselineRunId?: string | null; candidateRunId?: string | null } | null
-  lastCompareRef?: LearningCompareRef | null
-  lastRecommendationRef?: LearningRecommendationRef | null
-  lastSuiteEvaluationRef?: LearningSuiteEvaluationRef | null
-  lastSuiteRecommendationRef?: LearningRecommendationRef | null
-  activationAudit?: LearningActivationAudit | null
-  rollbackAudit?: LearningRollbackAudit | null
-  definition: LearningStrategyDefinition
-  supersededBy?: LearningSupersedeRecord | null
-  compareHistory?: LearningCompareRef[]
-  recommendationHistory?: LearningRecommendationRef[]
-  suiteEvaluationHistory?: LearningSuiteEvaluationRef[]
-  suiteRecommendationHistory?: LearningRecommendationRef[]
-  activationHistory?: LearningActivationAudit[]
-  rollbackHistory?: LearningRollbackAudit[]
-  notes?: string | null
+    | { kind: "reflection"; noteId: string }
+    | { kind: "manual" }
+    | { kind: "curated_rule"; ruleId?: string | null }
+    | { kind: "other"; summary: string };
+  rolloutState: LearningRolloutState;
+  createdAt: string;
+  updatedAt: string;
+  basedOnReflectionNote?: string | null;
+  compareTarget?: {
+    baselineRunId?: string | null;
+    candidateRunId?: string | null;
+  } | null;
+  lastCompareRef?: LearningCompareRef | null;
+  lastRecommendationRef?: LearningRecommendationRef | null;
+  lastSuiteEvaluationRef?: LearningSuiteEvaluationRef | null;
+  lastSuiteRecommendationRef?: LearningRecommendationRef | null;
+  activationAudit?: LearningActivationAudit | null;
+  rollbackAudit?: LearningRollbackAudit | null;
+  definition: LearningStrategyDefinition;
+  supersededBy?: LearningSupersedeRecord | null;
+  compareHistory?: LearningCompareRef[];
+  recommendationHistory?: LearningRecommendationRef[];
+  suiteEvaluationHistory?: LearningSuiteEvaluationRef[];
+  suiteRecommendationHistory?: LearningRecommendationRef[];
+  activationHistory?: LearningActivationAudit[];
+  rollbackHistory?: LearningRollbackAudit[];
+  notes?: string | null;
 }
 
 export interface LearningActiveStrategyEffect {
-  strategyId: string
-  label: string
-  kind: string
-  promptOverlay: string
+  strategyId: string;
+  label: string;
+  kind: string;
+  promptOverlay: string;
 }
 
 export interface LearningActiveStrategyOverlay {
-  overlayVersion: string
-  effects: LearningActiveStrategyEffect[]
+  overlayVersion: string;
+  effects: LearningActiveStrategyEffect[];
 }
 
-export async function learningListCandidates(): Promise<LearningStrategyIndexEntry[]> {
-  return invoke<LearningStrategyIndexEntry[]>('learning_list_candidates')
+export async function learningListCandidates(): Promise<
+  LearningStrategyIndexEntry[]
+> {
+  return invoke<LearningStrategyIndexEntry[]>("learning_list_candidates");
 }
 
 export async function learningGetCandidate(
   strategyId: string,
 ): Promise<LearningCandidateStrategy | null> {
-  return invoke<LearningCandidateStrategy | null>('learning_get_candidate', { strategyId })
+  return invoke<LearningCandidateStrategy | null>("learning_get_candidate", {
+    strategyId,
+  });
 }
 
-export async function learningGetActiveStrategies(): Promise<LearningCandidateStrategy[]> {
-  return invoke<LearningCandidateStrategy[]>('learning_get_active_strategies')
+export async function learningGetActiveStrategies(): Promise<
+  LearningCandidateStrategy[]
+> {
+  return invoke<LearningCandidateStrategy[]>("learning_get_active_strategies");
 }
 
 export async function learningResolveActiveOverlay(): Promise<LearningActiveStrategyOverlay> {
-  return invoke<LearningActiveStrategyOverlay>('learning_resolve_active_overlay')
+  return invoke<LearningActiveStrategyOverlay>(
+    "learning_resolve_active_overlay",
+  );
 }

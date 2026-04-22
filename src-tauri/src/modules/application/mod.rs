@@ -53,6 +53,7 @@ pub mod memory_quality_gate;
 pub mod memory_recall_assembler;
 pub mod memory_write_policy;
 pub mod permission_service;
+pub mod prompt_coordinator;
 pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
@@ -100,6 +101,11 @@ pub use memory_write_policy::{
     MEMORY_WRITE_POLICY_VERSION,
 };
 pub(crate) use permission_service::TauriPermissionPrompter;
+pub use prompt_coordinator::{
+    ActivatedPromptEntry, CoordinatedPromptInputs, PromptActivationReason, PromptAssemblyDecision,
+    PromptAssemblyLane, PromptCoordinator, PromptCoordinatorOutput, PromptCoordinatorRequest,
+    PromptLaneDecision, PromptLaneStatus, SuppressedPromptEntry,
+};
 pub use prompt_planner::{
     BuildPromptPlanRequest, PromptBlock, PromptBlockKind, PromptPlan, PromptPlanResult,
     PromptPlannerError,

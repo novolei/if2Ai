@@ -1,7 +1,11 @@
+use crate::modules::identity::resolve_identity;
+use crate::modules::identity::{IdentityRegistry, IdentitySettings, SessionIdentityOverride};
 use crate::modules::runtime::config::{
-    BoundaryEnforceMode, CompilerConfig, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
-    MemoryPolicyEnforceMode, MemoryRecallMode, ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
+    default_prompt_control_config_path, BoundaryEnforceMode, CompilerConfig, ConfigLoader,
+    ConfigSource, McpServerConfig, McpTransport, MemoryPolicyEnforceMode, MemoryRecallMode,
+    ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
 };
+use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 use crate::modules::runtime::json::JsonValue;
 use crate::modules::runtime::sandbox::FilesystemIsolationMode;
 use std::fs;
@@ -9,6 +13,28 @@ use uuid::Uuid;
 
 fn temp_dir() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("runtime-config-{}", Uuid::new_v4()))
+}
+
+struct HomeGuard {
+    original: Option<std::ffi::OsString>,
+}
+
+impl HomeGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let original = std::env::var_os("HOME");
+        std::env::set_var("HOME", path);
+        Self { original }
+    }
+}
+
+impl Drop for HomeGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.original {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
 }
 
 #[test]
@@ -236,6 +262,62 @@ fn parses_typed_mcp_and_oauth_config() {
 }
 
 #[test]
+fn config_reads_identity_defaults() {
+    let root = temp_dir();
+    let cwd = root.join("project");
+    let home = root.join("home").join(".claw");
+    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    fs::create_dir_all(&home).expect("home config dir");
+
+    fs::write(
+        home.join("settings.json"),
+        r#"{
+          "identity": {
+            "defaultSoulId": "if2ai-core",
+            "defaultPersonaId": "staff-architect"
+          }
+        }"#,
+    )
+    .expect("write settings");
+
+    let loaded = ConfigLoader::new(&cwd, &home)
+        .load()
+        .expect("config should load");
+
+    assert_eq!(
+        loaded.identity(),
+        &IdentitySettings {
+            default_soul_id: Some("if2ai-core".to_string()),
+            default_persona_id: Some("staff-architect".to_string()),
+            ..IdentitySettings::default()
+        }
+    );
+
+    fs::remove_dir_all(root).expect("cleanup temp dir");
+}
+
+#[test]
+fn session_override_wins_over_global_default() {
+    let registry = IdentityRegistry::builtin();
+    let defaults = IdentitySettings {
+        default_soul_id: Some("if2ai-core".to_string()),
+        default_persona_id: Some("staff-architect".to_string()),
+        ..IdentitySettings::default()
+    };
+    let session = SessionIdentityOverride {
+        soul_id: None,
+        persona_id: Some("execution-partner".to_string()),
+    };
+
+    let resolution = resolve_identity(&registry, &defaults, Some(&session));
+    assert_eq!(resolution.resolved.soul_id, "if2ai-core");
+    assert_eq!(
+        resolution.resolved.persona_id.as_deref(),
+        Some("execution-partner")
+    );
+}
+
+#[test]
 fn parses_plugin_config_from_enabled_plugins() {
     let root = temp_dir();
     let cwd = root.join("project");
@@ -441,6 +523,66 @@ fn parses_control_plane_release_flags() {
         loaded.control_plane().provider_transport().max_backoff_ms(),
         2400
     );
+    assert_eq!(loaded.control_plane().default_scenario_profile(), None);
+    assert!(loaded.control_plane().prompt_diagnostics_enabled());
+
+    fs::remove_dir_all(root).expect("cleanup temp dir");
+}
+
+#[test]
+fn config_reads_prompt_control_defaults() {
+    let root = temp_dir();
+    let _home_guard = HomeGuard::set(&root.join("home"));
+    let cwd = root.join("project");
+    let home = root.join("home").join(".claw");
+    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    fs::create_dir_all(&home).expect("home config dir");
+
+    let loaded = ConfigLoader::new(&cwd, &home)
+        .load()
+        .expect("config should load");
+    assert_eq!(loaded.control_plane().default_scenario_profile(), None);
+    assert!(loaded.control_plane().prompt_diagnostics_enabled());
+
+    fs::remove_dir_all(root).expect("cleanup temp dir");
+}
+
+#[test]
+fn config_reads_prompt_control_overrides_from_prompt_dir() {
+    let root = temp_dir();
+    let home_root = root.join("home");
+    let _home_guard = HomeGuard::set(&home_root);
+    let cwd = root.join("project");
+    let home = home_root.join(".claw");
+    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    fs::create_dir_all(&home).expect("home config dir");
+
+    let prompt_control_path = default_prompt_control_config_path();
+    fs::create_dir_all(
+        prompt_control_path
+            .parent()
+            .expect("prompt control parent should exist"),
+    )
+    .expect("create prompt config dir");
+    fs::write(
+        &prompt_control_path,
+        r#"{
+          "controlPlane": {
+            "defaultScenarioProfile": "research",
+            "promptDiagnosticsEnabled": false
+          }
+        }"#,
+    )
+    .expect("write prompt control settings");
+
+    let loaded = ConfigLoader::new(&cwd, &home)
+        .load()
+        .expect("config should load");
+    assert_eq!(
+        loaded.control_plane().default_scenario_profile(),
+        Some(ScenarioProfileHint::Research)
+    );
+    assert!(!loaded.control_plane().prompt_diagnostics_enabled());
 
     fs::remove_dir_all(root).expect("cleanup temp dir");
 }

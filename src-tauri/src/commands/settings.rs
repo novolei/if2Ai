@@ -1,11 +1,21 @@
-//! Memory settings Tauri commands.
+//! Settings Tauri commands.
 //!
-//! Provides configuration for the memory subsystem (token budget, trajectory export).
+//! Provides configuration for the memory subsystem and prompt control plane.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::modules::identity::{
+    normalize_identity_customization_pack, read_identity_customization_pack,
+    write_identity_customization_pack, IdentityCustomizationPack, IdentityRegistry,
+    PersonaCustomization, SoulCustomization,
+};
+use crate::modules::runtime::config::{default_prompt_control_config_path, ConfigLoader};
+use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
 /// Memory recall mode — selects between lexical-only and hybrid (vector +
 /// FTS + episodic) retrieval pipelines.  Mirrors the Rust runtime
@@ -26,6 +36,41 @@ pub enum MemoryPolicyEnforceModeSetting {
     #[default]
     Shadow,
     Enforce,
+}
+
+/// User-selectable default scenario profile for prompt control.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptScenarioProfileSetting {
+    Chat,
+    Coding,
+    Research,
+    Planning,
+    Review,
+}
+
+impl From<PromptScenarioProfileSetting> for ScenarioProfileHint {
+    fn from(value: PromptScenarioProfileSetting) -> Self {
+        match value {
+            PromptScenarioProfileSetting::Chat => Self::Chat,
+            PromptScenarioProfileSetting::Coding => Self::Coding,
+            PromptScenarioProfileSetting::Research => Self::Research,
+            PromptScenarioProfileSetting::Planning => Self::Planning,
+            PromptScenarioProfileSetting::Review => Self::Review,
+        }
+    }
+}
+
+impl From<ScenarioProfileHint> for PromptScenarioProfileSetting {
+    fn from(value: ScenarioProfileHint) -> Self {
+        match value {
+            ScenarioProfileHint::Chat => Self::Chat,
+            ScenarioProfileHint::Coding => Self::Coding,
+            ScenarioProfileHint::Research => Self::Research,
+            ScenarioProfileHint::Planning => Self::Planning,
+            ScenarioProfileHint::Review => Self::Review,
+        }
+    }
 }
 
 /// Memory configuration returned by the backend.
@@ -80,6 +125,82 @@ pub struct MemoryConfigInput {
     pub promotion: Option<crate::modules::memory::promotion::PromotionThresholds>,
 }
 
+/// Structured prompt control settings exposed to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptControlSettings {
+    /// `None` means auto mode — let request intelligence pick the scenario.
+    pub default_scenario_profile: Option<PromptScenarioProfileSetting>,
+    /// Selected global Soul id for prompt identity resolution.
+    pub default_soul_id: Option<String>,
+    /// Selected global Persona id for prompt identity resolution.
+    pub default_persona_id: Option<String>,
+    /// Optional global agent name; persists across all personas.
+    pub agent_name: Option<String>,
+    /// Optional name the user wants the agent to call them.
+    pub user_name: Option<String>,
+    /// Whether prompt diagnostics summaries are emitted to the frontend.
+    pub prompt_diagnostics_enabled: bool,
+}
+
+/// Persisted prompt control settings input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptControlSettingsInput {
+    #[serde(default)]
+    pub default_scenario_profile: Option<PromptScenarioProfileSetting>,
+    #[serde(default)]
+    pub default_soul_id: Option<String>,
+    #[serde(default)]
+    pub default_persona_id: Option<String>,
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    #[serde(default)]
+    pub user_name: Option<String>,
+    #[serde(default = "default_prompt_diagnostics_enabled")]
+    pub prompt_diagnostics_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptControlSoulOption {
+    pub id: String,
+    pub version: String,
+    pub name: String,
+    pub summary: String,
+    pub mission: String,
+    pub core_principles: Vec<String>,
+    pub decision_contract: String,
+    pub non_negotiables: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptControlPersonaOption {
+    pub id: String,
+    pub soul_id: String,
+    pub version: String,
+    pub name: String,
+    pub summary: String,
+    pub tone_rules: Vec<String>,
+    pub collaboration_rules: Vec<String>,
+    pub output_preferences: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptControlCatalog {
+    pub souls: Vec<PromptControlSoulOption>,
+    pub personas: Vec<PromptControlPersonaOption>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IdentityCustomizationPackDto {
+    #[serde(default)]
+    pub souls: BTreeMap<String, SoulCustomization>,
+    #[serde(default)]
+    pub personas: BTreeMap<String, PersonaCustomization>,
+}
+
+fn default_prompt_diagnostics_enabled() -> bool {
+    true
+}
+
 fn read_persisted_config() -> Option<MemoryConfigInput> {
     let home = std::env::var("HOME").ok()?;
     let path = std::path::Path::new(&home).join(".if2ai/memory_config.json");
@@ -94,6 +215,132 @@ fn write_persisted_config(cfg: &MemoryConfigInput) -> Result<(), String> {
     let path = dir.join("memory_config.json");
     let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+fn read_prompt_control_settings_file() -> Result<Option<Value>, String> {
+    let path = default_prompt_control_config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|e| e.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn write_prompt_control_settings_file(
+    input: &PromptControlSettingsInput,
+) -> Result<PromptControlSettings, String> {
+    let path = default_prompt_control_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut root = match read_prompt_control_settings_file()? {
+        Some(Value::Object(object)) => object,
+        Some(_) => {
+            return Err(format!("{} must contain a JSON object", path.display()));
+        }
+        None => Map::new(),
+    };
+
+    let mut control_plane = match root.remove("controlPlane") {
+        Some(Value::Object(object)) => object,
+        Some(_) => {
+            return Err(format!(
+                "{} controlPlane must contain a JSON object",
+                path.display()
+            ));
+        }
+        None => Map::new(),
+    };
+
+    match input.default_scenario_profile {
+        Some(profile) => {
+            let value = serde_json::to_value(profile).map_err(|e| e.to_string())?;
+            control_plane.insert("defaultScenarioProfile".to_string(), value);
+        }
+        None => {
+            control_plane.remove("defaultScenarioProfile");
+        }
+    }
+    control_plane.insert(
+        "promptDiagnosticsEnabled".to_string(),
+        Value::Bool(input.prompt_diagnostics_enabled),
+    );
+
+    let mut identity = match root.remove("identity") {
+        Some(Value::Object(object)) => object,
+        Some(_) => {
+            return Err(format!(
+                "{} identity must contain a JSON object",
+                path.display()
+            ));
+        }
+        None => Map::new(),
+    };
+    match input.default_soul_id.as_deref() {
+        Some(soul_id) if !soul_id.is_empty() => {
+            identity.insert(
+                "defaultSoulId".to_string(),
+                Value::String(soul_id.to_string()),
+            );
+        }
+        _ => {
+            identity.remove("defaultSoulId");
+        }
+    }
+    match input.default_persona_id.as_deref() {
+        Some(persona_id) if !persona_id.is_empty() => {
+            identity.insert(
+                "defaultPersonaId".to_string(),
+                Value::String(persona_id.to_string()),
+            );
+        }
+        _ => {
+            identity.remove("defaultPersonaId");
+        }
+    }
+    match input.agent_name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            identity.insert("agentName".to_string(), Value::String(name.to_string()));
+        }
+        _ => {
+            identity.remove("agentName");
+        }
+    }
+    match input.user_name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            identity.insert("userName".to_string(), Value::String(name.to_string()));
+        }
+        _ => {
+            identity.remove("userName");
+        }
+    }
+
+    root.insert("controlPlane".to_string(), Value::Object(control_plane));
+    root.insert("identity".to_string(), Value::Object(identity));
+    let json = serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+
+    Ok(PromptControlSettings {
+        default_scenario_profile: input.default_scenario_profile,
+        default_soul_id: input.default_soul_id.clone(),
+        default_persona_id: input.default_persona_id.clone(),
+        agent_name: input
+            .agent_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string),
+        user_name: input
+            .user_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string),
+        prompt_diagnostics_enabled: input.prompt_diagnostics_enabled,
+    })
 }
 
 fn count_trajectories() -> usize {
@@ -187,6 +434,132 @@ pub fn set_memory_config(
         recall_mode: config.recall_mode.unwrap_or_default(),
         policy_enforce_mode: config.policy_enforce_mode.unwrap_or_default(),
         promotion: config.promotion.unwrap_or_default(),
+    })
+}
+
+/// Read the effective prompt control settings, including defaults.
+#[tauri::command]
+pub fn get_prompt_control_settings() -> Result<PromptControlSettings, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config = ConfigLoader::default_for(cwd)
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    Ok(PromptControlSettings {
+        default_scenario_profile: config
+            .control_plane()
+            .default_scenario_profile()
+            .map(PromptScenarioProfileSetting::from),
+        default_soul_id: config.identity().default_soul_id.clone(),
+        default_persona_id: config.identity().default_persona_id.clone(),
+        agent_name: config.identity().agent_name.clone(),
+        user_name: config.identity().user_name.clone(),
+        prompt_diagnostics_enabled: config.control_plane().prompt_diagnostics_enabled(),
+    })
+}
+
+/// Persist prompt control settings to `~/.if2ai/prompt/control-plane.json`.
+#[tauri::command]
+pub fn set_prompt_control_settings(
+    request: PromptControlSettingsInput,
+) -> Result<PromptControlSettings, String> {
+    let registry = IdentityRegistry::builtin();
+    if let Some(soul_id) = request.default_soul_id.as_deref() {
+        if !soul_id.is_empty() && registry.soul(soul_id).is_none() {
+            return Err(format!("unknown soul id: {soul_id}"));
+        }
+    }
+    if let Some(persona_id) = request.default_persona_id.as_deref() {
+        if !persona_id.is_empty() && registry.persona(persona_id).is_none() {
+            return Err(format!("unknown persona id: {persona_id}"));
+        }
+    }
+    if let (Some(soul_id), Some(persona_id)) = (
+        request.default_soul_id.as_deref(),
+        request.default_persona_id.as_deref(),
+    ) {
+        if !soul_id.is_empty() && !persona_id.is_empty() {
+            if let Some(persona) = registry.persona(persona_id) {
+                if persona.soul_id != soul_id {
+                    return Err(format!(
+                        "persona `{persona_id}` does not belong to soul `{soul_id}`"
+                    ));
+                }
+            }
+        }
+    }
+    write_prompt_control_settings_file(&request)
+}
+
+/// Return the built-in Soul / Persona catalog for the prompt control panel.
+#[tauri::command]
+pub fn get_prompt_control_catalog() -> PromptControlCatalog {
+    let registry = IdentityRegistry::builtin();
+    PromptControlCatalog {
+        souls: registry
+            .souls()
+            .map(|soul| PromptControlSoulOption {
+                id: soul.id.clone(),
+                version: soul.version.clone(),
+                name: soul.name.clone(),
+                summary: soul.summary.clone(),
+                mission: soul.mission.clone(),
+                core_principles: soul.core_principles.clone(),
+                decision_contract: soul.decision_contract.clone(),
+                non_negotiables: soul.non_negotiables.clone(),
+            })
+            .collect(),
+        personas: registry
+            .personas()
+            .map(|persona| PromptControlPersonaOption {
+                id: persona.id.clone(),
+                soul_id: persona.soul_id.clone(),
+                version: persona.version.clone(),
+                name: persona.name.clone(),
+                summary: persona.summary.clone(),
+                tone_rules: persona.tone_rules.clone(),
+                collaboration_rules: persona.collaboration_rules.clone(),
+                output_preferences: persona.output_preferences.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Load the user-editable identity customization pack from `~/.if2ai/prompt/identity-pack.json`.
+#[tauri::command]
+pub fn get_identity_customization_pack() -> Result<IdentityCustomizationPackDto, String> {
+    let pack = read_identity_customization_pack()?;
+    Ok(IdentityCustomizationPackDto {
+        souls: pack.souls,
+        personas: pack.personas,
+    })
+}
+
+/// Persist the identity customization pack after validating known ids.
+#[tauri::command]
+pub fn set_identity_customization_pack(
+    request: IdentityCustomizationPackDto,
+) -> Result<IdentityCustomizationPackDto, String> {
+    let registry = IdentityRegistry::builtin();
+    for soul_id in request.souls.keys() {
+        if registry.soul(soul_id).is_none() {
+            return Err(format!("unknown soul id: {soul_id}"));
+        }
+    }
+    for persona_id in request.personas.keys() {
+        if registry.persona(persona_id).is_none() {
+            return Err(format!("unknown persona id: {persona_id}"));
+        }
+    }
+
+    let normalized = normalize_identity_customization_pack(IdentityCustomizationPack {
+        souls: request.souls,
+        personas: request.personas,
+    });
+    let saved = write_identity_customization_pack(&normalized)?;
+    Ok(IdentityCustomizationPackDto {
+        souls: saved.souls,
+        personas: saved.personas,
     })
 }
 

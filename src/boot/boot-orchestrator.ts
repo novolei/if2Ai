@@ -25,6 +25,7 @@
 // dialog instead of hanging on the splash.
 
 import type {
+  awaitGatewayReady as AwaitGatewayReadyFn,
   ensureDefaultWorkdir as EnsureDefaultWorkdirFn,
   getOnboardingState as GetOnboardingStateFn,
   listProjects as ListProjectsFn,
@@ -40,6 +41,7 @@ import type { BootstrapStore } from '@/state'
  * `src/api/*` facade function so tests can inject mocks
  * without touching Tauri IPC. */
 export interface BootDependencies {
+  awaitGatewayReady?: typeof AwaitGatewayReadyFn
   getOnboardingState: typeof GetOnboardingStateFn
   ensureDefaultWorkdir: typeof EnsureDefaultWorkdirFn
   listProjects: typeof ListProjectsFn
@@ -66,6 +68,7 @@ export async function runBootSequence(
   deps: BootDependencies,
 ): Promise<BootOutcome> {
   const {
+    awaitGatewayReady,
     getOnboardingState,
     ensureDefaultWorkdir,
     listProjects,
@@ -111,6 +114,10 @@ export async function runBootSequence(
   }
 
   try {
+    if (awaitGatewayReady) {
+      await awaitGatewayReady()
+    }
+
     let defaultProjectId: string | null = null
     try {
       const [, projId] = await ensureDefaultWorkdir()

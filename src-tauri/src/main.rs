@@ -53,9 +53,12 @@ use commands::{
     get_gateway_health,
     get_gateway_url,
     get_harness_status,
+    get_identity_customization_pack,
     get_memory_config,
     get_model_config,
     get_project,
+    get_prompt_control_catalog,
+    get_prompt_control_settings,
     get_session,
     get_session_telemetry,
     get_tool_definitions,
@@ -184,8 +187,11 @@ use commands::{
     security_confirm,
     set_browser_settings,
     set_default_tts_profile,
+    set_identity_customization_pack,
     set_memory_config,
     set_model_config,
+    set_prompt_control_settings,
+    set_session_identity,
     set_session_pinned,
     set_tts_settings,
     start_agent_stream,
@@ -790,6 +796,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(app_state)
         // Browser registry as separate managed state so browser commands can
         // access it without going through AppState.
@@ -898,6 +905,7 @@ fn main() {
             list_sessions,
             delete_session,
             rename_session,
+            set_session_identity,
             set_session_pinned,
             create_session,
             list_project_sessions,
@@ -981,7 +989,12 @@ fn main() {
             validate_web_search_key,
             // Memory settings
             get_memory_config,
+            get_identity_customization_pack,
+            get_prompt_control_catalog,
+            get_prompt_control_settings,
             set_memory_config,
+            set_identity_customization_pack,
+            set_prompt_control_settings,
             export_trajectories,
             // Trajectory introspection (H6) — async commands from modules/commands/trajectory.rs
             modules::commands::trajectory::get_trajectory_count,

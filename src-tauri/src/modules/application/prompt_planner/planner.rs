@@ -7,7 +7,11 @@ use super::build_request::BuildPromptPlanRequest;
 use super::diagnostics::{PromptPlanDiagnostics, PromptValidationIssue};
 use super::merge::merge_external_contributions;
 use crate::modules::application::memory_injection_service::MemoryInjectionSectionKind;
-use crate::modules::identity::{render_persona_block, render_soul_block, IdentityRegistry};
+use crate::modules::identity::{
+    apply_identity_customization_pack, read_identity_customization_pack,
+    read_identity_naming_settings, render_identity_naming_block, render_persona_block,
+    render_soul_block, IdentityRegistry,
+};
 use crate::modules::runtime::prompt::{load_system_prompt, PromptBuildError, SystemPromptBuilder};
 use crate::modules::runtime::prompt_tools_guide::web_tools_routing_block;
 
@@ -120,7 +124,41 @@ pub async fn build_prompt_plan(
     // 1b. Identity blocks stay outside the base system prompt so they
     // remain observable, hashable, and independently evolvable.
     if let Some(ref resolved_identity) = request.resolved_identity {
-        let registry = IdentityRegistry::builtin();
+        let registry = match read_identity_customization_pack() {
+            Ok(pack) => apply_identity_customization_pack(&IdentityRegistry::builtin(), &pack),
+            Err(error) => {
+                tracing::warn!(
+                    "[prompt_planner] failed to load identity customization pack: {}; using built-in registry",
+                    error
+                );
+                IdentityRegistry::builtin()
+            }
+        };
+
+        // 1b-prelude: Identity Naming block. Renders only when the user
+        // configured an agent_name in `~/.if2ai/prompt/control-plane.json`;
+        // otherwise we skip entirely to avoid wasting tokens on an empty
+        // declaration. Sits at priority 96 (above Soul/Persona) so the
+        // LLM sees the anchored name *before* the persona-specific
+        // expression rules.
+        let naming = read_identity_naming_settings();
+        if let Some(content) =
+            render_identity_naming_block(naming.agent_name.as_deref(), naming.user_name.as_deref())
+        {
+            blocks.push(PromptBlock {
+                id: "identity_naming".to_string(),
+                kind: PromptBlockKind::Soul,
+                title: "identity_naming".to_string(),
+                content,
+                source: PromptBlockSource {
+                    subsystem: "identity".to_string(),
+                    reference: Some("naming".to_string()),
+                },
+                priority: 96,
+                is_sensitive: true,
+            });
+        }
+
         if let Some(soul) = registry.soul(&resolved_identity.soul_id) {
             blocks.push(PromptBlock {
                 id: "soul".to_string(),
@@ -461,6 +499,9 @@ fn build_diagnostics(
                     .collect()
             })
             .unwrap_or_default(),
+        suppressed_entries: prompt_assembly_decision
+            .map(|decision| decision.suppressed_entries.clone())
+            .unwrap_or_default(),
         activation_reasons: prompt_assembly_decision
             .map(|decision| decision.activation_reasons.clone())
             .unwrap_or_default(),
@@ -496,6 +537,7 @@ mod tests {
                 lane_decisions: vec![],
                 activated_entry_ids: vec![],
                 suppressed_entry_ids: vec![],
+                suppressed_entries: vec![],
                 activation_reasons: vec![],
             },
             blocks: vec![

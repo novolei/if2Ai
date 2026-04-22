@@ -335,6 +335,46 @@ export interface MemoryContextItem {
   stored_at?: string
 }
 
+/** One lane summary row inside prompt diagnostics. */
+export interface PromptDiagnosticsLaneSummary {
+  lane: string
+  status: 'active' | 'suppressed'
+  entry_count: number
+}
+
+export interface PromptDiagnosticsActivatedEntry {
+  entry_id: string
+  lane: string
+  source: string
+}
+
+export interface PromptDiagnosticsSuppressedEntry {
+  entry_id: string
+  lane: string
+  reason_code: string
+}
+
+export interface PromptDiagnosticsActivationReason {
+  entry_id: string
+  lane: string
+  reason_code: string
+  detail: string
+}
+
+/** Frontend-safe summary of prompt assembly diagnostics. */
+export interface PromptDiagnosticsSummary {
+  trace_id: string
+  block_count: number
+  active_lane_count: number
+  lane_summaries: PromptDiagnosticsLaneSummary[]
+  activated_entry_ids: string[]
+  activated_entries: PromptDiagnosticsActivatedEntry[]
+  suppressed_entry_ids: string[]
+  suppressed_entries: PromptDiagnosticsSuppressedEntry[]
+  activation_reason_codes: string[]
+  activation_reasons: PromptDiagnosticsActivationReason[]
+}
+
 /** Stream token payload emitted on the `agent-token` channel. */
 export interface StreamTokenPayload {
   stream_id: string
@@ -364,6 +404,7 @@ export interface StreamTokenPayload {
   resume_cursor?: string
   context_budget_usage?: ContextBudgetUsage
   memory_context?: MemoryContextItem[]
+  prompt_diagnostics?: PromptDiagnosticsSummary
 }
 
 /** Permission prompt event emitted on the `permission-request` channel. */

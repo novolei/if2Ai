@@ -68,6 +68,7 @@ use crate::modules::runtime::budget::{
     MAX_STREAM_RETRY_ON_TIMEOUT,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
@@ -128,6 +129,8 @@ pub(super) struct StreamTaskInputs {
     pub memory_ticker_for_stream: Arc<MemoryTicker>,
     pub harness_event_bus_for_stream: Option<EventBus>,
     pub memory_context_items_for_task: Vec<MemoryItemProjection>,
+    pub prompt_diagnostics_for_task: PromptDiagnosticsSummary,
+    pub prompt_diagnostics_enabled_for_task: bool,
     pub app_handle_for_after_turn: AppHandle,
     pub pinned_store_for_after_turn: Arc<dyn PinnedStore>,
     pub memory_provider_for_after_turn: SharedMemoryProvider,
@@ -174,6 +177,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         memory_ticker_for_stream,
         harness_event_bus_for_stream,
         memory_context_items_for_task,
+        prompt_diagnostics_for_task,
+        prompt_diagnostics_enabled_for_task,
         app_handle_for_after_turn,
         pinned_store_for_after_turn,
         memory_provider_for_after_turn,
@@ -282,6 +287,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 resume_cursor: None,
                 context_budget_usage: None,
                 memory_context: None,
+                prompt_diagnostics: None,
             };
             stream_emitter.emit_payload(payload);
             completion_already_emitted = true;
@@ -488,6 +494,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     resume_cursor,
                     context_budget_usage: None,
                     memory_context: None,
+                    prompt_diagnostics: None,
                 };
                 stream_emitter.emit_payload(payload);
                 // Phase M4-C P5 — emit harness `StreamErrored`
@@ -596,6 +603,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 resume_cursor: None,
                                 context_budget_usage: None,
                                 memory_context: None,
+                                prompt_diagnostics: None,
                             };
                             stream_emitter.emit_payload(payload);
                         }
@@ -623,6 +631,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 resume_cursor: None,
                                 context_budget_usage: None,
                                 memory_context: None,
+                                prompt_diagnostics: None,
                             };
                             stream_emitter.emit_payload(payload);
                         }
@@ -689,6 +698,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     resume_cursor: None,
                                     context_budget_usage: None,
                                     memory_context: None,
+                                    prompt_diagnostics: None,
                                 };
                                 stream_emitter.emit_payload(payload);
                             }
@@ -719,6 +729,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     resume_cursor: None,
                                     context_budget_usage: None,
                                     memory_context: None,
+                                    prompt_diagnostics: None,
                                 };
                                 stream_emitter.emit_payload(payload);
                             }
@@ -815,6 +826,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             resume_cursor: resume_cursor.clone(),
                             context_budget_usage: None,
                             memory_context: None,
+                            prompt_diagnostics: None,
                         };
                         stream_emitter.emit_payload(payload);
                     }
@@ -840,6 +852,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                         resume_cursor,
                         context_budget_usage: None,
                         memory_context: None,
+                        prompt_diagnostics: None,
                     };
                     stream_emitter.emit_payload(payload);
                     // Phase M4-C P5 — emit harness `StreamErrored`
@@ -954,6 +967,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 resume_cursor: None,
                 context_budget_usage: None,
                 memory_context: None,
+                prompt_diagnostics: None,
             });
 
             // Permission check: apply session-scoped remember decisions first.
@@ -1117,6 +1131,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 resume_cursor: None,
                 context_budget_usage: None,
                 memory_context: None,
+                prompt_diagnostics: None,
             });
 
             // Append tool_use as assistant message, then tool_result as user message.
@@ -1209,6 +1224,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         harness_event_bus_for_stream,
         learning_module_for_stream,
         memory_context_items_for_task,
+        prompt_diagnostics_for_task,
+        prompt_diagnostics_enabled_for_task,
         baseline_message_count_stream,
         app_handle_for_after_turn,
         harness_bus_for_after_turn,

@@ -5,7 +5,59 @@
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::modules::identity::{IdentityRegistry, SessionIdentityOverride};
 use crate::modules::session::{Session, SessionMeta};
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionIdentityInput {
+    pub soul_id: Option<String>,
+    pub persona_id: Option<String>,
+}
+
+fn normalized_identity_override(
+    identity: Option<SessionIdentityInput>,
+) -> Result<Option<SessionIdentityOverride>, String> {
+    let Some(identity) = identity else {
+        return Ok(None);
+    };
+
+    let registry = IdentityRegistry::builtin();
+    let mut soul_id = identity
+        .soul_id
+        .and_then(|value| (!value.trim().is_empty()).then_some(value));
+    let persona_id = identity
+        .persona_id
+        .and_then(|value| (!value.trim().is_empty()).then_some(value));
+
+    if let Some(ref soul) = soul_id {
+        if registry.soul(soul).is_none() {
+            return Err(format!("unknown soul id: {soul}"));
+        }
+    }
+
+    if let Some(ref persona) = persona_id {
+        let persona_def = registry
+            .persona(persona)
+            .ok_or_else(|| format!("unknown persona id: {persona}"))?;
+        match soul_id.as_deref() {
+            Some(soul) if soul != persona_def.soul_id => {
+                return Err(format!(
+                    "persona `{persona}` does not belong to soul `{soul}`"
+                ));
+            }
+            None => {
+                soul_id = Some(persona_def.soul_id.clone());
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Some(SessionIdentityOverride {
+        soul_id,
+        persona_id,
+    }))
+}
 
 /// Create a new session.
 ///
@@ -17,19 +69,45 @@ pub async fn create_session(
     state: State<'_, AppState>,
     project_id: String,
     title: String,
+    identity: Option<SessionIdentityInput>,
 ) -> Result<Session, String> {
+    let normalized_identity = normalized_identity_override(identity)?;
     if project_id.is_empty() {
-        state
-            .session_manager
-            .create_session(title)
-            .await
-            .map_err(|e| e.to_string())
+        match normalized_identity {
+            Some(identity) => state
+                .session_manager
+                .create_session_with_identity(
+                    title,
+                    String::new(),
+                    identity.soul_id,
+                    identity.persona_id,
+                )
+                .await
+                .map_err(|e| e.to_string()),
+            None => state
+                .session_manager
+                .create_session(title)
+                .await
+                .map_err(|e| e.to_string()),
+        }
     } else {
-        state
-            .session_manager
-            .create_session_for_project(&project_id, title)
-            .await
-            .map_err(|e| e.to_string())
+        match normalized_identity {
+            Some(identity) => state
+                .session_manager
+                .create_session_with_identity(
+                    title,
+                    project_id,
+                    identity.soul_id,
+                    identity.persona_id,
+                )
+                .await
+                .map_err(|e| e.to_string()),
+            None => state
+                .session_manager
+                .create_session_for_project(&project_id, title)
+                .await
+                .map_err(|e| e.to_string()),
+        }
     }
 }
 
@@ -119,6 +197,27 @@ pub async fn memory_session_set_enabled(
         .session_manager
         .set_session_memory_enabled(&id, enabled)
         .await
+        .map_err(|e| e.to_string())
+}
+
+/// Update session-level identity override.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn set_session_identity(
+    state: State<'_, AppState>,
+    id: String,
+    identity: SessionIdentityInput,
+) -> Result<SessionMeta, String> {
+    let normalized =
+        normalized_identity_override(Some(identity))?.unwrap_or(SessionIdentityOverride {
+            soul_id: None,
+            persona_id: None,
+        });
+    state
+        .session_manager
+        .set_session_identity(&id, normalized.soul_id, normalized.persona_id)
+        .await
+        .map(|session| SessionMeta::from_session(&session))
         .map_err(|e| e.to_string())
 }
 

@@ -2,9 +2,18 @@
 
 #[cfg(test)]
 mod mig_002_a_tests {
+    use super::super::build_prompt_plan_request_from_coordinator;
+    use crate::modules::application::memory_injection_service::MemoryInjectionArtifacts;
+    use crate::modules::application::prompt_coordinator::{
+        CoordinatedPromptInputs, PromptAssemblyDecision,
+    };
+    use crate::modules::application::prompt_planner::PromptBuildMode;
+    use crate::modules::identity::{IdentitySource, ResolvedIdentity};
+    use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
     use crate::modules::runtime::contracts::execution_mode::{
         ComplexityLevel, ExecutionMode, ExecutionModeDecision, RiskLevel,
     };
+    use std::path::PathBuf;
 
     /// MIG-002-a: verify that the route gate logic correctly handles
     /// SpecializedSurface mode by short-circuiting (returning early).
@@ -76,5 +85,60 @@ mod mig_002_a_tests {
                 panic!("Expected DirectExecute mode to continue");
             }
         }
+    }
+
+    #[test]
+    fn prepare_chat_inputs_uses_prompt_coordinator() {
+        let coordinated = CoordinatedPromptInputs {
+            mode: PromptBuildMode::Planning,
+            resolved_identity: Some(ResolvedIdentity {
+                soul_id: "if2ai-core".to_string(),
+                soul_version: "1".to_string(),
+                persona_id: Some("staff-architect".to_string()),
+                persona_version: Some("1".to_string()),
+                source: IdentitySource::GlobalDefault,
+            }),
+            scenario_profile: Some(ScenarioProfileHint::Planning),
+            active_skill_ids: vec!["skill-a".to_string()],
+            external_contributions: Vec::new(),
+        };
+
+        let request = build_prompt_plan_request_from_coordinator(
+            "session-1".to_string(),
+            "design this".to_string(),
+            PathBuf::from("/tmp/project"),
+            "2026-04-22".to_string(),
+            "macos".to_string(),
+            "unix".to_string(),
+            vec!["web_search".to_string()],
+            MemoryInjectionArtifacts {
+                prompt_sections: Vec::new(),
+                memory_items: Vec::new(),
+            },
+            None,
+            "test",
+            PromptAssemblyDecision {
+                lane_decisions: Vec::new(),
+                activated_entries: Vec::new(),
+                suppressed_entries: Vec::new(),
+                activation_reasons: Vec::new(),
+            },
+            coordinated,
+        );
+
+        assert_eq!(request.mode, PromptBuildMode::Planning);
+        assert_eq!(
+            request.scenario_profile,
+            Some(ScenarioProfileHint::Planning)
+        );
+        assert_eq!(
+            request
+                .resolved_identity
+                .as_ref()
+                .and_then(|identity| identity.persona_id.as_deref()),
+            Some("staff-architect")
+        );
+        assert_eq!(request.active_skill_ids, vec!["skill-a".to_string()]);
+        assert!(request.prompt_assembly_decision.is_some());
     }
 }

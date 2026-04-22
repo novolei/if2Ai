@@ -20,6 +20,7 @@ pub mod commands;
 pub mod config;
 pub mod control_plane;
 pub mod harness;
+pub mod identity;
 pub mod learning;
 pub mod memory;
 pub mod onboarding;
@@ -49,6 +50,8 @@ pub use config::{
 };
 #[allow(unused_imports)]
 pub use control_plane::*;
+#[allow(unused_imports)]
+pub use identity::*;
 #[allow(unused_imports)]
 pub use learning::*;
 #[allow(unused_imports)]

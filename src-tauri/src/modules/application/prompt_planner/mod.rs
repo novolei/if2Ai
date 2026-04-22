@@ -89,6 +89,7 @@ mod tests {
                 lane_decisions: vec![],
                 activated_entry_ids: vec![],
                 suppressed_entry_ids: vec![],
+                suppressed_entries: vec![],
                 activation_reasons: vec![],
             },
             blocks: vec![

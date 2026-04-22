@@ -344,11 +344,14 @@ pub use project::{
 #[allow(unused_imports)]
 pub use session::{
     create_session, delete_session, get_session, list_project_sessions, list_sessions,
-    memory_session_set_enabled, rename_session, set_session_pinned,
+    memory_session_set_enabled, rename_session, set_session_identity, set_session_pinned,
 };
 #[allow(unused_imports)]
 pub use settings::{
-    export_trajectories, get_memory_config, set_memory_config, MemoryConfig, MemoryConfigInput,
+    export_trajectories, get_identity_customization_pack, get_memory_config,
+    get_prompt_control_catalog, get_prompt_control_settings, set_identity_customization_pack,
+    set_memory_config, set_prompt_control_settings, IdentityCustomizationPackDto, MemoryConfig,
+    MemoryConfigInput, PromptControlCatalog, PromptControlSettings, PromptControlSettingsInput,
 };
 #[allow(unused_imports)]
 pub use skills_hub::{

@@ -21,6 +21,8 @@ use super::{
     ConfigError, ControlPlaneGovernanceConfig, ProviderTransportConfig, RuntimeHookConfig,
     RuntimePluginConfig,
 };
+use crate::modules::identity::IdentitySettings;
+use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
 pub(super) fn read_optional_json_object(
     path: &Path,
@@ -58,6 +60,32 @@ pub(super) fn parse_optional_model(root: &JsonValue) -> Option<String> {
         .and_then(|object| object.get("model"))
         .and_then(JsonValue::as_str)
         .map(ToOwned::to_owned)
+}
+
+pub(super) fn parse_optional_identity_settings(
+    root: &JsonValue,
+) -> Result<IdentitySettings, ConfigError> {
+    let Some(object) = root.as_object() else {
+        return Ok(IdentitySettings::default());
+    };
+    let Some(identity_value) = object.get("identity") else {
+        return Ok(IdentitySettings::default());
+    };
+    let identity = expect_object(identity_value, "merged settings.identity")?;
+    Ok(IdentitySettings {
+        default_soul_id: optional_string(identity, "defaultSoulId", "merged settings.identity")?
+            .map(str::to_string),
+        default_persona_id: optional_string(
+            identity,
+            "defaultPersonaId",
+            "merged settings.identity",
+        )?
+        .map(str::to_string),
+        agent_name: optional_string(identity, "agentName", "merged settings.identity")?
+            .map(str::to_string),
+        user_name: optional_string(identity, "userName", "merged settings.identity")?
+            .map(str::to_string),
+    })
 }
 
 pub(super) fn parse_optional_hooks_config(
@@ -167,6 +195,19 @@ pub(super) fn parse_optional_control_plane_config(
         "merged settings.controlPlane",
     )?
     .unwrap_or(true);
+    let default_scenario_profile = optional_string(
+        control_plane,
+        "defaultScenarioProfile",
+        "merged settings.controlPlane",
+    )?
+    .map(parse_scenario_profile_hint_label)
+    .transpose()?;
+    let prompt_diagnostics_enabled = optional_bool(
+        control_plane,
+        "promptDiagnosticsEnabled",
+        "merged settings.controlPlane",
+    )?
+    .unwrap_or(true);
     let defaults = ProviderTransportConfig::default();
     let connect_timeout_ms = optional_u64(
         control_plane,
@@ -213,8 +254,23 @@ pub(super) fn parse_optional_control_plane_config(
         control_plane_v2_enabled,
         boundary_enforce_mode,
         sandbox_strict_mode,
+        default_scenario_profile,
+        prompt_diagnostics_enabled,
         provider_transport,
     })
+}
+
+fn parse_scenario_profile_hint_label(label: &str) -> Result<ScenarioProfileHint, ConfigError> {
+    match label {
+        "chat" => Ok(ScenarioProfileHint::Chat),
+        "coding" => Ok(ScenarioProfileHint::Coding),
+        "research" => Ok(ScenarioProfileHint::Research),
+        "planning" => Ok(ScenarioProfileHint::Planning),
+        "review" => Ok(ScenarioProfileHint::Review),
+        other => Err(ConfigError::Parse(format!(
+            "invalid scenario profile hint `{other}`; expected one of: chat, coding, research, planning, review"
+        ))),
+    }
 }
 
 pub(super) fn validate_provider_transport_config(

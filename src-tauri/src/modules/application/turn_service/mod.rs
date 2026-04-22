@@ -59,6 +59,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::modules::harness::HarnessState;
+use crate::modules::identity::{resolve_identity, IdentityRegistry, SessionIdentityOverride};
 use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
@@ -66,6 +67,7 @@ use crate::modules::memory::MemoryTicker;
 use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
 use crate::modules::projects::ProjectManager;
 use crate::modules::runtime::budget::ContextBudget;
+use crate::modules::runtime::config::ConfigLoader;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
@@ -85,6 +87,9 @@ use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 use super::memory_coordinator::{MemoryCoordinator, PrepareContextInput};
 use super::memory_injection_service::{
     MemoryInjectionArtifacts, MemoryInjectionDeps, MemoryItemProjection,
+};
+use super::prompt_coordinator::{
+    PromptAssemblyDecision, PromptCoordinator, PromptCoordinatorRequest,
 };
 use super::prompt_planner::{
     build_prompt_plan, BuildPromptPlanRequest, PromptPlanResult, PromptPlannerError,
@@ -224,6 +229,12 @@ pub struct PreparedChatInputs {
     /// explainer chip; M4 governance will consume it as a gate
     /// input.
     pub execution_mode_decision: ExecutionModeDecision,
+    /// FEAT-PCP-001 — explainable prompt control-plane decision for
+    /// this turn.
+    pub prompt_assembly_decision: PromptAssemblyDecision,
+    /// Whether prompt diagnostics should be projected to the frontend
+    /// for this turn.
+    pub prompt_diagnostics_enabled: bool,
 }
 
 /// Errors surfaced by [`TurnService`].
@@ -233,6 +244,40 @@ pub enum TurnServiceError {
     Provider(String),
     #[error(transparent)]
     Prompt(#[from] PromptPlannerError),
+}
+
+pub(super) fn build_prompt_plan_request_from_coordinator(
+    session_id: String,
+    user_message: String,
+    workdir: PathBuf,
+    current_date: String,
+    os_name: String,
+    os_family: String,
+    registered_tool_names: Vec<String>,
+    memory_injection: MemoryInjectionArtifacts,
+    active_strategy_overlay: Option<String>,
+    caller: &'static str,
+    prompt_assembly_decision: PromptAssemblyDecision,
+    coordinated_prompt: super::prompt_coordinator::CoordinatedPromptInputs,
+) -> BuildPromptPlanRequest {
+    BuildPromptPlanRequest {
+        session_id,
+        user_message,
+        workdir,
+        current_date,
+        os_name,
+        os_family,
+        registered_tool_names,
+        memory_injection: Some(memory_injection),
+        active_strategy_overlay,
+        caller,
+        mode: coordinated_prompt.mode,
+        resolved_identity: coordinated_prompt.resolved_identity,
+        scenario_profile: coordinated_prompt.scenario_profile,
+        prompt_assembly_decision: Some(prompt_assembly_decision),
+        active_skill_ids: coordinated_prompt.active_skill_ids,
+        options: super::prompt_planner::PromptBuildOptions::default(),
+    }
 }
 
 impl TurnService {
@@ -282,6 +327,46 @@ impl TurnService {
         let memory_items = prepared_context.memory_items;
 
         let registered_tool_names = self.deps.tool_registry.tool_names();
+        let runtime_config = ConfigLoader::default_for(&request.workdir)
+            .load()
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    caller = request.caller,
+                    workdir = %request.workdir.display(),
+                    "[turn_service] failed to load runtime config for identity resolution: {}",
+                    error
+                );
+                crate::modules::runtime::config::RuntimeConfig::empty()
+            });
+        let session_identity_override = if let Some(session_id) = request.session_id.as_deref() {
+            self.deps
+                .session_manager
+                .restore_session(session_id)
+                .await
+                .ok()
+                .and_then(|session| {
+                    (session.soul_id.is_some() || session.persona_id.is_some()).then_some(
+                        SessionIdentityOverride {
+                            soul_id: session.soul_id,
+                            persona_id: session.persona_id,
+                        },
+                    )
+                })
+        } else {
+            None
+        };
+        let identity_resolution = resolve_identity(
+            &IdentityRegistry::builtin(),
+            runtime_config.identity(),
+            session_identity_override.as_ref(),
+        );
+        for warning in &identity_resolution.warnings {
+            tracing::warn!(
+                caller = request.caller,
+                "[turn_service] identity resolution warning: {}",
+                warning
+            );
+        }
 
         // Phase M5 closeout — resolve any currently-Active
         // candidate strategy overlay so the prompt planner can
@@ -301,25 +386,38 @@ impl TurnService {
                 Some(text)
             }
         };
+        let prompt_coordinator = PromptCoordinator;
+        let coordinated_prompt = prompt_coordinator.coordinate(PromptCoordinatorRequest {
+            resolved_identity: Some(identity_resolution.resolved),
+            scenario_profile: intelligence.decision.scenario_profile_hint,
+            default_scenario_profile: runtime_config.control_plane().default_scenario_profile(),
+            execution_mode_decision: Some(intelligence.decision.clone()),
+            registered_tool_names: registered_tool_names.clone(),
+            memory_injection_present: !memory_injection.prompt_sections.is_empty(),
+            active_strategy_overlay_present: active_strategy_overlay.is_some(),
+            active_skill_ids: Vec::new(),
+        });
 
+        let planner_request = build_prompt_plan_request_from_coordinator(
+            request
+                .session_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            request.user_message.clone(),
+            request.workdir,
+            request.current_date,
+            request.os_name,
+            request.os_family,
+            registered_tool_names,
+            memory_injection.clone(),
+            active_strategy_overlay,
+            request.caller,
+            coordinated_prompt.decision.clone(),
+            coordinated_prompt.coordinated_inputs.clone(),
+        );
         let prompt = build_prompt_plan(
-            BuildPromptPlanRequest {
-                session_id: request.session_id.clone().unwrap_or_else(|| "unknown".to_string()),
-                user_message: request.user_message.clone(),
-                workdir: request.workdir,
-                current_date: request.current_date,
-                os_name: request.os_name,
-                os_family: request.os_family,
-                registered_tool_names,
-                memory_injection: Some(memory_injection.clone()),
-                active_strategy_overlay,
-                caller: request.caller,
-                mode: super::prompt_planner::PromptBuildMode::default(),
-                persona_id: None,
-                active_skill_ids: Vec::new(),
-                options: super::prompt_planner::PromptBuildOptions::default(),
-            },
-            Vec::new(), // MIG-006: No external contributions yet
+            planner_request,
+            coordinated_prompt.coordinated_inputs.external_contributions,
         )
         .await?;
 
@@ -329,6 +427,8 @@ impl TurnService {
             memory_items,
             memory_injection,
             execution_mode_decision: intelligence.decision,
+            prompt_assembly_decision: coordinated_prompt.decision,
+            prompt_diagnostics_enabled: runtime_config.control_plane().prompt_diagnostics_enabled(),
         })
     }
 }

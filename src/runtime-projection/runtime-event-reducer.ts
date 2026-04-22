@@ -22,15 +22,15 @@ import type {
   RunProjection,
   RuntimeProjectionSnapshot,
   ToolCallProjection,
-} from './types'
-import { emptyProjectionSnapshot } from './types'
+} from "./types";
+import { emptyProjectionSnapshot } from "./types";
 
 /** Cap on the rolling memory event ring so the snapshot never grows
  * unbounded.  Older events fall off the front. */
-const MEMORY_RING_CAP = 64
+const MEMORY_RING_CAP = 64;
 
 /** Phase M3.6 — cap on the rolling memory write-decision ring. */
-const MEMORY_DECISION_RING_CAP = 32
+const MEMORY_DECISION_RING_CAP = 32;
 
 /**
  * Apply one event to the previous snapshot. Returns a new snapshot
@@ -42,28 +42,28 @@ export function reduceRuntimeEvent(
   event: CanonicalRuntimeEvent,
 ): RuntimeProjectionSnapshot {
   switch (event.kind) {
-    case 'stream_text_delta':
+    case "stream_text_delta":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
         text: run.text + event.text,
-        status: 'streaming',
-      }))
-    case 'stream_thinking_start':
+        status: "streaming",
+      }));
+    case "stream_thinking_start":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
         thinkingStarted: true,
-        status: 'streaming',
-      }))
-    case 'stream_thinking_delta':
+        status: "streaming",
+      }));
+    case "stream_thinking_delta":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
         thinking: run.thinking + event.thinking,
         thinkingStarted: true,
-        status: 'streaming',
-      }))
-    case 'stream_tool_call_update':
+        status: "streaming",
+      }));
+    case "stream_tool_call_update":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => {
-        const existing = run.toolCalls[event.toolCallId]
+        const existing = run.toolCalls[event.toolCallId];
         const next: ToolCallProjection = {
           toolCallId: event.toolCallId,
           toolName: event.toolName,
@@ -71,24 +71,25 @@ export function reduceRuntimeEvent(
           toolArgs: event.toolArgs ?? existing?.toolArgs,
           toolResult: event.toolResult ?? existing?.toolResult,
           toolDurationMs: event.toolDurationMs ?? existing?.toolDurationMs,
-          effectiveWorkdir: event.effectiveWorkdir ?? existing?.effectiveWorkdir,
+          effectiveWorkdir:
+            event.effectiveWorkdir ?? existing?.effectiveWorkdir,
           policyDecision: event.policyDecision ?? existing?.policyDecision,
           evidenceId: event.evidenceId ?? existing?.evidenceId,
           requestId: event.requestId ?? existing?.requestId,
           firstSeenAt: existing?.firstSeenAt ?? event.receivedAt,
           lastUpdatedAt: event.receivedAt,
-        }
+        };
         return {
           ...run,
           toolCalls: { ...run.toolCalls, [event.toolCallId]: next },
-        }
-      })
-    case 'stream_final_text_override':
+        };
+      });
+    case "stream_final_text_override":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
         text: event.text,
-      }))
-    case 'stream_complete':
+      }));
+    case "stream_complete":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
         status: deriveCompletionStatus(event.taskOutcome),
@@ -98,6 +99,7 @@ export function reduceRuntimeEvent(
         resumeCursor: event.resumeCursor,
         contextBudgetUsage: event.contextBudgetUsage,
         memoryItems: event.memoryItems ?? run.memoryItems,
+        promptDiagnostics: event.promptDiagnostics ?? run.promptDiagnostics,
       })).pipe((snap) => {
         if (event.memoryItems && event.memoryItems.length > 0) {
           return {
@@ -106,20 +108,20 @@ export function reduceRuntimeEvent(
               ...snap.memory,
               lastRecallItems: event.memoryItems,
             },
-          }
+          };
         }
-        return snap
-      })
-    case 'stream_error':
+        return snap;
+      });
+    case "stream_error":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
-        status: 'failed',
-        taskOutcome: event.taskOutcome ?? 'failed',
+        status: "failed",
+        taskOutcome: event.taskOutcome ?? "failed",
         degradedReason: event.degradedReason ?? event.reason,
         resumeAvailable: event.resumeAvailable ?? false,
         resumeCursor: event.resumeCursor,
-      }))
-    case 'permission_request':
+      }));
+    case "permission_request":
       return {
         ...prev,
         approvals: {
@@ -133,40 +135,40 @@ export function reduceRuntimeEvent(
             receivedAt: event.receivedAt,
           },
         },
-      }
-    case 'permission_resolved': {
+      };
+    case "permission_resolved": {
       // Strip the resolved approval; the dialog has handed the
       // decision back to the backend via `respondPermission`.
       if (!(event.sessionId in prev.approvals)) {
-        return prev
+        return prev;
       }
-      const nextApprovals: typeof prev.approvals = {}
+      const nextApprovals: typeof prev.approvals = {};
       for (const [key, val] of Object.entries(prev.approvals)) {
-        if (key !== event.sessionId) nextApprovals[key] = val
+        if (key !== event.sessionId) nextApprovals[key] = val;
       }
-      return { ...prev, approvals: nextApprovals }
+      return { ...prev, approvals: nextApprovals };
     }
-    case 'memory_event': {
-      const ring = [...prev.memory.recentEvents, event.payload]
+    case "memory_event": {
+      const ring = [...prev.memory.recentEvents, event.payload];
       const trimmed =
         ring.length > MEMORY_RING_CAP
           ? ring.slice(ring.length - MEMORY_RING_CAP)
-          : ring
+          : ring;
       return {
         ...prev,
         memory: { ...prev.memory, recentEvents: trimmed },
-      }
+      };
     }
-    case 'memory_after_turn': {
+    case "memory_after_turn": {
       // Phase M3-C closeout — latest-wins projection of the
       // backend batch envelope.  Fires once per turn end, even
       // when the batch is empty (closes the M3-B "empty batch is
       // unobservable" audit gap).  Preserves the full
       // `quality` / `conflicts` arrays so consumers can render
       // gate / resolver detail without re-fetching.
-      const acceptedCount = event.quality.accepted.length
-      const rejectedCount = event.quality.rejected.length
-      const warningCount = event.quality.warnings.length
+      const acceptedCount = event.quality.accepted.length;
+      const rejectedCount = event.quality.rejected.length;
+      const warningCount = event.quality.warnings.length;
       return {
         ...prev,
         memory: {
@@ -186,9 +188,9 @@ export function reduceRuntimeEvent(
             receivedAt: event.receivedAt,
           },
         },
-      }
+      };
     }
-    case 'memory_write_decision': {
+    case "memory_write_decision": {
       // Phase M3.6 — rolling ring of typed write decisions.
       // Capped at MEMORY_DECISION_RING_CAP; oldest decisions fall
       // off the front so the snapshot stays bounded.  No backend
@@ -198,18 +200,18 @@ export function reduceRuntimeEvent(
         candidateId: event.candidateId,
         decision: event.payload,
         receivedAt: event.receivedAt,
-      }
-      const ring = [...prev.memory.writeDecisions, projection]
+      };
+      const ring = [...prev.memory.writeDecisions, projection];
       const trimmed =
         ring.length > MEMORY_DECISION_RING_CAP
           ? ring.slice(ring.length - MEMORY_DECISION_RING_CAP)
-          : ring
+          : ring;
       return {
         ...prev,
         memory: { ...prev.memory, writeDecisions: trimmed },
-      }
+      };
     }
-    case 'activation_snapshot':
+    case "activation_snapshot":
       // Honest projection: only what the canonical event carries.
       // No backfill of license metadata that the backend has not
       // produced.  When `LicenseLifecycleService` becomes a real
@@ -222,8 +224,8 @@ export function reduceRuntimeEvent(
           allowsMainShell: event.allowsMainShell,
           capturedAt: event.receivedAt,
         },
-      }
-    case 'execution_mode_decision':
+      };
+    case "execution_mode_decision":
       return {
         ...prev,
         executionMode: {
@@ -232,7 +234,11 @@ export function reduceRuntimeEvent(
           riskLevel: event.riskLevel,
           complexityLevel: event.complexityLevel,
           reasonCodes: event.reasonCodes,
+          scenarioProfileHint: event.scenarioProfileHint,
           matchedRules: event.matchedRules,
+          slotSummary: event.slotSummary,
+          ambiguousEscalated: event.ambiguousEscalated,
+          escalationSource: event.escalationSource,
           // Preserve any prior manual override the user already
           // dispatched — the classifier judgment refresh does not
           // clear the override.  Override is cleared explicitly via
@@ -242,30 +248,33 @@ export function reduceRuntimeEvent(
           capturedAt: event.receivedAt,
           lastUpdatedAt: event.receivedAt,
         },
-      }
-    case 'execution_mode_manual_override': {
+      };
+    case "execution_mode_manual_override": {
       // Manual override may arrive before any classifier judgment
       // (e.g. user picks a mode pre-classification).  In that case
       // we synthesise an empty projection so the override is
       // visible immediately; classifier-driven fields stay zero
       // until the next decision arrives.
-      const base = prev.executionMode
+      const base = prev.executionMode;
       if (!base) {
-        if (event.override === null) return prev
+        if (event.override === null) return prev;
         return {
           ...prev,
           executionMode: {
             executionMode: event.override,
-            riskLevel: 'low',
-            complexityLevel: 'trivial',
+            riskLevel: "low",
+            complexityLevel: "trivial",
             reasonCodes: [],
+            scenarioProfileHint: undefined,
             matchedRules: [],
+            slotSummary: null,
+            ambiguousEscalated: false,
             manualOverride: event.override,
-            policyVersion: '',
+            policyVersion: "",
             capturedAt: event.receivedAt,
             lastUpdatedAt: event.receivedAt,
           },
-        }
+        };
       }
       return {
         ...prev,
@@ -274,14 +283,14 @@ export function reduceRuntimeEvent(
           manualOverride: event.override,
           lastUpdatedAt: event.receivedAt,
         },
-      }
+      };
     }
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.
-      const _exhaustive: never = event
-      void _exhaustive
-      return prev
+      const _exhaustive: never = event;
+      void _exhaustive;
+      return prev;
     }
   }
 }
@@ -292,16 +301,16 @@ export function reduceRuntimeEventBatch(
   prev: RuntimeProjectionSnapshot,
   events: readonly CanonicalRuntimeEvent[],
 ): RuntimeProjectionSnapshot {
-  let next = prev
+  let next = prev;
   for (const event of events) {
-    next = reduceRuntimeEvent(next, event)
+    next = reduceRuntimeEvent(next, event);
   }
-  return next
+  return next;
 }
 
 /** Re-export the empty-snapshot factory so consumers only need to
  * import this module. */
-export { emptyProjectionSnapshot }
+export { emptyProjectionSnapshot };
 
 // ───────────────────────── Internal helpers ────────────────────────
 
@@ -309,7 +318,9 @@ export { emptyProjectionSnapshot }
  * for composing additional state mutations after a run-level edit
  * (e.g. mirroring `memoryItems` into `memory.lastRecallItems`). */
 interface PipeSnapshot extends RuntimeProjectionSnapshot {
-  pipe(fn: (snap: RuntimeProjectionSnapshot) => RuntimeProjectionSnapshot): PipeSnapshot
+  pipe(
+    fn: (snap: RuntimeProjectionSnapshot) => RuntimeProjectionSnapshot,
+  ): PipeSnapshot;
 }
 
 function mergeRun(
@@ -319,42 +330,42 @@ function mergeRun(
   apply: (run: RunProjection) => RunProjection,
 ): PipeSnapshot {
   const existing: RunProjection =
-    prev.runs[runId] ?? createEmptyRun(runId, receivedAt)
-  const updated = { ...apply(existing), lastUpdatedAt: receivedAt }
+    prev.runs[runId] ?? createEmptyRun(runId, receivedAt);
+  const updated = { ...apply(existing), lastUpdatedAt: receivedAt };
   const next: RuntimeProjectionSnapshot = {
     ...prev,
     runs: { ...prev.runs, [runId]: updated },
-  }
-  return makePipeSnapshot(next)
+  };
+  return makePipeSnapshot(next);
 }
 
 function makePipeSnapshot(snap: RuntimeProjectionSnapshot): PipeSnapshot {
-  const wrapped = snap as PipeSnapshot
+  const wrapped = snap as PipeSnapshot;
   wrapped.pipe = function pipe(
     fn: (s: RuntimeProjectionSnapshot) => RuntimeProjectionSnapshot,
   ): PipeSnapshot {
-    return makePipeSnapshot(fn(wrapped))
-  }
-  return wrapped
+    return makePipeSnapshot(fn(wrapped));
+  };
+  return wrapped;
 }
 
 function createEmptyRun(runId: string, receivedAt: number): RunProjection {
   return {
     runId,
-    text: '',
-    thinking: '',
+    text: "",
+    thinking: "",
     thinkingStarted: false,
-    status: 'streaming',
+    status: "streaming",
     resumeAvailable: false,
     toolCalls: {},
     memoryItems: [],
     lastUpdatedAt: receivedAt,
-  }
+  };
 }
 
 function deriveCompletionStatus(
-  outcome: CanonicalRuntimeEvent extends { taskOutcome?: infer T } ? T : never,
-): RunProjection['status'] {
-  if (outcome === 'failed') return 'failed'
-  return 'completed'
+  outcome: RunProjection["taskOutcome"],
+): RunProjection["status"] {
+  if (outcome === "failed") return "failed";
+  return "completed";
 }

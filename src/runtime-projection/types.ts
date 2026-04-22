@@ -20,17 +20,90 @@ import type {
   MemoryContextItem,
   MemoryEventPayload,
   MemoryWriteDecisionPayload,
+  PromptDiagnosticsSummary as WirePromptDiagnosticsSummary,
   QualityGateResultPayload,
-} from '@/transport/contracts'
+} from "@/transport/contracts";
 
 /** Tool-call lifecycle status, shared by every `stream_tool_call_update`. */
-export type ToolCallStatus = 'queued' | 'running' | 'completed' | 'error'
+export type ToolCallStatus = "queued" | "running" | "completed" | "error";
 
 /** Coarse outcome carried on `stream_complete`. */
-export type TaskOutcome = 'completed' | 'partial_success' | 'failed'
+export type TaskOutcome = "completed" | "partial_success" | "failed";
 
 /** Permission decision carried on tool-call updates. */
-export type PolicyDecision = 'allow' | 'deny' | 'prompt'
+export type PolicyDecision = "allow" | "deny" | "prompt";
+
+export interface PromptDiagnosticsLaneSummary {
+  lane: string;
+  status: "active" | "suppressed";
+  entryCount: number;
+}
+
+export interface PromptDiagnosticsActivatedEntry {
+  entryId: string;
+  lane: string;
+  source: string;
+}
+
+export interface PromptDiagnosticsSuppressedEntry {
+  entryId: string;
+  lane: string;
+  reasonCode: string;
+}
+
+export interface PromptDiagnosticsActivationReason {
+  entryId: string;
+  lane: string;
+  reasonCode: string;
+  detail: string;
+}
+
+export interface PromptDiagnosticsSummary {
+  traceId: string;
+  blockCount: number;
+  activeLaneCount: number;
+  laneSummaries: PromptDiagnosticsLaneSummary[];
+  activatedEntryIds: string[];
+  activatedEntries: PromptDiagnosticsActivatedEntry[];
+  suppressedEntryIds: string[];
+  suppressedEntries: PromptDiagnosticsSuppressedEntry[];
+  activationReasonCodes: string[];
+  activationReasons: PromptDiagnosticsActivationReason[];
+}
+
+export function translatePromptDiagnosticsSummary(
+  summary: WirePromptDiagnosticsSummary,
+): PromptDiagnosticsSummary {
+  return {
+    traceId: summary.trace_id,
+    blockCount: summary.block_count,
+    activeLaneCount: summary.active_lane_count,
+    laneSummaries: summary.lane_summaries.map((lane) => ({
+      lane: lane.lane,
+      status: lane.status,
+      entryCount: lane.entry_count,
+    })),
+    activatedEntryIds: summary.activated_entry_ids,
+    activatedEntries: summary.activated_entries.map((entry) => ({
+      entryId: entry.entry_id,
+      lane: entry.lane,
+      source: entry.source,
+    })),
+    suppressedEntryIds: summary.suppressed_entry_ids,
+    suppressedEntries: summary.suppressed_entries.map((entry) => ({
+      entryId: entry.entry_id,
+      lane: entry.lane,
+      reasonCode: entry.reason_code,
+    })),
+    activationReasonCodes: summary.activation_reason_codes,
+    activationReasons: summary.activation_reasons.map((reason) => ({
+      entryId: reason.entry_id,
+      lane: reason.lane,
+      reasonCode: reason.reason_code,
+      detail: reason.detail,
+    })),
+  };
+}
 
 /**
  * Canonical runtime event family produced by the translator.
@@ -58,85 +131,86 @@ export type CanonicalRuntimeEvent =
   | MemoryAfterTurnEvent
   | ActivationSnapshotEvent
   | ExecutionModeDecisionEvent
-  | ExecutionModeManualOverrideEvent
+  | ExecutionModeManualOverrideEvent;
 
 export interface StreamTextDeltaEvent {
-  kind: 'stream_text_delta'
-  runId: string
-  text: string
-  receivedAt: number
+  kind: "stream_text_delta";
+  runId: string;
+  text: string;
+  receivedAt: number;
 }
 
 export interface StreamThinkingStartEvent {
-  kind: 'stream_thinking_start'
-  runId: string
-  receivedAt: number
+  kind: "stream_thinking_start";
+  runId: string;
+  receivedAt: number;
 }
 
 export interface StreamThinkingDeltaEvent {
-  kind: 'stream_thinking_delta'
-  runId: string
-  thinking: string
-  receivedAt: number
+  kind: "stream_thinking_delta";
+  runId: string;
+  thinking: string;
+  receivedAt: number;
 }
 
 export interface StreamToolCallUpdateEvent {
-  kind: 'stream_tool_call_update'
-  runId: string
-  toolCallId: string
-  toolName: string
-  status: ToolCallStatus
-  toolArgs?: Record<string, unknown>
-  toolResult?: string
-  toolDurationMs?: number
-  effectiveWorkdir?: string
-  policyDecision?: PolicyDecision
-  evidenceId?: string
-  requestId?: string
-  receivedAt: number
+  kind: "stream_tool_call_update";
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  status: ToolCallStatus;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: string;
+  toolDurationMs?: number;
+  effectiveWorkdir?: string;
+  policyDecision?: PolicyDecision;
+  evidenceId?: string;
+  requestId?: string;
+  receivedAt: number;
 }
 
 export interface StreamFinalTextOverrideEvent {
-  kind: 'stream_final_text_override'
-  runId: string
-  text: string
-  requestId?: string
-  receivedAt: number
+  kind: "stream_final_text_override";
+  runId: string;
+  text: string;
+  requestId?: string;
+  receivedAt: number;
 }
 
 export interface StreamCompleteEvent {
-  kind: 'stream_complete'
-  runId: string
-  taskOutcome?: TaskOutcome
-  degradedReason?: string
-  resumeAvailable?: boolean
-  resumeCursor?: string
-  requestId?: string
-  contextBudgetUsage?: ContextBudgetUsage
-  memoryItems?: MemoryContextItem[]
-  receivedAt: number
+  kind: "stream_complete";
+  runId: string;
+  taskOutcome?: TaskOutcome;
+  degradedReason?: string;
+  resumeAvailable?: boolean;
+  resumeCursor?: string;
+  requestId?: string;
+  contextBudgetUsage?: ContextBudgetUsage;
+  memoryItems?: MemoryContextItem[];
+  promptDiagnostics?: PromptDiagnosticsSummary;
+  receivedAt: number;
 }
 
 export interface StreamErrorEvent {
-  kind: 'stream_error'
-  runId: string
-  reason: string
-  taskOutcome?: TaskOutcome
-  degradedReason?: string
-  resumeAvailable?: boolean
-  resumeCursor?: string
-  requestId?: string
-  receivedAt: number
+  kind: "stream_error";
+  runId: string;
+  reason: string;
+  taskOutcome?: TaskOutcome;
+  degradedReason?: string;
+  resumeAvailable?: boolean;
+  resumeCursor?: string;
+  requestId?: string;
+  receivedAt: number;
 }
 
 export interface PermissionRequestEvent {
-  kind: 'permission_request'
-  sessionId: string
-  toolName: string
-  permissionMode: string
-  currentMode: string
-  message: string
-  receivedAt: number
+  kind: "permission_request";
+  sessionId: string;
+  toolName: string;
+  permissionMode: string;
+  currentMode: string;
+  message: string;
+  receivedAt: number;
 }
 
 /**
@@ -150,20 +224,20 @@ export interface PermissionRequestEvent {
  * know what to clear.
  */
 export interface PermissionResolvedEvent {
-  kind: 'permission_resolved'
-  sessionId: string
-  decision: 'allow' | 'deny'
-  scope: 'once' | 'session'
-  receivedAt: number
+  kind: "permission_resolved";
+  sessionId: string;
+  decision: "allow" | "deny";
+  scope: "once" | "session";
+  receivedAt: number;
 }
 
 export interface MemoryLifecycleEvent {
-  kind: 'memory_event'
+  kind: "memory_event";
   /** Pass-through of the backend taxonomy.  Not mapped to a closed
    * frontend enum because the backend list is itself open (new
    * memory events are added per phase). */
-  payload: MemoryEventPayload
-  receivedAt: number
+  payload: MemoryEventPayload;
+  receivedAt: number;
 }
 
 /**
@@ -177,11 +251,11 @@ export interface MemoryLifecycleEvent {
  * UI consumption (M3.6 R2 surfaces).
  */
 export interface MemoryWriteDecisionEvent {
-  kind: 'memory_write_decision'
+  kind: "memory_write_decision";
   /** Caller-supplied id linking to the originating candidate. */
-  candidateId: string
-  payload: MemoryWriteDecisionPayload
-  receivedAt: number
+  candidateId: string;
+  payload: MemoryWriteDecisionPayload;
+  receivedAt: number;
 }
 
 /**
@@ -205,18 +279,18 @@ export interface MemoryWriteDecisionEvent {
  * `writeDecisions` ring keeps populating.
  */
 export interface MemoryAfterTurnEvent {
-  kind: 'memory_after_turn'
+  kind: "memory_after_turn";
   /** Phase M4.1 — governance trace contract version pinned by
    * the backend.  Translator forwards verbatim; `undefined` means
    * a pre-M4.1 emitter (legacy traces). */
-  traceVersion?: string
-  caller: string
-  policyVersion: string
-  decidedAt: string
-  decisions: MemoryWriteDecisionPayload[]
-  quality: QualityGateResultPayload
-  conflicts: ConflictResolutionPayload[]
-  receivedAt: number
+  traceVersion?: string;
+  caller: string;
+  policyVersion: string;
+  decidedAt: string;
+  decisions: MemoryWriteDecisionPayload[];
+  quality: QualityGateResultPayload;
+  conflicts: ConflictResolutionPayload[];
+  receivedAt: number;
 }
 
 /** Phase M2.2 placeholder.  No backend source emits an activation
@@ -224,22 +298,22 @@ export interface MemoryAfterTurnEvent {
  * The variant exists so the reducer can be extended without a
  * contract bump once a real source lands. */
 export interface ActivationSnapshotEvent {
-  kind: 'activation_snapshot'
+  kind: "activation_snapshot";
   /** Status discriminator from
    * `runtime::contracts::activation::ActivationStatusKind`. */
   statusKind:
-    | 'checking_local'
-    | 'needs_activation'
-    | 'requesting_activation'
-    | 'pending_approval'
-    | 'redeeming'
-    | 'activated'
-    | 'offline_grace'
-    | 'expired'
-    | 'revoked'
-    | 'deactivated'
-  allowsMainShell: boolean
-  receivedAt: number
+    | "checking_local"
+    | "needs_activation"
+    | "requesting_activation"
+    | "pending_approval"
+    | "redeeming"
+    | "activated"
+    | "offline_grace"
+    | "expired"
+    | "revoked"
+    | "deactivated";
+  allowsMainShell: boolean;
+  receivedAt: number;
 }
 
 /** Phase M2.2 placeholder.  Backend `request_intelligence_service`
@@ -248,22 +322,32 @@ export interface ActivationSnapshotEvent {
  * exists so the reducer can be extended without churn when the
  * decision becomes a real stream event. */
 export interface ExecutionModeDecisionEvent {
-  kind: 'execution_mode_decision'
-  runId?: string
+  kind: "execution_mode_decision";
+  runId?: string;
   executionMode:
-    | 'direct_execute'
-    | 'auto_plan_execute'
-    | 'plan_then_confirm'
-    | 'specialized_surface'
-  riskLevel: 'low' | 'medium' | 'high'
-  complexityLevel: 'trivial' | 'simple' | 'moderate' | 'complex'
-  reasonCodes: string[]
+    | "direct_execute"
+    | "auto_plan_execute"
+    | "plan_then_confirm"
+    | "specialized_surface";
+  riskLevel: "low" | "medium" | "high";
+  complexityLevel: "trivial" | "simple" | "moderate" | "complex";
+  reasonCodes: string[];
+  scenarioProfileHint?: string;
   /** Phase M2 audit fix — `classifierMatchedRuleIds` from the M0.5
    * `ExecutionModeDecision`. Empty array if backend didn't surface
    * any rule ids (e.g. classifier escalated to LLM fallback). */
-  matchedRules: string[]
-  policyVersion: string
-  receivedAt: number
+  matchedRules: string[];
+  /** Free-form classifier evidence summary. Preserved as an object
+   * projection so diagnostics surfaces can render what the
+   * classifier actually observed without recomputing locally. */
+  slotSummary: unknown;
+  /** Whether the classifier judged the request ambiguous enough to
+   * escalate its evidence path. */
+  ambiguousEscalated: boolean;
+  /** Optional escalation source when ambiguity handling fired. */
+  escalationSource?: string;
+  policyVersion: string;
+  receivedAt: number;
 }
 
 /**
@@ -277,76 +361,78 @@ export interface ExecutionModeDecisionEvent {
  * `null` clears the override.
  */
 export interface ExecutionModeManualOverrideEvent {
-  kind: 'execution_mode_manual_override'
-  override: ExecutionModeDecisionEvent['executionMode'] | null
-  receivedAt: number
+  kind: "execution_mode_manual_override";
+  override: ExecutionModeDecisionEvent["executionMode"] | null;
+  receivedAt: number;
 }
 
 // ───────────────────────── Projection state ────────────────────────
 
 /** Per-run projection state assembled from the stream event family. */
 export interface RunProjection {
-  runId: string
+  runId: string;
   /** Concatenated text deltas. */
-  text: string
+  text: string;
   /** Concatenated thinking deltas. */
-  thinking: string
+  thinking: string;
   /** `true` after the first `stream_thinking_start`. */
-  thinkingStarted: boolean
+  thinkingStarted: boolean;
   /** Coarse status, derived from the last seen event. */
-  status: 'streaming' | 'completed' | 'failed' | 'cancelled'
-  taskOutcome?: TaskOutcome
-  degradedReason?: string
-  resumeAvailable: boolean
-  resumeCursor?: string
+  status: "streaming" | "completed" | "failed" | "cancelled";
+  taskOutcome?: TaskOutcome;
+  degradedReason?: string;
+  resumeAvailable: boolean;
+  resumeCursor?: string;
   /** All tool-call updates indexed by `toolCallId`, last-write wins. */
-  toolCalls: Record<string, ToolCallProjection>
+  toolCalls: Record<string, ToolCallProjection>;
   /** Optional context-budget snapshot from `stream_complete`. */
-  contextBudgetUsage?: ContextBudgetUsage
+  contextBudgetUsage?: ContextBudgetUsage;
   /** Memory items recalled this run. */
-  memoryItems: MemoryContextItem[]
+  memoryItems: MemoryContextItem[];
+  /** Prompt assembly diagnostics from the most recent completion. */
+  promptDiagnostics?: PromptDiagnosticsSummary;
   /** Wall-clock `Date.now()` of the last update. */
-  lastUpdatedAt: number
+  lastUpdatedAt: number;
 }
 
 export interface ToolCallProjection {
-  toolCallId: string
-  toolName: string
-  status: ToolCallStatus
-  toolArgs?: Record<string, unknown>
-  toolResult?: string
-  toolDurationMs?: number
-  effectiveWorkdir?: string
-  policyDecision?: PolicyDecision
-  evidenceId?: string
-  requestId?: string
+  toolCallId: string;
+  toolName: string;
+  status: ToolCallStatus;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: string;
+  toolDurationMs?: number;
+  effectiveWorkdir?: string;
+  policyDecision?: PolicyDecision;
+  evidenceId?: string;
+  requestId?: string;
   /** First-seen wall-clock time. */
-  firstSeenAt: number
+  firstSeenAt: number;
   /** Last-write wall-clock time. */
-  lastUpdatedAt: number
+  lastUpdatedAt: number;
 }
 
 /** Snapshot of every pending permission prompt. */
 export interface PermissionApprovalProjection {
-  sessionId: string
-  toolName: string
-  permissionMode: string
-  currentMode: string
-  message: string
-  receivedAt: number
+  sessionId: string;
+  toolName: string;
+  permissionMode: string;
+  currentMode: string;
+  message: string;
+  receivedAt: number;
 }
 
 /** Lightweight rolling memory projection for the chat surface. */
 export interface MemoryRollingProjection {
   /** Latest 64 memory lifecycle events, oldest first. */
-  recentEvents: MemoryEventPayload[]
+  recentEvents: MemoryEventPayload[];
   /** Items recalled by the most recent `stream_complete`. */
-  lastRecallItems: MemoryContextItem[]
+  lastRecallItems: MemoryContextItem[];
   /** Phase M3.6 — rolling ring of typed memory write decisions
    * (oldest first, capped at 32).  Empty until a backend event
    * source dispatches `MemoryWriteDecisionEvent`s through the
    * bridge. */
-  writeDecisions: MemoryWriteDecisionProjection[]
+  writeDecisions: MemoryWriteDecisionProjection[];
   /** Phase M3-C closeout — projection of the most recent
    * `after_turn` batch envelope.  `null` until the first
    * `MemoryAfterTurnEvent` arrives.  Carries `quality` /
@@ -354,7 +440,7 @@ export interface MemoryRollingProjection {
    * a new transport seam.  Note: this is a *latest-wins* slot,
    * not a ring — the per-decision ring lives in
    * `writeDecisions`. */
-  lastAfterTurn: MemoryAfterTurnProjection | null
+  lastAfterTurn: MemoryAfterTurnProjection | null;
 }
 
 /** Phase M3-C closeout — per-batch projection consumed by future
@@ -362,77 +448,81 @@ export interface MemoryRollingProjection {
 export interface MemoryAfterTurnProjection {
   /** Phase M4.1 — governance trace contract version (forwarded
    * from `MemoryAfterTurnEvent.traceVersion`). */
-  traceVersion?: string
-  caller: string
-  policyVersion: string
-  decidedAt: string
-  decisionCount: number
-  acceptedCount: number
-  rejectedCount: number
-  warningCount: number
-  conflictsCount: number
+  traceVersion?: string;
+  caller: string;
+  policyVersion: string;
+  decidedAt: string;
+  decisionCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  warningCount: number;
+  conflictsCount: number;
   /** Full quality result preserved verbatim so consumers can
    * render rejected / warning details without a re-fetch. */
-  quality: QualityGateResultPayload
+  quality: QualityGateResultPayload;
   /** Full per-candidate conflict outcomes (parallel to the
    * decisions in the originating batch). */
-  conflicts: ConflictResolutionPayload[]
+  conflicts: ConflictResolutionPayload[];
   /** Wall-clock time the bridge dispatched this projection. */
-  receivedAt: number
+  receivedAt: number;
 }
 
 /** Per-decision projection consumed by the future M3.6 R2
  * MemoryWriteCard / MemoryChip / TelemetryDrawer surfaces. */
 export interface MemoryWriteDecisionProjection {
-  candidateId: string
-  decision: MemoryWriteDecisionPayload
-  receivedAt: number
+  candidateId: string;
+  decision: MemoryWriteDecisionPayload;
+  receivedAt: number;
 }
 
 /** Activation projection — `null` until a real source emits.  Held
  * here so the reducer / future store have a stable shape. */
 export interface ActivationProjection {
-  statusKind: ActivationSnapshotEvent['statusKind']
-  allowsMainShell: boolean
-  capturedAt: number
+  statusKind: ActivationSnapshotEvent["statusKind"];
+  allowsMainShell: boolean;
+  capturedAt: number;
 }
 
 /** Execution-mode projection — `null` until a real source emits. */
 export interface ExecutionModeProjection {
-  runId?: string
-  executionMode: ExecutionModeDecisionEvent['executionMode']
-  riskLevel: ExecutionModeDecisionEvent['riskLevel']
-  complexityLevel: ExecutionModeDecisionEvent['complexityLevel']
-  reasonCodes: string[]
+  runId?: string;
+  executionMode: ExecutionModeDecisionEvent["executionMode"];
+  riskLevel: ExecutionModeDecisionEvent["riskLevel"];
+  complexityLevel: ExecutionModeDecisionEvent["complexityLevel"];
+  reasonCodes: string[];
+  scenarioProfileHint?: string;
   /** Phase M2 audit fix — rule ids that fired in the classifier.
    * Mirrors `ExecutionModeDecisionEvent.matchedRules` so M2.9
    * explainability surfaces (popover / inspector) can render rule
    * traces without re-querying the backend. */
-  matchedRules: string[]
+  matchedRules: string[];
+  slotSummary: unknown;
+  ambiguousEscalated: boolean;
+  escalationSource?: string;
   /** Phase M2 audit fix — UI-driven manual override of the
    * classifier judgment.  `null` when the user has not overridden.
    * The pill SHOULD render the override prominently when set, but
    * `executionMode` (the classifier judgment) is NEVER mutated. */
-  manualOverride: ExecutionModeProjection['executionMode'] | null
-  policyVersion: string
-  capturedAt: number
+  manualOverride: ExecutionModeProjection["executionMode"] | null;
+  policyVersion: string;
+  capturedAt: number;
   /** Phase M2 audit fix — alias of `capturedAt` retained for the
    * YAML m2.5 spec field name. Both refer to the wall-clock time
    * the projection was last refreshed. */
-  lastUpdatedAt: number
+  lastUpdatedAt: number;
 }
 
 /** Top-level snapshot consumed by future M2.4 stores. */
 export interface RuntimeProjectionSnapshot {
   /** Runs indexed by `runId`. */
-  runs: Record<string, RunProjection>
+  runs: Record<string, RunProjection>;
   /** Approvals indexed by `sessionId` (one prompt per session at a time). */
-  approvals: Record<string, PermissionApprovalProjection>
-  memory: MemoryRollingProjection
+  approvals: Record<string, PermissionApprovalProjection>;
+  memory: MemoryRollingProjection;
   /** `null` until backend emits an activation snapshot event. */
-  activation: ActivationProjection | null
+  activation: ActivationProjection | null;
   /** `null` until backend emits an execution-mode decision event. */
-  executionMode: ExecutionModeProjection | null
+  executionMode: ExecutionModeProjection | null;
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -449,5 +539,5 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     },
     activation: null,
     executionMode: null,
-  }
+  };
 }

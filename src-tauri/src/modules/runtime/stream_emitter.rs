@@ -56,6 +56,7 @@ use tauri::{Emitter, WebviewWindow};
 // the `application` layer.  Reverse `runtime -> application`
 // dependencies are forbidden.
 use super::contracts::memory::MemoryItemProjection;
+use super::contracts::prompt::PromptDiagnosticsSummary;
 
 /// Canonical Tauri event name used by the agent-loop streaming
 /// path. Held as a `pub const` so the M2 frontend translator can
@@ -153,6 +154,9 @@ pub struct StreamTokenPayload {
     /// the `MemoryChip` / `MemoryEvidencePanel` UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_context: Option<Vec<MemoryItemProjection>>,
+    /// Prompt diagnostics summary for this completed turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_diagnostics: Option<PromptDiagnosticsSummary>,
 }
 
 impl StreamTokenPayload {
@@ -183,6 +187,7 @@ impl StreamTokenPayload {
             resume_cursor: None,
             context_budget_usage: None,
             memory_context: None,
+            prompt_diagnostics: None,
         }
     }
 }
@@ -313,5 +318,6 @@ mod tests {
         assert_eq!(p.event_type, "stream_complete");
         assert!(p.task_outcome.is_none());
         assert!(p.memory_context.is_none());
+        assert!(p.prompt_diagnostics.is_none());
     }
 }

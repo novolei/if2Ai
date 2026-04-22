@@ -34,6 +34,7 @@ pub mod activation;
 pub mod common;
 pub mod execution_mode;
 pub mod memory;
+pub mod prompt;
 
 pub use activation::{
     ActivationAction, ActivationActionKind, ActivationFailureReason, ActivationLicense,
@@ -51,4 +52,8 @@ pub use memory::{
     MemoryDecision, MemoryDecisionVerdict, MemoryItemProjection, MemoryKind, MemoryObjectKind,
     MemoryProjection, MemoryScope, MemoryWriteCandidate, MemoryWriteDecision,
     MemoryWriteDisposition,
+};
+pub use prompt::{
+    PromptDiagnosticsActivatedEntry, PromptDiagnosticsActivationReason,
+    PromptDiagnosticsLaneSummary, PromptDiagnosticsSummary, PromptDiagnosticsSuppressedEntry,
 };

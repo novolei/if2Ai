@@ -44,6 +44,8 @@ import {
   type MemoryEventPayload,
   type SessionTelemetry,
 } from '@/lib/tauri'
+import { PromptDiagnosticsPanel } from '@/modules/prompt-diagnostics/components/PromptDiagnosticsPanel'
+import type { PromptDiagnosticsSnapshot } from '@/modules/prompt-diagnostics/storage'
 
 /**
  * Phase 8A.12 (T-UI-8) — bounded ring buffer of recent
@@ -160,15 +162,15 @@ function MemoryLifecycleRow({ entry }: { entry: MemoryLifecycleLogEntry }) {
     }
   })()
   return (
-    <li className={cn('rounded-md border px-2 py-1.5 text-[11px]', meta.bg)}>
+    <li className={cn('rounded-lg border px-2.5 py-1.5 text-[11px]', meta.bg)}>
       <div className="flex items-center gap-1.5">
         <meta.Icon className={cn('h-3 w-3 shrink-0', meta.tone)} aria-hidden />
-        <span className={cn('font-medium', meta.tone)}>{meta.label}</span>
-        <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/70">
+        <span className={cn('text-[11px] font-semibold', meta.tone)}>{meta.label}</span>
+        <span className="ml-auto font-mono text-[10px] tabular-nums text-black/40">
           {time}
         </span>
       </div>
-      <div className="mt-0.5 truncate text-[11px] text-foreground/80">
+      <div className="mt-0.5 truncate text-[11px] text-foreground/78">
         {meta.render(entry)}
       </div>
     </li>
@@ -204,6 +206,8 @@ type MemoryEventLogEntry = MemoryEventPayload & {
 export interface TelemetryDrawerProps {
   /** The session ID whose telemetry is shown. */
   sessionId: string | null
+  /** Latest prompt diagnostics snapshot for the current chat session. */
+  latestPromptDiagnostics: PromptDiagnosticsSnapshot | null
   /** Whether the drawer is currently open. */
   open: boolean
   /** Called when the drawer is closed. */
@@ -251,14 +255,14 @@ function StatRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 py-1.5">
-      <div className="flex items-center gap-2 text-muted-foreground">
+      <div className="flex items-center gap-2 text-black/50">
         <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
         <span className="text-[12px]">{label}</span>
       </div>
       <div className="text-right">
-        <span className="text-[12px] font-medium tabular-nums text-foreground/80">{value}</span>
+        <span className="text-[12px] font-semibold tabular-nums text-foreground/85">{value}</span>
         {subValue && (
-          <span className="ml-1.5 text-[11px] text-muted-foreground">{subValue}</span>
+          <span className="ml-1.5 text-[10.5px] text-black/40">{subValue}</span>
         )}
       </div>
     </div>
@@ -267,7 +271,7 @@ function StatRow({
 
 function SectionHeader({ title }: { title: string }) {
   return (
-    <div className="mb-1 mt-3 border-t border-border/50 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+    <div className="mb-1.5 mt-4 border-t border-black/[0.06] pt-2.5 text-[10px] font-semibold uppercase tracking-widest text-black/35">
       {title}
     </div>
   )
@@ -331,18 +335,18 @@ function MemoryTimelineItem({ event }: { event: MemoryEventLogEntry }) {
   })()
 
   return (
-    <li className={cn('rounded-md border px-2 py-1.5 text-[11px]', meta.bg)}>
+    <li className={cn('rounded-lg border px-2.5 py-1.5 text-[11px]', meta.bg)}>
       <div className="flex items-center gap-1.5">
         <meta.Icon className={cn('h-3 w-3 shrink-0', meta.tone)} aria-hidden />
-        <span className={cn('font-medium', meta.tone)}>{meta.label}</span>
-        <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/70">
+        <span className={cn('text-[11px] font-semibold', meta.tone)}>{meta.label}</span>
+        <span className="ml-auto font-mono text-[10px] tabular-nums text-black/40">
           {time}
         </span>
       </div>
-      <div className="mt-0.5 truncate text-[11px] text-foreground/80">
+      <div className="mt-0.5 truncate text-[11px] text-foreground/78">
         <span className="font-mono">{event.memory_key ?? '(no key)'}</span>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+      <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-black/50">
         <span className="font-mono">{fromTier}</span>
         <span aria-hidden>→</span>
         <span className="font-mono">{toTier}</span>
@@ -361,7 +365,13 @@ function MemoryTimelineItem({ event }: { event: MemoryEventLogEntry }) {
 /**
  * Slide-over developer drawer showing live session telemetry and recording controls.
  */
-export function TelemetryDrawer({ sessionId, open, onClose, className }: TelemetryDrawerProps) {
+export function TelemetryDrawer({
+  sessionId,
+  latestPromptDiagnostics,
+  open,
+  onClose,
+  className,
+}: TelemetryDrawerProps) {
   const [harness, setHarness] = useState<HarnessStatusResponse | null>(null)
   const [telemetry, setTelemetry] = useState<SessionTelemetry | null>(null)
   const [loading, setLoading] = useState(false)
@@ -520,24 +530,31 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
         role="complementary"
         aria-label="开发者遥测面板"
         className={cn(
-          'fixed right-0 top-0 z-50 flex h-full w-72 flex-col',
-          'border-l border-border bg-popover shadow-token-lg',
+          'fixed right-0 top-0 z-50 flex h-full w-[26rem] flex-col',
+          'border-l border-black/[0.07] bg-white shadow-[0_0_48px_rgba(15,23,42,0.10)]',
           className,
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between border-b border-black/[0.06] bg-black/[0.012] px-4 py-3">
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-primary" aria-hidden />
-            <span className="text-[13px] font-semibold text-foreground/80">遥测面板</span>
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-jade/10 text-jade">
+              <Activity className="h-3.5 w-3.5" aria-hidden />
+            </span>
+            <div className="leading-tight">
+              <div className="text-[12.5px] font-semibold tracking-tight text-foreground/85">
+                遥测面板
+              </div>
+              <div className="text-[10px] text-black/40">Developer telemetry</div>
+            </div>
             {loading && (
-              <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" aria-label="加载中" />
+              <RefreshCw className="ml-1 h-3 w-3 animate-spin text-black/40" aria-label="加载中" />
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="rounded-md p-1.5 text-black/45 transition-colors hover:bg-black/[0.04] hover:text-foreground"
             aria-label="关闭遥测面板"
           >
             <X className="h-3.5 w-3.5" />
@@ -545,23 +562,28 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
         </div>
 
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <div className="flex-1 overflow-y-auto px-4 pb-5">
           {/* Error state */}
           {error && (
-            <div className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+            <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive/8 px-3 py-2 text-[11px] leading-4 text-destructive">
               {error}
             </div>
           )}
 
           {/* Harness status */}
           {harness && (
-            <div className="mt-3 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <div className="mt-3 flex items-center justify-between rounded-lg border border-black/[0.06] bg-black/[0.015] px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] text-black/55">
                 <CircleDot
-                  className={cn('h-3 w-3', harness.harness_enabled ? 'text-status-success' : 'text-muted-foreground/40')}
+                  className={cn(
+                    'h-3 w-3',
+                    harness.harness_enabled ? 'text-status-success' : 'text-black/30',
+                  )}
                   aria-hidden
                 />
-                <span>{harness.harness_enabled ? 'Harness 已启用' : 'Harness 未启用'}</span>
+                <span className="font-medium">
+                  {harness.harness_enabled ? 'Harness 已启用' : 'Harness 未启用'}
+                </span>
               </div>
 
               {harness.harness_enabled && sessionId && (
@@ -570,10 +592,10 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
                   onClick={() => void handleToggleRecording()}
                   disabled={recordingBusy || !sessionId}
                   className={cn(
-                    'rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors',
+                    'rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors',
                     isRecording
-                      ? 'bg-status-error-bg text-status-error hover:bg-status-error/20'
-                      : 'bg-status-success-bg text-status-success hover:bg-status-success/20',
+                      ? 'border-status-error/30 bg-status-error-bg text-status-error hover:bg-status-error/15'
+                      : 'border-status-success/30 bg-status-success-bg text-status-success hover:bg-status-success/15',
                     (recordingBusy || !sessionId) && 'cursor-default opacity-50',
                   )}
                   aria-label={isRecording ? '停止录制' : '开始录制'}
@@ -586,7 +608,7 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
 
           {/* No data */}
           {!loading && !telemetry && !error && (
-            <div className="mt-8 text-center text-[12px] text-muted-foreground">
+            <div className="mt-12 text-center text-[12px] text-black/45">
               {sessionId ? '当前会话暂无遥测数据' : '请选择一个会话'}
             </div>
           )}
@@ -666,18 +688,30 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
 
               {/* Last event */}
               {telemetry.last_event_at && (
-                <div className="mt-3 text-[10px] text-muted-foreground/60">
+                <div className="mt-3 rounded-md border border-black/[0.06] bg-black/[0.015] px-2.5 py-1.5 text-[10px] text-black/45">
                   最后事件：{new Date(telemetry.last_event_at).toLocaleTimeString('zh-CN')}
                 </div>
               )}
             </>
           )}
 
+          <SectionHeader title="Prompt Diagnostics" />
+          <div className="mt-1.5">
+            <PromptDiagnosticsPanel
+              snapshot={latestPromptDiagnostics}
+              title="Prompt Diagnostics"
+              description="当前会话最近一次 assistant 完成回合的 prompt control plane 摘要。"
+              collapsible
+              defaultExpanded={false}
+              compact
+            />
+          </div>
+
           {/* Memory lifecycle timeline (Phase 8A.12 / T-UI-8) */}
           {memoryLifecycleLog.length > 0 && (
             <>
               <SectionHeader title="记忆生命周期" />
-              <ul className="mt-1 space-y-1">
+              <ul className="mt-1.5 space-y-1.5">
                 {memoryLifecycleLog.map((entry) => (
                   <MemoryLifecycleRow key={entry.uid} entry={entry} />
                 ))}
@@ -690,7 +724,7 @@ export function TelemetryDrawer({ sessionId, open, onClose, className }: Telemet
               process-wide. */}
           <SectionHeader title="记忆晋升 / 降级" />
           {memoryLog.length === 0 ? (
-            <div className="px-1 py-1 text-[11px] text-muted-foreground/70">
+            <div className="px-1 py-1.5 text-[11px] text-black/40">
               暂无晋升或降级事件
             </div>
           ) : (

@@ -325,6 +325,8 @@ impl TurnService {
         }
         let memory_context_items_for_task: Vec<MemoryItemProjection> =
             prepared_stream.memory_items.clone();
+        let prompt_diagnostics_for_task = prepared_stream.prompt.plan.diagnostics.to_summary();
+        let prompt_diagnostics_enabled_for_task = prepared_stream.prompt_diagnostics_enabled;
         let RuntimeProviderResolution {
             provider_client,
             model,
@@ -431,6 +433,8 @@ impl TurnService {
             memory_ticker_for_stream,
             harness_event_bus_for_stream,
             memory_context_items_for_task,
+            prompt_diagnostics_for_task,
+            prompt_diagnostics_enabled_for_task,
             app_handle_for_after_turn,
             pinned_store_for_after_turn,
             memory_provider_for_after_turn,

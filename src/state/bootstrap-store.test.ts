@@ -119,6 +119,37 @@ describe('boot-orchestrator — runBootSequence', () => {
     assert.equal(snap.projects.length, 1)
   })
 
+  it('awaits the gateway readiness seam before project bootstrap when provided', async () => {
+    const store = createBootstrapStore()
+    const calls: string[] = []
+    const outcome = await runBootSequence(
+      store,
+      mockDeps({
+        awaitGatewayReady: async () => {
+          calls.push('gateway')
+        },
+        ensureDefaultWorkdir: async () => {
+          calls.push('ensure')
+          return ['/tmp/wd', 'default-project'] as [string, string]
+        },
+        listProjects: async () => {
+          calls.push('projects')
+          return [
+            {
+              id: 'default-project',
+              name: 'Default',
+              workdir: '/tmp/wd',
+              created_at: '2024-01-01',
+              session_count: 0,
+            },
+          ]
+        },
+      }),
+    )
+    assert.equal(outcome, 'ready')
+    assert.deepEqual(calls, ['gateway', 'ensure', 'projects'])
+  })
+
   it('first_launch state routes to onboarding', async () => {
     const store = createBootstrapStore()
     const outcome = await runBootSequence(
