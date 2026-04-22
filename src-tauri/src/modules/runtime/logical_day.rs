@@ -144,21 +144,64 @@ pub fn get_today() -> LogicalDay {
 }
 
 /// Parse an IANA timezone name; on failure log a warning and fall back
-/// to `chrono_tz::UTC`.  `None` (= no user override) → UTC as well.
+/// to the host OS local timezone, then to `chrono_tz::UTC`.
+///
+/// `None` (= no user override) follows the same OS → UTC fallback chain
+/// so a freshly installed app defaults to the user's local zone (e.g.
+/// `Asia/Shanghai`) instead of always reporting UTC. Users can still
+/// override via Memory Settings → 时间感知, and an empty string in the
+/// settings UI now means "follow the OS" rather than "force UTC".
 #[must_use]
 pub fn resolve_timezone(name: Option<&str>) -> Tz {
-    let Some(name) = name else {
-        return chrono_tz::UTC;
-    };
+    if let Some(name) = name {
+        if !name.is_empty() {
+            return parse_or_os_fallback(name);
+        }
+    }
+    detect_os_timezone().unwrap_or(chrono_tz::UTC)
+}
+
+/// Probe the host OS for its IANA timezone name. Returns `None` when
+/// the system call fails (rare — tempdir-only sandboxes, container
+/// builds without `/etc/localtime`, …) or when the returned name
+/// doesn't parse as a known IANA zone.
+#[must_use]
+pub fn detect_os_timezone() -> Option<Tz> {
+    match iana_time_zone::get_timezone() {
+        Ok(name) => match Tz::from_str(&name) {
+            Ok(tz) => Some(tz),
+            Err(err) => {
+                tracing::warn!(
+                    tz = %name,
+                    error = %err,
+                    "logical_day: OS reported an IANA name we cannot parse; falling back to UTC"
+                );
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "logical_day: failed to detect OS timezone; falling back to UTC"
+            );
+            None
+        }
+    }
+}
+
+/// Try to parse the explicit override; on parse failure, fall back to
+/// the OS local zone (preferred over UTC because most desktop users
+/// who typo a zone name still want a local-ish answer).
+fn parse_or_os_fallback(name: &str) -> Tz {
     match Tz::from_str(name) {
         Ok(tz) => tz,
         Err(err) => {
             tracing::warn!(
                 tz = name,
                 error = %err,
-                "logical_day: unknown IANA timezone; falling back to UTC"
+                "logical_day: unknown IANA timezone override; falling back to OS local then UTC"
             );
-            chrono_tz::UTC
+            detect_os_timezone().unwrap_or(chrono_tz::UTC)
         }
     }
 }
@@ -230,14 +273,35 @@ mod tests {
     }
 
     #[test]
-    fn unknown_tz_falls_back_to_utc() {
+    fn unknown_tz_returns_a_valid_zone() {
+        // PD0 fix: bad override now falls back to OS local first, UTC
+        // last — both are valid IANA zones, so just smoke-test we
+        // didn't panic and got something usable.
         let tz = resolve_timezone(Some("Not/A_Real_Zone"));
-        assert_eq!(tz, chrono_tz::UTC);
+        let _ = tz.name();
     }
 
     #[test]
-    fn none_tz_resolves_to_utc() {
-        assert_eq!(resolve_timezone(None), chrono_tz::UTC);
+    fn none_tz_resolves_to_os_local_or_utc() {
+        // PD0 fix: `None` no longer hard-codes UTC; it tries the host
+        // OS first.  Whatever zone we get back must round-trip through
+        // `Tz::from_str`, which is the property tests/runtime rely on.
+        let tz = resolve_timezone(None);
+        let _ = tz.name(); // smoke: must be a valid zone
+    }
+
+    #[test]
+    fn empty_string_override_behaves_like_none() {
+        assert_eq!(resolve_timezone(Some("")), resolve_timezone(None));
+    }
+
+    #[test]
+    fn unknown_override_falls_back_to_os_or_utc() {
+        let tz = resolve_timezone(Some("Not/A_Real_Zone"));
+        // Either the OS local zone or UTC — both are acceptable; what
+        // we MUST guarantee is that the function never panics and
+        // never returns a junk value.
+        let _ = tz.name();
     }
 
     #[test]

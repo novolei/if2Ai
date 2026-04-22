@@ -72,9 +72,12 @@ export function MemorySettingsPage() {
   const [promotion, setPromotion] = useState<PromotionThresholds>(DEFAULT_PROMOTION_THRESHOLDS)
 
   // MEM-MOD-PD0 — Day Awareness controls.
-  // Empty string means "no override" → backend falls back to UTC.
+  // Empty string means "no override" → backend falls back to OS local
+  // (PD0 B-fix), then UTC. The detected OS zone is shown next to the
+  // input so users see what an empty value will actually resolve to.
   const [timezone, setTimezone] = useState<string>('')
   const [cutoffHour, setCutoffHour] = useState<number>(4)
+  const [detectedOsTimezone, setDetectedOsTimezone] = useState<string | null>(null)
 
   // Phase 8B.10 / T-UI-2 — modal state for the compiled memory viewer.
   const [compiledViewerOpen, setCompiledViewerOpen] = useState(false)
@@ -103,6 +106,7 @@ export function MemorySettingsPage() {
       setPromotion(cfg.promotion ?? DEFAULT_PROMOTION_THRESHOLDS)
       setTimezone(cfg.timezone ?? '')
       setCutoffHour(cfg.logical_day_cutoff_hour ?? 4)
+      setDetectedOsTimezone(cfg.detected_os_timezone ?? null)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -628,18 +632,27 @@ export function MemorySettingsPage() {
           影响所有 daily-aggregation 记忆（compile_today / diary / 周报）。
         </p>
 
-        <div className="mb-3 flex gap-2 rounded-lg border border-amber-300/40 bg-amber-50/50 px-3 py-2 text-[11px] leading-5 text-amber-900/85">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-          <div>
-            <div className="font-medium">需要重启生效</div>
-            <div className="mt-0.5 text-amber-900/65">
-              <span className="font-mono">timezone</span> /{' '}
-              <span className="font-mono">cutoff_hour</span> 由{' '}
-              <span className="font-mono">runtime::config</span> 在启动时缓存为
-              <span className="font-mono"> OnceLock</span>，下次启动时新值才会被 prompt 计划读取。
+        {/*
+          Banner is conditional now: only the *override* path needs a
+          restart (`runtime::config` is `OnceLock`). When the user
+          leaves both fields at their defaults (timezone = "", cutoff
+          = 4) we silently follow the OS, no banner needed.
+        */}
+        {(timezone.trim() !== '' || cutoffHour !== 4) && (
+          <div className="mb-3 flex gap-2 rounded-lg border border-amber-300/40 bg-amber-50/50 px-3 py-2 text-[11px] leading-5 text-amber-900/85">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <div>
+              <div className="font-medium">非默认值需要重启生效</div>
+              <div className="mt-0.5 text-amber-900/65">
+                自定义的 <span className="font-mono">timezone</span> /{' '}
+                <span className="font-mono">cutoff_hour</span> 由{' '}
+                <span className="font-mono">runtime::config</span> 在启动时缓存为
+                <span className="font-mono"> OnceLock</span>，下次启动时新值才会进入 prompt。
+                留空 / 默认值则跟随系统、无需重启。
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -650,7 +663,11 @@ export function MemorySettingsPage() {
               type="text"
               list="if2ai-tz-suggestions"
               value={timezone}
-              placeholder="留空 = UTC（如 Asia/Shanghai）"
+              placeholder={
+                detectedOsTimezone
+                  ? `留空 = 跟随系统 (${detectedOsTimezone})`
+                  : '留空 = UTC（OS 探测失败）'
+              }
               onChange={(e) => setTimezone(e.target.value)}
               className="h-8 w-full rounded-lg border border-black/[0.09] bg-black/[0.025] px-3 text-[12.5px] font-mono outline-none transition-all focus:border-indigo-400/40 focus:ring-[3px] focus:ring-indigo-400/15"
             />
@@ -666,7 +683,11 @@ export function MemorySettingsPage() {
               <option value="UTC" />
             </datalist>
             <div className="mt-1 text-[10.5px] text-muted-foreground">
-              输入 IANA 时区名；解析失败回退 UTC。
+              {timezone.trim() === ''
+                ? detectedOsTimezone
+                  ? `当前生效：${detectedOsTimezone}（跟随系统，无需重启）`
+                  : '当前生效：UTC（系统时区探测失败）'
+                : '自定义 IANA 时区；解析失败回退到系统时区。'}
             </div>
           </div>
           <div>

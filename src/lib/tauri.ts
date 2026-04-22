@@ -1195,6 +1195,12 @@ export interface MemoryConfig {
    * yesterday's daily aggregations.
    */
   logical_day_cutoff_hour: number;
+  /**
+   * MEM-MOD-PD0 (B-fix) — Read-only IANA name detected from the host
+   * OS. Used by the "时间感知" UI to show what an empty `timezone`
+   * actually resolves to. `null`/undefined when the OS probe failed.
+   */
+  detected_os_timezone?: string | null;
 }
 
 /** Configuration input to persist. */

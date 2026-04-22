@@ -111,6 +111,12 @@ pub struct MemoryConfig {
     /// (0-23, default `4`). A 04:00 boundary keeps "I worked till 03:00
     /// last night" rolled into yesterday's daily aggregations.
     pub logical_day_cutoff_hour: u8,
+    /// MEM-MOD-PD0 (B-fix) — Read-only. Detected host OS timezone so
+    /// the Memory Settings UI can render "留空 = 跟随系统 (Asia/Shanghai)"
+    /// instead of the misleading "= UTC". `None` only when the OS probe
+    /// failed (rare), in which case the UI falls back to "UTC" copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_os_timezone: Option<String>,
 }
 
 /// Configuration to persist.
@@ -408,6 +414,8 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
     });
 
     let memory_runtime = crate::modules::runtime::config::current().memory();
+    let detected_os_timezone = crate::modules::runtime::logical_day::detect_os_timezone()
+        .map(|tz| tz.name().to_string());
     MemoryConfig {
         total_tokens: config.total_tokens,
         system_pct: config.system_pct,
@@ -426,6 +434,7 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
         logical_day_cutoff_hour: config
             .logical_day_cutoff_hour
             .unwrap_or_else(|| memory_runtime.logical_day_cutoff_hour()),
+        detected_os_timezone,
     }
 }
 
@@ -460,9 +469,7 @@ pub fn set_memory_config(
         }
     }
     if let Some(tz) = &config.timezone {
-        if !tz.is_empty()
-            && <chrono_tz::Tz as std::str::FromStr>::from_str(tz).is_err()
-        {
+        if !tz.is_empty() && <chrono_tz::Tz as std::str::FromStr>::from_str(tz).is_err() {
             return Err(format!("unknown IANA timezone: {tz}"));
         }
     }
@@ -493,6 +500,8 @@ pub fn set_memory_config(
         promotion: config.promotion.unwrap_or_default(),
         timezone: normalized_tz,
         logical_day_cutoff_hour: config.logical_day_cutoff_hour.unwrap_or(4),
+        detected_os_timezone: crate::modules::runtime::logical_day::detect_os_timezone()
+            .map(|tz| tz.name().to_string()),
     })
 }
 

@@ -36,6 +36,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # to compute the system-wide 04:00 LOCAL day boundary used by all daily
 # memory aggregations (compile_today/week, diary writer).
 chrono-tz = "0.10"
+# MEM-MOD-PD0 — Detect the host OS's IANA timezone so a fresh install
+# defaults to the user's local zone (e.g. "Asia/Shanghai") instead of
+# UTC.  Pure-Rust, no allocations on the hot path, used by `runtime::
+# logical_day::resolve_timezone` when no override is set.
+iana-time-zone = "0.1"
 thiserror = "1"
 async-trait = "0.1"
 sha2 = "0.9"
