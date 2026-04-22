@@ -303,6 +303,8 @@ impl TurnService {
         };
 
         let prompt = build_prompt_plan(BuildPromptPlanRequest {
+            session_id: request.session_id.clone().unwrap_or_else(|| "unknown".to_string()),
+            user_message: request.user_message.clone(),
             workdir: request.workdir,
             current_date: request.current_date,
             os_name: request.os_name,

@@ -2,10 +2,11 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [chat-prompt-dispatch](../../staff-remediation/gap-modules/chat-prompt-dispatch/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-22`
+- Completed: `2026-04-22` (PromptPlan 已升级为 traceable contract，包含 trace_id、block_hash、diagnostics)
 
 ---
 

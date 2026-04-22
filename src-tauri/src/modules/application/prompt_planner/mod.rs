@@ -112,9 +112,27 @@ impl PromptBlockKind {
 // title would force a non-`'static` lifetime on `Deserialize`).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PromptBlock {
+    /// Unique identifier for this block within the plan (e.g., "system", "memory_pinned-0").
+    pub id: String,
     pub kind: PromptBlockKind,
     pub title: &'static str,
     pub content: String,
+}
+
+/// Diagnostic metadata for a [`PromptPlan`].
+///
+/// Provides traceability and debugging information without exposing
+/// sensitive prompt content. Used by harness traces and diagnostics UIs.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PromptPlanDiagnostics {
+    /// Unique trace identifier for this plan.
+    pub trace_id: String,
+    /// Ordered list of block kinds in the plan.
+    pub block_kinds: Vec<PromptBlockKind>,
+    /// Total number of blocks.
+    pub block_count: usize,
+    /// Redacted preview of each block (first 48 chars or "[REDACTED]" for sensitive content).
+    pub redacted_preview: Vec<String>,
 }
 
 /// Ordered collection of [`PromptBlock`]s representing the static
@@ -122,8 +140,14 @@ pub struct PromptBlock {
 ///
 /// Use [`PromptPlan::join_into_text`] to render the canonical newline
 /// separator (single `"\n"`) used by the legacy assembly path.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PromptPlan {
+    /// Unique trace identifier computed from session context and block hash.
+    pub trace_id: String,
+    /// SHA256 hash of all block content for plan identity.
+    pub block_hash: String,
+    /// Diagnostic metadata for traceability.
+    pub diagnostics: PromptPlanDiagnostics,
     pub blocks: Vec<PromptBlock>,
 }
 
@@ -149,6 +173,10 @@ impl PromptPlan {
 /// Held as a struct so future slices can add fields (e.g. token
 /// budget, reflection notes) without breaking call sites.
 pub struct BuildPromptPlanRequest {
+    /// Session ID for trace identity computation.
+    pub session_id: String,
+    /// User message for trace identity computation.
+    pub user_message: String,
     /// Working directory the turn runs against. Drives runtime
     /// config + project context discovery in `load_system_prompt`.
     pub workdir: PathBuf,
@@ -230,6 +258,7 @@ pub async fn build_prompt_plan(
         }
     };
     blocks.push(PromptBlock {
+        id: "system".to_string(),
         kind: PromptBlockKind::System,
         title: "system",
         content: system_lines.join("\n"),
@@ -238,6 +267,7 @@ pub async fn build_prompt_plan(
     // 2. Web-tool routing guide (Phase 7C, slice 7C.4 parity).
     if let Some(guide) = web_tools_routing_block(&request.registered_tool_names) {
         blocks.push(PromptBlock {
+            id: "web_tools_routing_guide".to_string(),
             kind: PromptBlockKind::WebToolsRoutingGuide,
             title: "web_tools_routing_guide",
             content: guide,
@@ -252,6 +282,7 @@ pub async fn build_prompt_plan(
     if let Some(overlay) = request.active_strategy_overlay {
         if !overlay.trim().is_empty() {
             blocks.push(PromptBlock {
+                id: "active_strategy_overlay".to_string(),
                 kind: PromptBlockKind::ActiveStrategyOverlay,
                 title: "active_strategy_overlay",
                 content: overlay,
@@ -262,8 +293,14 @@ pub async fn build_prompt_plan(
     // 3. Memory injection blocks (Pinned / Compiled / Rules /
     //    Retrieved) in the order produced by the memory service.
     if let Some(artifacts) = request.memory_injection {
+        let mut memory_block_counters: std::collections::HashMap<MemoryInjectionSectionKind, usize> =
+            std::collections::HashMap::new();
         for section in artifacts.prompt_sections {
+            let counter = memory_block_counters.entry(section.kind).or_insert(0);
+            let block_id = format!("{}-{}", title_for_memory_section(section.kind), counter);
+            *counter += 1;
             blocks.push(PromptBlock {
+                id: block_id,
                 kind: PromptBlockKind::from_memory_section(section.kind),
                 title: title_for_memory_section(section.kind),
                 content: section.content,
@@ -271,7 +308,17 @@ pub async fn build_prompt_plan(
         }
     }
 
-    let plan = PromptPlan { blocks };
+    // Compute trace metadata
+    let block_hash = compute_block_hash(&blocks);
+    let trace_id = compute_trace_id(&request.session_id, &request.user_message, &block_hash);
+    let diagnostics = build_diagnostics(trace_id.clone(), &blocks);
+
+    let plan = PromptPlan {
+        trace_id,
+        block_hash,
+        diagnostics,
+        blocks,
+    };
     let text = plan.join_into_text();
     Ok(PromptPlanResult { plan, text })
 }
@@ -285,6 +332,57 @@ fn title_for_memory_section(kind: MemoryInjectionSectionKind) -> &'static str {
     }
 }
 
+/// Compute SHA256 hash of all blocks for plan identity.
+fn compute_block_hash(blocks: &[PromptBlock]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for block in blocks {
+        hasher.update(format!("{:?}|{}|{}\n", block.kind, block.title, block.content));
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// Compute unique trace ID from session context and block hash.
+fn compute_trace_id(session_id: &str, user_message: &str, block_hash: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(session_id.as_bytes());
+    hasher.update(user_message.as_bytes());
+    hasher.update(block_hash.as_bytes());
+    let hex_hash = hex::encode(hasher.finalize());
+    format!("trace_{}", &hex_hash[..16])
+}
+
+/// Build diagnostic metadata for the plan.
+fn build_diagnostics(
+    trace_id: String,
+    blocks: &[PromptBlock],
+) -> PromptPlanDiagnostics {
+    let redacted_preview = blocks
+        .iter()
+        .map(|b| {
+            // Redact system prompt and user intent as sensitive
+            let is_sensitive = matches!(
+                b.kind,
+                PromptBlockKind::System | PromptBlockKind::RetrievedMemory
+            );
+            if is_sensitive {
+                format!("{:?}: [REDACTED {} chars]", b.kind, b.content.chars().count())
+            } else {
+                let preview: String = b.content.chars().take(48).collect();
+                format!("{:?}: {}", b.kind, preview)
+            }
+        })
+        .collect();
+
+    PromptPlanDiagnostics {
+        trace_id: trace_id.clone(),
+        block_kinds: blocks.iter().map(|b| b.kind).collect(),
+        block_count: blocks.len(),
+        redacted_preview,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,13 +393,23 @@ mod tests {
     #[test]
     fn join_into_text_uses_legacy_newline_separator() {
         let plan = PromptPlan {
+            trace_id: "trace_test123".to_string(),
+            block_hash: "hash123".to_string(),
+            diagnostics: PromptPlanDiagnostics {
+                trace_id: "trace_test123".to_string(),
+                block_kinds: vec![PromptBlockKind::System, PromptBlockKind::RetrievedMemory],
+                block_count: 2,
+                redacted_preview: vec![],
+            },
             blocks: vec![
                 PromptBlock {
+                    id: "system".to_string(),
                     kind: PromptBlockKind::System,
                     title: "system",
                     content: "a".into(),
                 },
                 PromptBlock {
+                    id: "retrieved_memory-0".to_string(),
                     kind: PromptBlockKind::RetrievedMemory,
                     title: "retrieved_memory",
                     content: "b".into(),
@@ -313,8 +421,31 @@ mod tests {
     }
 
     #[test]
-    fn empty_plan_renders_to_empty_string() {
-        assert_eq!(PromptPlan::default().join_into_text(), "");
+    fn compute_block_hash_is_stable() {
+        let blocks = vec![
+            PromptBlock {
+                id: "system".to_string(),
+                kind: PromptBlockKind::System,
+                title: "system",
+                content: "test content".into(),
+            },
+        ];
+        let hash1 = compute_block_hash(&blocks);
+        let hash2 = compute_block_hash(&blocks);
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64); // SHA256 hex is 64 chars
+    }
+
+    #[test]
+    fn compute_trace_id_includes_session_and_message() {
+        let trace1 = compute_trace_id("session1", "hello", "hash123");
+        let trace2 = compute_trace_id("session2", "hello", "hash123");
+        let trace3 = compute_trace_id("session1", "world", "hash123");
+
+        assert!(trace1.starts_with("trace_"));
+        assert_ne!(trace1, trace2); // Different session
+        assert_ne!(trace1, trace3); // Different message
+        assert_eq!(trace1.len(), 22); // "trace_" + 16 hex chars
     }
 
     #[tokio::test]
@@ -344,6 +475,8 @@ mod tests {
             memory_items: Vec::new(),
         };
         let req = BuildPromptPlanRequest {
+            session_id: "test_session".to_string(),
+            user_message: "test message".to_string(),
             workdir: PathBuf::from("/nonexistent/path/for/m1-tests"),
             current_date: "2026-04-20".into(),
             os_name: "macos".into(),

@@ -18,6 +18,7 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md) | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                      | 2026-04-22 |
 | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | feature  | 让主聊天链走 gateway conversations/streaming surface (App.tsx 已完成 cutover)                                          | 2026-04-22 |
 | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md) | feature  | 把 execution mode 与 step preflight 从 advisory 升级成真实 product gate (4 sub-packs: a/b/c/d)                          | 2026-04-22 |
 | [GFR-T1-D-1](./refactor/GFR-T1-D-1-sqlite-provider-split.md)       | refactor | sqlite_provider 单刀目录化 + tests + scope + provider_impl 抽出；mod.rs 1579 → 268 LOC (-83%); T1-D 收尾              | 2026-04-21 |
@@ -125,7 +126,7 @@
 | 5    | P0     | [MIG-014](./feature/migration-core/MIG-014-session-and-chat-store-foundation.md)               | **done** | 建立 session/chat store 基础层                        |
 | 6    | P0     | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md)     | **done** | 让主聊天链走 gateway conversations/streaming surface  |
 | 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)   | **done** | 让 execution mode / preflight 成为真实 product gate   |
-| 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | draft    | 把 prompt planner 升级成 traceable contract           |
+| 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | **done** | 把 prompt planner 升级成 traceable contract           |
 | 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | draft    | 打通真实 memory lifecycle 闭环                        |
 | 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | draft    | 把 Tauri host 收口成 desktop host thin shell          |
 | 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | draft    | 把前端切到 canonical runtime projection 单一真相路径  |
