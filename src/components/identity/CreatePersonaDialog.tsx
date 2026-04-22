@@ -385,8 +385,18 @@ export function CreatePersonaDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
+      <DialogContent
+        className={cn(
+          // Override the base `grid gap-4 p-6` with a flex column so we
+          // can give the middle section a scroll container while keeping
+          // header + footer pinned. `max-h-[90vh]` caps the dialog so it
+          // never overflows the viewport (which used to push the save
+          // button below the visible area when rules were expanded).
+          "flex max-h-[90vh] w-[min(94vw,42rem)] max-w-[42rem] flex-col gap-0 overflow-hidden p-0",
+        )}
+      >
+        {/* Header — pinned, doesn't scroll */}
+        <DialogHeader className="shrink-0 border-b border-black/[0.06] px-6 py-4">
           <DialogTitle className="text-[16px] font-semibold tracking-tight">
             {isEditMode ? "编辑 Persona" : "新建 Persona"}
           </DialogTitle>
@@ -405,7 +415,8 @@ export function CreatePersonaDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4">
+        {/* Scrollable body */}
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-5">
           {/* Name + Soul */}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
             <label className="grid gap-1.5">
@@ -597,7 +608,8 @@ export function CreatePersonaDialog({
           </details>
         </div>
 
-        <DialogFooter>
+        {/* Footer — pinned at the bottom, always visible */}
+        <DialogFooter className="shrink-0 border-t border-black/[0.06] bg-white/95 px-6 py-3 backdrop-blur-sm">
           <Button
             type="button"
             variant="outline"
