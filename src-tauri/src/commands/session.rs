@@ -5,7 +5,10 @@
 use tauri::State;
 
 use crate::commands::AppState;
-use crate::modules::identity::{IdentityRegistry, SessionIdentityOverride};
+use crate::modules::identity::{
+    apply_identity_customization_pack, read_identity_customization_pack, IdentityRegistry,
+    SessionIdentityOverride,
+};
 use crate::modules::session::{Session, SessionMeta};
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -22,7 +25,14 @@ fn normalized_identity_override(
         return Ok(None);
     };
 
-    let registry = IdentityRegistry::builtin();
+    // Validate against the **effective** registry (built-in + custom
+    // personas from identity-pack.json) so a session can pick a
+    // user-created persona without hitting "unknown persona id".
+    // Best-effort pack read: a malformed pack falls back to built-in
+    // only — better to reject the override than to corrupt session state.
+    let builtin = IdentityRegistry::builtin();
+    let pack = read_identity_customization_pack().unwrap_or_default();
+    let registry = apply_identity_customization_pack(&builtin, &pack);
     let mut soul_id = identity
         .soul_id
         .and_then(|value| (!value.trim().is_empty()).then_some(value));

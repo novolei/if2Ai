@@ -11,9 +11,8 @@ use tauri::State;
 use crate::commands::AppState;
 use crate::modules::identity::{
     apply_identity_customization_pack, normalize_identity_customization_pack,
-    read_identity_customization_pack, write_identity_customization_pack,
-    CustomPersonaDefinition, IdentityCustomizationPack, IdentityRegistry, PersonaCustomization,
-    SoulCustomization,
+    read_identity_customization_pack, write_identity_customization_pack, CustomPersonaDefinition,
+    IdentityCustomizationPack, IdentityRegistry, PersonaCustomization, SoulCustomization,
 };
 use crate::modules::runtime::config::{default_prompt_control_config_path, ConfigLoader};
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
@@ -467,11 +466,23 @@ pub fn get_prompt_control_settings() -> Result<PromptControlSettings, String> {
 }
 
 /// Persist prompt control settings to `~/.if2ai/prompt/control-plane.json`.
+///
+/// Validation runs against the **effective** registry (built-in merged
+/// with user-defined personas from identity-pack.json), so persisting a
+/// user-created persona as the global default succeeds without
+/// requiring a separate validation surface.
 #[tauri::command]
 pub fn set_prompt_control_settings(
     request: PromptControlSettingsInput,
 ) -> Result<PromptControlSettings, String> {
-    let registry = IdentityRegistry::builtin();
+    let builtin = IdentityRegistry::builtin();
+    // Best-effort: if the pack is unreadable we fall back to built-in
+    // only and risk a false-negative for custom personas, but never
+    // crash the save. The user can always re-save once the pack is
+    // readable again.
+    let pack = read_identity_customization_pack().unwrap_or_default();
+    let registry = apply_identity_customization_pack(&builtin, &pack);
+
     if let Some(soul_id) = request.default_soul_id.as_deref() {
         if !soul_id.is_empty() && registry.soul(soul_id).is_none() {
             return Err(format!("unknown soul id: {soul_id}"));
