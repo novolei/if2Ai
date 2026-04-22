@@ -424,9 +424,13 @@ fn main() {
     // Keep the guard alive for the lifetime of the program - store it in a static
     std::mem::forget(_guard);
 
+    // Configure tracing to output to both file and stdout
+    let env_filter = EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into());
+
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(fmt::layer().with_writer(std::io::stdout).with_ansi(true))
+        .with(env_filter)
         .init();
 
     tracing::info!("If2Ai backend starting, log directory: {:?}", log_dir);
