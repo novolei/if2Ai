@@ -12,7 +12,7 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 MIG-008 Coding mode specialized augmentation)_ | —    | —    | —     |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | 建立 PromptCoordinator 与 assembly decision foundation | @executor |
 
 ## Recently Done
 
@@ -106,10 +106,10 @@
 
 | Pack    | 状态    | Phase | Goal                                                                                  | Depends On |
 | ------- | ------- | ----- | ------------------------------------------------------------------------------------- | ---------- |
-| MIG-005 | pending | P0    | PromptBlock 数据结构对齐（source + priority + is_sensitive + validation_issues）      | MIG-004    |
-| MIG-006 | pending | P1    | PromptContribution 机制 + PromptBuildMode + strict validation                         | MIG-005    |
-| MIG-007 | pending | P2    | 模块化重构（拆分为 block.rs / diagnostics.rs / build_request.rs / planner.rs）       | MIG-006    |
-| MIG-008 | pending | P2    | Coding mode 专用增强（continuation block + compaction policy + workspace augment）    | MIG-007    |
+| MIG-005 | done    | P0    | PromptBlock 数据结构对齐（source + priority + is_sensitive + validation_issues）      | MIG-004    |
+| MIG-006 | done    | P1    | PromptContribution 机制 + PromptBuildMode + strict validation                         | MIG-005    |
+| MIG-007 | done    | P2    | 模块化重构（拆分为 block.rs / diagnostics.rs / build_request.rs / planner.rs）       | MIG-006    |
+| MIG-008 | done    | P2    | Coding mode 专用增强（continuation block + compaction policy + workspace augment）    | MIG-007    |
 
 ---
 
@@ -129,7 +129,7 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 MIG-015 主聊天链 cutover)_ | —    | —    | —     |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | Prompt coordinator + assembly decision foundation | @executor |
 
 ### Migration-Core Pipeline
 
@@ -171,6 +171,16 @@
 | Pack   | 状态 | Goal |
 | ------ | ---- | ---- |
 | _(无)_ | —    | —    |
+
+### Prompt Control Plane Pipeline
+
+| Pack | 状态 | Goal |
+| ---- | ---- | ---- |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | active | Prompt coordinator + assembly decision foundation |
+| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | active | Scenario / task-focus prompt catalog |
+| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | active | Tool prompt catalog + conditional injection |
+| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | active | Utility / coordinator prompt lanes |
+| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | active | Prompt control panel + diagnostics projection |
 
 > 新 Pack 用 `./scripts/pack init <PACK-ID> --type feature --slug <slug> --files <a> [<b>...]` 生成。
 > `migration-core` 是当前优先级最高的 feature pipeline；老 `CPD-001` 保留作历史 pack，不再作为默认 active 入口。
