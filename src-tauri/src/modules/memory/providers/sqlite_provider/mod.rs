@@ -49,54 +49,25 @@ impl SqliteMemoryProvider {
         let conn = Connection::open(&db_path)
             .map_err(|e| MemoryError::Generic(format!("Failed to open database: {e}")))?;
 
-        // Initialize base schema
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS memory_entries (
-                key TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                category TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                importance REAL DEFAULT 0.5,
-                access_count INTEGER DEFAULT 0,
-                trust_score REAL DEFAULT 0.0
-            )",
-            [],
+        // MEM-MOD-P0 — schema is now managed by the versioned migration
+        // runner.  Pre-P0 installs that already have the canonical
+        // `memory_entries` table get a synthetic v1 row inserted into
+        // `schema_migrations` so v2+ migrations roll forward without
+        // re-running the v1 `CREATE TABLE`.
+        let report = crate::modules::memory::migrations::run_migrations(
+            &conn,
+            crate::modules::memory::migrations::memory_migrations(),
+            Some("memory_entries"),
         )
-        .map_err(|e| MemoryError::Generic(format!("Failed to create schema: {e}")))?;
-
-        // Scope isolation columns — added in Memory Control Plane V1.
-        // ALTER TABLE is idempotent: errors from duplicate-column additions are silently ignored.
-        let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN session_id TEXT", []);
-        let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN project_id TEXT", []);
-
-        // Create indexes (idempotent)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_category ON memory_entries(category)",
-            [],
-        )
-        .map_err(|e| MemoryError::Generic(format!("Failed to create index: {e}")))?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_created_at ON memory_entries(created_at)",
-            [],
-        )
-        .map_err(|e| MemoryError::Generic(format!("Failed to create index: {e}")))?;
-
-        // Indexes for scope-based queries — partial indexes on the rows that
-        // actually carry the scope tag, which keeps them small and selective
-        // (most rows are session-only or global, so `idx_memory_project_id`
-        // typically covers a few percent of the table).
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_session_id ON memory_entries(session_id) \
-             WHERE session_id IS NOT NULL",
-            [],
-        );
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_project_id ON memory_entries(project_id) \
-             WHERE project_id IS NOT NULL",
-            [],
-        );
+        .map_err(|err| MemoryError::Generic(err.to_string()))?;
+        if !report.applied.is_empty() || report.v1_backfilled {
+            tracing::info!(
+                applied = ?report.applied,
+                skipped = ?report.skipped,
+                v1_backfilled = report.v1_backfilled,
+                "[memory.schema] migrations executed"
+            );
+        }
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),

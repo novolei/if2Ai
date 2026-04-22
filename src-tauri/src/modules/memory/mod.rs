@@ -17,6 +17,7 @@ pub mod hrr;
 pub mod inject;
 pub mod intent;
 pub mod job_runner;
+pub mod migrations;
 pub mod llm;
 pub mod pinned;
 pub mod policy;

@@ -1,0 +1,341 @@
+//! MEM-MOD-P0 — versioned SQLite schema migrations.
+//!
+//! Replaces the historical "CREATE TABLE IF NOT EXISTS + ALTER TABLE +
+//! swallow errors" pattern with a tiny migration runner that:
+//!
+//! 1. Tracks applied versions in a `schema_migrations` table so we can
+//!    tell, post-mortem, exactly which migrations a corrupt DB has seen.
+//! 2. Runs each migration inside a single SQLite transaction so a
+//!    partial failure cannot leave the schema half-applied.
+//! 3. Backfills v1 transparently: fresh installs apply v1 from scratch;
+//!    upgraded installs that already have `memory_entries` (from the
+//!    old `IF NOT EXISTS` path) are recorded as "v1 already applied"
+//!    so v2+ migrations roll forward without touching v1.
+//!
+//! This module is intentionally generic — `Migration` can describe any
+//! table, any module.  Subsequent Packs will register their own slices
+//! (P3 `memory_links`, P6 `valid_from`/`valid_to`, P7 `learned_traits`)
+//! by appending to the slice returned by [`memory_migrations`].
+//!
+//! # Why a `fn` pointer for `up`?
+//!
+//! `Migration` lives in a `&'static [Migration]` slice (no allocations
+//! at startup) so we use a plain `fn` rather than a boxed closure.
+//! Migrations rarely need captured state; when they do, they can do
+//! work via free functions defined alongside the slice.
+
+use rusqlite::Connection;
+use std::fmt;
+
+/// One ordered, idempotent schema change.
+///
+/// `version` MUST be globally unique across the slice and monotonically
+/// increasing.  `up` MUST be safe to run on an empty database (i.e. it
+/// uses `IF NOT EXISTS` clauses or assumes nothing).  The runner wraps
+/// the call in a transaction, so `up` should NOT manage transactions
+/// itself.
+#[derive(Clone, Copy)]
+pub struct Migration {
+    pub version: u32,
+    pub name: &'static str,
+    pub up: fn(&Connection) -> rusqlite::Result<()>,
+}
+
+impl fmt::Debug for Migration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Migration")
+            .field("version", &self.version)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+/// Result of a successful [`run_migrations`] call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MigrationReport {
+    /// Versions actually applied during *this* run (in order).
+    pub applied: Vec<u32>,
+    /// Versions that were already in `schema_migrations` and skipped.
+    pub skipped: Vec<u32>,
+    /// `true` if a v1 backfill row was inserted for an upgraded DB
+    /// (i.e. `memory_entries` already existed but `schema_migrations`
+    /// was empty). Useful for boot-time logging.
+    pub v1_backfilled: bool,
+}
+
+/// Errors from the migration runner.  `String` payload (not a richer
+/// enum) because `MemoryError` already swallows everything as `Generic`
+/// at the call site and we want to surface the SQLite message verbatim.
+#[derive(Debug)]
+pub struct MigrationError(pub String);
+
+impl fmt::Display for MigrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "schema migration failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for MigrationError {}
+
+impl From<rusqlite::Error> for MigrationError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Apply every migration in `migrations` whose `version` is greater
+/// than the highest version already in `schema_migrations`.
+///
+/// Behaviour:
+/// - Creates `schema_migrations` if missing.
+/// - If `schema_migrations` is empty AND `legacy_table` exists in the
+///   DB, inserts a synthetic row recording v1 as already applied so
+///   pre-P0 installs roll forward into v2+ without re-running the v1
+///   `CREATE TABLE`.
+/// - Iterates `migrations` in declaration order (caller must keep them
+///   sorted by `version`).  Each `up` runs inside its own transaction;
+///   a failure rolls that migration back and aborts the whole run.
+///
+/// Pass `None` for `legacy_table` when bootstrapping a brand-new domain
+/// that has no pre-P0 schema to backfill.
+pub fn run_migrations(
+    conn: &Connection,
+    migrations: &[Migration],
+    legacy_table: Option<&str>,
+) -> Result<MigrationReport, MigrationError> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version    INTEGER PRIMARY KEY,
+            name       TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    let max_existing: Option<u32> = conn
+        .query_row(
+            "SELECT MAX(version) FROM schema_migrations",
+            [],
+            |row| row.get::<_, Option<u32>>(0),
+        )
+        .unwrap_or(None);
+
+    let mut report = MigrationReport::default();
+
+    // Backfill v1 for upgraded installs that already have the canonical
+    // table from the old `CREATE TABLE IF NOT EXISTS` path.
+    if max_existing.is_none() {
+        if let Some(table) = legacy_table {
+            if table_exists(conn, table)? {
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_migrations (version, name, applied_at)
+                     VALUES (1, 'backfilled_pre_p0', ?1)",
+                    rusqlite::params![chrono::Utc::now().to_rfc3339()],
+                )?;
+                report.v1_backfilled = true;
+            }
+        }
+    }
+
+    let already_applied = list_applied_versions(conn)?;
+
+    for migration in migrations {
+        if already_applied.contains(&migration.version) {
+            report.skipped.push(migration.version);
+            continue;
+        }
+
+        let tx_label = format!("v{} {}", migration.version, migration.name);
+        conn.execute_batch("BEGIN").map_err(|err| {
+            MigrationError(format!("failed to start tx for {tx_label}: {err}"))
+        })?;
+
+        match (migration.up)(conn).and_then(|()| {
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    migration.version,
+                    migration.name,
+                    chrono::Utc::now().to_rfc3339(),
+                ],
+            )
+            .map(|_| ())
+        }) {
+            Ok(()) => {
+                conn.execute_batch("COMMIT").map_err(|err| {
+                    MigrationError(format!("commit failed for {tx_label}: {err}"))
+                })?;
+                report.applied.push(migration.version);
+            }
+            Err(err) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(MigrationError(format!(
+                    "migration {tx_label} failed: {err}"
+                )));
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+fn list_applied_versions(conn: &Connection) -> Result<Vec<u32>, MigrationError> {
+    let mut stmt = conn.prepare("SELECT version FROM schema_migrations ORDER BY version")?;
+    let rows = stmt.query_map([], |row| row.get::<_, u32>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, MigrationError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        rusqlite::params![table],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+// ────────────────────────────────────────────────────────────────────
+// memory_entries migrations
+// ────────────────────────────────────────────────────────────────────
+
+/// All known migrations for the `memory_entries` domain.  P0 ships v1
+/// only — every later Pack appends to this slice.  Keep the slice
+/// `'static` so [`run_migrations`] takes no allocation at boot.
+#[must_use]
+pub fn memory_migrations() -> &'static [Migration] {
+    &MEMORY_MIGRATIONS
+}
+
+const MEMORY_MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "memory_entries_initial",
+    up: memory_v1_initial,
+}];
+
+/// v1 — the historical schema, captured as a single migration.  Stays
+/// idempotent so re-running it on a populated DB is a no-op.
+fn memory_v1_initial(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memory_entries (
+            key          TEXT PRIMARY KEY,
+            content      TEXT NOT NULL,
+            category     TEXT NOT NULL,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL,
+            importance   REAL DEFAULT 0.5,
+            access_count INTEGER DEFAULT 0,
+            trust_score  REAL DEFAULT 0.0
+        )",
+        [],
+    )?;
+
+    // Scope columns landed in Memory Control Plane V1 — keep
+    // `ALTER TABLE` calls behind `IF NOT EXISTS` semantics by ignoring
+    // duplicate-column errors (SQLite has no native idempotent ALTER).
+    let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN session_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE memory_entries ADD COLUMN project_id TEXT", []);
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_category ON memory_entries(category)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_created_at ON memory_entries(created_at)",
+        [],
+    )?;
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_session_id ON memory_entries(session_id) \
+         WHERE session_id IS NOT NULL",
+        [],
+    );
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_project_id ON memory_entries(project_id) \
+         WHERE project_id IS NOT NULL",
+        [],
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn open() -> Connection {
+        Connection::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn fresh_install_applies_all_migrations() {
+        let c = open();
+        let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
+        assert_eq!(report.applied, vec![1]);
+        assert!(report.skipped.is_empty());
+        assert!(!report.v1_backfilled);
+        assert!(table_exists(&c, "schema_migrations").unwrap());
+        assert!(table_exists(&c, "memory_entries").unwrap());
+    }
+
+    #[test]
+    fn upgrade_backfills_v1_for_legacy_db() {
+        let c = open();
+        // Simulate a pre-P0 install: the table exists but the
+        // schema_migrations bookkeeping does not.
+        c.execute(
+            "CREATE TABLE memory_entries (key TEXT PRIMARY KEY, content TEXT, category TEXT, \
+             created_at TEXT, updated_at TEXT)",
+            [],
+        )
+        .unwrap();
+
+        let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
+        assert!(report.v1_backfilled);
+        assert!(report.applied.is_empty(), "v1 must NOT re-run");
+        assert_eq!(report.skipped, vec![1]);
+    }
+
+    #[test]
+    fn rerun_is_a_noop() {
+        let c = open();
+        run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
+        let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
+        assert!(report.applied.is_empty());
+        assert_eq!(report.skipped, vec![1]);
+    }
+
+    #[test]
+    fn failing_migration_rolls_back() {
+        let c = open();
+        const BAD: &[Migration] = &[Migration {
+            version: 99,
+            name: "bad",
+            up: |conn| {
+                conn.execute("CREATE TABLE will_be_rolled_back (id INTEGER)", [])?;
+                // Force a failure after a successful sub-statement.
+                conn.execute("INVALID SQL", [])?;
+                Ok(())
+            },
+        }];
+
+        let err = run_migrations(&c, BAD, None).unwrap_err();
+        assert!(err.to_string().contains("v99 bad"));
+        // Table created in the failed migration MUST not survive.
+        assert!(!table_exists(&c, "will_be_rolled_back").unwrap());
+        // schema_migrations exists but should NOT contain v99.
+        let applied = list_applied_versions(&c).unwrap();
+        assert!(!applied.contains(&99));
+    }
+
+    #[test]
+    fn legacy_table_none_does_not_backfill() {
+        let c = open();
+        let report = run_migrations(&c, memory_migrations(), None).unwrap();
+        assert!(!report.v1_backfilled);
+        assert_eq!(report.applied, vec![1]);
+    }
+}
