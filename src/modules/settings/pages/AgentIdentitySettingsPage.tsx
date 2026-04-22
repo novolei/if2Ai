@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, Plus, RotateCcw, Shield, Sparkles, Trash2 } from "lucide-react";
+import { Bot, Check, Pencil, Plus, RotateCcw, Shield, Sparkles, Trash2 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
@@ -365,6 +365,7 @@ export function AgentIdentitySettingsPage() {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
 
   const [createPersonaOpen, setCreatePersonaOpen] = useState(false);
+  const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [userNameDraft, setUserNameDraft] = useState("");
   const [bioDraft, setBioDraft] = useState("");
@@ -1136,20 +1137,35 @@ export function AgentIdentitySettingsPage() {
                     : "border-black/[0.06] hover:-translate-y-0.5 hover:border-black/[0.1] hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)]",
                 )}
               >
-                {/* Delete affordance (custom only, fade in on hover) */}
+                {/* Edit + Delete affordances (custom only, fade in on hover) */}
                 {isCustom ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void handleDeleteCustomPersona(persona.id);
-                    }}
-                    title="删除自定义 Persona"
-                    aria-label="删除自定义 Persona"
-                    className="absolute left-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md text-black/35 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  <div className="absolute left-2 top-2 z-10 inline-flex items-center gap-0.5 opacity-0 transition-all group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setEditingPersonaId(persona.id);
+                        setCreatePersonaOpen(true);
+                      }}
+                      title="编辑自定义 Persona"
+                      aria-label="编辑自定义 Persona"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-jade/10 hover:text-jade"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteCustomPersona(persona.id);
+                      }}
+                      title="删除自定义 Persona"
+                      aria-label="删除自定义 Persona"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
                 ) : null}
                 {/* Custom badge */}
                 {isCustom ? (
@@ -1541,13 +1557,20 @@ export function AgentIdentitySettingsPage() {
 
       <CreatePersonaDialog
         open={createPersonaOpen}
-        onOpenChange={setCreatePersonaOpen}
+        onOpenChange={(next) => {
+          setCreatePersonaOpen(next);
+          // Clear edit context when the dialog closes so the next
+          // open defaults back to "create" mode.
+          if (!next) setEditingPersonaId(null);
+        }}
         catalog={catalog}
         defaultSoulId={selectedSoulId === "auto" ? null : selectedSoulId}
         currentPack={identityPack}
+        editingPersonaId={editingPersonaId}
         onSaved={async (saved) => {
           setLocalIdentityPack(saved);
-          // Reload catalog so the new persona shows up in the cards.
+          // Reload catalog so the persona's new content shows up in the
+          // cards (name / avatar / summary may all have changed).
           try {
             const nextCatalog = await getIdentityCatalog();
             setCatalog(nextCatalog);

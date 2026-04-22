@@ -34,6 +34,14 @@ interface CreatePersonaDialogProps {
   currentPack: IdentityCustomizationPack;
   /** Called with the saved pack so the parent can refresh local state. */
   onSaved: (savedPack: IdentityCustomizationPack) => void | Promise<void>;
+  /**
+   * Edit mode: when set, the dialog pre-fills with this persona's data
+   * and the save action **patches the same id** instead of creating a
+   * new entry. The id field becomes read-only because changing it would
+   * effectively orphan the entry (referrers like default_persona_id /
+   * session.persona_id would still point at the old id).
+   */
+  editingPersonaId?: string | null;
 }
 
 // ── Slug + collision-safe id generation ─────────────────────────────
@@ -216,7 +224,13 @@ export function CreatePersonaDialog({
   defaultSoulId,
   currentPack,
   onSaved,
+  editingPersonaId,
 }: CreatePersonaDialogProps) {
+  const isEditMode = Boolean(editingPersonaId);
+  const editingPersona = editingPersonaId
+    ? currentPack.custom_personas?.[editingPersonaId]
+    : null;
+
   const [name, setName] = useState("");
   const [soulId, setSoulId] = useState<string>("");
   const [vibe, setVibe] = useState("");
@@ -228,9 +242,26 @@ export function CreatePersonaDialog({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Reset form on open and seed soul / avatar with sensible defaults.
+  // Reset form on open. Two seed strategies depending on mode:
+  //   - edit: pre-fill from `editingPersona`, expand advanced section
+  //     (the user came here to edit rules, hide-by-default would just
+  //     force an extra click), keep vibe blank since it's an input
+  //     to the smart-expand button, not a stored field.
+  //   - create: blank slate with defaults.
   useEffect(() => {
     if (!open) return;
+    if (isEditMode && editingPersona) {
+      setName(editingPersona.name);
+      setSoulId(editingPersona.soul_id);
+      setSummary(editingPersona.summary);
+      setAvatarId(editingPersona.avatar_id ?? null);
+      setToneText((editingPersona.tone_rules ?? []).join("\n"));
+      setCollabText((editingPersona.collaboration_rules ?? []).join("\n"));
+      setOutputText((editingPersona.output_preferences ?? []).join("\n"));
+      setVibe("");
+      setAdvancedOpen(true);
+      return;
+    }
     setName("");
     setVibe("");
     setSummary("");
@@ -244,18 +275,20 @@ export function CreatePersonaDialog({
     setCollabText("");
     setOutputText("");
     setAdvancedOpen(false);
-  }, [open, defaultSoulId, catalog]);
+  }, [open, defaultSoulId, catalog, isEditMode, editingPersona]);
 
   // Existing persona ids (built-in + custom) — used both for collision
   // avoidance during id auto-generation and to pre-fade in-use avatars.
+  // In edit mode we exclude the persona being edited from the taken set
+  // so the previewId calculation can stay deterministic at the same id.
   const takenIds = useMemo(() => {
     const set = new Set<string>();
     catalog?.personas.forEach((persona) => set.add(persona.id));
-    Object.keys(currentPack.custom_personas ?? {}).forEach((key) =>
-      set.add(key),
-    );
+    Object.keys(currentPack.custom_personas ?? {}).forEach((key) => {
+      if (key !== editingPersonaId) set.add(key);
+    });
     return set;
-  }, [catalog, currentPack]);
+  }, [catalog, currentPack, editingPersonaId]);
 
   const avatarsInUse = useMemo(() => {
     const set = new Set<string>();
@@ -268,9 +301,15 @@ export function CreatePersonaDialog({
   const trimmedName = name.trim();
   const trimmedSummary = summary.trim();
 
+  // In edit mode the id is locked to the original to avoid orphaning
+  // any references (default_persona_id / session.persona_id). In create
+  // mode it auto-derives from the name with collision-safe suffixing.
   const previewId = useMemo(
-    () => generateUniqueId(trimmedName, takenIds),
-    [trimmedName, takenIds],
+    () =>
+      isEditMode && editingPersonaId
+        ? editingPersonaId
+        : generateUniqueId(trimmedName, takenIds),
+    [trimmedName, takenIds, isEditMode, editingPersonaId],
   );
 
   const soulName = useMemo(
@@ -328,13 +367,17 @@ export function CreatePersonaDialog({
         },
       };
       const saved = await setIdentityPack(nextPack);
-      toast.success("自定义 Persona 已创建", {
-        description: `${trimmedName} 现在可在 Persona 列表里点击切换。`,
+      toast.success(isEditMode ? "Persona 已更新" : "自定义 Persona 已创建", {
+        description: isEditMode
+          ? `${trimmedName} 的修改已保存，下一轮回复立即生效。`
+          : `${trimmedName} 现在可在 Persona 列表里点击切换。`,
       });
       await onSaved(saved);
       onOpenChange(false);
     } catch (error) {
-      toast.error("创建 Persona 失败", { description: String(error) });
+      toast.error(isEditMode ? "更新 Persona 失败" : "创建 Persona 失败", {
+        description: String(error),
+      });
     } finally {
       setSaving(false);
     }
@@ -345,11 +388,20 @@ export function CreatePersonaDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-[16px] font-semibold tracking-tight">
-            新建 Persona
+            {isEditMode ? "编辑 Persona" : "新建 Persona"}
           </DialogTitle>
           <DialogDescription className="text-[12px] leading-[1.6]">
-            填名字 + 一句话特征，<span className="font-medium text-foreground/70">点「智能扩写」</span>
-            自动生成完整人格规则，再选个头像即可。所有内容保存后随时可在「可编辑 Identity Pack」继续微调。
+            {isEditMode ? (
+              <>
+                修改名字、Soul、头像或行为规则；保存后<span className="font-medium text-foreground/70">下一轮回复立即生效</span>。
+                ID 在编辑模式下不可改，避免影响已有引用。
+              </>
+            ) : (
+              <>
+                填名字 + 一句话特征，<span className="font-medium text-foreground/70">点「智能扩写」</span>
+                自动生成完整人格规则，再选个头像即可。所有内容保存后随时可在「可编辑 Identity Pack」继续微调。
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -370,7 +422,7 @@ export function CreatePersonaDialog({
               />
               {trimmedName ? (
                 <span className="text-[10.5px] tracking-wide text-black/35">
-                  自动 ID:{" "}
+                  {isEditMode ? "ID（不可改）" : "自动 ID"}:{" "}
                   <code className="rounded bg-black/[0.04] px-1 py-px font-mono text-[10.5px] text-foreground/65">
                     {previewId}
                   </code>
@@ -562,7 +614,11 @@ export function CreatePersonaDialog({
             className="h-9 rounded-lg text-[12.5px]"
           >
             <Bot className="mr-1.5 h-3.5 w-3.5" />
-            {saving ? "保存中..." : "创建 Persona"}
+            {saving
+              ? "保存中..."
+              : isEditMode
+                ? "保存修改"
+                : "创建 Persona"}
           </Button>
         </DialogFooter>
       </DialogContent>
