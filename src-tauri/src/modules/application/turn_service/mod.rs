@@ -302,18 +302,25 @@ impl TurnService {
             }
         };
 
-        let prompt = build_prompt_plan(BuildPromptPlanRequest {
-            session_id: request.session_id.clone().unwrap_or_else(|| "unknown".to_string()),
-            user_message: request.user_message.clone(),
-            workdir: request.workdir,
-            current_date: request.current_date,
-            os_name: request.os_name,
-            os_family: request.os_family,
-            registered_tool_names,
-            memory_injection: Some(memory_injection.clone()),
-            active_strategy_overlay,
-            caller: request.caller,
-        })
+        let prompt = build_prompt_plan(
+            BuildPromptPlanRequest {
+                session_id: request.session_id.clone().unwrap_or_else(|| "unknown".to_string()),
+                user_message: request.user_message.clone(),
+                workdir: request.workdir,
+                current_date: request.current_date,
+                os_name: request.os_name,
+                os_family: request.os_family,
+                registered_tool_names,
+                memory_injection: Some(memory_injection.clone()),
+                active_strategy_overlay,
+                caller: request.caller,
+                mode: super::prompt_planner::PromptBuildMode::default(),
+                persona_id: None,
+                active_skill_ids: Vec::new(),
+                options: super::prompt_planner::PromptBuildOptions::default(),
+            },
+            Vec::new(), // MIG-006: No external contributions yet
+        )
         .await?;
 
         Ok(PreparedChatInputs {

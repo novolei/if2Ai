@@ -48,6 +48,10 @@ pub(crate) use preflight::{
 pub mod governor;
 pub(crate) use governor::{ContextGovernor, RequestPreflightStats};
 
+// MIG-006: External contributions merging logic.
+mod merge;
+use merge::merge_external_contributions;
+
 use crate::modules::runtime::prompt::{load_system_prompt, PromptBuildError, SystemPromptBuilder};
 use crate::modules::runtime::prompt_tools_guide::web_tools_routing_block;
 
@@ -57,6 +61,8 @@ use super::memory_injection_service::{MemoryInjectionArtifacts, MemoryInjectionS
 ///
 /// Closed enum on purpose: M4 harness traces depend on the alphabet
 /// being stable. Adding a kind requires a contract bump.
+///
+/// MIG-006: Added Persona and Skill kinds for external contributions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptBlockKind {
@@ -64,6 +70,8 @@ pub enum PromptBlockKind {
     /// [`SystemPromptBuilder`] (one or more lines pre-joined by
     /// [`load_system_prompt`]).
     System,
+    /// Persona block (optional, from persona_id).
+    Persona,
     /// Web-tool routing guide (`web_search` → `web_fetch` →
     /// `browser` escalation order). Present only when at least two
     /// of those tools are registered.
@@ -85,6 +93,10 @@ pub enum PromptBlockKind {
     /// learning registry.  Empty when no strategy is active or
     /// when active strategies carry only `Noop` definitions.
     ActiveStrategyOverlay,
+    /// Skills block (optional, from active_skill_ids).
+    Skill,
+    /// MCP (Model Context Protocol) contribution block.
+    Mcp,
 }
 
 impl PromptBlockKind {
@@ -125,6 +137,56 @@ pub struct PromptValidationIssue {
     pub code: String,
     /// Human-readable issue description.
     pub message: String,
+}
+
+/// External contribution to a prompt plan.
+///
+/// MIG-006: Allows subsystems (Memory, MCP, Skills, Learning) to
+/// contribute blocks without modifying the planner core.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PromptContribution {
+    pub kind: PromptBlockKind,
+    pub title: String,
+    pub body: String,
+    pub source: PromptBlockSource,
+}
+
+/// Prompt build mode.
+///
+/// MIG-006: Distinguishes between different execution contexts.
+/// Chat mode is the default; Coding mode will have specialized
+/// augmentation in Phase 4 (MIG-008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptBuildMode {
+    Chat,
+    Coding,
+}
+
+impl Default for PromptBuildMode {
+    fn default() -> Self {
+        Self::Chat
+    }
+}
+
+/// Options controlling prompt plan construction.
+///
+/// MIG-006: Enables strict validation mode and future extensions.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromptBuildOptions {
+    /// Whether to include full diagnostics in the plan.
+    pub include_diagnostics: bool,
+    /// Whether to fail on validation issues (strict mode).
+    pub strict_block_validation: bool,
+}
+
+impl Default for PromptBuildOptions {
+    fn default() -> Self {
+        Self {
+            include_diagnostics: true,
+            strict_block_validation: false,
+        }
+    }
 }
 
 /// Single block inside a [`PromptPlan`].
@@ -208,6 +270,8 @@ impl PromptPlan {
 ///
 /// Held as a struct so future slices can add fields (e.g. token
 /// budget, reflection notes) without breaking call sites.
+///
+/// MIG-006: Added mode, persona_id, active_skill_ids, options fields.
 pub struct BuildPromptPlanRequest {
     /// Session ID for trace identity computation.
     pub session_id: String,
@@ -240,6 +304,14 @@ pub struct BuildPromptPlanRequest {
     /// Caller tag for tracing (e.g. `"run_agent_turn"`,
     /// `"start_agent_stream"`).
     pub caller: &'static str,
+    /// MIG-006: Prompt build mode (Chat / Coding).
+    pub mode: PromptBuildMode,
+    /// MIG-006: Optional persona identifier.
+    pub persona_id: Option<String>,
+    /// MIG-006: Active skill identifiers.
+    pub active_skill_ids: Vec<String>,
+    /// MIG-006: Build options (diagnostics, strict validation).
+    pub options: PromptBuildOptions,
 }
 
 /// Output of [`build_prompt_plan`] — both the structured plan and
@@ -258,21 +330,28 @@ pub enum PromptPlannerError {
 
 /// Build the chat-turn prompt plan.
 ///
+/// MIG-006: Now accepts external_contributions parameter for subsystem
+/// contributions (Memory, MCP, Skills, Learning).
+///
 /// Block order (matches legacy `commands/agent.rs` assembly):
 ///
 /// 1. `System` — `load_system_prompt` lines joined by `"\n"`.
-/// 2. `WebToolsRoutingGuide` — only when at least two web tools are
+/// 2. `Persona` — optional, from persona_id.
+/// 3. `WebToolsRoutingGuide` — only when at least two web tools are
 ///    registered.
-/// 3. Memory injection sections in the order produced by
+/// 4. Memory injection sections in the order produced by
 ///    [`crate::modules::application::memory_injection_service::prepare_memory_injection`]:
 ///    Pinned → Compiled → Rules → Retrieved (any subset may be
 ///    absent).
+/// 5. `Skill` — optional, from active_skill_ids.
+/// 6. External contributions merged by kind.
 ///
 /// On `load_system_prompt` failure the planner falls back to the
 /// minimal `SystemPromptBuilder::new().render()` output, identical
 /// to the legacy fallback path.
 pub async fn build_prompt_plan(
     request: BuildPromptPlanRequest,
+    external_contributions: Vec<PromptContribution>,
 ) -> Result<PromptPlanResult, PromptPlannerError> {
     let mut blocks: Vec<PromptBlock> = Vec::new();
 
@@ -305,6 +384,22 @@ pub async fn build_prompt_plan(
         priority: 100,
         is_sensitive: true,
     });
+
+    // 1b. MIG-006: Persona block (optional).
+    if let Some(persona_id) = request.persona_id {
+        blocks.push(PromptBlock {
+            id: "persona".to_string(),
+            kind: PromptBlockKind::Persona,
+            title: "persona".to_string(),
+            content: persona_id,
+            source: PromptBlockSource {
+                subsystem: "persona".to_string(),
+                reference: None,
+            },
+            priority: 95,
+            is_sensitive: true,
+        });
+    }
 
     // 2. Web-tool routing guide (Phase 7C, slice 7C.4 parity).
     if let Some(guide) = web_tools_routing_block(&request.registered_tool_names) {
@@ -379,10 +474,33 @@ pub async fn build_prompt_plan(
         }
     }
 
+    // 3b. MIG-006: Skill block (optional).
+    if !request.active_skill_ids.is_empty() {
+        blocks.push(PromptBlock {
+            id: "skill".to_string(),
+            kind: PromptBlockKind::Skill,
+            title: "skill".to_string(),
+            content: request.active_skill_ids.join(", "),
+            source: PromptBlockSource {
+                subsystem: "skill_registry".to_string(),
+                reference: None,
+            },
+            priority: 40,
+            is_sensitive: false,
+        });
+    }
+
+    // 4. MIG-006: Merge external contributions.
+    let (blocks, validation_issues) = merge_external_contributions(
+        blocks,
+        external_contributions,
+        request.options.strict_block_validation,
+    )?;
+
     // Compute trace metadata
     let block_hash = compute_block_hash(&blocks);
     let trace_id = compute_trace_id(&request.session_id, &request.user_message, &block_hash);
-    let diagnostics = build_diagnostics(trace_id.clone(), &blocks);
+    let diagnostics = build_diagnostics(trace_id.clone(), &blocks, validation_issues);
 
     let plan = PromptPlan {
         trace_id,
@@ -430,9 +548,11 @@ fn compute_trace_id(session_id: &str, user_message: &str, block_hash: &str) -> S
 
 /// Build diagnostic metadata for the plan.
 /// MIG-005: Use block.is_sensitive instead of kind matching for redaction.
+/// MIG-006: Accept validation_issues parameter.
 fn build_diagnostics(
     trace_id: String,
     blocks: &[PromptBlock],
+    validation_issues: Vec<PromptValidationIssue>,
 ) -> PromptPlanDiagnostics {
     let redacted_preview = blocks
         .iter()
@@ -451,7 +571,7 @@ fn build_diagnostics(
         block_kinds: blocks.iter().map(|b| b.kind).collect(),
         block_count: blocks.len(),
         redacted_preview,
-        validation_issues: Vec::new(),
+        validation_issues,
     }
 }
 
@@ -576,8 +696,12 @@ mod tests {
             memory_injection: Some(artifacts),
             active_strategy_overlay: None,
             caller: "prompt_planner_test",
+            mode: PromptBuildMode::default(),
+            persona_id: None,
+            active_skill_ids: Vec::new(),
+            options: PromptBuildOptions::default(),
         };
-        let result = build_prompt_plan(req).await.expect("plan builds");
+        let result = build_prompt_plan(req, Vec::new()).await.expect("plan builds");
         // First block is always System (fallback or real).
         assert_eq!(result.plan.blocks[0].kind, PromptBlockKind::System);
         // Then the four memory sections in declared order.
@@ -594,3 +718,125 @@ mod tests {
         );
     }
 }
+
+    // MIG-006: Tests for external contributions
+    #[tokio::test]
+    async fn external_contributions_merge_correctly() {
+        let req = BuildPromptPlanRequest {
+            session_id: "test".to_string(),
+            user_message: "test".to_string(),
+            workdir: PathBuf::from("/nonexistent"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: Vec::new(),
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: PromptBuildMode::Chat,
+            persona_id: None,
+            active_skill_ids: Vec::new(),
+            options: PromptBuildOptions::default(),
+        };
+        let external = vec![PromptContribution {
+            kind: PromptBlockKind::Mcp,
+            title: "mcp_test".to_string(),
+            body: "mcp content".to_string(),
+            source: PromptBlockSource {
+                subsystem: "mcp".to_string(),
+                reference: None,
+            },
+        }];
+        let result = build_prompt_plan(req, external).await.expect("plan builds");
+        assert!(result.plan.blocks.iter().any(|b| b.kind == PromptBlockKind::Mcp));
+    }
+
+    #[tokio::test]
+    async fn strict_mode_rejects_forbidden_external_blocks() {
+        let req = BuildPromptPlanRequest {
+            session_id: "test".to_string(),
+            user_message: "test".to_string(),
+            workdir: PathBuf::from("/nonexistent"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: Vec::new(),
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: PromptBuildMode::Chat,
+            persona_id: None,
+            active_skill_ids: Vec::new(),
+            options: PromptBuildOptions {
+                include_diagnostics: true,
+                strict_block_validation: true,
+            },
+        };
+        let external = vec![PromptContribution {
+            kind: PromptBlockKind::System,
+            title: "override".to_string(),
+            body: "nope".to_string(),
+            source: PromptBlockSource {
+                subsystem: "ext".to_string(),
+                reference: None,
+            },
+        }];
+        assert!(build_prompt_plan(req, external).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn persona_and_skill_blocks_generated() {
+        let req = BuildPromptPlanRequest {
+            session_id: "test".to_string(),
+            user_message: "test".to_string(),
+            workdir: PathBuf::from("/nonexistent"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: Vec::new(),
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: PromptBuildMode::Chat,
+            persona_id: Some("test_persona".to_string()),
+            active_skill_ids: vec!["skill1".to_string(), "skill2".to_string()],
+            options: PromptBuildOptions::default(),
+        };
+        let result = build_prompt_plan(req, Vec::new()).await.expect("plan builds");
+        assert!(result.plan.blocks.iter().any(|b| b.kind == PromptBlockKind::Persona));
+        assert!(result.plan.blocks.iter().any(|b| b.kind == PromptBlockKind::Skill));
+    }
+
+    #[tokio::test]
+    async fn validation_issues_recorded_in_non_strict_mode() {
+        let req = BuildPromptPlanRequest {
+            session_id: "test".to_string(),
+            user_message: "test".to_string(),
+            workdir: PathBuf::from("/nonexistent"),
+            current_date: "2026-04-22".into(),
+            os_name: "macos".into(),
+            os_family: "unix".into(),
+            registered_tool_names: Vec::new(),
+            memory_injection: None,
+            active_strategy_overlay: None,
+            caller: "test",
+            mode: PromptBuildMode::Chat,
+            persona_id: None,
+            active_skill_ids: Vec::new(),
+            options: PromptBuildOptions {
+                include_diagnostics: true,
+                strict_block_validation: false,
+            },
+        };
+        let external = vec![PromptContribution {
+            kind: PromptBlockKind::Persona,
+            title: "override".to_string(),
+            body: "nope".to_string(),
+            source: PromptBlockSource {
+                subsystem: "ext".to_string(),
+                reference: None,
+            },
+        }];
+        let result = build_prompt_plan(req, external).await.expect("plan builds");
+        assert!(!result.plan.diagnostics.validation_issues.is_empty());
+    }
