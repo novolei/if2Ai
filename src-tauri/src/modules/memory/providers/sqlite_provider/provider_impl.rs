@@ -628,16 +628,24 @@ impl MemoryProvider for SqliteMemoryProvider {
     }
 
     /// MEM-MOD-P3 — partial UPDATE preserving stats columns.
+    /// MEM-MOD-P6 — also snapshots the previous row into
+    /// `memory_entry_history` so the temporal API can reconstruct
+    /// "what was the value at time T".
     async fn update_content(&self, key: &str, content: &str) -> Result<(), MemoryError> {
         let key = key.to_string();
         let content = content.to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            // Snapshot the current row first.  Best-effort — a
+            // missing history table (older DB pre-P6) is ignored.
+            let _ = snapshot_into_history(&c, &key, &now, "update");
+
             let rows = c
                 .execute(
                     "UPDATE memory_entries SET content = ?1, updated_at = ?2 WHERE key = ?3",
-                    params![content, chrono::Utc::now().to_rfc3339(), key],
+                    params![content, now, key],
                 )
                 .map_err(|e| MemoryError::Generic(format!("update_content failed: {e}")))?;
             if rows == 0 {
@@ -645,6 +653,51 @@ impl MemoryProvider for SqliteMemoryProvider {
             } else {
                 Ok(())
             }
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// MEM-MOD-P6 — pull every snapshot for `key`, newest first.
+    async fn list_history(
+        &self,
+        key: &str,
+    ) -> Result<Vec<crate::modules::memory::MemoryHistoryEntry>, MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut stmt = c.prepare(
+                "SELECT key, content, category, importance, trust_score,
+                        valid_from, valid_to, source
+                 FROM memory_entry_history
+                 WHERE key = ?1
+                 ORDER BY valid_from DESC",
+            )?;
+            let rows = stmt.query_map(params![key], |row| {
+                let valid_from_str: String = row.get(5)?;
+                let valid_to_str: String = row.get(6)?;
+                let parse = |s: &str| {
+                    chrono::DateTime::parse_from_rfc3339(s)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now())
+                };
+                Ok(crate::modules::memory::MemoryHistoryEntry {
+                    key: row.get(0)?,
+                    content: row.get(1)?,
+                    category: row.get(2)?,
+                    importance: row.get(3)?,
+                    trust_score: row.get(4)?,
+                    valid_from: parse(&valid_from_str),
+                    valid_to: parse(&valid_to_str),
+                    source: row.get(7)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows.flatten() {
+                out.push(row);
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
@@ -697,6 +750,10 @@ impl MemoryProvider for SqliteMemoryProvider {
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
             let now = chrono::Utc::now().to_rfc3339();
+            // MEM-MOD-P6 — snapshot existing entry (if any) before
+            // overwriting via upsert so the temporal API can still
+            // surface the pre-consolidation content.
+            let _ = snapshot_into_history(&c, &consolidated_key, &now, "consolidate");
             // 1) upsert the consolidated entry itself.
             c.execute(
                 "INSERT INTO memory_entries
@@ -779,6 +836,61 @@ impl MemoryProvider for SqliteMemoryProvider {
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
     }
+}
+
+/// MEM-MOD-P6 — best-effort snapshot of the current `memory_entries`
+/// row for `key` into `memory_entry_history` with `valid_to = now`.
+/// Returns `Ok(())` even when the source row is missing — this is a
+/// fire-and-forget audit hook, not a precondition for the caller's
+/// UPDATE / UPSERT.  A missing history table (DB pre-v3 migration)
+/// is also silently ignored.
+fn snapshot_into_history(
+    c: &rusqlite::Connection,
+    key: &str,
+    now_rfc3339: &str,
+    source: &str,
+) -> Result<(), MemoryError> {
+    let row = c.query_row(
+        "SELECT content, category, created_at, importance, trust_score
+         FROM memory_entries WHERE key = ?1",
+        rusqlite::params![key],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, f64>(3)?,
+                r.get::<_, f64>(4)?,
+            ))
+        },
+    );
+    let Ok((content, category, created_at, importance, trust_score)) = row else {
+        return Ok(()); // nothing to snapshot
+    };
+
+    if let Err(err) = c.execute(
+        "INSERT INTO memory_entry_history
+            (key, content, category, importance, trust_score,
+             valid_from, valid_to, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            key,
+            content,
+            category,
+            importance,
+            trust_score,
+            created_at,
+            now_rfc3339,
+            source
+        ],
+    ) {
+        tracing::warn!(
+            key,
+            error = %err,
+            "[memory.history] snapshot insert failed (non-fatal)"
+        );
+    }
+    Ok(())
 }
 
 /// MEM-MOD-P1 — Increment `access_count` for every key just returned

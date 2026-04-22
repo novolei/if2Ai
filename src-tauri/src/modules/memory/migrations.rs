@@ -222,6 +222,11 @@ const MEMORY_MIGRATIONS: &[Migration] = &[
         name: "memory_links_table",
         up: memory_v2_links,
     },
+    Migration {
+        version: 3,
+        name: "memory_entry_history",
+        up: memory_v3_history,
+    },
 ];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
@@ -300,6 +305,39 @@ fn memory_v2_links(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// MEM-MOD-P6 — v3: temporal versioning audit table.
+///
+/// Every `memory_update` / `memory_consolidate` writes a snapshot of
+/// the *previous* row here with `valid_from = old.created_at` and
+/// `valid_to = now`. The current `memory_entries` row remains the
+/// source of truth for "what is the value right now"; this table is
+/// the answer to "what *was* the value at time T".
+///
+/// Indexed on `(key, valid_from)` so `memory_recall_at_time(t)` can
+/// run as a covering range scan without a sort.
+fn memory_v3_history(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memory_entry_history (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            key          TEXT NOT NULL,
+            content      TEXT NOT NULL,
+            category     TEXT NOT NULL,
+            importance   REAL NOT NULL,
+            trust_score  REAL NOT NULL,
+            valid_from   TEXT NOT NULL,
+            valid_to     TEXT NOT NULL,
+            source       TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_key_from
+         ON memory_entry_history(key, valid_from)",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,12 +351,13 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1, 2]);
+        assert_eq!(report.applied, vec![1, 2, 3]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
         assert!(table_exists(&c, "memory_entries").unwrap());
         assert!(table_exists(&c, "memory_links").unwrap());
+        assert!(table_exists(&c, "memory_entry_history").unwrap());
     }
 
     #[test]
@@ -335,9 +374,10 @@ mod tests {
 
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.v1_backfilled);
-        assert_eq!(report.applied, vec![2], "v1 backfilled, v2 fresh");
+        assert_eq!(report.applied, vec![2, 3], "v1 backfilled, v2+v3 fresh");
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
+        assert!(table_exists(&c, "memory_entry_history").unwrap());
     }
 
     #[test]
@@ -346,7 +386,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1, 2]);
+        assert_eq!(report.skipped, vec![1, 2, 3]);
     }
 
     #[test]
@@ -377,6 +417,6 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1, 2]);
+        assert_eq!(report.applied, vec![1, 2, 3]);
     }
 }

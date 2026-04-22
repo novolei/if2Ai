@@ -33,6 +33,32 @@ async fn store_and_recall() {
 }
 
 #[tokio::test]
+async fn update_writes_history_snapshot_p6() {
+    let (provider, _temp) = create_test_provider();
+    provider
+        .store("k1", "v1", MemoryCategory::Conversation)
+        .await
+        .unwrap();
+    // First recall bumps access_count → 1; harmless for this test.
+    let _ = provider.recall("k1", None, 10).await.unwrap();
+
+    provider.update_content("k1", "v2").await.unwrap();
+    let hist = provider.list_history("k1").await.unwrap();
+    assert_eq!(hist.len(), 1, "exactly one snapshot written");
+    assert_eq!(hist[0].content, "v1");
+    assert_eq!(hist[0].source, "update");
+    assert_eq!(hist[0].category, "conversation");
+
+    // Second update produces a second snapshot.
+    provider.update_content("k1", "v3").await.unwrap();
+    let hist2 = provider.list_history("k1").await.unwrap();
+    assert_eq!(hist2.len(), 2);
+    // Newest first — v2 was the value at the time of the second update.
+    assert_eq!(hist2[0].content, "v2");
+    assert_eq!(hist2[1].content, "v1");
+}
+
+#[tokio::test]
 async fn store_upserts_existing() {
     let (provider, _temp) = create_test_provider();
 

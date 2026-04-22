@@ -83,6 +83,20 @@ pub struct MemoryEntryDto {
     pub project_id: Option<String>,
 }
 
+/// MEM-MOD-P6 — One historical snapshot of a memory entry returned
+/// by [`memory_history`] to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryHistoryEntryDto {
+    pub key: String,
+    pub content: String,
+    pub category: String,
+    pub importance: f64,
+    pub trust_score: f64,
+    pub valid_from: String,
+    pub valid_to: String,
+    pub source: String,
+}
+
 fn entry_to_dto(entry: &MemoryEntry) -> MemoryEntryDto {
     MemoryEntryDto {
         key: entry.key.clone(),
@@ -183,6 +197,35 @@ pub async fn memory_recall(
     .map_err(|e| e.to_string())?;
 
     Ok(entries.iter().map(entry_to_dto).collect())
+}
+
+/// MEM-MOD-P6 — Return the temporal history of a memory key
+/// (newest snapshot first).  Each item describes a value the entry
+/// held BEFORE the snapshot's `valid_to` timestamp.  Empty when the
+/// key has never been updated / consolidated.
+#[tauri::command]
+pub async fn memory_history(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<Vec<MemoryHistoryEntryDto>, String> {
+    let entries = state
+        .memory_provider
+        .list_history(&key)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(entries
+        .into_iter()
+        .map(|h| MemoryHistoryEntryDto {
+            key: h.key,
+            content: h.content,
+            category: h.category,
+            importance: h.importance,
+            trust_score: h.trust_score,
+            valid_from: h.valid_from.to_rfc3339(),
+            valid_to: h.valid_to.to_rfc3339(),
+            source: h.source,
+        })
+        .collect())
 }
 
 /// Delete a memory entry by key.

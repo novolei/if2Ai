@@ -97,6 +97,7 @@ macro_rules! tool_and_skill_commands {
 macro_rules! memory_and_prompt_commands {
     () => {
         crate::commands::memory_recall,
+        crate::commands::memory::memory_history,
         crate::commands::memory_delete,
         crate::commands::memory_export,
         crate::commands::memory_purge,
@@ -347,6 +348,7 @@ macro_rules! if2ai_command_surface {
             crate::commands::slash::list_skills,
             crate::commands::slash::list_agents,
             crate::commands::memory::memory_recall,
+            crate::commands::memory::memory_history,
             crate::commands::memory::memory_delete,
             crate::commands::memory::memory_export,
             crate::commands::memory::memory_purge,

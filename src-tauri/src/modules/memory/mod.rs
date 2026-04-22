@@ -130,6 +130,22 @@ pub struct MemoryEntry {
     pub project_id: Option<String>,
 }
 
+/// MEM-MOD-P6 — One historical snapshot of a memory entry as captured
+/// just before an UPDATE / DELETE / consolidate operation.  Mirrors the
+/// `memory_entry_history` SQLite row.  Newest snapshot first when
+/// returned by [`MemoryProvider::list_history`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryHistoryEntry {
+    pub key: String,
+    pub content: String,
+    pub category: String,
+    pub importance: f64,
+    pub trust_score: f64,
+    pub valid_from: chrono::DateTime<chrono::Utc>,
+    pub valid_to: chrono::DateTime<chrono::Utc>,
+    pub source: String,
+}
+
 /// Memory category for organizing memory entries.
 ///
 /// MEM-MOD-P2 added three new built-in categories so the agent has a
@@ -490,6 +506,19 @@ pub trait MemoryProvider: Send + Sync {
     ) -> Result<usize, MemoryError> {
         let _ = (source_keys, consolidated_key, consolidated_content, category);
         Ok(0)
+    }
+
+    /// MEM-MOD-P6 — Return the temporal history of a memory key in
+    /// reverse-chronological order (newest snapshot first). Each entry
+    /// is a `(content, category, valid_from, valid_to, source)` tuple.
+    /// Default impl returns an empty list — override in providers that
+    /// implement the v3 audit table.
+    async fn list_history(
+        &self,
+        key: &str,
+    ) -> Result<Vec<MemoryHistoryEntry>, MemoryError> {
+        let _ = key;
+        Ok(Vec::new())
     }
 
     /// MEM-MOD-P1 — Adjust the persisted `trust_score` of a memory entry by
