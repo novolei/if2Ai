@@ -102,27 +102,61 @@ impl PromptBlockKind {
     }
 }
 
+/// Source metadata for a [`PromptBlock`].
+///
+/// Tracks which subsystem contributed this block and optionally
+/// references the specific source (e.g., file path, memory ID).
+/// Used by harness for attribution and debugging.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PromptBlockSource {
+    /// Subsystem that produced this block (e.g., "system_prompt", "memory", "learning").
+    pub subsystem: String,
+    /// Optional reference to the specific source within the subsystem.
+    pub reference: Option<String>,
+}
+
+/// Validation issue encountered during prompt plan construction.
+///
+/// Used to record warnings or errors without failing the build
+/// (unless strict validation mode is enabled in future phases).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PromptValidationIssue {
+    /// Machine-readable issue code (e.g., "forbidden_sensitive_external_block").
+    pub code: String,
+    /// Human-readable issue description.
+    pub message: String,
+}
+
 /// Single block inside a [`PromptPlan`].
 ///
 /// `title` is a short human-readable tag for trace UIs; `content`
 /// is the raw text appended into the final prompt string.
-//
-// Only `Serialize` is derived: M4 harness needs to project the plan
-// to JSON traces, but we never deserialise plans (the `&'static str`
-// title would force a non-`'static` lifetime on `Deserialize`).
+///
+/// MIG-005: Added `source`, `priority`, and `is_sensitive` fields
+/// to align with UClaw's PromptBlock structure for harness attribution
+/// and future token budget optimization.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PromptBlock {
     /// Unique identifier for this block within the plan (e.g., "system", "memory_pinned-0").
     pub id: String,
     pub kind: PromptBlockKind,
-    pub title: &'static str,
+    pub title: String,
     pub content: String,
+    /// Source metadata for attribution and debugging.
+    pub source: PromptBlockSource,
+    /// Priority for ordering (100=highest, 0=lowest). Used for future token budget optimization.
+    pub priority: i32,
+    /// Whether this block contains sensitive content that should be redacted in diagnostics.
+    pub is_sensitive: bool,
 }
 
 /// Diagnostic metadata for a [`PromptPlan`].
 ///
 /// Provides traceability and debugging information without exposing
 /// sensitive prompt content. Used by harness traces and diagnostics UIs.
+///
+/// MIG-005: Added `validation_issues` field to record warnings/errors
+/// encountered during plan construction.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PromptPlanDiagnostics {
     /// Unique trace identifier for this plan.
@@ -133,6 +167,8 @@ pub struct PromptPlanDiagnostics {
     pub block_count: usize,
     /// Redacted preview of each block (first 48 chars or "[REDACTED]" for sensitive content).
     pub redacted_preview: Vec<String>,
+    /// Validation issues encountered during plan construction.
+    pub validation_issues: Vec<PromptValidationIssue>,
 }
 
 /// Ordered collection of [`PromptBlock`]s representing the static
@@ -260,8 +296,14 @@ pub async fn build_prompt_plan(
     blocks.push(PromptBlock {
         id: "system".to_string(),
         kind: PromptBlockKind::System,
-        title: "system",
+        title: "system".to_string(),
         content: system_lines.join("\n"),
+        source: PromptBlockSource {
+            subsystem: "system_prompt".to_string(),
+            reference: None,
+        },
+        priority: 100,
+        is_sensitive: true,
     });
 
     // 2. Web-tool routing guide (Phase 7C, slice 7C.4 parity).
@@ -269,8 +311,14 @@ pub async fn build_prompt_plan(
         blocks.push(PromptBlock {
             id: "web_tools_routing_guide".to_string(),
             kind: PromptBlockKind::WebToolsRoutingGuide,
-            title: "web_tools_routing_guide",
+            title: "web_tools_routing_guide".to_string(),
             content: guide,
+            source: PromptBlockSource {
+                subsystem: "tool_routing".to_string(),
+                reference: None,
+            },
+            priority: 90,
+            is_sensitive: false,
         });
     }
 
@@ -284,8 +332,14 @@ pub async fn build_prompt_plan(
             blocks.push(PromptBlock {
                 id: "active_strategy_overlay".to_string(),
                 kind: PromptBlockKind::ActiveStrategyOverlay,
-                title: "active_strategy_overlay",
+                title: "active_strategy_overlay".to_string(),
                 content: overlay,
+                source: PromptBlockSource {
+                    subsystem: "learning".to_string(),
+                    reference: None,
+                },
+                priority: 85,
+                is_sensitive: false,
             });
         }
     }
@@ -298,12 +352,29 @@ pub async fn build_prompt_plan(
         for section in artifacts.prompt_sections {
             let counter = memory_block_counters.entry(section.kind).or_insert(0);
             let block_id = format!("{}-{}", title_for_memory_section(section.kind), counter);
+            let title = title_for_memory_section(section.kind);
+            let kind = PromptBlockKind::from_memory_section(section.kind);
+
+            // MIG-005: Assign priority and is_sensitive based on memory section kind
+            let (priority, is_sensitive) = match section.kind {
+                MemoryInjectionSectionKind::Pinned => (80, false),
+                MemoryInjectionSectionKind::Compiled => (70, false),
+                MemoryInjectionSectionKind::Rules => (60, false),
+                MemoryInjectionSectionKind::Retrieved => (50, true),
+            };
+
             *counter += 1;
             blocks.push(PromptBlock {
                 id: block_id,
-                kind: PromptBlockKind::from_memory_section(section.kind),
-                title: title_for_memory_section(section.kind),
+                kind,
+                title: title.to_string(),
                 content: section.content,
+                source: PromptBlockSource {
+                    subsystem: "memory".to_string(),
+                    reference: None,
+                },
+                priority,
+                is_sensitive,
             });
         }
     }
@@ -333,11 +404,15 @@ fn title_for_memory_section(kind: MemoryInjectionSectionKind) -> &'static str {
 }
 
 /// Compute SHA256 hash of all blocks for plan identity.
+/// MIG-005: Include source.subsystem in hash computation for stability.
 fn compute_block_hash(blocks: &[PromptBlock]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     for block in blocks {
-        hasher.update(format!("{:?}|{}|{}\n", block.kind, block.title, block.content));
+        hasher.update(format!(
+            "{:?}|{}|{}|{}\n",
+            block.kind, block.title, block.source.subsystem, block.content
+        ));
     }
     hex::encode(hasher.finalize())
 }
@@ -354,6 +429,7 @@ fn compute_trace_id(session_id: &str, user_message: &str, block_hash: &str) -> S
 }
 
 /// Build diagnostic metadata for the plan.
+/// MIG-005: Use block.is_sensitive instead of kind matching for redaction.
 fn build_diagnostics(
     trace_id: String,
     blocks: &[PromptBlock],
@@ -361,12 +437,7 @@ fn build_diagnostics(
     let redacted_preview = blocks
         .iter()
         .map(|b| {
-            // Redact system prompt and user intent as sensitive
-            let is_sensitive = matches!(
-                b.kind,
-                PromptBlockKind::System | PromptBlockKind::RetrievedMemory
-            );
-            if is_sensitive {
+            if b.is_sensitive {
                 format!("{:?}: [REDACTED {} chars]", b.kind, b.content.chars().count())
             } else {
                 let preview: String = b.content.chars().take(48).collect();
@@ -380,6 +451,7 @@ fn build_diagnostics(
         block_kinds: blocks.iter().map(|b| b.kind).collect(),
         block_count: blocks.len(),
         redacted_preview,
+        validation_issues: Vec::new(),
     }
 }
 
@@ -400,19 +472,32 @@ mod tests {
                 block_kinds: vec![PromptBlockKind::System, PromptBlockKind::RetrievedMemory],
                 block_count: 2,
                 redacted_preview: vec![],
+                validation_issues: vec![],
             },
             blocks: vec![
                 PromptBlock {
                     id: "system".to_string(),
                     kind: PromptBlockKind::System,
-                    title: "system",
+                    title: "system".to_string(),
                     content: "a".into(),
+                    source: PromptBlockSource {
+                        subsystem: "system_prompt".to_string(),
+                        reference: None,
+                    },
+                    priority: 100,
+                    is_sensitive: true,
                 },
                 PromptBlock {
                     id: "retrieved_memory-0".to_string(),
                     kind: PromptBlockKind::RetrievedMemory,
-                    title: "retrieved_memory",
+                    title: "retrieved_memory".to_string(),
                     content: "b".into(),
+                    source: PromptBlockSource {
+                        subsystem: "memory".to_string(),
+                        reference: None,
+                    },
+                    priority: 50,
+                    is_sensitive: true,
                 },
             ],
         };
@@ -426,8 +511,14 @@ mod tests {
             PromptBlock {
                 id: "system".to_string(),
                 kind: PromptBlockKind::System,
-                title: "system",
+                title: "system".to_string(),
                 content: "test content".into(),
+                source: PromptBlockSource {
+                    subsystem: "system_prompt".to_string(),
+                    reference: None,
+                },
+                priority: 100,
+                is_sensitive: true,
             },
         ];
         let hash1 = compute_block_hash(&blocks);
