@@ -12,10 +12,10 @@
 //! The module compiles and is internally consistent (operations + store)
 //! but no caller in `application::*` or `commands::*` depends on it.
 //!
-//! See `docs/design-docs/memory-system.md` and the pending ADR
-//! `docs/design-docs/ADR/hrr-keep-or-remove.md` for the keep / wire /
-//! remove decision. Until that ADR lands, the module stays dead-on-arrival
-//! to avoid silent dependency creep.
+//! See [ADR-016 HRR Keep, Wire, or Remove](../../../../../docs/design-docs/postCLI/ADR/ADR-016-HRR-Keep-Or-Remove.md)
+//! for the active keep / wire / remove decision (deadline 2026-05-31).
+//! Until that ADR is resolved, the module stays dead-on-arrival to
+//! avoid silent dependency creep.
 
 #![allow(dead_code)]
 

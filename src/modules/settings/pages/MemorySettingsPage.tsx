@@ -12,6 +12,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
+import { MemoryAggregateOverview } from '@/components/memory/MemoryAggregateOverview'
 import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import { MemoryNarrativeViewer } from '@/components/memory/narrative/MemoryNarrativeViewer'
@@ -222,6 +223,15 @@ export function MemorySettingsPage() {
         <MemoryDebugTab />
       ) : (
         <>
+          {/* ── Aggregate overview (Memory Audit P1 #8) ──
+              Single hero panel answering "AI 记得我什么 — Pinned /
+              Compiled / Facts / Summaries" so the four sources stop
+              feeling like 4 disconnected sub-pages. */}
+          <MemoryAggregateOverview
+            onShowCompiled={() => setCompiledViewerOpen(true)}
+            onShowSummaries={() => setNarrativeViewerOpen(true)}
+          />
+
           {/* ── Pinned Memory (Phase 8A.12 / T-UI-1) ── */}
           <PinnedMemoryEditor />
 
