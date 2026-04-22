@@ -227,6 +227,11 @@ const MEMORY_MIGRATIONS: &[Migration] = &[
         name: "memory_entry_history",
         up: memory_v3_history,
     },
+    Migration {
+        version: 4,
+        name: "learned_traits_table",
+        up: memory_v4_learned_traits,
+    },
 ];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
@@ -338,6 +343,38 @@ fn memory_v3_history(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// MEM-MOD-P7 — v4: cross-session learned traits ("the user is X").
+///
+/// Each row is one durable observation about the user that survives
+/// session boundaries.  The agent's `trait_extractor` writes here
+/// after a session ends; the `Learned Traits` prompt block reads from
+/// here on every turn.  `disagreed_at` lets the user retire a trait
+/// they don't endorse without losing the audit trail.
+fn memory_v4_learned_traits(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS learned_traits (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            trait_text      TEXT NOT NULL,
+            evidence_count  INTEGER NOT NULL DEFAULT 1,
+            confidence      REAL NOT NULL DEFAULT 0.5,
+            first_seen_at   TEXT NOT NULL,
+            last_updated_at TEXT NOT NULL,
+            disagreed_at    TEXT,
+            source_session  TEXT
+        )",
+        [],
+    )?;
+    // Disagreed traits are excluded from the prompt block — partial
+    // index keeps the hot read path small.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_traits_active
+         ON learned_traits(last_updated_at DESC)
+         WHERE disagreed_at IS NULL",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,13 +388,14 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1, 2, 3]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
         assert!(table_exists(&c, "memory_entries").unwrap());
         assert!(table_exists(&c, "memory_links").unwrap());
         assert!(table_exists(&c, "memory_entry_history").unwrap());
+        assert!(table_exists(&c, "learned_traits").unwrap());
     }
 
     #[test]
@@ -374,10 +412,11 @@ mod tests {
 
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.v1_backfilled);
-        assert_eq!(report.applied, vec![2, 3], "v1 backfilled, v2+v3 fresh");
+        assert_eq!(report.applied, vec![2, 3, 4], "v1 backfilled, v2+v3+v4 fresh");
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
         assert!(table_exists(&c, "memory_entry_history").unwrap());
+        assert!(table_exists(&c, "learned_traits").unwrap());
     }
 
     #[test]
@@ -386,7 +425,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1, 2, 3]);
+        assert_eq!(report.skipped, vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -417,6 +456,6 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1, 2, 3]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4]);
     }
 }

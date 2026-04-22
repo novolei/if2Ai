@@ -166,6 +166,11 @@ pub struct AppState {
     /// `allow(dead_code)`: first reader lands in 8B.7.
     #[allow(dead_code)]
     pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
+
+    /// MEM-MOD-P7 — cross-session learned-traits store.  `None` until
+    /// bootstrap calls [`AppState::with_learned_traits`].  IPCs that
+    /// touch this field degrade to "no traits" while it is `None`.
+    pub learned_traits: Option<crate::modules::memory::learned_traits::LearnedTraitsStore>,
 }
 
 /// Constructor arguments for [`AppState`].
@@ -247,14 +252,33 @@ impl AppState {
             pinned_store: cfg.pinned_store,
             memory_compiler: cfg.memory_compiler,
             memory_ticker: cfg.memory_ticker,
+            learned_traits: None,
         }
+    }
+
+    /// MEM-MOD-P7 — opt-in: attach the cross-session learned-traits
+    /// store after construction.  Builder method (consumes `self`)
+    /// so the existing `AppStateConfig` stays unchanged and the
+    /// in-flight bootstrap god-file refactor does not need to learn
+    /// about this field today.  Bootstrap will start calling this
+    /// once the refactor stream lands; until then the IPCs degrade
+    /// gracefully to "no traits".
+    #[must_use]
+    pub fn with_learned_traits(
+        mut self,
+        store: crate::modules::memory::learned_traits::LearnedTraitsStore,
+    ) -> Self {
+        self.learned_traits = Some(store);
+        self
     }
 }
 
 pub mod agent;
 pub mod browser;
+pub mod command_surface;
 pub mod gateway;
 pub mod harness;
+pub mod host_composition;
 pub mod learning;
 pub mod memory;
 pub mod pinned;
@@ -274,6 +298,7 @@ pub mod tts;
 pub mod tts_download;
 pub mod web_search;
 
+#[allow(unused_imports)]
 pub use stt::{
     stt_download_openflow_model, stt_get_settings, stt_model_status, stt_save_settings,
     stt_transcribe,
@@ -298,6 +323,7 @@ pub use browser::{
     get_browser_settings, get_chrome_status, list_browser_profiles, release_browser_takeover,
     request_browser_status, request_browser_takeover, set_browser_settings, ChromeStatusPayload,
 };
+#[allow(unused_imports)]
 pub use gateway::{get_gateway_health, get_gateway_url};
 #[allow(unused_imports)]
 pub use harness::{
@@ -309,6 +335,8 @@ pub use harness::{
     start_harness_recording, stop_harness_recording, HarnessStatusResponse,
     HarnessTelemetryResponse,
 };
+#[allow(unused_imports)]
+pub use host_composition::{compose_desktop_host_state, DesktopHostComposition};
 #[allow(unused_imports)]
 pub use learning::{
     learning_activate_promoted_candidate, learning_apply_promotion_gate,
@@ -422,4 +450,5 @@ pub use tts::{
 };
 
 // TTS model download commands
+#[allow(unused_imports)]
 pub use tts_download::{tts_model_download_start, tts_model_download_status, tts_model_status};

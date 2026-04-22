@@ -228,6 +228,70 @@ pub async fn memory_history(
         .collect())
 }
 
+/// MEM-MOD-P7 — DTO returned by `learned_traits_list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearnedTraitDto {
+    pub id: i64,
+    pub trait_text: String,
+    pub evidence_count: i64,
+    pub confidence: f64,
+    pub first_seen_at: String,
+    pub last_updated_at: String,
+    pub source_session: Option<String>,
+}
+
+/// MEM-MOD-P7 — list active (non-disagreed) cross-session traits the
+/// agent has accumulated about the user.  Newest first.  `limit`
+/// defaults to 50.
+#[tauri::command]
+pub async fn learned_traits_list(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<LearnedTraitDto>, String> {
+    let store = match &state.learned_traits {
+        Some(s) => s.clone(),
+        None => return Ok(Vec::new()),
+    };
+    let traits = tokio::task::spawn_blocking(move || {
+        store.list_active(limit.unwrap_or(50))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(traits
+        .into_iter()
+        .map(|t| LearnedTraitDto {
+            id: t.id,
+            trait_text: t.trait_text,
+            evidence_count: t.evidence_count,
+            confidence: t.confidence,
+            first_seen_at: t.first_seen_at.to_rfc3339(),
+            last_updated_at: t.last_updated_at.to_rfc3339(),
+            source_session: t.source_session,
+        })
+        .collect())
+}
+
+/// MEM-MOD-P7 — user-facing "I don't agree" button. Marks the trait
+/// as retired so it stops appearing in the prompt block.  The row is
+/// kept for audit; idempotent re-disagree on an already-disagreed row
+/// returns `KeyNotFound` (UI can ignore).
+#[tauri::command]
+pub async fn learned_traits_disagree(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let store = match &state.learned_traits {
+        Some(s) => s.clone(),
+        None => return Err("learned_traits store not initialised".into()),
+    };
+    tokio::task::spawn_blocking(move || store.disagree(id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Delete a memory entry by key.
 #[tauri::command]
 pub async fn memory_delete(state: State<'_, AppState>, key: String) -> Result<(), String> {
