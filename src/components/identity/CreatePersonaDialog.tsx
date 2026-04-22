@@ -417,7 +417,10 @@ export function CreatePersonaDialog({
 
         {/* Scrollable body */}
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-5">
-          {/* Name + Soul */}
+          {/* Name + Soul — both sides reserve a fixed-height hint row
+              (`h-[14px]` below the control) so input and select stay
+              aligned at both top and bottom regardless of whether the
+              ID hint is shown. */}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
             <label className="grid gap-1.5">
               <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-black/40">
@@ -431,14 +434,18 @@ export function CreatePersonaDialog({
                 maxLength={64}
                 className="h-9 rounded-lg border border-black/[0.08] bg-white px-3 text-[13.5px] tracking-tight text-foreground/90 outline-none transition-all placeholder:text-black/25 focus:border-jade/45 focus:ring-[3px] focus:ring-jade/12"
               />
-              {trimmedName ? (
-                <span className="text-[10.5px] tracking-wide text-black/35">
-                  {isEditMode ? "ID（不可改）" : "自动 ID"}:{" "}
-                  <code className="rounded bg-black/[0.04] px-1 py-px font-mono text-[10.5px] text-foreground/65">
-                    {previewId}
-                  </code>
-                </span>
-              ) : null}
+              <span className="h-[14px] truncate text-[10.5px] tracking-wide text-black/35">
+                {trimmedName ? (
+                  <>
+                    {isEditMode ? "ID（不可改）" : "自动 ID"}:{" "}
+                    <code className="rounded bg-black/[0.04] px-1 py-px font-mono text-[10.5px] text-foreground/65">
+                      {previewId}
+                    </code>
+                  </>
+                ) : (
+                  <span aria-hidden>&nbsp;</span>
+                )}
+              </span>
             </label>
             <label className="grid gap-1.5">
               <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-black/40">
@@ -455,6 +462,8 @@ export function CreatePersonaDialog({
                   </option>
                 ))}
               </select>
+              {/* Spacer to mirror the left column's ID hint row. */}
+              <span className="h-[14px]" aria-hidden />
             </label>
           </div>
 
