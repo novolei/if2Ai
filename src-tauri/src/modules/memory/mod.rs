@@ -19,13 +19,13 @@ pub mod inject;
 pub mod intent;
 pub mod job_runner;
 pub mod learned_traits;
-pub mod migrations;
 pub mod llm;
+pub mod migrations;
 pub mod pinned;
 pub mod policy;
 pub mod promotion;
-pub mod reflection_loop;
 mod providers;
+pub mod reflection_loop;
 pub mod retrieval;
 pub mod scope;
 pub mod security;
@@ -505,7 +505,12 @@ pub trait MemoryProvider: Send + Sync {
         consolidated_content: &str,
         category: MemoryCategory,
     ) -> Result<usize, MemoryError> {
-        let _ = (source_keys, consolidated_key, consolidated_content, category);
+        let _ = (
+            source_keys,
+            consolidated_key,
+            consolidated_content,
+            category,
+        );
         Ok(0)
     }
 
@@ -514,10 +519,7 @@ pub trait MemoryProvider: Send + Sync {
     /// is a `(content, category, valid_from, valid_to, source)` tuple.
     /// Default impl returns an empty list — override in providers that
     /// implement the v3 audit table.
-    async fn list_history(
-        &self,
-        key: &str,
-    ) -> Result<Vec<MemoryHistoryEntry>, MemoryError> {
+    async fn list_history(&self, key: &str) -> Result<Vec<MemoryHistoryEntry>, MemoryError> {
         let _ = key;
         Ok(Vec::new())
     }
@@ -530,11 +532,7 @@ pub trait MemoryProvider: Send + Sync {
     /// The default implementation is a no-op (returns `Ok(0.0)`) so
     /// in-memory / vector-only providers remain functional during tests.
     /// Production providers (SQLite) override this to persist the change.
-    async fn adjust_trust_score(
-        &self,
-        key: &str,
-        delta: f64,
-    ) -> Result<f64, MemoryError> {
+    async fn adjust_trust_score(&self, key: &str, delta: f64) -> Result<f64, MemoryError> {
         let _ = (key, delta);
         Ok(0.0)
     }

@@ -383,10 +383,7 @@ pub fn normalize_identity_customization_pack(
                 .filter(|line| !line.is_empty())
                 .collect();
             let trimmed_id = id.trim().to_string();
-            if trimmed_id.is_empty()
-                || item.soul_id.is_empty()
-                || item.name.is_empty()
-            {
+            if trimmed_id.is_empty() || item.soul_id.is_empty() || item.name.is_empty() {
                 return None;
             }
             Some((trimmed_id, item))

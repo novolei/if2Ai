@@ -123,6 +123,7 @@ async fn agent_loop_executes_skill_tool_end_to_end() {
         scheduler::default_scheduler(),
         test_browser_registry,
         std::sync::Arc::new(crate::modules::memory::NullPinnedStore::new()),
+        None, // MEM-MOD-P4 — agent tests don't exercise the decision tree
     );
 
     let execution_context =

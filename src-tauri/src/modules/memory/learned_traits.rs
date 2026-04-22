@@ -64,6 +64,30 @@ impl LearnedTraitsStore {
         Self { conn }
     }
 
+    /// MEM-MOD-P7 — open a fresh SQLite handle against `db_path` and
+    /// run the memory migration set so the `learned_traits` table is
+    /// guaranteed to exist.  Used by bootstrap to wire a store
+    /// alongside the `SqliteMemoryProvider` without sharing its
+    /// private connection.
+    pub fn open(db_path: &std::path::Path) -> Result<Self, MemoryError> {
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                MemoryError::Generic(format!("create_dir_all failed: {e}"))
+            })?;
+        }
+        let conn = Connection::open(db_path)
+            .map_err(|e| MemoryError::Generic(format!("open db failed: {e}")))?;
+        crate::modules::memory::migrations::run_migrations(
+            &conn,
+            crate::modules::memory::migrations::memory_migrations(),
+            Some("memory_entries"),
+        )
+        .map_err(|e| MemoryError::Generic(e.to_string()))?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
     /// Insert a brand-new trait or bump `evidence_count` + `confidence`
     /// when the same `trait_text` already exists (case-sensitive
     /// matching — the LLM normalises wording before this layer sees it).

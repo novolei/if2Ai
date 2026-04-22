@@ -41,6 +41,8 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
+use crate::modules::memory::decision_tree::{decide_via_llm, DecisionPlan};
+use crate::modules::memory::llm::UtilityLlm;
 use crate::modules::memory::policy::{
     MemoryPolicyConfig, MemoryPolicyEngine, PolicyDecision, PolicyEnforceMode,
 };
@@ -221,12 +223,22 @@ fn content_preview(content: &str, max_chars: usize) -> String {
 }
 
 /// Creates the memory_store tool entry for the registry.
+///
+/// MEM-MOD-P4 — `utility_llm` is consulted by the Mem0-style update
+/// decision tree before persisting, but only when the user has flipped
+/// `MemoryFeatureConfig::decision_tree_enabled` on (defaults `false`).
+/// When the flag is off OR no LLM is provided, the historical "always
+/// add" path is taken byte-identical to the pre-P4 behaviour.
 #[allow(dead_code)]
 #[must_use]
-pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
+pub fn entry(
+    memory: SharedMemoryProvider,
+    utility_llm: Option<Arc<dyn UtilityLlm>>,
+) -> ToolEntry {
     let handler: ToolHandler = Arc::new(
         move |args: serde_json::Value, context: SharedToolContext| {
             let memory = memory.clone();
+            let utility_llm = utility_llm.clone();
             Box::pin(async move {
                 let key = args
                     .get("key")
@@ -371,6 +383,99 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     return Ok(pending.to_string());
                 }
 
+                // MEM-MOD-P4 — Mem0-style update decision tree.  Only
+                // consulted when the user has flipped the feature flag
+                // AND a utility LLM was injected into this tool.  We
+                // recall up to 5 candidate memories whose content
+                // overlaps the new fact, ask the LLM whether to NOOP
+                // / ADD / UPDATE / DELETE, and act on the verb.  Any
+                // failure (LLM unreachable, bad JSON, unknown key)
+                // falls back to plain ADD so a pathological classifier
+                // can never *drop* a real fact.
+                let decision_enabled =
+                    crate::modules::runtime::config::current().memory().decision_tree_enabled();
+                let decision: DecisionPlan = if decision_enabled {
+                    if let Some(ref llm) = utility_llm {
+                        let candidates = memory
+                            .recall_scoped(&content, None, 5, &scope)
+                            .await
+                            .unwrap_or_default();
+                        decide_via_llm(llm.as_ref(), &content, &candidates)
+                            .await
+                            .unwrap_or(DecisionPlan::Add)
+                    } else {
+                        DecisionPlan::Add
+                    }
+                } else {
+                    DecisionPlan::Add
+                };
+
+                match decision {
+                    DecisionPlan::NoOp { covered_by } => {
+                        let payload = json!({
+                            "status": "noop",
+                            "key": key,
+                            "category": category_str,
+                            "scope": scope_str,
+                            "policy_decision": decision_label(&policy_result.decision),
+                            "reason_code": "decision_tree_noop",
+                            "message": "memory_store: decision tree judged this fact already covered",
+                            "covered_by": covered_by,
+                        });
+                        return Ok(payload.to_string());
+                    }
+                    DecisionPlan::Update { existing_key } => {
+                        memory.update_content(&existing_key, &content).await.map_err(
+                            |e| ToolError::Handler(format!("decision_tree update failed: {e}")),
+                        )?;
+                        MemoryAuditEmitter::memory_persisted(
+                            &audit_ctx,
+                            &existing_key,
+                            category.as_str(),
+                        );
+                        let payload = json!({
+                            "status": "updated",
+                            "key": existing_key,
+                            "original_key": key,
+                            "category": category_str,
+                            "scope": scope_str,
+                            "reason_code": "decision_tree_update",
+                            "message": "memory_store: decision tree refined an existing entry",
+                        });
+                        return Ok(payload.to_string());
+                    }
+                    DecisionPlan::Delete { existing_key } => {
+                        let _ = memory.delete(&existing_key).await;
+                        // Still persist the new content as the
+                        // post-supersession value — Delete means "the
+                        // OLD fact is wrong", NOT "drop both".
+                        memory
+                            .store_scoped(&key, &content, category.clone(), &scope)
+                            .await
+                            .map_err(|e| {
+                                ToolError::Handler(format!("failed to store memory after supersede: {e}"))
+                            })?;
+                        MemoryAuditEmitter::memory_persisted(
+                            &audit_ctx,
+                            &key,
+                            category.as_str(),
+                        );
+                        let payload = json!({
+                            "status": "superseded",
+                            "key": key,
+                            "deleted_key": existing_key,
+                            "category": category_str,
+                            "scope": scope_str,
+                            "reason_code": "decision_tree_delete",
+                            "message": "memory_store: decision tree retired an obsolete entry then added the new one",
+                        });
+                        return Ok(payload.to_string());
+                    }
+                    DecisionPlan::Add => {
+                        // fall through to the historical add path
+                    }
+                }
+
                 memory
                     .store_scoped(&key, &content, category.clone(), &scope)
                     .await
@@ -455,7 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn memory_store_tool_entry_has_correct_structure() {
-        let entry = entry(test_memory());
+        let entry = entry(test_memory(), None);
         assert_eq!(entry.name, "memory_store");
         assert_eq!(entry.toolset, "memory");
         assert!(!entry.disabled);
@@ -465,7 +570,7 @@ mod tests {
     async fn allow_path_persists_and_returns_stored_json() {
         let _guard = TestEnforceGuard::set(PolicyEnforceMode::Shadow);
         let memory = test_memory();
-        let entry = entry(memory.clone());
+        let entry = entry(memory.clone(), None);
         let result = (entry.handler)(
             json!({"key": "k1", "content": "small", "category": "daily"}),
             empty_context(),
@@ -488,7 +593,7 @@ mod tests {
     async fn prompt_threshold_does_not_persist_and_returns_pending_approval() {
         let _guard = TestEnforceGuard::set(PolicyEnforceMode::Shadow);
         let memory = test_memory();
-        let entry = entry(memory.clone());
+        let entry = entry(memory.clone(), None);
         // Build content > 2000 bytes but well under 10000 so we trip the
         // `LengthPromptThreshold` rule.
         let big = "x".repeat(3_000);
@@ -522,7 +627,7 @@ mod tests {
         // downgraded to Allow and persisted with reason_code=shadow_denied.
         let _guard = TestEnforceGuard::set(PolicyEnforceMode::Shadow);
         let memory = test_memory();
-        let entry = entry(memory.clone());
+        let entry = entry(memory.clone(), None);
         let huge = "z".repeat(11_000); // > 10_000 byte hard limit.
         let result = (entry.handler)(
             json!({"key": "huge", "content": huge.clone()}),
@@ -546,7 +651,7 @@ mod tests {
     async fn deny_in_enforce_mode_returns_ok_json_and_does_not_persist() {
         let _guard = TestEnforceGuard::set(PolicyEnforceMode::Enforce);
         let memory = test_memory();
-        let entry = entry(memory.clone());
+        let entry = entry(memory.clone(), None);
         let huge = "z".repeat(11_000); // > 10_000 byte hard limit triggers Deny.
         let raw = (entry.handler)(
             json!({"key": "deny-huge", "content": huge.clone()}),
@@ -582,7 +687,7 @@ mod tests {
     async fn prompt_in_enforce_mode_returns_pending_approval() {
         let _guard = TestEnforceGuard::set(PolicyEnforceMode::Enforce);
         let memory = test_memory();
-        let entry = entry(memory.clone());
+        let entry = entry(memory.clone(), None);
         let big = "x".repeat(3_000);
         let raw = (entry.handler)(
             json!({"key": "enforce-prompt", "content": big.clone()}),

@@ -142,6 +142,10 @@ pub struct TurnServiceDeps {
     pub memory_ticker: Arc<MemoryTicker>,
     pub trajectory_manager: Option<Arc<TrajectoryManager>>,
     pub app_handle: Option<AppHandle>,
+    /// MEM-MOD-P7 — cross-session learned-traits store (None when
+    /// the SQLite-backed store is unavailable).  Read on every turn
+    /// to materialise the `LearnedTraits` prompt block (priority 93).
+    pub learned_traits: Option<crate::modules::memory::learned_traits::LearnedTraitsStore>,
 }
 
 impl TurnServiceDeps {
@@ -259,6 +263,10 @@ pub(super) fn build_prompt_plan_request_from_coordinator(
     caller: &'static str,
     prompt_assembly_decision: PromptAssemblyDecision,
     coordinated_prompt: super::prompt_coordinator::CoordinatedPromptInputs,
+    // MEM-MOD-P7 — pre-fetched active learned traits, ready to be
+    // rendered as the `LearnedTraits` prompt block.  Empty vec when
+    // the store is unavailable or holds nothing yet.
+    learned_traits: Vec<crate::modules::memory::learned_traits::LearnedTrait>,
 ) -> BuildPromptPlanRequest {
     BuildPromptPlanRequest {
         session_id,
@@ -277,6 +285,7 @@ pub(super) fn build_prompt_plan_request_from_coordinator(
         prompt_assembly_decision: Some(prompt_assembly_decision),
         active_skill_ids: coordinated_prompt.active_skill_ids,
         options: super::prompt_planner::PromptBuildOptions::default(),
+        learned_traits,
     }
 }
 
@@ -398,6 +407,23 @@ impl TurnService {
             active_skill_ids: Vec::new(),
         });
 
+        // MEM-MOD-P7 — fetch the active learned-traits slice off the
+        // hot path.  When the store is unavailable we degrade to an
+        // empty vec; the planner will then skip the LearnedTraits
+        // block entirely (no empty header).
+        let learned_traits: Vec<crate::modules::memory::learned_traits::LearnedTrait> =
+            match self.deps.learned_traits.as_ref() {
+                Some(store) => {
+                    let store = store.clone();
+                    tokio::task::spawn_blocking(move || store.list_active(8))
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default()
+                }
+                None => Vec::new(),
+            };
+
         let planner_request = build_prompt_plan_request_from_coordinator(
             request
                 .session_id
@@ -414,6 +440,7 @@ impl TurnService {
             request.caller,
             coordinated_prompt.decision.clone(),
             coordinated_prompt.coordinated_inputs.clone(),
+            learned_traits,
         );
         let prompt = build_prompt_plan(
             planner_request,

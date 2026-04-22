@@ -124,6 +124,7 @@ mod mig_002_a_tests {
                 activation_reasons: Vec::new(),
             },
             coordinated,
+            Vec::new(), // MEM-MOD-P7 — no learned traits in this test fixture
         );
 
         assert_eq!(request.mode, PromptBuildMode::Planning);

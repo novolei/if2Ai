@@ -109,6 +109,7 @@ async fn make_service() -> (TurnService, PathBuf) {
         memory_ticker: make_memory_ticker(),
         trajectory_manager: None,
         app_handle: None,
+        learned_traits: None,
     };
 
     (TurnService::new(deps), root)

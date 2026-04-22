@@ -142,6 +142,7 @@ mod tests {
             prompt_assembly_decision: None,
             active_skill_ids: Vec::new(),
             options: PromptBuildOptions::default(),
+            learned_traits: Vec::new(),
         };
         let result = build_prompt_plan(req, Vec::new())
             .await

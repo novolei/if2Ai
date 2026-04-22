@@ -119,4 +119,10 @@ pub struct BuildPromptPlanRequest {
     pub active_skill_ids: Vec<String>,
     /// MIG-006: Build options (diagnostics, strict validation).
     pub options: PromptBuildOptions,
+    /// MEM-MOD-P7 — cross-session learned traits the agent has
+    /// accumulated about the user.  Empty vec when the
+    /// LearnedTraitsStore is unavailable or holds nothing yet, in
+    /// which case the planner skips the `LearnedTraits` block
+    /// entirely (no empty header).
+    pub learned_traits: Vec<crate::modules::memory::learned_traits::LearnedTrait>,
 }

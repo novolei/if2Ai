@@ -191,6 +191,32 @@ pub async fn build_prompt_plan(
         }
     }
 
+    // 1c. MEM-MOD-P7 — Learned Traits block.  Sits at priority 93
+    // (between Persona 94 and Scenario 92) so the LLM reads identity
+    // first, then durable user observations, then the per-task
+    // scenario header.  Skipped entirely when the slice is empty so
+    // the prompt header stays tight.
+    if !request.learned_traits.is_empty() {
+        if let Some(content) =
+            crate::modules::memory::learned_traits::render_learned_traits_block(
+                &request.learned_traits,
+            )
+        {
+            blocks.push(PromptBlock {
+                id: "learned_traits".to_string(),
+                kind: PromptBlockKind::LearnedTraits,
+                title: "learned_traits".to_string(),
+                content,
+                source: PromptBlockSource {
+                    subsystem: "learned_traits".to_string(),
+                    reference: Some(format!("{} active", request.learned_traits.len())),
+                },
+                priority: 93,
+                is_sensitive: true,
+            });
+        }
+    }
+
     let scenario_mode = request
         .scenario_profile
         .map(super::build_request::PromptBuildMode::from_scenario_hint)
@@ -650,6 +676,7 @@ mod tests {
             prompt_assembly_decision: None,
             active_skill_ids: Vec::new(),
             options: super::super::PromptBuildOptions::default(),
+            learned_traits: Vec::new(),
         };
         let result = build_prompt_plan(req, Vec::new())
             .await
@@ -698,6 +725,7 @@ mod tests {
             prompt_assembly_decision: None,
             active_skill_ids: vec!["skill1".to_string()],
             options: super::super::PromptBuildOptions::default(),
+            learned_traits: Vec::new(),
         };
         let result = build_prompt_plan(req, Vec::new())
             .await
@@ -772,6 +800,7 @@ mod tests {
             }),
             active_skill_ids: Vec::new(),
             options: super::super::PromptBuildOptions::default(),
+            learned_traits: Vec::new(),
         };
 
         let result = build_prompt_plan(req, Vec::new())

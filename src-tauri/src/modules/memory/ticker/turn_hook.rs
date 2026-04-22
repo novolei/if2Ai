@@ -204,5 +204,72 @@ impl TurnHook for MemoryTicker {
             }
             finish_in_progress(&state, &session_owned);
         });
+
+        // MEM-MOD-P7 — distill this session's reflection memories into
+        // durable cross-session traits.  Independent task so it never
+        // blocks the rolling-summary / compile_today pipeline above.
+        if let Some((llm, store, memory)) = self.learned_traits_runtime() {
+            let scope_owned = scope.clone();
+            let session_owned = session_id.to_string();
+            tokio::spawn(async move {
+                // Pull at most 20 reflections from this session.  We
+                // ask for a generous limit (50) and filter client-side
+                // because the recall API has no session predicate
+                // beyond scope here; the LLM extractor caps the
+                // output at 1-3 traits regardless of input size.
+                let reflections: Vec<String> = match memory
+                    .recall_scoped("", Some("reflection"), 50, &scope_owned)
+                    .await
+                {
+                    Ok(entries) => entries
+                        .into_iter()
+                        .filter(|e| {
+                            e.session_id
+                                .as_deref()
+                                .map(|s| s == session_owned)
+                                .unwrap_or(false)
+                        })
+                        .take(20)
+                        .map(|e| e.content)
+                        .collect(),
+                    Err(err) => {
+                        tracing::warn!(
+                            session_id = %session_owned,
+                            error = %err,
+                            "[ticker.p7] failed to recall reflections; skipping trait extraction"
+                        );
+                        return;
+                    }
+                };
+
+                if reflections.is_empty() {
+                    tracing::debug!(
+                        session_id = %session_owned,
+                        "[ticker.p7] no reflections in this session — nothing to distil"
+                    );
+                    return;
+                }
+
+                match crate::modules::memory::learned_traits::extract_and_persist(
+                    llm.as_ref(),
+                    &store,
+                    &session_owned,
+                    &reflections,
+                )
+                .await
+                {
+                    Ok(n) => tracing::info!(
+                        session_id = %session_owned,
+                        traits_persisted = n,
+                        "[ticker.p7] learned_traits extracted"
+                    ),
+                    Err(err) => tracing::warn!(
+                        session_id = %session_owned,
+                        error = %err,
+                        "[ticker.p7] trait extraction failed (non-fatal)"
+                    ),
+                }
+            });
+        }
     }
 }

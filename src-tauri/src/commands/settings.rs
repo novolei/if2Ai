@@ -414,8 +414,8 @@ pub fn get_memory_config(state: State<'_, AppState>) -> MemoryConfig {
     });
 
     let memory_runtime = crate::modules::runtime::config::current().memory();
-    let detected_os_timezone = crate::modules::runtime::logical_day::detect_os_timezone()
-        .map(|tz| tz.name().to_string());
+    let detected_os_timezone =
+        crate::modules::runtime::logical_day::detect_os_timezone().map(|tz| tz.name().to_string());
     MemoryConfig {
         total_tokens: config.total_tokens,
         system_pct: config.system_pct,

@@ -59,6 +59,7 @@ mod tests {
             scheduler,
             test_browser,
             Arc::new(crate::modules::memory::NullPinnedStore::new()),
+            None, // MEM-MOD-P4 — no LLM in this integration test
         );
 
         // Verify all expected tools exist
@@ -229,6 +230,7 @@ mod tests {
             scheduler,
             test_browser,
             Arc::new(crate::modules::memory::NullPinnedStore::new()),
+            None, // MEM-MOD-P4 — no LLM in this integration test
         );
 
         // Get registry via toolset registry

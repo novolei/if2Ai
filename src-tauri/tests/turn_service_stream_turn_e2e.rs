@@ -109,6 +109,7 @@ async fn make_service_without_app_handle() -> (TurnService, PathBuf) {
         // entry path early-rejects the streaming request when the
         // IPC adapter forgot to plumb an `AppHandle` through.
         app_handle: None,
+        learned_traits: None,
     };
 
     (TurnService::new(deps), root)

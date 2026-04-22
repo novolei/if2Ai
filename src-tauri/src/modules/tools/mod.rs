@@ -40,6 +40,12 @@ pub fn register_builtin_tools(
     scheduler: SharedScheduler,
     browser: Arc<BrowserRegistry>,
     pinned: Arc<dyn PinnedStore>,
+    // MEM-MOD-P4 — when `Some`, `memory_store` consults the Mem0-style
+    // update decision tree before persisting (gated by the
+    // `decision_tree_enabled` feature flag).  Pass `None` to disable
+    // the tree entirely; production passes the same `utility_llm`
+    // already shared by the rolling summarizer / compiler.
+    utility_llm: Option<Arc<dyn crate::modules::memory::llm::UtilityLlm>>,
 ) {
     if let Err(e) = registry.register(builtin::browser_tool_entry(browser)) {
         eprintln!("Failed to register browser tool: {}", e);
@@ -77,7 +83,10 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::http_request_entry()) {
         eprintln!("Failed to register http_request tool: {}", e);
     }
-    if let Err(e) = registry.register(builtin::memory_store_entry(memory.clone())) {
+    if let Err(e) = registry.register(builtin::memory_store_entry(
+        memory.clone(),
+        utility_llm.clone(),
+    )) {
         eprintln!("Failed to register memory_store tool: {}", e);
     }
     if let Err(e) = registry.register(builtin::memory_recall_entry(memory.clone())) {

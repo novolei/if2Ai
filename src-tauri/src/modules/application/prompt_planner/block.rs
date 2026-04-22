@@ -57,6 +57,12 @@ pub enum PromptBlockKind {
     /// the last conversation, and cumulative days in the relationship.
     /// Sits at priority 92 alongside Scenario.
     DayAwareness,
+    /// MEM-MOD-P7 — durable cross-session observations about the user
+    /// ("RL prefers terse replies", "RL ships at 3 AM"). Sits at
+    /// priority 93 — above Scenario but below Soul/Persona — so the
+    /// LLM reads identity first, then user-specific traits, then the
+    /// scenario instructions that depend on them.
+    LearnedTraits,
 }
 
 impl PromptBlockKind {

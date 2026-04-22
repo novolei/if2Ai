@@ -87,6 +87,11 @@ pub struct MemoryTicker {
     /// exactly like pre-P5.  Tests + legacy callers therefore stay
     /// compile-clean without touching the constructor.
     reflection_runtime: Option<ReflectionRuntime>,
+    /// MEM-MOD-P7 — optional learned-traits runtime.  When `Some`,
+    /// `on_session_end` distills the session's reflection memories
+    /// into durable traits.  Independent of `reflection_runtime` so
+    /// either feature can be wired alone.
+    learned_traits_runtime: Option<LearnedTraitsRuntime>,
 }
 
 /// MEM-MOD-P5 — bundle of runtime dependencies the reflection pulse
@@ -95,6 +100,17 @@ pub struct MemoryTicker {
 #[derive(Clone)]
 struct ReflectionRuntime {
     llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+    memory: crate::modules::memory::SharedMemoryProvider,
+}
+
+/// MEM-MOD-P7 — bundle of runtime dependencies the trait extractor
+/// needs at session end.  Carries its own LLM handle so callers can
+/// route trait distillation to a different model if desired (e.g. a
+/// cheaper one for high-frequency reflection).
+#[derive(Clone)]
+struct LearnedTraitsRuntime {
+    llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+    store: crate::modules::memory::learned_traits::LearnedTraitsStore,
     memory: crate::modules::memory::SharedMemoryProvider,
 }
 
@@ -122,6 +138,7 @@ impl MemoryTicker {
             config,
             state: Arc::new(Mutex::new(TickerState::default())),
             reflection_runtime: None,
+            learned_traits_runtime: None,
         }
     }
 
@@ -150,6 +167,33 @@ impl MemoryTicker {
         self.reflection_runtime
             .as_ref()
             .map(|rt| (rt.llm.clone(), rt.memory.clone()))
+    }
+
+    /// MEM-MOD-P7 — attach a learned-traits runtime so
+    /// `on_session_end` distills the session's reflection memories
+    /// into durable cross-session traits.
+    #[must_use]
+    pub fn with_learned_traits_runtime(
+        mut self,
+        llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+        store: crate::modules::memory::learned_traits::LearnedTraitsStore,
+        memory: crate::modules::memory::SharedMemoryProvider,
+    ) -> Self {
+        self.learned_traits_runtime = Some(LearnedTraitsRuntime { llm, store, memory });
+        self
+    }
+
+    /// MEM-MOD-P7 — internal accessor used by `turn_hook.rs::on_session_end`.
+    pub(super) fn learned_traits_runtime(
+        &self,
+    ) -> Option<(
+        Arc<dyn crate::modules::memory::llm::UtilityLlm>,
+        crate::modules::memory::learned_traits::LearnedTraitsStore,
+        crate::modules::memory::SharedMemoryProvider,
+    )> {
+        self.learned_traits_runtime
+            .as_ref()
+            .map(|rt| (rt.llm.clone(), rt.store.clone(), rt.memory.clone()))
     }
 
     /// Read-only access to the runtime config.

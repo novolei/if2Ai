@@ -19,6 +19,7 @@ pub mod channel;
 pub mod commands;
 pub mod config;
 pub mod control_plane;
+pub mod desktop_host;
 pub mod harness;
 pub mod identity;
 pub mod learning;
