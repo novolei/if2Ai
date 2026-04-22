@@ -134,6 +134,107 @@ impl UtilityLlm for ProviderUtilityLlm {
     }
 }
 
+/// MEM-MOD-WIRE-FIX — Production `UtilityLlm` for the if2Ai chat
+/// path.
+///
+/// Bridges the memory subsystem's `UtilityLlm` seam onto the same
+/// `ProviderClient` resolver the live agent turn uses
+/// ([`crate::modules::application::provider_service::resolve_chat_runtime_provider`]).
+/// Lazy: every `complete()` re-resolves the provider so flipping the
+/// configured chat model in Settings takes effect on the next utility
+/// call without a restart (`ConfigLoader` itself is cached, so the
+/// lookup is cheap).
+///
+/// Unlike [`ProviderUtilityLlm`], this adapter does NOT need a
+/// pre-built [`ProviderManager`] — historically that path required
+/// every memory consumer to register a `Box<dyn LlmProvider>` upfront,
+/// which the if2Ai bootstrap has never done.  The result was the
+/// production `MockUtilityLlm::empty()` placeholder turning every
+/// rolling summary, every reflection pulse, every learned-trait
+/// extraction into a no-op (=> empty `memory.md`, 0 traits, etc.).
+/// This adapter is the fix.
+pub struct ChatProviderUtilityLlm {
+    /// Working directory used to load the per-project provider
+    /// transport policy.  Bootstrap passes the user's home dir so we
+    /// always pick up the global `settings.json`; per-project
+    /// overrides will be honoured once a future slice threads the
+    /// turn's `workdir` through the memory pipeline.
+    workdir: std::path::PathBuf,
+}
+
+impl ChatProviderUtilityLlm {
+    /// Construct a new chat-provider-backed shim.
+    #[must_use]
+    pub fn new(workdir: std::path::PathBuf) -> Self {
+        Self { workdir }
+    }
+}
+
+#[async_trait]
+impl UtilityLlm for ChatProviderUtilityLlm {
+    async fn complete(
+        &self,
+        system: &str,
+        user: &str,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<String, MemoryError> {
+        if system.is_empty() && user.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Resolve provider lazily so config edits take effect on the
+        // next utility call (no restart needed).
+        let resolution =
+            crate::modules::application::provider_service::resolve_chat_runtime_provider(
+                &self.workdir,
+            )
+            .await
+            .map_err(|e| MemoryError::Generic(format!("UtilityLlm.resolve: {e}")))?;
+
+        let request = MessageRequest {
+            model: resolution.model.clone(),
+            max_tokens,
+            messages: vec![InputMessage::user_text(user)],
+            system: if system.is_empty() {
+                None
+            } else {
+                Some(system.to_string())
+            },
+            tools: None,
+            tool_choice: None,
+            stream: false,
+        };
+
+        tracing::debug!(
+            model = %resolution.model,
+            max_tokens,
+            temperature,
+            system_len = system.len(),
+            user_len = user.len(),
+            "[utility-llm.chat] dispatching one-shot completion"
+        );
+
+        let response = resolution
+            .provider_client
+            .send_message(&request)
+            .await
+            .map_err(|e| MemoryError::Generic(format!("UtilityLlm.send: {e}")))?;
+
+        let text = response
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                OutputContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        Ok(text)
+    }
+}
+
 /// In-memory test double for [`UtilityLlm`].
 ///
 /// Returns canned responses in order; once `responses` is exhausted the

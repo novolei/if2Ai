@@ -48,7 +48,7 @@ pub use job_runner::{JobAttempt, JobError, JobStatus};
 // is for external consumers only.
 #[allow(unused_imports)]
 pub use llm::ProviderUtilityLlm;
-pub use llm::{MockUtilityLlm, UtilityLlm};
+pub use llm::{ChatProviderUtilityLlm, MockUtilityLlm, UtilityLlm};
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
 

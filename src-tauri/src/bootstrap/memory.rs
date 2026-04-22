@@ -25,10 +25,20 @@ pub(super) fn build_memory_bootstrap(
 ) -> MemoryBootstrap {
     let job_runner = Arc::new(open_job_runner_with_fallback(&paths.memory_root));
 
-    let utility_llm: Arc<dyn modules::memory::UtilityLlm> =
-        Arc::new(modules::memory::MockUtilityLlm::empty());
-    tracing::warn!(
-        "[init] UtilityLlm bound to MockUtilityLlm placeholder; real provider wiring deferred to slice 8A.7+"
+    // MEM-MOD-WIRE-FIX — bind UtilityLlm to the live chat provider so
+    // the entire memory pipeline (rolling summary → compile_today/
+    // week/longterm/facts → reflection_loop → learned_traits
+    // extractor → Mem0 decision tree) runs through the user's
+    // configured chat model.  Pre-fix this was a `MockUtilityLlm::
+    // empty()` that silently returned `""` for every call, which is
+    // why memory.md was always blank, learned_traits stayed at 0,
+    // and the compile pipeline reported every step SKIPPED.
+    let utility_llm: Arc<dyn modules::memory::UtilityLlm> = Arc::new(
+        modules::memory::ChatProviderUtilityLlm::new(paths.if2ai_dir.clone()),
+    );
+    tracing::info!(
+        "[init] UtilityLlm bound to ChatProviderUtilityLlm (workdir={:?})",
+        paths.if2ai_dir
     );
 
     let summary_db_path = paths.memory_root.join("memory.db");
