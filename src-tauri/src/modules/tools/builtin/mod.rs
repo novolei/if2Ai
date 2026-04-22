@@ -20,6 +20,7 @@ pub mod grep_search;
 pub mod http_request;
 pub mod json_parse;
 pub mod memory_export;
+pub mod memory_feedback_signal;
 pub mod memory_forget;
 pub mod memory_purge;
 pub mod memory_recall;
@@ -82,6 +83,8 @@ pub use http_request::entry as http_request_entry;
 pub use json_parse::json_parse_tool_entry;
 #[allow(unused_imports)]
 pub use memory_export::entry as memory_export_entry;
+#[allow(unused_imports)]
+pub use memory_feedback_signal::entry as memory_feedback_signal_entry;
 #[allow(unused_imports)]
 pub use memory_forget::entry as memory_forget_entry;
 #[allow(unused_imports)]

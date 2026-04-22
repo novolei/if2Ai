@@ -22,7 +22,14 @@ async fn store_and_recall() {
     assert_eq!(results[0].key, "test_key");
     assert_eq!(results[0].content, "Hello world");
     assert_eq!(results[0].importance, 0.5);
-    assert_eq!(results[0].access_count, 0);
+    // MEM-MOD-P1 — `recall` now bumps `access_count` for every hit so
+    // the returned entry already reflects the +1 (was 0 pre-P1).
+    assert_eq!(results[0].access_count, 1);
+
+    // Calling recall a second time should bump again (proves we wrote
+    // back, not just patched the in-memory copy).
+    let again = provider.recall("test_key", None, 10).await.unwrap();
+    assert_eq!(again[0].access_count, 2);
 }
 
 #[tokio::test]

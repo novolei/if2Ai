@@ -92,6 +92,9 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::memory_export_entry(memory.clone())) {
         eprintln!("Failed to register memory_export tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::memory_feedback_signal_entry(memory.clone())) {
+        eprintln!("Failed to register memory_feedback_signal tool: {}", e);
+    }
     if let Err(e) = registry.register(builtin::pin_memory_entry(pinned.clone())) {
         eprintln!("Failed to register pin_memory tool: {}", e);
     }

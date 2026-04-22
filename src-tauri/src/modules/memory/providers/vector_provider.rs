@@ -491,6 +491,20 @@ impl MemoryProvider for VectorMemoryProvider {
         Ok(0)
     }
 
+    /// MEM-MOD-P1 — delegate to SQLite when available; LanceDB does not
+    /// store `trust_score`, so without dual-write this is a no-op.
+    async fn adjust_trust_score(
+        &self,
+        key: &str,
+        delta: f64,
+    ) -> Result<f64, MemoryError> {
+        if let Some(ref sqlite) = self.sqlite {
+            return sqlite.adjust_trust_score(key, delta).await;
+        }
+        let _ = (key, delta);
+        Ok(0.0)
+    }
+
     /// Scope-aware store — delegates to the SQLite dual-write provider when
     /// available so `session_id` / `project_id` are persisted.  Without
     /// SQLite the entry is stored without scope metadata; LanceDB has no

@@ -212,7 +212,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                 }
             }
 
-            let results = if query_str.is_empty() {
+            let mut results: Vec<MemoryEntry> = if query_str.is_empty() {
                 all_entries
             } else {
                 let query_lower = query_str.to_lowercase();
@@ -224,6 +224,15 @@ impl MemoryProvider for SqliteMemoryProvider {
                     })
                     .collect()
             };
+
+            // MEM-MOD-P1 — Stats Activation: bump `access_count` on every
+            // recalled key so the WeibullDecay formula has signal to work
+            // with and the Memory Browser's "访问 N 次" badge stops being
+            // a permanent zero.  The +1 is applied to the in-memory
+            // entries we return as well so the immediate caller (and
+            // any audit emitter consuming the same Vec) sees a fresh
+            // value without an extra round-trip.
+            bump_access_counts_in_results(&c, &mut results)?;
 
             Ok(results)
         })
@@ -286,7 +295,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                 }
             }
 
-            let results = if query_str.is_empty() {
+            let mut results: Vec<MemoryEntry> = if query_str.is_empty() {
                 all_entries
             } else {
                 let query_lower = query_str.to_lowercase();
@@ -298,6 +307,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                     })
                     .collect()
             };
+
+            // MEM-MOD-P1 — see `recall_scoped` above for the rationale.
+            bump_access_counts_in_results(&c, &mut results)?;
 
             Ok(results)
         })
@@ -590,5 +602,101 @@ impl MemoryProvider for SqliteMemoryProvider {
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// MEM-MOD-P1 — clamp `trust_score + delta` into `[-1.0, 1.0]` and
+    /// persist the result.  Single-row UPDATE — cheap enough to be
+    /// invoked from a per-turn LLM tool without batching.
+    async fn adjust_trust_score(
+        &self,
+        key: &str,
+        delta: f64,
+    ) -> Result<f64, MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+
+            let current: Option<f64> = c
+                .query_row(
+                    "SELECT trust_score FROM memory_entries WHERE key = ?1",
+                    params![key],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            let Some(current) = current else {
+                return Err(MemoryError::KeyNotFound(key));
+            };
+
+            let new_score = (current + delta).clamp(-1.0_f64, 1.0_f64);
+            c.execute(
+                "UPDATE memory_entries
+                 SET trust_score = ?1, updated_at = ?2
+                 WHERE key = ?3",
+                params![new_score, chrono::Utc::now().to_rfc3339(), key],
+            )
+            .map_err(|e| {
+                MemoryError::Generic(format!("trust_score update failed: {e}"))
+            })?;
+
+            Ok(new_score)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+}
+
+/// MEM-MOD-P1 — Increment `access_count` for every key just returned
+/// to a recall caller, in a single batched UPDATE.  Errors here are
+/// non-fatal: stats are best-effort and we never want to fail a recall
+/// because the bookkeeping write hit a transient SQLite lock.  A
+/// `tracing::warn!` makes the failure visible without poisoning the
+/// audit stream.
+///
+/// The matching `MemoryEntry::access_count` values in `results` are
+/// bumped in lockstep so the immediate caller (and the audit emitter
+/// downstream) sees a fresh count without an extra round-trip.
+fn bump_access_counts_in_results(
+    c: &rusqlite::Connection,
+    results: &mut [MemoryEntry],
+) -> Result<(), MemoryError> {
+    if results.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = std::iter::repeat("?")
+        .take(results.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "UPDATE memory_entries
+         SET access_count = access_count + 1
+         WHERE key IN ({placeholders})"
+    );
+
+    let key_params: Vec<&dyn rusqlite::ToSql> = results
+        .iter()
+        .map(|e| &e.key as &dyn rusqlite::ToSql)
+        .collect();
+
+    match c.execute(&sql, rusqlite::params_from_iter(key_params)) {
+        Ok(_) => {
+            for entry in results.iter_mut() {
+                entry.access_count = entry.access_count.saturating_add(1);
+            }
+            Ok(())
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                count = results.len(),
+                "[memory.recall] best-effort access_count bump failed; returning unmodified results"
+            );
+            Ok(())
+        }
     }
 }

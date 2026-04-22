@@ -42,9 +42,9 @@ pub use job_runner::{JobAttempt, JobError, JobStatus};
 // implementation held on AppState, which the bin reaches for via
 // the deep path (`llm::ProviderUtilityLlm::new`) so this re-export
 // is for external consumers only.
-pub use llm::{MockUtilityLlm, UtilityLlm};
 #[allow(unused_imports)]
 pub use llm::ProviderUtilityLlm;
+pub use llm::{MockUtilityLlm, UtilityLlm};
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
 
@@ -64,18 +64,16 @@ pub use summary::{SessionSummaryRecord, SummarySource};
 // reaches for them via `pinned::types::*` directly.
 pub use pinned::{NullPinnedStore, PinnedStore, SqlitePinnedStore};
 #[allow(unused_imports)]
-pub use pinned::{
-    PinScope, PinSource, PinnedItem, MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS,
-};
+pub use pinned::{PinScope, PinSource, PinnedItem, MAX_PINS_PER_SCOPE, MAX_PIN_CONTENT_CHARS};
 
 // System-prompt memory injection — `build_memory_injection` and
 // `MemoryInjection` are consumed by application::memory_injection_service.
 // `CHARS_PER_TOKEN_ESTIMATE` is part of the public surface for the
 // occasional ad-hoc consumer (tests, external embedders), so we keep
 // it exported even though the bin doesn't reach for it directly.
-pub use inject::{build_memory_injection, MemoryInjection};
 #[allow(unused_imports)]
 pub use inject::CHARS_PER_TOKEN_ESTIMATE;
+pub use inject::{build_memory_injection, MemoryInjection};
 
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
@@ -93,9 +91,9 @@ pub use compiler::{CompilePaths, CompileResult};
 // hooks. `DailyStep` / `TickerState` are part of the public surface
 // for diagnostics consumers (TickerStatusCard etc) but no current bin
 // caller imports them — keep re-exported, allow unused.
-pub use ticker::{MemoryTicker, TickerConfig};
 #[allow(unused_imports)]
 pub use ticker::{DailyStep, TickerState};
+pub use ticker::{MemoryTicker, TickerConfig};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -406,6 +404,23 @@ pub trait MemoryProvider: Send + Sync {
         // Silence "unused variable" warnings for the default no-op.
         let _ = (lambda_hours, k);
         Ok(0)
+    }
+
+    /// MEM-MOD-P1 — Adjust the persisted `trust_score` of a memory entry by
+    /// `delta`, clamping the resulting value to `[-1.0, 1.0]`. Returns the
+    /// new `trust_score` so callers (LLM tools, audit emitter) can echo it
+    /// back without an extra read.
+    ///
+    /// The default implementation is a no-op (returns `Ok(0.0)`) so
+    /// in-memory / vector-only providers remain functional during tests.
+    /// Production providers (SQLite) override this to persist the change.
+    async fn adjust_trust_score(
+        &self,
+        key: &str,
+        delta: f64,
+    ) -> Result<f64, MemoryError> {
+        let _ = (key, delta);
+        Ok(0.0)
     }
 }
 
