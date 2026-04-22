@@ -29,7 +29,7 @@ import {
   resolveSkillSlash,
   respondPermission,
   setSessionPinned,
-  startAgentStream,
+  startChatTurn,
   suggestSlashCommands,
   type Project,
   type ProjectMeta,
@@ -62,6 +62,7 @@ import { bootstrapStore, useBootstrapSelector } from '@/state'
 // `Dispatch<SetStateAction<T>>` API is preserved at every
 // existing call site.
 import {
+  getConversationSnapshot,
   removeSession,
   setConversation,
   setSessionLoading as setStoreSessionLoading,
@@ -280,7 +281,11 @@ function App() {
         | Record<string, Conversation>
         | ((prev: Record<string, Conversation>) => Record<string, Conversation>),
     ) => {
-      const prev = chatSlice.conversations
+      // Always read the latest snapshot from the store, not the
+      // stale React-rendered chatSlice.conversations. This ensures
+      // that multiple setConversations calls within the same
+      // sendMessage invocation see each other's updates.
+      const prev = getConversationSnapshot().conversations
       const value =
         typeof next === 'function'
           ? (next as (p: Record<string, Conversation>) => Record<string, Conversation>)(prev)
@@ -303,7 +308,7 @@ function App() {
         }
       }
     },
-    [chatSlice.conversations],
+    [],
   )
   const [input, setInput] = useState('')
   // Phase M2.6 — opt-in classifier preview. Watches the active
@@ -323,7 +328,8 @@ function App() {
         | Record<string, boolean>
         | ((prev: Record<string, boolean>) => Record<string, boolean>),
     ) => {
-      const prev = chatSlice.sessionLoading
+      // Always read the latest snapshot from the store
+      const prev = getConversationSnapshot().sessionLoading
       const value =
         typeof next === 'function'
           ? (next as (p: Record<string, boolean>) => Record<string, boolean>)(prev)
@@ -337,7 +343,7 @@ function App() {
         }
       }
     },
-    [chatSlice.sessionLoading],
+    [],
   )
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
@@ -359,7 +365,8 @@ function App() {
         | Record<string, TodoItem[]>
         | ((prev: Record<string, TodoItem[]>) => Record<string, TodoItem[]>),
     ) => {
-      const prev = chatSlice.sessionTodos
+      // Always read the latest snapshot from the store
+      const prev = getConversationSnapshot().sessionTodos
       const value =
         typeof next === 'function'
           ? (next as (p: Record<string, TodoItem[]>) => Record<string, TodoItem[]>)(prev)
@@ -373,7 +380,7 @@ function App() {
         }
       }
     },
-    [chatSlice.sessionTodos],
+    [],
   )
   const sessionTitleStates = chatSlice.sessionTitleStates
   const setSessionTitleStates = useCallback(
@@ -382,7 +389,8 @@ function App() {
         | Record<string, SessionTitleState>
         | ((prev: Record<string, SessionTitleState>) => Record<string, SessionTitleState>),
     ) => {
-      const prev = chatSlice.sessionTitleStates
+      // Always read the latest snapshot from the store
+      const prev = getConversationSnapshot().sessionTitleStates
       const value =
         typeof next === 'function'
           ? (next as (p: Record<string, SessionTitleState>) => Record<string, SessionTitleState>)(
@@ -405,7 +413,7 @@ function App() {
         setStoreTitleState(id, wanted)
       }
     },
-    [chatSlice.sessionTitleStates],
+    [],
   )
   // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({})
@@ -438,7 +446,8 @@ function App() {
         | Record<string, string>
         | ((prev: Record<string, string>) => Record<string, string>),
     ) => {
-      const prev = chatSlice.streamAbortHandles
+      // Always read the latest snapshot from the store
+      const prev = getConversationSnapshot().streamAbortHandles
       const value =
         typeof next === 'function'
           ? (next as (p: Record<string, string>) => Record<string, string>)(prev)
@@ -455,7 +464,7 @@ function App() {
         }
       }
     },
-    [chatSlice.streamAbortHandles],
+    [],
   )
   // Phase M2.8 — permission prompt now reads from the canonical
   // projection store (`snapshot.approvals`).  The bridge feeds the
@@ -897,7 +906,7 @@ function App() {
           ...msg,
           content: msg.content || ' ',
         })) ?? [],
-    [activeConv?.messages]
+    [activeConv]
   )
   const runningSessionIds = Object.entries(sessionLoading)
     .filter(([, running]) => running)
@@ -1624,12 +1633,12 @@ function App() {
 
       const finalizedAssistantId = assistantMsgId
       setConversations((prev) => {
-        const currentConv = prev[activeSessionId]
+        const currentConv = prev[sessionId]
         if (!currentConv) return prev
 
         return {
           ...prev,
-          [activeSessionId]: {
+          [sessionId]: {
             ...currentConv,
             messages: currentConv.messages.map((msg) =>
               msg.id === finalizedAssistantId
@@ -1712,9 +1721,9 @@ function App() {
           // via the skill() tool and then responds according to its instructions.
           try {
             createAssistantMessage()
-            const streamId = await startAgentStream(sessionId, skillInvocation, permissionMode)
-            setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: streamId }))
-            const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
+            const handle = await startChatTurn({ sessionId, userMessage: skillInvocation, permissionMode })
+            setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: handle.streamId }))
+            const unlisten = await handle.subscribe((payload: StreamTokenPayload) => {
               if (payload.event_type === 'text_delta' && payload.text) {
                 ensureAssistantMessage()
                 if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
@@ -1923,10 +1932,10 @@ function App() {
 
     try {
       createAssistantMessage()
-      const streamId = await startAgentStream(sessionId, userMsg.content, permissionMode)
-      setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: streamId }))
+      const handle = await startChatTurn({ sessionId, userMessage: userMsg.content, permissionMode })
+      setStreamAbortHandles((prev) => ({ ...prev, [sessionId]: handle.streamId }))
 
-      const unlisten = await listenToStream(streamId, (payload: StreamTokenPayload) => {
+      const unlisten = await handle.subscribe((payload: StreamTokenPayload) => {
         if (payload.event_type === 'text_delta' && payload.text) {
           ensureAssistantMessage()
           if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
@@ -2060,11 +2069,11 @@ function App() {
           hasPendingTextDelta = false
           hasPendingThinkingDelta = false
           setConversations((prev) => {
-            const currentConv = prev[activeSessionId]
+            const currentConv = prev[sessionId]
             if (!currentConv) return prev
             return {
               ...prev,
-                [activeSessionId]: {
+                [sessionId]: {
                   ...currentConv,
                   messages: currentConv.messages.map((msg) =>
                     msg.id === currentAssistantId
@@ -2441,6 +2450,16 @@ function App() {
     }
   }
 
+  // Adapter for AppShell's simplified event signature
+  const handleWindowDragForAppShell = (_event: { clientX: number; clientY: number }) => {
+    // AppShell only provides clientX/clientY, but we need the full event
+    // for target checking. Since AppShell already handles the window-drag
+    // regions, we can safely call startDragging directly.
+    void appWindow.startDragging().catch(() => {
+      // Ignore drag failures on platforms that do not support the request in this context.
+    })
+  }
+
   // MIG-013 — `loadMainAppData` removed: its responsibilities
   // are now owned by `runBootSequence` (in
   // `src/boot/boot-orchestrator.ts`), which is invoked both on
@@ -2532,7 +2551,7 @@ function App() {
         onOpenSettings: () => openSettingsWindow(),
         appIconSrc,
       }}
-      onWindowDrag={startWindowDrag}
+      onWindowDrag={handleWindowDragForAppShell}
       onOnboardingComplete={handleOnboardingComplete}
       chatSectionOverlay={
         <AgentVoiceIndicator

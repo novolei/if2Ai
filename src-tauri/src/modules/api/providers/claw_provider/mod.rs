@@ -6,9 +6,9 @@ mod provider_impl;
 #[cfg(test)]
 mod tests;
 
+use message_stream::expect_success;
 #[allow(unused_imports)]
 pub use message_stream::MessageStream;
-use message_stream::expect_success;
 // Re-exported for `super::*` access in tests.rs (kept byte-identical).
 #[allow(unused_imports)]
 use message_stream::is_retryable_status;

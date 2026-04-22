@@ -12,6 +12,7 @@
 // MIG-012 pack Cutover section.
 
 export * from './client'
+export * from './conversations'
 export * from './gateway-re-export'
 export * from './onboarding'
 export * from './projects'

@@ -48,11 +48,11 @@ use std::sync::{Arc, Mutex};
 
 // HashSet + TurnHook + daily_step_name re-exported for `super::*` glob in tests.rs.
 #[allow(unused_imports)]
-use std::collections::HashSet;
-#[allow(unused_imports)]
 use crate::modules::runtime::conversation::TurnHook;
 #[allow(unused_imports)]
 use daily::daily_step_name;
+#[allow(unused_imports)]
+use std::collections::HashSet;
 
 use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter, RecoveredSummary};
 use crate::modules::memory::compiler::{CompilePaths, MemoryCompiler};

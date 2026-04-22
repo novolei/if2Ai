@@ -2,10 +2,11 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [execution-mode-policy-routing](../../staff-remediation/gap-modules/execution-mode-policy-routing/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-22`
+- Completed: `2026-04-22` (4 sub-packs: MIG-002-a/b/c/d all merged)
 
 ---
 

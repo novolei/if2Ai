@@ -260,6 +260,15 @@ function _getSnapshot(): _State {
 }
 
 /**
+ * Synchronously read the current store snapshot without subscribing.
+ * Use this in non-React contexts (e.g., event handlers, async functions)
+ * where you need the latest state but don't want to trigger re-renders.
+ */
+export function getConversationSnapshot(): ConversationSlice {
+  return _getSnapshot()
+}
+
+/**
  * React hook that returns the full `ConversationSlice`, re-rendering the
  * calling component whenever any conversation state changes.
  */
