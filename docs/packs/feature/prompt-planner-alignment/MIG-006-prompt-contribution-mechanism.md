@@ -2,11 +2,12 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Analysis: [prompt-planner-gap-analysis.md](../../../staff-remediation/prompt-planner-gap-analysis.md) §7.2
 - Depends On: `MIG-005`
 - Last Updated: `2026-04-22`
+- Completed: `2026-04-22`
 
 ---
 

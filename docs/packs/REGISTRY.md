@@ -12,12 +12,13 @@
 
 | Pack                                       | Type | Goal | Owner |
 | ------------------------------------------ | ---- | ---- | ----- |
-| _(无 — 下一刀建议 MIG-006 prompt contribution mechanism)_ | —    | —    | —     |
+| _(无 — 下一刀建议 MIG-007 prompt planner modularization)_ | —    | —    | —     |
 
 ## Recently Done
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [MIG-006](./feature/prompt-planner-alignment/MIG-006-prompt-contribution-mechanism.md) | feature  | 实现 PromptContribution 机制 + PromptBuildMode + strict validation，让子系统独立贡献 prompt blocks                      | 2026-04-22 |
 | [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md) | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                  | 2026-04-22 |
 | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md) | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                      | 2026-04-22 |
 | [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | feature  | 让主聊天链走 gateway conversations/streaming surface (App.tsx 已完成 cutover)                                          | 2026-04-22 |
