@@ -1757,6 +1757,75 @@ export async function memoryDelete(key: string): Promise<void> {
   return invoke<void>("memory_delete", { key });
 }
 
+/**
+ * MEM-MOD-P6 — One historical snapshot of a memory entry, captured
+ * just before an UPDATE / CONSOLIDATE. Returned newest-first by
+ * {@link memoryHistory}.
+ */
+export interface MemoryHistoryEntryDto {
+  key: string;
+  content: string;
+  category: string;
+  importance: number;
+  trust_score: number;
+  /** RFC 3339 — when this snapshot's value was first written. */
+  valid_from: string;
+  /** RFC 3339 — when this snapshot was archived (= overwritten). */
+  valid_to: string;
+  /** `"update"` | `"consolidate"` — what triggered the snapshot. */
+  source: string;
+}
+
+/**
+ * MEM-MOD-P6 — Pull every historical snapshot for `key` (newest first).
+ * Empty when the key has never been updated or consolidated.
+ */
+export async function memoryHistory(
+  key: string,
+): Promise<MemoryHistoryEntryDto[]> {
+  return invoke<MemoryHistoryEntryDto[]>("memory_history", { key });
+}
+
+/**
+ * MEM-MOD-P7 — One durable observation about the user accumulated
+ * across sessions. Surfaced by {@link learnedTraitsList}; retired by
+ * {@link learnedTraitsDisagree} when the user clicks "我不同意".
+ */
+export interface LearnedTraitDto {
+  id: number;
+  trait_text: string;
+  evidence_count: number;
+  /** [0, 1) — saturating with each repeat sighting (rises 30 % of gap). */
+  confidence: number;
+  /** RFC 3339 — first time the LLM extractor surfaced this trait. */
+  first_seen_at: string;
+  /** RFC 3339 — most recent time evidence_count was bumped. */
+  last_updated_at: string;
+  /** Originating session_id; informational only. */
+  source_session: string | null;
+}
+
+/**
+ * MEM-MOD-P7 — List active (non-disagreed) cross-session traits the
+ * agent has accumulated. Newest first. `limit` defaults to 50 backend-side.
+ */
+export async function learnedTraitsList(
+  limit?: number,
+): Promise<LearnedTraitDto[]> {
+  return invoke<LearnedTraitDto[]>("learned_traits_list", {
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * MEM-MOD-P7 — Mark a trait as disagreed-with so the prompt block stops
+ * surfacing it. The row is preserved (audit trail), only `disagreed_at`
+ * is set.
+ */
+export async function learnedTraitsDisagree(id: number): Promise<void> {
+  return invoke<void>("learned_traits_disagree", { id });
+}
+
 /** A single promotion recommendation surfaced to the Memory Browser. */
 export interface MemoryPromotionCandidateDto {
   key: string;

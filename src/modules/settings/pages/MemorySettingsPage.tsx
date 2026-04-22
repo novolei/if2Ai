@@ -6,6 +6,7 @@ import {
   Brain,
   Check,
   Clock,
+  ThumbsDown,
   Download,
   History,
   Sliders,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { MemoryAggregateOverview } from '@/components/memory/MemoryAggregateOverview'
+import { LearnedTraitsPanel } from '@/components/memory/LearnedTraitsPanel'
 import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEditor'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import { MemoryNarrativeViewer } from '@/components/memory/narrative/MemoryNarrativeViewer'
@@ -615,6 +617,27 @@ export function MemorySettingsPage() {
             默认: 3/0.55 · 8/0.70
           </span>
         </div>
+      </SettingsSurface>
+
+      {/* ── Learned Traits (MEM-MOD-P7) ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-violet-500/[0.1]">
+              <ThumbsDown className="h-3.5 w-3.5 text-violet-600" />
+            </div>
+            <div>
+              <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+                跨 session 学到的特征 · Learned Traits
+              </div>
+              <p className="mt-1 text-[11.5px] text-muted-foreground">
+                Agent 在每个 session 结束时基于 reflection 提炼出 1–3 条「关于你」的累积观察。
+                觉得不对的可以一键撤回，行（保留审计）但不再进入未来 prompt。
+              </p>
+            </div>
+          </div>
+        </div>
+        <LearnedTraitsPanel />
       </SettingsSurface>
 
       {/* ── Day Awareness (MEM-MOD-PD0) ── */}

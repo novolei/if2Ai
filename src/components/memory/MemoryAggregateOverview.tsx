@@ -64,6 +64,15 @@ export function MemoryAggregateOverview({
   const totalEntries = entries.length
   const coreEntries = entries.filter((e) => e.category === 'core').length
   const dailyEntries = entries.filter((e) => e.category === 'daily').length
+  // MEM-MOD-P2 — surface the three new built-in facets so the overview
+  // reflects the real category mix, not just the original two.
+  const reflectionEntries = entries.filter(
+    (e) => e.category === 'reflection',
+  ).length
+  const workingEntries = entries.filter((e) => e.category === 'working').length
+  const proceduralEntries = entries.filter(
+    (e) => e.category === 'procedural',
+  ).length
 
   // Pinned, Compiled, and Recent Summaries — load on mount + on
   // invalidation. We share one invalidation key for these three since
@@ -262,6 +271,18 @@ export function MemoryAggregateOverview({
         <span aria-hidden>·</span>
         <span>
           Daily <strong className="font-semibold text-foreground/75">{dailyEntries}</strong>
+        </span>
+        <span aria-hidden>·</span>
+        <span>
+          Working <strong className="font-semibold text-foreground/75">{workingEntries}</strong>
+        </span>
+        <span aria-hidden>·</span>
+        <span>
+          Procedural <strong className="font-semibold text-foreground/75">{proceduralEntries}</strong>
+        </span>
+        <span aria-hidden>·</span>
+        <span>
+          Reflection <strong className="font-semibold text-foreground/75">{reflectionEntries}</strong>
         </span>
         {onShowBrowser ? (
           <button

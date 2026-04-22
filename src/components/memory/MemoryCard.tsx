@@ -11,6 +11,7 @@
 
 import { ArrowDown, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { MemoryHistoryViewer } from './MemoryHistoryViewer'
 
 export interface MemoryEntryDto {
   key: string
@@ -151,6 +152,11 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
               className="h-full rounded-full bg-primary/40 transition-all duration-300"
               style={{ width: `${Math.round(entry.importance * 100)}%` }}
             />
+          </div>
+          {/* MEM-MOD-P6 — temporal history of this key, lazy-loaded
+              on first expand so the card stays cheap when collapsed. */}
+          <div className="mt-2.5">
+            <MemoryHistoryViewer memoryKey={entry.key} />
           </div>
         </div>
         <div className="flex shrink-0 flex-col gap-1">
