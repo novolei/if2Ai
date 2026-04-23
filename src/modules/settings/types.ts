@@ -10,6 +10,7 @@ export type SettingsSectionId =
   | "web-search"
   | "memory"
   | "model"
+  | "providers"
   | "connections"
   | "remote"
   | "tts-settings"

@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [execution-mode-policy-routing](../../staff-remediation/gap-modules/execution-mode-policy-routing/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -34,6 +34,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [UClaw Gap Migration Audit](../../staff-remediation/uclaw-gap-migration-audit.md)
 - [If2Ai Worker Adoption Design](../../staff-remediation/if2ai-worker-adoption-design.md)
@@ -54,6 +55,12 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - 至少一条 worker/tool contract 测试通过
 - 至少一个旧工具路径被迁入统一 contract
+
+## Code Audit 2026-04-23
+
+- Status: done; skip for worker/tool contract foundation.
+- Evidence: `ToolExecutionBroker` and `prepare_step_execution` exist; `ToolRegistryExecutor` routes tool dispatch through the broker and enforced preflight.
+- Remaining Gap: retry/attempt timeline is not part of this pack; continue with `MIG-022`.
 
 ## Out Of Scope
 

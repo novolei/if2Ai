@@ -2,6 +2,15 @@
 
 <cite>
 **Referenced Files in This Document**
+- [planner.rs](file://src-tauri/src/modules/application/prompt_planner/planner.rs)
+- [block.rs](file://src-tauri/src/modules/application/prompt_planner/block.rs)
+- [diagnostics.rs](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs)
+- [build_request.rs](file://src-tauri/src/modules/application/prompt_planner/build_request.rs)
+- [governor.rs](file://src-tauri/src/modules/application/prompt_planner/governor.rs)
+- [preflight.rs](file://src-tauri/src/modules/application/prompt_planner/preflight.rs)
+- [sanitize.rs](file://src-tauri/src/modules/application/prompt_planner/sanitize.rs)
+- [merge.rs](file://src-tauri/src/modules/application/prompt_planner/merge.rs)
+- [mod.rs](file://src-tauri/src/modules/application/prompt_planner/mod.rs)
 - [prompt.rs](file://rust/crates/runtime/src/prompt.rs)
 - [prompt_tools_guide.rs](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs)
 - [inject.rs](file://src-tauri/src/modules/memory/inject.rs)
@@ -12,10 +21,11 @@
 
 ## Update Summary
 **Changes Made**
-- Updated modular architecture documentation to reflect the refactoring of runtime/prompt.rs into a modular directory structure
-- Added documentation for the new prompt module organization with separate files for different prompt components
-- Updated file references to reflect the new modular structure while maintaining complete functionality
-- Enhanced documentation to cover the new prompt module boundaries and responsibilities
+- Updated modular architecture documentation to reflect the complete refactoring of the prompt planner into focused submodules
+- Added comprehensive documentation for all new modular components (block.rs, diagnostics.rs, build_request.rs, planner.rs)
+- Updated file references to reflect the new modular structure while maintaining complete backward compatibility
+- Enhanced documentation to cover the new prompt planner boundaries, governor, preflight, and sanitize components
+- Documented the external contributions merging mechanism and traceability improvements
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -24,352 +34,418 @@
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
 6. [Modular Prompt Architecture](#modular-prompt-architecture)
-7. [Dependency Analysis](#dependency-analysis)
-8. [Performance Considerations](#performance-considerations)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Conclusion](#conclusion)
+7. [Governor, Preflight, and Sanitize Components](#governor-preflight-and-sanitize-components)
+8. [External Contributions and Merging](#external-contributions-and-merging)
+9. [Dependency Analysis](#dependency-analysis)
+10. [Performance Considerations](#performance-considerations)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the prompt planner subsystem that assembles the system prompt for the agent. The subsystem has been refactored into a modular architecture while maintaining complete functionality. It covers:
-- Prompt assembly process and the stable section ordering
-- System prompt construction with environment, project context, and runtime configuration
-- Web-tools guide integration for routing between web-access tools
-- Memory injection sections (pinned, compiled, rules) and retrieval integration
-- The PromptPlan structure and PromptBlock types conceptually
-- The prompt planning workflow and traceability
-- Governor, preflight, and sanitize components within the prompt planner architecture
+This document explains the prompt planner subsystem that assembles the system prompt for the agent. The subsystem has been completely refactored into a highly modular architecture while maintaining complete backward compatibility. The new architecture follows UClaw alignment principles and provides:
 
-**Updated** The prompt planner now operates through a modular directory structure that separates concerns into distinct components while preserving all existing functionality.
+- **Structured prompt planning** with explicit block types and traceability
+- **Modular components** (planner, block types, diagnostics, build requests) for maintainability
+- **Governor, preflight, and sanitize** components for request management
+- **External contributions merging** mechanism for subsystem integration
+- **Enhanced traceability** with block hashing and diagnostic metadata
+- **Coding mode augmentation** and compaction support
+
+**Updated** The prompt planner now operates through a fully modular directory structure with clear separation of concerns across multiple specialized components.
 
 ## Project Structure
-The prompt planner has been refactored into a modular directory structure within the Rust runtime module:
-- **prompt.rs**: Core prompt builder and system prompt construction functions
-- **prompt_tools_guide.rs**: Web tools routing guide generation for tool selection
-- **inject.rs**: Memory injection service for assembling memory sections
-- **Module boundaries**: Clear separation of concerns with dedicated responsibilities
+The prompt planner has been completely refactored into a comprehensive modular architecture within the Rust application module:
 
 ```mermaid
 graph TB
-subgraph "Modular Prompt Architecture"
-subgraph "Rust Runtime Prompt Module"
-P1["prompt.rs<br/>Core prompt builder"]
-P2["prompt_tools_guide.rs<br/>Web tools routing"]
-P3["inject.rs<br/>Memory injection"]
+subgraph "Modular Prompt Planner Architecture"
+subgraph "Core Planning Components"
+P1["planner.rs<br/>Main prompt planning logic"]
+B1["block.rs<br/>Prompt block types and structures"]
+D1["diagnostics.rs<br/>Diagnostic metadata and validation"]
+BR1["build_request.rs<br/>Build request types and modes"]
+end
+subgraph "Supporting Components"
+G1["governor.rs<br/>Token and character budget management"]
+PF1["preflight.rs<br/>Request preflight estimators"]
+S1["sanitize.rs<br/>Input sanitization"]
+M1["merge.rs<br/>External contributions merging"]
 end
 subgraph "Integration Layer"
-L1["lib.rs<br/>Module exports"]
+MOD["mod.rs<br/>Module exports and organization"]
 end
-subgraph "External Dependencies"
-D1["ProjectContext<br/>RuntimeConfig"]
-D2["PinnedStore<br/>Memory scopes"]
-D3["ToolRegistry"]
+subgraph "Legacy Integration"
+L1["prompt.rs<br/>System prompt builder"]
+L2["prompt_tools_guide.rs<br/>Web tools routing"]
+L3["inject.rs<br/>Memory injection service"]
 end
 end
-P1 --> L1
-P2 --> L1
-P3 --> L1
-L1 --> D1
-L1 --> D2
-L1 --> D3
+P1 --> MOD
+B1 --> MOD
+D1 --> MOD
+BR1 --> MOD
+G1 --> MOD
+PF1 --> MOD
+S1 --> MOD
+M1 --> MOD
+MOD --> L1
+MOD --> L2
+MOD --> L3
 ```
 
 **Diagram sources**
-- [prompt.rs:1-796](file://rust/crates/runtime/src/prompt.rs#L1-L796)
-- [prompt_tools_guide.rs:1-229](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L1-L229)
-- [inject.rs:1-463](file://src-tauri/src/modules/memory/inject.rs#L1-L463)
-- [lib.rs:74-77](file://rust/crates/runtime/src/lib.rs#L74-L77)
+- [mod.rs:1-157](file://src-tauri/src/modules/application/prompt_planner/mod.rs#L1-L157)
+- [planner.rs:1-823](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L1-L823)
+- [block.rs:1-130](file://src-tauri/src/modules/application/prompt_planner/block.rs#L1-L130)
+- [diagnostics.rs:1-316](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs#L1-L316)
+- [build_request.rs:1-129](file://src-tauri/src/modules/application/prompt_planner/build_request.rs#L1-L129)
 
 **Section sources**
-- [prompt.rs:1-796](file://rust/crates/runtime/src/prompt.rs#L1-L796)
-- [prompt_tools_guide.rs:1-229](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L1-L229)
-- [inject.rs:1-463](file://src-tauri/src/modules/memory/inject.rs#L1-L463)
-- [lib.rs:74-77](file://rust/crates/runtime/src/lib.rs#L74-L77)
+- [mod.rs:1-157](file://src-tauri/src/modules/application/prompt_planner/mod.rs#L1-L157)
+- [planner.rs:1-823](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L1-L823)
+- [block.rs:1-130](file://src-tauri/src/modules/application/prompt_planner/block.rs#L1-L130)
+- [diagnostics.rs:1-316](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs#L1-L316)
+- [build_request.rs:1-129](file://src-tauri/src/modules/application/prompt_planner/build_request.rs#L1-L129)
 
 ## Core Components
-The modular prompt architecture maintains the same core components with enhanced separation of concerns:
+The modular prompt architecture maintains the same core components with significantly enhanced separation of concerns:
 
-- **SystemPromptBuilder**: Constructs ordered sections of the system prompt with modular support for different prompt components
-- **ProjectContext**: Collects environment metadata, instruction files, and optional git snapshots
-- **MemoryInjection**: Encapsulates pinned, compiled, and rules sections with token estimation
-- **WebToolsRoutingGuide**: Generates routing blocks for web-access tools with escalation logic
-- **PromptPlan**: Conceptual structure representing ordered prompt blocks
-- **PromptBlock**: Conceptual unit representing named, typed blocks
+### Prompt Planning Core
+- **PromptPlan**: Structured representation of the complete prompt with traceability metadata
+- **PromptBlock**: Individual prompt segments with source attribution and priority
+- **PromptBlockKind**: Canonical enumeration of all block types for stable harness traces
+- **PromptPlanResult**: Combined plan and rendered text for efficient processing
+
+### Request and Configuration
+- **BuildPromptPlanRequest**: Comprehensive input bundle for prompt construction
+- **PromptBuildMode**: Execution context modes (Chat, Coding, Research, Planning, Review)
+- **PromptBuildOptions**: Configuration for diagnostics and validation behavior
+
+### Diagnostics and Validation
+- **PromptPlanDiagnostics**: Complete diagnostic metadata for traceability
+- **PromptValidationIssue**: Structured validation problems and warnings
+- **Traceability**: Block hashing, trace IDs, and redacted previews
 
 Key responsibilities remain consistent:
-- Assembly: Modular assembly of static and dynamic sections
-- Budgeting: Character/token budget enforcement across all components
-- Injection: Coordinated injection of skills index, tool routing, and memory sections
-- Traceability: Maintained prompt plan for diagnostics and reproducibility
+- **Structured Assembly**: Modular assembly of static and dynamic sections with explicit ordering
+- **Budget Management**: Character/token budget enforcement across all components
+- **External Integration**: Controlled contributions from subsystems through merging
+- **Traceability**: Enhanced prompt plan for diagnostics, reproducibility, and observability
 
 **Section sources**
-- [prompt.rs:85-94](file://rust/crates/runtime/src/prompt.rs#L85-L94)
-- [inject.rs:46-62](file://src-tauri/src/modules/memory/inject.rs#L46-L62)
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
+- [planner.rs:18-56](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L18-L56)
+- [block.rs:7-66](file://src-tauri/src/modules/application/prompt_planner/block.rs#L7-L66)
+- [build_request.rs:13-77](file://src-tauri/src/modules/application/prompt_planner/build_request.rs#L13-L77)
+- [diagnostics.rs:27-56](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs#L27-L56)
 
 ## Architecture Overview
-The modular prompt planner orchestrates multiple data sources through clearly separated components. The flow integrates:
-- Static sections (intro, system, doing tasks, actions)
-- Skills index integration
-- Tool routing guide generation
-- Dynamic boundary marker
-- Environment, project context, runtime config
-- Memory injection with budget enforcement
-- Append sections
+The modular prompt planner orchestrates multiple data sources through clearly separated components with enhanced request management. The flow integrates:
 
 ```mermaid
 sequenceDiagram
 participant Caller as "Caller"
-participant Builder as "SystemPromptBuilder"
-participant Skills as "Skills Integration"
-participant Guide as "Web Tools Guide"
-participant Mem as "Memory Injection"
-participant Output as "Rendered Prompt"
-Caller->>Builder : new()
-Caller->>Builder : with_skills_index(Skills)
-Caller->>Builder : with_tool_routing_guide(Guide)
-Caller->>Builder : with_memory_injection(Mem)
-Caller->>Builder : with_project_context(ProjectContext)
-Caller->>Builder : with_runtime_config(RuntimeConfig)
-Builder->>Builder : build()
-Builder-->>Output : Vec<String> sections
+participant Planner as "Prompt Planner"
+participant Governor as "Context Governor"
+participant Preflight as "Preflight Estimators"
+participant Sanitizer as "Sanitizer"
+participant Core as "Core Components"
+participant Output as "PromptPlanResult"
+Caller->>Planner : BuildPromptPlanRequest
+Planner->>Governor : Request admission control
+Governor->>Preflight : Budget estimation
+Preflight->>Sanitizer : Input sanitization
+Sanitizer->>Core : Processed inputs
+Core->>Core : Build prompt blocks
+Core->>Core : Merge external contributions
+Core->>Core : Compute diagnostics
+Core-->>Output : PromptPlanResult
 ```
 
 **Diagram sources**
-- [prompt.rs:96-141](file://rust/crates/runtime/src/prompt.rs#L96-L141)
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
-- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
+- [planner.rs:88-401](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L88-L401)
+- [governor.rs:33-49](file://src-tauri/src/modules/application/prompt_planner/governor.rs#L33-L49)
+- [preflight.rs:10-59](file://src-tauri/src/modules/application/prompt_planner/preflight.rs#L10-L59)
+- [sanitize.rs:49-148](file://src-tauri/src/modules/application/prompt_planner/sanitize.rs#L49-L148)
 
 ## Detailed Component Analysis
 
-### SystemPromptBuilder and Prompt Assembly
-The builder composes sections in a strict sequence with modular support:
-- Intro section (conditional output style)
-- Output style (optional)
-- System section
-- Doing tasks section
-- Actions section
-- Dynamic boundary marker
-- Environment context
-- Project context
-- Instruction files (budgeted)
-- Runtime config
-- Memory injection sections
-- Append sections
+### Prompt Planning Workflow and Block Assembly
+The planner constructs a comprehensive prompt plan with explicit block ordering and enhanced traceability:
 
-The modular architecture maintains the same assembly order while distributing responsibilities across separate modules.
+1. **System Prompt**: Load and validate system prompt with fallback mechanism
+2. **Identity Blocks**: Soul, Persona, and Identity Naming blocks with priority management
+3. **Scenario and Day Awareness**: Contextual framing with temporal anchoring
+4. **Web Tools Routing Guide**: Conditional tool selection guidance
+5. **Memory Injection**: Structured memory sections with priority assignment
+6. **Skill Blocks**: Optional skill identification
+7. **Coding Mode Augmentation**: Specialized context for development tasks
+8. **External Contributions**: Controlled integration from subsystems
 
 ```mermaid
 flowchart TD
-A["Intro"] --> B["Output Style"]
-B --> C["System"]
-C --> D["Doing tasks"]
-D --> E["Actions"]
-E --> F["Dynamic Boundary"]
-F --> G["Environment"]
-G --> H["Project Context"]
-H --> I["Instruction Files"]
-I --> J["Runtime Config"]
-J --> K["Memory Injection"]
-K --> L["Append Sections"]
+A["System Prompt"] --> B["Identity Blocks"]
+B --> C["Scenario & Day Awareness"]
+C --> D["Web Tools Guide"]
+D --> E["Memory Injection"]
+E --> F["Skill Blocks"]
+F --> G["Coding Augmentation"]
+G --> H["External Contributions"]
+H --> I["Final Prompt Plan"]
 ```
 
 **Diagram sources**
-- [prompt.rs:144-171](file://rust/crates/runtime/src/prompt.rs#L144-L171)
+- [planner.rs:88-401](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L88-L401)
 
 **Section sources**
-- [prompt.rs:144-171](file://rust/crates/runtime/src/prompt.rs#L144-L171)
-- [prompt.rs:414-428](file://rust/crates/runtime/src/prompt.rs#L414-L428)
+- [planner.rs:88-401](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L88-L401)
+- [planner.rs:466-552](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L466-L552)
 
-### Skills Index Integration
-Skills integration remains centralized in the main prompt module with the same discovery and caching mechanisms. The modular architecture preserves all existing functionality while improving code organization.
+### Prompt Block Types and Structure
+The modular architecture defines comprehensive block types with explicit semantics and priority assignments:
 
-Key behaviors remain unchanged:
-- Collect entries from roots and resolve shadows by precedence
-- Optionally filter by available toolsets
-- Cache results keyed by mtime hash
-- Render a concise index with additional skills note
+- **System**: Static system prompt content
+- **Identity**: Soul, Persona, and Identity Naming blocks
+- **Context**: Scenario and Day Awareness framing
+- **Tools**: Web tools routing guidance
+- **Memory**: Pinned, Compiled, Rules, and Retrieved memory sections
+- **Strategy**: Active strategy overlay blocks
+- **Skills**: Current skill identification
+- **Coding**: Development-focused context blocks
+- **Continuation**: Long session management
 
-**Section sources**
-- [prompt.rs:143-209](file://rust/crates/runtime/src/prompt.rs#L143-L209)
-- [prompt.rs:217-301](file://rust/crates/runtime/src/prompt.rs#L217-L301)
-
-### Web Tools Guide Integration
-The web tools guide module provides comprehensive routing guidance with escalation logic. The module is completely self-contained and handles:
-- Tool registration validation
-- Escalation order generation (web_search → web_fetch → browser)
-- Rule enforcement and anti-pattern prevention
-- User takeover handling for browser tools
-
-```mermaid
-flowchart TD
-A["Registered Tools"] --> B{"Count web tools ≥ 2?"}
-B --> |No| C["No Routing Guide"]
-B --> |Yes| D["Generate Escalation Rules"]
-D --> E["Add Cost Considerations"]
-E --> F["Add Anti-patterns"]
-F --> G["Add User Takeover Handling"]
-G --> H["Return Routing Block"]
-```
-
-**Diagram sources**
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
+Each block includes source attribution, priority for ordering, and sensitivity flags for diagnostics.
 
 **Section sources**
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
+- [block.rs:13-81](file://src-tauri/src/modules/application/prompt_planner/block.rs#L13-L81)
+- [block.rs:104-130](file://src-tauri/src/modules/application/prompt_planner/block.rs#L104-L130)
 
-### Memory Injection Sections
-Memory injection maintains the same comprehensive budget enforcement and section composition:
-- Pinned section: user-pinned facts with highest priority
-- Compiled section: compiled memory from 8B+ pipeline
-- Rules section: locale-aware consumption guidelines
-- Token estimation: precise budget tracking
+### Build Request and Configuration Management
+The build request system provides comprehensive configuration for prompt construction:
 
-```mermaid
-flowchart TD
-A["Build Memory Injection"] --> B["Compute Char Budget"]
-B --> C["Render Rules Section"]
-C --> D{"Budget > Rules?"}
-D --> |No| E["Return Rules Only"]
-D --> |Yes| F["Reserve Rules Size"]
-F --> G["Fetch Pinned Items"]
-G --> H["Render Pinned Section"]
-H --> I["Read Compiled File"]
-I --> J["Render Compiled Section"]
-J --> K["Estimate Tokens"]
-K --> L["Return MemoryInjection"]
-```
-
-**Diagram sources**
-- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
-- [inject.rs:135-199](file://src-tauri/src/modules/memory/inject.rs#L135-L199)
-- [inject.rs:204-222](file://src-tauri/src/modules/memory/inject.rs#L204-L222)
+- **Session Context**: Session ID, user message, and working directory
+- **Environment Data**: Date, OS information, and tool registry
+- **Identity Resolution**: Resolved identity with soul/persona
+- **Execution Mode**: PromptBuildMode for different contexts
+- **Memory Artifacts**: Structured memory injection data
+- **Learning Integration**: Active strategy overlays
+- **Options Control**: Diagnostics and validation preferences
 
 **Section sources**
-- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
-- [inject.rs:135-199](file://src-tauri/src/modules/memory/inject.rs#L135-L199)
-- [inject.rs:204-222](file://src-tauri/src/modules/memory/inject.rs#L204-L222)
-
-### Prompt Planning Workflow and Traceability
-The modular architecture maintains the same traceable workflow:
-- Build a PromptPlan enumerating ordered PromptBlocks
-- Each block corresponds to a stable, documented source
-- Dynamic boundary ensures predictable trimming
-- Tests validate ordering and boundary behavior
-
-```mermaid
-flowchart TD
-A["PromptPlan"] --> B["System Block"]
-B --> C["WebToolsRoutingGuide Block"]
-C --> D["Memory Block"]
-D --> E["Pinned Sub-block"]
-D --> F["Compiled Sub-block"]
-D --> G["Rules Sub-block"]
-E --> H["PromptPlanResult"]
-F --> H
-G --> H
-```
-
-**Diagram sources**
-- [03-prompt-builder.md:11-25](file://docs/final_design/agent/03-prompt-builder.md#L11-L25)
-
-**Section sources**
-- [03-prompt-builder.md:1-51](file://docs/final_design/agent/03-prompt-builder.md#L1-L51)
+- [build_request.rs:84-129](file://src-tauri/src/modules/application/prompt_planner/build_request.rs#L84-L129)
 
 ## Modular Prompt Architecture
-The refactored architecture introduces clear module boundaries while preserving functionality:
+The refactored architecture introduces comprehensive module boundaries while preserving full functionality:
 
-### Core Prompt Module (prompt.rs)
-- **Responsibilities**: System prompt construction, project context management, instruction file processing
-- **Key Functions**: `SystemPromptBuilder`, `ProjectContext`, `load_system_prompt`
-- **Budget Management**: Character and token budget enforcement
-- **Content Processing**: Instruction file discovery, normalization, and rendering
+### Core Planning Module (planner.rs)
+- **Responsibilities**: Main prompt planning logic, block assembly, and plan construction
+- **Key Functions**: `build_prompt_plan`, `compute_block_hash`, `build_diagnostics`
+- **Priority Management**: Explicit block ordering and sensitivity handling
+- **Traceability**: Block hashing, trace ID computation, and diagnostic metadata
 
-### Web Tools Guide Module (prompt_tools_guide.rs)
-- **Responsibilities**: Tool routing decision support
-- **Key Functions**: `web_tools_routing_block`, tool validation and escalation logic
-- **Configuration**: Web tool name constants and routing rules
-- **Testing**: Comprehensive test coverage for routing scenarios
+### Block Type Definitions (block.rs)
+- **Responsibilities**: Canonical block type definitions and structures
+- **Key Types**: `PromptBlockKind`, `PromptBlock`, `PromptBlockSource`, `PromptContribution`
+- **Stability**: Closed enum for harness trace compatibility
+- **Attribution**: Source tracking and priority assignment
 
-### Memory Injection Module (inject.rs)
-- **Responsibilities**: Memory section assembly and budget enforcement
-- **Key Structures**: `MemoryInjection`, budget calculation and enforcement
-- **Locale Support**: Chinese and English rule variants
-- **Async Processing**: Asynchronous memory fetching and rendering
+### Diagnostic Metadata (diagnostics.rs)
+- **Responsibilities**: Comprehensive diagnostic information and validation
+- **Key Types**: `PromptPlanDiagnostics`, `PromptValidationIssue`
+- **Frontend Safety**: Redacted previews and structured summaries
+- **Control Plane Integration**: Lane decisions and activation reasons
 
-### Integration Layer (lib.rs)
-- **Exports**: Public API exposure for all prompt components
-- **Module Boundaries**: Clear separation of concerns
-- **Dependencies**: Proper dependency management across modules
+### Build Request Types (build_request.rs)
+- **Responsibilities**: Request configuration and execution modes
+- **Key Types**: `BuildPromptPlanRequest`, `PromptBuildMode`, `PromptBuildOptions`
+- **Extensibility**: Struct-based design for future enhancements
+- **Mode Support**: Multi-context execution modes
+
+### Supporting Components
+- **Governor**: Request admission control and budget management
+- **Preflight**: Character and token estimation utilities
+- **Sanitize**: Input validation and cleanup
+- **Merge**: External contributions integration
 
 **Section sources**
-- [prompt.rs:1-796](file://rust/crates/runtime/src/prompt.rs#L1-L796)
-- [prompt_tools_guide.rs:1-229](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L1-L229)
-- [inject.rs:1-463](file://src-tauri/src/modules/memory/inject.rs#L1-L463)
-- [lib.rs:74-77](file://rust/crates/runtime/src/lib.rs#L74-L77)
+- [planner.rs:1-823](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L1-L823)
+- [block.rs:1-130](file://src-tauri/src/modules/application/prompt_planner/block.rs#L1-L130)
+- [diagnostics.rs:1-316](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs#L1-L316)
+- [build_request.rs:1-129](file://src-tauri/src/modules/application/prompt_planner/build_request.rs#L1-L129)
+
+## Governor, Preflight, and Sanitize Components
+The modular architecture includes three critical supporting components for request management:
+
+### Context Governor (governor.rs)
+Manages request admission and budget enforcement:
+- **Admission Control**: Validates request size against configured limits
+- **Token Budget Gate**: Removes oldest messages when token limits exceeded
+- **Character Budget Gate**: Trims longest messages when character limits exceeded
+- **Artifact Gate**: Summarizes tool results and images for model consumption
+- **Statistics Tracking**: Comprehensive metrics for all transformations
+
+### Preflight Estimators (preflight.rs)
+Provides budget estimation utilities:
+- **Character Counting**: Accurate message length estimation
+- **Token Estimation**: Approximate token count from character counts
+- **Message Summarization**: Intelligent content truncation for budget constraints
+- **Tool Result Processing**: Special handling for tool execution results
+
+### Input Sanitizer (sanitize.rs)
+Ensures input validity and provider compatibility:
+- **Message Validation**: Removes empty and malformed messages
+- **Tool Result Matching**: Validates tool use/result pairing
+- **Input Validation**: Ensures tool use inputs are properly formatted JSON
+- **Orphan Detection**: Identifies and removes disconnected tool references
+- **Statistics Collection**: Detailed metrics for all sanitization actions
+
+```mermaid
+flowchart TD
+A["Raw Messages"] --> B["Sanitize"]
+B --> C["Estimate Budget"]
+C --> D["Governor Decision"]
+D --> E{"Within Limits?"}
+E --> |Yes| F["Proceed to Planner"]
+E --> |No| G["Apply Transformations"]
+G --> H["Trim/Summarize"]
+H --> I["Retry Budget Estimation"]
+I --> E
+```
+
+**Diagram sources**
+- [governor.rs:33-49](file://src-tauri/src/modules/application/prompt_planner/governor.rs#L33-L49)
+- [preflight.rs:10-59](file://src-tauri/src/modules/application/prompt_planner/preflight.rs#L10-L59)
+- [sanitize.rs:49-148](file://src-tauri/src/modules/application/prompt_planner/sanitize.rs#L49-L148)
+
+**Section sources**
+- [governor.rs:1-204](file://src-tauri/src/modules/application/prompt_planner/governor.rs#L1-L204)
+- [preflight.rs:1-142](file://src-tauri/src/modules/application/prompt_planner/preflight.rs#L1-L142)
+- [sanitize.rs:1-172](file://src-tauri/src/modules/application/prompt_planner/sanitize.rs#L1-L172)
+
+## External Contributions and Merging
+The modular architecture supports controlled integration from external subsystems through a sophisticated merging mechanism:
+
+### Contribution Model
+- **PromptContribution**: Standardized external contribution structure
+- **Kind Restrictions**: Prevents sensitive core block modifications
+- **Priority Assignment**: Lower priority for external contributions
+- **Source Attribution**: Complete provenance tracking
+
+### Merging Logic (merge.rs)
+Implements sophisticated merging rules:
+- **Validation First**: Rejects forbidden sensitive contributions
+- **Order Preservation**: Maintains original order within each kind
+- **Kind-Based Insertion**: Inserts external blocks after corresponding core blocks
+- **Fallback Handling**: Adds unmatched contributions at the end
+- **Strict Mode Support**: Immediate error reporting in validation failures
+
+### Supported External Contributions
+- **Memory**: Additional memory sections beyond core injection
+- **MCP**: Model Context Protocol contributions
+- **Skills**: Additional skill context
+- **Learning**: Strategy and policy overlays
+- **Utility**: General-purpose utility contributions
+
+```mermaid
+flowchart LR
+A["Core Blocks"] --> B["Merge Engine"]
+C["External Contributions"] --> B
+B --> D["Validated Contributions"]
+B --> E["Validation Issues"]
+D --> F["Merged Result"]
+E --> G{"Strict Mode?"}
+G --> |Yes| H["Error"]
+G --> |No| F
+```
+
+**Diagram sources**
+- [merge.rs:22-104](file://src-tauri/src/modules/application/prompt_planner/merge.rs#L22-L104)
+
+**Section sources**
+- [merge.rs:1-126](file://src-tauri/src/modules/application/prompt_planner/merge.rs#L1-L126)
+- [planner.rs:376-381](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L376-L381)
 
 ## Dependency Analysis
-The modular architecture maintains clear boundaries between components:
-- **SystemPromptBuilder** depends on ProjectContext, RuntimeConfig, and modular components
-- **MemoryInjection** depends on PinnedStore and compiled memory files
-- **WebToolsRoutingGuide** depends on ToolRegistry tool names
-- **Integration** manages module exports and dependencies
+The modular architecture maintains clear boundaries between components with strategic dependencies:
 
 ```mermaid
 graph TB
-subgraph "Modular Dependencies"
-Builder["SystemPromptBuilder"] --> PC["ProjectContext"]
-Builder --> RC["RuntimeConfig"]
-Builder --> MI["MemoryInjection"]
-Builder --> WTG["WebToolsGuide"]
-MI --> PS["PinnedStore"]
-WTG --> TR["ToolRegistry"]
+subgraph "Core Planning Dependencies"
+Planner["planner.rs"] --> Block["block.rs"]
+Planner --> Diag["diagnostics.rs"]
+Planner --> BR["build_request.rs"]
+Planner --> Merge["merge.rs"]
+Planner --> Runtime["runtime prompt.rs"]
+Planner --> Tools["prompt_tools_guide.rs"]
+Planner --> Memory["memory inject.rs"]
+end
+subgraph "Supporting Dependencies"
+Governor["governor.rs"] --> Preflight["preflight.rs"]
+Governor --> RuntimeBC["runtime block_conversion.rs"]
+Sanitizer["sanitize.rs"] --> RuntimeBC
 end
 subgraph "Integration Layer"
-IL["lib.rs exports"] --> Builder
-IL --> MI
-IL --> WTG
+Mod["mod.rs"] --> Planner
+Mod --> Block
+Mod --> Diag
+Mod --> BR
+Mod --> Governor
+Mod --> Preflight
+Mod --> Sanitizer
+Mod --> Merge
 end
 ```
 
 **Diagram sources**
-- [prompt.rs:354-570](file://rust/crates/runtime/src/prompt.rs#L354-L570)
-- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
-- [lib.rs:74-77](file://rust/crates/runtime/src/lib.rs#L74-L77)
+- [planner.rs:5-16](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L5-L16)
+- [mod.rs:37-69](file://src-tauri/src/modules/application/prompt_planner/mod.rs#L37-L69)
 
 **Section sources**
-- [prompt.rs:354-570](file://rust/crates/runtime/src/prompt.rs#L354-L570)
-- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
-- [lib.rs:74-77](file://rust/crates/runtime/src/lib.rs#L74-L77)
+- [planner.rs:5-16](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L5-L16)
+- [mod.rs:37-69](file://src-tauri/src/modules/application/prompt_planner/mod.rs#L37-L69)
 
 ## Performance Considerations
-The modular architecture maintains performance characteristics:
-- **Budget enforcement**: Instruction files and memory sections truncated to stay within limits
-- **Caching**: Skills index cached by mtime hash to avoid repeated scans
-- **Early termination**: Instruction rendering stops when budget exhausted
-- **Locale-aware truncation**: Preserves CJK correctness and avoids partial grapheme splits
-- **Async processing**: Memory injection performed asynchronously before prompt building
+The modular architecture maintains and enhances performance characteristics:
+
+- **Lazy Loading**: Components loaded only when needed
+- **Efficient Hashing**: Block hash computation optimized for stability
+- **Memory Efficiency**: Structured data types minimize memory overhead
+- **Early Termination**: Validation and merging short-circuit on errors
+- **Batch Processing**: Multiple components designed for concurrent operation
+- **Diagnostics Control**: Optional diagnostic inclusion reduces overhead
 
 ## Troubleshooting Guide
-Common issues and resolutions remain consistent:
-- **Missing git**: Git status/diff snapshots optional and gracefully handled
-- **Empty skills index**: Skills section omitted when no skills installed
-- **Insufficient budget**: Memory injection may include only rules section when budget tight
-- **Web tools guide not injected**: Occurs when fewer than two web tools registered
-- **Instruction truncation**: Content truncated with markers when exceeding limits
+Common issues and resolutions with enhanced diagnostic capabilities:
 
-Validation references:
-- Instruction file discovery and truncation
-- Skills index caching and filtering
-- Memory budget enforcement and truncation
-- Tool routing guide gating
+### Modular Architecture Issues
+- **Missing Dependencies**: Check module imports and re-export statements
+- **Block Ordering Problems**: Verify priority assignments and kind mappings
+- **External Contribution Failures**: Review validation rules and strict mode settings
+- **Memory Injection Issues**: Validate memory artifacts structure and section kinds
+
+### Request Management Problems
+- **Budget Exceeded**: Review governor statistics and adjust limits
+- **Sanitization Errors**: Check message format and tool result matching
+- **Preflight Estimation Issues**: Verify character counting and token estimation
+- **Traceability Problems**: Confirm block hashing and trace ID computation
+
+### Legacy Integration Issues
+- **System Prompt Loading**: Check fallback mechanisms and error handling
+- **Web Tools Guide**: Verify tool registration and escalation logic
+- **Memory Injection**: Validate section composition and budget enforcement
+- **Backward Compatibility**: Ensure API compatibility with external callers
 
 **Section sources**
-- [prompt.rs:237-285](file://rust/crates/runtime/src/prompt.rs#L237-L285)
-- [prompt.rs:217-301](file://src-tauri/src/modules/runtime/prompt.rs#L217-L301)
-- [inject.rs:94-133](file://src-tauri/src/modules/memory/inject.rs#L94-L133)
-- [prompt_tools_guide.rs:34-128](file://src-tauri/src/modules/runtime/prompt_tools_guide.rs#L34-L128)
+- [planner.rs:102-110](file://src-tauri/src/modules/application/prompt_planner/planner.rs#L102-L110)
+- [diagnostics.rs:58-162](file://src-tauri/src/modules/application/prompt_planner/diagnostics.rs#L58-L162)
+- [merge.rs:30-59](file://src-tauri/src/modules/application/prompt_planner/merge.rs#L30-L59)
 
 ## Conclusion
-The refactored prompt planner subsystem provides a robust, traceable, and budget-aware mechanism for assembling the system prompt through a modular architecture. The separation of concerns into distinct modules (core prompt builder, web tools guide, and memory injection) improves maintainability while preserving all existing functionality. By maintaining clear module boundaries, enforcing strict budgets, and ensuring reliable agent behavior across diverse environments, the modular architecture supports both current operations and future enhancements.
+The completely refactored prompt planner subsystem provides a robust, traceable, and highly modular mechanism for assembling the system prompt. The new architecture follows UClaw alignment principles while maintaining complete backward compatibility. Key improvements include:
+
+- **Enhanced Modularity**: Clear separation of concerns across specialized components
+- **Improved Traceability**: Comprehensive block hashing, trace IDs, and diagnostic metadata
+- **External Integration**: Controlled contributions from subsystems through merging
+- **Request Management**: Sophisticated governor, preflight, and sanitization components
+- **Future Extensibility**: Structured design supports ongoing enhancements
+
+By maintaining explicit module boundaries, enforcing strict priorities, and ensuring reliable agent behavior across diverse environments, the modular architecture supports both current operations and future enhancements while providing superior observability and maintainability.

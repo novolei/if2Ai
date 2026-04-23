@@ -2,12 +2,22 @@
 
 <cite>
 **Referenced Files in This Document**
+- [mod.rs](file://src-tauri/src/modules/memory/mod.rs)
+- [migrations.rs](file://src-tauri/src/modules/memory/migrations.rs)
+- [working_memory.rs](file://src-tauri/src/modules/memory/working_memory.rs)
+- [decision_tree.rs](file://src-tauri/src/modules/memory/decision_tree.rs)
+- [reflection_loop.rs](file://src-tauri/src/modules/memory/reflection_loop.rs)
+- [llm.rs](file://src-tauri/src/modules/memory/llm.rs)
+- [inject.rs](file://src-tauri/src/modules/memory/inject.rs)
+- [compiler/mod.rs](file://src-tauri/src/modules/memory/compiler/mod.rs)
+- [ticker/mod.rs](file://src-tauri/src/modules/memory/ticker/mod.rs)
+- [learned_traits.rs](file://src-tauri/src/modules/memory/learned_traits.rs)
+- [policy.rs](file://src-tauri/src/modules/memory/policy.rs)
 - [vector_provider.rs](file://src-tauri/src/modules/memory/providers/vector_provider.rs)
 - [lancedb.rs](file://src-tauri/src/modules/memory/providers/lancedb.rs)
 - [sqlite_provider.rs](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs)
 - [fastembed.rs](file://src-tauri/src/modules/memory/embedding/fastembed.rs)
 - [scope.rs](file://src-tauri/src/modules/memory/scope.rs)
-- [mod.rs](file://src-tauri/src/modules/memory/mod.rs)
 - [memory.rs](file://src-tauri/src/commands/memory.rs)
 - [if2Ai-Memory-Autonomous-Learning-Architecture-Report.md](file://docs/design-docs/postCLI/if2Ai-Memory-Autonomous-Learning-Architecture-Report.md)
 - [ADR-003-FastEmbed-LanceDB-Selection.md](file://docs/design-docs/postCLI/ADR/ADR-003-FastEmbed-LanceDB-Selection.md)
@@ -20,6 +30,15 @@
 - [01-usage-guide.md](file://docs/staff-remediation/gap-modules/memory-write-recall-lifecycle/01-usage-guide.md)
 - [02-implementation.md](file://docs/staff-remediation/gap-modules/memory-write-recall-lifecycle/02-implementation.md)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added comprehensive documentation for MEM-MOD series modernization including versioned schema migrations, working memory, decision tree logic, self-reflection loop, and temporal versioning
+- Updated architecture overview to reflect sophisticated self-evolving memory management system
+- Enhanced memory lifecycle documentation with new quality gates and conflict resolution mechanisms
+- Added detailed sections on memory policy engine, compiler orchestration, and ticker-based scheduling
+- Expanded security and access control documentation with threat scanning integration
+- Updated configuration options to include new memory compiler and policy settings
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -34,362 +53,468 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes If2Ai’s vector-based memory architecture with a hybrid provider design that supports both SQLite (persistent, scope-aware, importance decay) and LanceDB (vector search, approximate nearest-neighbor). It explains the dual-write strategy for data consistency, threat scanning integration for security, automatic summarization capabilities, hierarchical memory scopes (session, project, global), retrieval via FastEmbed embeddings, and the memory lifecycle from creation to archival. Practical configuration options, quality gates, conflict resolution, and security/access control are covered.
+This document describes If2Ai's sophisticated vector-based memory architecture representing the MEM-MOD series modernization from basic storage to a self-evolving memory management system. The architecture now features versioned schema migrations, working memory with sliding window eviction, decision tree logic for intelligent memory updates, self-reflection loops with temporal versioning, and comprehensive compiler orchestration. It maintains the hybrid provider design supporting both SQLite (persistent, scope-aware, importance decay) and LanceDB (vector search, approximate nearest-neighbor) while adding advanced capabilities for automatic summarization, policy enforcement, and temporal memory management.
 
 ## Project Structure
-The memory system spans Rust modules under the Tauri backend and complementary documentation and design artifacts:
-- Providers: VectorMemoryProvider (FastEmbed + LanceDB), SqliteMemoryProvider
-- Embedding: FastEmbedProvider
-- Scope: MemoryExecutionScope and resolver
-- Commands: Memory command API with scope kinds
-- Design docs: ADRs, architecture report, lifecycle migration plans
-- Security: ThreatScanner integration points
-- Summaries: Session rolling summaries and atomic file writes
+The memory system spans Rust modules under the Tauri backend with comprehensive modernization features:
+- **Core Infrastructure**: Versioned schema migrations, working memory, decision tree logic
+- **Self-Evolution**: Reflection loop, learned traits, temporal versioning
+- **Compiler System**: Memory compilation orchestration, assembly pipeline
+- **Scheduler**: Memory ticker for automated processing
+- **Policy Engine**: Memory write policy enforcement with shadow mode
+- **Providers**: VectorMemoryProvider (FastEmbed + LanceDB), SqliteMemoryProvider
+- **Embedding**: FastEmbedProvider with 384-dimension multilingual embeddings
+- **Scope Management**: MemoryExecutionScope with hierarchical isolation
+- **Security**: ThreatScanner integration and memory policy enforcement
+- **Injection**: System prompt memory injection with budget management
 
 ```mermaid
 graph TB
-subgraph "Providers"
+subgraph "Modern Memory Infrastructure"
+MIG["Versioned Schema Migrations<br/>v1-v6 with temporal versioning"]
+WM["Working Memory<br/>Sliding window eviction"]
+DT["Decision Tree Logic<br/>Mem0-style update classification"]
+RL["Self-Reflection Loop<br/>Periodic memory synthesis"]
+LT["Learned Traits<br/>Cross-session observations"]
+COMP["Memory Compiler<br/>Daily compilation orchestration"]
+TICK["Memory Ticker<br/>Automated scheduling"]
+POL["Memory Policy Engine<br/>Shadow mode enforcement"]
+END["Utility LLM Interface<br/>Provider abstraction"]
+end
+subgraph "Hybrid Providers"
 VMP["VectorMemoryProvider<br/>FastEmbed + LanceDB"]
 SMP["SqliteMemoryProvider<br/>Persistent, scope-aware"]
 end
-subgraph "Embedding"
-FE["FastEmbedProvider<br/>384-dim model"]
-end
-subgraph "Storage"
+subgraph "Storage & Processing"
 LDB["LanceDBMemory<br/>Arrow schema, IVF-PQ"]
-SQLITE["SQLite DB<br/>memory_entries table"]
+SQLITE["SQLite DB<br/>memory_entries + history tables"]
+INJ["Memory Injection<br/>System prompt integration"]
 end
-subgraph "Runtime"
-SCOPE["MemoryExecutionScope<br/>session/project/global"]
-CMD["Memory Commands<br/>scope kinds"]
-end
-subgraph "Security"
-TS["ThreatScanner<br/>pattern-based redaction"]
-end
-subgraph "Summaries"
-RS["RollingSummarizer<br/>atomic JSON writes"]
-end
+MIG --> SMP
+WM --> END
+DT --> SMP
+RL --> END
+LT --> LT
+COMP --> END
+TICK --> COMP
+POL --> SMP
 VMP --> FE
 VMP --> LDB
 VMP --> SMP
 SMP --> SQLITE
-SCOPE --> CMD
-VMP -. optional .-> TS
-SMP -. optional .-> TS
-RS --> SMP
+INJ --> SMP
 ```
 
 **Diagram sources**
-- [vector_provider.rs:107-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L107-L117)
-- [lancedb.rs:112-144](file://src-tauri/src/modules/memory/providers/lancedb.rs#L112-L144)
-- [sqlite_provider.rs:22-32](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L22-L32)
-- [fastembed.rs:35-58](file://src-tauri/src/modules/memory/embedding/fastembed.rs#L35-L58)
-- [scope.rs:25-33](file://src-tauri/src/modules/memory/scope.rs#L25-L33)
-- [memory.rs:97-103](file://src-tauri/src/commands/memory.rs#L97-L103)
-- [today.rs:188-203](file://src-tauri/src/modules/memory/compiler/today.rs#L188-L203)
+- [migrations.rs:1-519](file://src-tauri/src/modules/memory/migrations.rs#L1-L519)
+- [working_memory.rs:1-226](file://src-tauri/src/modules/memory/working_memory.rs#L1-L226)
+- [decision_tree.rs:1-301](file://src-tauri/src/modules/memory/decision_tree.rs#L1-L301)
+- [reflection_loop.rs:1-185](file://src-tauri/src/modules/memory/reflection_loop.rs#L1-L185)
+- [learned_traits.rs:1-424](file://src-tauri/src/modules/memory/learned_traits.rs#L1-L424)
+- [compiler/mod.rs:1-474](file://src-tauri/src/modules/memory/compiler/mod.rs#L1-L474)
+- [ticker/mod.rs:1-628](file://src-tauri/src/modules/memory/ticker/mod.rs#L1-L628)
+- [policy.rs:1-336](file://src-tauri/src/modules/memory/policy.rs#L1-L336)
+- [llm.rs:1-340](file://src-tauri/src/modules/memory/llm.rs#L1-L340)
 
 **Section sources**
-- [mod.rs:1-73](file://src-tauri/src/modules/memory/mod.rs#L1-L73)
+- [mod.rs:1-703](file://src-tauri/src/modules/memory/mod.rs#L1-L703)
 - [memory-system.md:39-58](file://docs/design-docs/memory-system.md#L39-L58)
 
 ## Core Components
-- VectorMemoryProvider: Combines FastEmbed (offline, multilingual) with LanceDB (vector + FTS). Supports dual-write to SQLite for durability and importance decay. Implements hybrid search (vector + FTS) with reciprocal rank fusion.
-- SqliteMemoryProvider: Persistent, scope-aware, with indexes for category and scope filters. Supports scoped recall/export and importance decay via Weibull.
-- FastEmbedProvider: 384-dimension embeddings using a multilingual model; cached locally.
-- LanceDBMemory: Arrow schema with fixed-size float32 embeddings; IVF-PQ index creation guardrails; vector and FTS search.
-- MemoryExecutionScope: Enforces session/project/global isolation; resolver constructs scope from runtime context.
-- Memory commands: Frontend-facing scope kinds (Global, Project, Session) mapped to execution scope.
-- ThreatScanner: Pattern-based detection and redaction integrated at provider boundaries.
-- Session summaries: Rolling summarization with atomic file writes and dual-write to SQLite.
+The MEM-MOD modernization introduces sophisticated components for self-evolving memory management:
+
+**Versioned Schema Migrations**: Complete overhaul from basic storage to structured evolution with six migration versions (v1-v6) including temporal versioning audit tables, learned traits persistence, and conversation recall enhancements.
+
+**Working Memory**: Sliding window eviction system maintaining bounded conversation context with configurable turn limits (default 8) and token budgets (default 1600), automatically removing oldest messages when constraints are exceeded.
+
+**Decision Tree Logic**: Mem0-style memory update classification system that determines whether new facts should be NOOP (already covered), ADD (new), UPDATE (replace existing), or DELETE (retire contradictory) based on LLM analysis.
+
+**Self-Reflection Loop**: Automated periodic memory synthesis that generates insights about user preferences and patterns, creating Reflection-category memories that inform agent behavior and personality.
+
+**Learned Traits**: Cross-session observation system that distills reflection memories into durable traits with confidence scoring, evidence tracking, and user disagreement capability.
+
+**Memory Compiler**: Comprehensive daily compilation orchestration coordinating four pipelines (today, week, longterm, facts) with fingerprint caching, job runner throttling, and assembly pipeline.
+
+**Memory Ticker**: Sophisticated scheduler driving automated processing including rolling summaries, daily compilation cycles, session cleanup, and recovery procedures.
+
+**Memory Policy Engine**: Advanced write policy enforcement with shadow mode for gradual rollout, content length limits, category restrictions, and threat scanner integration.
+
+**Utility LLM Interface**: Abstraction layer enabling memory subsystems to use any provider through a unified interface, supporting both production and mock implementations.
 
 **Section sources**
-- [vector_provider.rs:98-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L98-L117)
-- [sqlite_provider.rs:18-32](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L18-L32)
-- [fastembed.rs:31-58](file://src-tauri/src/modules/memory/embedding/fastembed.rs#L31-L58)
-- [lancedb.rs:108-144](file://src-tauri/src/modules/memory/providers/lancedb.rs#L108-L144)
-- [scope.rs:20-33](file://src-tauri/src/modules/memory/scope.rs#L20-L33)
-- [memory.rs:97-132](file://src-tauri/src/commands/memory.rs#L97-L132)
-- [today.rs:188-203](file://src-tauri/src/modules/memory/compiler/today.rs#L188-L203)
+- [migrations.rs:201-242](file://src-tauri/src/modules/memory/migrations.rs#L201-L242)
+- [working_memory.rs:30-91](file://src-tauri/src/modules/memory/working_memory.rs#L30-L91)
+- [decision_tree.rs:36-69](file://src-tauri/src/modules/memory/decision_tree.rs#L36-L69)
+- [reflection_loop.rs:38-97](file://src-tauri/src/modules/memory/reflection_loop.rs#L38-L97)
+- [learned_traits.rs:56-90](file://src-tauri/src/modules/memory/learned_traits.rs#L56-L90)
+- [compiler/mod.rs:168-205](file://src-tauri/src/modules/memory/compiler/mod.rs#L168-L205)
+- [ticker/mod.rs:75-95](file://src-tauri/src/modules/memory/ticker/mod.rs#L75-L95)
+- [policy.rs:120-142](file://src-tauri/src/modules/memory/policy.rs#L120-L142)
+- [llm.rs:42-54](file://src-tauri/src/modules/memory/llm.rs#L42-L54)
 
 ## Architecture Overview
-The hybrid provider architecture separates concerns:
-- SQLite: authoritative, durable, scope-aware, supports importance decay and Weibull aging.
-- LanceDB: vector search engine with IVF-PQ index; FTS fallback; hybrid recall with RRF.
-- FastEmbed: offline, CPU-friendly embeddings; dimension 384.
-- ThreatScanner: optional, applied once at the provider boundary to redact sensitive content before persistence.
-- Scope enforcement: enforced at recall/export time via SQL filters and command-layer mapping.
+The MEM-MOD architecture represents a complete transformation from basic storage to sophisticated self-evolving memory management:
+
+**Versioned Evolution**: The migration system tracks schema changes across six versions, with temporal versioning allowing historical queries and audit trails. Each migration version adds new capabilities while maintaining backward compatibility.
+
+**Self-Evolution Mechanisms**: Multiple autonomous systems continuously improve memory quality through reflection, decision-making, and compilation processes. The system learns from interactions and adapts its memory strategies over time.
+
+**Hybrid Provider Intelligence**: Enhanced dual-write strategy with intelligent routing based on memory type, importance, and access patterns. VectorMemoryProvider coordinates between SQLite and LanceDB providers for optimal performance.
+
+**Temporal Memory Management**: Comprehensive temporal versioning system that tracks memory changes over time, enabling historical queries and understanding of memory evolution.
 
 ```mermaid
 sequenceDiagram
 participant UI as "Frontend"
-participant CMD as "Memory Command"
+participant POL as "Memory Policy Engine"
+participant DT as "Decision Tree"
+participant WM as "Working Memory"
+participant COMP as "Memory Compiler"
+participant TICK as "Memory Ticker"
 participant VMP as "VectorMemoryProvider"
-participant FE as "FastEmbedProvider"
 participant SMP as "SqliteMemoryProvider"
-participant LDB as "LanceDBMemory"
-UI->>CMD : "store(key, content, category, scope)"
-CMD->>VMP : "store_scoped(key, content, category, scope)"
-alt SQLite enabled
-VMP->>SMP : "store_scoped(key, content, category, scope)"
-SMP-->>VMP : "OK"
+UI->>POL : "Proposed memory write"
+POL->>POL : "Shadow mode evaluation"
+POL-->>UI : "Allow/Deny/Prompt decision"
+alt Decision Tree Enabled
+UI->>DT : "New memory content"
+DT->>DT : "Classify update type"
+DT-->>UI : "NOOP/ADD/UPDATE/DELETE"
 end
-VMP->>FE : "embed_one(content)"
-FE-->>VMP : "embedding"
-VMP->>LDB : "insert(entry, embedding)"
-LDB-->>VMP : "OK"
-VMP-->>CMD : "OK"
-CMD-->>UI : "OK"
+WM->>WM : "Sliding window eviction"
+COMP->>COMP : "Daily compilation"
+TICK->>TICK : "Automated scheduling"
+VMP->>SMP : "Dual-write coordination"
 ```
 
 **Diagram sources**
+- [policy.rs:153-208](file://src-tauri/src/modules/memory/policy.rs#L153-L208)
+- [decision_tree.rs:160-170](file://src-tauri/src/modules/memory/decision_tree.rs#L160-L170)
+- [working_memory.rs:81-90](file://src-tauri/src/modules/memory/working_memory.rs#L81-L90)
+- [compiler/mod.rs:218-321](file://src-tauri/src/modules/memory/compiler/mod.rs#L218-L321)
+- [ticker/mod.rs:408-414](file://src-tauri/src/modules/memory/ticker/mod.rs#L408-L414)
 - [vector_provider.rs:503-576](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L503-L576)
-- [sqlite_provider.rs:394-447](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L394-L447)
-- [lancedb.rs:147-164](file://src-tauri/src/modules/memory/providers/lancedb.rs#L147-L164)
-- [fastembed.rs:82-101](file://src-tauri/src/modules/memory/embedding/fastembed.rs#L82-L101)
-- [memory.rs:112-132](file://src-tauri/src/commands/memory.rs#L112-L132)
 
 ## Detailed Component Analysis
 
-### VectorMemoryProvider
-- Dual-write strategy: SQLite first (authoritative), then asynchronous LanceDB insert. When SQLite is absent, LanceDB is synchronous.
-- Hybrid search: Parallel vector and FTS search with RRF fusion; optional category filter.
-- Scope-awareness: Delegates scoped store/recall/export to SQLite when enabled; warns and falls back when disabled.
-- Threat scanning: Optional shared scanner invoked once per write to redact sensitive content before dual-write.
-- Importance decay: Delegated to SQLite provider when enabled; otherwise no-op.
+### Versioned Schema Migrations
+The MEM-MOD-P0 foundation establishes a robust migration system replacing ad-hoc schema changes with systematic evolution:
+
+**Migration Framework**: Structured approach with version tracking, transactional application, and backfill support for legacy databases. Each migration is idempotent and safely applies schema changes.
+
+**Temporal Versioning**: MEM-MOD-P6 introduces memory_entry_history table with valid_from/valid_to timestamps, enabling historical queries and audit trails. This allows understanding of memory evolution over time.
+
+**Cross-Session Learning**: MEM-MOD-P7 adds learned_traits table for durable observations that persist across sessions, with confidence scoring and user disagreement capability.
+
+**Conversation Enhancement**: P1-7 migrations add conversation_recall_fts (FTS5 virtual table) and conversation_recall_embeddings for turn-level search capabilities.
 
 ```mermaid
 classDiagram
-class VectorMemoryProvider {
-+embedder : FastEmbedProvider
-+lancedb : LanceDBMemory
-+sqlite : Option<SqliteMemoryProvider>
-+config : VectorProviderConfig
-+scanner : Option<ThreatScanner>
-+store(key, content, category)
-+recall(query, category, limit)
-+store_scoped(key, content, category, scope)
-+recall_scoped(query, category, limit, scope)
-+apply_importance_decay(lambda, k)
+class Migration {
++version : u32
++name : &str
++up : fn(&Connection) -> rusqlite : : Result<()>
 }
-class FastEmbedProvider {
-+embed_one(text) Vec<f32>
-+dimension() usize
+class MemoryMigrations {
++memory_migrations() &Static [Migration]
++run_migrations(conn, migrations, legacy_table) MigrationReport
++memory_v1_initial()
++memory_v2_links()
++memory_v3_history()
++memory_v4_learned_traits()
++memory_v5_conversation_recall_fts()
++memory_v6_conversation_recall_embeddings()
 }
-class LanceDBMemory {
-+insert(entry, embedding)
-+search(embedding, limit)
-+fts_search(query, category, limit)
-+ensure_vector_index(np, nsv)
+class MigrationReport {
++applied : Vec<u32>
++skipped : Vec<u32>
++v1_backfilled : bool
 }
-class SqliteMemoryProvider {
-+store_scoped(key, content, category, scope)
-+recall_scoped(query, category, limit, scope)
-+export_scoped(category, scope)
-+apply_importance_decay(lambda, k)
-}
-VectorMemoryProvider --> FastEmbedProvider : "uses"
-VectorMemoryProvider --> LanceDBMemory : "writes to"
-VectorMemoryProvider --> SqliteMemoryProvider : "optional dual-write"
+Migration <|-- MemoryMigrations
+MemoryMigrations --> MigrationReport
 ```
 
 **Diagram sources**
-- [vector_provider.rs:98-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L98-L117)
-- [fastembed.rs:35-106](file://src-tauri/src/modules/memory/embedding/fastembed.rs#L35-L106)
-- [lancedb.rs:108-144](file://src-tauri/src/modules/memory/providers/lancedb.rs#L108-L144)
-- [sqlite_provider.rs:22-32](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L22-L32)
+- [migrations.rs:37-51](file://src-tauri/src/modules/memory/migrations.rs#L37-L51)
+- [migrations.rs:207-242](file://src-tauri/src/modules/memory/migrations.rs#L207-L242)
+- [migrations.rs:53-64](file://src-tauri/src/modules/memory/migrations.rs#L53-L64)
 
 **Section sources**
-- [vector_provider.rs:308-492](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L308-L492)
-- [ADR-013-High-Gaps-BACKLOG.md:130-184](file://docs/design-docs/postCLI/ADR/backlog/ADR-013-High-Gaps-BACKLOG.md#L130-L184)
+- [migrations.rs:1-519](file://src-tauri/src/modules/memory/migrations.rs#L1-L519)
 
-### SqliteMemoryProvider
-- Schema: memory_entries with primary key, content, category, timestamps, importance, access_count, trust_score, plus optional session_id and project_id for scope.
-- Indexes: category, created_at, and partial indexes for session_id/project_id to optimize scope queries.
-- Scoped recall/export: SQL WHERE clauses and ORDER BY tiering (session > project > global) with importance/access_count/recency weighting.
-- Migration: Import legacy JSON (claw-cli format) into SQLite within a transaction.
-- Threat scanning: Optional scanner attached at construction to redact content before INSERT.
+### Working Memory System
+Sophisticated sliding window memory management with intelligent eviction policies:
 
-```mermaid
-flowchart TD
-Start(["Scoped Recall"]) --> BuildClause["Build visibility clause<br/>and params"]
-BuildClause --> ExecQuery["Execute SELECT with ORDER BY tier"]
-ExecQuery --> FilterQuery{"Query empty?"}
-FilterQuery --> |Yes| ReturnResults["Return collected entries"]
-FilterQuery --> |No| ApplyFilter["Apply content filter (lowercase)"]
-ApplyFilter --> ReturnResults
-```
+**Eviction Strategy**: Dual constraint system using both turn count (default 8) and token budget (default 1600) to maintain optimal conversation context. Oldest messages are removed when either limit is exceeded.
 
-**Diagram sources**
-- [sqlite_provider.rs:449-570](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L449-L570)
+**Token Budgeting**: Accurate token counting considering text content, tool calls, and thinking blocks. Uses platform-specific token estimation for precise budget management.
+
+**Performance Optimization**: Efficient removal of oldest entries and continuous budget monitoring to minimize computational overhead during eviction cycles.
 
 **Section sources**
-- [sqlite_provider.rs:18-99](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L18-L99)
-- [sqlite_provider.rs:261-344](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L261-L344)
-- [sqlite_provider.rs:394-447](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L394-L447)
+- [working_memory.rs:30-91](file://src-tauri/src/modules/memory/working_memory.rs#L30-L91)
+- [working_memory.rs:94-125](file://src-tauri/src/modules/memory/working_memory.rs#L94-L125)
 
-### LanceDBMemory
-- Schema: key, content, category, embedding (FixedSizeList<Float32, 384>), created_at.
-- Operations: insert, vector search, category-filtered vector search, FTS-like client-side filtering, export_all, delete, count.
-- Indexing: IVF-PQ creation guarded by row count threshold and idempotency checks; logs warnings on failure.
+### Decision Tree Logic
+Mem0-style memory update classification system:
 
-```mermaid
-sequenceDiagram
-participant VMP as "VectorMemoryProvider"
-participant LDB as "LanceDBMemory"
-VMP->>LDB : "search_with_filter(embedding, category, limit)"
-LDB-->>VMP : "Vec<ScoredMemory>"
-VMP->>LDB : "fts_search(query, category, limit)"
-LDB-->>VMP : "Vec<ScoredMemory>"
-```
+**Classification Types**: Four decision types - NOOP (already covered), ADD (new content), UPDATE (replace existing), DELETE (retire contradictory). Each decision includes appropriate metadata for downstream processing.
 
-**Diagram sources**
-- [lancedb.rs:166-202](file://src-tauri/src/modules/memory/providers/lancedb.rs#L166-L202)
-- [lancedb.rs:211-239](file://src-tauri/src/modules/memory/providers/lancedb.rs#L211-L239)
+**LLM Integration**: Small utility LLM performs classification based on comparison with existing memories, returning structured JSON responses with verb-based classification.
+
+**Robust Parsing**: Fallback mechanisms ensure system resilience - unknown verbs, missing keys, or malformed responses default to ADD classification.
 
 **Section sources**
-- [lancedb.rs:59-106](file://src-tauri/src/modules/memory/providers/lancedb.rs#L59-L106)
-- [lancedb.rs:267-342](file://src-tauri/src/modules/memory/providers/lancedb.rs#L267-L342)
+- [decision_tree.rs:36-69](file://src-tauri/src/modules/memory/decision_tree.rs#L36-L69)
+- [decision_tree.rs:160-170](file://src-tauri/src/modules/memory/decision_tree.rs#L160-L170)
+- [decision_tree.rs:118-154](file://src-tauri/src/modules/memory/decision_tree.rs#L118-L154)
 
-### FastEmbedProvider
-- Model: Multilingual E5-small (384-dimension).
-- Methods: embed_one, embed, dimension.
-- Error handling: Empty text, dimension mismatch, model errors.
+### Self-Reflection Loop
+Automated memory synthesis system generating insights about user behavior and preferences:
 
-**Section sources**
-- [fastembed.rs:31-106](file://src-tauri/src/modules/memory/embedding/fastembed.rs#L31-L106)
-- [ADR-003-FastEmbed-LanceDB-Selection.md:46-74](file://docs/design-docs/postCLI/ADR/ADR-003-FastEmbed-LanceDB-Selection.md#L46-L74)
+**Periodic Synthesis**: Reflection pulses triggered at configurable intervals (reflection_threshold) generate insights about user preferences, goals, and recurring patterns.
 
-### Memory Execution Scope and Commands
-- MemoryExecutionScope: session_id, project_id, workdir; global() convenience; is_global().
-- MemoryScopeKind (Global, Project, Session) mapped to scope construction in commands.
-- Scope enforcement: SQL WHERE clauses and default filter logic for export_scoped.
+**LLM-Driven Analysis**: Utility LLM extracts meaningful observations from recent conversation transcripts, focusing on user behavior and agent performance patterns.
+
+**Memory Persistence**: Generated reflections are stored as Reflection-category memories with unique keys for easy retrieval and integration into agent reasoning.
 
 **Section sources**
-- [scope.rs:20-59](file://src-tauri/src/modules/memory/scope.rs#L20-L59)
-- [scope.rs:61-108](file://src-tauri/src/modules/memory/scope.rs#L61-L108)
-- [memory.rs:86-132](file://src-tauri/src/commands/memory.rs#L86-L132)
-- [mod.rs:170-199](file://src-tauri/src/modules/memory/mod.rs#L170-L199)
+- [reflection_loop.rs:38-97](file://src-tauri/src/modules/memory/reflection_loop.rs#L38-L97)
+- [reflection_loop.rs:147-184](file://src-tauri/src/modules/memory/reflection_loop.rs#L147-L184)
 
-### Threat Scanning Integration
-- VectorMemoryProvider: Optional ThreatScanner attached via with_scanner; applied once per write to clean content before dual-write.
-- SqliteMemoryProvider: Optional ThreatScanner attached via with_scanner; defense-in-depth for direct provider callers.
-- Tool layer: Built-in scanner used prior to policy evaluation; audit events emitted on matches.
+### Learned Traits System
+Cross-session observation persistence and management:
 
-**Section sources**
-- [vector_provider.rs:113-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L113-L117)
-- [sqlite_provider.rs:24-31](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L24-L31)
-- [memory-store.rs:271-296](file://src-tauri/src/modules/tools/builtin/memory_store.rs#L271-L296)
+**Trait Distillation**: Reflection memories are processed to extract durable observations about user characteristics and preferences, compressed into single-line traits.
 
-### Automatic Summarization
-- Rolling summaries: SessionSummaryStore dual-write (SQLite authoritative, JSON sidecar best-effort).
-- Atomic file writes: tmp + rename for reliability.
-- Budget computation and prompts: Per-turn budget scaling and fixed-output constraints.
+**Confidence Scoring**: Evidence-based confidence calculation that increases with repeated sightings, approaching saturation for reliable long-term knowledge.
+
+**User Control**: Users can disagree with traits they don't endorse, marking them for exclusion from future prompts while maintaining audit trail.
+
+**Storage Efficiency**: Optimized SQLite schema with partial indexes for fast active trait queries and efficient storage of cross-session observations.
 
 **Section sources**
-- [mod.rs:1-31](file://src-tauri/src/modules/memory/summary/mod.rs#L1-L31)
-- [memory-enhancement-from-openhanako-v1.md:868-883](file://docs/design-docs/postCLI/memory-enhancement-from-openhanako-v1.md#L868-L883)
-- [today.rs:188-203](file://src-tauri/src/modules/memory/compiler/today.rs#L188-L203)
+- [learned_traits.rs:95-136](file://src-tauri/src/modules/memory/learned_traits.rs#L95-L136)
+- [learned_traits.rs:138-211](file://src-tauri/src/modules/memory/learned_traits.rs#L138-L211)
+- [learned_traits.rs:263-282](file://src-tauri/src/modules/memory/learned_traits.rs#L263-L282)
 
-### Memory Lifecycle, Quality Gates, and Conflict Resolution
-- Lifecycle: Real memory lifecycle migration targets打通 write policy, quality gate, conflict resolution, and persistence into a single pipeline.
-- Quality gates and conflict resolution: Integrated in harness-grade evaluation and grading modules.
-- Gap remediation: Memory write/recall lifecycle gaps documented with implementation plans.
+### Memory Compiler Orchestration
+Comprehensive daily compilation system coordinating multiple memory generation pipelines:
+
+**Pipeline Coordination**: Four specialized compilers (today, week, longterm, facts) with fingerprint caching to avoid unnecessary recomputation and JobRunner throttling for resource management.
+
+**Assembly Pipeline**: Synchronous file assembly combining individual compilation outputs into unified memory.md with bilingual section headers and proper ordering.
+
+**Configuration Management**: CompilerConfig governs character limits, scheduling, and processing parameters for each compilation stage.
 
 **Section sources**
-- [MIG-005-real-memory-lifecycle.md:47-69](file://docs/packs/feature/migration-core/MIG-005-real-memory-lifecycle.md#L47-L69)
-- [01-usage-guide.md:1-20](file://docs/staff-remediation/gap-modules/memory-write-recall-lifecycle/01-usage-guide.md#L1-L20)
-- [02-implementation.md:1-26](file://docs/staff-remediation/gap-modules/memory-write-recall-lifecycle/02-implementation.md#L1-L26)
+- [compiler/mod.rs:168-321](file://src-tauri/src/modules/memory/compiler/mod.rs#L168-L321)
+- [compiler/mod.rs:47-118](file://src-tauri/src/modules/memory/compiler/mod.rs#L47-L118)
+
+### Memory Ticker Scheduler
+Sophisticated automated processing system:
+
+**Multi-Tier Scheduling**: Per-turn, session-end, and daily processing coordinated through TickerConfig with configurable intervals and thresholds.
+
+**Recovery Mechanisms**: Startup recovery scans for unprocessed session summaries and resumes interrupted processing, ensuring data integrity across application restarts.
+
+**Background Processing**: Non-blocking task execution with progress tracking, in-progress session management, and error handling for reliable automated processing.
+
+**Section sources**
+- [ticker/mod.rs:75-95](file://src-tauri/src/modules/memory/ticker/mod.rs#L75-L95)
+- [ticker/mod.rs:536-626](file://src-tauri/src/modules/memory/ticker/mod.rs#L536-L626)
+
+### Memory Policy Engine
+Advanced write policy enforcement with shadow mode:
+
+**Shadow Mode**: Default safe operation mode where deny decisions are downgraded to allow with shadow logging, enabling gradual policy rollout without disrupting existing behavior.
+
+**Configurable Rules**: Content length limits, category restrictions, prompt thresholds, and threat scanner integration provide comprehensive memory governance.
+
+**Machine-Readable Decisions**: Stable reason codes and structured policy results enable audit logging, frontend display, and automated decision-making.
+
+**Section sources**
+- [policy.rs:120-234](file://src-tauri/src/modules/memory/policy.rs#L120-L234)
+- [policy.rs:45-88](file://src-tauri/src/modules/memory/policy.rs#L45-L88)
+
+### Utility LLM Interface
+Abstraction layer enabling flexible LLM integration:
+
+**Provider Abstraction**: Unified interface supporting multiple LLM providers through ProviderManager, with lazy resolution for runtime model switching.
+
+**Mock Implementation**: Comprehensive test doubles for development and testing scenarios, supporting deterministic response sequences and call counting.
+
+**Chat Integration**: Specialized adapter for chat runtime provider resolution, enabling seamless integration with the main agent conversation flow.
+
+**Section sources**
+- [llm.rs:42-135](file://src-tauri/src/modules/memory/llm.rs#L42-L135)
+- [llm.rs:173-239](file://src-tauri/src/modules/memory/llm.rs#L173-L239)
+- [llm.rs:276-293](file://src-tauri/src/modules/memory/llm.rs#L276-L293)
+
+### Memory Injection System
+System prompt integration with budget management:
+
+**Priority-Based Assembly**: Pinned memory sections take precedence over compiled memory, with rules section always included for agent guidance on memory usage.
+
+**Budget Enforcement**: Character-based budget calculation using 4:1 ratio (chars per token) with progressive truncation when budgets are exceeded.
+
+**Locale Support**: Bilingual rendering supporting both English and Chinese with appropriate headers and instructions.
+
+**Section sources**
+- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
+- [inject.rs:135-200](file://src-tauri/src/modules/memory/inject.rs#L135-L200)
 
 ## Dependency Analysis
-- VectorMemoryProvider depends on FastEmbedProvider and LanceDBMemory; optionally on SqliteMemoryProvider.
-- SqliteMemoryProvider depends on rusqlite and implements MemoryProvider trait.
-- Memory commands depend on MemoryExecutionScope and scope kinds.
-- ThreatScanner is optional and injected into providers.
+The MEM-MOD architecture introduces complex interdependencies between components:
+
+**Migration Dependencies**: All memory operations depend on proper migration execution, with temporal versioning requiring consistent schema evolution across all components.
+
+**Policy Integration**: Memory operations traverse through policy engine for governance, with shadow mode providing safe gradual adoption of stricter policies.
+
+**Compiler Coordination**: Memory compiler orchestrates multiple subsystems including working memory, reflection loop, and learned traits, coordinating their outputs into unified memory artifacts.
+
+**LLM Integration**: Extensive LLM usage across decision tree, reflection loop, learned traits extraction, and memory injection, requiring robust provider abstraction and fallback mechanisms.
 
 ```mermaid
 graph LR
-CMD["Memory Commands"] --> SCOPE["MemoryExecutionScope"]
-VMP["VectorMemoryProvider"] --> FE["FastEmbedProvider"]
-VMP --> LDB["LanceDBMemory"]
-VMP --> SMP["SqliteMemoryProvider"]
-SMP --> SQLITE["SQLite DB"]
-VMP -.-> TS["ThreatScanner"]
-SMP -.-> TS
+POL["Memory Policy Engine"] --> VMP["VectorMemoryProvider"]
+DT["Decision Tree"] --> SMP["SqliteMemoryProvider"]
+WM["Working Memory"] --> COMP["Memory Compiler"]
+COMP --> TICK["Memory Ticker"]
+RL["Reflection Loop"] --> LT["Learned Traits"]
+LT --> COMP
+END["Utility LLM"] --> DT
+END --> RL
+END --> COMP
+INJ["Memory Injection"] --> SMP
+MIG["Schema Migrations"] --> SMP
+MIG --> LDB["LanceDBMemory"]
 ```
 
 **Diagram sources**
-- [memory.rs:97-132](file://src-tauri/src/commands/memory.rs#L97-L132)
-- [vector_provider.rs:98-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L98-L117)
-- [sqlite_provider.rs:22-32](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L22-L32)
+- [policy.rs:153-208](file://src-tauri/src/modules/memory/policy.rs#L153-L208)
+- [decision_tree.rs:160-170](file://src-tauri/src/modules/memory/decision_tree.rs#L160-L170)
+- [compiler/mod.rs:218-321](file://src-tauri/src/modules/memory/compiler/mod.rs#L218-L321)
+- [ticker/mod.rs:408-414](file://src-tauri/src/modules/memory/ticker/mod.rs#L408-L414)
+- [reflection_loop.rs:76-97](file://src-tauri/src/modules/memory/reflection_loop.rs#L76-L97)
+- [learned_traits.rs:263-282](file://src-tauri/src/modules/memory/learned_traits.rs#L263-L282)
+- [inject.rs:88-133](file://src-tauri/src/modules/memory/inject.rs#L88-L133)
+- [migrations.rs:101-178](file://src-tauri/src/modules/memory/migrations.rs#L101-L178)
 
 **Section sources**
 - [mod.rs:201-380](file://src-tauri/src/modules/memory/mod.rs#L201-L380)
 
 ## Performance Considerations
-- Vector search acceleration: IVF-PQ index creation guarded by minimum row thresholds; soft failure logs warnings and continues with brute-force scan.
-- Hybrid search: Parallel vector and FTS; RRF fusion aggregates results.
-- SQLite scope queries: Partial indexes on session_id/project_id reduce index size and improve selectivity.
-- Asynchronous LanceDB writes: Fire-and-forget background inserts when dual-write is enabled, minimizing latency for the primary SQLite write.
-- Embedding dimension: 384-dimension embeddings balance multilingual coverage and CPU efficiency.
+MEM-MOD introduces several performance optimizations and considerations:
+
+**Migration Performance**: Transactional migration application prevents partial schema corruption and enables efficient batch processing of schema changes across all migration versions.
+
+**Working Memory Efficiency**: Sliding window eviction operates in O(n) time with minimal memory overhead, using efficient removal of oldest entries and continuous budget monitoring.
+
+**Decision Tree Optimization**: Small utility LLM calls with constrained token budgets (256 tokens) minimize computational overhead while maintaining classification accuracy.
+
+**Compiler Caching**: Fingerprint-based caching prevents redundant LLM calls, with JobRunner throttling preventing resource exhaustion during intensive compilation tasks.
+
+**Temporal Query Performance**: Memory history queries leverage indexed valid_from timestamps for efficient range scans without sorting requirements.
 
 **Section sources**
-- [lancedb.rs:267-342](file://src-tauri/src/modules/memory/providers/lancedb.rs#L267-L342)
-- [vector_provider.rs:241-275](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L241-L275)
-- [sqlite_provider.rs:80-93](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L80-L93)
+- [migrations.rs:146-175](file://src-tauri/src/modules/memory/migrations.rs#L146-L175)
+- [working_memory.rs:81-90](file://src-tauri/src/modules/memory/working_memory.rs#L81-L90)
+- [decision_tree.rs:166-169](file://src-tauri/src/modules/memory/decision_tree.rs#L166-L169)
+- [compiler/mod.rs:352-402](file://src-tauri/src/modules/memory/compiler/mod.rs#L352-L402)
+- [migrations.rs:345-350](file://src-tauri/src/modules/memory/migrations.rs#L345-L350)
 
 ## Troubleshooting Guide
-- Vector search disabled: Hybrid search falls back to FTS; verify vector_search_enabled flag.
-- Index creation failures: Ensure sufficient rows and retry; warnings are logged and brute-force scan is used.
-- Dimension mismatch: Embedding dimension must match LanceDB expectation (384).
-- Scope visibility: Without SQLite dual-write, scoped metadata is dropped; enable sqlite_path to honor session/project/global tiers.
-- Threat scanner redactions: When flagged, audit events are emitted; content is cleaned before persistence.
-- Clear all memories: SQLite first (authoritative), then best-effort LanceDB deletion; counts differ when dual-write is enabled.
+MEM-MOD introduces new troubleshooting scenarios and solutions:
+
+**Migration Failures**: Transactional migration rollback ensures system stability - check MigrationError messages for specific failure details and verify database permissions.
+
+**Decision Tree Issues**: When decision tree classification fails, system falls back to ADD classification. Check LLM availability, token limits, and JSON parsing errors in decision tree logs.
+
+**Working Memory Eviction**: Excessive eviction indicates insufficient budget allocation - adjust max_turns or max_tokens parameters based on conversation complexity requirements.
+
+**Compiler Pipeline Problems**: JobRunner throttling may cause delayed compilation - check JobRunner configuration and LLM endpoint availability for fingerprint-based caching issues.
+
+**Reflection Loop Failures**: Reflection synthesis errors are non-fatal and logged - verify LLM availability and ensure sufficient recent conversation history for meaningful insights.
+
+**Policy Engine Conflicts**: Shadow mode denies are downgraded to allows - switch to enforce mode once policy effectiveness is validated through shadow observations.
 
 **Section sources**
-- [vector_provider.rs:231-239](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L231-L239)
-- [lancedb.rs:283-342](file://src-tauri/src/modules/memory/providers/lancedb.rs#L283-L342)
-- [lancedb.rs:147-154](file://src-tauri/src/modules/memory/providers/lancedb.rs#L147-L154)
-- [vector_provider.rs:514-524](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L514-L524)
-- [vector_provider.rs:407-439](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L407-L439)
+- [migrations.rs:168-175](file://src-tauri/src/modules/memory/migrations.rs#L168-L175)
+- [decision_tree.rs:169](file://src-tauri/src/modules/memory/decision_tree.rs#L169)
+- [working_memory.rs:81-90](file://src-tauri/src/modules/memory/working_memory.rs#L81-L90)
+- [compiler/mod.rs:378-402](file://src-tauri/src/modules/memory/compiler/mod.rs#L378-L402)
+- [reflection_loop.rs:84-96](file://src-tauri/src/modules/memory/reflection_loop.rs#L84-L96)
+- [policy.rs:210-226](file://src-tauri/src/modules/memory/policy.rs#L210-L226)
 
 ## Conclusion
-If2Ai’s memory system combines SQLite and LanceDB to deliver durable, scope-aware, and vector-powered recall. The dual-write strategy ensures consistency, while optional threat scanning protects sensitive content. Automatic summarization and lifecycle improvements are being integrated to form a robust, secure, and high-performance memory architecture.
+If2Ai's MEM-MOD modernization transforms the memory system from basic storage to a sophisticated self-evolving architecture. The six-version migration framework establishes robust foundations, while working memory, decision trees, reflection loops, and learned traits enable autonomous memory improvement. The comprehensive compiler orchestration, scheduler system, and policy engine provide enterprise-grade memory management capabilities. This modernized system delivers enhanced performance, reliability, and intelligence while maintaining backward compatibility and extensibility.
 
 ## Appendices
 
 ### Configuration Options
-- VectorProviderConfig
-  - db_path: LanceDB directory path
-  - vector_search_enabled: Enable/disable vector search
-  - sqlite_path: Optional SQLite dual-write path
-- VectorMemoryProvider
-  - with_scanner: Attach shared ThreatScanner
-  - is_enabled/dimension helpers exposed for diagnostics
+**Memory Feature Configuration**:
+- decision_tree_enabled: Toggle Mem0-style decision tree for intelligent memory updates
+- inject_to_prompt: Control system prompt memory injection (pinned + compiled)
+- max_inject_tokens: Token budget cap for memory injection payload
+- compiler: Memory compiler configuration with character limits and scheduling
+
+**Memory Policy Configuration**:
+- enforce_mode: Shadow or Enforce mode for policy governance
+- max_content_bytes: Hard content length limit for memory writes
+- prompt_threshold_bytes: Threshold triggering user confirmation prompts
+- denied_categories: Category-based write restrictions
+
+**Ticker Configuration**:
+- reflection_threshold: Turns between reflection pulses
+- daily_check_interval_secs: Background daily processing interval
+- turns_per_summary: User turns between rolling summary generation
 
 **Section sources**
+- [memory.rs:97-132](file://src-tauri/src/commands/memory.rs#L97-L132)
 - [vector_provider.rs:55-96](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L55-L96)
-- [vector_provider.rs:189-193](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L189-L193)
-- [vector_provider.rs:277-281](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L277-L281)
+- [policy.rs:90-114](file://src-tauri/src/modules/memory/policy.rs#L90-L114)
+- [ticker/mod.rs:408-414](file://src-tauri/src/modules/memory/ticker/mod.rs#L408-L414)
 
 ### Practical Examples
-- Store scoped memory with session/project/global visibility
-- Recall with category and limit; hybrid search with RRF fusion
-- Clear all memories (SQLite authoritative, best-effort LanceDB)
-- Apply importance decay (Weibull) via SQLite provider
+**Working Memory Operations**:
+- Initialize with custom constraints: WorkingMemory::new(8, 1600)
+- Automatic eviction: push() and extend() methods trigger eviction when limits exceeded
+- Token budget monitoring: token_count() provides real-time budget usage
+
+**Decision Tree Classification**:
+- Content analysis: decide_via_llm() performs classification with fallback to ADD
+- Candidate selection: recall() with limited k values for relevant context
+- Action execution: Apply classified decisions to memory operations
+
+**Memory Compilation**:
+- Daily pipeline: compile_today() → compile_week() → compile_longterm() → compile_facts() → assemble()
+- Fingerprint caching: Automatic cache validation prevents redundant LLM calls
+- Budget management: Character limits prevent excessive memory growth
+
+**Reflection Processing**:
+- Periodic synthesis: synthesize_and_persist() generates insights from conversation history
+- Trait extraction: extract_and_persist() converts reflections to durable learned traits
+- User interaction: disagree() method allows user disagreement with traits
 
 **Section sources**
-- [vector_provider.rs:503-576](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L503-L576)
-- [vector_provider.rs:378-390](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L378-L390)
-- [vector_provider.rs:407-439](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L407-L439)
-- [sqlite_provider.rs:668-685](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L668-L685)
+- [working_memory.rs:30-91](file://src-tauri/src/modules/memory/working_memory.rs#L30-L91)
+- [decision_tree.rs:160-170](file://src-tauri/src/modules/memory/decision_tree.rs#L160-L170)
+- [compiler/mod.rs:218-321](file://src-tauri/src/modules/memory/compiler/mod.rs#L218-L321)
+- [reflection_loop.rs:76-97](file://src-tauri/src/modules/memory/reflection_loop.rs#L76-L97)
+- [learned_traits.rs:263-282](file://src-tauri/src/modules/memory/learned_traits.rs#L263-L282)
 
 ### Security and Access Control
-- ThreatScanner: Pattern-based detection and redaction applied at provider boundaries
-- Scope enforcement: SQL-based visibility rules (tiered ordering) and command-layer mapping
-- Audit events: Emitted for PII redaction and write decisions
+**Memory Policy Engine**: Comprehensive governance with shadow mode for safe policy rollout, content length limits, category restrictions, and threat scanner integration.
+
+**Threat Scanner Integration**: Optional pattern-based detection and redaction applied at provider boundaries for sensitive content protection.
+
+**Access Control**: MemoryExecutionScope enforces session/project/global isolation with tiered visibility rules and SQL-based enforcement.
+
+**Audit Logging**: Comprehensive audit events for policy decisions, memory operations, and system evolution tracking.
 
 **Section sources**
+- [policy.rs:153-208](file://src-tauri/src/modules/memory/policy.rs#L153-L208)
 - [vector_provider.rs:113-117](file://src-tauri/src/modules/memory/providers/vector_provider.rs#L113-L117)
-- [sqlite_provider.rs:24-31](file://src-tauri/src/modules/memory/providers/sqlite_provider.rs#L24-L31)
-- [memory-store.rs:271-296](file://src-tauri/src/modules/tools/builtin/memory_store.rs#L271-L296)
+- [scope.rs:20-59](file://src-tauri/src/modules/memory/scope.rs#L20-L59)
 - [mod.rs:170-199](file://src-tauri/src/modules/memory/mod.rs#L170-L199)

@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [execution-mode-policy-routing](../../staff-remediation/gap-modules/execution-mode-policy-routing/01-usage-guide.md)
 - Last Updated: `2026-04-23`
@@ -48,6 +48,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-007 Worker Tool Execution Contract](./MIG-007-worker-tool-execution-contract.md)
 - [MIG-021 Resume Contract And Run Recovery](./MIG-021-resume-contract-and-run-recovery.md)
@@ -65,6 +66,12 @@
 - `npm test -- tool-timeline`
 - `npm run build`
 - 至少一条测试验证多次 retry 的 timeline 顺序稳定
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: `RunLogEntry` has `tool_call_id` and `attempt_id`; tool projection handles tool lifecycle updates.
+- Remaining Gap: stable `attempt_id / attempt_no` generation, retry state machine, and attempt ledger timeline are not complete.
 
 ## Out Of Scope
 

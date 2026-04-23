@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -83,6 +83,12 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - 至少一条 host bootstrap / lifecycle 测试通过
 - `main.rs` 的职责可清晰描述为 host composition root，而不是业务 command 总控
+
+## Code Audit 2026-04-23
+
+- Status: done; skip unless host boundary regresses.
+- Evidence: `src-tauri/src/modules/desktop_host/{builder,setup}.rs` owns native host setup; `main.rs` delegates composition; `tray_action_resolution_only_accepts_native_host_ids` passed.
+- Remaining Gap: broader command boundary thinning belongs to `GAP-004`, not this pack.
 
 ## Out Of Scope
 

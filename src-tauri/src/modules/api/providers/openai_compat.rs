@@ -70,6 +70,12 @@ pub struct OpenAiCompatClient {
     http: reqwest::Client,
     api_key: String,
     base_url: String,
+    /// P-MULTI-API — Stable provider id matching `KNOWN_PROVIDERS` so
+    /// `build_chat_completion_request_for_provider` can look up the
+    /// model's reasoning capability.  Derived from `provider_name`
+    /// lower-cased; bespoke IDs (e.g. `kimi-coding`) can be set via
+    /// [`OpenAiCompatClient::with_provider_id`].
+    provider_id: String,
     max_retries: u32,
     initial_backoff: Duration,
     max_backoff: Duration,
@@ -82,6 +88,7 @@ impl OpenAiCompatClient {
             http: reqwest::Client::new(),
             api_key: api_key.into(),
             base_url: read_base_url(config),
+            provider_id: config.provider_name.to_ascii_lowercase(),
             max_retries: DEFAULT_MAX_RETRIES,
             initial_backoff: DEFAULT_INITIAL_BACKOFF,
             max_backoff: DEFAULT_MAX_BACKOFF,
@@ -101,6 +108,16 @@ impl OpenAiCompatClient {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// P-MULTI-API — override the resolved provider id (default = lower
+    /// case of `OpenAiCompatConfig::provider_name`).  Use this for
+    /// bespoke `KNOWN_PROVIDERS` ids like `kimi-coding` whose display
+    /// name does not lower-case cleanly.
+    #[must_use]
+    pub fn with_provider_id(mut self, provider_id: impl Into<String>) -> Self {
+        self.provider_id = provider_id.into();
         self
     }
 
@@ -192,7 +209,10 @@ impl OpenAiCompatClient {
             .post(&request_url)
             .header("content-type", "application/json")
             .bearer_auth(&self.api_key)
-            .json(&build_chat_completion_request(request))
+            .json(&build_chat_completion_request_for_provider(
+                request,
+                &self.provider_id,
+            ))
             .send()
             .await
             .map_err(ApiError::from)
@@ -304,11 +324,21 @@ struct StreamState {
     message_started: bool,
     text_started: bool,
     text_finished: bool,
+    /// Reasoning content streams on its own block index
+    /// ([`THINKING_BLOCK_INDEX`]) so the chat UI can render it
+    /// independently of `text_delta`. We use `u32::MAX` so it cannot
+    /// collide with text (`0`) or tool blocks (`openai_index + 1`).
+    thinking_started: bool,
+    thinking_finished: bool,
     finished: bool,
     stop_reason: Option<String>,
     usage: Option<Usage>,
     tool_calls: BTreeMap<u32, ToolCallState>,
 }
+
+#[allow(dead_code)]
+const TEXT_BLOCK_INDEX: u32 = 0;
+const THINKING_BLOCK_INDEX: u32 = u32::MAX;
 
 impl StreamState {
     fn new(model: String) -> Self {
@@ -317,6 +347,8 @@ impl StreamState {
             message_started: false,
             text_started: false,
             text_finished: false,
+            thinking_started: false,
+            thinking_finished: false,
             finished: false,
             stop_reason: None,
             usage: None,
@@ -358,7 +390,41 @@ impl StreamState {
         }
 
         for choice in chunk.choices {
+            // Reasoning / thinking deltas — emit `Thinking` content block on
+            // a dedicated index. We close the block as soon as `text`
+            // (final answer) starts streaming so the UI's `ThinkingBlock`
+            // can fold up and the text bubble appears below.
+            if let Some(reasoning) = choice
+                .delta
+                .reasoning_content
+                .clone()
+                .filter(|value| !value.is_empty())
+            {
+                if !self.thinking_started {
+                    self.thinking_started = true;
+                    events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                        index: THINKING_BLOCK_INDEX,
+                        content_block: OutputContentBlock::Thinking {
+                            thinking: String::new(),
+                            signature: None,
+                        },
+                    }));
+                }
+                events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+                    index: THINKING_BLOCK_INDEX,
+                    delta: ContentBlockDelta::ThinkingDelta {
+                        thinking: reasoning,
+                    },
+                }));
+            }
+
             if let Some(content) = choice.delta.content.filter(|value| !value.is_empty()) {
+                if self.thinking_started && !self.thinking_finished {
+                    self.thinking_finished = true;
+                    events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                        index: THINKING_BLOCK_INDEX,
+                    }));
+                }
                 if !self.text_started {
                     self.text_started = true;
                     events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
@@ -422,6 +488,15 @@ impl StreamState {
         self.finished = true;
 
         let mut events = Vec::new();
+        // Close thinking first (it should already be closed once text
+        // started, but reasoning-only responses with no `content` need
+        // an explicit stop here).
+        if self.thinking_started && !self.thinking_finished {
+            self.thinking_finished = true;
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index: THINKING_BLOCK_INDEX,
+            }));
+        }
         if self.text_started && !self.text_finished {
             self.text_finished = true;
             events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
@@ -599,6 +674,12 @@ struct ChunkChoice {
 struct ChunkDelta {
     #[serde(default)]
     content: Option<String>,
+    /// Reasoning / chain-of-thought content streamed by reasoning-capable
+    /// OpenAI-compatible models (DeepSeek-R1, Qwen-QwQ, GLM-Z1, some
+    /// Ollama models, …). Maps to Anthropic's `thinking` content block so
+    /// the chat UI's `ThinkingBlock` renders the foldable card.
+    #[serde(default, alias = "reasoning")]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Vec<DeltaToolCall>,
 }
@@ -634,6 +715,25 @@ struct ErrorBody {
 }
 
 fn build_chat_completion_request(request: &MessageRequest) -> Value {
+    build_chat_completion_request_for_provider(request, "")
+}
+
+/// Provider-aware request builder.  `provider_id` lets us look up the
+/// model's [`ModelCapability`] so reasoning-bearing wire fields
+/// (`reasoning_content`, top-level `enable_thinking`, `reasoning_effort`)
+/// are emitted only when the resolved capability says so.  The empty
+/// string means "no provider context" which falls through to default
+/// behaviour and matches the legacy single-arg helper above.
+pub(super) fn build_chat_completion_request_for_provider(
+    request: &MessageRequest,
+    provider_id: &str,
+) -> Value {
+    let cap = crate::modules::provider::capabilities::resolve(
+        provider_id,
+        &request.model,
+        None,
+        crate::modules::provider::capabilities::GlobalThinkingPolicy::from_env(),
+    );
     let mut messages = Vec::new();
     if let Some(system) = request.system.as_ref().filter(|value| !value.is_empty()) {
         messages.push(json!({
@@ -642,7 +742,7 @@ fn build_chat_completion_request(request: &MessageRequest) -> Value {
         }));
     }
     for message in &request.messages {
-        messages.extend(translate_message(message));
+        messages.extend(translate_message(message, &cap));
     }
 
     let mut payload = json!({
@@ -660,10 +760,28 @@ fn build_chat_completion_request(request: &MessageRequest) -> Value {
         payload["tool_choice"] = openai_tool_choice(tool_choice);
     }
 
+    // P-MULTI-API — top-level reasoning fields by quirk.
+    if let Some(flag) = cap.enable_thinking_flag {
+        payload["enable_thinking"] = Value::Bool(flag);
+    }
+    if cap.supports_reasoning_effort {
+        // Read the user-selected `IF2AI_THINKING_LEVEL` (matches the
+        // ThinkingLevelButton on the frontend).  Defaults to `medium`
+        // when unset; `off` strips the field entirely.
+        let level = std::env::var("IF2AI_THINKING_LEVEL").unwrap_or_else(|_| "medium".into());
+        let normalised = level.to_ascii_lowercase();
+        if matches!(normalised.as_str(), "low" | "medium" | "high") {
+            payload["reasoning_effort"] = Value::String(normalised);
+        }
+    }
+
     payload
 }
 
-fn translate_message(message: &InputMessage) -> Vec<Value> {
+fn translate_message(
+    message: &InputMessage,
+    cap: &crate::modules::provider::capabilities::ModelCapability,
+) -> Vec<Value> {
     match message.role.as_str() {
         "assistant" => {
             let mut text = String::new();
@@ -685,11 +803,37 @@ fn translate_message(message: &InputMessage) -> Vec<Value> {
             if text.is_empty() && tool_calls.is_empty() {
                 Vec::new()
             } else {
-                vec![json!({
-                    "role": "assistant",
-                    "content": (!text.is_empty()).then_some(text),
-                    "tool_calls": tool_calls,
-                })]
+                let mut obj = serde_json::Map::new();
+                obj.insert("role".into(), json!("assistant"));
+                obj.insert(
+                    "content".into(),
+                    if text.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(text)
+                    },
+                );
+                obj.insert("tool_calls".into(), Value::Array(tool_calls.clone()));
+
+                // P-MULTI-API: write `reasoning_content` for models that
+                // capture it (Quirk::ReasoningRequiredInToolCalls).  When
+                // history pre-dates thinking capture we fall back to an
+                // empty string for assistant rows that carry tool_calls,
+                // since Kimi-thinking / DeepSeek-R1 will 400 otherwise.
+                if cap.reasoning {
+                    let value = match &message.thinking {
+                        Some(t) => Value::String(t.clone()),
+                        None if cap.reasoning_required_in_tool_calls && !tool_calls.is_empty() => {
+                            tracing::warn!(
+                                "[openai_compat] padding empty reasoning_content for legacy assistant tool_call (history pre-dates thinking capture)"
+                            );
+                            Value::String(String::new())
+                        }
+                        None => return vec![Value::Object(obj)],
+                    };
+                    obj.insert("reasoning_content".into(), value);
+                }
+                vec![Value::Object(obj)]
             }
         }
         _ => message
@@ -987,6 +1131,7 @@ mod tests {
                         is_error: false,
                     },
                 ],
+                thinking: None,
             }],
             system: Some("be helpful".to_string()),
             tools: Some(vec![ToolDefinition {

@@ -122,7 +122,11 @@ impl RealApiClient {
                     crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
                 };
 
-                InputMessage { role, content }
+                InputMessage {
+                    role,
+                    content,
+                    thinking: msg.thinking.clone(),
+                }
             })
             .collect();
 

@@ -76,13 +76,19 @@ async fn list_ollama_models(base_url: &str) -> Result<Vec<Model>, String> {
         .filter_map(|m| {
             let name = m.get("name").and_then(|v| v.as_str())?;
             let canonical = resolve_model_alias(name);
-            Some(Model {
-                id: name.to_string(),
-                name: canonical,
-                context_window: None,
-                max_tokens: None,
-                modality: ModelModality::Text,
-            })
+            Some(enrich_model_capability(
+                "ollama",
+                Model {
+                    id: name.to_string(),
+                    name: canonical,
+                    context_window: None,
+                    max_tokens: None,
+                    modality: ModelModality::Text,
+                    reasoning: false,
+                    reasoning_required_in_tool_calls: false,
+                    supports_reasoning_effort: false,
+                },
+            ))
         })
         .collect())
 }
@@ -92,36 +98,56 @@ async fn list_ollama_models(base_url: &str) -> Result<Vec<Model>, String> {
 /// Anthropic doesn't expose a public model listing endpoint,
 /// so we use a hardcoded list of known models.
 fn list_anthropic_models() -> Vec<Model> {
-    vec![
-        Model {
-            id: "claude-opus-4-6".to_string(),
-            name: "Claude Opus 4.6".to_string(),
-            context_window: Some(200_000),
-            max_tokens: Some(32_000),
-            modality: ModelModality::Text,
-        },
-        Model {
-            id: "claude-sonnet-4-6".to_string(),
-            name: "Claude Sonnet 4.6".to_string(),
-            context_window: Some(200_000),
-            max_tokens: Some(64_000),
-            modality: ModelModality::Text,
-        },
-        Model {
-            id: "claude-sonnet-4-5-20250514".to_string(),
-            name: "Claude Sonnet 4.5".to_string(),
-            context_window: Some(200_000),
-            max_tokens: Some(64_000),
-            modality: ModelModality::Text,
-        },
-        Model {
-            id: "claude-haiku-4-5-20251213".to_string(),
-            name: "Claude Haiku 4.5".to_string(),
-            context_window: Some(200_000),
-            max_tokens: Some(8_000),
-            modality: ModelModality::Text,
-        },
+    [
+        ("claude-opus-4-6", "Claude Opus 4.6", 200_000, 32_000),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6", 200_000, 64_000),
+        (
+            "claude-sonnet-4-5-20250514",
+            "Claude Sonnet 4.5",
+            200_000,
+            64_000,
+        ),
+        (
+            "claude-haiku-4-5-20251213",
+            "Claude Haiku 4.5",
+            200_000,
+            8_000,
+        ),
     ]
+    .into_iter()
+    .map(|(id, name, ctx, max)| {
+        enrich_model_capability(
+            "anthropic",
+            Model {
+                id: id.to_string(),
+                name: name.to_string(),
+                context_window: Some(ctx),
+                max_tokens: Some(max),
+                modality: ModelModality::Text,
+                reasoning: false,
+                reasoning_required_in_tool_calls: false,
+                supports_reasoning_effort: false,
+            },
+        )
+    })
+    .collect()
+}
+
+/// P-MULTI-API — Fill the reasoning-related fields on a `Model` from the
+/// `(provider_id, model.id)` lookup against the built-in capability
+/// dictionary. Idempotent — re-running on an already-enriched model is
+/// safe.
+fn enrich_model_capability(provider_id: &str, mut model: Model) -> Model {
+    let cap = super::capabilities::resolve(
+        provider_id,
+        &model.id,
+        None,
+        super::capabilities::GlobalThinkingPolicy::Auto,
+    );
+    model.reasoning = cap.reasoning;
+    model.reasoning_required_in_tool_calls = cap.reasoning_required_in_tool_calls;
+    model.supports_reasoning_effort = cap.supports_reasoning_effort;
+    model
 }
 
 /// Fetch models from an OpenAI-compatible provider via `/models`.
@@ -155,20 +181,66 @@ async fn list_openai_compat_models(
         .and_then(|m| m.as_array())
         .ok_or_else(|| "Provider response missing 'data' field".to_string())?;
 
+    // Heuristic: derive provider id from base_url host.  Ollama / OpenAI /
+    // Anthropic etc. use distinct hosts.  Falls back to "" which makes
+    // `enrich_model_capability` skip dict lookups (returns `Default`).
+    let provider_id = derive_provider_id_from_base_url(base_url);
     Ok(models
         .iter()
         .filter_map(|m| {
             let id = m.get("id").and_then(|v| v.as_str())?;
             let canonical = resolve_model_alias(id);
-            Some(Model {
-                id: id.to_string(),
-                name: canonical,
-                context_window: None,
-                max_tokens: None,
-                modality: ModelModality::Text,
-            })
+            Some(enrich_model_capability(
+                &provider_id,
+                Model {
+                    id: id.to_string(),
+                    name: canonical,
+                    context_window: None,
+                    max_tokens: None,
+                    modality: ModelModality::Text,
+                    reasoning: false,
+                    reasoning_required_in_tool_calls: false,
+                    supports_reasoning_effort: false,
+                },
+            ))
         })
         .collect())
+}
+
+/// Best-effort host → known-provider id derivation. Used by
+/// `list_openai_compat_models` to pick the right capability lookup
+/// without requiring callers to thread the provider id through the
+/// model fetch path.
+fn derive_provider_id_from_base_url(base_url: &str) -> String {
+    let url_lower = base_url.to_ascii_lowercase();
+    for kp in super::known_providers::KNOWN_PROVIDERS {
+        if !kp.default_base_url.is_empty()
+            && url_lower.contains(&kp.default_base_url.to_ascii_lowercase())
+        {
+            return kp.id.to_string();
+        }
+    }
+    // Soft host matching for users with custom prefixes (proxies / mirrors).
+    for (host_substr, id) in [
+        ("moonshot", "moonshot"),
+        ("api.kimi.com/coding", "kimi-coding"),
+        ("dashscope.aliyuncs.com/compatible", "dashscope"),
+        ("coding.dashscope", "dashscope-coding"),
+        ("deepseek", "deepseek"),
+        ("ollama", "ollama"),
+        ("11434", "ollama"),
+        ("openai.com", "openai"),
+        ("anthropic.com", "anthropic"),
+        ("openrouter", "openrouter"),
+        ("siliconflow", "siliconflow"),
+        ("bigmodel.cn", "zhipu"),
+        ("minimaxi", "minimax"),
+    ] {
+        if url_lower.contains(host_substr) {
+            return id.to_string();
+        }
+    }
+    String::new()
 }
 
 /// Configure a provider by saving its settings via `ConfigService`.

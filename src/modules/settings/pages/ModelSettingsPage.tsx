@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TtsModelSection } from './TtsModelSection'
+import { ThinkingModeChip } from '@/components/chat/ThinkingModeChip'
 
 const DEFAULT_MODEL_NAME = 'intfloat/multilingual-e5-small'
 
@@ -31,7 +32,17 @@ interface ModelRoleConfig {
 interface AvailableModelGroup {
   provider_id: string
   provider_name: string
-  models: { model_id: string; name: string; context_window?: number }[]
+  models: AvailableModelEntry[]
+}
+
+interface AvailableModelEntry {
+  model_id: string
+  name: string
+  context_window?: number
+  /** P-MULTI-API — surfaced from the backend capability resolver. */
+  reasoning?: boolean
+  reasoning_required_in_tool_calls?: boolean
+  supports_reasoning_effort?: boolean
 }
 
 const ROLE_META: Record<string, {
@@ -189,11 +200,14 @@ function ModelDropdown({
                         {model.model_id}
                       </span>
                     </div>
-                    {model.context_window && (
-                      <span className="shrink-0 rounded-md bg-black/[0.05] px-1.5 text-[9.5px] text-black/35">
-                        {(model.context_window / 1000).toFixed(0)}K
-                      </span>
-                    )}
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <ThinkingModeChip model={model} compact />
+                      {model.context_window && (
+                        <span className="shrink-0 rounded-md bg-black/[0.05] px-1.5 text-[9.5px] text-black/35">
+                          {(model.context_window / 1000).toFixed(0)}K
+                        </span>
+                      )}
+                    </div>
                   </button>
                 )
               })}

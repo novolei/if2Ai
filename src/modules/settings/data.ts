@@ -76,6 +76,13 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     icon: Cpu,
   },
   {
+    id: "providers",
+    label: "服务商管理",
+    description:
+      "OAuth / Coding Plan / API 三段式管理 LLM 服务商，按 openhanako 模式查看 Base URL、API 类型、推理能力与已添加模型。",
+    icon: Cpu,
+  },
+  {
     id: "connections",
     label: "连接应用",
     description: "接入外部社交渠道与消息平台。",

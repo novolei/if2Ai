@@ -1445,14 +1445,146 @@ export async function onboarding_get_state(): Promise<Record<string, unknown>> {
  * [`ActivationSnapshot`](`@/transport/contracts`) from the backend
  * `activation_service`.
  *
- * Backed by the new `activation_get_status` Tauri command. Today
- * the backend derives the snapshot from legacy onboarding-completion
- * truth (no remote license API yet); the IPC payload still uses the
- * canonical M0.4 contract shape so the boot-shell projection seam
- * stays compatible when a real license backend lands.
+ * Backed by `activation_get_status`：本地许可缓存 + 激活 HTTP 客户端；
+ * 未设置 `IF2AI_ACTIVATION_BASE_URL` 时 Rust 侧使用公网默认端点（与
+ * UClaw 共用 `license-api`）。载荷仍为 M0.4 `ActivationSnapshot` 形状。
  */
 export async function activationGetStatus(): Promise<ActivationSnapshot> {
   return invoke<ActivationSnapshot>("activation_get_status");
+}
+
+// ─── Phase M2.6 — activation gate (UClaw activation server port) ─────
+
+/** Stable installation identity returned by `activation_get_installation_id`. */
+export interface InstallationIdentity {
+  installationId: string;
+  /** 8-char human-friendly indicator (`XXXX-XXXX`). */
+  deviceIndicator: string;
+}
+
+/** Wire shape for `POST /v1/activations/request` responses. */
+export interface ActivationRequestPayloadDto {
+  requestId: string;
+  /** Server-issued 8-char alphanumeric code (also used as OTP visual). */
+  deviceRequestCode: string;
+  /** `"pending"` (frontend should poll) or `"approved"` (skip polling). */
+  status: string;
+  expiresAt: string;
+  serverTime: string;
+}
+
+/** Wire shape for `GET /v1/activations/request/:id` responses. */
+export interface ActivationPollResponseDto {
+  requestId: string;
+  status: string;
+  canRedeem: boolean;
+  serverTime: string;
+}
+
+/** Stable error shape returned by activation IPCs (UI-friendly `code`). */
+export interface ActivationErrorDto {
+  code:
+    | "transport"
+    | "invalid_response"
+    | "queueing"
+    | "busy"
+    | "invalid_app_id"
+    | "server_error"
+    | "decoding"
+    | "not_configured";
+  httpStatus?: number;
+  message: string;
+}
+
+/** Tauri event payload broadcast before each retry sleep. */
+export interface ActivationRetryStatusEvent {
+  /** HTTP status that triggered the retry; `-1` for transport errors. */
+  statusCode: number;
+  attempt: number;
+  maxAttempts: number;
+}
+
+export const ACTIVATION_RETRY_EVENT = "activation_retry_status";
+export const ACTIVATION_STATUS_EVENT = "activation_status_changed";
+
+export async function activationGetInstallationId(): Promise<InstallationIdentity> {
+  return invoke<InstallationIdentity>("activation_get_installation_id");
+}
+
+export async function activationRequestLicense(
+  installationId: string,
+): Promise<ActivationRequestPayloadDto> {
+  return invoke<ActivationRequestPayloadDto>("activation_request_license", {
+    installationId,
+  });
+}
+
+export async function activationPollRequestStatus(
+  requestId: string,
+): Promise<ActivationPollResponseDto> {
+  return invoke<ActivationPollResponseDto>("activation_poll_request_status", {
+    requestId,
+  });
+}
+
+export async function activationRedeemWithRequestId(
+  requestId: string,
+  installationId: string,
+): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>("activation_redeem_with_request_id", {
+    requestId,
+    installationId,
+  });
+}
+
+export async function activationRedeemByInviteCode(
+  inviteCode: string,
+  installationId: string,
+): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>("activation_redeem_by_invite_code", {
+    inviteCode,
+    installationId,
+  });
+}
+
+export async function activationRefresh(): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>("activation_refresh");
+}
+
+export async function activationRevokeCheck(): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>("activation_revoke_check");
+}
+
+export async function activationDeactivate(): Promise<ActivationSnapshot> {
+  return invoke<ActivationSnapshot>("activation_deactivate");
+}
+
+/** Subscribe to retry-status notifications.  Returns the unlisten fn. */
+export function listenActivationRetryStatus(
+  cb: (event: ActivationRetryStatusEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ActivationRetryStatusEvent>(ACTIVATION_RETRY_EVENT, (e) =>
+    cb(e.payload),
+  );
+}
+
+/**
+ * Subscribe to backend-emitted activation snapshot transitions.
+ * The Rust lifecycle loop emits this whenever the periodic
+ * `revoke_check` (or refresh) returns a snapshot whose `kind` /
+ * `allowsMainShell` differs from the previous tick — e.g. the
+ * server revoked the license while the app was running.
+ *
+ * The payload mirrors the same `ActivationSnapshot` returned by
+ * `activation_get_status`, so listeners typically just dispatch a
+ * `refreshActivationSnapshot()` to keep the projection store in sync.
+ */
+export function listenActivationStatusChanged(
+  cb: (snapshot: ActivationSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<ActivationSnapshot>(ACTIVATION_STATUS_EVENT, (e) =>
+    cb(e.payload),
+  );
 }
 
 /** Phase M2.6 — wire-shape input for the deterministic classifier. */

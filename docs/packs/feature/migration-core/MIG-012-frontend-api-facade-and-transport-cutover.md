@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -87,6 +87,12 @@
 - `npm run build`
 - 至少一条 frontend API facade 或 transport adapter 测试通过
 - `App.tsx` 直接 import 的 `@/lib/tauri` 业务 helper 数量显著下降
+
+## Code Audit 2026-04-23
+
+- Status: done; skip frontend facade foundation.
+- Evidence: `src/api/client.ts`, `src/api/{conversations,sessions,streaming,projects,...}.ts`, and API facade tests exist and pass.
+- Remaining Gap: `src/lib/tauri.ts` still has compatibility DTOs/helpers; cleanup belongs to GAP/GFR follow-ups.
 
 ## Out Of Scope
 

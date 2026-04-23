@@ -320,7 +320,15 @@ impl TurnService {
                     crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
                 };
 
-                InputMessage { role, content }
+                InputMessage {
+                    role,
+                    content,
+                    // P-MULTI-API: forward captured assistant
+                    // chain-of-thought so the wire serializer can write
+                    // `reasoning_content` for thinking-required models
+                    // (Kimi-thinking-preview / DeepSeek-R1).
+                    thinking: msg.thinking.clone(),
+                }
             })
             .collect();
 

@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -89,6 +89,12 @@
 - `npm run build`
 - 至少一条 shell / router / bootstrap store 测试通过
 - `App.tsx` 职责显著下降，主壳层存在明确统一入口
+
+## Code Audit 2026-04-23
+
+- Status: done; skip AppShell/router/bootstrap foundation.
+- Evidence: `AppShell`, `ContentRouter`, `BootShell`, `bootstrap-store`, and boot/router tests exist and pass.
+- Remaining Gap: full shell truth unification belongs to `MIG-006`.
 
 ## Out Of Scope
 

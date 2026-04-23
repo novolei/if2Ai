@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [execution-mode-policy-routing](../../staff-remediation/gap-modules/execution-mode-policy-routing/01-usage-guide.md)
 - Last Updated: `2026-04-23`
@@ -48,6 +48,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-007 Worker Tool Execution Contract](./MIG-007-worker-tool-execution-contract.md)
 - [MIG-016 Canonical Run Event Log Foundation](./MIG-016-canonical-run-event-log-foundation.md)
@@ -65,6 +66,12 @@
 - `npm test -- permission`
 - `npm run build`
 - pending permission 在刷新后仍可恢复展示
+
+## Code Audit 2026-04-23
+
+- Status: done; skip pending-permission recovery foundation.
+- Evidence: `runtime/pending_permission.rs`, permission service persistence/clear, `get_pending_permission`, and frontend recovery tests exist; targeted Rust/TS tests passed.
+- Remaining Gap: team/member approval policy belongs to `TEAM-006`.
 
 ## Out Of Scope
 

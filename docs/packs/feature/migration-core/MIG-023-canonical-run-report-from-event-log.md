@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
 - Last Updated: `2026-04-23`
@@ -45,6 +45,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-008 Harness Replay And Eval On Canonical Run Report](./MIG-008-harness-replay-and-eval-on-canonical-run-report.md)
 - [MIG-016 Canonical Run Event Log Foundation](./MIG-016-canonical-run-event-log-foundation.md)
@@ -61,6 +62,12 @@
 - `cargo test --manifest-path src-tauri/Cargo.toml harness`
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
 - 至少一条测试验证 report 独立于旧 trace 拼装路径仍可生成
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: harness `run_report`, `trace_aggregator`, `suite_report`, compare and graders exist.
+- Remaining Gap: canonical run report is not yet generated directly from event log; harness still has an event-bus/trace truth path.
 
 ## Out Of Scope
 

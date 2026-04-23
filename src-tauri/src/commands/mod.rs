@@ -420,8 +420,12 @@ pub use window::{
 // Onboarding commands (Phase 6G)
 #[allow(unused_imports)]
 pub use activation::{
-    activation_complete, activation_get_status, activation_start, activation_test_message,
-    activation_validate, ActivationChecklist, ActivationResult,
+    activation_complete, activation_deactivate, activation_get_installation_id,
+    activation_get_status, activation_poll_request_status, activation_redeem_by_invite_code,
+    activation_redeem_with_request_id, activation_refresh, activation_request_license,
+    activation_revoke_check, activation_start, activation_test_message, activation_validate,
+    ActivationChecklist, ActivationErrorDto, ActivationPollResponseDto,
+    ActivationRequestPayloadDto, ActivationResult, InstallationIdentity,
 };
 // Request intelligence (Phase M2.6)
 #[allow(unused_imports)]

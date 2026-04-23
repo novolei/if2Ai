@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
 - Last Updated: `2026-04-23`
@@ -48,6 +48,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-003 Runtime Event Projection Truth](./MIG-003-runtime-event-projection-truth.md)
 - [MIG-014 Session And Chat Store Foundation](./MIG-014-session-and-chat-store-foundation.md)
@@ -65,6 +66,12 @@
 - `npm test -- chat-store`
 - `npm run build`
 - 聊天主路径不再长期并行依赖老 listener 与 projection 作为双真相
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: `chat-run-projection` and runtime projection tests pass; UI already overlays run projection onto chat messages.
+- Remaining Gap: final chat UI still derives from `Conversation + RunProjection`; raw listener and `conversation-slice` are not fully retired.
 
 ## Out Of Scope
 

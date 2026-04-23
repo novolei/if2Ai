@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
 - Last Updated: `2026-04-23`
@@ -46,6 +46,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-001 Canonical Chat Execution Spine](./MIG-001-canonical-chat-execution-spine.md)
 - [MIG-015 Gateway Conversations And Streaming Surface](./MIG-015-gateway-conversations-and-streaming-surface.md)
@@ -69,6 +70,12 @@
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
 - 至少一条测试验证同一 run 的 `seq` 单调递增
 - 至少一条测试验证 `stream_complete` 或 `stream_error` 落盘
+
+## Code Audit 2026-04-23
+
+- Status: done; skip foundation work.
+- Evidence: `runtime/event_log.rs` implements append-only JSONL run log; `run.rs` / `stream.rs` generate `run_id`; targeted `event_log` tests passed.
+- Remaining Gap: contract unification/redaction guardrails belong to `GAP-002` and `GAP-008`.
 
 ## Out Of Scope
 

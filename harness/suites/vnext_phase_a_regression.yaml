@@ -1,0 +1,103 @@
+# Harness Suite: vNext Phase A Regression
+# Phase A 完成后必须全跑，确保事实源与真相边界不被破坏
+
+suite_id: "vnext_phase_a_regression"
+name: "vNext Phase A — Fact Source & Truth Boundary"
+description: "Phase A (T-001~T-005) 完成后回归验证：contract 统一、projection truth、chat cutover、session.json 拆分"
+target_pass_rate: 1.0
+runner: "mixed"
+
+test_cases:
+
+  # ─── T-001: Contract 统一 ───
+  - id: "vnext-a-001"
+    name: "Runtime contract envelope round-trips"
+    description: "RuntimeEventEnvelope → JSON → 反序列化等价"
+    type: "unit"
+    test_fn: "runtime::contracts::tests::envelope_round_trips_through_json"
+    expect:
+      - "test passes"
+
+  - id: "vnext-a-002"
+    name: "Stream payload maps to runtime envelope"
+    description: "每个 StreamTokenPayload event_type 可映射到 RuntimeEventType"
+    type: "unit"
+    test_fn: "runtime::contracts::tests::stream_payload_maps_to_runtime_event_type"
+    expect:
+      - "test passes"
+
+  - id: "vnext-a-003"
+    name: "Correlation run_id set for run-scoped events"
+    description: "run-scoped 事件必须携带 correlation.run_id"
+    type: "unit"
+    test_fn: "runtime::contracts::tests::correlation_run_id_set_for_run_events"
+    expect:
+      - "test passes"
+
+  # ─── T-002/T-003: Projection Truth + Chat Cutover ───
+  - id: "vnext-a-004"
+    name: "Runtime projection tests pass"
+    description: "前端 projection reducer 全部测试通过"
+    type: "unit"
+    test_fn: "npm_test_runtime_projection"
+    expect:
+      - "all tests pass"
+
+  - id: "vnext-a-005"
+    name: "Chat store tests pass"
+    description: "前端 chat-store 全部测试通过"
+    type: "unit"
+    test_fn: "npm_test_chat_store"
+    expect:
+      - "all tests pass"
+
+  - id: "vnext-a-006"
+    name: "No new raw agent-token consumer in chat modules"
+    description: "src/modules/chat/ 下不新增直接 listen('agent-token') 的代码"
+    type: "static"
+    test_fn: "grep_check_no_raw_agent_token_in_chat_modules"
+    expect:
+      - "no matches found"
+
+  # ─── T-004: session.json 拆分 ───
+  - id: "vnext-a-007"
+    name: "Event log seq monotonic"
+    description: "MIG-016 保证不被破坏：seq 在混合 append 下单调递增"
+    type: "unit"
+    test_fn: "runtime::event_log::tests::event_log_seq_is_monotonic_with_mixed_append_modes"
+    expect:
+      - "test passes"
+
+  # ─── 跨 Task 基线 ───
+  - id: "vnext-a-008"
+    name: "Cargo build + clippy pass"
+    description: "后端编译无错误无警告"
+    type: "build"
+    test_fn: "cargo_build_and_clippy"
+    expect:
+      - "exit code 0"
+
+  - id: "vnext-a-009"
+    name: "Frontend build passes"
+    description: "npm run build 通过"
+    type: "build"
+    test_fn: "npm_run_build"
+    expect:
+      - "exit code 0"
+
+  # ─── MIG-016/MIG-018/MIG-019 已有保证不被破坏 ───
+  - id: "vnext-a-010"
+    name: "History replay stable"
+    description: "MIG-018 保证：同事件集合投影稳定"
+    type: "unit"
+    test_fn: "runtime::history::tests::history_replay_is_stable_for_same_events"
+    expect:
+      - "test passes"
+
+  - id: "vnext-a-011"
+    name: "Pending permission round-trip"
+    description: "MIG-019 保证：pending 权限持久化与恢复往返正确"
+    type: "unit"
+    test_fn: "runtime::pending_permission::tests::pending_permission_write_read_clear_round_trip"
+    expect:
+      - "test passes"

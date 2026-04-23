@@ -120,6 +120,9 @@ pub(crate) fn sanitize_messages_for_provider(
                 _ => "user".to_string(),
             },
             content: next_content,
+            // P-MULTI-API: preserve captured thinking through sanitize so
+            // downstream `translate_message` can still emit `reasoning_content`.
+            thinking: message.thinking.clone(),
         };
         if !tool_use_ids.is_empty() && sanitized_message.role == "assistant" {
             expected_tool_results = tool_use_ids;

@@ -50,6 +50,7 @@
 
 import {
   activationGetStatus,
+  listenActivationStatusChanged,
   listenMemoryAfterTurn,
   listenMemoryEvent,
   listenToAgentTokenStream,
@@ -176,6 +177,18 @@ export function wireRuntimeProjectionListeners(
   // `snapshot.activation` as `null`; consumers MUST treat `null` as
   // "unknown", not "blocked".
   void refreshActivationSnapshot(store)
+
+  // Server-driven transitions: the Rust `lifecycle_manager` emits
+  // `activation_status_changed` when its periodic `revoke_check`
+  // observes a state delta (e.g. admin revoke on the VPS).  Refresh
+  // the projection so `<ActivationGateOverlay/>` re-evaluates and
+  // pops the modal without requiring an app restart.
+  track(
+    listenActivationStatusChanged(() => {
+      void refreshActivationSnapshot(store)
+    }),
+    'activation_status_changed',
+  )
 
   return () => {
     cancelled = true

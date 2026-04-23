@@ -26,6 +26,7 @@ import { SkillsSettingsPage } from "./pages/SkillsSettingsPage";
 import { WebSearchSettingsPage } from "./pages/WebSearchSettingsPage";
 import { MemorySettingsPage } from "./pages/MemorySettingsPage";
 import { ModelSettingsPage } from "./pages/ModelSettingsPage";
+import { ProvidersSettingsPage } from "./pages/ProvidersSettingsPage";
 import { ToolSettingsPage } from "./pages/ToolSettingsPage";
 import { TtsProfilesPage } from "./pages/TtsProfilesPage";
 import { TtsSettingsPage } from "./pages/TtsSettingsPage";
@@ -224,6 +225,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <MemorySettingsPage />;
       case "model":
         return <ModelSettingsPage />;
+      case "providers":
+        return <ProvidersSettingsPage />;
       case "connections":
         return <ConnectionsSettingsPage state={state} actions={actions} />;
       case "remote":

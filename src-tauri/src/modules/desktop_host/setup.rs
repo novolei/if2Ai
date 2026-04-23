@@ -39,7 +39,14 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     resolve_bundled_skills(app);
     install_system_tray(app)?;
     install_main_window_policy(app);
+    start_activation_lifecycle(app);
     Ok(())
+}
+
+fn start_activation_lifecycle(app: &App) {
+    crate::modules::application::activation::lifecycle_manager::spawn_activation_lifecycle(
+        app.handle().clone(),
+    );
 }
 
 fn register_browser_app_handle(app: &App) {

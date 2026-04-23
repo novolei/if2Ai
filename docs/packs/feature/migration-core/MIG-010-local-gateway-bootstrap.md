@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -92,6 +92,12 @@
 - `npm run build`
 - 至少一条 gateway bootstrap / readiness 测试通过
 - 前端存在可调用的统一 bootstrap seam，而不只是业务 command 列表
+
+## Code Audit 2026-04-23
+
+- Status: done; skip bootstrap foundation.
+- Evidence: `gateway_service`, `gateway_bootstrap_test`, frontend `gateway-re-export`, and boot readiness seam exist.
+- Remaining Gap: real transport replacement remains future work, not this pack.
 
 ## Out Of Scope
 

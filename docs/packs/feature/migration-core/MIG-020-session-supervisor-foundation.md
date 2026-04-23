@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
 - Last Updated: `2026-04-23`
@@ -47,6 +47,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-019 Pending Permission Recovery](./MIG-019-pending-permission-recovery.md)
 - [MIG-015 Gateway Conversations And Streaming Surface](./MIG-015-gateway-conversations-and-streaming-surface.md)
@@ -64,6 +65,12 @@
 - `npm test -- session-store`
 - `npm run build`
 - 前端可区分 active / blocked / recoverable failed 三种 session 状态
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: lifecycle hooks, cost guard, self-repair, session store, and runtime projection status fields exist.
+- Remaining Gap: no first-class `SessionSupervisor` snapshot owner with active_run_id / blocked / recoverable lifecycle truth.
 
 ## Out Of Scope
 

@@ -1,0 +1,96 @@
+# Harness Suite: vNext Phase B Regression
+# Phase B 完成后必须全跑，确保 Session Continuity 不被破坏
+
+suite_id: "vnext_phase_b_regression"
+name: "vNext Phase B — Session Continuity"
+description: "Phase B (T-006~T-009) 完成后回归验证：supervisor、stream_task 分解、command thinning"
+target_pass_rate: 1.0
+runner: "mixed"
+
+test_cases:
+
+  # ─── Phase A 回归（必须继续通过）───
+  - id: "vnext-b-001"
+    name: "Phase A 全部回归"
+    description: "Phase A regression suite 全部通过"
+    type: "suite"
+    test_fn: "vnext_phase_a_regression"
+    expect:
+      - "all tests pass"
+
+  # ─── T-006: Supervisor ───
+  - id: "vnext-b-002"
+    name: "Supervisor status transitions valid"
+    description: "idle → running → blocked/recoverable_failed → completed 状态机正确"
+    type: "unit"
+    test_fn: "runtime::supervisor::tests::supervisor_status_transitions_are_valid"
+    expect:
+      - "test passes"
+
+  - id: "vnext-b-003"
+    name: "Supervisor snapshot persists and loads"
+    description: "快照持久化往返正确"
+    type: "unit"
+    test_fn: "runtime::supervisor::tests::supervisor_snapshot_persists_and_loads"
+    expect:
+      - "test passes"
+
+  - id: "vnext-b-004"
+    name: "Active/blocked/recoverable distinguishable"
+    description: "三态可区分"
+    type: "unit"
+    test_fn: "runtime::supervisor::tests::active_blocked_recoverable_distinguishable"
+    expect:
+      - "test passes"
+
+  # ─── T-007: Supervisor 前端 ───
+  - id: "vnext-b-005"
+    name: "Supervisor projection tests pass"
+    description: "前端 supervisor-projection 全部测试通过"
+    type: "unit"
+    test_fn: "npm_test_supervisor_projection"
+    expect:
+      - "all tests pass"
+
+  # ─── T-008: stream_task 分解 ───
+  - id: "vnext-b-006"
+    name: "stream_task files under god-file limit"
+    description: "每个文件 ≤ 800 行"
+    type: "static"
+    test_fn: "file_size_check_stream_task_modules"
+    expect:
+      - "all files ≤ 800 lines"
+
+  - id: "vnext-b-007"
+    name: "Event order equivalent after decomposition"
+    description: "分解前后 event 顺序等价"
+    type: "unit"
+    test_fn: "runtime::event_log::tests::event_order_equivalent_after_stream_task_decomposition"
+    expect:
+      - "test passes"
+
+  # ─── T-009: Command Thinning ───
+  - id: "vnext-b-008"
+    name: "Command handlers are thin"
+    description: "所有 command handler 不超过 15 行"
+    type: "static"
+    test_fn: "command_handler_line_count_check"
+    expect:
+      - "all handlers ≤ 15 lines"
+
+  # ─── 基线 ───
+  - id: "vnext-b-009"
+    name: "Cargo build + clippy pass"
+    description: "后端编译无错误无警告"
+    type: "build"
+    test_fn: "cargo_build_and_clippy"
+    expect:
+      - "exit code 0"
+
+  - id: "vnext-b-010"
+    name: "Frontend build passes"
+    description: "npm run build 通过"
+    type: "build"
+    test_fn: "npm_run_build"
+    expect:
+      - "exit code 0"

@@ -54,6 +54,16 @@ pub struct AvailableModel {
     pub name: String,
     /// Context window size (if known)
     pub context_window: Option<u64>,
+    /// P-MULTI-API — model exposes reasoning / chain-of-thought.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning: bool,
+    /// P-MULTI-API — assistant tool_call history rows must carry
+    /// `reasoning_content` (Kimi-thinking-preview / DeepSeek-R1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning_required_in_tool_calls: bool,
+    /// P-MULTI-API — model accepts top-level `reasoning_effort`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_reasoning_effort: bool,
 }
 
 /// Available model group — all models for one provider.
@@ -228,11 +238,20 @@ impl ModelResolver {
                         });
 
                 for model in &entry.models {
+                    let cap = crate::modules::provider::capabilities::resolve(
+                        provider_id.as_str(),
+                        &model.id,
+                        None,
+                        crate::modules::provider::capabilities::GlobalThinkingPolicy::Auto,
+                    );
                     group.models.push(AvailableModel {
                         provider_id: provider_id.clone(),
                         model_id: model.id.clone(),
                         name: model.name.clone(),
                         context_window: model.context_window,
+                        reasoning: cap.reasoning,
+                        reasoning_required_in_tool_calls: cap.reasoning_required_in_tool_calls,
+                        supports_reasoning_effort: cap.supports_reasoning_effort,
                     });
                 }
             }

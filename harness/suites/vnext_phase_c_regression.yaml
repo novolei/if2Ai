@@ -1,0 +1,114 @@
+# Harness Suite: vNext Phase C Regression
+# Phase C 完成后必须全跑，确保恢复与工具执行语义不被破坏
+
+suite_id: "vnext_phase_c_regression"
+name: "vNext Phase C — Recovery & Tool Execution Semantics"
+description: "Phase C (T-010~T-014) 完成后回归验证：tool contract、resume、attempt ledger"
+target_pass_rate: 1.0
+runner: "mixed"
+
+test_cases:
+
+  # ─── Phase B 回归（必须继续通过）───
+  - id: "vnext-c-001"
+    name: "Phase B 全部回归"
+    description: "Phase B regression suite 全部通过"
+    type: "suite"
+    test_fn: "vnext_phase_b_regression"
+    expect:
+      - "all tests pass"
+
+  # ─── T-010: Tool Contract ───
+  - id: "vnext-c-002"
+    name: "Tool execution produces attempt_id"
+    description: "每次工具调用携带 attempt_id"
+    type: "unit"
+    test_fn: "tools::tests::tool_execution_produces_attempt_id"
+    expect:
+      - "test passes"
+
+  - id: "vnext-c-003"
+    name: "Attempt_no increments on retry"
+    description: "重试时 attempt_no 递增"
+    type: "unit"
+    test_fn: "tools::tests::attempt_no_increments_on_retry"
+    expect:
+      - "test passes"
+
+  # ─── T-011: Resume Contract ───
+  - id: "vnext-c-004"
+    name: "Mutating tool not mislabelled safe"
+    description: "有副作用的工具不被标为安全 resume"
+    type: "unit"
+    test_fn: "runtime::supervisor::tests::mutating_tool_not_mislabelled_safe"
+    expect:
+      - "test passes"
+
+  - id: "vnext-c-005"
+    name: "Resume contract on stream terminal"
+    description: "stream_complete/stream_error 带 recoverability"
+    type: "unit"
+    test_fn: "runtime::supervisor::tests::resume_contract_on_stream_terminal"
+    expect:
+      - "test passes"
+
+  # ─── T-012: Resume 前端 ───
+  - id: "vnext-c-006"
+    name: "Resume projection tests pass"
+    description: "前端 resume-projection 全部测试通过"
+    type: "unit"
+    test_fn: "npm_test_resume_projection"
+    expect:
+      - "all tests pass"
+
+  # ─── T-013: Attempt Ledger ───
+  - id: "vnext-c-007"
+    name: "Attempt_no monotonic per tool call"
+    description: "同一 tool_call_id 下 attempt_no 单调递增"
+    type: "unit"
+    test_fn: "runtime::attempt_ledger::tests::attempt_no_monotonic_per_tool_call"
+    expect:
+      - "test passes"
+
+  - id: "vnext-c-008"
+    name: "Attempt status machine complete"
+    description: "queued → settled 所有路径可走通"
+    type: "unit"
+    test_fn: "runtime::attempt_ledger::tests::attempt_status_machine_complete"
+    expect:
+      - "test passes"
+
+  # ─── T-014: Attempt 前端 ───
+  - id: "vnext-c-009"
+    name: "Attempt projection tests pass"
+    description: "前端 attempt-projection 全部测试通过"
+    type: "unit"
+    test_fn: "npm_test_attempt_projection"
+    expect:
+      - "all tests pass"
+
+  # ─── Contract Drift 回归 ───
+  - id: "vnext-c-010"
+    name: "Contract drift test passes"
+    description: "Rust event kind 与 TS translator 映射完整"
+    type: "unit"
+    test_fn: "npm_test_contract_drift"
+    expect:
+      - "test passes"
+
+  # ─── 基线 ───
+  - id: "vnext-c-011"
+    name: "Cargo build + test pass"
+    description: "后端编译 + 全部测试通过"
+    type: "build"
+    test_fn: "cargo_build_and_test"
+    expect:
+      - "exit code 0"
+
+  - id: "vnext-c-012"
+    name: "Frontend build passes"
+    description: "npm run build 通过"
+    type: "build"
+    test_fn: "npm_run_build"
+    expect:
+      - "exit code 0"

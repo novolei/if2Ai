@@ -1,34 +1,52 @@
-//! Activation Tauri commands (Phase M1.7 thin adapter).
+//! Activation Tauri commands.
 //!
-//! The 4 ceremony commands required by ADR-014 §18.9
-//! (`activation_validate / activation_start / activation_test_message
-//! / activation_complete`) are preserved verbatim on the wire — the
-//! frontend onboarding flow continues to call them with the same
-//! shapes — but their bodies now delegate to
-//! [`crate::modules::application::activation_service::ActivationService`].
+//! Two layers coexist on this surface:
 //!
-//! The new platform-style commands (`activation_get_status`,
-//! `activation_request_license`, `activation_redeem`,
-//! `activation_refresh`, `activation_revoke_check`,
-//! `activation_deactivate`) listed in
-//! [`docs/exec-plans/active/phase-m1-routing-activation-control-plane-file-level-plan.md`](../../../docs/exec-plans/active/phase-m1-routing-activation-control-plane-file-level-plan.md)
-//! §5.4 land in a follow-up slice — the M1.7 surface intentionally
-//! ships only the typed service edge so the boot-shell work in M2
-//! can adopt them without IPC churn.
+//! 1. **Legacy ceremony** (Phase M1.7) — `activation_validate /
+//!    activation_start / activation_test_message / activation_complete`
+//!    drive the existing onboarding Step 6 "Wake Agent" flow.  Wire
+//!    shape preserved verbatim.  Bodies delegate to
+//!    [`ActivationService`].
+//!
+//! 2. **Activation gate** (Phase M2.6 — UClaw activation server port)
+//!    — six new commands let the boot-shell modal talk to the real
+//!    `iclaw-activation-server` v0.2 backend:
+//!
+//!    - `activation_get_installation_id`
+//!    - `activation_request_license`
+//!    - `activation_poll_request_status`
+//!    - `activation_redeem_with_request_id`
+//!    - `activation_redeem_by_invite_code`
+//!    - `activation_refresh`
+//!    - `activation_revoke_check`
+//!    - `activation_deactivate`
+//!
+//!    Retry status is forwarded to the frontend as a Tauri event
+//!    named `activation_retry_status` whose payload mirrors UClaw's
+//!    `(http_status, attempt, max_attempts)` triple.
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
+use crate::modules::application::activation::installation_id::{device_indicator, installation_id};
+use crate::modules::application::activation::models::{
+    ActivationRequestResponse as InternalRequestResponse,
+    ActivationStatusResponse as InternalStatusResponse, NetworkFailure,
+};
 use crate::modules::application::activation_service::{
     ActivationCeremonyResult as ServiceCeremonyResult, ActivationChecklist as ServiceChecklist,
     ActivationService,
 };
+use crate::modules::application::license_lifecycle_service::LicenseLifecycleService;
 use crate::modules::provider::types::TestResult;
 use crate::modules::runtime::contracts::activation::ActivationSnapshot;
 
-/// Activation checklist — IPC wire shape. Field-for-field mirror of
-/// [`ServiceChecklist`] held here so the existing TS twin in
-/// [`src/lib/tauri.ts`](../../../src/lib/tauri.ts) keeps compiling
-/// during the M1 transition.
+// ─────────────────────────────────────────────────────────────────────
+// Legacy ceremony surface
+// ─────────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivationChecklist {
     pub system_check: bool,
@@ -48,14 +66,11 @@ impl From<ServiceChecklist> for ActivationChecklist {
     }
 }
 
-/// Result of starting the agent — wire shape preserved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivationResult {
     pub success: bool,
     pub session_id: Option<String>,
     pub message: String,
-    /// First response from the configured LLM — displayed during
-    /// the onboarding ceremony.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_response: Option<String>,
 }
@@ -71,7 +86,6 @@ impl From<ServiceCeremonyResult> for ActivationResult {
     }
 }
 
-/// Validate that all activation preconditions are met.
 #[tauri::command]
 pub async fn activation_validate() -> Result<ActivationChecklist, String> {
     ActivationService::new()
@@ -80,8 +94,6 @@ pub async fn activation_validate() -> Result<ActivationChecklist, String> {
         .map(ActivationChecklist::from)
 }
 
-/// Start the agent for the first time — runs the onboarding
-/// ceremony greeting via the application service.
 #[tauri::command]
 pub async fn activation_start() -> Result<ActivationResult, String> {
     ActivationService::new()
@@ -90,37 +102,199 @@ pub async fn activation_start() -> Result<ActivationResult, String> {
         .map(ActivationResult::from)
 }
 
-/// Send a test message to verify end-to-end connectivity.
 #[tauri::command]
 pub async fn activation_test_message() -> Result<TestResult, String> {
     ActivationService::new().test_active_provider().await
 }
 
-/// Mark activation as complete and finish onboarding.
-///
-/// Returns `()` on the wire to match the legacy IPC shape;
-/// [`ActivationService::complete_activation`] returns a typed
-/// snapshot for future M2 boot-shell consumers — the legacy adapter
-/// uses the `_legacy` shim to discard it.
 #[tauri::command]
 pub async fn activation_complete() -> Result<(), String> {
     ActivationService::new().complete_activation_legacy().await
 }
 
-/// Phase M2.5 — return the canonical
-/// [`ActivationSnapshot`] for the boot-shell projection layer.
-///
-/// `ActivationSnapshot` already carries `#[serde(rename_all =
-/// "camelCase")]` on every field (M0.4 contract), so the wire
-/// payload matches the TypeScript `ActivationSnapshot` interface in
-/// [`src/transport/contracts.ts`](../../../src/transport/contracts.ts)
-/// without any adapter struct.
-///
-/// Honest scope: today the snapshot reflects the legacy
-/// onboarding-completion truth (no remote license backend). The
-/// service mapping + every fallback is documented in
-/// [`ActivationService::current_snapshot`].
 #[tauri::command]
 pub async fn activation_get_status() -> Result<ActivationSnapshot, String> {
     Ok(ActivationService::new().current_snapshot().await)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase M2.6 — activation gate surface
+// ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallationIdentity {
+    pub installation_id: String,
+    pub device_indicator: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationRequestPayloadDto {
+    pub request_id: String,
+    pub device_request_code: String,
+    pub status: String,
+    pub expires_at: String,
+    pub server_time: String,
+}
+
+impl From<InternalRequestResponse> for ActivationRequestPayloadDto {
+    fn from(v: InternalRequestResponse) -> Self {
+        Self {
+            request_id: v.request_id,
+            device_request_code: v.device_request_code,
+            status: v.status,
+            expires_at: v.expires_at,
+            server_time: v.server_time,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationPollResponseDto {
+    pub request_id: String,
+    pub status: String,
+    pub can_redeem: bool,
+    pub server_time: String,
+}
+
+impl From<InternalStatusResponse> for ActivationPollResponseDto {
+    fn from(v: InternalStatusResponse) -> Self {
+        Self {
+            request_id: v.request_id,
+            status: v.status,
+            can_redeem: v.can_redeem,
+            server_time: v.server_time,
+        }
+    }
+}
+
+/// Stable wire shape for activation errors.  Includes a UI-friendly
+/// `code` plus the raw server text so the frontend can render the
+/// right copy without parsing English error strings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationErrorDto {
+    pub code: String,
+    pub http_status: Option<u16>,
+    pub message: String,
+}
+
+impl From<NetworkFailure> for ActivationErrorDto {
+    fn from(err: NetworkFailure) -> Self {
+        let code = err.ui_code().to_string();
+        let http_status = match &err {
+            NetworkFailure::ServerError { status, .. } => Some(*status),
+            _ => None,
+        };
+        let message = err.to_string();
+        Self {
+            code,
+            http_status,
+            message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivationRetryStatusEvent {
+    status_code: i32,
+    attempt: u32,
+    max_attempts: u32,
+}
+
+const ACTIVATION_RETRY_EVENT: &str = "activation_retry_status";
+
+fn lifecycle(app: &AppHandle) -> LicenseLifecycleService {
+    let app = app.clone();
+    let emitter: Arc<dyn Fn(i32, u32, u32) + Send + Sync> =
+        Arc::new(move |status_code, attempt, max_attempts| {
+            let payload = ActivationRetryStatusEvent {
+                status_code,
+                attempt,
+                max_attempts,
+            };
+            if let Err(err) = app.emit(ACTIVATION_RETRY_EVENT, payload) {
+                tracing::warn!(target: "if2ai::activation", "failed to emit retry status: {err}");
+            }
+        });
+    LicenseLifecycleService::new().with_retry_emitter(emitter)
+}
+
+#[tauri::command]
+pub async fn activation_get_installation_id() -> Result<InstallationIdentity, String> {
+    let id = installation_id();
+    Ok(InstallationIdentity {
+        device_indicator: device_indicator(&id),
+        installation_id: id,
+    })
+}
+
+#[tauri::command]
+pub async fn activation_request_license(
+    app: AppHandle,
+    installation_id: String,
+) -> Result<ActivationRequestPayloadDto, ActivationErrorDto> {
+    lifecycle(&app)
+        .request_license(installation_id)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_poll_request_status(
+    app: AppHandle,
+    request_id: String,
+) -> Result<ActivationPollResponseDto, ActivationErrorDto> {
+    lifecycle(&app)
+        .poll_request_status(request_id)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_redeem_with_request_id(
+    app: AppHandle,
+    request_id: String,
+    installation_id: String,
+) -> Result<ActivationSnapshot, ActivationErrorDto> {
+    lifecycle(&app)
+        .redeem_with_request_id(request_id, installation_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_redeem_by_invite_code(
+    app: AppHandle,
+    invite_code: String,
+    installation_id: String,
+) -> Result<ActivationSnapshot, ActivationErrorDto> {
+    lifecycle(&app)
+        .redeem_by_invite_code(invite_code, installation_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_refresh(
+    app: AppHandle,
+) -> Result<ActivationSnapshot, ActivationErrorDto> {
+    lifecycle(&app).refresh().await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_revoke_check(
+    app: AppHandle,
+) -> Result<ActivationSnapshot, ActivationErrorDto> {
+    lifecycle(&app).revoke_check().await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn activation_deactivate(app: AppHandle) -> Result<ActivationSnapshot, String> {
+    Ok(lifecycle(&app).deactivate().await)
 }

@@ -52,6 +52,10 @@ once_cell = "1"
 tempfile = "3"
 bytes = "1"
 base64 = "0.22"
+ed25519-dalek = { version = "2", default-features = false, features = [
+    "alloc",
+    "std",
+] }
 dirs = "5"
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
 fastembed = { version = "5", default-features = false, features = [
@@ -106,6 +110,7 @@ name = "harness-cli"
 path = "src/bin/harness_cli.rs"
 
 [build-dependencies]
+base64 = "0.22"
 tauri-build = { version = "2", features = [] }
 
 # All build profile customizations live in the workspace root Cargo.toml

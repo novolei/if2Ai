@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -88,6 +88,12 @@
 - `npm run build`
 - 至少一条 session store 或 chat store 测试通过
 - `App.tsx` 不再直接持有主要 per-session chat runtime state
+
+## Code Audit 2026-04-23
+
+- Status: done; skip store foundation.
+- Evidence: `session-store`, `conversation-slice`, `chat-store`, and session/chat store tests exist and pass.
+- Remaining Gap: final projection-only runtime truth belongs to `MIG-017` / `GAP-003`.
 
 ## Out Of Scope
 

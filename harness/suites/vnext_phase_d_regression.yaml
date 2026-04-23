@@ -1,0 +1,98 @@
+# Harness Suite: vNext Phase D Regression
+# Phase D 完成后必须全跑，确保审计与评测闭环
+
+suite_id: "vnext_phase_d_regression"
+name: "vNext Phase D — Audit & Eval Closure"
+description: "Phase D (T-015~T-017) + 跨 Phase (T-018~T-020) 完成后回归验证"
+target_pass_rate: 1.0
+runner: "mixed"
+
+test_cases:
+
+  # ─── Phase C 回归（必须继续通过）───
+  - id: "vnext-d-001"
+    name: "Phase C 全部回归"
+    description: "Phase C regression suite 全部通过"
+    type: "suite"
+    test_fn: "vnext_phase_c_regression"
+    expect:
+      - "all tests pass"
+
+  # ─── T-015: Run Report ───
+  - id: "vnext-d-002"
+    name: "Run report independent of legacy trace"
+    description: "report 独立于旧 trace 拼装路径仍可生成"
+    type: "unit"
+    test_fn: "runtime::run_report::tests::report_independent_of_legacy_trace"
+    expect:
+      - "test passes"
+
+  - id: "vnext-d-003"
+    name: "Run report contains all sections"
+    description: "包含 run summary / tool / permission / recoverability / memory"
+    type: "unit"
+    test_fn: "runtime::run_report::tests::report_contains_all_sections"
+    expect:
+      - "test passes"
+
+  # ─── T-016: Harness Truth Cutover ───
+  - id: "vnext-d-004"
+    name: "Harness report prefers canonical run report"
+    description: "harness report 优先使用 canonical report"
+    type: "unit"
+    test_fn: "harness::tests::harness_report_prefers_canonical_run_report"
+    expect:
+      - "test passes"
+
+  # ─── T-017: Harness Eval ───
+  - id: "vnext-d-005"
+    name: "Harness suite results equivalent"
+    description: "同一 suite 基于 canonical report 的评估结果与旧路径等价"
+    type: "integration"
+    test_fn: "harness::tests::harness_suite_results_equivalent"
+    expect:
+      - "test passes"
+
+  # ─── T-018: Contract Drift Guardrails ───
+  - id: "vnext-d-006"
+    name: "Unmapped runtime event fails fast"
+    description: "新增的 Rust event_type 未在 TS translator 映射中时测试失败"
+    type: "unit"
+    test_fn: "npm_test_contract_drift_unmapped_fails"
+    expect:
+      - "test passes"
+
+  # ─── T-019: Memory UI ───
+  - id: "vnext-d-007"
+    name: "Memory UI uses single read model"
+    description: "所有 memory UI 组件走同一 facade"
+    type: "unit"
+    test_fn: "npm_test_memory_read_model"
+    expect:
+      - "test passes"
+
+  # ─── T-020: Checkpoint 冷启动 ───
+  - id: "vnext-d-008"
+    name: "Cold start recovers full projection"
+    description: "刷新后 projection 完整恢复"
+    type: "integration"
+    test_fn: "npm_test_cold_start_projection_recovery"
+    expect:
+      - "test passes"
+
+  # ─── 全量基线 ───
+  - id: "vnext-d-009"
+    name: "Full cargo test workspace"
+    description: "后端全量测试通过"
+    type: "build"
+    test_fn: "cargo_test_workspace"
+    expect:
+      - "exit code 0"
+
+  - id: "vnext-d-010"
+    name: "Full npm test + build"
+    description: "前端全量测试 + 构建通过"
+    type: "build"
+    test_fn: "npm_test_and_build"
+    expect:
+      - "exit code 0"

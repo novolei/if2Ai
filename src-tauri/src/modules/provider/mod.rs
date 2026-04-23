@@ -11,7 +11,10 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod capabilities;
 pub mod client;
+pub mod known_models;
+pub mod known_providers;
 pub mod llm_provider;
 pub mod registry;
 pub mod resilience;

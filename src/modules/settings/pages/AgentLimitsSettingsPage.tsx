@@ -1,9 +1,18 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsSurface } from "../components/SettingsSurface";
 import { useContextBarMode } from "@/components/chat/useContextBarMode";
+
+type ThinkingPolicy = "auto" | "force-on" | "force-off";
+const THINKING_POLICY_KEY = "IF2AI_THINKING_MODE_OVERRIDE";
+
+function readThinkingPolicy(): ThinkingPolicy {
+  if (typeof window === "undefined") return "auto";
+  const raw = window.localStorage.getItem(THINKING_POLICY_KEY) ?? "auto";
+  return raw === "force-on" || raw === "force-off" ? raw : "auto";
+}
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -38,6 +47,25 @@ const SNIPPET = `# Cost guard (P0-3) — 单位：美分/次；留空表示不�
 export function AgentLimitsSettingsPage() {
   const [copied, setCopied] = useState(false);
   const [barMode, setBarMode] = useContextBarMode();
+  const [thinkingPolicy, setThinkingPolicy] = useState<ThinkingPolicy>(readThinkingPolicy);
+
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === THINKING_POLICY_KEY) setThinkingPolicy(readThinkingPolicy());
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, []);
+
+  const updatePolicy = useCallback((next: ThinkingPolicy) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THINKING_POLICY_KEY, next);
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: THINKING_POLICY_KEY, newValue: next }),
+      );
+    }
+    setThinkingPolicy(next);
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -92,6 +120,57 @@ export function AgentLimitsSettingsPage() {
           ；切换即时生效，配置保存在浏览器
           <code className="mx-1 rounded bg-black/[0.06] px-1">localStorage</code>
           ，无需重启。
+        </p>
+      </SettingsSurface>
+      <SettingsSurface className="px-5 py-4">
+        <SectionLabel>思维模式策略 (Reasoning Override)</SectionLabel>
+        <p className="mb-3 text-[12.5px] leading-relaxed text-black/55">
+          控制后端是否给请求体写入 <code className="rounded bg-black/[0.06] px-1">reasoning_content</code>
+          、<code className="rounded bg-black/[0.06] px-1">enable_thinking</code>、
+          <code className="rounded bg-black/[0.06] px-1">reasoning_effort</code> 等思考字段。默认按
+          模型词典自动判定（Kimi-thinking / DeepSeek-R1 / o1 等）；
+          <strong className="text-black/75"> 强制开启 </strong> 用于排错；
+          <strong className="text-black/75"> 强制关闭 </strong>
+          用于绕开供应商对思考字段的拒绝。
+        </p>
+        <div className="mb-2 flex items-center gap-2">
+          <Button
+            type="button"
+            variant={thinkingPolicy === "auto" ? "default" : "outline"}
+            size="sm"
+            className="rounded-xl"
+            onClick={() => updatePolicy("auto")}
+          >
+            自动（默认）
+          </Button>
+          <Button
+            type="button"
+            variant={thinkingPolicy === "force-on" ? "default" : "outline"}
+            size="sm"
+            className="rounded-xl"
+            onClick={() => updatePolicy("force-on")}
+          >
+            强制开启
+          </Button>
+          <Button
+            type="button"
+            variant={thinkingPolicy === "force-off" ? "default" : "outline"}
+            size="sm"
+            className="rounded-xl"
+            onClick={() => updatePolicy("force-off")}
+          >
+            强制关闭
+          </Button>
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-black/45">
+          当前选择：
+          <code className="ml-1 rounded bg-black/[0.06] px-1">
+            IF2AI_THINKING_MODE_OVERRIDE={thinkingPolicy}
+          </code>
+          ；同时建议在启动环境里 <code className="mx-1 rounded bg-black/[0.06] px-1">
+            export IF2AI_THINKING_MODE_OVERRIDE={thinkingPolicy}
+          </code>
+          以便后端立即生效（前端 localStorage 仅用于 UI 状态记忆）。
         </p>
       </SettingsSurface>
       <SettingsSurface className="px-5 py-4">

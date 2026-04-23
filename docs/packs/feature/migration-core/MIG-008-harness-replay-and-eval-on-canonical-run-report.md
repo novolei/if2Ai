@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [harness-eval-and-replay](../../staff-remediation/gap-modules/harness-eval-and-replay/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -54,6 +54,12 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - 至少一条 replay 或 eval 相关测试通过
 - workflow truth 中相关项不再是 `not_established`
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: `HarnessRunReport`, graders, compare, persistence, and suite report exist.
+- Remaining Gap: report/replay/eval still aggregate harness event bus and traces; not yet derived from canonical run event log.
 
 ## Out Of Scope
 

@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -36,6 +36,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [UClaw Gap Migration Audit](../../staff-remediation/uclaw-gap-migration-audit.md)
 - [Runtime Projection And Shell Usage](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
@@ -59,6 +60,12 @@
 - `npm run build`
 - 关键聊天 UI 不再同时依赖老 listener 与 projection bridge 作为双真相
 - 至少一条前端状态投影测试通过
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: `runtimeProjectionStore`, bridge, reducer, `chat-run-projection`, and projection/history tests exist; targeted frontend tests passed.
+- Remaining Gap: `App.tsx` / chat still use compatibility raw stream listeners and `conversation-slice`; final UI is not yet projection-only.
 
 ## Out Of Scope
 

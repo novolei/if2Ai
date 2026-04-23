@@ -1,0 +1,6 @@
+# VPS 部署目标，一行，格式: user@host
+# 复制为 .deploy-host 并填入实际地址:
+# cp .deploy-host.example .deploy-host
+# 编辑 .deploy-host 填入 root@your-vps-ip
+
+root@your-vps-ip

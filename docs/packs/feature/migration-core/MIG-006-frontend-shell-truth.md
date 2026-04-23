@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -54,6 +54,12 @@
 - `npm run build`
 - `App.tsx` 职责下降
 - 主 shell 状态存在清晰统一入口
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: `AppShell`, `ContentRouter`, `bootstrapStore`, and `sessionStore` are present and tested.
+- Remaining Gap: activation/session/run/composer shell truth is still split across `App.tsx`, stores, and projection; no full shell truth store yet.
 
 ## Out Of Scope
 

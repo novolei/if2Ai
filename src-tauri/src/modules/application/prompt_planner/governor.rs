@@ -94,6 +94,7 @@ impl ContextGovernor {
             .iter()
             .map(|message| InputMessage {
                 role: message.role.clone(),
+                thinking: message.thinking.clone(),
                 content: message
                     .content
                     .iter()

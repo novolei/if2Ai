@@ -162,6 +162,16 @@ pub struct Model {
     pub max_tokens: Option<u64>,
     /// Input modality
     pub modality: ModelModality,
+    /// P-MULTI-API — model exposes reasoning / thinking content.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning: bool,
+    /// P-MULTI-API — assistant tool_call history rows must carry
+    /// `reasoning_content` (Kimi-thinking-preview / DeepSeek-R1).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning_required_in_tool_calls: bool,
+    /// P-MULTI-API — model accepts top-level `reasoning_effort` (o1/o3/GPT-5).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_reasoning_effort: bool,
 }
 
 // ── TestResult ──────────────────────────────────────────────────────────────

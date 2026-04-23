@@ -121,20 +121,18 @@ impl ActivationService {
     /// contract bump — the IPC + frontend projection seam stays the
     /// same.
     pub async fn current_snapshot(&self) -> ActivationSnapshot {
-        let state = load_state().await.unwrap_or_else(|err| {
-            tracing::debug!(
-                "[activation_service] no onboarding state on disk ({err}); defaulting to NeedsActivation"
-            );
-            OnboardingState::default()
-        });
-
-        let kind = if state.onboarding_completed {
-            ActivationStatusKind::Activated
-        } else {
-            ActivationStatusKind::NeedsActivation
-        };
-
-        snapshot_with_kind(kind, None, None)
+        // License is the single source of truth for `allows_main_shell`.
+        //
+        // Earlier revisions fell back to `OnboardingState.onboarding_completed`
+        // when the local license cache was missing.  That mask hid genuine
+        // post-boot transitions: once the lifecycle loop's `revoke_check`
+        // observed a server-side revoke and wiped `license.json`, the
+        // fallback would silently re-promote the snapshot to `Activated`,
+        // so the activation modal never popped.  Treat a missing /
+        // invalid license as the canonical `NeedsActivation` instead —
+        // the activation gate then renders for fresh installs *and* for
+        // post-revoke transitions, with no special casing.
+        self.lifecycle.local_boot_restore().await
     }
 
     /// Compute the precondition checklist used by the onboarding

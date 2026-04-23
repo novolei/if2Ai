@@ -30,6 +30,13 @@ impl MessageRequest {
 pub struct InputMessage {
     pub role: String,
     pub content: Vec<InputContentBlock>,
+    /// P-MULTI-API — Captured chain-of-thought / reasoning text from the
+    /// previous assistant turn.  Wire serializers may forward this as
+    /// `reasoning_content` (Kimi/DeepSeek) or drop it (GPT-4o etc.) per
+    /// the resolved [`crate::modules::provider::capabilities::ModelCapability`].
+    /// Optional + `default` so existing callers compile without churn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 impl InputMessage {
@@ -38,6 +45,7 @@ impl InputMessage {
         Self {
             role: "user".to_string(),
             content: vec![InputContentBlock::Text { text: text.into() }],
+            thinking: None,
         }
     }
 
@@ -56,6 +64,7 @@ impl InputMessage {
                 }],
                 is_error,
             }],
+            thinking: None,
         }
     }
 }

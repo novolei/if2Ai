@@ -134,6 +134,8 @@
 | `PERF-` | 性能优化 / 算法升级（必须有 before/after 数据）           | CHARTER §6.3 |
 | `DEP-`  | 升级依赖 / 升级框架（diff 只能是 lockfile + manifest 类） | CHARTER §6.4 |
 | `CPD-`  | 已有的 chat-prompt-dispatch 系列（legacy 命名，沿用）     | CHARTER §6.1 |
+| `GAP-`  | 架构 Gap / 二次真相清理 Pack                              | CHARTER §6.1 |
+| `TEAM-` | Agents Teams 能力 Pack                                    | CHARTER §6.1 |
 
 ### Active
 
@@ -154,22 +156,24 @@
 | 7    | P1     | [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)   | **done** | 让 execution mode / preflight 成为真实 product gate   |
 | 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | **done** | 把 prompt planner 升级成 traceable contract           |
 | 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | **done** | 打通真实 memory lifecycle 闭环                        |
-| 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | draft    | 把 Tauri host 收口成 desktop host thin shell          |
-| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | draft    | 把前端切到 canonical runtime projection 单一真相路径  |
-| 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)                            | draft    | 建立统一 shell truth                                  |
-| 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md)                  | draft    | 建立统一 worker/tool execution contract               |
-| 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | draft    | 让 harness replay/eval 建在 canonical run report 上   |
-| 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)                    | draft    | 把 activation/license 升级成真实生命周期系统          |
-| 16   | P0     | [MIG-016](./feature/migration-core/MIG-016-canonical-run-event-log-foundation.md)              | draft    | 建立 canonical run event log append-only 事实源       |
-| 17   | P0     | [MIG-017](./feature/migration-core/MIG-017-runtime-projection-chat-truth-cutover.md)           | draft    | 让聊天主 UI 真正切到 projection 单一真相              |
-| 18   | P1     | [MIG-018](./feature/migration-core/MIG-018-session-history-replay-and-paging.md)               | draft    | 建立 session history replay + paging                  |
-| 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | draft    | 让 pending permission 可恢复 / 可重连                 |
-| 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | draft    | 建立 session supervisor 生命周期真相                  |
-| 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | draft    | 建立 typed resume / run recovery contract             |
-| 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | draft    | 建立 tool attempt ledger + timeline contract          |
-| 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | draft    | 让 harness/run report 改读 event log                  |
+| 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | **done** | 把 Tauri host 收口成 desktop host thin shell          |
+| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | partial  | 把前端切到 canonical runtime projection 单一真相路径  |
+| 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)                            | partial  | 建立统一 shell truth                                  |
+| 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md)                  | **done** | 建立统一 worker/tool execution contract               |
+| 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | partial  | 让 harness replay/eval 建在 canonical run report 上   |
+| 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)                    | partial  | 把 activation/license 升级成真实生命周期系统          |
+| 16   | P0     | [MIG-016](./feature/migration-core/MIG-016-canonical-run-event-log-foundation.md)              | **done** | 建立 canonical run event log append-only 事实源       |
+| 17   | P0     | [MIG-017](./feature/migration-core/MIG-017-runtime-projection-chat-truth-cutover.md)           | partial  | 让聊天主 UI 真正切到 projection 单一真相              |
+| 18   | P1     | [MIG-018](./feature/migration-core/MIG-018-session-history-replay-and-paging.md)               | **done** | 建立 session history replay + paging                  |
+| 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | **done** | 让 pending permission 可恢复 / 可重连                 |
+| 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | partial  | 建立 session supervisor 生命周期真相                  |
+| 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | partial  | 建立 typed resume / run recovery contract             |
+| 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | partial  | 建立 tool attempt ledger + timeline contract          |
+| 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | partial  | 让 harness/run report 改读 event log                  |
 
 > Migration-Core canonical blueprint:
+> [Current Architecture](../../ARCHITECTURE.md)
+>
 > [If2Ai vNext Session Runtime Blueprint](../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 >
 > `MIG-003`、`MIG-007`、`MIG-016` ~ `MIG-023` 必须完整参照该蓝图进行更新与任务实施。
@@ -203,6 +207,55 @@
 - `P3`
   - 最后把 canonical run report 接入 harness / eval。
   - 目标是把 replay、grader、audit 统一收口到 event-log truth 上。
+
+### Migration-Core Code Audit 2026-04-23
+
+| Pack | Code-aligned status | Evidence | Remaining Gap |
+| ---- | ------------------- | -------- | ------------- |
+| MIG-011 | done | `desktop_host::{builder,setup}` exists; `tray_action_resolution_only_accepts_native_host_ids` passes | skip unless host boundary regresses |
+| MIG-003 | partial | `runtimeProjectionStore`, bridge, reducer, chat projection tests exist | `App.tsx` / chat still retain compatibility raw-stream and conversation-slice truth |
+| MIG-006 | partial | `AppShell`, `ContentRouter`, `bootstrapStore`, `sessionStore` exist | no complete shell truth store; activation/session/run/composer still split |
+| MIG-007 | done | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor` | skip; future attempt work belongs to MIG-022 |
+| MIG-008 | partial | `HarnessRunReport`, graders, compare, suite report exist | not yet derived from canonical event log / run report |
+| MIG-009 | partial | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
+| MIG-016 | done | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass | skip; hardening belongs to GAP-002 / GAP-008 |
+| MIG-017 | partial | chat projection + runtime projection tests pass | final UI still overlays `Conversation + RunProjection`; raw listener not transport-only everywhere |
+| MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | skip; session.json fallback retirement belongs to GAP-001 |
+| MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
+| MIG-020 | partial | lifecycle hooks/cost guard/self repair sidecars exist | no first-class `SessionSupervisor` snapshot owner yet |
+| MIG-021 | partial | resume cursor and recoverable UI fields exist | missing typed `resume_reason` / `safe_to_retry_mutations` contract |
+| MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log | no stable attempt_id/attempt_no generation or ledger state machine |
+| MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |
+
+### Architecture Gap Pipeline
+
+来自 [ARCHITECTURE.md](../../ARCHITECTURE.md) §7，用于清理 vNext 主线之外的二次真相、边界漂移与 god-file 风险。详见 [architecture-gaps/README.md](./feature/architecture-gaps/README.md)。
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md) | draft | 拆分 `session.json` 混合事实源 |
+| 2 | P0 | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md) | draft | 统一 runtime envelope / stream payload / run log contract |
+| 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | draft | 前端 runtime UI 收敛到 projection-first |
+| 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | draft | 瘦身 command boundary 与 AppState 聚合 |
+| 5 | P1 | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md) | draft | 拆分 `stream_task.rs` god-file 职责 |
+| 6 | P1 | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | draft | 统一 memory UI 读模型 |
+| 7 | P2 | [GAP-007](./feature/architecture-gaps/GAP-007-harness-event-log-truth-cutover.md) | draft | harness/report 改读 canonical event log |
+| 8 | P2 | [GAP-008](./feature/architecture-gaps/GAP-008-contract-drift-guardrails.md) | draft | 建立前后端 contract drift guardrails |
+
+### Agents Teams Pipeline
+
+Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件：MIG-016、MIG-017、MIG-019、MIG-020、MIG-022、MIG-023 至少完成对应基础能力。详见 [agents-teams/README.md](./feature/agents-teams/README.md)。
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [TEAM-001](./feature/agents-teams/TEAM-001-team-domain-contracts.md) | draft | Team bounded context 与核心 contracts |
+| 2 | P0 | [TEAM-002](./feature/agents-teams/TEAM-002-team-api-and-projection-skeleton.md) | draft | Team API facade 与 projection skeleton |
+| 3 | P1 | [TEAM-003](./feature/agents-teams/TEAM-003-team-supervisor-mvp.md) | draft | TeamSupervisor planner/executor/reviewer MVP |
+| 4 | P1 | [TEAM-004](./feature/agents-teams/TEAM-004-team-aware-runtime-correlation.md) | draft | team-aware runtime correlation 与 replay |
+| 5 | P1 | [TEAM-005](./feature/agents-teams/TEAM-005-team-workspace-ui.md) | draft | TeamWorkspace 一级 UI |
+| 6 | P2 | [TEAM-006](./feature/agents-teams/TEAM-006-team-memory-and-permission-policy.md) | draft | team memory scope 与 permission policy |
+| 7 | P2 | [TEAM-007](./feature/agents-teams/TEAM-007-team-tool-ledger-and-review-gates.md) | draft | team tool ledger 与 review gates |
+| 8 | P3 | [TEAM-008](./feature/agents-teams/TEAM-008-team-run-report-and-harness.md) | draft | team run report 与 harness |
 
 ### Bug / Perf / Dep
 

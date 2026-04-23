@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# vnext-task-to-pack — 从 task.md 的 T-XXX 翻译为 VNEXT-XXX Pack stub
+#
+# Usage:
+#   ./scripts/vnext-task-to-pack T-003
+#   ./scripts/vnext-task-to-pack T-003 --dry-run   # 只打印，不写文件
+#
+# 输出: docs/packs/feature/migration-core/VNEXT-T003-<slug>.md
+#
+# 读取 docs/vnext_new/task.md 中的 T-XXX 定义，结合 spec.md 和 design.md
+# 的对应章节引用，生成符合 pack-template-vnext.md 的 Pack stub。
+#
+# 依赖: python3, grep, sed
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VNEXT_DIR="$REPO_ROOT/docs/vnext_new"
+PACK_DIR="$REPO_ROOT/docs/packs/feature/migration-core"
+
+TASK_ID="${1:-}"
+DRY_RUN=false
+if [[ "${2:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+if [[ -z "$TASK_ID" ]]; then
+    echo "usage: vnext-task-to-pack T-XXX [--dry-run]" >&2
+    echo "" >&2
+    echo "Translate a task.md Task into a VNEXT Pack stub." >&2
+    echo "Available tasks: T-001 through T-020" >&2
+    exit 2
+fi
+
+# Validate task ID format
+if [[ ! "$TASK_ID" =~ ^T-[0-9]{3}$ ]]; then
+    echo "error: Task ID must be T-NNN format (e.g. T-003)" >&2
+    exit 1
+fi
+
+TASK_FILE="$VNEXT_DIR/task.md"
+SPEC_FILE="$VNEXT_DIR/spec.md"
+DESIGN_FILE="$VNEXT_DIR/design.md"
+
+for f in "$TASK_FILE" "$SPEC_FILE" "$DESIGN_FILE"; do
+    if [[ ! -f "$f" ]]; then
+        echo "error: required file not found: $f" >&2
+        exit 1
+    fi
+done
+
+# ─── Extract task info from task.md ───
+
+# Find the section header for this task
+TASK_LINE=$(grep -n "^### ${TASK_ID}:" "$TASK_FILE" | head -1 | cut -d: -f1)
+if [[ -z "$TASK_LINE" ]]; then
+    echo "error: Task $TASK_ID not found in $TASK_FILE" >&2
+    exit 1
+fi
+
+# Extract task title (after the ### T-XXX: prefix)
+TASK_TITLE=$(sed -n "${TASK_LINE}p" "$TASK_FILE" | sed "s/^### ${TASK_ID}: //")
+
+# Extract the table rows below the section header
+TASK_BLOCK_START=$((TASK_LINE + 1))
+TASK_BLOCK_END=$(sed -n "${TASK_BLOCK_START},\$p" "$TASK_FILE" | grep -n "^---$\|^### " | head -1 | cut -d: -f1)
+if [[ -z "$TASK_BLOCK_END" ]]; then
+    TASK_BLOCK_END=50  # fallback
+fi
+TASK_BLOCK_END=$((TASK_BLOCK_START + TASK_BLOCK_END - 2))
+
+# Extract key fields from the task table
+# Table format: | **field** | value |
+ASSOCIATION=$(sed -n "${TASK_BLOCK_START},${TASK_BLOCK_END}p" "$TASK_FILE" | grep '| \*\*关联\*\* |' | head -1 | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//')
+PRIORITY=$(sed -n "${TASK_BLOCK_START},${TASK_BLOCK_END}p" "$TASK_FILE" | grep '| \*\*优先级\*\* |' | head -1 | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//')
+DEPENDS=$(sed -n "${TASK_BLOCK_START},${TASK_BLOCK_END}p" "$TASK_FILE" | grep '| \*\*依赖\*\* |' | head -1 | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//')
+
+# Extract spec/design references from §11 document relation table
+# §11 table format: | T-XXX | §X.X MIG-YYY | §X.X Design Title |
+SPEC_REF=$(grep "^| ${TASK_ID} | §" "$TASK_FILE" | head -1 | awk -F'|' '{print $3}' | sed 's/^ *//;s/ *$//')
+DESIGN_REF=$(grep "^| ${TASK_ID} | §" "$TASK_FILE" | head -1 | awk -F'|' '{print $4}' | sed 's/^ *//;s/ *$//')
+
+# Generate slug from title
+SLUG=$(echo "$TASK_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+# ─── Generate Pack stub ───
+
+PACK_ID="VNEXT-${TASK_ID/T-/T}"
+PACK_FILE="$PACK_DIR/${PACK_ID}-${SLUG}.md"
+
+cat <<STUB
+# ${PACK_ID}: ${TASK_TITLE}
+
+## Status
+- State: active
+- Task Ref: ${TASK_ID}（docs/vnext_new/task.md）
+- Spec Ref: ${SPEC_REF}（docs/vnext_new/spec.md）
+- Design Ref: ${DESIGN_REF}（docs/vnext_new/design.md）
+- Depends On: ${DEPENDS}
+- Last Updated: $(date +%Y-%m-%d)
+
+---
+
+## Goal
+<!-- 从 task.md T-XXX 的"输出"字段提取，2-3 行描述要什么行为存在 -->
+
+## Spec (verifiable — 每条配 1 个 test name)
+<!-- 从 task.md T-XXX 的"验收"字段逐条转写 -->
+- <行为 1> → 测试 \`tests::<module>::<test_name>\`
+
+## Files (scope — write list)
+<!-- 从 task.md T-XXX 的"关键代码路径"字段提取 -->
+- <!-- (new|modify) -->
+
+## Reads (read-only inputs)
+- docs/vnext_new/spec.md ${SPEC_REF}
+- docs/vnext_new/design.md ${DESIGN_REF}
+- <!-- 补充只读依赖文件 -->
+
+## Contract (review must check — vNext 通用 + 本 Pack 特有)
+
+### vNext 通用约束
+- [ ] 不新增直接消费 raw Tauri event 的 UI surface
+- [ ] 不把 transcript 写入 session.json 作为长期事实源
+- [ ] 不让 harness / projection / session manager 各自生成独立 run truth
+- [ ] 所有新 runtime event 可关联 session_id / run_id
+- [ ] 无 unwrap() / expect() / todo!() 在非测试代码
+- [ ] 跨模块用 crate::modules::*
+
+### 本 Pack 特有约束
+<!-- 从 spec.md 对应章节提取不变量 -->
+
+## Out of Scope
+<!-- 与 task.md 对齐的排除项 -->
+- ❌ 不顺手"优化"/"清理"代码
+- ❌ 不在 Pack 没列出的文件里做修改
+
+## Verify
+- ./scripts/pack run ${PACK_ID}
+
+## Done
+- 上面 verify 全 PASS
+- REGISTRY 状态改为 done
+STUB
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo "" >&2
+    echo "[dry-run] Would write to: $PACK_FILE" >&2
+else
+    mkdir -p "$PACK_DIR"
+    cat <<STUB > "$PACK_FILE"
+# ${PACK_ID}: ${TASK_TITLE}
+
+## Status
+- State: active
+- Task Ref: ${TASK_ID}（docs/vnext_new/task.md）
+- Spec Ref: ${SPEC_REF}（docs/vnext_new/spec.md）
+- Design Ref: ${DESIGN_REF}（docs/vnext_new/design.md）
+- Depends On: ${DEPENDS}
+- Last Updated: $(date +%Y-%m-%d)
+
+---
+
+## Goal
+<!-- 从 task.md T-XXX 的"输出"字段提取，2-3 行描述要什么行为存在 -->
+
+## Spec (verifiable — 每条配 1 个 test name)
+<!-- 从 task.md T-XXX 的"验收"字段逐条转写 -->
+- <行为 1> → 测试 \`tests::<module>::<test_name>\`
+
+## Files (scope — write list)
+<!-- 从 task.md T-XXX 的"关键代码路径"字段提取 -->
+- <!-- (new|modify) -->
+
+## Reads (read-only inputs)
+- docs/vnext_new/spec.md ${SPEC_REF}
+- docs/vnext_new/design.md ${DESIGN_REF}
+- <!-- 补充只读依赖文件 -->
+
+## Contract (review must check — vNext 通用 + 本 Pack 特有)
+
+### vNext 通用约束
+- [ ] 不新增直接消费 raw Tauri event 的 UI surface
+- [ ] 不把 transcript 写入 session.json 作为长期事实源
+- [ ] 不让 harness / projection / session manager 各自生成独立 run truth
+- [ ] 所有新 runtime event 可关联 session_id / run_id
+- [ ] 无 unwrap() / expect() / todo!() 在非测试代码
+- [ ] 跨模块用 crate::modules::*
+
+### 本 Pack 特有约束
+<!-- 从 spec.md 对应章节提取不变量 -->
+
+## Out of Scope
+<!-- 与 task.md 对齐的排除项 -->
+- ❌ 不顺手"优化"/"清理"代码
+- ❌ 不在 Pack 没列出的文件里做修改
+
+## Verify
+- ./scripts/pack run ${PACK_ID}
+
+## Done
+- 上面 verify 全 PASS
+- REGISTRY 状态改为 done
+STUB
+    echo "Created: $PACK_FILE" >&2
+fi

@@ -104,6 +104,7 @@ graph TB
 | 📚 Skills | [skills/index.md](./skills/index.md) | 技能发现、市场、安全审查 |
 | 🚀 Guide | [guide/index.md](./guide/index.md) | 快速开始、环境配置、FAQ |
 | 📖 Reference | [reference/index.md](./reference/index.md) | 项目结构、编码规范 |
+| 🔀 Git | [git/index.md](./git/index.md) | Git 集成、Slash 命令、差距分析 |
 
 ## 🔄 与 cc-haha 定位对比
 

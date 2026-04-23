@@ -2,11 +2,15 @@
 //! Migrated from /rust/crates/api
 //! Handles LLM provider integration and routing
 
+pub mod api_type;
 mod client;
 mod error;
 pub mod providers;
 mod sse;
 mod types;
+
+#[allow(unused_imports)]
+pub use api_type::ApiType;
 
 // Re-export key types
 #[allow(unused_imports)]

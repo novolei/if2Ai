@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [activation-license-lifecycle](../../staff-remediation/gap-modules/activation-license-lifecycle/01-usage-guide.md)
-- Last Updated: `2026-04-21`
+- Last Updated: `2026-04-23`
 
 ---
 
@@ -53,6 +53,12 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - `npm run build`
 - activation 状态来源不再只是 local snapshot
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: activation runtime contracts, `LicenseLifecycleService`, `ActivationService::current_snapshot`, `activation_get_status`, and frontend projection seam exist.
+- Remaining Gap: request/redeem/refresh/revoke/deactivate IPC commands and remote-backed lifecycle are still skeleton/placeholder.
 
 ## Out Of Scope
 

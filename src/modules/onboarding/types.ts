@@ -88,7 +88,32 @@ export interface Model {
   context_window: number | null;
   max_tokens: number | null;
   modality: ModelModality;
+  /** P-MULTI-API — model exposes reasoning / chain-of-thought stream. */
+  reasoning?: boolean;
+  /** P-MULTI-API — assistant tool_call history rows must carry
+   * `reasoning_content` (Kimi-thinking-preview / DeepSeek-R1). */
+  reasoning_required_in_tool_calls?: boolean;
+  /** P-MULTI-API — model accepts top-level `reasoning_effort`
+   * (low/medium/high). OpenAI o1/o3/GPT-5 family. */
+  supports_reasoning_effort?: boolean;
 }
+
+/** P-MULTI-API — wire format strings, mirror openhanako-main + Rust enum. */
+export type ApiType =
+  | 'openai-completions'
+  | 'anthropic-messages'
+  | 'openai-responses'
+  | 'openai-codex-responses';
+
+export const API_TYPE_OPTIONS: { value: ApiType; label: string }[] = [
+  { value: 'openai-completions', label: 'OpenAI Compatible' },
+  { value: 'anthropic-messages', label: 'Anthropic Messages' },
+  { value: 'openai-responses', label: 'OpenAI Responses' },
+  { value: 'openai-codex-responses', label: 'ChatGPT Codex (Plus/Pro)' },
+];
+
+/** Service category for the Settings sidebar (OAuth / Coding Plan / API). */
+export type ServiceCategory = 'oauth' | 'coding-plan' | 'api';
 
 export interface ProviderConfig {
   provider_id: string;

@@ -1409,6 +1409,11 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     name: tool_name.clone(),
                     input: tool_input,
                 }],
+                // P-MULTI-API: in-flight assistant tool_use blocks come
+                // straight from the live SSE; if accumulated_thinking has
+                // content it's already attached on the previous text
+                // segment, so we leave None here.
+                thinking: None,
             });
             session_messages.push(crate::modules::api::InputMessage {
                 role: "user".to_string(),
@@ -1424,6 +1429,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     }],
                     is_error,
                 }],
+                thinking: None,
             });
 
             // Also collect session-format message for persistence in order.

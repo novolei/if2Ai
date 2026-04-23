@@ -22,14 +22,20 @@
 
 ## Pack Order
 
-1. `MIG-016` Canonical run event log foundation
-2. `MIG-017` Runtime projection chat truth cutover
-3. `MIG-018` Session history replay and paging
-4. `MIG-019` Pending permission recovery
-5. `MIG-020` Session supervisor foundation
-6. `MIG-021` Resume contract and run recovery
-7. `MIG-022` Tool attempt ledger and timeline contract
-8. `MIG-023` Canonical run report from event log
+Current code-audited sequence after 2026-04-23 scan:
+
+1. `MIG-016` done; skip unless event-log foundation regresses.
+2. `MIG-017` partial; continue projection-only chat cutover.
+3. `MIG-018` done; skip replay/paging foundation.
+4. `MIG-019` done; skip pending-permission recovery foundation.
+5. `MIG-020` partial; build first-class SessionSupervisor snapshot owner.
+6. `MIG-021` partial; finish typed resume/recovery contract.
+7. `MIG-022` partial; finish attempt ledger and retry timeline.
+8. `MIG-023` partial; derive canonical run report from event log.
+
+Already completed supporting packs: `MIG-010`, `MIG-011`, `MIG-012`, `MIG-013`, `MIG-014`, `MIG-015`, `MIG-007`.
+
+Still partial supporting packs: `MIG-003`, `MIG-006`, `MIG-008`, `MIG-009`.
 
 ## Reads
 

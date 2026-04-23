@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
 - Last Updated: `2026-04-23`
@@ -48,6 +48,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-016 Canonical Run Event Log Foundation](./MIG-016-canonical-run-event-log-foundation.md)
 - [MIG-017 Runtime Projection Chat Truth Cutover](./MIG-017-runtime-projection-chat-truth-cutover.md)
@@ -66,6 +67,12 @@
 - `npm run build`
 - 至少一条测试验证 paging 前后页无重复无丢失
 - 至少一条测试验证 replay 同一批 events 输出稳定
+
+## Code Audit 2026-04-23
+
+- Status: done; skip replay/paging foundation.
+- Evidence: `runtime/history.rs`, `get_session_history_page`, TS history replay, and paging/replay tests exist; targeted Rust/TS tests passed.
+- Remaining Gap: retiring legacy `session.json` fallback belongs to `GAP-001`.
 
 ## Out Of Scope
 

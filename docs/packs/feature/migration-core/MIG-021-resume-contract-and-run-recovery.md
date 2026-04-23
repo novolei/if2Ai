@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: `draft`
+- State: `partial`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
 - Last Updated: `2026-04-23`
@@ -46,6 +46,7 @@
 
 ## Source Of Truth
 
+- [Current Architecture](../../../../ARCHITECTURE.md)
 - [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [MIG-020 Session Supervisor Foundation](./MIG-020-session-supervisor-foundation.md)
 - [MIG-018 Session History Replay And Paging](./MIG-018-session-history-replay-and-paging.md)
@@ -63,6 +64,12 @@
 - `npm test -- runtime-projection`
 - `npm run build`
 - mutating tool 场景不会被误标为无条件安全 resume
+
+## Code Audit 2026-04-23
+
+- Status: partial.
+- Evidence: resume cursor parsing/building and `resumeAvailable` / `resumeCursor` projection fields exist.
+- Remaining Gap: typed `resume_reason` and `safe_to_retry_mutations` contract is not complete; recovery remains cursor-oriented.
 
 ## Out Of Scope
 

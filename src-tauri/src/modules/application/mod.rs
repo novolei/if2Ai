@@ -42,6 +42,7 @@
 // request_intelligence, m1.7 activation) will pick them up.
 #![allow(unused_imports)]
 
+pub mod activation;
 pub mod activation_service;
 pub mod gateway_service;
 pub mod job_monitor;
