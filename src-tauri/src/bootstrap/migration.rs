@@ -40,6 +40,7 @@
 //!   running `tauri dev` before the next boot — better than
 //!   risking a corrupted vector index.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,23 +56,44 @@ pub struct MigrationReport {
     /// Subtrees skipped because a lock file was detected (typically
     /// `vector_db/`).
     pub skipped_locked: Vec<String>,
-    /// `true` when the sentinel already existed, so this call was a
-    /// no-op.
-    pub sentinel_present: bool,
+    /// Subtrees skipped because a per-subtree sentinel was already
+    /// present from a previous run.
+    pub skipped_already_migrated: Vec<String>,
 }
 
 impl MigrationReport {
     fn is_empty_run(&self) -> bool {
-        self.moved.is_empty() && self.merged.is_empty() && self.skipped_locked.is_empty()
+        self.moved.is_empty()
+            && self.merged.is_empty()
+            && self.skipped_locked.is_empty()
+            && self.skipped_already_migrated.is_empty()
     }
 }
 
 /// Subtree names that live under both roots historically.  Listed in
 /// safest-first order so a single failure doesn't abort the rest.
+///
+/// Adding a new subtree: append to this list AND it will auto-migrate
+/// for users who already ran the previous PATH-FIX (their per-subtree
+/// sentinels only cover the older list, so the new entry surfaces as
+/// "needs migration" on the next boot).
 const MIGRATABLE_SUBTREES: &[&str] = &[
-    "memory",        // SQLite + LanceDB + summaries — biggest win
-    "trajectories",  // newline-delimited JSON, large but no locks
+    "memory",       // SQLite + LanceDB + summaries — biggest win, typically locked at runtime
+    "trajectories", // newline-delimited JSON, no locks
+    // PATH-FIX v2 — TTS / STT ONNX models historically downloaded under
+    // `data_local_dir/.if2ai/models/`.  Users who re-downloaded into
+    // `~/.if2ai/models/` post-PATH-FIX-v1 hit the merge path: identical
+    // files are deduped via mtime-keep-newer, so the worst case is the
+    // legacy 1.5 GB collapses into the home copy without overwriting.
+    "models",
 ];
+
+/// Subtrees considered "covered" by the legacy global sentinel
+/// `.migrated_from_data_local_dir.<ts>` written by PATH-FIX v1.  Any
+/// subtree NOT in this list auto-migrates for upgraded users (their
+/// global sentinel cannot vouch for what didn't exist when it was
+/// written).
+const LEGACY_GLOBAL_SENTINEL_COVERS: &[&str] = &["memory", "trajectories"];
 
 /// `legacy/` may use BOTH the dotted (`./.if2ai/...`) and undotted
 /// (`./if2ai/...`) prefixes — earlier `harness` / `learning` modules
@@ -91,15 +113,22 @@ pub fn migrate_legacy_data_dir(
 ) -> std::io::Result<MigrationReport> {
     let mut report = MigrationReport::default();
 
-    // Idempotent gate: never run twice.
-    let sentinel_glob = format!("{}/.migrated_from_data_local_dir", if2ai_dir.display());
-    if has_sentinel(if2ai_dir) {
-        report.sentinel_present = true;
-        return Ok(report);
-    }
+    // PATH-FIX v2 — per-subtree sentinels (vs PATH-FIX v1's global
+    // sentinel).  `already` is the set of subtrees we MUST skip because
+    // a prior boot recorded their migration; everything else is fair
+    // game.  Adding a new entry to MIGRATABLE_SUBTREES → next boot
+    // surfaces it as "needs migration" without forcing the user to
+    // delete sentinel files.
+    let already = read_already_migrated(if2ai_dir);
 
     let Some(legacy_root) = legacy_data_root else {
-        write_sentinel(if2ai_dir, &report)?;
+        // No legacy root → mark every known subtree as migrated so
+        // future boots short-circuit instantly.
+        for subtree in MIGRATABLE_SUBTREES {
+            if !already.contains(*subtree) {
+                let _ = write_subtree_sentinel(if2ai_dir, subtree);
+            }
+        }
         return Ok(report);
     };
 
@@ -111,18 +140,25 @@ pub fn migrate_legacy_data_dir(
         .filter(|p| p.exists())
         .collect();
 
-    if candidates.is_empty() {
-        // Truly fresh install with no legacy data.  Still write the
-        // sentinel so we don't probe data_local_dir on every future
-        // boot.
-        write_sentinel(if2ai_dir, &report)?;
-        return Ok(report);
-    }
-
     fs::create_dir_all(if2ai_dir)?;
 
-    for legacy in &candidates {
-        for &subtree in MIGRATABLE_SUBTREES {
+    for &subtree in MIGRATABLE_SUBTREES {
+        if already.contains(subtree) {
+            tracing::debug!(
+                "[migration] {} already migrated by a previous boot — skipping",
+                subtree
+            );
+            report.skipped_already_migrated.push(subtree.to_string());
+            continue;
+        }
+
+        // For each candidate legacy root, attempt this subtree.  If a
+        // src is locked we mark it without writing the sentinel, so
+        // the user can close the app and the next boot retries.
+        let mut handled = false;
+        let mut locked = false;
+
+        for legacy in &candidates {
             let src = legacy.join(subtree);
             if !src.exists() {
                 continue;
@@ -132,11 +168,11 @@ pub fn migrate_legacy_data_dir(
             if has_lock_file(&src) {
                 tracing::warn!(
                     src = %src.display(),
-                    "[migration] {} contains a .lock file (LanceDB?) — skipping. \
-                     Close any running app and re-launch to retry.",
+                    "[migration] {} contains a .lock file (LanceDB? running app?) \
+                     — skipping. Close any running if2ai instance and re-launch.",
                     subtree
                 );
-                report.skipped_locked.push(subtree.to_string());
+                locked = true;
                 continue;
             }
 
@@ -149,16 +185,18 @@ pub fn migrate_legacy_data_dir(
                         subtree
                     );
                     report.moved.push(subtree.to_string());
+                    handled = true;
                 }
                 Ok(MoveOutcome::Merged { copied }) => {
                     tracing::info!(
                         src = %src.display(),
                         dst = %dst.display(),
                         files_copied = copied,
-                        "[migration] merged {} subtree (target was non-empty)",
+                        "[migration] merged {} subtree (target was non-empty; kept newer mtime)",
                         subtree
                     );
                     report.merged.push(subtree.to_string());
+                    handled = true;
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -171,17 +209,23 @@ pub fn migrate_legacy_data_dir(
                 }
             }
         }
+
+        // Always write the sentinel UNLESS we hit a lock — that's the
+        // one scenario where the user is supposed to close the app
+        // and re-run.  Sentinel rules: handled (moved/merged), or
+        // legacy didn't have this subtree → drop sentinel either way.
+        if locked && !handled {
+            report.skipped_locked.push(subtree.to_string());
+            // Intentionally NO sentinel here.
+        } else {
+            let _ = write_subtree_sentinel(if2ai_dir, subtree);
+        }
     }
 
     if report.is_empty_run() {
-        // Nothing to do — legacy roots existed but held no migratable
-        // subtrees.  Still drop the sentinel.
-        tracing::debug!(
-            "[migration] legacy root probed but contained no recognised subtrees: {sentinel_glob}"
-        );
+        tracing::debug!("[migration] no subtrees needed migration this run");
     }
 
-    write_sentinel(if2ai_dir, &report)?;
     Ok(report)
 }
 
@@ -265,34 +309,49 @@ fn has_lock_file(root: &Path) -> bool {
     walk(root)
 }
 
-fn has_sentinel(if2ai_dir: &Path) -> bool {
+/// Read the set of subtrees marked as "already migrated" by previous
+/// boots.  Recognises BOTH the PATH-FIX v1 global sentinel
+/// (`.migrated_from_data_local_dir.<ts>`, covers
+/// [`LEGACY_GLOBAL_SENTINEL_COVERS`]) and the PATH-FIX v2 per-subtree
+/// sentinels (`.migrated_<subtree>.<ts>`).
+fn read_already_migrated(if2ai_dir: &Path) -> HashSet<String> {
+    let mut migrated = HashSet::new();
     let Ok(read) = fs::read_dir(if2ai_dir) else {
-        return false;
+        return migrated;
     };
     for entry in read.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".migrated_from_data_local_dir")
-        {
-            return true;
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        // PATH-FIX v1 global sentinel: covers a known subset.
+        if name.starts_with(".migrated_from_data_local_dir") {
+            for s in LEGACY_GLOBAL_SENTINEL_COVERS {
+                migrated.insert((*s).to_string());
+            }
+            continue;
+        }
+
+        // PATH-FIX v2 per-subtree sentinel: `.migrated_<subtree>.<ts>`
+        // — split on dots, the segment between `migrated_` prefix
+        // and the timestamp is the subtree name.
+        if let Some(rest) = name.strip_prefix(".migrated_") {
+            if let Some(subtree) = rest.split('.').next() {
+                if !subtree.is_empty() {
+                    migrated.insert(subtree.to_string());
+                }
+            }
         }
     }
-    false
+    migrated
 }
 
-fn write_sentinel(if2ai_dir: &Path, report: &MigrationReport) -> std::io::Result<()> {
+fn write_subtree_sentinel(if2ai_dir: &Path, subtree: &str) -> std::io::Result<()> {
     fs::create_dir_all(if2ai_dir)?;
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let path = if2ai_dir.join(format!(".migrated_from_data_local_dir.{ts}"));
-    let body = format!(
-        "moved={:?}\nmerged={:?}\nskipped_locked={:?}\n",
-        report.moved, report.merged, report.skipped_locked
-    );
-    fs::write(&path, body)?;
+    let path = if2ai_dir.join(format!(".migrated_{subtree}.{ts}"));
+    fs::write(&path, format!("subtree={subtree}\nmigrated_at={ts}\n"))?;
     Ok(())
 }
 
@@ -312,17 +371,23 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_writes_sentinel_no_legacy() {
+    fn fresh_install_writes_per_subtree_sentinels_no_legacy() {
         let home = tempdir().unwrap();
-        let report =
-            migrate_legacy_data_dir(&home.path().join(".if2ai"), None).expect("must succeed");
-        assert!(report.is_empty_run());
-        // Sentinel must exist post-call.
         let if2ai = home.path().join(".if2ai");
-        assert!(has_sentinel(&if2ai), "sentinel should be written");
-        // Re-running is a no-op (sentinel_present=true).
+        let report = migrate_legacy_data_dir(&if2ai, None).expect("must succeed");
+        assert!(report.is_empty_run());
+        // Every known subtree must have its own sentinel post-call.
+        let migrated = read_already_migrated(&if2ai);
+        for subtree in MIGRATABLE_SUBTREES {
+            assert!(
+                migrated.contains(*subtree),
+                "subtree {subtree} should have a sentinel after fresh install"
+            );
+        }
+        // Re-running is a true no-op.
         let again = migrate_legacy_data_dir(&if2ai, None).expect("idempotent");
-        assert!(again.sentinel_present);
+        assert!(again.is_empty_run());
+        assert_eq!(again.skipped_already_migrated.len(), 0); // legacy_root is None → no probe loop
     }
 
     #[test]
@@ -402,6 +467,85 @@ mod tests {
             b"NEW",
             "newer file must survive merge"
         );
+    }
+
+    #[test]
+    fn legacy_global_sentinel_skips_v1_subtrees_but_not_v2_models() {
+        // Simulate an upgraded install: PATH-FIX v1 wrote a global
+        // sentinel (memory + trajectories already migrated), but
+        // models is new in v2.  We expect models to migrate while
+        // memory/trajectories are skipped.
+        let home = tempdir().unwrap();
+        let legacy = tempdir().unwrap();
+        let if2ai = home.path().join(".if2ai");
+        fs::create_dir_all(&if2ai).unwrap();
+        // Drop the v1 global sentinel.
+        fs::write(
+            if2ai.join(".migrated_from_data_local_dir.1700000000"),
+            "fake v1 sentinel",
+        )
+        .unwrap();
+
+        // Seed legacy with all 3 subtrees.
+        seed_legacy(legacy.path(), "memory", b"old-memory");
+        seed_legacy(legacy.path(), "trajectories", b"old-traj");
+        seed_legacy(legacy.path(), "models", b"old-tts-onnx");
+
+        let report = migrate_legacy_data_dir(&if2ai, Some(legacy.path())).expect("must succeed");
+
+        // memory + trajectories must be skipped; models must move.
+        assert!(report
+            .skipped_already_migrated
+            .contains(&"memory".to_string()));
+        assert!(report
+            .skipped_already_migrated
+            .contains(&"trajectories".to_string()));
+        assert_eq!(report.moved, vec!["models".to_string()]);
+        assert!(if2ai.join("models").join("data.bin").exists());
+        // legacy memory + trajectories untouched (we skipped, not moved).
+        assert!(legacy.path().join(".if2ai").join("memory").exists());
+        assert!(legacy.path().join(".if2ai").join("trajectories").exists());
+    }
+
+    #[test]
+    fn second_boot_after_models_migration_is_full_noop() {
+        // After a successful models migration, re-running must skip
+        // ALL three subtrees (each has its own sentinel now).
+        let home = tempdir().unwrap();
+        let legacy = tempdir().unwrap();
+        let if2ai = home.path().join(".if2ai");
+        seed_legacy(legacy.path(), "memory", b"x");
+        seed_legacy(legacy.path(), "models", b"y");
+        seed_legacy(legacy.path(), "trajectories", b"z");
+
+        let first = migrate_legacy_data_dir(&if2ai, Some(legacy.path())).unwrap();
+        assert_eq!(first.moved.len(), 3);
+
+        let second = migrate_legacy_data_dir(&if2ai, Some(legacy.path())).unwrap();
+        assert_eq!(second.moved.len(), 0);
+        assert_eq!(second.merged.len(), 0);
+        assert_eq!(second.skipped_already_migrated.len(), 3);
+    }
+
+    #[test]
+    fn locked_subtree_does_not_write_sentinel_so_next_boot_retries() {
+        let home = tempdir().unwrap();
+        let legacy = tempdir().unwrap();
+        let mem = legacy.path().join(".if2ai").join("memory");
+        fs::create_dir_all(mem.join("vector_db")).unwrap();
+        fs::write(mem.join("vector_db").join("lance.lock"), b"").unwrap();
+        fs::write(mem.join("memory.db"), b"data").unwrap();
+
+        let if2ai = home.path().join(".if2ai");
+        let first = migrate_legacy_data_dir(&if2ai, Some(legacy.path())).unwrap();
+        assert_eq!(first.skipped_locked, vec!["memory".to_string()]);
+        // No sentinel written for memory → next boot can retry.
+        assert!(!read_already_migrated(&if2ai).contains("memory"));
+
+        // Remove the lock and re-run; this time memory should move.
+        fs::remove_file(mem.join("vector_db").join("lance.lock")).unwrap();
+        let second = migrate_legacy_data_dir(&if2ai, Some(legacy.path())).unwrap();
+        assert!(second.moved.contains(&"memory".to_string()));
     }
 
     #[test]
