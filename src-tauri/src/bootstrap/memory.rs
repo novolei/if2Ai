@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::modules;
@@ -232,10 +232,8 @@ fn create_memory_provider(
 
     let vector_result = runtime.block_on(async {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let memory_root = dirs::data_local_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".if2ai")
-                .join("memory");
+            // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+            let memory_root = modules::config::store::if2ai_data_root().join("memory");
             let db_path = memory_root.join("vector_db");
             let sqlite_path = Some(memory_root.join("memory.db"));
 
@@ -289,9 +287,8 @@ async fn create_hybrid_provider() -> Result<modules::memory::SharedMemoryProvide
 fn create_sqlite_provider(
     scanner: Arc<modules::memory::security::ThreatScanner>,
 ) -> modules::memory::SharedMemoryProvider {
-    let db_path = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let db_path = modules::config::store::if2ai_data_root()
         .join("memory")
         .join("memory.db");
     if let Some(parent) = db_path.parent() {

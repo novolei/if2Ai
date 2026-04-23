@@ -175,10 +175,7 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
 /// for a hook that's intentionally fire-and-forget.
 #[tauri::command]
 #[allow(dead_code)]
-pub async fn close_session(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn close_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
     use crate::modules::memory::scope::MemoryExecutionScope;
     use crate::modules::runtime::conversation::TurnHook;
 

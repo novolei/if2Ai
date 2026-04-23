@@ -254,10 +254,8 @@ async fn append_static_sections(
         session_id, project_id, workdir,
     );
 
-    let memory_root = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("memory");
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let memory_root = crate::modules::config::store::if2ai_data_root().join("memory");
     let compiled_path = memory_root.join("memory.md");
 
     let is_zh = crate::modules::runtime::locale::is_zh();

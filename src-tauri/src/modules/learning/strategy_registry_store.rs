@@ -114,14 +114,13 @@ impl StrategyRegistryStore {
         Self { root: root.into() }
     }
 
-    /// Default root: `<dirs::data_local_dir>/if2ai/learning/strategies`.
-    /// Falls back to `./learning/strategies` when the platform data
-    /// dir is unavailable (test sandboxes / CI without HOME).
+    /// Default root: `~/.if2ai/learning/strategies`.
+    /// MEM-MOD-PATH-FIX — single root via if2ai_data_root().
     #[must_use]
     pub fn with_default_root() -> Self {
-        let root = dirs::data_local_dir()
-            .map(|d| d.join("if2ai").join("learning").join("strategies"))
-            .unwrap_or_else(|| PathBuf::from("./learning/strategies"));
+        let root = crate::modules::config::store::if2ai_data_root()
+            .join("learning")
+            .join("strategies");
         Self::new(root)
     }
 

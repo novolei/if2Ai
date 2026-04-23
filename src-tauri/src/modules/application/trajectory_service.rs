@@ -37,10 +37,9 @@ pub(crate) async fn record_trajectory_if_possible(
     }
 
     // Fallback: create a temporary manager.
-    let trajectories_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("trajectories");
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let trajectories_dir =
+        crate::modules::config::store::if2ai_data_root().join("trajectories");
 
     let manager = match TrajectoryManager::new(trajectories_dir) {
         Ok(m) => m,

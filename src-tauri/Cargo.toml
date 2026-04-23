@@ -98,6 +98,7 @@ rubato = "0.16"
 hound = "3.5"
 rand = "0.8"
 unicode_categories = "0.1"
+sys-locale = "0.3"
 
 [[bin]]
 name = "harness-cli"

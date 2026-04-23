@@ -191,10 +191,7 @@ mod tests {
         )
         .await
         .expect("compile_week must succeed");
-        assert_eq!(
-            result,
-            CompileResult::skipped(SkipReason::EmptyInput),
-        );
+        assert_eq!(result, CompileResult::skipped(SkipReason::EmptyInput),);
         assert!(!out.exists(), "must NOT write empty week.md");
     }
 

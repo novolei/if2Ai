@@ -200,10 +200,7 @@ mod tests {
         )
         .await
         .expect("must not error");
-        assert_eq!(
-            res,
-            CompileResult::skipped(SkipReason::UpstreamMissing),
-        );
+        assert_eq!(res, CompileResult::skipped(SkipReason::UpstreamMissing),);
         assert!(!out.exists(), "longterm.md must not be created");
     }
 

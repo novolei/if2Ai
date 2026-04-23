@@ -735,10 +735,18 @@ fn rejects_invalid_memory_recall_mode_label() {
 }
 
 #[test]
-fn runtime_config_language_default_is_en_us() {
-    // Empty config → no `language` key → default `"en-US"`.
+fn runtime_config_language_default_falls_back_to_os_or_en_us() {
+    // LOCALE-DETECT — pre-fix this expected hard-coded "en-US".
+    // Now we probe the host OS first (sys-locale) and fall back to
+    // "en-US" only when that fails.  CI / dev hosts give a real
+    // locale so we just assert the tag is non-empty BCP-47-shaped.
     let cfg = super::RuntimeConfig::empty();
-    assert_eq!(cfg.language(), "en-US");
+    let lang = cfg.language();
+    assert!(!lang.is_empty(), "language must never be empty");
+    assert!(
+        !lang.contains('_'),
+        "BCP-47 uses hyphens, not underscores; got {lang}"
+    );
 }
 
 #[test]
@@ -767,8 +775,9 @@ fn current_returns_default_when_unset_and_set_current_installs_value() {
     // serially (cargo's default within the same binary) so other
     // tests do not race on the slot.
     let before = super::current();
-    // Default config has empty merged map → language() falls back to "en-US".
-    assert_eq!(before.language(), "en-US");
+    // LOCALE-DETECT — empty merged map → language() falls back to OS
+    // locale or "en-US"; both are valid non-empty BCP-47.
+    assert!(!before.language().is_empty());
 
     let mut merged = std::collections::BTreeMap::new();
     merged.insert(

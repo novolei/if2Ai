@@ -78,9 +78,10 @@ pub fn validate_safe_path(base: &Path, requested: &Path) -> Result<PathBuf, Path
 }
 
 /// Get safe memory database path
+/// MEM-MOD-PATH-FIX — single root under `~/.if2ai/memory/`.
 pub fn get_memory_db_path() -> Result<PathBuf, PathError> {
-    let base = dirs::data_local_dir().ok_or(PathError::NoDataDirectory)?;
-    let memory_dir = base.join(".if2ai").join("memory");
+    let base = crate::modules::config::store::if2ai_data_root();
+    let memory_dir = base.join("memory");
 
     std::fs::create_dir_all(&memory_dir).map_err(|_| PathError::DirectoryCreationFailed)?;
 

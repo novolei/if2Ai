@@ -12,6 +12,23 @@ use serde::Serialize;
 
 /// Returns the path to `~/.if2ai/` directory.
 fn if2ai_dir() -> PathBuf {
+    if2ai_data_root()
+}
+
+/// MEM-MOD-PATH-FIX — canonical `~/.if2ai/` data root used by every
+/// if2Ai subsystem (memory, models, sessions, projects, trajectories,
+/// learning strategies, harness reports, ...).
+///
+/// Pre-fix the codebase had **two** competing roots:
+///   - `~/.if2ai/` (sessions / projects / config / models / skills / todos)
+///   - `~/Library/Application Support/.if2ai/` (memory / vector_db /
+///     summaries / jobs / trajectories / learning / harness)
+/// causing memory data to disappear on restart whenever code changes
+/// touched the `data_local_dir()` resolver.  This helper is the single
+/// source of truth — every subsystem MUST go through it (or via
+/// [`crate::bootstrap`] which forwards from here).
+#[must_use]
+pub fn if2ai_data_root() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".if2ai")
 }

@@ -6,6 +6,7 @@ use crate::modules;
 
 mod app;
 mod memory;
+mod migration;
 mod runtime;
 
 /// Filesystem paths resolved once during backend startup.
@@ -29,28 +30,34 @@ pub struct AppBootstrap {
 }
 
 /// Resolve all process-level data directories used by the desktop host.
+///
+/// MEM-MOD-PATH-FIX — `memory_root` now derives from `~/.if2ai`
+/// (single root for the entire app); `dirs::data_local_dir()` was the
+/// pre-fix legacy location and is no longer consulted by new boots.
+/// One-shot migration of legacy `~/Library/Application Support/.if2ai`
+/// is handled by [`migration::migrate_legacy_data_dir`] which `main.rs`
+/// invokes before [`build_app_bootstrap`].
 #[must_use]
 pub fn resolve_boot_paths() -> BootPaths {
     resolve_boot_paths_from_inputs(
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| String::from("."))),
-        dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")),
         std::env::var("IF2AI_SESSIONS_DIR").ok().map(PathBuf::from),
         std::env::var("IF2AI_PROJECTS_DIR").ok().map(PathBuf::from),
     )
 }
 
 pub use app::build_app_bootstrap;
+pub use migration::migrate_legacy_data_dir;
 pub use runtime::initialize_process_runtime;
 
 fn resolve_boot_paths_from_inputs(
     home_dir: PathBuf,
-    data_local_dir: PathBuf,
     sessions_override: Option<PathBuf>,
     projects_override: Option<PathBuf>,
 ) -> BootPaths {
     let if2ai_dir = home_dir.join(".if2ai");
     let log_dir = if2ai_dir.join("log");
-    let memory_root = data_local_dir.join(".if2ai").join("memory");
+    let memory_root = if2ai_dir.join("memory");
     let sessions_dir = sessions_override.unwrap_or_else(|| if2ai_dir.join("sessions"));
     let projects_dir = projects_override.unwrap_or_else(|| if2ai_dir.join("projects"));
 
@@ -72,16 +79,17 @@ mod tests {
     fn boot_paths_default_to_if2ai_subdirectories() {
         let paths = resolve_boot_paths_from_inputs(
             PathBuf::from("/tmp/if2ai-home"),
-            PathBuf::from("/tmp/if2ai-data"),
             None,
             None,
         );
 
         assert_eq!(paths.if2ai_dir, PathBuf::from("/tmp/if2ai-home/.if2ai"));
         assert_eq!(paths.log_dir, PathBuf::from("/tmp/if2ai-home/.if2ai/log"));
+        // MEM-MOD-PATH-FIX — memory_root now under ~/.if2ai (NOT
+        // data_local_dir).  Single-root model post-migration.
         assert_eq!(
             paths.memory_root,
-            PathBuf::from("/tmp/if2ai-data/.if2ai/memory")
+            PathBuf::from("/tmp/if2ai-home/.if2ai/memory")
         );
         assert_eq!(
             paths.sessions_dir,
@@ -97,7 +105,6 @@ mod tests {
     fn boot_paths_honor_explicit_session_and_project_overrides() {
         let paths = resolve_boot_paths_from_inputs(
             PathBuf::from("/tmp/if2ai-home"),
-            PathBuf::from("/tmp/if2ai-data"),
             Some(PathBuf::from("/tmp/custom-sessions")),
             Some(PathBuf::from("/tmp/custom-projects")),
         );
@@ -106,7 +113,7 @@ mod tests {
         assert_eq!(paths.projects_dir, PathBuf::from("/tmp/custom-projects"));
         assert_eq!(
             paths.memory_root,
-            PathBuf::from("/tmp/if2ai-data/.if2ai/memory")
+            PathBuf::from("/tmp/if2ai-home/.if2ai/memory")
         );
     }
 }

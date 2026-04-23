@@ -8,6 +8,21 @@ fn main() {
     let paths = bootstrap::resolve_boot_paths();
     bootstrap::initialize_process_runtime(&paths);
 
+    // MEM-MOD-PATH-FIX — one-shot migration of the legacy
+    // `<data_local_dir>/.if2ai/{memory,trajectories,...}` subtrees
+    // into `~/.if2ai/`.  Idempotent: a sentinel file makes
+    // subsequent boots no-op.  Must run BEFORE `build_app_bootstrap`
+    // because that step opens SQLite + LanceDB at the new path.
+    if let Err(err) = bootstrap::migrate_legacy_data_dir(
+        &paths.if2ai_dir,
+        dirs::data_local_dir().as_deref(),
+    ) {
+        tracing::warn!(
+            error = %err,
+            "[migration] legacy data dir migration failed; continuing with possibly empty memory"
+        );
+    }
+
     let app_bootstrap = bootstrap::build_app_bootstrap(&paths);
     let host_composition = commands::compose_desktop_host_state(
         app_bootstrap.app_state_config,

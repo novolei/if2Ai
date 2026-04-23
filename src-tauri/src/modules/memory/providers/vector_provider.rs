@@ -69,10 +69,8 @@ pub struct VectorProviderConfig {
 
 impl Default for VectorProviderConfig {
     fn default() -> Self {
-        let base = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".if2ai")
-            .join("memory");
+        // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+        let base = crate::modules::config::store::if2ai_data_root().join("memory");
 
         Self {
             db_path: base.join("vector_db"),

@@ -415,17 +415,79 @@ impl RuntimeConfig {
 
     /// Active UI / prompt language as a BCP-47 tag (e.g. `"zh-CN"`,
     /// `"en-US"`).  Read from the merged `language` top-level settings
-    /// key; defaults to `"en-US"` when no override is set.
+    /// key; falls back to the host OS locale (via `sys-locale`) and
+    /// finally to `"en-US"` when even that lookup fails.
     ///
     /// Phase 8A.4 — backs [`crate::modules::runtime::locale::is_zh`] so
     /// every memory-prompt builder switches zh ↔ en from a single source
     /// of truth, without each call site re-parsing settings.json.
+    ///
+    /// LOCALE-DETECT — pre-fix this hard-coded `"en-US"` whenever
+    /// `settings.json` had no `language` key, so a Chinese-locale
+    /// macOS user with a fresh install saw English prompts.  Now the
+    /// OS locale (e.g. `"zh-CN"`) is consulted, normalised to BCP-47
+    /// (underscore → hyphen) and cached in a `OnceLock` so every call
+    /// is O(1).
     #[must_use]
     pub fn language(&self) -> &str {
-        self.merged
-            .get("language")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("en-US")
+        // `match` (vs `unwrap_or_else`) is intentional: the explicit
+        // arms let the borrow checker unify the borrowed branch
+        // (lifetime tied to `self.merged`) with the `'static` branch
+        // (`OnceLock<String>` cache) without conflicting bounds.
+        match self.merged.get("language").and_then(JsonValue::as_str) {
+            Some(explicit) => explicit,
+            None => detect_language_or_en_us(),
+        }
+    }
+}
+
+/// LOCALE-DETECT — probe the host OS once and cache the BCP-47 tag.
+/// Called by [`RuntimeConfig::language`] only when no explicit
+/// `language` override exists in `settings.json`.
+fn detect_language_or_en_us() -> &'static str {
+    use std::sync::OnceLock;
+    static DETECTED: OnceLock<String> = OnceLock::new();
+    DETECTED
+        .get_or_init(|| {
+            sys_locale::get_locale()
+                .map(normalize_bcp47)
+                .unwrap_or_else(|| "en-US".to_string())
+        })
+        .as_str()
+}
+
+/// `sys_locale` may return underscored tags on some platforms
+/// (`zh_CN`, `en_US.UTF-8`).  Normalise to canonical BCP-47:
+/// `zh-CN`, `en-US`, …  Strips POSIX `.encoding@modifier` suffixes.
+fn normalize_bcp47(raw: String) -> String {
+    let stripped = raw
+        .split(|c: char| c == '.' || c == '@')
+        .next()
+        .unwrap_or(&raw);
+    stripped.replace('_', "-")
+}
+
+#[cfg(test)]
+mod locale_normalize_tests {
+    use super::normalize_bcp47;
+
+    #[test]
+    fn normalize_underscore_to_hyphen() {
+        assert_eq!(normalize_bcp47("zh_CN".into()), "zh-CN");
+        assert_eq!(normalize_bcp47("en_US".into()), "en-US");
+    }
+
+    #[test]
+    fn normalize_strips_posix_encoding_and_modifier() {
+        assert_eq!(normalize_bcp47("en_US.UTF-8".into()), "en-US");
+        assert_eq!(normalize_bcp47("zh_CN.UTF-8@latin".into()), "zh-CN");
+    }
+
+    #[test]
+    fn normalize_passes_through_canonical_tags() {
+        assert_eq!(normalize_bcp47("zh-CN".into()), "zh-CN");
+        assert_eq!(normalize_bcp47("en".into()), "en");
+        assert_eq!(normalize_bcp47("zh-Hans-CN".into()), "zh-Hans-CN");
     }
 }
 

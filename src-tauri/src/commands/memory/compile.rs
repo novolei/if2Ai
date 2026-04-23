@@ -121,10 +121,8 @@ pub struct CompiledMemoryDto {
 fn resolve_paths(scope: &str) -> Result<(MemoryExecutionScope, CompilePaths), String> {
     match scope {
         "current" | "all" | "project" | "global" => {
-            let root = dirs::data_local_dir()
-                .ok_or_else(|| "data_local_dir unavailable".to_string())?
-                .join(".if2ai")
-                .join("memory");
+            // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+            let root = crate::modules::config::store::if2ai_data_root().join("memory");
             Ok((
                 MemoryExecutionScope::global(),
                 CompilePaths::from_scope_root(&root),
@@ -261,17 +259,24 @@ mod compile_command_tests {
 
     #[test]
     fn compile_report_serializes_snake_case_results() {
+        // MEM-MOD-WIRE-FIX-3 — `Skipped` now carries a reason payload;
+        // wire shape is `{kind:"skipped",reason:"cache_hit"}` instead
+        // of the bare `"skipped"` string of yore.
         let report = CompileReport {
             today: CompileResult::Compiled,
-            week: CompileResult::Skipped,
-            longterm: CompileResult::Skipped,
+            week: CompileResult::skipped(crate::modules::memory::SkipReason::CacheHit),
+            longterm: CompileResult::skipped(
+                crate::modules::memory::SkipReason::UpstreamMissing,
+            ),
             facts: CompileResult::Compiled,
             assembled: true,
             elapsed_ms: 42,
         };
         let json = serde_json::to_value(&report).expect("serialize");
-        assert_eq!(json["today"], "compiled");
-        assert_eq!(json["week"], "skipped");
+        assert_eq!(json["today"]["kind"], "compiled");
+        assert_eq!(json["week"]["kind"], "skipped");
+        assert_eq!(json["week"]["reason"], "cache_hit");
+        assert_eq!(json["longterm"]["reason"], "upstream_missing");
         assert_eq!(json["assembled"], true);
         assert_eq!(json["elapsed_ms"], 42);
     }

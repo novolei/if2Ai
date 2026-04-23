@@ -224,12 +224,12 @@ impl MemoryTicker {
         ))
     }
 
-    /// Resolve `<data_local_dir>/.if2ai/memory` per v2 §0.5 Δ-6.  Returns
-    /// `None` when the OS does not expose a local data directory (rare;
-    /// CI sandboxes occasionally hit this) — callers must downgrade to a
-    /// `tracing::warn!` and skip the step.
+    /// MEM-MOD-PATH-FIX — Resolve `~/.if2ai/memory` (was the
+    /// `<data_local_dir>/.if2ai/memory` double-root pre-fix).
+    /// Always returns `Some` — kept as `Option` to preserve the old
+    /// signature that callers downgrade to `warn!` on `None`.
     fn memory_root() -> Option<std::path::PathBuf> {
-        dirs::data_local_dir().map(|d| d.join(".if2ai").join("memory"))
+        Some(crate::modules::config::store::if2ai_data_root().join("memory"))
     }
 
     /// Spawn rolling_summary → compile_today → assemble in a background

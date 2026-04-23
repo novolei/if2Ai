@@ -33,10 +33,8 @@ pub async fn export_trajectories_to_file(output_path: String) -> Result<u64, Str
 /// Get the number of trajectory files on disk
 #[tauri::command]
 pub async fn get_trajectory_count() -> Result<u64, String> {
-    let base_path = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("trajectories");
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let base_path = crate::modules::config::store::if2ai_data_root().join("trajectories");
 
     // Ensure directory exists (manager creates it)
     let manager = TrajectoryManager::new(base_path).map_err(|e| e.to_string())?;
@@ -46,10 +44,8 @@ pub async fn get_trajectory_count() -> Result<u64, String> {
 /// Get the default trajectory storage path
 #[tauri::command]
 pub async fn get_trajectory_path() -> Result<String, String> {
-    let path = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
-        .join("trajectories");
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let path = crate::modules::config::store::if2ai_data_root().join("trajectories");
 
     path.to_str()
         .map(String::from)

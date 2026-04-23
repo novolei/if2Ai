@@ -78,9 +78,8 @@ impl HybridMemoryProvider {
         let embedder =
             FastEmbedProvider::new().map_err(|e| HybridError::Embedding(e.to_string()))?;
 
-        let lancedb_path = dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".if2ai")
+        // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+        let lancedb_path = crate::modules::config::store::if2ai_data_root()
             .join("memory")
             .join("hybrid_db");
 

@@ -103,7 +103,6 @@ pub use ticker::{MemoryTicker, TickerConfig};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -651,9 +650,8 @@ pub type SharedMemoryProvider = Arc<dyn MemoryProvider>;
 /// Data survives process restarts.
 #[allow(dead_code)]
 pub async fn default_memory_provider() -> SharedMemoryProvider {
-    let db_path = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".if2ai")
+    // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
+    let db_path = crate::modules::config::store::if2ai_data_root()
         .join("memory")
         .join("memory.db");
 
