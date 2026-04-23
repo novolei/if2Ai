@@ -153,6 +153,8 @@ export interface SessionMeta {
   message_count: number;
   soul_id?: string | null;
   persona_id?: string | null;
+  /** Active skill names for prompt + low-trust tool attenuation */
+  active_skill_ids?: string[];
 }
 
 /**
@@ -590,6 +592,16 @@ export async function setSessionIdentity(
   return await invoke<SessionMeta>("set_session_identity", { id, identity });
 }
 
+export async function setSessionActiveSkillIds(
+  id: string,
+  activeSkillIds: string[],
+): Promise<Session> {
+  return await invoke<Session>("set_session_active_skill_ids", {
+    id,
+    active_skill_ids: activeSkillIds,
+  });
+}
+
 /**
  * 列出指定项目中的所有会话
  *
@@ -644,6 +656,33 @@ export async function getSession(id: string): Promise<Session> {
   return await invoke<Session>("get_session", { id });
 }
 
+/** In-memory transcript undo/redo availability (see `session_undo` / `session_redo`). */
+export interface ConversationUndoStatus {
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export async function sessionUndoStatus(
+  id: string,
+): Promise<ConversationUndoStatus> {
+  return await invoke<ConversationUndoStatus>("session_undo_status", { id });
+}
+
+/** Restore one transcript checkpoint for the session. */
+export async function sessionUndo(id: string): Promise<Session> {
+  return await invoke<Session>("session_undo", { id });
+}
+
+/** Re-apply the last undone transcript checkpoint. */
+export async function sessionRedo(id: string): Promise<Session> {
+  return await invoke<Session>("session_redo", { id });
+}
+
+/** Drain P2-12 job-monitor diagnostic lines for a session. */
+export async function drainJobMonitorLines(id: string): Promise<string[]> {
+  return await invoke<string[]>("drain_job_monitor_lines", { id });
+}
+
 /**
  * 会话信息（包含消息）
  */
@@ -657,6 +696,19 @@ export interface Session {
   token_count: number;
   soul_id?: string | null;
   persona_id?: string | null;
+  active_skill_ids?: string[];
+  /** P2-11 — per-session running totals (provider-billable). */
+  session_totals?: SessionTotals;
+}
+
+/** P2-11 — mirrors Rust `SessionUsageTotals`. */
+export interface SessionTotals {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  turns: number;
 }
 
 export interface SessionIdentityInput {

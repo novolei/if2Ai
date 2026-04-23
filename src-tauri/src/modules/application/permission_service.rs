@@ -10,12 +10,16 @@
 //! follow-up cleanup.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::modules::harness::{AgentEvent, HarnessState};
 use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::pending_permission::{
+    clear_pending_permission, write_pending_permission, PendingPermissionRecord,
+};
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
@@ -61,26 +65,63 @@ impl PermissionPrompter for TauriPermissionPrompter {
             request.current_mode.as_str(),
             request.required_mode.as_str()
         );
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let requested_at = chrono::Utc::now().to_rfc3339();
+        let message = format!(
+            "Tool '{}' requires {} permission (current: {})",
+            request.tool_name,
+            request.required_mode.as_str(),
+            request.current_mode.as_str()
+        );
+        let pending_record = PendingPermissionRecord {
+            request_id: request_id.clone(),
+            session_id: self.session_id.clone(),
+            tool_name: request.tool_name.clone(),
+            permission_mode: request.required_mode.as_str().to_string(),
+            current_mode: request.current_mode.as_str().to_string(),
+            message: message.clone(),
+            requested_at,
+        };
+        let Some(app_data_dir) = self.window.app_handle().path().app_data_dir().ok() else {
+            tracing::warn!(
+                "[permission] failed to resolve app data dir for recoverable permission session_id={}, tool={}",
+                self.session_id,
+                request.tool_name
+            );
+            return PermissionPromptDecision::Deny {
+                reason: "Permission request could not be persisted".to_string(),
+            };
+        };
+        if let Err(err) = write_pending_permission(&app_data_dir, &pending_record) {
+            tracing::warn!(
+                "[permission] failed to persist pending permission session_id={}, tool={}, error={}",
+                self.session_id,
+                request.tool_name,
+                err
+            );
+            return PermissionPromptDecision::Deny {
+                reason: "Permission request could not be persisted".to_string(),
+            };
+        }
+        let app_data_dir = Some(app_data_dir);
+
         // 1. emit confirmation event to the frontend
         let _ = self.window.emit(
             "permission-request",
             serde_json::json!({
+                "request_id": request_id,
                 "session_id": self.session_id,
                 "tool_name": request.tool_name,
                 "permission_mode": request.required_mode.as_str(),
                 "current_mode": request.current_mode.as_str(),
-                "message": format!(
-                    "Tool '{}' requires {} permission (current: {})",
-                    request.tool_name,
-                    request.required_mode.as_str(),
-                    request.current_mode.as_str()
-                ),
+                "message": message,
             }),
         );
         if let Some(event_logger) = &self.event_logger {
             let _ = event_logger.append_sync(
                 "permission_requested",
                 serde_json::json!({
+                    "request_id": pending_record.request_id,
                     "tool_name": request.tool_name,
                     "required_mode": request.required_mode.as_str(),
                     "current_mode": request.current_mode.as_str(),
@@ -108,12 +149,14 @@ impl PermissionPrompter for TauriPermissionPrompter {
                     let _ = event_logger.append_sync(
                         "permission_resolved",
                         serde_json::json!({
+                            "request_id": pending_record.request_id,
                             "tool_name": request.tool_name,
                             "decision": decision_label,
                             "reason": deny_reason,
                         }),
                     );
                 }
+                clear_pending_permission_if_possible(&app_data_dir, &self.session_id);
                 decision
             }
             Err(_) => {
@@ -121,12 +164,14 @@ impl PermissionPrompter for TauriPermissionPrompter {
                     let _ = event_logger.append_sync(
                         "permission_resolved",
                         serde_json::json!({
+                            "request_id": pending_record.request_id,
                             "tool_name": request.tool_name,
                             "decision": "deny",
                             "reason": "timeout",
                         }),
                     );
                 }
+                clear_pending_permission_if_possible(&app_data_dir, &self.session_id);
                 PermissionPromptDecision::Deny {
                     reason: "Permission request timed out".to_string(),
                 }
@@ -289,4 +334,63 @@ pub(crate) fn respond_to_permission_prompt(
     }
 
     Ok(())
+}
+
+fn clear_pending_permission_if_possible(app_data_dir: &Option<PathBuf>, session_id: &str) {
+    if let Some(app_data_dir) = app_data_dir {
+        if let Err(err) = clear_pending_permission(app_data_dir, session_id) {
+            tracing::warn!(
+                "[permission] failed to clear pending permission session_id={}, error={}",
+                session_id,
+                err
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::runtime::pending_permission::{
+        read_pending_permission, write_pending_permission,
+    };
+
+    #[test]
+    fn respond_permission_does_not_clear_pending_before_prompter_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_id = "session-42".to_string();
+        let record = PendingPermissionRecord {
+            request_id: "permission-1".to_string(),
+            session_id: session_id.clone(),
+            tool_name: "bash".to_string(),
+            permission_mode: "dangerFullAccess".to_string(),
+            current_mode: "readOnly".to_string(),
+            message: "Tool 'bash' requires dangerFullAccess permission".to_string(),
+            requested_at: "2026-04-23T00:00:00Z".to_string(),
+        };
+        write_pending_permission(dir.path(), &record).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut senders = HashMap::new();
+        senders.insert(session_id.clone(), tx);
+        let permission_senders = Mutex::new(senders);
+        let permission_overrides = Mutex::new(HashMap::new());
+
+        respond_to_permission_prompt(
+            &permission_senders,
+            &permission_overrides,
+            None,
+            session_id.clone(),
+            "allow".to_string(),
+            Some("bash".to_string()),
+            Some("once".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(rx.recv().unwrap(), PermissionPromptDecision::Allow);
+        assert_eq!(
+            read_pending_permission(dir.path(), &session_id).unwrap(),
+            Some(record)
+        );
+    }
 }

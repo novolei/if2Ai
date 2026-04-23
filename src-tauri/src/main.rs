@@ -13,10 +13,9 @@ fn main() {
     // into `~/.if2ai/`.  Idempotent: a sentinel file makes
     // subsequent boots no-op.  Must run BEFORE `build_app_bootstrap`
     // because that step opens SQLite + LanceDB at the new path.
-    if let Err(err) = bootstrap::migrate_legacy_data_dir(
-        &paths.if2ai_dir,
-        dirs::data_local_dir().as_deref(),
-    ) {
+    if let Err(err) =
+        bootstrap::migrate_legacy_data_dir(&paths.if2ai_dir, dirs::data_local_dir().as_deref())
+    {
         tracing::warn!(
             error = %err,
             "[migration] legacy data dir migration failed; continuing with possibly empty memory"

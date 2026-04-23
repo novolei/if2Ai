@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use super::session_undo::{ConversationUndoStatus, SessionUndoRegistry};
+
 use chrono::{DateTime, SecondsFormat, Utc};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -91,6 +93,9 @@ pub struct SessionMeta {
     /// Session-level Persona override.
     #[serde(default)]
     pub persona_id: Option<String>,
+    /// Active skill ids for this session (prompt + trust attenuation).
+    #[serde(default)]
+    pub active_skill_ids: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -110,6 +115,7 @@ impl SessionMeta {
             memory_reenabled_at: session.memory_reenabled_at,
             soul_id: session.soul_id.clone(),
             persona_id: session.persona_id.clone(),
+            active_skill_ids: session.active_skill_ids.clone(),
         }
     }
 }
@@ -177,6 +183,56 @@ pub struct Session {
     /// Session-scoped Persona override applied on top of global defaults.
     #[serde(default)]
     pub persona_id: Option<String>,
+    /// Session-scoped active skill ids (names) for prompt + trust attenuation.
+    #[serde(default)]
+    pub active_skill_ids: Vec<String>,
+    /// Per-session running totals for provider-billable token usage and
+    /// USD cost (P2-11). Updated by `stream_finalize` after each successful
+    /// turn so the chat UI can render `本会话累计` without re-walking the
+    /// whole transcript on every render.
+    ///
+    /// Optional + `#[serde(default)]` so existing on-disk session JSON
+    /// stays loadable; absent means "never recorded yet".
+    #[serde(default)]
+    pub session_totals: Option<SessionUsageTotals>,
+}
+
+/// Persisted per-session totals counterpart to
+/// [`crate::modules::runtime::stream_emitter::SessionUsageTotalsPayload`].
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SessionUsageTotals {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cost_usd: f64,
+    #[serde(default)]
+    pub turns: u32,
+}
+
+impl SessionUsageTotals {
+    /// Add one turn's usage to the running totals.
+    pub fn record(&mut self, usage: crate::modules::runtime::usage::TokenUsage, cost_usd: f64) {
+        self.input_tokens = self
+            .input_tokens
+            .saturating_add(u64::from(usage.input_tokens));
+        self.output_tokens = self
+            .output_tokens
+            .saturating_add(u64::from(usage.output_tokens));
+        self.cache_creation_input_tokens = self
+            .cache_creation_input_tokens
+            .saturating_add(u64::from(usage.cache_creation_input_tokens));
+        self.cache_read_input_tokens = self
+            .cache_read_input_tokens
+            .saturating_add(u64::from(usage.cache_read_input_tokens));
+        self.cost_usd += cost_usd;
+        self.turns = self.turns.saturating_add(1);
+    }
 }
 
 #[allow(dead_code)]
@@ -205,6 +261,8 @@ impl Session {
             memory_reenabled_at: None,
             soul_id: None,
             persona_id: None,
+            active_skill_ids: Vec::new(),
+            session_totals: None,
         }
     }
 
@@ -287,6 +345,8 @@ pub struct SessionManager {
     /// Optional active retrieval manager for injecting memory context at
     /// session creation time.  `None` when active retrieval is disabled.
     active_retrieval: Option<Arc<crate::modules::memory::retrieval::ActiveRetrievalManager>>,
+    /// In-memory undo/redo stacks (transcript snapshots). Shared across clones.
+    session_undo: Arc<SessionUndoRegistry>,
 }
 
 #[allow(dead_code)]
@@ -307,6 +367,7 @@ impl SessionManager {
             sessions_dir,
             projects_base_dir,
             active_retrieval: None,
+            session_undo: Arc::new(SessionUndoRegistry::new()),
         }
     }
 
@@ -588,6 +649,42 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Record transcript state **before** appending the next user turn (non-stream
+    /// and streaming finalize paths). No-op when undo is disabled via env.
+    pub fn push_conversation_undo_checkpoint(&self, session_id: &str, session: &Session) {
+        self.session_undo.push_checkpoint(session_id, session);
+    }
+
+    /// Whether undo/redo actions are available for this session id.
+    #[must_use]
+    pub fn conversation_undo_status(&self, session_id: &str) -> ConversationUndoStatus {
+        self.session_undo.status(session_id)
+    }
+
+    /// Restore the previous transcript snapshot and persist. Err when stack empty.
+    pub async fn apply_conversation_undo(&self, session_id: &str) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        if !self.session_undo.undo_into(session_id, &mut session) {
+            return Err(SessionError::InvalidData(
+                "nothing to undo for this session".to_string(),
+            ));
+        }
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
+    /// Re-apply a transcript snapshot popped from the redo stack.
+    pub async fn apply_conversation_redo(&self, session_id: &str) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        if !self.session_undo.redo_into(session_id, &mut session) {
+            return Err(SessionError::InvalidData(
+                "nothing to redo for this session".to_string(),
+            ));
+        }
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
     /// Add a message to a session.
     pub async fn add_message(
         &self,
@@ -656,6 +753,19 @@ impl SessionManager {
         let mut session = self.restore_session(session_id).await?;
         session.soul_id = soul_id;
         session.persona_id = persona_id;
+        session.updated_at = format_time(SystemTime::now());
+        self.save_session(&session).await?;
+        Ok(session)
+    }
+
+    /// Replace session-scoped active skill ids and persist.
+    pub async fn set_session_active_skill_ids(
+        &self,
+        session_id: &str,
+        active_skill_ids: Vec<String>,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.restore_session(session_id).await?;
+        session.active_skill_ids = active_skill_ids;
         session.updated_at = format_time(SystemTime::now());
         self.save_session(&session).await?;
         Ok(session)
@@ -737,6 +847,7 @@ impl SessionManager {
             fs::remove_file(&legacy_path).await.map_err(|e| {
                 SessionError::WriteError(format!("failed to delete {}: {e}", legacy_path.display()))
             })?;
+            self.session_undo.remove_session(id);
             return Ok(());
         }
 
@@ -762,6 +873,7 @@ impl SessionManager {
                                 session_path.display()
                             ))
                         })?;
+                        self.session_undo.remove_session(id);
                         return Ok(());
                     }
                 }
@@ -906,6 +1018,7 @@ mod tests {
             memory_reenabled_at: None,
             soul_id: None,
             persona_id: None,
+            active_skill_ids: Vec::new(),
         }
     }
 
@@ -952,6 +1065,7 @@ mod tests {
         assert!(meta.memory_reenabled_at.is_none());
         assert_eq!(meta.soul_id, None);
         assert_eq!(meta.persona_id, None);
+        assert!(meta.active_skill_ids.is_empty());
         assert!(!meta.pinned);
     }
 
@@ -970,6 +1084,7 @@ mod tests {
             memory_reenabled_at: None,
             soul_id: Some("if2ai-core".into()),
             persona_id: Some("staff-architect".into()),
+            active_skill_ids: Vec::new(),
         };
         let json = serde_json::to_string(&meta).expect("serialise");
         // chrono serialises DateTime<Utc> as RFC3339 by default.

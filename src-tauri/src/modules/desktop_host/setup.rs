@@ -34,6 +34,8 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     register_browser_app_handle(app);
     register_memory_audit_emitter(app);
     start_memory_ticker(app);
+    let ticker = app.state::<Arc<MemoryTicker>>().inner().clone();
+    crate::modules::runtime::self_repair::spawn_self_repair_watchdog(ticker);
     resolve_bundled_skills(app);
     install_system_tray(app)?;
     install_main_window_policy(app);

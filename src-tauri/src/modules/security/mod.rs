@@ -12,6 +12,8 @@
 pub mod access;
 pub mod atomic_write;
 pub mod path;
+pub mod redaction;
+pub mod safety;
 pub mod validation;
 
 // Re-export for external consumers; currently unused but reserved for future use.

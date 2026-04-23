@@ -7,6 +7,8 @@ import {
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
+  Redo2,
+  Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GitActionsPicker } from "@/components/chat/GitActionsPicker";
@@ -20,6 +22,7 @@ import { HomeScreen } from "./HomeScreen";
 import { SidebarTop } from "./SidebarTop";
 import { BrowserCard } from "@/components/browser/BrowserCard";
 import { useBrowserStore } from "@/stores/browser-slice";
+import { refreshPendingPermission } from "@/runtime-projection";
 
 const CHAT_DENSITY_MODE_STORAGE_KEY = "chatDensityModeV2";
 const CHAT_FONT_MODE_STORAGE_KEY = "chatFontModeV2";
@@ -115,6 +118,7 @@ export function ChatWorkspace({
   onWorktreeProjectCreated,
   activeTitle,
   activeMessages,
+  activeSessionTotals,
   input,
   isLoading,
   loading,
@@ -154,6 +158,9 @@ export function ChatWorkspace({
   onPreviewFocusChange,
   runningSessionIds,
   activeSessionMeta,
+  conversationUndoStatus,
+  onConversationUndo,
+  onConversationRedo,
 }: ChatWorkspaceProps) {
   // Browser store — used to show the globe badge in the header when the AI's
   // browser is actively running for the current session.
@@ -199,6 +206,39 @@ export function ChatWorkspace({
       // Ignore storage failures so layout controls never crash the main workspace.
     }
   }, [fontMode]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    void refreshPendingPermission(activeSessionId).catch((err) => {
+      console.warn("[permission] failed to recover pending permission", err);
+    });
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!activeSessionId || !conversationUndoStatus) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("[data-composer-input]")) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.key.toLowerCase() !== "z") return;
+      if (e.shiftKey) {
+        if (!conversationUndoStatus.canRedo || !onConversationRedo) return;
+        e.preventDefault();
+        void onConversationRedo();
+      } else {
+        if (!conversationUndoStatus.canUndo || !onConversationUndo) return;
+        e.preventDefault();
+        void onConversationUndo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    activeSessionId,
+    conversationUndoStatus,
+    onConversationUndo,
+    onConversationRedo,
+  ]);
 
   return (
     <div className="relative h-full min-h-0 min-w-0 overflow-hidden">
@@ -356,6 +396,43 @@ export function ChatWorkspace({
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-jade" />
                   </div>
                 )}
+                {activeSessionId && conversationUndoStatus ? (
+                  <div
+                    className="window-no-drag flex items-center gap-0.5"
+                    data-window-no-drag="true"
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full text-muted-foreground disabled:opacity-40"
+                      data-window-no-drag="true"
+                      disabled={!conversationUndoStatus.canUndo}
+                      title="撤销上一轮 (⌘Z)"
+                      aria-label="撤销对话"
+                      onClick={() => {
+                        void onConversationUndo?.();
+                      }}
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full text-muted-foreground disabled:opacity-40"
+                      data-window-no-drag="true"
+                      disabled={!conversationUndoStatus.canRedo}
+                      title="重做 (⌘⇧Z)"
+                      aria-label="重做对话"
+                      onClick={() => {
+                        void onConversationRedo?.();
+                      }}
+                    >
+                      <Redo2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : null}
                 <div className="window-no-drag" data-window-no-drag="true">
                   <HeaderViewStyleControls
                     fontMode={fontMode}
@@ -434,6 +511,7 @@ export function ChatWorkspace({
                       densityMode={densityMode}
                       fontMode={fontMode}
                       onPreviewFocusChange={onPreviewFocusChange}
+                      sessionTotals={activeSessionTotals}
                     />
                   </div>
                 </div>

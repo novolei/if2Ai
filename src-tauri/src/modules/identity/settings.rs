@@ -4,23 +4,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Path to the persisted prompt control plane settings file.
-/// Mirrors `commands::settings::default_prompt_control_config_path`
-/// so identity-only consumers can read naming without depending on
-/// the full ConfigLoader pipeline (which is heavy per-turn).
+/// Mirrors `runtime::config::default_prompt_control_config_path` so
+/// identity-only consumers can read naming without depending on the
+/// full ConfigLoader pipeline (which is heavy per-turn).
 #[must_use]
 pub fn default_prompt_control_settings_path() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(|home| {
-            PathBuf::from(home)
-                .join(".if2ai")
-                .join("prompt")
-                .join("control-plane.json")
-        })
-        .unwrap_or_else(|| {
-            PathBuf::from(".if2ai")
-                .join("prompt")
-                .join("control-plane.json")
-        })
+    let config_home = std::env::var_os("CLAW_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claw")))
+        .unwrap_or_else(|| PathBuf::from(".claw"));
+    config_home
+        .parent()
+        .unwrap_or(&config_home)
+        .join(".if2ai")
+        .join("prompt")
+        .join("control-plane.json")
 }
 
 /// Lightweight result of reading just the naming-related identity

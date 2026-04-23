@@ -100,6 +100,16 @@ pub(super) struct FinalizeStreamInputs {
     pub sanitize_orphan_samples: Vec<String>,
     pub sanitize_unmatched_samples: Vec<String>,
     pub sanitize_invalid_tool_use_samples: Vec<String>,
+    /// P1-7 / P2-11: provider-billable token usage summed across this
+    /// turn's LLM calls. `default()` (all zeros) when the provider stream
+    /// did not emit `message_delta` events (frontend then falls back to
+    /// the budget estimate).
+    pub accumulated_usage: crate::modules::runtime::usage::TokenUsage,
+    /// Effective model id used for this turn (post smart-routing). Drives
+    /// pricing lookup + RoutingInfoPayload `effective_model`.
+    pub effective_model: String,
+    /// P1-8: routing decision summary already attached to TurnContext.
+    pub routing_info: Option<crate::modules::runtime::stream_emitter::RoutingInfoPayload>,
 
     // ── service handles ──
     pub stream_emitter: AgentStreamEmitter,
@@ -173,6 +183,9 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         sanitize_orphan_samples,
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
+        accumulated_usage,
+        effective_model,
+        routing_info,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -197,7 +210,16 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
 
     // Guardrail: do not allow "operation completed" claims without a successful
     // mutating tool evidence in this request.
-    if contains_unverified_file_claim(&accumulated_text) && !has_successful_mutating_tool {
+    //
+    // Resume turns intentionally skip this check: the previous turn already
+    // ran the tool (its mutation evidence lives in earlier session messages,
+    // not in `has_successful_mutating_tool` of this resume), and the
+    // accumulated_text typically carries the assistant's prior "已写入 …"
+    // wrap-up text that we want to preserve.
+    if !is_resume_turn
+        && contains_unverified_file_claim(&accumulated_text)
+        && !has_successful_mutating_tool
+    {
         let guarded = "未执行工具，无法确认完成。".to_string();
         tracing::warn!(
             "[start_agent_stream] Rewriting unverified completion claim to guarded message"
@@ -225,6 +247,9 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
+            turn_cost: None,
+            routing_info: None,
+            session_totals: None,
         };
         stream_emitter.emit_payload(override_payload.clone());
         let _ = run_event_logger
@@ -255,6 +280,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         request_id: provider_request_id.clone(),
     };
 
+    session_manager.push_conversation_undo_checkpoint(&session_id, &app_session_clone);
+
     // Save session with all accumulated messages
     let mut updated_app_session = app_session_clone;
     let user_msg = crate::modules::runtime::session::ConversationMessage {
@@ -270,6 +297,12 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         resume_cursor: None,
         request_id: Some(provider_request_id.clone()),
     };
+    // P1-7 / P2-11 — capture the assistant output text length BEFORE
+    // `flush_assistant_timeline_segment` `mem::take`s `accumulated_text`,
+    // otherwise the tiktoken fallback below sees an empty string and the
+    // chip / session totals show `0 输出` even when the LLM produced output.
+    let assistant_output_for_estimate: String = accumulated_text.clone();
+
     flush_assistant_timeline_segment(
         &mut timeline_session_messages,
         &mut accumulated_text,
@@ -299,6 +332,88 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             request_id: Some(persisted_turn_outcome.request_id.clone()),
         });
     }
+    // P1-7 / P2-11 — fall back to a tiktoken estimate when the provider
+    // didn't ship usage (Ollama / many OpenAI-compat endpoints unless
+    // `stream_options.include_usage: true` is set).  We tag the model
+    // string with `~est` so the chip / dashboards can flag the value
+    // as approximate while still giving the user *some* signal.
+    let (final_usage, model_label) = if accumulated_usage.total_tokens() > 0 {
+        (accumulated_usage, effective_model.clone())
+    } else {
+        let est_input: u32 =
+            (crate::modules::runtime::budget::estimate_tokens(&system_prompt_for_stream)
+                + session_messages
+                    .iter()
+                    .map(|m| {
+                        m.content
+                            .iter()
+                            .map(|c| match c {
+                                crate::modules::api::InputContentBlock::Text { text } => {
+                                    crate::modules::runtime::budget::estimate_tokens(text)
+                                }
+                                crate::modules::api::InputContentBlock::ToolResult {
+                                    content,
+                                    ..
+                                } => content
+                                    .iter()
+                                    .map(|b| match b {
+                                        crate::modules::api::ToolResultContentBlock::Text {
+                                            text,
+                                        } => crate::modules::runtime::budget::estimate_tokens(text),
+                                        crate::modules::api::ToolResultContentBlock::Json {
+                                            value,
+                                        } => crate::modules::runtime::budget::estimate_tokens(
+                                            &value.to_string(),
+                                        ),
+                                        crate::modules::api::ToolResultContentBlock::Image {
+                                            alt,
+                                            ..
+                                        } => alt.as_deref().map_or(
+                                            0,
+                                            crate::modules::runtime::budget::estimate_tokens,
+                                        ),
+                                    })
+                                    .sum::<usize>(),
+                                _ => 0,
+                            })
+                            .sum::<usize>()
+                    })
+                    .sum::<usize>())
+            .min(u32::MAX as usize) as u32;
+        let est_output: u32 =
+            (crate::modules::runtime::budget::estimate_tokens(&assistant_output_for_estimate))
+                .min(u32::MAX as usize) as u32;
+        let est = crate::modules::runtime::usage::TokenUsage {
+            input_tokens: est_input,
+            output_tokens: est_output,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        };
+        let label = if effective_model.is_empty() {
+            "~est".to_string()
+        } else {
+            format!("{} ~est", effective_model)
+        };
+        tracing::info!(
+            "[start_agent_stream] usage fallback to tiktoken estimate: in={} out={} model={}",
+            est_input,
+            est_output,
+            effective_model
+        );
+        (est, label)
+    };
+
+    // Stamp the final assistant message with the resolved usage.  Done
+    // BEFORE save_session so reload picks up the chip.
+    if final_usage.total_tokens() > 0 {
+        if let Some(last_assistant) = timeline_session_messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == crate::modules::runtime::session::MessageRole::Assistant)
+        {
+            last_assistant.usage = Some(final_usage);
+        }
+    }
     let appended_message_count = 1 + timeline_session_messages.len();
     updated_app_session.messages.push(user_msg);
     updated_app_session
@@ -306,6 +421,22 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         .extend(timeline_session_messages);
     updated_app_session.message_count =
         updated_app_session.logical_message_count() + appended_message_count;
+
+    // P2-11 — bump per-session running totals before save_session so
+    // reload reflects the latest billed cost. `cost_usd_for_turn` is
+    // also forwarded into the stream_complete payload below.
+    let cost_usd_for_turn = if final_usage.total_tokens() > 0 {
+        let cost = crate::modules::runtime::usage::cost_for_usage(final_usage, &effective_model);
+        let mut totals = updated_app_session
+            .session_totals
+            .clone()
+            .unwrap_or_default();
+        totals.record(final_usage, cost);
+        updated_app_session.session_totals = Some(totals);
+        Some(cost)
+    } else {
+        None
+    };
 
     // Context compaction — compact if session exceeds token threshold
     let compaction_config = CompactionConfig::default();
@@ -328,6 +459,26 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
 
     if let Err(e) = session_manager.save_session(&updated_app_session).await {
         tracing::error!("[start_agent_stream] Failed to save session: {}", e);
+    }
+
+    // P1-7 — conversation recall index (SQLite FTS; best-effort).
+    {
+        let turn_id = format!(
+            "{}:{}",
+            stream_session_id_for_after_turn, updated_app_session.message_count
+        );
+        if let Err(e) = memory_provider_for_stream
+            .conversation_recall_ingest(
+                &stream_session_id_for_after_turn,
+                stream_project_id_for_after_turn.as_deref(),
+                &turn_id,
+                &user_message_clone,
+                &accumulated_text.chars().take(12_000).collect::<String>(),
+            )
+            .await
+        {
+            tracing::debug!(error = %e, "[conversation_recall] ingest skipped");
+        }
     }
 
     // ── Post-turn streaming parity (mirrors run_agent_turn) ──
@@ -537,6 +688,31 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             Some(memory_context_items_for_task.clone())
         };
 
+        // Build the per-turn / per-session payloads from the values we
+        // already wrote into `updated_app_session` above. `model_label`
+        // carries the `~est` suffix when we fell back to tiktoken so
+        // the chip tooltip shows it.
+        let turn_cost_payload = cost_usd_for_turn.map(|cost| {
+            crate::modules::runtime::stream_emitter::TurnCostPayload {
+                input_tokens: final_usage.input_tokens,
+                output_tokens: final_usage.output_tokens,
+                cache_creation_input_tokens: final_usage.cache_creation_input_tokens,
+                cache_read_input_tokens: final_usage.cache_read_input_tokens,
+                cost_usd: cost,
+                model: model_label.clone(),
+            }
+        });
+        let session_totals_payload = updated_app_session.session_totals.as_ref().map(|t| {
+            crate::modules::runtime::stream_emitter::SessionUsageTotalsPayload {
+                input_tokens: t.input_tokens,
+                output_tokens: t.output_tokens,
+                cache_creation_input_tokens: t.cache_creation_input_tokens,
+                cache_read_input_tokens: t.cache_read_input_tokens,
+                cost_usd: t.cost_usd,
+                turns: t.turns,
+            }
+        });
+
         let payload = StreamTokenPayload {
             stream_id: stream_id_for_task.clone(),
             text: None,
@@ -560,6 +736,9 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             memory_context: memory_payload,
             prompt_diagnostics: prompt_diagnostics_enabled_for_task
                 .then_some(prompt_diagnostics_for_task),
+            turn_cost: turn_cost_payload,
+            routing_info: routing_info.clone(),
+            session_totals: session_totals_payload,
         };
         stream_emitter.emit_payload(payload);
         let _ = run_event_logger
@@ -583,13 +762,29 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
     // Phase 6E harness: emit TurnFinished for the streaming path.
     // We treat any non-failed stream as success here; downstream consumers
     // can refine via `task_outcome` if needed.
+    let turn_duration_ms = stream_turn_started_at.elapsed().as_millis() as u64;
     crate::modules::harness::agent_loop_integration::emit_turn_finished(
         harness_event_bus_for_stream.as_ref(),
         &session_id,
         turn_number_for_stream,
         !stream_failed,
         token_count,
-        stream_turn_started_at.elapsed().as_millis() as u64,
+        turn_duration_ms,
+    );
+    crate::modules::learning::estimation::record_turn_duration_ms(turn_duration_ms);
+    crate::modules::observability::emit(
+        "stream_turn_finished",
+        &format!(
+            "session_id={} turn={} ms={} tokens={} failed={}",
+            session_id, turn_number_for_stream, turn_duration_ms, token_count, stream_failed
+        ),
+    );
+    crate::modules::application::job_monitor::publish_line(
+        &session_id,
+        format!(
+            "stream turn {} finished: {}ms tokens={}",
+            turn_number_for_stream, turn_duration_ms, token_count
+        ),
     );
 
     // Phase 8B.11 fix — fire MemoryTicker.on_turn_complete for the

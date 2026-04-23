@@ -250,13 +250,14 @@ fn demo_by_id_returns_none_for_invalid_id() {
 }
 
 #[test]
-fn demo_audio_path_resolves_to_file_or_fallback() {
+fn demo_audio_path_resolves_only_when_file_exists() {
     use if2ai_backend::modules::tts::voice::demo::resolve_demo_audio_path;
 
-    // This may not find the actual file if voices aren't installed,
-    // but it should return Some path (either existing or fallback)
-    let path = resolve_demo_audio_path("demo-0");
-    assert!(path.is_some());
+    // Demo audio is optional: when the user has not installed voice files,
+    // providers fall back to builtin voice codes instead of a fake path.
+    if let Some(path) = resolve_demo_audio_path("demo-0") {
+        assert!(path.exists());
+    }
 }
 
 // ── Voice presets ───────────────────────────────────────────────────────────

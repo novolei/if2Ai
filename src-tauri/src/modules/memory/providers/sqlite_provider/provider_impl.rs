@@ -588,11 +588,17 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut updated = 0usize;
             for entry in &entries {
                 let new_importance = decay.compute_importance(entry);
+                // `updated_at` 故意不动：importance 是从 created_at /
+                // access_count 反推出来的衍生指标，每轮对话末尾跑一次
+                // decay 不算"内容被修改"。原版同时把 updated_at 刷成
+                // now 会让整库时间戳塌缩到"最近一次衰减时刻"，前端
+                // "上次更新时间"完全失去意义（参见 Memory Browser
+                // bug 调查 — 所有 entries 的 updated_at 都落在同一
+                // 个 ms 桶里）。
                 let rows = c
                     .execute(
-                        "UPDATE memory_entries SET importance = ?1, updated_at = ?2 \
-                         WHERE key = ?3",
-                        params![new_importance, chrono::Utc::now().to_rfc3339(), entry.key,],
+                        "UPDATE memory_entries SET importance = ?1 WHERE key = ?2",
+                        params![new_importance, entry.key],
                     )
                     .map_err(|e| MemoryError::Generic(format!("decay update failed: {e}")))?;
                 updated += rows;
@@ -822,15 +828,242 @@ impl MemoryProvider for SqliteMemoryProvider {
             };
 
             let new_score = (current + delta).clamp(-1.0_f64, 1.0_f64);
+            // `updated_at` 同样不动：trust_score 是用户/agent 反馈
+            // 累加出的衍生指标（feedback bumps 一次 +/- delta），跟
+            // memory 的内容文本无关。把 updated_at 也刷成 now 会让
+            // 任何一次"赞/踩"都伪装成"内容更新"，污染 timeline。
+            // see also: apply_importance_decay 同位置修复。
             c.execute(
-                "UPDATE memory_entries
-                 SET trust_score = ?1, updated_at = ?2
-                 WHERE key = ?3",
-                params![new_score, chrono::Utc::now().to_rfc3339(), key],
+                "UPDATE memory_entries SET trust_score = ?1 WHERE key = ?2",
+                params![new_score, key],
             )
             .map_err(|e| MemoryError::Generic(format!("trust_score update failed: {e}")))?;
 
             Ok(new_score)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    async fn conversation_recall_ingest(
+        &self,
+        session_id: &str,
+        project_id: Option<&str>,
+        turn_id: &str,
+        user_message: &str,
+        assistant_excerpt: &str,
+    ) -> Result<(), MemoryError> {
+        let session_id = session_id.to_string();
+        let project_id = project_id.map(str::to_string);
+        let turn_id = turn_id.to_string();
+        let body = format!("User:\n{user_message}\n\nAssistant:\n{assistant_excerpt}");
+        // P1-7 — best-effort dense embedding for hybrid recall ranking.
+        // `embedder_for_recall` returns None when the env switch is off
+        // OR when FastEmbed init failed (we degrade silently to FTS-only).
+        let embedding_blob =
+            crate::modules::memory::conversation_recall_vector::embedder_for_recall().and_then(
+                |embedder| match embedder.embed_one(&body) {
+                    Ok(v) => Some(
+                        crate::modules::memory::conversation_recall_vector::f32_slice_to_blob(&v),
+                    ),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "[conversation_recall] embed skipped");
+                        None
+                    }
+                },
+            );
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            c.execute(
+                "INSERT INTO conversation_recall_fts(session_id, project_id, turn_id, body) VALUES (?1, ?2, ?3, ?4)",
+                params![session_id, project_id, turn_id, body],
+            )
+            .map_err(|e| MemoryError::Generic(format!("conversation_recall ingest: {e}")))?;
+            if let Some(blob) = embedding_blob {
+                // PRIMARY KEY (session_id, turn_id) — REPLACE keeps the row
+                // idempotent if a turn is re-ingested.
+                let _ = c.execute(
+                    "INSERT OR REPLACE INTO conversation_recall_embeddings\
+                     (session_id, project_id, turn_id, embedding) VALUES (?1, ?2, ?3, ?4)",
+                    params![session_id, project_id, turn_id, blob],
+                );
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    async fn conversation_recall_search(
+        &self,
+        query: &str,
+        session_id: &str,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>, MemoryError> {
+        let query = query.trim().to_string();
+        let session_id = session_id.to_string();
+        let project_id = project_id.map(str::to_string);
+        let limit = limit.clamp(1, 50);
+        // P1-7 hybrid: embed the query once outside the spawn_blocking so
+        // the FastEmbed call (which itself uses ORT) doesn't sit on the
+        // blocking pool's mutex. `None` ⇒ FTS-only path.
+        let query_embedding = if !query.is_empty() {
+            crate::modules::memory::conversation_recall_vector::embedder_for_recall().and_then(
+                |embedder| match embedder.embed_one(&query) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "[conversation_recall] query embed skipped");
+                        None
+                    }
+                },
+            )
+        } else {
+            None
+        };
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut out = Vec::new();
+            if query.is_empty() {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT body FROM conversation_recall_fts WHERE session_id = ?1 \
+                         ORDER BY rowid DESC LIMIT ?2",
+                    )
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![session_id, limit], |row| row.get::<_, String>(0))
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                for r in rows {
+                    out.push(r.map_err(|e| MemoryError::Generic(e.to_string()))?);
+                }
+                return Ok(out);
+            }
+
+            let tokens: Vec<String> = query
+                .split_whitespace()
+                .filter(|t| !t.is_empty())
+                .map(|t| t.replace('"', ""))
+                .filter(|t| !t.is_empty())
+                .collect();
+            if tokens.is_empty() {
+                return Ok(out);
+            }
+            let match_body = tokens
+                .iter()
+                .map(|t| format!("body:\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+
+            let sid = session_id.replace('"', "");
+            let mut match_expr = format!("session_id:\"{sid}\" AND ({match_body})");
+            if let Some(pid) = project_id.as_deref() {
+                let pid = pid.replace('"', "");
+                match_expr.push_str(&format!(" AND project_id:\"{pid}\""));
+            }
+
+            // When we have a query embedding, pull a wider candidate pool
+            // (≤ 4*limit, capped at 50) and re-rank by FTS bm25 + cosine
+            // against the per-turn embedding. Otherwise keep the historical
+            // "FTS bm25 only" path byte-equivalent.
+            let widen = if query_embedding.is_some() {
+                (limit.saturating_mul(4)).clamp(limit, 50)
+            } else {
+                limit
+            };
+
+            let mut stmt = c
+                .prepare(
+                    "SELECT body, turn_id, bm25(conversation_recall_fts) AS rank \
+                     FROM conversation_recall_fts \
+                     WHERE conversation_recall_fts MATCH ?1 \
+                     ORDER BY rank \
+                     LIMIT ?2",
+                )
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![match_expr, widen], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                })
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut candidates: Vec<(String, String, f64)> = Vec::new();
+            for r in rows {
+                candidates.push(r.map_err(|e| MemoryError::Generic(e.to_string()))?);
+            }
+            if candidates.is_empty() {
+                return Ok(out);
+            }
+
+            let Some(query_vec) = query_embedding else {
+                // FTS-only: bm25 ascending order is already best-first.
+                for (body, _turn, _rank) in candidates.into_iter().take(limit) {
+                    out.push(body);
+                }
+                return Ok(out);
+            };
+
+            // bm25 in SQLite FTS5 is "lower is better" — flip + min-max
+            // normalize to a 0..1 score where 1.0 is the best FTS hit.
+            let min_rank = candidates
+                .iter()
+                .map(|(_, _, r)| *r)
+                .fold(f64::INFINITY, f64::min);
+            let max_rank = candidates
+                .iter()
+                .map(|(_, _, r)| *r)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let span = (max_rank - min_rank).abs().max(f64::EPSILON);
+
+            let mut embed_stmt = c
+                .prepare(
+                    "SELECT embedding FROM conversation_recall_embeddings \
+                     WHERE session_id = ?1 AND turn_id = ?2",
+                )
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+
+            // Hybrid weight (0..1): higher = lean on FTS, default 0.4 so
+            // semantic similarity dominates when both signals exist.
+            let alpha: f64 = std::env::var("IF2AI_CONVERSATION_RECALL_HYBRID_ALPHA")
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.4_f64)
+                .clamp(0.0_f64, 1.0_f64);
+
+            let mut scored: Vec<(f64, String)> = Vec::with_capacity(candidates.len());
+            for (body, turn, rank) in candidates {
+                let fts_score = ((max_rank - rank) / span).clamp(0.0, 1.0);
+                let cosine = embed_stmt
+                    .query_row(params![session_id, turn], |row| row.get::<_, Vec<u8>>(0))
+                    .ok()
+                    .and_then(|blob| {
+                        crate::modules::memory::conversation_recall_vector::blob_to_f32_slice(&blob)
+                    })
+                    .map(|v| {
+                        crate::modules::memory::conversation_recall_vector::cosine_similarity(
+                            &query_vec, &v,
+                        ) as f64
+                    });
+                let combined = match cosine {
+                    Some(cos) => alpha * fts_score + (1.0 - alpha) * cos.max(0.0),
+                    None => fts_score, // no embedding row ⇒ FTS-only weight
+                };
+                scored.push((combined, body));
+            }
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            for (_score, body) in scored.into_iter().take(limit) {
+                out.push(body);
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?

@@ -25,6 +25,7 @@ pub mod harness;
 pub mod identity;
 pub mod learning;
 pub mod memory;
+pub mod observability;
 pub mod onboarding;
 pub mod projects;
 pub mod provider;

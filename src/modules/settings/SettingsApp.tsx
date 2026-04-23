@@ -34,6 +34,7 @@ import { SttConfigPage } from "./pages/SttConfigPage";
 import { StrategyDiagnosticsPage } from "./pages/StrategyDiagnosticsPage";
 import { PromptDiagnosticsPage } from "./pages/PromptDiagnosticsPage";
 import { AgentIdentitySettingsPage } from "./pages/AgentIdentitySettingsPage";
+import { AgentLimitsSettingsPage } from "./pages/AgentLimitsSettingsPage";
 
 interface SettingsAppProps {
   onClose: () => void;
@@ -191,6 +192,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <AgentIdentitySettingsPage />;
       case "usage":
         return <UsageSettingsPage state={state} actions={actions} />;
+      case "agent-limits":
+        return <AgentLimitsSettingsPage />;
       case "skills":
         return (
           <SkillsSettingsPage

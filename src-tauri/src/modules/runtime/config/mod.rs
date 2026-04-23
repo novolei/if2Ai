@@ -278,7 +278,7 @@ impl ConfigLoader {
             loaded_entries.push(entry);
         }
 
-        let prompt_control_path = default_prompt_control_config_path();
+        let prompt_control_path = prompt_control_config_path_for_home(&self.config_home);
         if let Some(value) = read_optional_json_object(&prompt_control_path)? {
             deep_merge_objects(&mut merged, &value);
             loaded_entries.push(ConfigEntry {
@@ -460,10 +460,7 @@ fn detect_language_or_en_us() -> &'static str {
 /// (`zh_CN`, `en_US.UTF-8`).  Normalise to canonical BCP-47:
 /// `zh-CN`, `en-US`, …  Strips POSIX `.encoding@modifier` suffixes.
 fn normalize_bcp47(raw: String) -> String {
-    let stripped = raw
-        .split(|c: char| c == '.' || c == '@')
-        .next()
-        .unwrap_or(&raw);
+    let stripped = raw.split(['.', '@']).next().unwrap_or(&raw);
     stripped.replace('_', "-")
 }
 
@@ -751,21 +748,20 @@ pub fn default_config_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".claw"))
 }
 
-/// Resolve the dedicated prompt-control config path.
+/// Resolve the dedicated prompt-control config path adjacent to the
+/// configured runtime home.
 #[must_use]
 pub fn default_prompt_control_config_path() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(|home| {
-            PathBuf::from(home)
-                .join(".if2ai")
-                .join("prompt")
-                .join("control-plane.json")
-        })
-        .unwrap_or_else(|| {
-            PathBuf::from(".if2ai")
-                .join("prompt")
-                .join("control-plane.json")
-        })
+    prompt_control_config_path_for_home(&default_config_home())
+}
+
+pub(crate) fn prompt_control_config_path_for_home(config_home: &Path) -> PathBuf {
+    config_home
+        .parent()
+        .unwrap_or(config_home)
+        .join(".if2ai")
+        .join("prompt")
+        .join("control-plane.json")
 }
 
 impl RuntimeHookConfig {

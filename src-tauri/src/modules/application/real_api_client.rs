@@ -165,6 +165,12 @@ impl RealApiClient {
             stream: false,
         };
 
-        self.provider.send_message(&api_request).await
+        let cfg = crate::modules::provider::resilience::LlmResilienceConfig::from_env();
+        crate::modules::provider::resilience::send_message_resilient_cached(
+            &self.provider,
+            &api_request,
+            &cfg,
+        )
+        .await
     }
 }

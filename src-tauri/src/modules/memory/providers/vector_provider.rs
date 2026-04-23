@@ -382,6 +382,22 @@ impl MemoryProvider for VectorMemoryProvider {
         category: Option<&str>,
         limit: usize,
     ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        // Empty query = "list all entries" (Memory Browser browse path,
+        // settings export-then-bump, etc.).  hybrid_search would try to
+        // embed an empty string and the FastEmbed model fails with
+        // `EmptyText`.  Delegate directly to SQLite when present so the
+        // semantics stay "recall everything (and bump access_count)";
+        // the SQLite recall path already handles empty queries by
+        // returning all rows up to `limit`.
+        if query.trim().is_empty() {
+            if let Some(ref sqlite) = self.sqlite {
+                return sqlite.recall(query, category, limit).await;
+            }
+            // No SQLite mirror: empty query has no defined semantics for
+            // the pure vector store, return empty rather than error.
+            return Ok(Vec::new());
+        }
+
         let scored = self
             .hybrid_search(query, category, limit)
             .await

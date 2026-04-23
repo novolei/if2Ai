@@ -14,7 +14,7 @@
 //!
 //! ## 架构
 //!
-//! ```
+//! ```text
 //! 前端 MediaRecorder (PCM16LE) ──base64──▶ stt_transcribe (Tauri cmd)
 //!                                            ├─ 解码 bytes → f32
 //!                                            └─ OpenFlowAsrEngine.transcribe

@@ -7,7 +7,9 @@
 //! the recurring observations into a small, durable list of *traits*
 //! the agent treats as foundational on every future turn:
 //!
-//!     "你之前观察到：RL prefers terse answers; RL ships at 3 AM ..."
+//! ```text
+//! "你之前观察到：RL prefers terse answers; RL ships at 3 AM ..."
+//! ```
 //!
 //! Storage: SQLite `learned_traits` table (migration v4).  Reads are
 //! covered by a partial index `WHERE disagreed_at IS NULL` so the

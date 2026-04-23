@@ -124,6 +124,90 @@ pub async fn resolve_chat_runtime_provider(
     })
 }
 
+// ── P1-8 smart routing (cheap model for low-complexity turns) ─────────────
+
+fn smart_routing_enabled() -> bool {
+    std::env::var("IF2AI_SMART_ROUTING")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn smart_route_threshold() -> f32 {
+    std::env::var("IF2AI_SMART_ROUTE_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.42f32)
+        .clamp(0.0, 1.0)
+}
+
+fn cheap_model_id_from_env() -> Option<String> {
+    let v = std::env::var("IF2AI_CHEAP_MODEL_ID").ok()?;
+    let t = v.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// When `IF2AI_SMART_ROUTING=1` and classifier `complexity_score` ≤ threshold,
+/// replace [`RuntimeProviderResolution::model`] with `IF2AI_CHEAP_MODEL_ID`.
+#[must_use]
+pub fn apply_complexity_model_routing(
+    mut resolution: RuntimeProviderResolution,
+    complexity_score: f32,
+) -> RuntimeProviderResolution {
+    if !smart_routing_enabled() {
+        return resolution;
+    }
+    let Some(cheap) = cheap_model_id_from_env() else {
+        tracing::warn!(
+            "[smart_routing] IF2AI_SMART_ROUTING=1 but IF2AI_CHEAP_MODEL_ID is empty; skipping"
+        );
+        return resolution;
+    };
+    let t = smart_route_threshold();
+    if complexity_score <= t {
+        tracing::info!(
+            score = complexity_score,
+            threshold = t,
+            cheap_model = %cheap,
+            "[smart_routing] low complexity → cheap model"
+        );
+        resolution.model = cheap;
+    } else {
+        tracing::debug!(
+            score = complexity_score,
+            threshold = t,
+            "[smart_routing] above threshold → primary model"
+        );
+    }
+    resolution
+}
+
+/// Optional OpenAI-compatible failover `ProviderClient` when
+/// `IF2AI_FAILOVER_BASE_URL` is set (e.g. backup endpoint or local Ollama).
+///
+/// `IF2AI_FAILOVER_API_KEY` is optional (empty for keyless local servers).
+pub async fn resolve_optional_failover_openai_client(
+    workdir: &Path,
+) -> Result<Option<ProviderClient>, String> {
+    let base = match std::env::var("IF2AI_FAILOVER_BASE_URL") {
+        Ok(b) if !b.trim().is_empty() => b,
+        _ => return Ok(None),
+    };
+    let api_key = std::env::var("IF2AI_FAILOVER_API_KEY").unwrap_or_default();
+    let policy = load_provider_transport_policy(workdir);
+    let client = OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai())
+        .with_base_url(base)
+        .with_retry_policy(
+            policy.max_retries(),
+            Duration::from_millis(policy.initial_backoff_ms()),
+            Duration::from_millis(policy.max_backoff_ms()),
+        );
+    Ok(Some(ProviderClient::OpenAi(client)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

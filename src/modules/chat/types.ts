@@ -1,5 +1,6 @@
 import type {
   ContextBudgetUsage,
+  ConversationUndoStatus,
   MemoryContextItem,
   PermissionMode,
   PromptDiagnosticsSummary,
@@ -7,7 +8,9 @@ import type {
   ProjectMeta,
   SessionIdentityInput,
   SessionMeta,
+  SessionTotals,
 } from "@/lib/tauri";
+import type { RoutingInfo, TurnCost } from "@/runtime-projection/types";
 import type { Dispatch, SetStateAction } from "react";
 import type { TodoItem } from "@/components/ui/TodoPanel";
 
@@ -74,6 +77,17 @@ export interface Message {
    */
   contextBudgetUsage?: ContextBudgetUsage;
   /**
+   * P1-7 / P2-11 — provider-billable token usage + USD cost for this turn.
+   * Drives the Steward-style `[Zap] X 输入 · Y 输出 · $Z.ZZZZ` chip below
+   * the assistant message.  Only populated for assistant messages.
+   */
+  turnCost?: TurnCost;
+  /**
+   * P1-8 — smart-routing decision summary for this turn (cheap vs primary
+   * model + complexity bucket).  Drives the routing chip below the message.
+   */
+  routing?: RoutingInfo;
+  /**
    * Prompt control-plane diagnostics summary for this assistant turn.
    * Carries lane / entry / reason metadata only, never raw prompt text.
    */
@@ -94,6 +108,10 @@ export interface Conversation {
   title: string;
   messages: Message[];
   updatedAt: Date;
+  /** P2-11 — running per-session totals (provider-billable). Hydrated from
+   * `Session.session_totals` on load and refreshed from
+   * `StreamTokenPayload.session_totals` on each `stream_complete`. */
+  sessionTotals?: SessionTotals;
 }
 
 export type SessionTitleStage =
@@ -139,6 +157,9 @@ export interface ChatWorkspaceProps {
   }) => void;
   activeTitle: string;
   activeMessages: Message[];
+  /** P2-11 — running per-session totals (provider-billable). Forwarded to
+   * `ChatUI` → `ContextBar` so the「本会话累计」row reflects the active session. */
+  activeSessionTotals?: SessionTotals;
   input: string;
   isLoading: boolean;
   loading: boolean;
@@ -147,6 +168,7 @@ export interface ChatWorkspaceProps {
     projectId: string,
     sessionId: string,
     projectOverride?: ProjectMeta,
+    options?: { forceReload?: boolean },
   ) => Promise<void>;
   onNewChat: (projectId: string) => void;
   onNewThread: () => void;
@@ -198,4 +220,10 @@ export interface ChatWorkspaceProps {
    * composer. `null` when no turn has completed yet for this session.
    */
   latestContextBudgetUsage?: ContextBudgetUsage | null;
+  /** Backend undo stack availability for the active session. */
+  conversationUndoStatus?: ConversationUndoStatus | null;
+  /** Restore previous transcript snapshot (session_undo). */
+  onConversationUndo?: () => void | Promise<void>;
+  /** Re-apply last undone snapshot (session_redo). */
+  onConversationRedo?: () => void | Promise<void>;
 }

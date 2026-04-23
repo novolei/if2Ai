@@ -369,7 +369,10 @@ mod tests {
         assert_eq!(cache_hit, r#"{"kind":"skipped","reason":"cache_hit"}"#);
         assert_eq!(empty, r#"{"kind":"skipped","reason":"empty_input"}"#);
         assert_eq!(degraded, r#"{"kind":"skipped","reason":"llm_degraded"}"#);
-        assert_eq!(upstream, r#"{"kind":"skipped","reason":"upstream_missing"}"#);
+        assert_eq!(
+            upstream,
+            r#"{"kind":"skipped","reason":"upstream_missing"}"#
+        );
     }
 
     #[tokio::test]

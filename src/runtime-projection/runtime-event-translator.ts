@@ -31,8 +31,8 @@ import type {
   MemoryLifecycleEvent,
   MemoryWriteDecisionEvent,
   PermissionRequestEvent,
-} from "./types";
-import { translatePromptDiagnosticsSummary } from "./types";
+} from "./types.ts";
+import { translatePromptDiagnosticsSummary } from "./types.ts";
 
 function nowMs(): number {
   return Date.now();
@@ -109,6 +109,38 @@ export function translateAgentTokenPayload(
         memoryItems: payload.memory_context,
         promptDiagnostics: payload.prompt_diagnostics
           ? translatePromptDiagnosticsSummary(payload.prompt_diagnostics)
+          : undefined,
+        turnCost: payload.turn_cost
+          ? {
+              inputTokens: payload.turn_cost.input_tokens,
+              outputTokens: payload.turn_cost.output_tokens,
+              cacheCreationInputTokens:
+                payload.turn_cost.cache_creation_input_tokens,
+              cacheReadInputTokens: payload.turn_cost.cache_read_input_tokens,
+              costUsd: payload.turn_cost.cost_usd,
+              model: payload.turn_cost.model,
+            }
+          : undefined,
+        routing: payload.routing_info
+          ? {
+              complexityScore: payload.routing_info.complexity_score,
+              complexityLevel: payload.routing_info.complexity_level,
+              executionMode: payload.routing_info.execution_mode,
+              usedCheapModel: payload.routing_info.used_cheap_model,
+              effectiveModel: payload.routing_info.effective_model,
+            }
+          : undefined,
+        sessionTotals: payload.session_totals
+          ? {
+              inputTokens: payload.session_totals.input_tokens,
+              outputTokens: payload.session_totals.output_tokens,
+              cacheCreationInputTokens:
+                payload.session_totals.cache_creation_input_tokens,
+              cacheReadInputTokens:
+                payload.session_totals.cache_read_input_tokens,
+              costUsd: payload.session_totals.cost_usd,
+              turns: payload.session_totals.turns,
+            }
           : undefined,
         receivedAt,
       };

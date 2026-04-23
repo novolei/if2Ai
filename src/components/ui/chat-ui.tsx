@@ -54,8 +54,10 @@ const MessageVoiceButtonLazy = React.lazy(() =>
 const SttButtonLazy = React.lazy(() =>
   import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
 )
-import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode } from "@/lib/tauri"
+import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode, type SessionTotals } from "@/lib/tauri"
 import { MemoryChip } from "@/components/memory/MemoryChip"
+import { TurnCostChip } from "@/components/chat/TurnCostChip"
+import { RoutingChip } from "@/components/chat/RoutingChip"
 import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
 import { WriteToolDiffCard } from "@/components/chat/WriteToolDiffCard"
 import { BranchPicker } from "@/components/chat/BranchPicker"
@@ -113,6 +115,10 @@ interface Message {
   isRecovering?: boolean
   memoryContext?: MemoryContextItem[]
   contextBudgetUsage?: ContextBudgetUsage
+  /** P1-7 / P2-11 — provider-billable token + USD chip data. */
+  turnCost?: import("@/runtime-projection/types").TurnCost
+  /** P1-8 — smart-routing decision summary. */
+  routing?: import("@/runtime-projection/types").RoutingInfo
 }
 
 interface ChatUIProps {
@@ -141,6 +147,8 @@ interface ChatUIProps {
   densityMode?: DensityMode
   fontMode?: FontMode
   onPreviewFocusChange?: (active: boolean) => void
+  /** P2-11 — running per-session totals; rendered in ContextBar's second row. */
+  sessionTotals?: SessionTotals
 }
 
 type DensityMode = 'comfortable' | 'compact'
@@ -250,6 +258,7 @@ export function ChatUI({
   densityMode: densityModeProp = 'comfortable',
   fontMode: fontModeProp = 'sans',
   onPreviewFocusChange,
+  sessionTotals,
 }: ChatUIProps) {
   const bottomRef = React.useRef<HTMLDivElement>(null)
   const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
@@ -1231,6 +1240,7 @@ export function ChatUI({
                 <ContextBar
                   usage={latestContextBudgetUsage}
                   windowSize={messages.length}
+                  sessionTotals={sessionTotals}
                 />
               </div>
             </div>
@@ -2318,6 +2328,7 @@ const ComposerDock = React.memo(function ComposerDock({
           <div className="flex-1 px-0 pt-1 pb-0.5">
             <Textarea
               ref={textareaRef}
+              data-composer-input="true"
               value={input}
               onChange={(e) => handleInputWithSlashDetect(e.target.value)}
               onCompositionStart={() => { isComposingRef.current = true }}
@@ -3209,6 +3220,13 @@ const ChatMessage = React.memo(function ChatMessage({
                     />
                     <div className="mt-1.5 flex items-center gap-1.5 pl-1">
                       <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
+                      {/* Per-message TurnCost chip — placed before the copy
+                          button so the user sees billable usage right after
+                          the timestamp, mirroring Steward's `turn-cost-bar`
+                          layout (see ChatArea.svelte). */}
+                      {message.turnCost ? (
+                        <TurnCostChip turnCost={message.turnCost} className="ml-1" />
+                      ) : null}
                       <MessageCopyButton
                         side="right"
                         copied={isCopied}
@@ -3223,6 +3241,9 @@ const ChatMessage = React.memo(function ChatMessage({
                       ) : null}
                       {message.memoryContext && message.memoryContext.length > 0 ? (
                         <MemoryChip items={message.memoryContext} className="ml-1" />
+                      ) : null}
+                      {message.routing ? (
+                        <RoutingChip routing={message.routing} className="ml-1" />
                       ) : null}
                     </div>
                   </>

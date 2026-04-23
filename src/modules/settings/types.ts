@@ -4,6 +4,7 @@ export type SettingsSectionId =
   | "general"
   | "agent-identity"
   | "usage"
+  | "agent-limits"
   | "skills"
   | "tools"
   | "web-search"

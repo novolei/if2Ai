@@ -134,6 +134,21 @@ impl TurnService {
             )
             .await;
 
+        if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
+            .scan_inbound_for_secrets(&user_message)
+        {
+            let _ = run_event_logger
+                .append(
+                    "run_error",
+                    serde_json::json!({
+                        "stage": "inbound_secret_scan",
+                        "error": warn,
+                    }),
+                )
+                .await;
+            return Err(warn);
+        }
+
         // Restore the session
         let app_session = match self.deps.session_manager.restore_session(&session_id).await {
             Ok(session) => session,
@@ -203,6 +218,7 @@ impl TurnService {
                 workdir_str: execution_context.workdir.to_str().map(str::to_string),
                 user_message: user_message.clone(),
                 caller: "run_agent_turn",
+                active_skill_ids: app_session.active_skill_ids.clone(),
             })
             .await
         {
@@ -296,10 +312,14 @@ impl TurnService {
             mode.as_str()
         );
 
+        let tool_allowlist = crate::modules::skills::attenuation::tool_allowlist_for_active_skills(
+            &prepared.active_skill_ids,
+        );
         let tool_executor = ToolRegistryExecutor::new_with_context(
             self.deps.tool_registry.clone(),
             execution_context,
-        );
+        )
+        .with_definition_allowlist(tool_allowlist);
 
         // Phase M1.3 — prompt vec + joined text from the structured plan.
         let system_prompt: Vec<String> = prepared
@@ -327,6 +347,10 @@ impl TurnService {
             Some(tool_executor.execution_context.project_id.clone())
         };
 
+        self.deps
+            .session_manager
+            .push_conversation_undo_checkpoint(&session_id, &app_session);
+
         let mut runtime = ConversationRuntime::new(
             runtime_session,
             api_client,
@@ -351,6 +375,14 @@ impl TurnService {
             user_message
         );
 
+        let cost_cfg_run = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
+        if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
+            &cost_cfg_run,
+            &session_id,
+        ) {
+            return Err(ce.to_string());
+        }
+
         let result = runtime.run_turn(user_message.clone(), None);
 
         tracing::info!(
@@ -360,6 +392,28 @@ impl TurnService {
 
         match result {
             Ok(summary) => {
+                let sync_turn_ms = turn_started_at_run.elapsed().as_millis() as u64;
+                crate::modules::learning::estimation::record_turn_duration_ms(sync_turn_ms);
+                crate::modules::observability::emit(
+                    "run_turn_finished",
+                    &format!(
+                        "session_id={} turn={} ms={} iterations={}",
+                        session_id, turn_number_run, sync_turn_ms, summary.iterations
+                    ),
+                );
+                crate::modules::application::job_monitor::publish_line(
+                    &session_id,
+                    format!(
+                        "run turn {} finished: {}ms iterations={}",
+                        turn_number_run, sync_turn_ms, summary.iterations
+                    ),
+                );
+                for _ in 0..summary.iterations.max(1) {
+                    crate::modules::runtime::cost_guard::CostGuard::record_llm_call_charged(
+                        &cost_cfg_run,
+                        &session_id,
+                    );
+                }
                 let response_text = summary
                     .assistant_messages
                     .iter()
@@ -444,6 +498,25 @@ impl TurnService {
                     .save_session(&updated_app_session)
                     .await
                     .map_err(|e| e.to_string())?;
+
+                // P1-7 — conversation recall index (SQLite FTS; best-effort).
+                {
+                    let turn_id = format!("{}:{}", session_id, next_message_count);
+                    if let Err(e) = self
+                        .deps
+                        .memory_provider
+                        .conversation_recall_ingest(
+                            &session_id,
+                            session_ctx_project.as_deref(),
+                            &turn_id,
+                            &user_message,
+                            &final_text.chars().take(12_000).collect::<String>(),
+                        )
+                        .await
+                    {
+                        tracing::debug!(error = %e, "[conversation_recall] ingest skipped");
+                    }
+                }
 
                 record_trajectory_if_possible(
                     &trajectory_session,

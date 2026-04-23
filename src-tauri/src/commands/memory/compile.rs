@@ -265,9 +265,7 @@ mod compile_command_tests {
         let report = CompileReport {
             today: CompileResult::Compiled,
             week: CompileResult::skipped(crate::modules::memory::SkipReason::CacheHit),
-            longterm: CompileResult::skipped(
-                crate::modules::memory::SkipReason::UpstreamMissing,
-            ),
+            longterm: CompileResult::skipped(crate::modules::memory::SkipReason::UpstreamMissing),
             facts: CompileResult::Compiled,
             assembled: true,
             elapsed_ms: 42,

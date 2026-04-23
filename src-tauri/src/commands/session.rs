@@ -2,14 +2,23 @@
 //!
 //! Provides session management commands for Tauri.
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 use crate::modules::identity::{
     apply_identity_customization_pack, read_identity_customization_pack, IdentityRegistry,
     SessionIdentityOverride,
 };
-use crate::modules::session::{Session, SessionMeta};
+use crate::modules::session::{ConversationUndoStatus, Session, SessionMeta};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryPageResponse {
+    pub event_page: crate::modules::runtime::history::SessionHistoryEventPage,
+    pub replay: crate::modules::runtime::history::SessionHistoryReplay,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_session: Option<Session>,
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,6 +301,21 @@ pub async fn set_session_identity(
         .map_err(|e| e.to_string())
 }
 
+/// Replace session-scoped active skill ids (prompt + low-trust tool attenuation).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn set_session_active_skill_ids(
+    state: State<'_, AppState>,
+    id: String,
+    active_skill_ids: Vec<String>,
+) -> Result<Session, String> {
+    state
+        .session_manager
+        .set_session_active_skill_ids(&id, active_skill_ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Get a session with its messages (for restoring chat history).
 #[tauri::command]
 #[allow(dead_code)]
@@ -301,4 +325,88 @@ pub async fn get_session(state: State<'_, AppState>, id: String) -> Result<Sessi
         .restore_session(&id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Whether transcript undo/redo is available for this session (in-memory stacks).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn session_undo_status(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ConversationUndoStatus, String> {
+    Ok(state.session_manager.conversation_undo_status(&id))
+}
+
+/// Restore the previous transcript snapshot (one level).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn session_undo(state: State<'_, AppState>, id: String) -> Result<Session, String> {
+    state
+        .session_manager
+        .apply_conversation_undo(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Re-apply the last undone transcript snapshot.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn session_redo(state: State<'_, AppState>, id: String) -> Result<Session, String> {
+    state
+        .session_manager
+        .apply_conversation_redo(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Drain buffered job-monitor lines for a session (P2-12 diagnostics).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn drain_job_monitor_lines(id: String) -> Result<Vec<String>, String> {
+    Ok(crate::modules::application::job_monitor::drain_lines(&id))
+}
+
+/// Page through canonical run-log events and replay them into history projection.
+///
+/// When no event log exists for the first page, returns the legacy full
+/// session in `fallback_session` so existing callers can stay compatible
+/// while new history consumers migrate to event-log replay.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn get_session_history_page(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    limit: Option<usize>,
+    cursor: Option<String>,
+) -> Result<SessionHistoryPageResponse, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let event_page = crate::modules::runtime::history::read_session_history_event_page(
+        &base_dir,
+        &id,
+        limit,
+        cursor.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    let replay = crate::modules::runtime::history::replay_session_history(&id, &event_page.entries);
+    let fallback_session = if cursor.is_none() && event_page.entries.is_empty() {
+        Some(
+            state
+                .session_manager
+                .restore_session(&id)
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    Ok(SessionHistoryPageResponse {
+        event_page,
+        replay,
+        fallback_session,
+    })
 }

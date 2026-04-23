@@ -5,6 +5,7 @@
 //! Extracted from `commands/agent.rs` in GFR-006a (pure structural move,
 //! function bodies byte-identical).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::modules::control_plane::{AuditEmitter, SessionExecutionContext, ToolExecutionBroker};
@@ -56,6 +57,8 @@ pub(crate) struct ToolRegistryExecutor {
     tool_registry: Arc<crate::modules::tools::ToolRegistry>,
     broker: ToolExecutionBroker,
     pub(crate) execution_context: SessionExecutionContext,
+    /// When set, only these tool names are advertised to the LLM and accepted in `execute`.
+    definition_allowlist: Option<HashSet<String>>,
 }
 
 impl ToolRegistryExecutor {
@@ -67,7 +70,14 @@ impl ToolRegistryExecutor {
             tool_registry: tool_registry.clone(),
             broker: ToolExecutionBroker::new(tool_registry),
             execution_context,
+            definition_allowlist: None,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_definition_allowlist(mut self, allowlist: Option<HashSet<String>>) -> Self {
+        self.definition_allowlist = allowlist;
+        self
     }
 
     pub(crate) fn execute_with_trace(
@@ -77,6 +87,13 @@ impl ToolRegistryExecutor {
         trace_id: &str,
         request_id: Option<&str>,
     ) -> Result<String, ToolError> {
+        if let Some(ref allow) = self.definition_allowlist {
+            if !allow.contains(tool_name) {
+                return Err(ToolError::new(format!(
+                    "tool `{tool_name}` is not available while low-trust skills are active (skill trust attenuation)"
+                )));
+            }
+        }
         let args = parse_tool_input_json(input);
         let switches = load_control_plane_switches(&self.execution_context.workdir);
         tracing::info!(
@@ -84,6 +101,16 @@ impl ToolRegistryExecutor {
             switches.control_plane_v2_enabled,
             switches.boundary_enforce_mode.as_str(),
             switches.sandbox_strict_mode
+        );
+        // P1-9 + P2-14 — emit a bounded, redacted observer event before
+        // dispatch. No-op unless `IF2AI_OBSERVER=log`; payload is always
+        // run through `redact_tool_args_summary` so secrets never reach
+        // the observer surface.
+        let args_summary =
+            crate::modules::security::redaction::redact_tool_args_summary(&args, 512);
+        crate::modules::observability::emit(
+            "tool.execute.start",
+            &format!("tool={tool_name} trace={trace_id} args={args_summary}"),
         );
         let result = tokio::task::block_in_place(|| {
             let handle = tokio::runtime::Handle::current();
@@ -110,7 +137,17 @@ impl ToolRegistryExecutor {
                 ))
             }
         })
-        .map_err(|e: crate::modules::tools::ToolError| ToolError::new(e.to_string()))?;
+        .map_err(|e: crate::modules::tools::ToolError| {
+            crate::modules::observability::emit(
+                "tool.execute.err",
+                &format!("tool={tool_name} trace={trace_id} err={}", e),
+            );
+            ToolError::new(e.to_string())
+        })?;
+        crate::modules::observability::emit(
+            "tool.execute.ok",
+            &format!("tool={tool_name} trace={trace_id} bytes={}", result.len()),
+        );
         Ok(result)
     }
 }
@@ -123,7 +160,7 @@ impl ToolExecutor for ToolRegistryExecutor {
 
     fn get_definitions(&self) -> Vec<crate::modules::api::ToolDefinition> {
         let definitions = self.tool_registry.get_definitions(None);
-        definitions
+        let mut out: Vec<crate::modules::api::ToolDefinition> = definitions
             .into_iter()
             .filter_map(|def| {
                 let obj = def.as_object()?;
@@ -137,6 +174,10 @@ impl ToolExecutor for ToolRegistryExecutor {
                     input_schema: func.get("parameters")?.clone(),
                 })
             })
-            .collect()
+            .collect();
+        if let Some(ref allow) = self.definition_allowlist {
+            out.retain(|d| allow.contains(&d.name));
+        }
+        out
     }
 }

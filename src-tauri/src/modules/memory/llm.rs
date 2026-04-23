@@ -215,11 +215,14 @@ impl UtilityLlm for ChatProviderUtilityLlm {
             "[utility-llm.chat] dispatching one-shot completion"
         );
 
-        let response = resolution
-            .provider_client
-            .send_message(&request)
-            .await
-            .map_err(|e| MemoryError::Generic(format!("UtilityLlm.send: {e}")))?;
+        let cfg = crate::modules::provider::resilience::LlmResilienceConfig::from_env();
+        let response = crate::modules::provider::resilience::send_message_resilient_cached(
+            &resolution.provider_client,
+            &request,
+            &cfg,
+        )
+        .await
+        .map_err(|e| MemoryError::Generic(format!("UtilityLlm.send: {e}")))?;
 
         let text = response
             .content

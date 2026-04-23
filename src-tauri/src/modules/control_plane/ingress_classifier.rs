@@ -301,8 +301,10 @@ mod tests {
 
     #[test]
     fn default_falls_back_to_auto_plan_execute() {
-        let out =
-            classify("here is a long-ish ambiguous sentence without any clear single-step verb");
+        let out = classify(
+            "here is a deliberately long ambiguous request without any clear single-step verb, \
+             web-surface hint, planning verb, or multi-step sequencing signal",
+        );
         assert_eq!(out.decision.execution_mode, ExecutionMode::AutoPlanExecute);
         assert_eq!(out.evidence.policy_version, CLASSIFIER_POLICY_VERSION);
     }

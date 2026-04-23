@@ -22,8 +22,8 @@ import type {
   RunProjection,
   RuntimeProjectionSnapshot,
   ToolCallProjection,
-} from "./types";
-import { emptyProjectionSnapshot } from "./types";
+} from "./types.ts";
+import { emptyProjectionSnapshot } from "./types.ts";
 
 /** Cap on the rolling memory event ring so the snapshot never grows
  * unbounded.  Older events fall off the front. */
@@ -42,6 +42,11 @@ export function reduceRuntimeEvent(
   event: CanonicalRuntimeEvent,
 ): RuntimeProjectionSnapshot {
   switch (event.kind) {
+    case "stream_run_bound":
+      return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
+        ...run,
+        sessionId: event.sessionId,
+      }));
     case "stream_text_delta":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
@@ -98,6 +103,9 @@ export function reduceRuntimeEvent(
         resumeAvailable: event.resumeAvailable ?? false,
         resumeCursor: event.resumeCursor,
         contextBudgetUsage: event.contextBudgetUsage,
+        turnCost: event.turnCost ?? run.turnCost,
+        routing: event.routing ?? run.routing,
+        sessionTotals: event.sessionTotals ?? run.sessionTotals,
         memoryItems: event.memoryItems ?? run.memoryItems,
         promptDiagnostics: event.promptDiagnostics ?? run.promptDiagnostics,
       })).pipe((snap) => {
@@ -266,6 +274,18 @@ export function reduceRuntimeEvent(
           lastUpdatedAt: event.receivedAt,
         },
       };
+    case "projection_discard_session_runs": {
+      const sid = event.sessionId;
+      const runs = { ...prev.runs };
+      for (const [runId, run] of Object.entries(runs)) {
+        if (run.sessionId === sid) {
+          delete runs[runId];
+        }
+      }
+      const approvals = { ...prev.approvals };
+      delete approvals[sid];
+      return { ...prev, runs, approvals };
+    }
     case "execution_mode_manual_override": {
       // Manual override may arrive before any classifier judgment
       // (e.g. user picks a mode pre-classification).  In that case

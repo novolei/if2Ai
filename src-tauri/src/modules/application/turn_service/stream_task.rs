@@ -114,7 +114,16 @@ pub(super) struct StreamTaskInputs {
     pub tool_defs_for_stream: Vec<ToolDefinition>,
     pub system_prompt_for_stream: String,
     pub provider_client_for_stream: crate::modules::api::ProviderClient,
+    /// Optional OpenAI-compatible failover when `IF2AI_FAILOVER_BASE_URL` is set.
+    pub failover_provider_client: Option<crate::modules::api::ProviderClient>,
+    pub lifecycle_hooks: std::sync::Arc<crate::modules::runtime::lifecycle_hooks::HookRegistry>,
     pub model_for_stream: String,
+    /// P1-8: smart-routing decision summary already computed in
+    /// `turn_service` (see `apply_complexity_model_routing`). When `Some`
+    /// it is forwarded into `stream_complete` so the chat UI can render a
+    /// per-message routing chip.
+    pub routing_info_for_stream:
+        Option<crate::modules::runtime::stream_emitter::RoutingInfoPayload>,
     pub execution_context_for_task: SessionExecutionContext,
     pub tool_registry_clone: Arc<ToolRegistry>,
     pub session_manager: Arc<SessionManager>,
@@ -203,7 +212,10 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         tool_defs_for_stream,
         system_prompt_for_stream,
         provider_client_for_stream,
+        failover_provider_client,
+        lifecycle_hooks,
         model_for_stream,
+        routing_info_for_stream,
         execution_context_for_task,
         tool_registry_clone,
         session_manager,
@@ -240,6 +252,17 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let mut accumulated_text = String::new();
     let mut accumulated_thinking = String::new();
     let mut token_count: u32 = 0;
+    // P1-7 / P2-11: provider-billable usage. Anthropic puts `input_tokens`
+    // on `message_start` and `output_tokens` on `message_delta`; OpenAI
+    // compat puts both on the synthesised `message_delta` in `finish()`.
+    // We keep one running per-call snapshot (`current_call_usage`) using
+    // max-merge so partial fields from either event combine into the
+    // truth, then commit it into `accumulated_usage` on `message_stop` so
+    // multi-iteration tool loops sum correctly.
+    let mut accumulated_usage: crate::modules::runtime::usage::TokenUsage =
+        crate::modules::runtime::usage::TokenUsage::default();
+    let mut current_call_usage: crate::modules::runtime::usage::TokenUsage =
+        crate::modules::runtime::usage::TokenUsage::default();
     let mut stream_failed = false;
     let mut completion_already_emitted = false;
     let mut has_successful_tool = false;
@@ -268,6 +291,10 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let mut preflight_trimmed_chars_total = 0usize;
     let mut stream_start_retry_count = 0usize;
     let mut stream_event_retry_count = 0usize;
+    let mut stream_circuit = crate::modules::provider::resilience::StreamCircuitState::default();
+    let stream_resilience_cfg =
+        crate::modules::provider::resilience::LlmResilienceConfig::from_env();
+    let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
     let mut provider_request_id = format!("stream_{}", stream_id_for_task);
     let is_resume_turn = inbound_resume_cursor.is_some();
     let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
@@ -329,6 +356,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 context_budget_usage: None,
                 memory_context: None,
                 prompt_diagnostics: None,
+                turn_cost: None,
+                routing_info: None,
+                session_totals: None,
             };
             stream_emitter.emit_payload(payload.clone());
             append_stream_event(&run_event_logger, &payload).await;
@@ -471,11 +501,81 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             stream: true,
         };
 
-        let mut stream = match provider_client_for_stream
-            .stream_message(&iter_api_request)
-            .await
+        if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
+            &cost_guard_cfg,
+            &session_id,
+        ) {
+            stream_failed = true;
+            last_stream_error_reason = Some(ce.to_string());
+            terminal_status = Some("failed_to_start_stream");
+            let user_visible_truth = TaskOutcomeResolver::resolve(
+                ExecutionTruth {
+                    has_successful_tool,
+                    has_successful_mutating_tool,
+                },
+                &ConversationTruth {
+                    stream_failed: true,
+                    terminal_status: "failed_to_start_stream",
+                    last_stream_error_reason: last_stream_error_reason.clone(),
+                },
+            );
+            let payload = StreamTokenPayload {
+                stream_id: stream_id_for_task.clone(),
+                text: None,
+                thinking: None,
+                event_type: "stream_error".to_string(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_status: None,
+                tool_args: None,
+                tool_result: Some(ce.to_string()),
+                tool_duration_ms: None,
+                effective_workdir: None,
+                policy_decision: None,
+                evidence_id: None,
+                request_id: Some(provider_request_id.clone()),
+                task_outcome: Some(user_visible_truth.task_outcome.to_string()),
+                degraded_reason: user_visible_truth.degraded_reason,
+                resume_available: Some(user_visible_truth.resume_available),
+                resume_cursor: None,
+                context_budget_usage: None,
+                memory_context: None,
+                prompt_diagnostics: None,
+                turn_cost: None,
+                routing_info: None,
+                session_totals: None,
+            };
+            stream_emitter.emit_payload(payload.clone());
+            append_stream_event(&run_event_logger, &payload).await;
+            if let Some(bus) = harness_event_bus_for_stream.as_ref() {
+                let _ = bus.emit(AgentEvent::StreamErrored {
+                    session_id: session_id.clone(),
+                    reason: last_stream_error_reason
+                        .clone()
+                        .unwrap_or_else(|| "cost_limit".to_string()),
+                    resume_available: user_visible_truth.resume_available,
+                    at: chrono::Utc::now(),
+                });
+            }
+            break;
+        }
+
+        let mut stream = match crate::modules::provider::resilience::stream_message_with_resilience(
+            &provider_client_for_stream,
+            failover_provider_client.as_ref(),
+            &iter_api_request,
+            &mut stream_circuit,
+            &stream_resilience_cfg,
+        )
+        .await
         {
-            Ok(s) => s,
+            Ok(s) => {
+                crate::modules::runtime::cost_guard::CostGuard::record_llm_call_charged(
+                    &cost_guard_cfg,
+                    &session_id,
+                );
+                s
+            }
             Err(e) => {
                 let stream_error_reason = format_stream_error_reason(&e);
                 if is_network_timeout_reason(&stream_error_reason)
@@ -537,6 +637,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     context_budget_usage: None,
                     memory_context: None,
                     prompt_diagnostics: None,
+                    turn_cost: None,
+                    routing_info: None,
+                    session_totals: None,
                 };
                 stream_emitter.emit_payload(payload.clone());
                 append_stream_event(&run_event_logger, &payload).await;
@@ -647,6 +750,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 context_budget_usage: None,
                                 memory_context: None,
                                 prompt_diagnostics: None,
+                                turn_cost: None,
+                                routing_info: None,
+                                session_totals: None,
                             };
                             stream_emitter.emit_payload(payload.clone());
                             append_stream_event(&run_event_logger, &payload).await;
@@ -676,6 +782,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 context_budget_usage: None,
                                 memory_context: None,
                                 prompt_diagnostics: None,
+                                turn_cost: None,
+                                routing_info: None,
+                                session_totals: None,
                             };
                             stream_emitter.emit_payload(payload.clone());
                             append_stream_event(&run_event_logger, &payload).await;
@@ -713,6 +822,31 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             }
                         }
 
+                        // Commit this LLM call's usage into the turn-wide
+                        // accumulator and reset for the next tool-loop call.
+                        accumulated_usage.input_tokens = accumulated_usage
+                            .input_tokens
+                            .saturating_add(current_call_usage.input_tokens);
+                        accumulated_usage.output_tokens = accumulated_usage
+                            .output_tokens
+                            .saturating_add(current_call_usage.output_tokens);
+                        accumulated_usage.cache_creation_input_tokens = accumulated_usage
+                            .cache_creation_input_tokens
+                            .saturating_add(current_call_usage.cache_creation_input_tokens);
+                        accumulated_usage.cache_read_input_tokens = accumulated_usage
+                            .cache_read_input_tokens
+                            .saturating_add(current_call_usage.cache_read_input_tokens);
+                        tracing::info!(
+                            "[start_agent_stream] MessageStop: this_call_usage in={} out={} cache_w={} cache_r={} | turn_total in={} out={}",
+                            current_call_usage.input_tokens,
+                            current_call_usage.output_tokens,
+                            current_call_usage.cache_creation_input_tokens,
+                            current_call_usage.cache_read_input_tokens,
+                            accumulated_usage.input_tokens,
+                            accumulated_usage.output_tokens,
+                        );
+                        current_call_usage = crate::modules::runtime::usage::TokenUsage::default();
+
                         tracing::info!(
                             "[start_agent_stream] MessageStop received, {} pending tool uses",
                             pending_tool_uses.len()
@@ -744,6 +878,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     context_budget_usage: None,
                                     memory_context: None,
                                     prompt_diagnostics: None,
+                                    turn_cost: None,
+                                    routing_info: None,
+                                    session_totals: None,
                                 };
                                 stream_emitter.emit_payload(payload.clone());
                                 append_stream_event(&run_event_logger, &payload).await;
@@ -776,6 +913,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     context_budget_usage: None,
                                     memory_context: None,
                                     prompt_diagnostics: None,
+                                    turn_cost: None,
+                                    routing_info: None,
+                                    session_totals: None,
                                 };
                                 stream_emitter.emit_payload(payload.clone());
                                 append_stream_event(&run_event_logger, &payload).await;
@@ -783,7 +923,37 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             _ => {}
                         }
                     }
-                    _ => {}
+                    ApiStreamEvent::MessageStart(ev) => {
+                        // P1-7 / P2-11: Anthropic ships `input_tokens` +
+                        // cache fields here, then `output_tokens` on the
+                        // `message_delta`; OpenAI compat seeds zeros here
+                        // and fills both on its synthesised `message_delta`.
+                        // Max-merge keeps both vendors honest.
+                        let u = &ev.message.usage;
+                        current_call_usage.input_tokens =
+                            current_call_usage.input_tokens.max(u.input_tokens);
+                        current_call_usage.output_tokens =
+                            current_call_usage.output_tokens.max(u.output_tokens);
+                        current_call_usage.cache_creation_input_tokens = current_call_usage
+                            .cache_creation_input_tokens
+                            .max(u.cache_creation_input_tokens);
+                        current_call_usage.cache_read_input_tokens = current_call_usage
+                            .cache_read_input_tokens
+                            .max(u.cache_read_input_tokens);
+                    }
+                    ApiStreamEvent::MessageDelta(ev) => {
+                        let u = &ev.usage;
+                        current_call_usage.input_tokens =
+                            current_call_usage.input_tokens.max(u.input_tokens);
+                        current_call_usage.output_tokens =
+                            current_call_usage.output_tokens.max(u.output_tokens);
+                        current_call_usage.cache_creation_input_tokens = current_call_usage
+                            .cache_creation_input_tokens
+                            .max(u.cache_creation_input_tokens);
+                        current_call_usage.cache_read_input_tokens = current_call_usage
+                            .cache_read_input_tokens
+                            .max(u.cache_read_input_tokens);
+                    }
                 },
                 Ok(None) => {
                     // Stream ended without MessageStop - extract any remaining tools
@@ -793,6 +963,20 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             pending_tool_uses.push((tool_id, tool_name, input_json));
                         }
                     }
+                    // Salvage any usage we did capture before the truncation.
+                    accumulated_usage.input_tokens = accumulated_usage
+                        .input_tokens
+                        .saturating_add(current_call_usage.input_tokens);
+                    accumulated_usage.output_tokens = accumulated_usage
+                        .output_tokens
+                        .saturating_add(current_call_usage.output_tokens);
+                    accumulated_usage.cache_creation_input_tokens = accumulated_usage
+                        .cache_creation_input_tokens
+                        .saturating_add(current_call_usage.cache_creation_input_tokens);
+                    accumulated_usage.cache_read_input_tokens = accumulated_usage
+                        .cache_read_input_tokens
+                        .saturating_add(current_call_usage.cache_read_input_tokens);
+                    current_call_usage = crate::modules::runtime::usage::TokenUsage::default();
                     tracing::info!(
                         "[start_agent_stream] Stream ended (Ok(None)), {} pending tool uses",
                         pending_tool_uses.len()
@@ -874,6 +1058,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             context_budget_usage: None,
                             memory_context: None,
                             prompt_diagnostics: None,
+                            turn_cost: None,
+                            routing_info: None,
+                            session_totals: None,
                         };
                         stream_emitter.emit_payload(payload.clone());
                         append_stream_event(&run_event_logger, &payload).await;
@@ -901,6 +1088,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                         context_budget_usage: None,
                         memory_context: None,
                         prompt_diagnostics: None,
+                        turn_cost: None,
+                        routing_info: None,
+                        session_totals: None,
                     };
                     stream_emitter.emit_payload(payload.clone());
                     append_stream_event(&run_event_logger, &payload).await;
@@ -1044,6 +1234,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 context_budget_usage: None,
                 memory_context: None,
                 prompt_diagnostics: None,
+                turn_cost: None,
+                routing_info: None,
+                session_totals: None,
             };
             stream_emitter.emit_payload(running_payload.clone());
             append_stream_event(&run_event_logger, &running_payload).await;
@@ -1156,6 +1349,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     (reason, true)
                 }
             };
+            let safety = crate::modules::security::safety::shared_safety_layer();
+            let sanitized_tool = safety.sanitize_tool_output(&tool_name, &result_text);
+            let wrapped_for_llm = safety.wrap_for_llm(&tool_name, &sanitized_tool.content);
             let policy_decision = if denied_by_policy { "deny" } else { "allow" };
             let duration_ms = start_time.elapsed().as_millis() as u64;
             if !is_error {
@@ -1172,6 +1368,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             if is_mutating_tool_success(&tool_name, &input_json, is_error) {
                 has_successful_mutating_tool = true;
             }
+            crate::modules::runtime::self_repair::record_tool_outcome(&tool_name, !is_error);
 
             // Emit completed/error event
             let terminal_tool_payload = StreamTokenPayload {
@@ -1183,7 +1380,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 tool_name: Some(tool_name.clone()),
                 tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
                 tool_args: Some(tool_input.clone()),
-                tool_result: Some(result_text.clone()),
+                tool_result: Some(sanitized_tool.content.clone()),
                 tool_duration_ms: Some(duration_ms),
                 effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
                 policy_decision: Some(policy_decision.to_string()),
@@ -1196,6 +1393,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 context_budget_usage: None,
                 memory_context: None,
                 prompt_diagnostics: None,
+                turn_cost: None,
+                routing_info: None,
+                session_totals: None,
             };
             stream_emitter.emit_payload(terminal_tool_payload.clone());
             append_stream_event(&run_event_logger, &terminal_tool_payload).await;
@@ -1218,7 +1418,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                         text: summarize_tool_result_for_model(
                             &tool_name,
                             &tool_id,
-                            &result_text,
+                            &wrapped_for_llm,
                             is_error,
                         ),
                     }],
@@ -1231,7 +1431,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 crate::modules::runtime::session::ConversationMessage::tool_result(
                     tool_id,
                     tool_name,
-                    result_text,
+                    sanitized_tool.content,
                     is_error,
                 ),
             );
@@ -1245,6 +1445,18 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             session_messages.len()
         );
     }
+
+    let accumulated_text = match lifecycle_hooks
+        .run_point(
+            crate::modules::runtime::lifecycle_hooks::HookPoint::BeforeOutbound,
+            Some(session_id.as_str()),
+            accumulated_text.clone(),
+        )
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => format!("{accumulated_text}\n\n[outbound lifecycle hook: {e}]"),
+    };
 
     super::stream_finalize::finalize_stream_task(super::stream_finalize::FinalizeStreamInputs {
         session_id,
@@ -1281,6 +1493,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         sanitize_orphan_samples,
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
+        accumulated_usage,
+        effective_model: model_for_stream.clone(),
+        routing_info: routing_info_for_stream.clone(),
         stream_emitter,
         run_event_logger,
         session_manager,

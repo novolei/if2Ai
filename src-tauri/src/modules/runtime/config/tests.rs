@@ -1,7 +1,7 @@
 use crate::modules::identity::resolve_identity;
 use crate::modules::identity::{IdentityRegistry, IdentitySettings, SessionIdentityOverride};
 use crate::modules::runtime::config::{
-    default_prompt_control_config_path, BoundaryEnforceMode, CompilerConfig, ConfigLoader,
+    prompt_control_config_path_for_home, BoundaryEnforceMode, CompilerConfig, ConfigLoader,
     ConfigSource, McpServerConfig, McpTransport, MemoryPolicyEnforceMode, MemoryRecallMode,
     ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
 };
@@ -532,7 +532,6 @@ fn parses_control_plane_release_flags() {
 #[test]
 fn config_reads_prompt_control_defaults() {
     let root = temp_dir();
-    let _home_guard = HomeGuard::set(&root.join("home"));
     let cwd = root.join("project");
     let home = root.join("home").join(".claw");
     fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
@@ -551,13 +550,12 @@ fn config_reads_prompt_control_defaults() {
 fn config_reads_prompt_control_overrides_from_prompt_dir() {
     let root = temp_dir();
     let home_root = root.join("home");
-    let _home_guard = HomeGuard::set(&home_root);
     let cwd = root.join("project");
     let home = home_root.join(".claw");
     fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
-    let prompt_control_path = default_prompt_control_config_path();
+    let prompt_control_path = prompt_control_config_path_for_home(&home);
     fs::create_dir_all(
         prompt_control_path
             .parent()

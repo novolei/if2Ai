@@ -94,7 +94,9 @@ use super::prompt_coordinator::{
 use super::prompt_planner::{
     build_prompt_plan, BuildPromptPlanRequest, PromptPlanResult, PromptPlannerError,
 };
-use super::provider_service::{resolve_chat_runtime_provider, RuntimeProviderResolution};
+use super::provider_service::{
+    apply_complexity_model_routing, resolve_chat_runtime_provider, RuntimeProviderResolution,
+};
 use super::request_intelligence_service::{classify, RequestIntelligenceInput};
 
 /// Long-lived dependencies the service holds on construction.
@@ -212,6 +214,8 @@ pub struct PrepareChatInputsRequest {
     /// Caller tag for tracing (`"run_agent_turn"` /
     /// `"start_agent_stream"`).
     pub caller: &'static str,
+    /// Active skill ids for this turn (session-scoped); drives prompt block + trust attenuation.
+    pub active_skill_ids: Vec<String>,
 }
 
 /// Composite output produced by [`TurnService::prepare_chat_inputs`].
@@ -239,6 +243,8 @@ pub struct PreparedChatInputs {
     /// Whether prompt diagnostics should be projected to the frontend
     /// for this turn.
     pub prompt_diagnostics_enabled: bool,
+    /// Echo of active skill ids used for this prepared turn.
+    pub active_skill_ids: Vec<String>,
 }
 
 /// Errors surfaced by [`TurnService`].
@@ -300,20 +306,29 @@ impl TurnService {
         &self,
         request: PrepareChatInputsRequest,
     ) -> Result<PreparedChatInputs, TurnServiceError> {
-        let provider = resolve_chat_runtime_provider(&request.workdir)
-            .await
-            .map_err(TurnServiceError::Provider)?;
-
-        // M1.6 — request intelligence runs first so future slices
-        // can short-circuit memory + prompt work for
-        // `specialized_surface` / denied modes. Today the decision
-        // is advisory only.
+        // M1.6 — request intelligence (used for routing + future gates).
         let intelligence = classify(RequestIntelligenceInput {
             user_message: request.user_message.clone(),
             session_id: request.session_id.clone(),
             project_id: request.project_id.clone(),
             workdir: Some(request.workdir.clone()),
         });
+        crate::modules::observability::emit(
+            "request_classify",
+            &format!(
+                "mode={:?} risk={:?} complexity_level={:?} complexity_score={:.3}",
+                intelligence.decision.execution_mode,
+                intelligence.decision.risk_level,
+                intelligence.decision.complexity_level,
+                intelligence.decision.complexity_score
+            ),
+        );
+
+        let provider = resolve_chat_runtime_provider(&request.workdir)
+            .await
+            .map_err(TurnServiceError::Provider)?;
+        let provider =
+            apply_complexity_model_routing(provider, intelligence.decision.complexity_score);
 
         // M3.2 — per-turn memory orchestration now flows through
         // the canonical `MemoryCoordinator::prepare_context` seam.
@@ -404,7 +419,7 @@ impl TurnService {
             registered_tool_names: registered_tool_names.clone(),
             memory_injection_present: !memory_injection.prompt_sections.is_empty(),
             active_strategy_overlay_present: active_strategy_overlay.is_some(),
-            active_skill_ids: Vec::new(),
+            active_skill_ids: request.active_skill_ids.clone(),
         });
 
         // MEM-MOD-P7 — fetch the active learned-traits slice off the
@@ -456,6 +471,10 @@ impl TurnService {
             execution_mode_decision: intelligence.decision,
             prompt_assembly_decision: coordinated_prompt.decision,
             prompt_diagnostics_enabled: runtime_config.control_plane().prompt_diagnostics_enabled(),
+            active_skill_ids: coordinated_prompt
+                .coordinated_inputs
+                .active_skill_ids
+                .clone(),
         })
     }
 }

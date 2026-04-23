@@ -82,6 +82,13 @@ pub struct HubLockEntry {
     pub installed_at: DateTime<Utc>,
     /// Version string if available.
     pub version: Option<String>,
+    /// P1-5 — Optional manifest-declared trust tier
+    /// (`high` / `standard` / `low`). When present, takes precedence
+    /// over source-identifier inference in
+    /// [`crate::modules::skills::attenuation`]. `#[serde(default)]`
+    /// keeps existing lock files forward-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<String>,
 }
 
 /// Hub lock file manager — tracks all installed skills.
@@ -427,6 +434,7 @@ impl HubState {
             identifier: identifier.to_string(),
             installed_at: chrono::Utc::now(),
             version: None,
+            trust_tier: None,
         };
         self.lock.add(entry)
     }
@@ -554,6 +562,7 @@ mod tests {
             identifier: "owner/repo".to_string(),
             installed_at: chrono::Utc::now(),
             version: Some("1.0.0".to_string()),
+            trust_tier: None,
         };
         lock.add(entry).unwrap();
 
@@ -576,6 +585,7 @@ mod tests {
             identifier: "owner/repo".to_string(),
             installed_at: chrono::Utc::now(),
             version: None,
+            trust_tier: None,
         };
         lock.add(entry).unwrap();
         lock.remove("remove-me").unwrap();

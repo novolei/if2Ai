@@ -29,6 +29,7 @@ import {
   startAgentStream,
   stopAgentStream,
   respondPermission,
+  getPendingPermission,
 } from "./streaming.ts";
 import {
   createSession,
@@ -159,6 +160,30 @@ describe("api/streaming — wire contract", () => {
           toolName: "bash",
           scope: "session",
         },
+      },
+    ]);
+  });
+
+  it("getPendingPermission forwards the recoverable permission lookup", async () => {
+    const pending = {
+      request_id: "permission-1",
+      session_id: "session-42",
+      tool_name: "bash",
+      permission_mode: "dangerFullAccess",
+      current_mode: "readOnly",
+      message: "Tool 'bash' requires dangerFullAccess permission",
+      requested_at: "2026-04-23T00:00:00Z",
+    };
+    const { client, calls } = recordingClient({
+      get_pending_permission: pending,
+    });
+    setApiClient(client);
+
+    assert.deepEqual(await getPendingPermission("session-42"), pending);
+    assert.deepEqual(calls, [
+      {
+        command: "get_pending_permission",
+        args: { sessionId: "session-42" },
       },
     ]);
   });

@@ -8,7 +8,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -60,11 +60,15 @@ impl RunLogEntry {
 #[derive(Debug, Clone)]
 struct EventLogSink {
     path: PathBuf,
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl EventLogSink {
     fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            write_lock: Arc::new(Mutex::new(())),
+        }
     }
 }
 
@@ -151,7 +155,7 @@ impl RunEventLogger {
     ) -> RunLogEntry {
         let entry = self.make_entry(event_type, payload);
         if let Some(sink) = &self.sink {
-            if let Err(error) = append_entry_async(&sink.path, &entry).await {
+            if let Err(error) = append_entry_async(sink, &entry).await {
                 tracing::warn!(
                     error = %error,
                     session_id = %entry.session_id,
@@ -174,7 +178,7 @@ impl RunEventLogger {
     ) -> RunLogEntry {
         let entry = self.make_entry(event_type, payload);
         if let Some(sink) = &self.sink {
-            if let Err(error) = append_entry_sync(&sink.path, &entry) {
+            if let Err(error) = append_entry_sync(sink, &entry) {
                 tracing::warn!(
                     error = %error,
                     session_id = %entry.session_id,
@@ -197,11 +201,14 @@ impl RunEventLogger {
 
     fn make_entry(&self, event_type: impl Into<String>, payload: impl Serialize) -> RunLogEntry {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        let payload = serde_json::to_value(payload).unwrap_or_else(|error| {
+        let mut payload = serde_json::to_value(payload).unwrap_or_else(|error| {
             serde_json::json!({
                 "serialization_error": error.to_string()
             })
         });
+        if crate::modules::security::redaction::event_log_redaction_enabled() {
+            crate::modules::security::redaction::redact_value_in_place(&mut payload);
+        }
         RunLogEntry::new(
             self.session_id.clone(),
             self.run_id.clone(),
@@ -220,32 +227,29 @@ impl RunEventLogger {
     }
 }
 
-async fn append_entry_async(path: &Path, entry: &RunLogEntry) -> Result<(), std::io::Error> {
-    use tokio::io::AsyncWriteExt;
-
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await?;
-    let line = serde_json::to_vec(entry)
-        .map_err(|error| std::io::Error::other(format!("serialize run log entry: {error}")))?;
-    file.write_all(&line).await?;
-    file.write_all(b"\n").await?;
-    Ok(())
+async fn append_entry_async(
+    sink: &EventLogSink,
+    entry: &RunLogEntry,
+) -> Result<(), std::io::Error> {
+    let sink = sink.clone();
+    let entry = entry.clone();
+    tokio::task::spawn_blocking(move || append_entry_sync(&sink, &entry))
+        .await
+        .map_err(|error| std::io::Error::other(format!("join run log append: {error}")))?
 }
 
-fn append_entry_sync(path: &Path, entry: &RunLogEntry) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
+fn append_entry_sync(sink: &EventLogSink, entry: &RunLogEntry) -> Result<(), std::io::Error> {
+    let _guard = sink
+        .write_lock
+        .lock()
+        .map_err(|_| std::io::Error::other("run log write lock poisoned"))?;
+    if let Some(parent) = sink.path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)?;
+        .open(&sink.path)?;
     let line = serde_json::to_vec(entry)
         .map_err(|error| std::io::Error::other(format!("serialize run log entry: {error}")))?;
     file.write_all(&line)?;

@@ -7,6 +7,7 @@ pub mod bash;
 pub mod browser_tool;
 pub mod config;
 pub mod content_search;
+pub mod conversation_search;
 pub mod cron_add;
 pub mod cron_list;
 pub mod cron_remove;
@@ -58,6 +59,7 @@ pub use browser_tool::browser_tool_entry;
 pub use config::config_tool_entry;
 #[allow(unused_imports)]
 pub use content_search::entry as content_search_entry;
+pub use conversation_search::entry as conversation_search_entry;
 #[allow(unused_imports)]
 pub use cron_add::entry as cron_add_entry;
 #[allow(unused_imports)]

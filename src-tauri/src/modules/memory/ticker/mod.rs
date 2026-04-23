@@ -224,6 +224,21 @@ impl MemoryTicker {
         ))
     }
 
+    /// P1-6 — if the daily pipeline flag was left `true` after a panic or
+    /// aborted task, clear it so the next logical day can run again.
+    pub fn repair_clear_stuck_daily(&self) {
+        let Ok(mut g) = self.state.lock() else {
+            tracing::error!(
+                "[self_repair] MemoryTicker state mutex poisoned; cannot clear daily_running"
+            );
+            return;
+        };
+        if g.daily_running {
+            tracing::warn!("[self_repair] clearing stuck MemoryTicker::daily_running");
+            g.daily_running = false;
+        }
+    }
+
     /// MEM-MOD-PATH-FIX — Resolve `~/.if2ai/memory` (was the
     /// `<data_local_dir>/.if2ai/memory` double-root pre-fix).
     /// Always returns `Some` — kept as `Option` to preserve the old

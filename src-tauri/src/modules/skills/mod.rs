@@ -10,6 +10,7 @@
 //! - Remote passthrough: remote backend environment variable passthrough
 //! - Snapshot: skill export/import functionality
 
+pub mod attenuation;
 pub mod commands;
 pub mod config;
 pub mod external_dirs;

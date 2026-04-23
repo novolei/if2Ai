@@ -6,7 +6,7 @@
 //! intentionally lean: it parses Tauri command parameters,
 //! constructs a per-call `TurnService`, and delegates.
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::commands::AppState;
 #[cfg(test)]
@@ -18,6 +18,7 @@ use crate::modules::control_plane::SessionExecutionContext;
 use crate::modules::runtime::conversation::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
 };
+use crate::modules::runtime::pending_permission::PendingPermissionRecord;
 #[cfg(test)]
 use crate::modules::runtime::permissions::PermissionMode;
 #[cfg(test)]
@@ -214,6 +215,43 @@ pub fn respond_permission(
         tool_name,
         scope,
     )
+}
+
+/// Return the current pending permission for a session, if one is recoverable.
+#[tauri::command]
+pub fn get_pending_permission(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Option<PendingPermissionRecord>, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("Failed to resolve app data dir: {err}"))?;
+    let pending = crate::modules::runtime::pending_permission::read_pending_permission(
+        &app_data_dir,
+        &session_id,
+    )
+    .map_err(|err| format!("Failed to read pending permission: {err}"))?;
+    if pending.is_none() {
+        return Ok(None);
+    }
+
+    let has_live_waiter = state
+        .permission_senders
+        .lock()
+        .map_err(|err| format!("Failed to lock permission senders: {err}"))?
+        .contains_key(&session_id);
+    if !has_live_waiter {
+        crate::modules::runtime::pending_permission::clear_pending_permission(
+            &app_data_dir,
+            &session_id,
+        )
+        .map_err(|err| format!("Failed to clear stale pending permission: {err}"))?;
+        return Ok(None);
+    }
+
+    Ok(pending)
 }
 
 #[cfg(test)]

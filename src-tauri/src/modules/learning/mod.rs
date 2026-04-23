@@ -11,6 +11,7 @@
 
 pub mod active_overlay;
 pub mod candidate_evaluator;
+pub mod estimation;
 pub mod failure_clustering;
 pub mod failure_taxonomy;
 pub mod promotion_gate;

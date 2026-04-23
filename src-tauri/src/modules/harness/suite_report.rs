@@ -447,7 +447,7 @@ mod tests {
             s.tasks[0].unexpected_blocker_codes,
             vec!["unexpected_failure".to_string()]
         );
-        assert_eq!(s.grade, SuiteGrade::Warning);
+        assert_eq!(s.grade, SuiteGrade::Fail);
     }
 
     #[test]

@@ -3,6 +3,7 @@ import {
   Bot,
   Brain,
   Cpu,
+  Gauge,
   Globe,
   Info,
   Link2,
@@ -34,6 +35,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: "用量统计",
     description: "查看会话、消息和资源消耗概览。",
     icon: BarChart3,
+  },
+  {
+    id: "agent-limits",
+    label: "治理与成本",
+    description: "CostGuard、智能路由、脱敏与撤销相关环境变量说明。",
+    icon: Gauge,
   },
   {
     id: "skills",

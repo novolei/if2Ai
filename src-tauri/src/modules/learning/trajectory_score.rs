@@ -112,6 +112,15 @@ pub struct TrajectoryScore {
     /// Convenience flag: `true` iff `composite < 0.5` — used by
     /// reflection generation to decide whether to emit a note.
     pub is_low_quality: bool,
+    /// P2-11 — Diagnostic-only hint: process-wide rolling average of turn
+    /// duration (ms) at score time. Intentionally **not** part of the
+    /// composite score (latency is excluded by design — see module doc),
+    /// but exposed here so reflection notes and the learning UI can show
+    /// "this score landed on a slow/fast process" without re-reading
+    /// estimation state. `None` when the estimation learner is disabled
+    /// (`IF2AI_ESTIMATION_LEARNER` unset/0) or no samples have arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolling_avg_turn_ms_hint: Option<u64>,
 }
 
 impl TrajectoryScore {
@@ -142,6 +151,7 @@ pub fn score_run_report(report: &HarnessRunReport) -> TrajectoryScore {
         composite,
         is_low_quality: composite < 0.5,
         axes,
+        rolling_avg_turn_ms_hint: super::estimation::avg_turn_duration_ms(),
     }
 }
 

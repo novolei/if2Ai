@@ -32,6 +32,10 @@ pub enum ApiError {
         attempt: u32,
         base_delay: Duration,
     },
+    /// LLM stream circuit is open (too many consecutive failures); wait before retrying.
+    CircuitBreakerOpen {
+        retry_after_secs: u64,
+    },
 }
 
 impl ApiError {
@@ -58,7 +62,8 @@ impl ApiError {
             | Self::Io(_)
             | Self::Json(_)
             | Self::InvalidSseFrame(_)
-            | Self::BackoffOverflow { .. } => false,
+            | Self::BackoffOverflow { .. }
+            | Self::CircuitBreakerOpen { .. } => false,
         }
     }
 }
@@ -108,6 +113,10 @@ impl Display for ApiError {
             } => write!(
                 f,
                 "retry backoff overflowed on attempt {attempt} with base delay {base_delay:?}"
+            ),
+            Self::CircuitBreakerOpen { retry_after_secs } => write!(
+                f,
+                "llm circuit breaker open; retry after {retry_after_secs}s"
             ),
         }
     }

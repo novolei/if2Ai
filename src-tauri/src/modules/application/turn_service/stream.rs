@@ -259,6 +259,46 @@ impl TurnService {
             user_message.trim().to_string()
         };
 
+        if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
+            .scan_inbound_for_secrets(&normalized_user_message)
+        {
+            let _ = run_event_logger
+                .append(
+                    "stream_error",
+                    serde_json::json!({
+                        "stage": "inbound_secret_scan",
+                        "error": warn,
+                    }),
+                )
+                .await;
+            return Err(warn);
+        }
+
+        let lifecycle_hooks =
+            crate::modules::runtime::lifecycle_hooks::build_default_registry().await;
+        let normalized_user_message = match lifecycle_hooks
+            .run_point(
+                crate::modules::runtime::lifecycle_hooks::HookPoint::BeforeInbound,
+                Some(session_id.as_str()),
+                normalized_user_message,
+            )
+            .await
+        {
+            Ok(t) => t,
+            Err(reason) => {
+                let _ = run_event_logger
+                    .append(
+                        "stream_error",
+                        serde_json::json!({
+                            "stage": "before_inbound_hook",
+                            "error": reason,
+                        }),
+                    )
+                    .await;
+                return Err(reason);
+            }
+        };
+
         // Convert session messages to API format
         let runtime_session = app_session_to_runtime(&app_session);
         let messages: Vec<InputMessage> = runtime_session
@@ -288,24 +328,6 @@ impl TurnService {
         let mut all_messages = messages;
         all_messages.push(InputMessage::user_text(&normalized_user_message));
 
-        // Get tool definitions from registry and convert to ToolDefinition format
-        let definitions = self.deps.tool_registry.get_definitions(None);
-        let tool_defs: Vec<crate::modules::api::ToolDefinition> = definitions
-            .into_iter()
-            .filter_map(|def| {
-                let obj = def.as_object()?;
-                let func = obj.get("function")?.as_object()?;
-                Some(crate::modules::api::ToolDefinition {
-                    name: func.get("name")?.as_str()?.to_string(),
-                    description: func
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .map(String::from),
-                    input_schema: func.get("parameters")?.clone(),
-                })
-            })
-            .collect();
-
         // Phase M1.4 — single application service seam composes
         // provider + memory injection (static + retrieved) + prompt
         // plan in one await.  `memory_items` is moved into the spawned
@@ -328,6 +350,7 @@ impl TurnService {
                 workdir_str: execution_context.workdir.to_str().map(str::to_string),
                 user_message: normalized_user_message.clone(),
                 caller: "start_agent_stream",
+                active_skill_ids: app_session.active_skill_ids.clone(),
             })
             .await
         {
@@ -358,6 +381,28 @@ impl TurnService {
                 return Err(message);
             }
         };
+
+        let definitions = self.deps.tool_registry.get_definitions(None);
+        let tool_defs: Vec<crate::modules::api::ToolDefinition> = definitions
+            .into_iter()
+            .filter_map(|def| {
+                let obj = def.as_object()?;
+                let func = obj.get("function")?.as_object()?;
+                Some(crate::modules::api::ToolDefinition {
+                    name: func.get("name")?.as_str()?.to_string(),
+                    description: func
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(String::from),
+                    input_schema: func.get("parameters")?.clone(),
+                })
+            })
+            .collect();
+        let tool_defs = crate::modules::skills::attenuation::attenuate_tool_definitions(
+            tool_defs,
+            &prepared_stream.active_skill_ids,
+        );
+
         // MIG-002-a — request intelligence now acts as a real route gate.
         // Short-circuit for SpecializedSurface mode.
         use crate::modules::runtime::contracts::execution_mode::ExecutionMode;
@@ -417,7 +462,39 @@ impl TurnService {
         let user_message_clone = normalized_user_message.clone();
         let tool_registry_clone = self.deps.tool_registry.clone();
         let model_for_stream = model.clone();
+        // P1-8 — build the routing chip payload from the classifier
+        // decision + the resolved (post smart-routing) model name. We
+        // detect the cheap-model swap by comparing against
+        // `IF2AI_CHEAP_MODEL_ID`; absence means "no smart routing".
+        let routing_info_for_stream = {
+            let decision = &prepared_stream.execution_mode_decision;
+            let cheap_match = std::env::var("IF2AI_CHEAP_MODEL_ID")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .map(|cheap| cheap == model_for_stream)
+                .unwrap_or(false);
+            Some(crate::modules::runtime::stream_emitter::RoutingInfoPayload {
+                complexity_score: decision.complexity_score,
+                complexity_level: format!("{:?}", decision.complexity_level).to_lowercase(),
+                execution_mode: format!("{:?}", decision.execution_mode).to_lowercase(),
+                used_cheap_model: cheap_match,
+                effective_model: model_for_stream.clone(),
+            })
+        };
         let provider_client_for_stream = provider_client.clone();
+        let failover_provider_client =
+            crate::modules::application::provider_service::resolve_optional_failover_openai_client(
+                &execution_context.workdir,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "[start_agent_stream] optional failover provider not available: {}",
+                    e
+                );
+                None
+            });
         let messages_for_stream = all_messages.clone();
         let tool_defs_for_stream = tool_defs.clone();
         let system_prompt_for_stream = system_prompt_with_memory;
@@ -496,7 +573,10 @@ impl TurnService {
             tool_defs_for_stream,
             system_prompt_for_stream,
             provider_client_for_stream,
+            failover_provider_client,
+            lifecycle_hooks,
             model_for_stream,
+            routing_info_for_stream,
             execution_context_for_task,
             tool_registry_clone,
             session_manager,

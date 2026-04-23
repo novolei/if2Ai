@@ -378,8 +378,9 @@ pub use project::{
 };
 #[allow(unused_imports)]
 pub use session::{
-    create_session, delete_session, get_session, list_project_sessions, list_sessions,
-    memory_session_set_enabled, rename_session, set_session_identity, set_session_pinned,
+    create_session, delete_session, drain_job_monitor_lines, get_session, list_project_sessions,
+    list_sessions, memory_session_set_enabled, rename_session, session_redo, session_undo,
+    session_undo_status, set_session_active_skill_ids, set_session_identity, set_session_pinned,
 };
 #[allow(unused_imports)]
 pub use settings::{

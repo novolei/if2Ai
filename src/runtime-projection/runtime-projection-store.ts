@@ -22,10 +22,10 @@
 //    Tests use [`createRuntimeProjectionStore`] to get a fresh
 //    instance.
 
-import type { CanonicalRuntimeEvent, RuntimeProjectionSnapshot } from './types'
-import { emptyProjectionSnapshot } from './types'
-import { createRuntimeEventQueue, type RuntimeEventQueue } from './runtime-event-queue'
-import { reduceRuntimeEventBatch } from './runtime-event-reducer'
+import type { CanonicalRuntimeEvent, RuntimeProjectionSnapshot } from './types.ts'
+import { emptyProjectionSnapshot } from './types.ts'
+import { createRuntimeEventQueue, type RuntimeEventQueue } from './runtime-event-queue.ts'
+import { reduceRuntimeEventBatch } from './runtime-event-reducer.ts'
 
 export type RuntimeProjectionListener = () => void
 

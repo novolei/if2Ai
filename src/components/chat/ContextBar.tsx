@@ -19,10 +19,11 @@
  */
 
 import { useState } from 'react'
-import { Brain } from 'lucide-react'
+import { Brain, Coins } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ContextBudgetUsage } from '@/lib/tauri'
+import type { ContextBudgetUsage, SessionTotals } from '@/lib/tauri'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
+import { useContextBarMode } from './useContextBarMode'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,8 +38,21 @@ export interface ContextBarProps {
    * When provided, shown as a compact label beside the bar.
    */
   windowSize?: number
+  /**
+   * P2-11 — running per-session totals (provider-billable). When present
+   * a second compact line is rendered below the budget bar showing the
+   * accumulated input/output tokens, USD cost and turn count.
+   */
+  sessionTotals?: SessionTotals
   /** Additional CSS class names. */
   className?: string
+}
+
+function formatCostUsd(cost: number): string {
+  if (cost <= 0) return '$0.00'
+  if (cost < 0.01) return `$${cost.toFixed(4)}`
+  if (cost < 1) return `$${cost.toFixed(3)}`
+  return `$${cost.toFixed(2)}`
 }
 
 // ── Segment config ────────────────────────────────────────────────────────────
@@ -90,15 +104,54 @@ function pct(value: number, total: number): number {
  * Compact token-budget bar rendered above the chat input when
  * `ContextBudgetUsage` data is present in the latest stream payload.
  */
-export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
+export function ContextBar({ usage, windowSize, sessionTotals, className }: ContextBarProps) {
   // Phase 8B.10 / T-UI-2 — wire the memory badge to the CompiledMemoryViewer modal.
   const [memoryViewerOpen, setMemoryViewerOpen] = useState(false)
+  const [mode] = useContextBarMode()
+  const sessionOnly = mode === 'session-only'
 
-  if (!usage) return null
+  // Render the budget block only when usage data is available, but still
+  // render the per-session totals row below when only that one is present
+  // (e.g. fresh session with prior persisted turns but no new stream yet).
+  if (!usage && !sessionTotals) return null
 
-  const { total_budget, remaining } = usage
+  const total_budget = usage?.total_budget ?? 0
+  const remaining = usage?.remaining ?? 0
   const usedPct = pct(total_budget - remaining, total_budget)
   const remainingPct = pct(remaining, total_budget)
+  // P2-11 / UX — in `session-only` mode collapse the cross-session baseline
+  // (system + memory + output_reserve) into a single muted segment so the
+  // session-local `history_tokens` segment dominates and per-session
+  // differences are visible at a glance.
+  const baselineTokens = usage
+    ? usage.system_tokens + usage.memory_tokens + usage.output_reserve
+    : 0
+  const visualSegments = !usage
+    ? []
+    : sessionOnly
+      ? [
+          {
+            key: 'baseline' as const,
+            label: '基线',
+            colorClass: 'bg-muted-foreground/20',
+            value: baselineTokens,
+            badgeColor: 'bg-muted-foreground/30',
+          },
+          {
+            key: 'history_tokens' as const,
+            label: '会话历史',
+            colorClass: 'bg-primary/70',
+            value: usage.history_tokens,
+            badgeColor: 'bg-primary/70',
+          },
+        ]
+      : SEGMENTS.map((seg) => ({
+          key: seg.key,
+          label: seg.label,
+          colorClass: seg.colorClass,
+          value: usage[seg.key],
+          badgeColor: seg.colorClass,
+        }))
 
   return (
     <>
@@ -107,13 +160,15 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
       role="status"
       aria-label={`上下文使用量：${formatTokenCount(total_budget - remaining)} / ${formatTokenCount(total_budget)} tokens`}
     >
+      {usage ? (
+      <>
       {/* Segmented progress bar */}
       <div
         className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted"
         aria-hidden
       >
-        {SEGMENTS.map((seg) => {
-          const segPct = pct(usage[seg.key], total_budget)
+        {visualSegments.map((seg) => {
+          const segPct = pct(seg.value, total_budget)
           if (segPct <= 0) return null
           return (
             <div
@@ -132,16 +187,15 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
 
       {/* Legend row */}
       <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-        {SEGMENTS.map((seg) => {
-          const val = usage[seg.key]
-          if (val <= 0) return null
+        {visualSegments.map((seg) => {
+          if (seg.value <= 0) return null
           return (
             <span key={seg.key} className="flex items-center gap-1">
               <span
-                className={cn('inline-block h-1.5 w-1.5 rounded-full', seg.colorClass)}
+                className={cn('inline-block h-1.5 w-1.5 rounded-full', seg.badgeColor)}
                 aria-hidden
               />
-              {seg.label} {formatTokenCount(val)}
+              {seg.label} {formatTokenCount(seg.value)}
             </span>
           )
         })}
@@ -149,7 +203,7 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
         {/* Memory badge — Phase 8A.12 (skeleton) wired in 8B.10 / T-UI-2.
             Click opens the CompiledMemoryViewer modal so users can inspect
             the exact memory.md being injected into the system prompt. */}
-        {usage.memory_tokens > 0 && (
+        {usage!.memory_tokens > 0 && (
           <button
             type="button"
             onClick={() => setMemoryViewerOpen(true)}
@@ -161,8 +215,28 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
           </button>
         )}
 
+        {/* P2-11 — running per-session totals, sandwiched between the
+            segment legend and the remaining/window stats so it doesn't
+            occupy a separate row that gets clipped by the composer. */}
+        {sessionTotals && sessionTotals.turns > 0 ? (
+          <span
+            className="mx-auto flex items-center gap-1.5 tabular-nums text-muted-foreground/80"
+            title="本会话累计：基于 provider usage 与当前模型单价"
+          >
+            <Coins className="h-3 w-3" aria-hidden />
+            <span>本会话累计</span>
+            <span>{formatTokenCount(sessionTotals.input_tokens)} 输入</span>
+            <span className="text-muted-foreground/50">·</span>
+            <span>{formatTokenCount(sessionTotals.output_tokens)} 输出</span>
+            <span className="text-muted-foreground/50">·</span>
+            <span>{formatCostUsd(sessionTotals.cost_usd)}</span>
+            <span className="text-muted-foreground/50">·</span>
+            <span>{sessionTotals.turns} 回合</span>
+          </span>
+        ) : null}
+
         {/* Remaining */}
-        <span className="ml-auto tabular-nums">
+        <span className={cn('tabular-nums', sessionTotals && sessionTotals.turns > 0 ? '' : 'ml-auto')}>
           剩余 {formatTokenCount(remaining)} / {formatTokenCount(total_budget)}
           {windowSize !== undefined && (
             <span className="ml-2 text-muted-foreground/60">
@@ -185,6 +259,8 @@ export function ContextBar({ usage, windowSize, className }: ContextBarProps) {
           {Math.round(usedPct)}%
         </span>
       </div>
+      </>
+      ) : null}
     </div>
     <CompiledMemoryViewer
       open={memoryViewerOpen}

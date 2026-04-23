@@ -523,12 +523,23 @@ pub async fn hub_install(
 
     // 6. Update lock file
     let hub_state = create_hub_state(&paths).map_err(|e| e.to_string())?;
+    // P1-5 — best-effort read of skill.json `trustTier` so attenuation
+    // can prefer manifest-declared trust over identifier inference.
+    let trust_tier_from_manifest = std::fs::read_to_string(final_path.join("skill.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| {
+            v.get("trustTier")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+        });
     let lock_entry = crate::modules::skills::hub::HubLockEntry {
         skill_name: skill_name.clone(),
         source: source_id.clone(),
         identifier: identifier.clone(),
         installed_at: chrono::Utc::now(),
         version: None,
+        trust_tier: trust_tier_from_manifest,
     };
     hub_state
         .lock

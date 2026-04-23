@@ -54,9 +54,17 @@ impl UsageCostEstimate {
     }
 }
 
+/// Best-effort price lookup keyed by substring on lower-cased model name.
+///
+/// Covers the vendors if2Ai ships providers for; unknown models fall through
+/// to `None` and the caller should warn + use [`ModelPricing::default_sonnet_tier`].
+/// Numbers are USD per 1M tokens, sourced from each vendor's public price
+/// page as of 2026-Q1; bump these when prices change.
 #[must_use]
 pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     let normalized = model.to_ascii_lowercase();
+
+    // ── Anthropic ──
     if normalized.contains("haiku") {
         return Some(ModelPricing {
             input_cost_per_million: 1.0,
@@ -76,6 +84,127 @@ pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     if normalized.contains("sonnet") {
         return Some(ModelPricing::default_sonnet_tier());
     }
+
+    // ── OpenAI (GPT-5/4o family + o-series) ──
+    if normalized.contains("gpt-5") || normalized.contains("gpt5") {
+        return Some(ModelPricing {
+            input_cost_per_million: 2.5,
+            output_cost_per_million: 10.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 1.25,
+        });
+    }
+    if normalized.contains("gpt-4o-mini") || normalized.contains("4o-mini") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.15,
+            output_cost_per_million: 0.6,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.075,
+        });
+    }
+    if normalized.contains("gpt-4o") || normalized.contains("4o") {
+        return Some(ModelPricing {
+            input_cost_per_million: 2.5,
+            output_cost_per_million: 10.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 1.25,
+        });
+    }
+    if normalized.contains("o3-mini") {
+        return Some(ModelPricing {
+            input_cost_per_million: 1.1,
+            output_cost_per_million: 4.4,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.55,
+        });
+    }
+    if normalized.contains("o3") {
+        return Some(ModelPricing {
+            input_cost_per_million: 10.0,
+            output_cost_per_million: 40.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 2.5,
+        });
+    }
+    if normalized.contains("o1-mini") {
+        return Some(ModelPricing {
+            input_cost_per_million: 3.0,
+            output_cost_per_million: 12.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 1.5,
+        });
+    }
+    if normalized.contains("o1") {
+        return Some(ModelPricing {
+            input_cost_per_million: 15.0,
+            output_cost_per_million: 60.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 7.5,
+        });
+    }
+
+    // ── DeepSeek ──
+    if normalized.contains("deepseek-reasoner") || normalized.contains("deepseek-r1") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.55,
+            output_cost_per_million: 2.19,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.14,
+        });
+    }
+    if normalized.contains("deepseek") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.27,
+            output_cost_per_million: 1.1,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.07,
+        });
+    }
+
+    // ── Alibaba Qwen ──
+    if normalized.contains("qwen-max") {
+        return Some(ModelPricing {
+            input_cost_per_million: 1.6,
+            output_cost_per_million: 6.4,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.0,
+        });
+    }
+    if normalized.contains("qwen-plus") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.4,
+            output_cost_per_million: 1.2,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.0,
+        });
+    }
+    if normalized.contains("qwen") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.3,
+            output_cost_per_million: 0.6,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.0,
+        });
+    }
+
+    // ── Google Gemini ──
+    if normalized.contains("gemini-2.5-pro") || normalized.contains("gemini-2-5-pro") {
+        return Some(ModelPricing {
+            input_cost_per_million: 1.25,
+            output_cost_per_million: 10.0,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.31,
+        });
+    }
+    if normalized.contains("gemini-2.5-flash") || normalized.contains("gemini-2-5-flash") {
+        return Some(ModelPricing {
+            input_cost_per_million: 0.3,
+            output_cost_per_million: 2.5,
+            cache_creation_cost_per_million: 0.0,
+            cache_read_cost_per_million: 0.075,
+        });
+    }
+
     None
 }
 
@@ -155,6 +284,25 @@ impl TokenUsage {
 
 fn cost_for_tokens(tokens: u32, usd_per_million_tokens: f64) -> f64 {
     f64::from(tokens) / 1_000_000.0 * usd_per_million_tokens
+}
+
+/// Compute total USD cost for `usage` against `model`. Falls back to
+/// `default_sonnet_tier` and warns when `model` is non-empty but unknown so
+/// price-table drift is observable in logs.
+#[must_use]
+pub fn cost_for_usage(usage: TokenUsage, model: &str) -> f64 {
+    let pricing = pricing_for_model(model).unwrap_or_else(|| {
+        if !model.is_empty() {
+            tracing::warn!(
+                model = %model,
+                "[usage] no pricing for model; using default_sonnet_tier as fallback"
+            );
+        }
+        ModelPricing::default_sonnet_tier()
+    });
+    usage
+        .estimate_cost_usd_with_pricing(pricing)
+        .total_cost_usd()
 }
 
 #[must_use]
@@ -275,6 +423,49 @@ mod tests {
         let opus_cost = usage.estimate_cost_usd_with_pricing(opus);
         assert_eq!(format_usd(haiku_cost.total_cost_usd()), "$3.5000");
         assert_eq!(format_usd(opus_cost.total_cost_usd()), "$52.5000");
+    }
+
+    #[test]
+    fn extended_pricing_table_covers_known_vendors() {
+        // P0 confidence: each vendor branch hits a pricing entry; we don't
+        // pin exact dollar values here (those drift) — just that the lookup
+        // succeeds so unknown-model fallback warnings stay rare.
+        for model in [
+            "gpt-5-2026-04",
+            "gpt-4o-mini",
+            "gpt-4o",
+            "o3-mini",
+            "o3",
+            "o1",
+            "deepseek-reasoner",
+            "deepseek-chat",
+            "qwen-max",
+            "qwen-plus",
+            "qwen-turbo",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "claude-haiku-4-5",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+        ] {
+            assert!(
+                pricing_for_model(model).is_some(),
+                "expected pricing for {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn cost_for_usage_falls_back_to_default_for_unknown_model() {
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        };
+        let cost = super::cost_for_usage(usage, "completely-unknown-model-id");
+        // default_sonnet_tier input cost is $15 / M tokens.
+        assert!((cost - 15.0).abs() < 1e-6, "cost={cost}");
     }
 
     #[test]

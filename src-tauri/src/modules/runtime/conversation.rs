@@ -205,6 +205,11 @@ pub struct ConversationRuntime<C, T> {
     /// Set via [`Self::with_session_context`] from `commands/agent.rs`.
     session_id_for_hook: Option<String>,
     project_id_for_hook: Option<String>,
+    /// P2-10 — when true, each [`Self::run_turn`] snapshots `session.messages`
+    /// before appending the user message; see [`Self::undo_last_checkpoint`].
+    undo_checkpoints_enabled: bool,
+    undo_stack: Vec<Vec<ConversationMessage>>,
+    redo_stack: Vec<Vec<ConversationMessage>>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -259,6 +264,9 @@ where
             turn_hook: None,
             session_id_for_hook: None,
             project_id_for_hook: None,
+            undo_checkpoints_enabled: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -288,6 +296,57 @@ where
         self.session_id_for_hook = Some(session_id.into());
         self.project_id_for_hook = project_id;
         self
+    }
+
+    /// P2-10 — enable per-turn checkpoints of `session.messages` (before user text).
+    #[must_use]
+    pub fn with_undo_checkpoints(mut self, enabled: bool) -> Self {
+        self.undo_checkpoints_enabled = enabled;
+        self
+    }
+
+    fn push_undo_checkpoint(&mut self) {
+        const MAX: usize = 32;
+        self.undo_stack.push(self.session.messages.clone());
+        while self.undo_stack.len() > MAX {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// Restore `session.messages` to the state before the last [`Self::run_turn`]
+    /// that pushed a checkpoint. Returns `false` if undo is disabled or empty.
+    pub fn undo_last_checkpoint(&mut self) -> bool {
+        if !self.undo_checkpoints_enabled {
+            return false;
+        }
+        let Some(prev) = self.undo_stack.pop() else {
+            return false;
+        };
+        let cur = std::mem::replace(&mut self.session.messages, prev);
+        self.redo_stack.push(cur);
+        const MAX: usize = 32;
+        while self.redo_stack.len() > MAX {
+            self.redo_stack.remove(0);
+        }
+        true
+    }
+
+    /// Re-apply the last undone message list. Returns `false` if redo is empty.
+    pub fn redo_last_checkpoint(&mut self) -> bool {
+        if !self.undo_checkpoints_enabled {
+            return false;
+        }
+        let Some(next) = self.redo_stack.pop() else {
+            return false;
+        };
+        let cur = std::mem::replace(&mut self.session.messages, next);
+        self.undo_stack.push(cur);
+        const MAX: usize = 32;
+        while self.undo_stack.len() > MAX {
+            self.undo_stack.remove(0);
+        }
+        true
     }
 
     /// Cap the number of agent loop iterations within a single turn.
@@ -360,9 +419,18 @@ where
         user_input: impl Into<String>,
         mut prompter: Option<&mut dyn PermissionPrompter>,
     ) -> Result<TurnSummary, RuntimeError> {
+        let user_text = user_input.into();
+        if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
+            .scan_inbound_for_secrets(&user_text)
+        {
+            return Err(RuntimeError::session_error(warn));
+        }
+        if self.undo_checkpoints_enabled {
+            self.push_undo_checkpoint();
+        }
         self.session
             .messages
-            .push(ConversationMessage::user_text(user_input.into()));
+            .push(ConversationMessage::user_text(user_text));
 
         let mut assistant_messages = Vec::new();
         let mut tool_results = Vec::new();
@@ -431,6 +499,7 @@ where
             }
 
             for (tool_use_id, tool_name, input) in pending_tool_uses {
+                let tool_name_for_metrics = tool_name.clone();
                 let permission_outcome = if let Some(prompt) = prompter.as_mut() {
                     self.permission_policy
                         .authorize(&tool_name, &input, Some(*prompt))
@@ -469,10 +538,15 @@ where
                                 post_hook_result.is_denied(),
                             );
 
+                            let safety = crate::modules::security::safety::shared_safety_layer();
+                            let sanitized = safety.sanitize_tool_output(&tool_name, &output);
+                            let wrapped_for_llm =
+                                safety.wrap_for_llm(&tool_name, &sanitized.content);
+
                             ConversationMessage::tool_result(
                                 tool_use_id,
                                 tool_name,
-                                output,
+                                wrapped_for_llm,
                                 is_error,
                             )
                         }
@@ -481,6 +555,21 @@ where
                         ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
                     }
                 };
+                let ok = result_message
+                    .blocks
+                    .iter()
+                    .find_map(|b| {
+                        if let ContentBlock::ToolResult { is_error, .. } = b {
+                            Some(!*is_error)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(false);
+                crate::modules::runtime::self_repair::record_tool_outcome(
+                    &tool_name_for_metrics,
+                    ok,
+                );
                 self.session.messages.push(result_message.clone());
                 tool_results.push(result_message);
             }
@@ -1232,5 +1321,46 @@ mod tests {
             sent <= 4,
             "expected ≤ 4 messages sent to LLM (working memory limit), got {sent}"
         );
+    }
+
+    struct OnceTextApi;
+
+    impl ApiClient for OnceTextApi {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            Ok(vec![
+                AssistantEvent::TextDelta("x".into()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    #[test]
+    fn undo_checkpoint_restores_messages_before_last_turn() {
+        let permission_policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite);
+        let system_prompt = SystemPromptBuilder::new()
+            .with_project_context(ProjectContext {
+                cwd: PathBuf::from("/tmp/project"),
+                current_date: "2026-03-31".to_string(),
+                git_status: None,
+                git_diff: None,
+                instruction_files: Vec::new(),
+            })
+            .with_os("linux", "6.8")
+            .build();
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            OnceTextApi,
+            StaticToolExecutor::new(),
+            permission_policy,
+            system_prompt,
+        )
+        .with_undo_checkpoints(true);
+
+        runtime.run_turn("hi", None).expect("turn");
+        assert_eq!(runtime.session().messages.len(), 2);
+        assert!(runtime.undo_last_checkpoint());
+        assert!(runtime.session().messages.is_empty());
+        assert!(runtime.redo_last_checkpoint());
+        assert_eq!(runtime.session().messages.len(), 2);
     }
 }

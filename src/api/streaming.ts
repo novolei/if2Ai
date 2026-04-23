@@ -12,6 +12,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { AGENT_TOKEN_EVENT } from '@/transport/contracts'
 import type {
   PermissionMode,
+  PermissionRequestPayload,
   StreamTokenPayload,
 } from '@/transport/contracts'
 
@@ -77,5 +78,20 @@ export async function respondPermission(
     decision,
     toolName: options?.toolName,
     scope: options?.scope,
+  })
+}
+
+/** Recoverable pending permission returned by the backend fetch seam. */
+export type PendingPermissionPayload = PermissionRequestPayload & {
+  request_id: string
+  requested_at: string
+}
+
+/** Fetch the pending permission currently blocking a session, if any. */
+export async function getPendingPermission(
+  sessionId: string,
+): Promise<PendingPermissionPayload | null> {
+  return getApiClient().call<PendingPermissionPayload | null>('get_pending_permission', {
+    sessionId,
   })
 }

@@ -12,6 +12,7 @@
 pub mod audit;
 pub mod compat;
 pub mod compiler;
+pub mod conversation_recall_vector;
 pub mod decision_tree;
 pub mod embedding;
 pub mod hrr;
@@ -535,6 +536,33 @@ pub trait MemoryProvider: Send + Sync {
     async fn adjust_trust_score(&self, key: &str, delta: f64) -> Result<f64, MemoryError> {
         let _ = (key, delta);
         Ok(0.0)
+    }
+
+    /// P1-7 — Persist one turn into conversation recall (FTS on SQLite).
+    ///
+    /// Default is a no-op so vector-only / hybrid Lance backends stay quiet.
+    async fn conversation_recall_ingest(
+        &self,
+        _session_id: &str,
+        _project_id: Option<&str>,
+        _turn_id: &str,
+        _user_message: &str,
+        _assistant_excerpt: &str,
+    ) -> Result<(), MemoryError> {
+        Ok(())
+    }
+
+    /// P1-7 — Search prior turns in the session via FTS (vector hybrid TBD).
+    async fn conversation_recall_search(
+        &self,
+        _query: &str,
+        _session_id: &str,
+        _project_id: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<String>, MemoryError> {
+        Err(MemoryError::Generic(
+            "conversation_recall_search is not available for this memory backend".to_string(),
+        ))
     }
 }
 

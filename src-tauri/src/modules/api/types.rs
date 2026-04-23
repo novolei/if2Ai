@@ -191,13 +191,22 @@ pub enum OutputContentBlock {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
+    // P1-7 hardening: every field is `#[serde(default)]` because real
+    // providers omit different subsets — Anthropic's `message_delta`
+    // ships only `output_tokens`, OpenAI-compat ships only
+    // `prompt_tokens` / `completion_tokens` (already mapped). Without
+    // defaults a missing field caused the entire `MessageDelta` event
+    // to fail deserialization, silently dropping the per-turn usage
+    // chip data.
+    #[serde(default)]
     pub input_tokens: u32,
     #[serde(default)]
     pub cache_creation_input_tokens: u32,
     #[serde(default)]
     pub cache_read_input_tokens: u32,
+    #[serde(default)]
     pub output_tokens: u32,
 }
 

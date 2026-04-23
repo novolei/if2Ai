@@ -18,6 +18,25 @@ pub struct BootPaths {
     pub projects_dir: PathBuf,
 }
 
+/// P0-2 — Future LLM provider composition seam.
+///
+/// Today resilience (`provider::resilience::stream_message_with_resilience`)
+/// is invoked at call sites in `turn_service`. As we migrate to the
+/// `LlmProvider` trait introduced in [`provider::llm_provider`], this
+/// helper will assemble the decorator chain top-down based on env /
+/// settings:
+///
+/// ```text
+/// Failover( Retry( CircuitBreaker( CompletionCache( RawClient ))))
+/// ```
+///
+/// Until each layer is migrated, the function is intentionally
+/// unimplemented; call sites continue to use the historical helpers.
+#[allow(dead_code)]
+pub fn compose_llm_provider_chain_unimplemented() {
+    // Marker for the M-pack that will own the composition.
+}
+
 /// Core application bootstrap result consumed by `main.rs`.
 pub struct AppBootstrap {
     pub app_state_config: commands::AppStateConfig,
@@ -77,11 +96,7 @@ mod tests {
 
     #[test]
     fn boot_paths_default_to_if2ai_subdirectories() {
-        let paths = resolve_boot_paths_from_inputs(
-            PathBuf::from("/tmp/if2ai-home"),
-            None,
-            None,
-        );
+        let paths = resolve_boot_paths_from_inputs(PathBuf::from("/tmp/if2ai-home"), None, None);
 
         assert_eq!(paths.if2ai_dir, PathBuf::from("/tmp/if2ai-home/.if2ai"));
         assert_eq!(paths.log_dir, PathBuf::from("/tmp/if2ai-home/.if2ai/log"));

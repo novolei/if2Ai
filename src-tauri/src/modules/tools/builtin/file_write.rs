@@ -100,19 +100,12 @@ pub fn entry() -> ToolEntry {
             let mut previous_content: Option<String> = None;
             let mut previous_truncated = false;
             if !append && resolved_path.is_file() {
-                match fs::read_to_string(&resolved_path).await {
-                    Ok(text) => {
-                        if text.len() <= PREVIOUS_CONTENT_PREVIEW_BYTES {
-                            previous_content = Some(text);
-                        } else {
-                            previous_truncated = true;
-                        }
+                if let Ok(text) = fs::read_to_string(&resolved_path).await {
+                    if text.len() <= PREVIOUS_CONTENT_PREVIEW_BYTES {
+                        previous_content = Some(text);
+                    } else {
+                        previous_truncated = true;
                     }
-                    // Non-UTF8 files (binary blobs) are not diffable; just
-                    // drop the previous snapshot and let the frontend show
-                    // "all additions".  Other IO errors are non-fatal here:
-                    // we still proceed with the write.
-                    Err(_) => {}
                 }
             }
 

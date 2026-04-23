@@ -112,6 +112,47 @@ pub struct ContextBudgetUsagePayload {
     pub remaining: usize,
 }
 
+/// Per-turn provider-billable token usage and USD cost. Emitted on
+/// `stream_complete` so the chat UI can render a Steward-style
+/// `[Zap] 12,040 输入 · 62 输出 · $0.0307` chip beneath the assistant
+/// reply. `cost_usd` uses the price table in
+/// [`crate::modules::runtime::usage::pricing_for_model`].
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct TurnCostPayload {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_creation_input_tokens: u32,
+    pub cache_read_input_tokens: u32,
+    pub cost_usd: f64,
+    pub model: String,
+}
+
+/// Smart-routing decision summary attached to `stream_complete` so the
+/// chat UI can render a per-message routing chip (P1-8). `used_cheap_model`
+/// is `true` when `apply_complexity_model_routing` swapped to the cheap
+/// model id; `effective_model` is the model that actually answered.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct RoutingInfoPayload {
+    pub complexity_score: f32,
+    pub complexity_level: String,
+    pub execution_mode: String,
+    pub used_cheap_model: bool,
+    pub effective_model: String,
+}
+
+/// Per-session running totals after a successful `stream_complete`.
+/// Lets the ContextBar render「本会话累计」 without a second IPC.
+/// Mirrors the persisted `SessionUsageTotals` on `Session`.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SessionUsageTotalsPayload {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cost_usd: f64,
+    pub turns: u32,
+}
+
 /// Canonical wire payload for every `agent-token` emission.
 ///
 /// One struct holds every field every event variant might want to
@@ -157,6 +198,15 @@ pub struct StreamTokenPayload {
     /// Prompt diagnostics summary for this completed turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_diagnostics: Option<PromptDiagnosticsSummary>,
+    /// Per-turn token + cost (only on `stream_complete`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_cost: Option<TurnCostPayload>,
+    /// Smart-routing decision (P1-8, only on `stream_complete`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing_info: Option<RoutingInfoPayload>,
+    /// Session running totals after this turn (only on `stream_complete`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_totals: Option<SessionUsageTotalsPayload>,
 }
 
 impl StreamTokenPayload {
@@ -188,6 +238,9 @@ impl StreamTokenPayload {
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
+            turn_cost: None,
+            routing_info: None,
+            session_totals: None,
         }
     }
 }

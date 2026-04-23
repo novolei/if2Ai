@@ -44,6 +44,7 @@
 
 pub mod activation_service;
 pub mod gateway_service;
+pub mod job_monitor;
 pub mod license_lifecycle_service;
 pub mod memory_candidate_extractor;
 pub mod memory_conflict_resolution;
@@ -111,7 +112,8 @@ pub use prompt_planner::{
     PromptPlannerError,
 };
 pub use provider_service::{
-    load_provider_transport_policy, resolve_chat_runtime_provider, RuntimeProviderResolution,
+    apply_complexity_model_routing, load_provider_transport_policy, resolve_chat_runtime_provider,
+    RuntimeProviderResolution,
 };
 pub(crate) use real_api_client::RealApiClient;
 pub use request_intelligence_service::{

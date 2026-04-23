@@ -284,6 +284,37 @@ export interface ContextBudgetUsage {
   remaining: number
 }
 
+/** Per-turn provider-billable token usage + USD cost (P1-7 / P2-11).
+ * Mirrors `TurnCostPayload` in
+ * `src-tauri/src/modules/runtime/stream_emitter.rs`. */
+export interface TurnCost {
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  cost_usd: number
+  model: string
+}
+
+/** Smart-routing decision summary (P1-8). */
+export interface RoutingInfo {
+  complexity_score: number
+  complexity_level: string
+  execution_mode: string
+  used_cheap_model: boolean
+  effective_model: string
+}
+
+/** Per-session running totals (P2-11). */
+export interface SessionUsageTotals {
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  cost_usd: number
+  turns: number
+}
+
 /** Memory lifecycle event emitted by `MemoryAuditEmitter` over the
  * Tauri `memory_event` channel.  Mirrors `MemoryEventPayload` in
  * `src-tauri/src/modules/memory/audit.rs`. */
@@ -406,6 +437,9 @@ export interface StreamTokenPayload {
   context_budget_usage?: ContextBudgetUsage
   memory_context?: MemoryContextItem[]
   prompt_diagnostics?: PromptDiagnosticsSummary
+  turn_cost?: TurnCost
+  routing_info?: RoutingInfo
+  session_totals?: SessionUsageTotals
 }
 
 /** Permission prompt event emitted on the `permission-request` channel. */

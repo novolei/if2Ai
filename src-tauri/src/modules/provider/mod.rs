@@ -12,7 +12,9 @@
 #![allow(unused_imports)]
 
 pub mod client;
+pub mod llm_provider;
 pub mod registry;
+pub mod resilience;
 pub mod service;
 pub mod test;
 pub mod types;

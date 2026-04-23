@@ -21,7 +21,6 @@ import { Button } from '@/components/ui/button'
 import {
   memoryDelete,
   memoryDemote,
-  memoryExport,
   memoryPromote,
   memoryPromotionCandidates,
   memoryRecall,
@@ -136,7 +135,20 @@ export function MemoryBrowser({
     setError(null)
     try {
       const category = activeCategory === 'all' ? null : activeCategory
-      const results = await memoryExport({ category, scope: effectiveScope })
+      // 走 `memory_recall({query: ''})` 而不是 `memory_export`：
+      // backend 的 recall 路径会顺手 bump 每条命中的 `access_count`
+      // (sqlite_provider/provider_impl.rs::bump_access_counts_in_results)，
+      // 而 export 是只读快照路径，故意不 bump 以免污染数据库。
+      // 用户对"在 Memory Browser 里看了一下"的直觉就是"我访问过它"，
+      // 所以 browse 路径走 recall 更合理；export 仍然保留给"导出整库
+      // 不留痕"的场景（设置页 / 后端工具）。
+      // limit 给一个高上限，足够大多数库；超过这个量再做 backend 分页。
+      const results = await memoryRecall({
+        query: '',
+        category,
+        limit: 1000,
+        scope: effectiveScope,
+      })
       setEntries(results)
       setTotalCount(results.length)
     } catch (e) {

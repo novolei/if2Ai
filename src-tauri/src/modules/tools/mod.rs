@@ -92,6 +92,9 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::memory_recall_entry(memory.clone())) {
         eprintln!("Failed to register memory_recall tool: {}", e);
     }
+    if let Err(e) = registry.register(builtin::conversation_search_entry(memory.clone())) {
+        eprintln!("Failed to register conversation_search tool: {}", e);
+    }
     if let Err(e) = registry.register(builtin::memory_forget_entry(memory.clone())) {
         eprintln!("Failed to register memory_forget tool: {}", e);
     }
@@ -193,4 +196,6 @@ pub fn register_builtin_tools(
     if let Err(e) = registry.register(builtin::powershell_tool_entry()) {
         eprintln!("Failed to register PowerShell tool: {}", e);
     }
+
+    crate::modules::scheduler::spawn_scheduler_self_repair_watchdog(scheduler);
 }

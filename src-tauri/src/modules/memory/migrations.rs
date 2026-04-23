@@ -229,6 +229,16 @@ const MEMORY_MIGRATIONS: &[Migration] = &[
         name: "learned_traits_table",
         up: memory_v4_learned_traits,
     },
+    Migration {
+        version: 5,
+        name: "conversation_recall_fts",
+        up: memory_v5_conversation_recall_fts,
+    },
+    Migration {
+        version: 6,
+        name: "conversation_recall_embeddings",
+        up: memory_v6_conversation_recall_embeddings,
+    },
 ];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
@@ -372,6 +382,48 @@ fn memory_v4_learned_traits(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// P1-7 — turn-level conversation snippets for `conversation_search` (FTS5).
+///
+/// Vector hybrid scoring can be layered later; the FTS surface is the
+/// durable cross-turn retrieval primitive on SQLite builds with FTS5.
+fn memory_v5_conversation_recall_fts(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS conversation_recall_fts USING fts5(
+            session_id UNINDEXED,
+            project_id UNINDEXED,
+            turn_id UNINDEXED,
+            body,
+            tokenize = 'porter unicode61'
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+/// P1-7 — turn-level embedding rows for hybrid recall ranking.
+///
+/// Stores one embedding per (session, turn). Body text stays in the FTS5
+/// virtual table; we only persist the dense vector here as a little-endian
+/// f32 BLOB (see [`conversation_recall_vector`]).
+fn memory_v6_conversation_recall_embeddings(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_recall_embeddings (
+            session_id  TEXT NOT NULL,
+            project_id  TEXT,
+            turn_id     TEXT NOT NULL,
+            embedding   BLOB NOT NULL,
+            PRIMARY KEY (session_id, turn_id)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conv_recall_embed_session
+         ON conversation_recall_embeddings(session_id)",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,7 +437,7 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1, 2, 3, 4]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
@@ -393,6 +445,8 @@ mod tests {
         assert!(table_exists(&c, "memory_links").unwrap());
         assert!(table_exists(&c, "memory_entry_history").unwrap());
         assert!(table_exists(&c, "learned_traits").unwrap());
+        assert!(table_exists(&c, "conversation_recall_fts").unwrap());
+        assert!(table_exists(&c, "conversation_recall_embeddings").unwrap());
     }
 
     #[test]
@@ -411,13 +465,15 @@ mod tests {
         assert!(report.v1_backfilled);
         assert_eq!(
             report.applied,
-            vec![2, 3, 4],
-            "v1 backfilled, v2+v3+v4 fresh"
+            vec![2, 3, 4, 5, 6],
+            "v1 backfilled, v2..=v6 fresh"
         );
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
         assert!(table_exists(&c, "memory_entry_history").unwrap());
         assert!(table_exists(&c, "learned_traits").unwrap());
+        assert!(table_exists(&c, "conversation_recall_fts").unwrap());
+        assert!(table_exists(&c, "conversation_recall_embeddings").unwrap());
     }
 
     #[test]
@@ -426,7 +482,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1, 2, 3, 4]);
+        assert_eq!(report.skipped, vec![1, 2, 3, 4, 5, 6]);
     }
 
     #[test]
@@ -457,6 +513,6 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1, 2, 3, 4]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
     }
 }

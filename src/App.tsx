@@ -28,7 +28,6 @@ import {
   getOnboardingState,
   getSession,
   listenToChatPrefill,
-  listenToStream,
   listProjects,
   listProjectSessions,
   openProjectInFinder,
@@ -38,11 +37,15 @@ import {
   renameSession,
   resolveSkillSlash,
   respondPermission,
+  sessionRedo,
+  sessionUndo,
+  sessionUndoStatus,
   setSessionPinned,
   startChatTurn,
   suggestSlashCommands,
   updateSessionIdentity,
   type Project,
+  type ConversationUndoStatus,
   type ProjectMeta,
   type SessionIdentityInput,
   type SessionMeta,
@@ -55,6 +58,7 @@ import type {
 } from "@/transport/contracts";
 import { toast } from "sonner";
 import {
+  projectConversationMessagesFromRuns,
   runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
@@ -423,6 +427,9 @@ function App() {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [isRightRailOpen, setIsRightRailOpen] = useState(false);
+  const [conversationUndoStatus, setConversationUndoStatus] =
+    useState<ConversationUndoStatus | null>(null);
+
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === "undefined") return "dangerFullAccess";
     const stored = localStorage.getItem("permissionMode");
@@ -1119,19 +1126,56 @@ function App() {
   }, [currentProject?.workdir, gitProbeNonce]);
   const minLeftPaneWidth = 280;
   const maxLeftPaneWidth = 520;
-  const activeMessages = useMemo(
-    () =>
-      activeConv?.messages
-        .filter(
-          (msg) =>
-            !(msg.role === "user" && msg.content.includes("[resume_cursor]")),
-        )
-        .map((msg) => ({
-          ...msg,
-          content: msg.content || " ",
-        })) ?? [],
-    [activeConv],
-  );
+  const projectionRuns = useRuntimeProjectionSelector((s) => s.runs);
+  // P2-11 — pick the most recent projection run for the active session and
+  // surface its `sessionTotals`.  When no run exists for this session yet
+  // (fresh load before any turn), falls back to undefined so ContextBar
+  // hides the row.  Reload-from-disk hydration is a follow-up: it needs
+  // `Conversation` to carry the persisted `Session.session_totals`.
+  const activeSessionTotals = useMemo(() => {
+    if (!activeSessionId) return undefined;
+    // 1) Live: latest projection run for this session (set by stream_complete).
+    let latestAt = -1;
+    let latestTotals:
+      | NonNullable<(typeof projectionRuns)[string]["sessionTotals"]>
+      | undefined;
+    for (const run of Object.values(projectionRuns)) {
+      if (run.sessionId !== activeSessionId) continue;
+      if (!run.sessionTotals) continue;
+      if (run.lastUpdatedAt > latestAt) {
+        latestAt = run.lastUpdatedAt;
+        latestTotals = run.sessionTotals;
+      }
+    }
+    if (latestTotals) {
+      return {
+        input_tokens: latestTotals.inputTokens,
+        output_tokens: latestTotals.outputTokens,
+        cache_creation_input_tokens: latestTotals.cacheCreationInputTokens,
+        cache_read_input_tokens: latestTotals.cacheReadInputTokens,
+        cost_usd: latestTotals.costUsd,
+        turns: latestTotals.turns,
+      };
+    }
+    // 2) Persisted: hydrated from Session.session_totals on load.
+    const conv = conversations[activeSessionId];
+    return conv?.sessionTotals;
+  }, [projectionRuns, activeSessionId, conversations]);
+  const activeMessages = useMemo(() => {
+    const baseMessages =
+      activeConv?.messages.filter(
+        (msg) =>
+          !(msg.role === "user" && msg.content.includes("[resume_cursor]")),
+      ) ?? [];
+    return projectConversationMessagesFromRuns(
+      baseMessages,
+      projectionRuns,
+      activeSessionId,
+    ).map((msg) => ({
+      ...msg,
+      content: msg.content || " ",
+    }));
+  }, [activeConv?.messages, activeSessionId, projectionRuns]);
   const latestPromptDiagnosticsSnapshot =
     useMemo<PromptDiagnosticsSnapshot | null>(() => {
       if (!activeSessionId) return null;
@@ -1335,6 +1379,7 @@ function App() {
     projectId: string,
     sessionId: string,
     projectOverride?: ProjectMeta,
+    options?: { forceReload?: boolean },
   ) => {
     setActiveSection("chat");
     setActiveProjectId(projectId);
@@ -1353,7 +1398,7 @@ function App() {
       });
     }
 
-    if (conversations[sessionId]) return;
+    if (conversations[sessionId] && !options?.forceReload) return;
 
     const sessionMeta = projectSessions[projectId]?.find(
       (session) => session.id === sessionId,
@@ -1492,6 +1537,7 @@ function App() {
             PLACEHOLDER_SESSION_TITLE,
           messages: convertedMessages,
           updatedAt: new Date(fullSession.updated_at),
+          sessionTotals: fullSession.session_totals,
         },
       }));
       setSessionTitleStates((prev) => ({
@@ -1787,6 +1833,95 @@ function App() {
     }
   };
 
+  const refreshConversationUndoStatus = useCallback(async () => {
+    if (!activeSessionId) {
+      setConversationUndoStatus(null);
+      return;
+    }
+    try {
+      setConversationUndoStatus(await sessionUndoStatus(activeSessionId));
+    } catch {
+      setConversationUndoStatus(null);
+    }
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    void refreshConversationUndoStatus();
+  }, [
+    refreshConversationUndoStatus,
+    activeSessionId,
+    activeConv?.messages.length,
+  ]);
+
+  const handleConversationUndo = useCallback(async () => {
+    if (!activeSessionId || !activeProjectId) return;
+    if (sessionLoading[activeSessionId]) {
+      const ok = window.confirm(
+        "当前会话仍在生成回复，撤销将先停止流式输出。是否继续？",
+      );
+      if (!ok) return;
+      await stopAgentStream(activeSessionId);
+    }
+    try {
+      await sessionUndo(activeSessionId);
+      runtimeProjectionStore.dispatch({
+        kind: "projection_discard_session_runs",
+        sessionId: activeSessionId,
+        receivedAt: Date.now(),
+      });
+      runtimeProjectionStore.flush();
+      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
+        forceReload: true,
+      });
+      toast.success("已撤销");
+    } catch (err) {
+      toast.error("撤销失败", { description: String(err) });
+    }
+    void refreshConversationUndoStatus();
+    // handleSelectSession is stable enough for UX; omitting from deps avoids a large refactor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
+  }, [
+    activeSessionId,
+    activeProjectId,
+    sessionLoading,
+    stopAgentStream,
+    refreshConversationUndoStatus,
+  ]);
+
+  const handleConversationRedo = useCallback(async () => {
+    if (!activeSessionId || !activeProjectId) return;
+    if (sessionLoading[activeSessionId]) {
+      const ok = window.confirm(
+        "当前会话仍在生成回复，重做将先停止流式输出。是否继续？",
+      );
+      if (!ok) return;
+      await stopAgentStream(activeSessionId);
+    }
+    try {
+      await sessionRedo(activeSessionId);
+      runtimeProjectionStore.dispatch({
+        kind: "projection_discard_session_runs",
+        sessionId: activeSessionId,
+        receivedAt: Date.now(),
+      });
+      runtimeProjectionStore.flush();
+      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
+        forceReload: true,
+      });
+      toast.success("已重做");
+    } catch (err) {
+      toast.error("重做失败", { description: String(err) });
+    }
+    void refreshConversationUndoStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
+  }, [
+    activeSessionId,
+    activeProjectId,
+    sessionLoading,
+    stopAgentStream,
+    refreshConversationUndoStatus,
+  ]);
+
   const handlePermissionDecision = async (
     decision: "allow" | "deny",
     scope: "once" | "session" = "once",
@@ -1893,14 +2028,33 @@ function App() {
     let streamRafId: number | null = null;
     const seenToolCallIds = new Set<string>();
 
-    const createAssistantMessage = () => {
-      if (assistantMsgId) return;
+    const createAssistantMessage = (streamId?: string) => {
+      if (assistantMsgId) {
+        if (streamId) {
+          const currentAssistantId = assistantMsgId;
+          setConversations((prev) => {
+            const currentConv = prev[sessionId];
+            if (!currentConv) return prev;
+            return {
+              ...prev,
+              [sessionId]: {
+                ...currentConv,
+                messages: currentConv.messages.map((msg) =>
+                  msg.id === currentAssistantId ? { ...msg, streamId } : msg,
+                ),
+              },
+            };
+          });
+        }
+        return;
+      }
       assistantMsgId = crypto.randomUUID();
       const assistantMsg: Message = {
         id: assistantMsgId,
         role: "assistant",
         content: "",
         timestamp: new Date(),
+        streamId,
         isStreaming: true,
         statusLabel: options?.isInternalResume
           ? "正在恢复未完成任务…"
@@ -1952,9 +2106,11 @@ function App() {
       accumulatedThinking = "";
     };
 
-    const ensureAssistantMessage = () => {
+    const ensureAssistantMessage = (streamId?: string) => {
       if (!assistantMsgId) {
-        createAssistantMessage();
+        createAssistantMessage(streamId);
+      } else if (streamId) {
+        createAssistantMessage(streamId);
       }
 
       return assistantMsgId;
@@ -2008,6 +2164,103 @@ function App() {
       });
     };
 
+    const finishProjectedStream = (
+      payload: StreamTokenPayload,
+      unlisten: () => void,
+    ) => {
+      cancelScheduledAssistantFlush();
+      void agentVoice.flushAndStop();
+      if (payload.prompt_diagnostics) {
+        void publishLatestPromptDiagnosticsSnapshot({
+          sessionId,
+          projectId: conv.projectId,
+          assistantMessageId: assistantMsgId ?? null,
+          updatedAt: Date.now(),
+          summary: payload.prompt_diagnostics,
+        });
+      }
+      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
+      setStreamAbortHandles((prev) => {
+        const { [sessionId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      void refreshProjectSessions(conv.projectId).catch((error) => {
+        console.error("Failed to refresh session counts:", error);
+      });
+      setConversations((prev) => {
+        const currentConv = prev[sessionId];
+        if (!currentConv) return prev;
+        return {
+          ...prev,
+          [sessionId]: {
+            ...currentConv,
+            messages: currentConv.messages.map((msg) =>
+              msg.isRecovering ? { ...msg, isRecovering: false } : msg,
+            ),
+          },
+        };
+      });
+      unlisten();
+    };
+
+    const handleProjectedStreamSideEffect = (
+      payload: StreamTokenPayload,
+      unlisten: () => void,
+    ) => {
+      if (payload.event_type === "text_delta" && payload.text) {
+        agentVoice.feed(payload.text);
+        return;
+      }
+
+      if (payload.event_type === "tool_call_update") {
+        if (payload.tool_name === "TodoWrite" && payload.tool_result) {
+          const nextTodos = extractTodosFromToolResult(payload.tool_result);
+          if (nextTodos) {
+            setSessionTodos((prev) => ({ ...prev, [sessionId]: nextTodos }));
+          }
+        }
+        return;
+      }
+
+      if (payload.event_type === "stream_complete") {
+        finishProjectedStream(payload, unlisten);
+        autoResumeAttemptsRef.current[sessionId] = 0;
+        attemptedAutoResumeCursorsRef.current.clear();
+        return;
+      }
+
+      if (payload.event_type === "stream_error") {
+        finishProjectedStream(payload, unlisten);
+        const errMsg = payload.tool_result || "Agent 执行失败，请稍后重试。";
+        const taskOutcome = payload.task_outcome ?? "failed";
+        const resumeAvailable = payload.resume_available ?? false;
+        const resumeCursor = payload.resume_cursor;
+        if (
+          taskOutcome === "partial_success" &&
+          resumeAvailable &&
+          resumeCursor
+        ) {
+          const cursorKey = `${sessionId}:${resumeCursor}`;
+          const attemptCount = autoResumeAttemptsRef.current[sessionId] ?? 0;
+          if (
+            !attemptedAutoResumeCursorsRef.current.has(cursorKey) &&
+            attemptCount < 2
+          ) {
+            attemptedAutoResumeCursorsRef.current.add(cursorKey);
+            autoResumeAttemptsRef.current[sessionId] = attemptCount + 1;
+            setRecoveryStateForCursor(sessionId, resumeCursor, true);
+            window.setTimeout(() => {
+              void sendMessage(buildResumePrompt(resumeCursor), {
+                sessionIdOverride: sessionId,
+                isInternalResume: true,
+                resumeCursor,
+              });
+            }, 80);
+          }
+        }
+      }
+    };
+
     // Detect slash commands
     if (messageText.startsWith("/")) {
       const cmdPrefix = messageText.split(/\s+/)[0];
@@ -2030,12 +2283,22 @@ function App() {
               userMessage: skillInvocation,
               permissionMode,
             });
+            runtimeProjectionStore.dispatch({
+              kind: "stream_run_bound",
+              runId: handle.streamId,
+              sessionId,
+              receivedAt: Date.now(),
+            });
+            createAssistantMessage(handle.streamId);
             setStreamAbortHandles((prev) => ({
               ...prev,
               [sessionId]: handle.streamId,
             }));
             const unlisten = await handle.subscribe(
               (payload: StreamTokenPayload) => {
+                handleProjectedStreamSideEffect(payload, unlisten);
+                return;
+                /*
                 if (payload.event_type === "text_delta" && payload.text) {
                   ensureAssistantMessage();
                   if (
@@ -2250,6 +2513,27 @@ function App() {
                                 promptDiagnostics:
                                   payload.prompt_diagnostics ??
                                   msg.promptDiagnostics,
+                                turnCost: payload.turn_cost
+                                  ? {
+                                      inputTokens: payload.turn_cost.input_tokens,
+                                      outputTokens: payload.turn_cost.output_tokens,
+                                      cacheCreationInputTokens:
+                                        payload.turn_cost.cache_creation_input_tokens,
+                                      cacheReadInputTokens:
+                                        payload.turn_cost.cache_read_input_tokens,
+                                      costUsd: payload.turn_cost.cost_usd,
+                                      model: payload.turn_cost.model,
+                                    }
+                                  : msg.turnCost,
+                                routing: payload.routing_info
+                                  ? {
+                                      complexityScore: payload.routing_info.complexity_score,
+                                      complexityLevel: payload.routing_info.complexity_level,
+                                      executionMode: payload.routing_info.execution_mode,
+                                      usedCheapModel: payload.routing_info.used_cheap_model,
+                                      effectiveModel: payload.routing_info.effective_model,
+                                    }
+                                  : msg.routing,
                               };
                             }
                             if (
@@ -2283,6 +2567,7 @@ function App() {
                     return rest;
                   });
                 }
+                */
               },
             );
           } catch (err) {
@@ -2350,12 +2635,22 @@ function App() {
         userMessage: userMsg.content,
         permissionMode,
       });
+      runtimeProjectionStore.dispatch({
+        kind: "stream_run_bound",
+        runId: handle.streamId,
+        sessionId,
+        receivedAt: Date.now(),
+      });
+      createAssistantMessage(handle.streamId);
       setStreamAbortHandles((prev) => ({
         ...prev,
         [sessionId]: handle.streamId,
       }));
 
       const unlisten = await handle.subscribe((payload: StreamTokenPayload) => {
+        handleProjectedStreamSideEffect(payload, unlisten);
+        return;
+        /*
         if (payload.event_type === "text_delta" && payload.text) {
           ensureAssistantMessage();
           if (!accumulatedText && !accumulatedThinking && assistantMsgId) {
@@ -2619,6 +2914,27 @@ function App() {
                           msg.contextBudgetUsage,
                         promptDiagnostics:
                           payload.prompt_diagnostics ?? msg.promptDiagnostics,
+                        turnCost: payload.turn_cost
+                          ? {
+                              inputTokens: payload.turn_cost.input_tokens,
+                              outputTokens: payload.turn_cost.output_tokens,
+                              cacheCreationInputTokens:
+                                payload.turn_cost.cache_creation_input_tokens,
+                              cacheReadInputTokens:
+                                payload.turn_cost.cache_read_input_tokens,
+                              costUsd: payload.turn_cost.cost_usd,
+                              model: payload.turn_cost.model,
+                            }
+                          : msg.turnCost,
+                        routing: payload.routing_info
+                          ? {
+                              complexityScore: payload.routing_info.complexity_score,
+                              complexityLevel: payload.routing_info.complexity_level,
+                              executionMode: payload.routing_info.execution_mode,
+                              usedCheapModel: payload.routing_info.used_cheap_model,
+                              effectiveModel: payload.routing_info.effective_model,
+                            }
+                          : msg.routing,
                       };
                     }
                     if (
@@ -2760,6 +3076,7 @@ function App() {
             }
           }
         }
+        */
       });
     } catch (err) {
       console.error("startAgentStream error:", err);
@@ -3096,6 +3413,7 @@ function App() {
             }}
             activeTitle={activeTitle}
             activeMessages={activeMessages}
+            activeSessionTotals={activeSessionTotals}
             input={input}
             isLoading={isActiveSessionLoading}
             loading={loading}
@@ -3135,6 +3453,9 @@ function App() {
             onPreviewFocusChange={handlePreviewFocusChange}
             runningSessionIds={runningSessionIds}
             activeSessionMeta={activeSessionMeta}
+            conversationUndoStatus={conversationUndoStatus}
+            onConversationUndo={handleConversationUndo}
+            onConversationRedo={handleConversationRedo}
           />
         ),
         memory: (

@@ -117,6 +117,7 @@ export function translatePromptDiagnosticsSummary(
  * `runId` will come from `correlation.runId` instead.
  */
 export type CanonicalRuntimeEvent =
+  | StreamRunBoundEvent
   | StreamTextDeltaEvent
   | StreamThinkingStartEvent
   | StreamThinkingDeltaEvent
@@ -131,7 +132,15 @@ export type CanonicalRuntimeEvent =
   | MemoryAfterTurnEvent
   | ActivationSnapshotEvent
   | ExecutionModeDecisionEvent
-  | ExecutionModeManualOverrideEvent;
+  | ExecutionModeManualOverrideEvent
+  | ProjectionDiscardSessionRunsEvent;
+
+export interface StreamRunBoundEvent {
+  kind: "stream_run_bound";
+  runId: string;
+  sessionId: string;
+  receivedAt: number;
+}
 
 export interface StreamTextDeltaEvent {
   kind: "stream_text_delta";
@@ -188,7 +197,42 @@ export interface StreamCompleteEvent {
   contextBudgetUsage?: ContextBudgetUsage;
   memoryItems?: MemoryContextItem[];
   promptDiagnostics?: PromptDiagnosticsSummary;
+  /** P1-7 / P2-11 — provider-billable token usage + USD cost for this turn. */
+  turnCost?: TurnCost;
+  /** P1-8 — smart-routing decision summary for this turn. */
+  routing?: RoutingInfo;
+  /** P2-11 — running per-session totals after this turn. */
+  sessionTotals?: SessionUsageTotals;
   receivedAt: number;
+}
+
+/** Per-turn token + cost (frontend mirror of `TurnCostPayload`). */
+export interface TurnCost {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  costUsd: number;
+  model: string;
+}
+
+/** Smart-routing decision summary (frontend mirror of `RoutingInfoPayload`). */
+export interface RoutingInfo {
+  complexityScore: number;
+  complexityLevel: string;
+  executionMode: string;
+  usedCheapModel: boolean;
+  effectiveModel: string;
+}
+
+/** Per-session running totals (frontend mirror of `SessionUsageTotalsPayload`). */
+export interface SessionUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  costUsd: number;
+  turns: number;
 }
 
 export interface StreamErrorEvent {
@@ -366,11 +410,20 @@ export interface ExecutionModeManualOverrideEvent {
   receivedAt: number;
 }
 
+/** UI-driven: drop all stream run projections tied to one session (e.g. transcript undo). */
+export interface ProjectionDiscardSessionRunsEvent {
+  kind: "projection_discard_session_runs";
+  sessionId: string;
+  receivedAt: number;
+}
+
 // ───────────────────────── Projection state ────────────────────────
 
 /** Per-run projection state assembled from the stream event family. */
 export interface RunProjection {
   runId: string;
+  /** Session that owns this run, bound by the chat command facade. */
+  sessionId?: string;
   /** Concatenated text deltas. */
   text: string;
   /** Concatenated thinking deltas. */
@@ -387,6 +440,12 @@ export interface RunProjection {
   toolCalls: Record<string, ToolCallProjection>;
   /** Optional context-budget snapshot from `stream_complete`. */
   contextBudgetUsage?: ContextBudgetUsage;
+  /** P1-7 / P2-11 — provider-billable usage + USD cost for this run. */
+  turnCost?: TurnCost;
+  /** P1-8 — smart-routing decision for this run. */
+  routing?: RoutingInfo;
+  /** P2-11 — per-session running totals snapshot at end of this run. */
+  sessionTotals?: SessionUsageTotals;
   /** Memory items recalled this run. */
   memoryItems: MemoryContextItem[];
   /** Prompt assembly diagnostics from the most recent completion. */
