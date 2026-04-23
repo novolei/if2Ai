@@ -31,7 +31,7 @@ use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::compiler::fingerprint::{
     compute_fingerprint, is_unchanged, write_fingerprint, EMPTY_FINGERPRINT,
 };
-use crate::modules::memory::compiler::CompileResult;
+use crate::modules::memory::compiler::{CompileResult, SkipReason};
 use crate::modules::memory::job_runner::{JobError, JobRunner};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::summary::store::SessionSummaryStore;
@@ -94,16 +94,18 @@ pub async fn compile_today(
             target = ?output_path,
             "compile_today: fingerprint unchanged, skipping"
         );
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::CacheHit));
     }
 
     let audit_ctx = AuditContext::from_scope(scope);
 
+    // MEM-MOD-WIRE-FIX-3 — surface "no input" honestly instead of
+    // writing an empty `today.md` + fingerprint that masquerades as
+    // a successful compile.  Skipping without persisting the
+    // fingerprint also means the next click after the user accrues
+    // real summaries WILL re-trigger the LLM (no false cache hit).
     if summaries.is_empty() {
-        atomic_write(output_path, "")?;
-        write_fingerprint(output_path, &fp)?;
-        MemoryAuditEmitter::memory_compiled(&audit_ctx, "today", "compiled", 0, 0, 0);
-        return Ok(CompileResult::Compiled);
+        return Ok(CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     let input = summaries
@@ -137,7 +139,7 @@ pub async fn compile_today(
         Ok(Some(s)) => s,
         Ok(None) => {
             tracing::warn!("compile_today: skipped — JobRunner exhausted retries or quota");
-            return Ok(CompileResult::Skipped);
+            return Ok(CompileResult::skipped(SkipReason::LlmDegraded));
         }
         Err(JobError::Generic(msg)) => {
             return Err(MemoryError::Generic(format!(
@@ -293,7 +295,13 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn empty_input_writes_empty_md_and_fingerprint() {
+    async fn empty_input_skips_with_empty_input_reason() {
+        // MEM-MOD-WIRE-FIX-3 — fresh install with zero summaries
+        // now reports Skipped { EmptyInput } instead of writing an
+        // empty `today.md` + fingerprint that masquerades as a
+        // successful compile.  Crucially, NO fingerprint is written
+        // so the *next* call after the user accrues real summaries
+        // re-triggers the LLM (no false cache hit).
         let dir = tempdir().expect("tempdir");
         let out = dir.path().join("today.md");
         let store: Arc<dyn SessionSummaryStore> = Arc::new(NullSessionSummaryStore::new());
@@ -309,9 +317,12 @@ pub(crate) mod tests {
         )
         .await
         .expect("compile_today must succeed");
-        assert_eq!(result, CompileResult::Compiled);
-        assert!(out.exists());
-        assert!(std::fs::read_to_string(&out).expect("read").is_empty());
+        assert_eq!(
+            result,
+            CompileResult::skipped(SkipReason::EmptyInput),
+            "no summaries → skip with EmptyInput reason, do not write fingerprint"
+        );
+        assert!(!out.exists(), "must NOT write empty today.md");
     }
 
     #[tokio::test]
@@ -353,7 +364,11 @@ pub(crate) mod tests {
         )
         .await
         .expect("second compile");
-        assert_eq!(res, CompileResult::Skipped);
+        assert_eq!(
+            res,
+            CompileResult::skipped(SkipReason::CacheHit),
+            "second compile MUST short-circuit on fingerprint cache hit"
+        );
         assert_eq!(
             llm.call_count(),
             calls_after_first,

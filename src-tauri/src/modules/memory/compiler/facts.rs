@@ -36,7 +36,7 @@ use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::compiler::fingerprint::{
     compute_fingerprint, is_unchanged, write_fingerprint, EMPTY_FINGERPRINT,
 };
-use crate::modules::memory::compiler::CompileResult;
+use crate::modules::memory::compiler::{CompileResult, SkipReason};
 use crate::modules::memory::job_runner::{JobError, JobRunner};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::summary::store::SessionSummaryStore;
@@ -142,7 +142,7 @@ pub async fn compile_facts(
             target = ?output_path,
             "compile_facts: fingerprint unchanged, skipping"
         );
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::CacheHit));
     }
 
     let prev = std::fs::read_to_string(output_path).unwrap_or_default();
@@ -150,9 +150,13 @@ pub async fn compile_facts(
     let chars_in = merged.chars().count();
     let audit_ctx = AuditContext::from_scope(scope);
 
-    // Small corpus → direct write, no LLM call.  The empty-input case
-    // also lands here (chars_in == 0) and is recorded as Compiled so
-    // the fingerprint sidecar gets written.
+    // MEM-MOD-WIRE-FIX-3 — both branches below need explicit handling:
+    //   chars_in == 0          → no facts to record AT ALL → EmptyInput
+    //   0 < chars_in < THRESH  → small corpus, direct write (Compiled)
+    //   chars_in >= THRESH     → LLM extraction path
+    if chars_in == 0 {
+        return Ok(CompileResult::skipped(SkipReason::EmptyInput));
+    }
     if chars_in < FACTS_NO_LLM_THRESHOLD_CHARS {
         atomic_write(output_path, &merged)?;
         write_fingerprint(output_path, &fp)?;
@@ -185,7 +189,7 @@ pub async fn compile_facts(
         Ok(Some(s)) => s,
         Ok(None) => {
             tracing::warn!("compile_facts: skipped — JobRunner exhausted retries or quota");
-            return Ok(CompileResult::Skipped);
+            return Ok(CompileResult::skipped(SkipReason::LlmDegraded));
         }
         Err(JobError::Generic(msg)) => {
             return Err(MemoryError::Generic(format!(
@@ -441,7 +445,7 @@ mod tests {
         )
         .await
         .expect("second compile");
-        assert_eq!(res, CompileResult::Skipped);
+        assert_eq!(res, CompileResult::skipped(SkipReason::CacheHit));
     }
 
     #[test]

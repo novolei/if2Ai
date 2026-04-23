@@ -20,7 +20,7 @@ use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::compiler::fingerprint::{
     compute_fingerprint, is_unchanged, write_fingerprint, EMPTY_FINGERPRINT,
 };
-use crate::modules::memory::compiler::CompileResult;
+use crate::modules::memory::compiler::{CompileResult, SkipReason};
 use crate::modules::memory::job_runner::{JobError, JobRunner};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::summary::store::SessionSummaryStore;
@@ -63,16 +63,14 @@ pub async fn compile_week(
     let fp = compute_fingerprint(&fp_keys);
     if is_unchanged(output_path, &fp) {
         tracing::debug!(target = ?output_path, "compile_week: fingerprint unchanged, skipping");
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::CacheHit));
     }
 
     let audit_ctx = AuditContext::from_scope(scope);
 
+    // MEM-MOD-WIRE-FIX-3 — surface "no input" honestly; see today.rs.
     if summaries.is_empty() {
-        atomic_write(output_path, "")?;
-        write_fingerprint(output_path, &fp)?;
-        MemoryAuditEmitter::memory_compiled(&audit_ctx, "week", "compiled", 0, 0, 0);
-        return Ok(CompileResult::Compiled);
+        return Ok(CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     let input = summaries
@@ -106,7 +104,7 @@ pub async fn compile_week(
         Ok(Some(s)) => s,
         Ok(None) => {
             tracing::warn!("compile_week: skipped — JobRunner exhausted retries or quota");
-            return Ok(CompileResult::Skipped);
+            return Ok(CompileResult::skipped(SkipReason::LlmDegraded));
         }
         Err(JobError::Generic(msg)) => {
             return Err(MemoryError::Generic(format!(
@@ -176,7 +174,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn empty_input_writes_empty_md() {
+    async fn empty_input_skips_with_empty_input_reason() {
+        // MEM-MOD-WIRE-FIX-3 — see today.rs comment.
         let dir = tempdir().expect("tempdir");
         let out = dir.path().join("week.md");
         let store: Arc<dyn SessionSummaryStore> = Arc::new(NullSessionSummaryStore::new());
@@ -192,8 +191,11 @@ mod tests {
         )
         .await
         .expect("compile_week must succeed");
-        assert_eq!(result, CompileResult::Compiled);
-        assert!(out.exists());
+        assert_eq!(
+            result,
+            CompileResult::skipped(SkipReason::EmptyInput),
+        );
+        assert!(!out.exists(), "must NOT write empty week.md");
     }
 
     #[tokio::test]

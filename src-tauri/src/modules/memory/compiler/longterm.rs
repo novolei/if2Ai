@@ -23,7 +23,7 @@ use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::compiler::fingerprint::{
     compute_fingerprint, is_unchanged, write_fingerprint,
 };
-use crate::modules::memory::compiler::CompileResult;
+use crate::modules::memory::compiler::{CompileResult, SkipReason};
 use crate::modules::memory::job_runner::{JobError, JobRunner};
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryError, UtilityLlm};
@@ -49,7 +49,7 @@ pub async fn compile_longterm(
 ) -> Result<CompileResult, MemoryError> {
     if !week_md_path.exists() {
         tracing::debug!(week = ?week_md_path, "compile_longterm: week.md missing, skipping");
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::UpstreamMissing));
     }
     let week_content = std::fs::read_to_string(week_md_path).map_err(|e| {
         MemoryError::Generic(format!(
@@ -58,7 +58,7 @@ pub async fn compile_longterm(
     })?;
     if week_content.trim().is_empty() {
         tracing::debug!("compile_longterm: week.md empty, skipping");
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     if let Some(parent) = output_path.parent() {
@@ -75,7 +75,7 @@ pub async fn compile_longterm(
             target = ?output_path,
             "compile_longterm: fingerprint unchanged, skipping"
         );
-        return Ok(CompileResult::Skipped);
+        return Ok(CompileResult::skipped(SkipReason::CacheHit));
     }
 
     let prev_longterm = std::fs::read_to_string(output_path).unwrap_or_default();
@@ -115,7 +115,7 @@ pub async fn compile_longterm(
         Ok(Some(s)) => s,
         Ok(None) => {
             tracing::warn!("compile_longterm: skipped — JobRunner exhausted retries or quota");
-            return Ok(CompileResult::Skipped);
+            return Ok(CompileResult::skipped(SkipReason::LlmDegraded));
         }
         Err(JobError::Generic(msg)) => {
             return Err(MemoryError::Generic(format!(
@@ -200,7 +200,10 @@ mod tests {
         )
         .await
         .expect("must not error");
-        assert_eq!(res, CompileResult::Skipped);
+        assert_eq!(
+            res,
+            CompileResult::skipped(SkipReason::UpstreamMissing),
+        );
         assert!(!out.exists(), "longterm.md must not be created");
     }
 
@@ -222,7 +225,7 @@ mod tests {
         )
         .await
         .expect("must not error");
-        assert_eq!(res, CompileResult::Skipped);
+        assert_eq!(res, CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     #[tokio::test]
@@ -284,7 +287,7 @@ mod tests {
         )
         .await
         .expect("second compile");
-        assert_eq!(res, CompileResult::Skipped);
+        assert_eq!(res, CompileResult::skipped(SkipReason::CacheHit));
         assert_eq!(llm.call_count(), calls_after, "no LLM call on cache hit");
     }
 

@@ -50,16 +50,71 @@ use crate::modules::runtime::config::CompilerConfig;
 /// fingerprint), the LLM was invoked, and the corresponding `*.md`
 /// artifact has been rewritten on disk.
 ///
-/// `Skipped` — either the fingerprint was unchanged (cache hit) or
-/// there was no input to summarise.  In both cases the existing
-/// artifact is left untouched and no LLM tokens are spent.
+/// `Skipped { reason }` — output untouched, no LLM tokens spent. The
+/// `reason` payload disambiguates **why** (cache hit, empty input,
+/// degraded LLM, missing upstream file) so the Memory Debug UI can
+/// render a precise diagnosis instead of an opaque "SKIPPED".
+///
+/// Wire-format (serde, internally tagged):
+/// ```json
+/// { "kind": "compiled" }
+/// { "kind": "skipped", "reason": "cache_hit" }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CompileResult {
     /// LLM ran; output `*.md` rewritten.
     Compiled,
-    /// Cache hit or empty input; output left as-is.
-    Skipped,
+    /// Output left as-is; reason describes the trigger.
+    Skipped { reason: SkipReason },
+}
+
+impl CompileResult {
+    /// Convenience constructor: `Skipped { reason: CacheHit }` is the
+    /// hottest path so callers get a tiny shorthand.
+    #[must_use]
+    pub const fn skipped(reason: SkipReason) -> Self {
+        Self::Skipped { reason }
+    }
+}
+
+/// Why a [`CompileResult::Skipped`] was emitted.  The variants form a
+/// fixed alphabet — every `return Ok(CompileResult::Skipped { … })`
+/// site in `compiler/*.rs` MUST pick one of these so the UI never
+/// receives an unlabelled skip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    /// Fingerprint sidecar matched current inputs → no recomputation
+    /// needed.  This is the *expected* reason on the second click of
+    /// the Memory Debug "一键全套测试" cache-verification step.
+    CacheHit,
+    /// Required upstream artifact is missing on disk (e.g.
+    /// `compile_longterm` skipped because `week.md` does not exist).
+    UpstreamMissing,
+    /// Upstream artifact / `session_summaries` query returned empty
+    /// content — there is literally nothing to compile.  This is the
+    /// "fresh-install / no conversations yet" path users hit first.
+    EmptyInput,
+    /// `JobRunner` short-circuited because retries / quota are
+    /// exhausted, or the LLM call itself returned an unrecoverable
+    /// error after exhausting backoff.  Indicates a real degradation
+    /// — the LLM endpoint may be misconfigured.
+    LlmDegraded,
+}
+
+impl SkipReason {
+    /// Stable wire label (matches the `serde(rename_all)` slug) used
+    /// by the audit emitter and by front-end copy generators.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            SkipReason::CacheHit => "cache_hit",
+            SkipReason::UpstreamMissing => "upstream_missing",
+            SkipReason::EmptyInput => "empty_input",
+            SkipReason::LlmDegraded => "llm_degraded",
+        }
+    }
 }
 
 /// On-disk paths for one scope's compiled-memory artifacts.
@@ -295,22 +350,34 @@ mod tests {
     }
 
     #[test]
-    fn compile_result_serializes_snake_case() {
-        // The TauriCommand surface for memory_compile_now (8B.5) ships
-        // `CompileResult` to the frontend; lock the wire-format down
-        // here so a future rename of the variants is caught early.
+    fn compile_result_serializes_with_kind_and_reason() {
+        // MEM-MOD-WIRE-FIX-3 — Wire-format locked down here so a
+        // future variant rename is caught early.  The shape is the
+        // same one MemoryDebugTab.tsx parses (`{kind, reason?}`),
+        // which is itself why we picked `tag = "kind"` over a bare
+        // string union.
         let compiled = serde_json::to_string(&CompileResult::Compiled).expect("serialize");
-        let skipped = serde_json::to_string(&CompileResult::Skipped).expect("serialize");
-        assert_eq!(compiled, "\"compiled\"");
-        assert_eq!(skipped, "\"skipped\"");
+        let cache_hit = serde_json::to_string(&CompileResult::skipped(SkipReason::CacheHit))
+            .expect("serialize");
+        let empty = serde_json::to_string(&CompileResult::skipped(SkipReason::EmptyInput))
+            .expect("serialize");
+        let degraded = serde_json::to_string(&CompileResult::skipped(SkipReason::LlmDegraded))
+            .expect("serialize");
+        let upstream = serde_json::to_string(&CompileResult::skipped(SkipReason::UpstreamMissing))
+            .expect("serialize");
+        assert_eq!(compiled, r#"{"kind":"compiled"}"#);
+        assert_eq!(cache_hit, r#"{"kind":"skipped","reason":"cache_hit"}"#);
+        assert_eq!(empty, r#"{"kind":"skipped","reason":"empty_input"}"#);
+        assert_eq!(degraded, r#"{"kind":"skipped","reason":"llm_degraded"}"#);
+        assert_eq!(upstream, r#"{"kind":"skipped","reason":"upstream_missing"}"#);
     }
 
     #[tokio::test]
-    async fn wired_compile_today_compiles_empty_then_skips() {
-        // 8B.3 — with the NullSessionSummaryStore returning zero rows
-        // the function takes the empty-input fast path: writes an
-        // empty today.md + sentinel fingerprint and returns Compiled.
-        // A second call hits the cache and returns Skipped.
+    async fn wired_compile_today_skips_when_no_summaries() {
+        // MEM-MOD-WIRE-FIX-3 — fresh install (zero summaries) returns
+        // Skipped { EmptyInput }, NOT a fake Compiled-with-empty-body.
+        // The fingerprint is intentionally NOT written so the next
+        // call after summaries arrive re-triggers the LLM path.
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -319,17 +386,20 @@ mod tests {
             .compile_today(&scope, &paths)
             .await
             .expect("first compile must not error");
-        assert_eq!(first, CompileResult::Compiled);
-        assert!(paths.today_md.exists());
+        assert_eq!(first, CompileResult::skipped(SkipReason::EmptyInput));
+        assert!(!paths.today_md.exists(), "must NOT write empty today.md");
         let second = compiler
             .compile_today(&scope, &paths)
             .await
             .expect("second compile must not error");
-        assert_eq!(second, CompileResult::Skipped);
+        // No fingerprint written → second call ALSO sees EmptyInput,
+        // not CacheHit.  Once real summaries land, fp diverges and
+        // a real Compiled fires.
+        assert_eq!(second, CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     #[tokio::test]
-    async fn wired_compile_week_compiles_empty_then_skips() {
+    async fn wired_compile_week_skips_when_no_summaries() {
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -338,19 +408,14 @@ mod tests {
             .compile_week(&scope, &paths)
             .await
             .expect("first compile must not error");
-        assert_eq!(first, CompileResult::Compiled);
-        let second = compiler
-            .compile_week(&scope, &paths)
-            .await
-            .expect("second compile must not error");
-        assert_eq!(second, CompileResult::Skipped);
+        assert_eq!(first, CompileResult::skipped(SkipReason::EmptyInput));
     }
 
     #[tokio::test]
-    async fn stub_compile_longterm_returns_skipped() {
-        // 8B.3 wired the real implementation; with no week.md on disk
-        // the function still returns Skipped, preserving the original
-        // contract of this test.
+    async fn stub_compile_longterm_returns_upstream_missing() {
+        // MEM-MOD-WIRE-FIX-3 — explicit reason now: week.md doesn't
+        // exist, so the longterm pipeline can't fold anything → it's
+        // an UpstreamMissing skip, not the generic "Skipped" of yore.
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
         let paths = CompilePaths::from_scope_root(Path::new("/tmp/if2ai-stub-longterm-8b3"));
@@ -358,15 +423,14 @@ mod tests {
             .compile_longterm(&scope, &paths)
             .await
             .expect("must not error");
-        assert_eq!(out, CompileResult::Skipped);
+        assert_eq!(out, CompileResult::skipped(SkipReason::UpstreamMissing));
     }
 
     #[tokio::test]
-    async fn wired_compile_facts_compiles_empty_then_skips() {
-        // 8B.4 — with the NullSessionSummaryStore returning zero rows
-        // the function takes the small-corpus fast path: writes an
-        // empty facts.md + sentinel fingerprint and returns Compiled.
-        // A second call hits the cache and returns Skipped.
+    async fn wired_compile_facts_skips_when_no_summaries() {
+        // MEM-MOD-WIRE-FIX-3 — fresh install (zero summaries) =>
+        // chars_in == 0 in compile_facts → EmptyInput skip, no
+        // file written.
         let compiler = make_compiler();
         let scope = MemoryExecutionScope::global();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -375,13 +439,8 @@ mod tests {
             .compile_facts(&scope, &paths)
             .await
             .expect("first compile must not error");
-        assert_eq!(first, CompileResult::Compiled);
-        assert!(paths.facts_md.exists());
-        let second = compiler
-            .compile_facts(&scope, &paths)
-            .await
-            .expect("second compile must not error");
-        assert_eq!(second, CompileResult::Skipped);
+        assert_eq!(first, CompileResult::skipped(SkipReason::EmptyInput));
+        assert!(!paths.facts_md.exists(), "must NOT write empty facts.md");
     }
 
     #[tokio::test]

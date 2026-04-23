@@ -1948,15 +1948,30 @@ export async function memoryClearAll(): Promise<number> {
 // string union is kept so the wire-shape stays stable for future
 // project / session sidecars.
 
-/** Single-stage compile verdict mirroring Rust `CompileResult`. */
-export type CompileResultKind = "compiled" | "skipped";
+/**
+ * MEM-MOD-WIRE-FIX-3 — `CompileResult::Skipped` now carries a reason
+ * payload so the Memory Debug UI can explain *why* a stage didn't
+ * recompile. Wire shape mirrors `serde(tag = "kind")` over the Rust
+ * enum:
+ *   { kind: "compiled" }
+ *   { kind: "skipped", reason: "cache_hit" | ... }
+ */
+export type CompileSkipReason =
+  | "cache_hit"
+  | "upstream_missing"
+  | "empty_input"
+  | "llm_degraded";
+
+export type CompileResult =
+  | { kind: "compiled" }
+  | { kind: "skipped"; reason: CompileSkipReason };
 
 /** Frontend mirror of the backend `CompileReport`. */
 export interface CompileReport {
-  today: CompileResultKind;
-  week: CompileResultKind;
-  longterm: CompileResultKind;
-  facts: CompileResultKind;
+  today: CompileResult;
+  week: CompileResult;
+  longterm: CompileResult;
+  facts: CompileResult;
   assembled: boolean;
   elapsed_ms: number;
 }

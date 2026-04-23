@@ -21,6 +21,8 @@ import {
   memoryCompiledRead,
   pinnedGet,
   type CompileReport,
+  type CompileResult,
+  type CompileSkipReason,
   type CompiledMemoryDto,
   type PinnedItemDto,
 } from '@/lib/tauri'
@@ -62,19 +64,76 @@ function StatusIcon({ status }: { status: StepStatus }) {
   return <div className="h-3.5 w-3.5 rounded-full border border-black/15" />
 }
 
-function compileResultBadge(kind: 'compiled' | 'skipped') {
-  const tone =
-    kind === 'compiled'
-      ? 'bg-emerald-500/[0.12] text-emerald-700 dark:text-emerald-300'
-      : 'bg-zinc-400/[0.18] text-zinc-700 dark:text-zinc-300'
+/**
+ * MEM-MOD-WIRE-FIX-3 — `Skipped` 不再是单一字符串，每个 reason 都
+ * 有自己的视觉语言：
+ *   cache_hit        → 灰底（正常缓存命中，预期）
+ *   empty_input      → 琥珀色（无数据可编 — 用户需要先聊会儿）
+ *   upstream_missing → 琥珀色（依赖文件缺失 — 通常 longterm 等 week.md）
+ *   llm_degraded     → 红色（LLM 调用失败 — 配置问题）
+ */
+const SKIP_REASON_LABEL: Record<CompileSkipReason, string> = {
+  cache_hit: '缓存命中',
+  empty_input: '无新摘要',
+  upstream_missing: '上游缺失',
+  llm_degraded: 'LLM 失败',
+}
+
+const SKIP_REASON_TONE: Record<CompileSkipReason, string> = {
+  cache_hit: 'bg-zinc-400/[0.18] text-zinc-700 dark:text-zinc-300',
+  empty_input: 'bg-amber-400/[0.18] text-amber-800 dark:text-amber-300',
+  upstream_missing: 'bg-amber-400/[0.18] text-amber-800 dark:text-amber-300',
+  llm_degraded: 'bg-red-500/[0.18] text-red-700 dark:text-red-300',
+}
+
+const SKIP_REASON_HINT: Record<CompileSkipReason, string> = {
+  cache_hit:
+    '指纹与上次相同，跳过 LLM。缓存正常。',
+  empty_input:
+    '没有可用的 session_summaries。聊 6 轮以上 + 切 session 让 ticker flush 摘要后再试。',
+  upstream_missing:
+    '依赖的上游 .md 文件还不存在。先编译它（如 longterm 依赖 week.md）。',
+  llm_degraded:
+    'LLM 调用失败 / 重试耗尽。检查 Settings → 模型配置 / API key / OAuth。',
+}
+
+function compileResultBadge(result: CompileResult) {
+  if (result.kind === 'compiled') {
+    return (
+      <span className="rounded-md bg-emerald-500/[0.12] px-1.5 py-0.5 font-mono text-[10px] uppercase text-emerald-700 dark:text-emerald-300">
+        compiled
+      </span>
+    )
+  }
+  const tone = SKIP_REASON_TONE[result.reason]
+  const label = SKIP_REASON_LABEL[result.reason]
+  const hint = SKIP_REASON_HINT[result.reason]
   return (
-    <span className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] uppercase ${tone}`}>
-      {kind}
+    <span
+      className={`group relative inline-flex cursor-help items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[10px] uppercase ${tone}`}
+      title={hint}
+    >
+      skipped
+      <span className="font-sans text-[9.5px] normal-case opacity-90">· {label}</span>
     </span>
   )
 }
 
 function CompileReportRow({ report }: { report: CompileReport }) {
+  // Surface a clear secondary line when ANY stage degrades, so users
+  // immediately see "为什么没编" without hovering each badge.
+  const degradedHints: string[] = []
+  for (const [stage, r] of [
+    ['today', report.today],
+    ['week', report.week],
+    ['longterm', report.longterm],
+    ['facts', report.facts],
+  ] as const) {
+    if (r.kind === 'skipped' && r.reason !== 'cache_hit') {
+      degradedHints.push(`${stage}: ${SKIP_REASON_LABEL[r.reason]}`)
+    }
+  }
+
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-4">
       <div className="flex items-center gap-1.5">
@@ -94,6 +153,11 @@ function CompileReportRow({ report }: { report: CompileReport }) {
         <span>assembled: {report.assembled ? '✅' : '❌'}</span>
         <span>elapsed: {report.elapsed_ms} ms</span>
       </div>
+      {degradedHints.length > 0 && (
+        <div className="col-span-2 mt-0.5 sm:col-span-4 rounded-md border border-amber-300/40 bg-amber-50/60 px-2 py-1 text-[10.5px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          ⚠️ {degradedHints.join('  ·  ')}
+        </div>
+      )}
     </div>
   )
 }
@@ -251,7 +315,7 @@ export function MemoryDebugTab() {
         <DebugStep
           n={1}
           title="memory_compile_now (首次)"
-          hint="预期: today/week/facts 多为 'compiled'（如有 session_summaries），longterm 通常 'skipped'（依赖 week.md）"
+          hint="预期: today/week/facts 多为 'compiled'（如有 session_summaries），longterm 通常 'skipped · 上游缺失'（依赖 week.md）。如果全是 'skipped · 无新摘要'，说明还没有 session_summary 数据 — 先聊 6+ 轮再切 session 让 ticker flush。"
           result={steps.step1_first_compile}
           render={(payload) => {
             try {
@@ -270,22 +334,31 @@ export function MemoryDebugTab() {
           render={(payload) => {
             try {
               const r = JSON.parse(payload) as CompileReport
-              const allSkipped =
-                r.today === 'skipped' &&
-                r.week === 'skipped' &&
-                r.longterm === 'skipped' &&
-                r.facts === 'skipped'
+              // MEM-MOD-WIRE-FIX-3 — "fingerprint cache 健康" 现在
+              // 必须看 kind == 'skipped' && reason == 'cache_hit'，
+              // 否则 EmptyInput / UpstreamMissing 会被误判为缓存正常。
+              const cacheHealthy = (
+                ['today', 'week', 'longterm', 'facts'] as const
+              ).every((stage) => {
+                const v = r[stage]
+                return v.kind === 'skipped' && v.reason === 'cache_hit'
+              })
+              const allSkipped = (
+                ['today', 'week', 'longterm', 'facts'] as const
+              ).every((stage) => r[stage].kind === 'skipped')
               return (
                 <div className="flex flex-col gap-1">
                   <CompileReportRow report={r} />
                   <div
                     className={`text-[10.5px] ${
-                      allSkipped ? 'text-emerald-600' : 'text-amber-600'
+                      cacheHealthy ? 'text-emerald-600' : 'text-amber-600'
                     }`}
                   >
-                    {allSkipped
-                      ? '✅ Fingerprint cache 工作正常（全部 skipped）'
-                      : '⚠️ 期待全 skipped，但有 compiled 项 — 可能是 session_summaries 在 step 1 之后又变了'}
+                    {cacheHealthy
+                      ? '✅ Fingerprint cache 工作正常（全部 cache_hit）'
+                      : allSkipped
+                        ? '⚠️ 全部 skipped 但并非缓存命中 — 是空输入 / 上游缺失 / LLM 失败，先解决上一步报告里的具体 reason'
+                        : '⚠️ 期待全 skipped，但有 compiled 项 — 可能是 session_summaries 在 step 1 之后又变了'}
                   </div>
                 </div>
               )

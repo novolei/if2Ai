@@ -90,7 +90,7 @@ pub use scope::MemoryExecutionScope;
 // the submodule layout.
 pub use compiler::MemoryCompiler;
 #[allow(unused_imports)]
-pub use compiler::{CompilePaths, CompileResult};
+pub use compiler::{CompilePaths, CompileResult, SkipReason};
 
 // MemoryTicker — wired to AppState and triggered from runtime turn
 // hooks. `DailyStep` / `TickerState` are part of the public surface
