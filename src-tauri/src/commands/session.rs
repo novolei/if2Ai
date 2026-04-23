@@ -157,6 +157,70 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
         .map_err(|e| e.to_string())
 }
 
+/// MEM-MOD-WIRE-FIX-2 — fire the `MemoryTicker::on_session_end` hook
+/// for the given session. Called by the frontend whenever a session
+/// loses focus (user clicks "+" to start a new session, switches to a
+/// different session in the sidebar, or closes the tab/window).
+///
+/// Without this IPC the post-Pack feature loop is broken end-to-end:
+/// `on_session_end` fires the rolling-summary flush + compile_today +
+/// (P5) reflection extraction + (P7) `learned_traits` distillation.
+/// All of those depend on a session "ending" — which historically had
+/// **no caller** in the codebase, so memory.md stayed empty and the
+/// learned-traits panel always read 0.
+///
+/// Idempotent + best-effort: a missing session is a 200, not a 500
+/// (the user may have just deleted it). Errors loading the session are
+/// converted to a structured warn so the UI doesn't surface a popup
+/// for a hook that's intentionally fire-and-forget.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn close_session(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    use crate::modules::memory::scope::MemoryExecutionScope;
+    use crate::modules::runtime::conversation::TurnHook;
+
+    let session = match state.session_manager.restore_session(&id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                session_id = %id,
+                error = %e,
+                "[session_close] cannot restore session for end-hook; skipping"
+            );
+            return Ok(());
+        }
+    };
+
+    let scope = MemoryExecutionScope {
+        session_id: Some(session.id.clone()),
+        project_id: if session.project_id.is_empty() {
+            None
+        } else {
+            Some(session.project_id.clone())
+        },
+        // workdir is request-scoped (resolved per turn from
+        // ToolContext); for the session-end hook we have no
+        // active turn, so leave it None.
+        workdir: None,
+    };
+
+    tracing::info!(
+        session_id = %session.id,
+        project_id = scope.project_id.as_deref().unwrap_or("-"),
+        message_count = session.messages.len(),
+        "[session_close] firing memory_ticker.on_session_end"
+    );
+
+    state
+        .memory_ticker
+        .on_session_end(&scope, &session.id, &session.messages);
+
+    Ok(())
+}
+
 /// Rename a session in place.
 #[tauri::command]
 #[allow(dead_code)]

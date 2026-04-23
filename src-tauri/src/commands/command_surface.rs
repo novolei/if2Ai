@@ -61,6 +61,7 @@ macro_rules! project_and_session_commands {
     () => {
         crate::commands::list_sessions,
         crate::commands::delete_session,
+        crate::commands::session::close_session,
         crate::commands::rename_session,
         crate::commands::set_session_identity,
         crate::commands::set_session_pinned,
@@ -326,6 +327,7 @@ macro_rules! if2ai_command_surface {
             crate::commands::project::write_file_contents,
             crate::commands::session::list_sessions,
             crate::commands::session::delete_session,
+            crate::commands::session::close_session,
             crate::commands::session::rename_session,
             crate::commands::session::set_session_identity,
             crate::commands::session::set_session_pinned,

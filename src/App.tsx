@@ -20,6 +20,7 @@ import {
   createPermanentWorktree,
   createProject,
   createSession,
+  closeSession,
   deleteProject,
   deleteSession,
   ensureDefaultWorkdir,
@@ -311,12 +312,20 @@ function App() {
   const activeSessionId = useSessionSelector((s) => s.activeSessionId);
   const setActiveSessionId = useCallback(
     (next: string | null | ((prev: string | null) => string | null)) => {
+      const previous = sessionStore.getSnapshot().activeSessionId;
       const value =
         typeof next === "function"
-          ? (next as (prev: string | null) => string | null)(
-              sessionStore.getSnapshot().activeSessionId,
-            )
+          ? (next as (prev: string | null) => string | null)(previous)
           : next;
+      // MEM-MOD-WIRE-FIX-2 — fire `on_session_end` for the session
+      // we're about to leave so the rolling-summary / compile_today
+      // / reflection / learned_traits pipelines actually run.  Best-
+      // effort: a failed close never blocks the switch.
+      if (previous && previous !== value) {
+        void closeSession(previous).catch((err) => {
+          console.warn("[session_close] failed", previous, err);
+        });
+      }
       sessionStore.setActiveSessionId(value);
     },
     [],
