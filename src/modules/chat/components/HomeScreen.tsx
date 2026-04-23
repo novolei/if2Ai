@@ -58,7 +58,8 @@ export function HomeScreen({
     Array<{ value: string; label: string }>
   >([])
   useEffect(() => {
-    void (async () => {
+    let cancelled = false
+    const refresh = async () => {
       try {
         const groups = await invoke<
           Array<{
@@ -67,6 +68,7 @@ export function HomeScreen({
             models: Array<{ model_id: string; name: string }>
           }>
         >('model_list_available')
+        if (cancelled) return
         const items = groups
           .filter((g) => g.models.length > 0)
           .flatMap((g) =>
@@ -79,7 +81,14 @@ export function HomeScreen({
       } catch {
         // Fallback to empty
       }
-    })()
+    }
+    void refresh()
+    const onChanged = () => void refresh()
+    window.addEventListener('if2ai:models-changed', onChanged)
+    return () => {
+      cancelled = true
+      window.removeEventListener('if2ai:models-changed', onChanged)
+    }
   }, [])
   const [localInput, setLocalInput] = useState('')
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)

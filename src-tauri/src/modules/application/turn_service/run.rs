@@ -295,6 +295,7 @@ impl TurnService {
         }
         let RuntimeProviderResolution {
             provider_client,
+            provider_id: _provider_id,
             model,
             request_timeout,
         } = prepared.provider;

@@ -457,11 +457,47 @@ impl TurnService {
             coordinated_prompt.coordinated_inputs.clone(),
             learned_traits,
         );
-        let prompt = build_prompt_plan(
+        let mut prompt = build_prompt_plan(
             planner_request,
             coordinated_prompt.coordinated_inputs.external_contributions,
         )
         .await?;
+
+        // Inject a tiny "runtime model" hint so the LLM answers
+        // "你是什么模型 / what model are you" with the actual provider +
+        // model identifier instead of a generic boilerplate. Both the
+        // structured block list (consumed by run.rs) and the flattened
+        // text (consumed by stream.rs) get the same line — we
+        // re-render the text from blocks to keep them in lockstep.
+        {
+            use super::prompt_planner::{PromptBlock, PromptBlockKind, PromptBlockSource};
+            let provider_id = provider.provider_id.clone();
+            let model_id = provider.model.clone();
+            let provider_display = crate::modules::provider::known_providers::find(&provider_id)
+                .map(|p| p.display_name.to_string())
+                .unwrap_or_else(|| provider_id.clone());
+            let qualified = format!("{provider_display} / {model_id}");
+            let line = format!(
+                "[runtime_model] You are currently running on `{qualified}` \
+                 (provider_id=`{provider_id}`, model_id=`{model_id}`). \
+                 If the user asks which model you are (e.g. \"你是什么模型\", \
+                 \"what model are you\"), answer truthfully with this exact \
+                 provider + model name."
+            );
+            prompt.plan.blocks.push(PromptBlock {
+                id: "runtime_model".into(),
+                kind: PromptBlockKind::System,
+                title: "Runtime Model".into(),
+                content: line,
+                source: PromptBlockSource {
+                    subsystem: "runtime".into(),
+                    reference: Some(qualified),
+                },
+                priority: 90,
+                is_sensitive: false,
+            });
+            prompt.text = prompt.plan.join_into_text();
+        }
 
         Ok(PreparedChatInputs {
             provider,

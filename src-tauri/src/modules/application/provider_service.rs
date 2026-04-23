@@ -38,6 +38,8 @@ use crate::modules::runtime::config::{ConfigLoader, ProviderTransportConfig};
 pub struct RuntimeProviderResolution {
     /// Concrete provider client, ready to issue requests.
     pub provider_client: ProviderClient,
+    /// Resolved provider id (e.g. `"anthropic"`, `"moonshot"`).
+    pub provider_id: String,
     /// Resolved model id (e.g. `"claude-3-5-sonnet"`, `"gpt-4o"`).
     pub model: String,
     /// Per-request overall timeout derived from the loaded
@@ -119,6 +121,7 @@ pub async fn resolve_chat_runtime_provider(
 
     Ok(RuntimeProviderResolution {
         provider_client,
+        provider_id: resolved.provider_id,
         model: resolved.model_id,
         request_timeout,
     })

@@ -129,6 +129,10 @@ export function ProvidersSettingsPage() {
     const counts = new Map<string, number>();
     modelMap.forEach((models, providerId) => counts.set(providerId, models.length));
     setModelCounts(counts);
+    // Notify chat surfaces (HomeScreen / chat-ui) so the model
+    // dropdown reflects the latest provider+model set without a
+    // hard reload. Listened via `window.addEventListener('if2ai:models-changed', …)`.
+    window.dispatchEvent(new CustomEvent("if2ai:models-changed"));
   }, [getConfiguredProviders, getAllConfiguredModels]);
 
   useEffect(() => {
@@ -384,8 +388,10 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
         ) : (
           <CompactInput
             value={apiKey}
-            onChange={setApiKey}
+            onChange={(e) => setApiKey(e.target.value)}
             type="password"
+            autoComplete="off"
+            spellCheck={false}
             placeholder={provider.auth_type === "none" ? "无需 API Key" : "sk-…"}
             disabled={provider.auth_type === "none"}
           />
@@ -394,7 +400,9 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
         <label className="text-black/55">Base URL</label>
         <CompactInput
           value={baseUrl}
-          onChange={setBaseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
           placeholder={provider.default_base_url}
         />
 

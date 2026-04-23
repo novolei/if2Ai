@@ -459,6 +459,7 @@ impl TurnService {
         let prompt_diagnostics_enabled_for_task = prepared_stream.prompt_diagnostics_enabled;
         let RuntimeProviderResolution {
             provider_client,
+            provider_id: _provider_id,
             model,
             request_timeout: _request_timeout,
         } = prepared_stream.provider;
@@ -482,13 +483,15 @@ impl TurnService {
                 .filter(|v| !v.is_empty())
                 .map(|cheap| cheap == model_for_stream)
                 .unwrap_or(false);
-            Some(crate::modules::runtime::stream_emitter::RoutingInfoPayload {
-                complexity_score: decision.complexity_score,
-                complexity_level: format!("{:?}", decision.complexity_level).to_lowercase(),
-                execution_mode: format!("{:?}", decision.execution_mode).to_lowercase(),
-                used_cheap_model: cheap_match,
-                effective_model: model_for_stream.clone(),
-            })
+            Some(
+                crate::modules::runtime::stream_emitter::RoutingInfoPayload {
+                    complexity_score: decision.complexity_score,
+                    complexity_level: format!("{:?}", decision.complexity_level).to_lowercase(),
+                    execution_mode: format!("{:?}", decision.execution_mode).to_lowercase(),
+                    used_cheap_model: cheap_match,
+                    effective_model: model_for_stream.clone(),
+                },
+            )
         };
         let provider_client_for_stream = provider_client.clone();
         let failover_provider_client =

@@ -352,6 +352,9 @@ export function ModelSettingsPage() {
     try {
       await invoke('model_set_role_config', { role, modelRef })
       toast.success(`已设置 ${ROLE_META[role]?.label ?? role}`)
+      // Notify chat surfaces so the model dropdown updates immediately
+      // when the user changes the active "chat" role here.
+      window.dispatchEvent(new CustomEvent('if2ai:models-changed'))
     } catch (err) {
       toast.error('设置失败', { description: String(err) })
       void loadRoleConfigs()

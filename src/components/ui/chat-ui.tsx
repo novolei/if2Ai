@@ -61,6 +61,7 @@ import { RoutingChip } from "@/components/chat/RoutingChip"
 import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
 import { WriteToolDiffCard } from "@/components/chat/WriteToolDiffCard"
 import { BranchPicker } from "@/components/chat/BranchPicker"
+import { ModelPicker } from "@/components/chat/ModelPicker"
 import { SlashResultCard } from "@/components/chat/SlashResultCard"
 import { ContextBar } from "@/components/chat/ContextBar"
 import { VirtualMessageList } from "@/components/chat/VirtualMessageList"
@@ -276,14 +277,21 @@ export function ChatUI({
   const [availableModelItems, setAvailableModelItems] = React.useState<
     Array<{ value: string; label: string }>
   >([])
+  // Refetch the model list whenever the settings UI emits a change.
+  // Provider config saves / model selection saves dispatch a
+  // `if2ai:models-changed` window event (see ProvidersSettingsPage +
+  // ModelSettingsPage). Listening lets the chat dropdown reflect new
+  // models / providers without a hard reload.
   React.useEffect(() => {
-    void (async () => {
+    let cancelled = false
+    const refresh = async () => {
       try {
         const groups = await invoke<Array<{
           provider_id: string
           provider_name: string
           models: Array<{ model_id: string; name: string }>
         }>>('model_list_available')
+        if (cancelled) return
         const items = groups
           .filter((g) => g.models.length > 0)
           .flatMap((g) =>
@@ -297,13 +305,20 @@ export function ChatUI({
         // If the parent hasn't provided a real model yet, auto-select the first
         // available one so the picker always shows a real model name.
         if (!selectedModelProp && items.length > 0 && onModelChangeProp) {
-          const first = items[0]
-          onModelChangeProp(first.value)
+          onModelChangeProp(items[0].value)
         }
       } catch {
-        // Fallback: leave list empty, will use hardcoded below
+        // Fallback: leave list empty, hardcoded fallback below
       }
-    })()
+    }
+
+    void refresh()
+    const onChanged = () => void refresh()
+    window.addEventListener('if2ai:models-changed', onChanged)
+    return () => {
+      cancelled = true
+      window.removeEventListener('if2ai:models-changed', onChanged)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
@@ -2416,42 +2431,26 @@ const ComposerDock = React.memo(function ComposerDock({
 
             {/* Right: model | divider | mic | send */}
             <div className="flex items-center gap-1.5">
-              {/* Model selector */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
-                    disabled={isLoading}
-                  >
-                    {availableModelItems.length > 0
-                      ? (availableModelItems.find((i) => i.value === selectedModel)?.label ??
-                         availableModelItems[0]?.label ??
-                         modelLabelFor(selectedModel))
-                      : (selectedModel ? modelLabelFor(selectedModel) : '选择模型')}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent sideOffset={6} align="end" className="w-[220px]">
-                  {(availableModelItems.length > 0 ? availableModelItems : modelItems).map((item) => (
-                    <MenuItemButton
-                      key={item.value}
-                      onClick={() => {
-                        setSelectedModel(item.value)
-                        if (availableModelItems.length > 0) {
-                          const parts = item.value.split('/')
-                          if (parts.length === 2) {
-                            void invoke('model_set_active', { providerId: parts[0], modelId: parts[1] })
-                          }
-                        }
-                      }}
-                      active={selectedModel === item.value}
-                    >
-                      {item.label}
-                    </MenuItemButton>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {/* Model selector — Popover-based, BranchPicker-style */}
+              <ModelPicker
+                availableItems={
+                  availableModelItems.length > 0 ? availableModelItems : modelItems
+                }
+                selected={selectedModel}
+                disabled={isLoading}
+                onChange={(value) => {
+                  setSelectedModel(value)
+                  if (availableModelItems.length > 0) {
+                    const parts = value.split('/')
+                    if (parts.length === 2) {
+                      void invoke('model_set_active', {
+                        providerId: parts[0],
+                        modelId: parts[1],
+                      })
+                    }
+                  }
+                }}
+              />
 
               <div className="h-3.5 w-px bg-black/10" />
 

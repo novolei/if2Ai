@@ -226,8 +226,29 @@ function App() {
         // Fallback: leave empty so chat-ui shows first available model from list
       }
     })();
+    // Refresh the active model whenever settings emit a change (provider
+    // saved / role reassigned) so the chat dropdown follows ModelSettings.
+    const onModelsChanged = () => {
+      void (async () => {
+        try {
+          const activeModel = await invoke<{
+            provider_id: string;
+            model_id: string;
+          } | null>("model_get_active");
+          if (activeModel) {
+            setSelectedModel(
+              `${activeModel.provider_id}/${activeModel.model_id}`,
+            );
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    };
+    window.addEventListener("if2ai:models-changed", onModelsChanged);
     return () => {
       signal.cancelled = true;
+      window.removeEventListener("if2ai:models-changed", onModelsChanged);
     };
   }, []);
 
