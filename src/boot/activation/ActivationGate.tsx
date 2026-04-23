@@ -23,6 +23,8 @@ import { useEffect, useRef } from 'react'
 
 import { Wand2 } from 'lucide-react'
 
+import appIconUrl from '@/assets/app-icon.png'
+
 import { useActivationGate } from './useActivationGate'
 
 import { BetaInviteBadge } from './components/BetaInviteBadge'
@@ -76,12 +78,17 @@ export function ActivationGate({ onCloseRequested }: ActivationGateProps) {
       >
         <GateCardStripes />
 
-        {/* Top-left logo placeholder (square). UClaw bundles a real
-            AppLogo asset; we use a soft outlined square so missing
-            asset doesn't break the layout. */}
-        <div
-          className="absolute left-6 top-6 h-[80px] w-[80px] rounded-2xl bg-white/60 ring-1 ring-zinc-300/40"
-          aria-hidden
+        {/* Top-left app icon (matches macOS dock icon).  Falls back to
+            a soft tile if the asset ever fails to load so the layout
+            never collapses. */}
+        <img
+          src={appIconUrl}
+          alt="if2AI"
+          draggable={false}
+          className="pointer-events-none absolute left-6 top-6 h-[80px] w-[80px] select-none rounded-2xl bg-white/60 object-cover shadow-md ring-1 ring-zinc-300/40"
+          onError={(e) => {
+            ;(e.currentTarget as HTMLImageElement).style.visibility = 'hidden'
+          }}
         />
 
         {/* Top-right beta-invite badge */}

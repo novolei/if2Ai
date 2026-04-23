@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { Check } from 'lucide-react'
+import { Check, X } from 'lucide-react'
 
 export type OtpPhase = 'idle' | 'filling' | 'verifying' | 'success' | 'error'
 
@@ -32,6 +32,7 @@ export function OtpCells({ code, digitsCount = 8, phase }: OtpCellsProps) {
   const [shakeOffset, setShakeOffset] = useState(0)
   const [errorFlash, setErrorFlash] = useState(false)
   const [drawSuccess, setDrawSuccess] = useState(false)
+  const [drawError, setDrawError] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -42,11 +43,13 @@ export function OtpCells({ code, digitsCount = 8, phase }: OtpCellsProps) {
   useEffect(() => {
     if (phase === 'success') {
       setDrawSuccess(false)
+      setDrawError(false)
       const t = window.setTimeout(() => setDrawSuccess(true), 30)
       return () => window.clearTimeout(t)
     }
     if (phase === 'error') {
       setErrorFlash(true)
+      setDrawError(false)
       let cancelled = false
       ;(async () => {
         for (const v of SHAKE_SEQUENCE) {
@@ -54,8 +57,13 @@ export function OtpCells({ code, digitsCount = 8, phase }: OtpCellsProps) {
           setShakeOffset(v)
           await new Promise((r) => setTimeout(r, 55))
         }
-        await new Promise((r) => setTimeout(r, 120))
-        if (!cancelled) setErrorFlash(false)
+        if (cancelled) return
+        // After the shake settles, pop the ✗ glyph in (matching the
+        // success animation timing) but keep the red stroke so the
+        // box stays semantically "errored" until the parent advances
+        // the phase.
+        setDrawError(true)
+        await new Promise((r) => setTimeout(r, 320))
       })()
       return () => {
         cancelled = true
@@ -64,6 +72,7 @@ export function OtpCells({ code, digitsCount = 8, phase }: OtpCellsProps) {
     setErrorFlash(false)
     setShakeOffset(0)
     setDrawSuccess(false)
+    setDrawError(false)
     return undefined
   }, [phase])
 
@@ -84,29 +93,65 @@ export function OtpCells({ code, digitsCount = 8, phase }: OtpCellsProps) {
       style={{ transform: `translateX(${shakeOffset}px)`, transition: 'transform 55ms ease' }}
     >
       {merged ? (
-        <div
-          className="rounded-lg"
-          style={{
-            width: 36,
-            height: 36,
-            background: 'rgba(255,255,255,0.18)',
-            outline: `${strokeWidth(false)}px solid ${strokeColor(false)}`,
-          }}
-        >
-          {phase === 'success' && (
+        (() => {
+          // Solid pill on success / error so the white glyph stays
+          // legible against the orange/red striped backdrop. The
+          // verifying state keeps the translucent look + amber stroke.
+          const filled = phase === 'success' || phase === 'error'
+          const fill =
+            phase === 'success'
+              ? 'rgb(34,197,94)'
+              : phase === 'error'
+                ? 'rgb(239,68,68)'
+                : 'rgba(255,255,255,0.18)'
+          return (
             <div
-              className="flex h-full w-full items-center justify-center"
+              className="rounded-lg"
               style={{
-                color: 'rgb(34,197,94)',
-                opacity: drawSuccess ? 1 : 0,
-                transform: `scale(${drawSuccess ? 1 : 0.86})`,
-                transition: 'opacity 220ms ease, transform 220ms ease',
+                width: 36,
+                height: 36,
+                background: fill,
+                outline: filled
+                  ? 'none'
+                  : `${strokeWidth(false)}px solid ${strokeColor(false)}`,
+                boxShadow: filled
+                  ? phase === 'success'
+                    ? '0 4px 14px rgba(34,197,94,0.45)'
+                    : '0 4px 14px rgba(239,68,68,0.45)'
+                  : 'none',
+                transition: 'background 200ms ease, box-shadow 200ms ease',
               }}
             >
-              <Check strokeWidth={3} className="h-[22px] w-[22px]" />
+              {phase === 'success' && (
+                <div
+                  className="flex h-full w-full items-center justify-center"
+                  style={{
+                    color: '#ffffff',
+                    opacity: drawSuccess ? 1 : 0,
+                    transform: `scale(${drawSuccess ? 1 : 0.86})`,
+                    transition: 'opacity 220ms ease, transform 220ms ease',
+                  }}
+                >
+                  <Check strokeWidth={3.2} className="h-[22px] w-[22px]" />
+                </div>
+              )}
+              {phase === 'error' && (
+                <div
+                  className="flex h-full w-full items-center justify-center"
+                  style={{
+                    color: '#ffffff',
+                    opacity: drawError ? 1 : 0,
+                    transform: `scale(${drawError ? 1 : 0.86})`,
+                    transition: 'opacity 220ms ease, transform 220ms ease',
+                  }}
+                  aria-label="激活失败"
+                >
+                  <X strokeWidth={3.2} className="h-[22px] w-[22px]" />
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          )
+        })()
       ) : (
         <div className="flex gap-[6px]">
           {Array.from({ length: digitsCount }).map((_, i) => {

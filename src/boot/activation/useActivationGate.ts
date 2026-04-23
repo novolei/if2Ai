@@ -184,8 +184,14 @@ export function useActivationGate(): [ActivationGateState, ActivationGateActions
     setStatusText('激活成功，正在进入主界面…')
     setCanRetry(false)
     setIsWorking(false)
-    await refreshActivationSnapshot()
+
+    // IMPORTANT: hold the modal *before* publishing the new snapshot.
+    // `refreshActivationSnapshot()` flips `allowsMainShell` to true, and
+    // `ActivationGateOverlay` immediately unmounts <ActivationGate/>,
+    // killing the success ✓ animation mid-frame.  Play the ceremony
+    // first, *then* hand off to the main shell.
     await new Promise((r) => setTimeout(r, SUCCESS_HOLD_MS))
+    await refreshActivationSnapshot()
     setCloseRequested(true)
   }, [])
 
