@@ -231,10 +231,7 @@ fn content_preview(content: &str, max_chars: usize) -> String {
 /// add" path is taken byte-identical to the pre-P4 behaviour.
 #[allow(dead_code)]
 #[must_use]
-pub fn entry(
-    memory: SharedMemoryProvider,
-    utility_llm: Option<Arc<dyn UtilityLlm>>,
-) -> ToolEntry {
+pub fn entry(memory: SharedMemoryProvider, utility_llm: Option<Arc<dyn UtilityLlm>>) -> ToolEntry {
     let handler: ToolHandler = Arc::new(
         move |args: serde_json::Value, context: SharedToolContext| {
             let memory = memory.clone();
@@ -392,8 +389,9 @@ pub fn entry(
                 // failure (LLM unreachable, bad JSON, unknown key)
                 // falls back to plain ADD so a pathological classifier
                 // can never *drop* a real fact.
-                let decision_enabled =
-                    crate::modules::runtime::config::current().memory().decision_tree_enabled();
+                let decision_enabled = crate::modules::runtime::config::current()
+                    .memory()
+                    .decision_tree_enabled();
                 let decision: DecisionPlan = if decision_enabled {
                     if let Some(ref llm) = utility_llm {
                         let candidates = memory
@@ -425,9 +423,12 @@ pub fn entry(
                         return Ok(payload.to_string());
                     }
                     DecisionPlan::Update { existing_key } => {
-                        memory.update_content(&existing_key, &content).await.map_err(
-                            |e| ToolError::Handler(format!("decision_tree update failed: {e}")),
-                        )?;
+                        memory
+                            .update_content(&existing_key, &content)
+                            .await
+                            .map_err(|e| {
+                                ToolError::Handler(format!("decision_tree update failed: {e}"))
+                            })?;
                         MemoryAuditEmitter::memory_persisted(
                             &audit_ctx,
                             &existing_key,
@@ -453,13 +454,11 @@ pub fn entry(
                             .store_scoped(&key, &content, category.clone(), &scope)
                             .await
                             .map_err(|e| {
-                                ToolError::Handler(format!("failed to store memory after supersede: {e}"))
+                                ToolError::Handler(format!(
+                                    "failed to store memory after supersede: {e}"
+                                ))
                             })?;
-                        MemoryAuditEmitter::memory_persisted(
-                            &audit_ctx,
-                            &key,
-                            category.as_str(),
-                        );
+                        MemoryAuditEmitter::memory_persisted(&audit_ctx, &key, category.as_str());
                         let payload = json!({
                             "status": "superseded",
                             "key": key,

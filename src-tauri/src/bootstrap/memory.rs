@@ -120,30 +120,29 @@ pub(super) fn build_memory_bootstrap(
     // SQLite db file the memory provider already manages.  Independent
     // connection on purpose: the trait extractor runs on session-end
     // tasks that should not contend with the recall hot path.
-    let learned_traits = match modules::memory::learned_traits::LearnedTraitsStore::open(
-        &summary_db_path,
-    ) {
-        Ok(store) => {
-            tracing::info!(
-                "[init] LearnedTraitsStore initialised at {:?}",
-                summary_db_path
-            );
-            Some(store)
-        }
-        Err(e) => {
-            tracing::error!(
-                "[init] LearnedTraitsStore failed to open {summary_db_path:?}: {e}; \
+    let learned_traits =
+        match modules::memory::learned_traits::LearnedTraitsStore::open(&summary_db_path) {
+            Ok(store) => {
+                tracing::info!(
+                    "[init] LearnedTraitsStore initialised at {:?}",
+                    summary_db_path
+                );
+                Some(store)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "[init] LearnedTraitsStore failed to open {summary_db_path:?}: {e}; \
                  cross-session trait accumulation disabled this run"
-            );
-            None
-        }
-    };
+                );
+                None
+            }
+        };
 
     // MEM-MOD-P5 + P7 — finish the ticker by attaching every runtime
     // we now have.  `with_reflection_runtime` always wires; the P7
     // runtime is only attached when the store opened successfully.
-    let mut ticker_finished = memory_ticker_base
-        .with_reflection_runtime(utility_llm.clone(), memory_provider.clone());
+    let mut ticker_finished =
+        memory_ticker_base.with_reflection_runtime(utility_llm.clone(), memory_provider.clone());
     if let Some(ref store) = learned_traits {
         ticker_finished = ticker_finished.with_learned_traits_runtime(
             utility_llm.clone(),

@@ -56,6 +56,7 @@ use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
+use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::session::{ContentBlock, ConversationMessage};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
 
@@ -106,20 +107,50 @@ impl TurnService {
             user_message,
             permission_mode,
         } = request;
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let run_event_logger = self
+            .deps
+            .app_handle
+            .as_ref()
+            .map(|handle| {
+                RunEventLogger::for_app_handle(handle, session_id.clone(), run_id.clone())
+            })
+            .unwrap_or_else(|| RunEventLogger::disabled(session_id.clone(), run_id.clone()));
 
         tracing::info!(
-            "[run_agent_turn] Starting - session_id: {}, message: {}",
+            "[run_agent_turn] Starting - session_id: {}, run_id: {}, message: {}",
             session_id,
+            run_id,
             user_message
         );
+        let _ = run_event_logger
+            .append(
+                "run_started",
+                serde_json::json!({
+                    "caller": "run_agent_turn",
+                    "permission_mode": permission_mode.clone(),
+                    "message_preview": user_message.chars().take(160).collect::<String>(),
+                }),
+            )
+            .await;
 
         // Restore the session
-        let app_session = self
-            .deps
-            .session_manager
-            .restore_session(&session_id)
-            .await
-            .map_err(|e| e.to_string())?;
+        let app_session = match self.deps.session_manager.restore_session(&session_id).await {
+            Ok(session) => session,
+            Err(error) => {
+                let message = error.to_string();
+                let _ = run_event_logger
+                    .append(
+                        "run_error",
+                        serde_json::json!({
+                            "stage": "restore_session",
+                            "error": message,
+                        }),
+                    )
+                    .await;
+                return Err(message);
+            }
+        };
 
         tracing::info!(
             "[run_agent_turn] Session restored, {} messages",
@@ -161,7 +192,7 @@ impl TurnService {
         } else {
             Some(execution_context.project_id.clone())
         };
-        let prepared = self
+        let prepared = match self
             .prepare_chat_inputs(PrepareChatInputsRequest {
                 workdir: execution_context.workdir.clone(),
                 current_date: crate::modules::runtime::logical_day::get_today().display,
@@ -174,16 +205,31 @@ impl TurnService {
                 caller: "run_agent_turn",
             })
             .await
-            .map_err(|err| match err {
-                TurnServiceError::Provider(msg) => {
-                    tracing::error!("[run_agent_turn] Failed to create API client: {}", msg);
-                    format!("Failed to connect to AI service: {msg}")
-                }
-                TurnServiceError::Prompt(p) => {
-                    tracing::error!("[run_agent_turn] Prompt planning failed: {}", p);
-                    p.to_string()
-                }
-            })?;
+        {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                let message = match err {
+                    TurnServiceError::Provider(msg) => {
+                        tracing::error!("[run_agent_turn] Failed to create API client: {}", msg);
+                        format!("Failed to connect to AI service: {msg}")
+                    }
+                    TurnServiceError::Prompt(p) => {
+                        tracing::error!("[run_agent_turn] Prompt planning failed: {}", p);
+                        p.to_string()
+                    }
+                };
+                let _ = run_event_logger
+                    .append(
+                        "run_error",
+                        serde_json::json!({
+                            "stage": "prepare_chat_inputs",
+                            "error": message,
+                        }),
+                    )
+                    .await;
+                return Err(message);
+            }
+        };
         // MIG-002-a — request intelligence now acts as a real route gate.
         // Short-circuit for SpecializedSurface mode.
         use crate::modules::runtime::contracts::execution_mode::ExecutionMode;
@@ -194,6 +240,19 @@ impl TurnService {
                     route_hint = ?prepared.execution_mode_decision.route_hint,
                     "[run_agent_turn] Short-circuiting: SpecializedSurface mode"
                 );
+                let routed_message = format!(
+                    "Request routed to specialized surface: {:?}",
+                    prepared.execution_mode_decision.route_hint
+                );
+                let _ = run_event_logger
+                    .append(
+                        "run_error",
+                        serde_json::json!({
+                            "stage": "execution_mode_gate",
+                            "error": routed_message.clone(),
+                        }),
+                    )
+                    .await;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
@@ -202,10 +261,7 @@ impl TurnService {
                     0,
                     turn_started_at_run.elapsed().as_millis() as u64,
                 );
-                return Err(format!(
-                    "Request routed to specialized surface: {:?}",
-                    prepared.execution_mode_decision.route_hint
-                ));
+                return Err(routed_message);
             }
             ExecutionMode::DirectExecute
             | ExecutionMode::AutoPlanExecute
@@ -589,6 +645,72 @@ impl TurnService {
                     );
                 }
 
+                for assistant_message in &summary.assistant_messages {
+                    if let Some(thinking) = assistant_message.thinking.as_ref() {
+                        let _ = run_event_logger
+                            .append(
+                                "thinking_delta",
+                                serde_json::json!({
+                                    "thinking": thinking,
+                                    "request_id": assistant_message.request_id,
+                                }),
+                            )
+                            .await;
+                    }
+                    for block in &assistant_message.blocks {
+                        if let ContentBlock::Text { text } = block {
+                            let _ = run_event_logger
+                                .append(
+                                    "text_delta",
+                                    serde_json::json!({
+                                        "text": text,
+                                        "request_id": assistant_message.request_id,
+                                    }),
+                                )
+                                .await;
+                        }
+                    }
+                }
+                for tool_result in &summary.tool_results {
+                    for block in &tool_result.blocks {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            tool_name,
+                            output,
+                            is_error,
+                        } = block
+                        {
+                            let _ = run_event_logger
+                                .append(
+                                    if *is_error {
+                                        "tool_call_failed"
+                                    } else {
+                                        "tool_call_completed"
+                                    },
+                                    serde_json::json!({
+                                        "tool_call_id": tool_use_id,
+                                        "tool_name": tool_name,
+                                        "output": output,
+                                        "is_error": is_error,
+                                    }),
+                                )
+                                .await;
+                        }
+                    }
+                }
+                let _ = run_event_logger
+                    .append(
+                        "run_completed",
+                        serde_json::json!({
+                            "message": final_text.clone(),
+                            "thinking": thinking_content.clone(),
+                            "turn_iterations": summary.iterations,
+                            "assistant_message_count": summary.assistant_messages.len(),
+                            "tool_result_count": summary.tool_results.len(),
+                        }),
+                    )
+                    .await;
+
                 tracing::info!(
                     "[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}",
                     final_text.len(),
@@ -611,6 +733,15 @@ impl TurnService {
             }
             Err(e) => {
                 let error_message = friendly_runtime_error_message(&e);
+                let _ = run_event_logger
+                    .append(
+                        "run_error",
+                        serde_json::json!({
+                            "error": error_message,
+                            "runtime_error": e.to_string(),
+                        }),
+                    )
+                    .await;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,

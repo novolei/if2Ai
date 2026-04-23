@@ -183,7 +183,7 @@ fn check_skill_toolset_availability(
 
 /// Static list of builtin slash command specs.
 fn builtin_specs() -> Vec<SlashCommandSpecDto> {
-    vec![
+    let mut specs = vec![
         SlashCommandSpecDto {
             name: "/help".into(),
             description: "Show available slash commands".into(),
@@ -204,7 +204,43 @@ fn builtin_specs() -> Vec<SlashCommandSpecDto> {
             description: "List available agents".into(),
             category: "utility".into(),
         },
+    ];
+    specs.extend(git_slash_specs());
+    specs
+}
+
+/// Git-related slash commands; kept beside the builtin list so the
+/// frontend's completion menu and the dispatcher in
+/// [`crate::modules::git::slash`] can never drift out of sync.
+fn git_slash_specs() -> Vec<SlashCommandSpecDto> {
+    [
+        ("/branch", "List, create, or switch git branches"),
+        ("/worktree", "List, add, remove, or prune git worktrees"),
+        ("/diff", "Show staged and unstaged diffs"),
+        (
+            "/commit",
+            "Stage all changes and create a commit (caller supplies the message)",
+        ),
+        (
+            "/commit-push-pr",
+            "Commit, push the branch, and open a pull request via gh",
+        ),
+        (
+            "/pr",
+            "Open a pull request via gh; falls back to a draft when gh is missing",
+        ),
+        (
+            "/issue",
+            "Open a GitHub issue via gh; falls back to a draft when gh is missing",
+        ),
     ]
+    .into_iter()
+    .map(|(name, description)| SlashCommandSpecDto {
+        name: name.into(),
+        description: description.into(),
+        category: "git".into(),
+    })
+    .collect()
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -266,15 +302,63 @@ pub fn suggest_slash_commands(input: String, limit: Option<usize>) -> Vec<String
     results
 }
 
+/// Resolve the active project's workdir for a given session.
+///
+/// Resolution order:
+/// 1. Restore the session via `session_manager`; on failure fall back to
+///    the host-process CWD (legacy behaviour).
+/// 2. If `session.project_id` is non-empty, look up the project via
+///    `project_manager` and use its `workdir`.
+/// 3. Otherwise fall back to the host-process CWD.
+///
+/// This is the canonical way for the slash IPC surface to find the
+/// "current project root", so that `/branch`, `/diff`, `/skills`, ... in a
+/// session bound to project A don't accidentally inspect the bundle
+/// directory of the if2ai host app.
+async fn resolve_session_workdir(state: &AppState, session_id: &str) -> std::path::PathBuf {
+    resolve_session_workdir_inner(&state.session_manager, &state.project_manager, session_id).await
+}
+
+/// Pure variant of [`resolve_session_workdir`] that takes the two
+/// managers it actually uses, so unit tests can stand it up against
+/// real `SessionManager` / `ProjectManager` instances backed by tmp
+/// dirs without having to construct the full `AppState`.
+async fn resolve_session_workdir_inner(
+    session_manager: &std::sync::Arc<crate::modules::session::SessionManager>,
+    project_manager: &std::sync::Arc<crate::modules::projects::ProjectManager>,
+    session_id: &str,
+) -> std::path::PathBuf {
+    let fallback = || std::env::current_dir().unwrap_or_default();
+    if session_id.is_empty() {
+        return fallback();
+    }
+    let session = match session_manager.restore_session(session_id).await {
+        Ok(session) => session,
+        Err(_) => return fallback(),
+    };
+    if session.project_id.is_empty() {
+        return fallback();
+    }
+    match project_manager.get_project(&session.project_id).await {
+        Ok(project) => project.workdir,
+        Err(_) => fallback(),
+    }
+}
+
 /// Execute a slash command and return the result message.
 #[tauri::command]
 #[allow(dead_code)]
-pub fn execute_slash_command(
+pub async fn execute_slash_command(
     state: State<'_, AppState>,
     input: String,
-    _session_id: String,
+    session_id: String,
 ) -> Result<String, String> {
     let name = input.split_whitespace().next().unwrap_or("").to_string();
+    // Resolve once and reuse for every dispatcher below.  Any branch that
+    // previously called `std::env::current_dir()` would otherwise pick up
+    // the Tauri host-process CWD (the if2ai bundle dir), not the active
+    // project's workdir — which is exactly the bug we are fixing here.
+    let workdir = resolve_session_workdir(&state, &session_id).await;
 
     match name.as_str() {
         "/help" => {
@@ -289,12 +373,9 @@ pub fn execute_slash_command(
             // Frontend should clear the session UI; backend returns confirmation.
             Ok("Conversation cleared.".to_string())
         }
-        "/skills" => {
-            let workdir = std::env::current_dir().unwrap_or_default();
-            handle_skills_command(&workdir, &input)
-        }
+        "/skills" => handle_skills_command(&workdir, &input),
         "/agents" => {
-            let agents = list_agents_impl(&std::env::current_dir().unwrap_or_default());
+            let agents = list_agents_impl(&workdir);
             if agents.is_empty() {
                 Ok("No agents found.".to_string())
             } else {
@@ -306,8 +387,16 @@ pub fn execute_slash_command(
             }
         }
         _ => {
+            // First: try git slash commands (`/branch`, `/worktree`, ...)
+            // against the resolved project workdir.  The typed git IPC under
+            // `crate::commands::git` accepts an explicit `cwd` from the
+            // frontend; this fallback path now mirrors that behaviour by
+            // using `resolve_session_workdir` instead of the host CWD.
+            if let Some(rendered) = try_dispatch_git_slash(&workdir, &input) {
+                return rendered;
+            }
+
             // Try to resolve as a skill slash command: /skill-name [instruction]
-            let workdir = std::env::current_dir().unwrap_or_default();
             let skill_key = name.trim_start_matches('/').to_lowercase();
 
             // Find skill info for toolset validation
@@ -341,6 +430,67 @@ pub fn execute_slash_command(
             }
         }
     }
+}
+
+/// Attempt to handle `input` as a git slash command (`/branch`,
+/// `/worktree`, `/diff`, `/commit`, `/commit-push-pr`, `/pr`, `/issue`).
+///
+/// Returns:
+/// - `Some(Ok(text))` — git command handled, text is the user-facing
+///   response.
+/// - `Some(Err(message))` — git command attempted but failed; message
+///   is the structured `GitError::Display` rendering.
+/// - `None` — `input` is not a git slash command; caller should fall
+///   through to its other dispatchers.
+///
+/// `commit` / `commit-push-pr` / `pr` / `issue` need additional
+/// fields (commit message, PR title, branch hint) that the legacy
+/// frontend slash IPC does not transport.  When called via the legacy
+/// surface those commands return a usage hint pointing to the typed
+/// IPC under `crate::commands::git` (added by the `ipc` TODO of the
+/// migration plan).
+///
+/// **CWD**: callers must pass the active project's workdir as `cwd`.
+/// In [`execute_slash_command`] this is resolved from the incoming
+/// `session_id` via [`resolve_session_workdir`], so the dispatcher
+/// runs against the project the user actually has open — not the
+/// host-process CWD (which on a packaged Tauri build is the if2ai
+/// bundle directory and would otherwise leak into every git command).
+fn try_dispatch_git_slash(cwd: &std::path::Path, input: &str) -> Option<Result<String, String>> {
+    use crate::modules::git::slash::{dispatch, known_command_names, SlashRequest};
+
+    let mut tokens = input.split_whitespace();
+    let raw_name = tokens.next()?;
+    let trimmed = raw_name.trim_start_matches('/').to_ascii_lowercase();
+    if !known_command_names().contains(&trimmed.as_str()) {
+        return None;
+    }
+
+    let args: Vec<&str> = tokens.collect();
+    let needs_message = matches!(
+        trimmed.as_str(),
+        "commit" | "commit-push-pr" | "pr" | "issue"
+    );
+    if needs_message {
+        return Some(Ok(format!(
+            "/{trimmed} requires a message (and title for PR/Issue) — call the typed git IPC under `commands::git` from the frontend instead."
+        )));
+    }
+
+    let request = SlashRequest {
+        name: trimmed.as_str(),
+        args,
+        message: None,
+        title: None,
+        branch_hint: None,
+        cwd,
+    };
+    let result = dispatch(&request);
+    Some(match result {
+        Ok(Some(text)) => Ok(text),
+        Ok(None) => Err(format!("Unknown git slash command: /{trimmed}")),
+        Err(err) => Err(err.to_string()),
+    })
 }
 
 /// Build a skill invocation message from a `/skill-name [instruction]` input.
@@ -977,4 +1127,128 @@ fn list_agents_impl(workdir: &std::path::Path) -> Vec<AgentInfo> {
     }
 
     agents
+}
+
+#[cfg(test)]
+mod tests {
+    //! CWD regression suite — prevents the `/branch` etc. slash dispatch
+    //! from regressing back to using the host-process CWD instead of
+    //! the active session's project workdir.
+    //!
+    //! The fix lives in [`resolve_session_workdir_inner`]; before it
+    //! existed every slash command saw `std::env::current_dir()` (the
+    //! Tauri bundle directory), which silently leaked information
+    //! across projects.  Each test below codifies one branch of that
+    //! resolver so a future refactor can't quietly bring the bug back.
+    use super::resolve_session_workdir_inner;
+    use crate::modules::projects::ProjectManager;
+    use crate::modules::session::SessionManager;
+    use std::env::temp_dir;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    struct Fixture {
+        sessions: Arc<SessionManager>,
+        projects: Arc<ProjectManager>,
+        sessions_root: PathBuf,
+        projects_root: PathBuf,
+    }
+
+    impl Fixture {
+        async fn new(label: &str) -> Self {
+            let root = temp_dir().join(format!("if2ai_slash_cwd_{label}_{}", Uuid::new_v4()));
+            let sessions_root = root.join("sessions");
+            let projects_root = root.join("projects");
+            tokio::fs::create_dir_all(&sessions_root).await.unwrap();
+            tokio::fs::create_dir_all(&projects_root).await.unwrap();
+            // SessionManager and ProjectManager must agree on the
+            // project storage root so `restore_session` can find the
+            // project entries the test seeded.
+            let sessions = SessionManager::new(sessions_root.clone(), projects_root.clone());
+            let projects = ProjectManager::new(projects_root.clone());
+            Self {
+                sessions: Arc::new(sessions),
+                projects: Arc::new(projects),
+                sessions_root,
+                projects_root,
+            }
+        }
+
+        async fn cleanup(self) {
+            let _ = tokio::fs::remove_dir_all(&self.sessions_root).await;
+            let _ = tokio::fs::remove_dir_all(&self.projects_root).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_to_project_workdir_when_session_has_one() {
+        let fx = Fixture::new("with-project").await;
+        // Create a project at a real on-disk dir so canonicalize() works
+        // for any downstream caller (the resolver itself doesn't
+        // canonicalize but other layers do).
+        let workdir = fx.sessions_root.parent().unwrap().join("repo");
+        tokio::fs::create_dir_all(&workdir).await.unwrap();
+        let project = fx
+            .projects
+            .create_project("Demo".to_string(), workdir.clone())
+            .await
+            .expect("create project");
+        let session = fx
+            .sessions
+            .create_session_for_project(&project.id, "Test".to_string())
+            .await
+            .expect("create session");
+
+        let resolved = resolve_session_workdir_inner(&fx.sessions, &fx.projects, &session.id).await;
+        assert_eq!(
+            resolved, workdir,
+            "session bound to project should resolve to project workdir, not host CWD",
+        );
+
+        fx.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_cwd_when_session_id_empty() {
+        let fx = Fixture::new("empty-id").await;
+        let expected = std::env::current_dir().unwrap_or_default();
+        let resolved = resolve_session_workdir_inner(&fx.sessions, &fx.projects, "").await;
+        assert_eq!(
+            resolved, expected,
+            "empty session_id should fall back to process CWD",
+        );
+        fx.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_cwd_when_session_id_unknown() {
+        let fx = Fixture::new("unknown-id").await;
+        let expected = std::env::current_dir().unwrap_or_default();
+        let resolved =
+            resolve_session_workdir_inner(&fx.sessions, &fx.projects, "definitely-not-a-session")
+                .await;
+        assert_eq!(
+            resolved, expected,
+            "unknown session id must not crash; fall back to host CWD",
+        );
+        fx.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_cwd_when_session_has_no_project() {
+        let fx = Fixture::new("no-project").await;
+        let session = fx
+            .sessions
+            .create_session("Detached".to_string())
+            .await
+            .expect("create session");
+        let expected = std::env::current_dir().unwrap_or_default();
+        let resolved = resolve_session_workdir_inner(&fx.sessions, &fx.projects, &session.id).await;
+        assert_eq!(
+            resolved, expected,
+            "session with empty project_id should fall back, not invoke get_project",
+        );
+        fx.cleanup().await;
+    }
 }

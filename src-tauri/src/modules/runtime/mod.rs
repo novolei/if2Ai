@@ -11,6 +11,7 @@ pub mod config;
 pub mod contracts;
 pub mod conversation;
 pub mod episodic_compaction;
+pub mod event_log;
 pub mod file_ops;
 pub mod hooks;
 pub mod json;

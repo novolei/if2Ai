@@ -36,6 +36,7 @@
 
 ## Source Of Truth
 
+- [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [UClaw Gap Migration Audit](../../staff-remediation/uclaw-gap-migration-audit.md)
 - [Runtime Projection And Shell Usage](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
 - [Runtime Projection And Shell Implementation](../../staff-remediation/gap-modules/runtime-projection-and-shell/02-implementation.md)
@@ -68,3 +69,4 @@
 ## Execution Notes
 
 - 先缩真相来源，再缩 UI 文件体积。
+- 本 Pack 的设计、实现、review、验收必须完整参照 [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)。

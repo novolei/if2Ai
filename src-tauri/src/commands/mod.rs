@@ -277,6 +277,7 @@ pub mod agent;
 pub mod browser;
 pub mod command_surface;
 pub mod gateway;
+pub mod git;
 pub mod harness;
 pub mod host_composition;
 pub mod learning;
@@ -325,6 +326,12 @@ pub use browser::{
 };
 #[allow(unused_imports)]
 pub use gateway::{get_gateway_health, get_gateway_url};
+#[allow(unused_imports)]
+pub use git::{
+    gh_available, gh_create_issue, gh_create_pr, git_add_worktree, git_branches, git_commit,
+    git_commit_push_pr, git_current_branch, git_default_branch, git_diff, git_prune_worktrees,
+    git_remove_worktree, git_status, git_worktrees, CommitOutcome, CreatePrResponse,
+};
 #[allow(unused_imports)]
 pub use harness::{
     get_all_session_telemetry, get_harness_status, get_session_telemetry,

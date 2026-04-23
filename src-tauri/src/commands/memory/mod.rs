@@ -252,12 +252,10 @@ pub async fn learned_traits_list(
         Some(s) => s.clone(),
         None => return Ok(Vec::new()),
     };
-    let traits = tokio::task::spawn_blocking(move || {
-        store.list_active(limit.unwrap_or(50))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    let traits = tokio::task::spawn_blocking(move || store.list_active(limit.unwrap_or(50)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     Ok(traits
         .into_iter()
         .map(|t| LearnedTraitDto {
@@ -277,10 +275,7 @@ pub async fn learned_traits_list(
 /// kept for audit; idempotent re-disagree on an already-disagreed row
 /// returns `KeyNotFound` (UI can ignore).
 #[tauri::command]
-pub async fn learned_traits_disagree(
-    state: State<'_, AppState>,
-    id: i64,
-) -> Result<(), String> {
+pub async fn learned_traits_disagree(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     let store = match &state.learned_traits {
         Some(s) => s.clone(),
         None => return Err("learned_traits store not initialised".into()),
@@ -574,4 +569,3 @@ fn scope_tier_rank(tier: ScopeTier) -> u8 {
         ScopeTier::Session => 2,
     }
 }
-

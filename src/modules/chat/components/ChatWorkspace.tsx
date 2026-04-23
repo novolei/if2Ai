@@ -5,11 +5,12 @@ import {
   Globe,
   MessageSquare,
   MoreHorizontal,
-  Play,
-  SquareTerminal,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import DsButton from "@/components/ds/Button";
+import { GitActionsPicker } from "@/components/chat/GitActionsPicker";
+import { GitWorkbenchDialog } from "@/components/chat/GitWorkbenchDialog";
 import { cn } from "@/lib/utils";
 import { ChatUI } from "@/components/ui/chat-ui";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -108,6 +109,10 @@ export function ChatWorkspace({
   activeSessionId,
   currentProject,
   branchLabel,
+  isGitRepo,
+  onGitRepoChanged,
+  onBranchChange,
+  onWorktreeProjectCreated,
   activeTitle,
   activeMessages,
   input,
@@ -175,6 +180,7 @@ export function ChatWorkspace({
       return "sans";
     }
   });
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -350,13 +356,6 @@ export function ChatWorkspace({
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-jade" />
                   </div>
                 )}
-                <DsButton
-                  variant="ghost"
-                  size="sm"
-                  Icon={Play}
-                  className="window-no-drag rounded-full"
-                  data-window-no-drag="true"
-                />
                 <div className="window-no-drag" data-window-no-drag="true">
                   <HeaderViewStyleControls
                     fontMode={fontMode}
@@ -365,19 +364,40 @@ export function ChatWorkspace({
                     onDensityModeChange={setDensityMode}
                   />
                 </div>
+                <GitActionsPicker
+                  cwd={currentProject?.workdir}
+                  isGitRepo={isGitRepo ?? null}
+                  onGitRepoChanged={onGitRepoChanged}
+                  onBranchChange={onBranchChange}
+                  onOpenWorkbench={() => setWorkbenchOpen(true)}
+                  onWorktreeProjectCreated={
+                    onWorktreeProjectCreated
+                      ? (project) =>
+                          onWorktreeProjectCreated({
+                            id: project.id,
+                            name: project.name,
+                            workdir: project.workdir,
+                          })
+                      : undefined
+                  }
+                />
                 <Button
                   variant="ghost"
                   size="icon"
                   className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(243,236,226,0.94))] hover:text-black/82 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                   data-window-no-drag="true"
-                  title={isRightRailOpen ? "关闭右侧 Rail" : "打开右侧 Rail"}
+                  title={isRightRailOpen ? "收起侧边抽屉" : "展开侧边抽屉"}
                   aria-label={
-                    isRightRailOpen ? "关闭右侧 Rail" : "打开右侧 Rail"
+                    isRightRailOpen ? "收起侧边抽屉" : "展开侧边抽屉"
                   }
                   aria-pressed={isRightRailOpen}
                   onClick={onToggleRightRail}
                 >
-                  <SquareTerminal className="h-4 w-4" />
+                  {isRightRailOpen ? (
+                    <PanelRightClose className="h-4 w-4" />
+                  ) : (
+                    <PanelRightOpen className="h-4 w-4" />
+                  )}
                 </Button>
               </div>
             </header>
@@ -393,6 +413,9 @@ export function ChatWorkspace({
                       projectLabel={currentProject?.name ?? "if2Ai"}
                       defaultWorkdir={currentProject?.workdir}
                       branchLabel={branchLabel}
+                      isGitRepo={isGitRepo ?? null}
+                      onGitRepoChanged={onGitRepoChanged}
+                      onBranchChange={onBranchChange}
                       messages={activeMessages}
                       input={input}
                       onInputChange={onInputChange}
@@ -437,6 +460,12 @@ export function ChatWorkspace({
           </div>
         </ErrorBoundary>
       </main>
+      <GitWorkbenchDialog
+        open={workbenchOpen}
+        onOpenChange={setWorkbenchOpen}
+        cwd={currentProject?.workdir}
+        currentBranch={branchLabel}
+      />
     </div>
   );
 }

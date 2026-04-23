@@ -54,17 +54,15 @@ const DELTA_NEGATIVE: f64 = -0.10;
 #[allow(dead_code)]
 #[must_use]
 pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, context: SharedToolContext| {
+    let handler: ToolHandler =
+        Arc::new(move |args: serde_json::Value, context: SharedToolContext| {
             let memory = memory.clone();
             Box::pin(async move {
                 let key = args
                     .get("key")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        ToolError::Handler(
-                            "missing required parameter: key".to_string(),
-                        )
+                        ToolError::Handler("missing required parameter: key".to_string())
                     })?
                     .to_string();
 
@@ -76,14 +74,14 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
 
                 // Resolve `delta`: explicit numeric override wins, otherwise
                 // map the coarse signal to ±0.10 / 0.0.
-                let delta = args
-                    .get("delta")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or_else(|| match signal.as_str() {
-                        "positive" => DELTA_POSITIVE,
-                        "negative" => DELTA_NEGATIVE,
-                        _ => 0.0,
-                    });
+                let delta =
+                    args.get("delta")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(match signal.as_str() {
+                            "positive" => DELTA_POSITIVE,
+                            "negative" => DELTA_NEGATIVE,
+                            _ => 0.0,
+                        });
 
                 let scope = context
                     .lock()
@@ -94,11 +92,7 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
 
                 match memory.adjust_trust_score(&key, delta).await {
                     Ok(new_score) => {
-                        MemoryAuditEmitter::memory_captured(
-                            &audit_ctx,
-                            &key,
-                            "feedback_signal",
-                        );
+                        MemoryAuditEmitter::memory_captured(&audit_ctx, &key, "feedback_signal");
                         let payload = json!({
                             "status": "ok",
                             "key": key,
@@ -122,8 +116,7 @@ pub fn entry(memory: SharedMemoryProvider) -> ToolEntry {
                     ))),
                 }
             })
-        },
-    );
+        });
 
     ToolEntry {
         name: "memory_feedback_signal".to_string(),

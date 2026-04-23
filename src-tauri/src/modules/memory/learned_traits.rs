@@ -71,9 +71,8 @@ impl LearnedTraitsStore {
     /// private connection.
     pub fn open(db_path: &std::path::Path) -> Result<Self, MemoryError> {
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                MemoryError::Generic(format!("create_dir_all failed: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| MemoryError::Generic(format!("create_dir_all failed: {e}")))?;
         }
         let conn = Connection::open(db_path)
             .map_err(|e| MemoryError::Generic(format!("open db failed: {e}")))?;
@@ -96,7 +95,10 @@ impl LearnedTraitsStore {
         trait_text: &str,
         source_session: Option<&str>,
     ) -> Result<i64, MemoryError> {
-        let c = self.conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+        let c = self
+            .conn
+            .lock()
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
         let now = Utc::now().to_rfc3339();
         let existing: Option<(i64, i64, f64)> = c
             .query_row(
@@ -133,7 +135,10 @@ impl LearnedTraitsStore {
 
     /// Newest non-disagreed traits first (used by both UI + prompt).
     pub fn list_active(&self, limit: usize) -> Result<Vec<LearnedTrait>, MemoryError> {
-        let c = self.conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+        let c = self
+            .conn
+            .lock()
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
         let mut stmt = c
             .prepare(
                 "SELECT id, trait_text, evidence_count, confidence,
@@ -158,13 +163,11 @@ impl LearnedTraitsStore {
                             )
                         })
                 };
-                let disagreed = row
-                    .get::<_, Option<String>>(6)?
-                    .and_then(|s| {
-                        chrono::DateTime::parse_from_rfc3339(&s)
-                            .ok()
-                            .map(|dt| dt.with_timezone(&Utc))
-                    });
+                let disagreed = row.get::<_, Option<String>>(6)?.and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Utc))
+                });
                 Ok(LearnedTrait {
                     id: row.get(0)?,
                     trait_text: row.get(1)?,
@@ -188,7 +191,10 @@ impl LearnedTraitsStore {
     /// surfacing it.  We keep the row (audit trail), only set
     /// `disagreed_at`.
     pub fn disagree(&self, id: i64) -> Result<(), MemoryError> {
-        let c = self.conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+        let c = self
+            .conn
+            .lock()
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
         let rows = c
             .execute(
                 "UPDATE learned_traits SET disagreed_at = ?1 WHERE id = ?2",
@@ -237,7 +243,10 @@ If nothing rises to that bar, return an empty array []."
 /// best-effort).
 #[must_use]
 pub fn parse_traits(raw: &str) -> Vec<String> {
-    let body = raw.trim().trim_start_matches("```json").trim_start_matches("```");
+    let body = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```");
     let body = body.trim_end_matches("```").trim();
     serde_json::from_str::<Vec<String>>(body)
         .unwrap_or_default()
@@ -283,9 +292,7 @@ pub fn render_learned_traits_block(traits: &[LearnedTrait]) -> Option<String> {
         return None;
     }
     let mut out = String::from("# Learned Traits · 关于用户的累积观察\n");
-    out.push_str(
-        "(累积自跨 session 反思；如错请用 Settings → 我不同意 撤回。)\n\n",
-    );
+    out.push_str("(累积自跨 session 反思；如错请用 Settings → 我不同意 撤回。)\n\n");
     for t in traits.iter().take(8) {
         out.push_str(&format!(
             "- {} (置信度 {:.2}, 证据 ×{})\n",
@@ -314,8 +321,12 @@ mod tests {
     #[test]
     fn upsert_inserts_then_bumps() {
         let s = make_store();
-        let a = s.upsert("RL prefers terse replies", Some("sess-1")).unwrap();
-        let b = s.upsert("RL prefers terse replies", Some("sess-2")).unwrap();
+        let a = s
+            .upsert("RL prefers terse replies", Some("sess-1"))
+            .unwrap();
+        let b = s
+            .upsert("RL prefers terse replies", Some("sess-2"))
+            .unwrap();
         assert_eq!(a, b, "second upsert MUST hit the same row");
         let traits = s.list_active(10).unwrap();
         assert_eq!(traits.len(), 1);
@@ -389,7 +400,7 @@ mod tests {
         use crate::modules::memory::llm::MockUtilityLlm;
         let s = make_store();
         let llm = MockUtilityLlm::new(vec![
-            r#"["RL ships at 3 AM", "RL prefers code-first"]"#.to_string(),
+            r#"["RL ships at 3 AM", "RL prefers code-first"]"#.to_string()
         ]);
         let n = extract_and_persist(&llm, &s, "sess-x", &["a".into(), "b".into()])
             .await

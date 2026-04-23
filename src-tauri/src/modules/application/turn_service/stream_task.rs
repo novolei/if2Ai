@@ -69,6 +69,7 @@ use crate::modules::runtime::budget::{
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
+use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
@@ -102,6 +103,7 @@ use crate::modules::tools::ToolRegistry;
 /// without churn at the spawn boundary.
 pub(super) struct StreamTaskInputs {
     pub stream_id_for_task: String,
+    pub run_event_logger: RunEventLogger,
     pub session_id: String,
     pub user_message_clone: String,
     pub permission_mode_for_stream: Option<String>,
@@ -140,6 +142,44 @@ pub(super) struct StreamTaskInputs {
     pub harness_bus_for_after_turn: Option<EventBus>,
 }
 
+async fn append_stream_event(run_event_logger: &RunEventLogger, payload: &StreamTokenPayload) {
+    let event_type = match payload.event_type.as_str() {
+        "thinking_start" => "thinking_started",
+        "tool_call_update" => match payload.tool_status.as_deref() {
+            Some("queued") => "tool_call_queued",
+            Some("running") => "tool_call_running",
+            Some("completed") => "tool_call_completed",
+            Some("error") => "tool_call_failed",
+            _ => "tool_call_update",
+        },
+        other => other,
+    };
+    let _ = run_event_logger.append(event_type, payload.clone()).await;
+}
+
+async fn append_remembered_permission_events(
+    run_event_logger: &RunEventLogger,
+    tool_name: &str,
+    decision: &PermissionPromptDecision,
+) {
+    let (decision_label, reason) = match decision {
+        PermissionPromptDecision::Allow => ("allow", None),
+        PermissionPromptDecision::Deny { reason } => ("deny", Some(reason.clone())),
+    };
+    let payload = serde_json::json!({
+        "tool_name": tool_name,
+        "source": "session_override",
+        "decision": decision_label,
+        "reason": reason,
+    });
+    let _ = run_event_logger
+        .append("permission_requested", payload.clone())
+        .await;
+    let _ = run_event_logger
+        .append("permission_resolved", payload)
+        .await;
+}
+
 /// Run the spawned tool-loop body for one streaming chat turn.
 ///
 /// This function takes ownership of every captured value via
@@ -152,6 +192,7 @@ pub(super) struct StreamTaskInputs {
 pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let StreamTaskInputs {
         stream_id_for_task,
+        run_event_logger,
         session_id,
         user_message_clone,
         permission_mode_for_stream,
@@ -289,7 +330,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 memory_context: None,
                 prompt_diagnostics: None,
             };
-            stream_emitter.emit_payload(payload);
+            stream_emitter.emit_payload(payload.clone());
+            append_stream_event(&run_event_logger, &payload).await;
             completion_already_emitted = true;
             terminal_status = Some("cancelled_by_user");
             break;
@@ -496,7 +538,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     memory_context: None,
                     prompt_diagnostics: None,
                 };
-                stream_emitter.emit_payload(payload);
+                stream_emitter.emit_payload(payload.clone());
+                append_stream_event(&run_event_logger, &payload).await;
                 // Phase M4-C P5 — emit harness `StreamErrored`
                 // event so the trace aggregator records the
                 // hard error against the run report.
@@ -605,7 +648,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 memory_context: None,
                                 prompt_diagnostics: None,
                             };
-                            stream_emitter.emit_payload(payload);
+                            stream_emitter.emit_payload(payload.clone());
+                            append_stream_event(&run_event_logger, &payload).await;
                         }
                         crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
                             accumulated_thinking.push_str(&thinking);
@@ -633,7 +677,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 memory_context: None,
                                 prompt_diagnostics: None,
                             };
-                            stream_emitter.emit_payload(payload);
+                            stream_emitter.emit_payload(payload.clone());
+                            append_stream_event(&run_event_logger, &payload).await;
                         }
                         crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
                         crate::modules::api::ContentBlockDelta::InputJsonDelta { partial_json } => {
@@ -700,7 +745,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     memory_context: None,
                                     prompt_diagnostics: None,
                                 };
-                                stream_emitter.emit_payload(payload);
+                                stream_emitter.emit_payload(payload.clone());
+                                append_stream_event(&run_event_logger, &payload).await;
                             }
                             crate::modules::api::OutputContentBlock::ToolUse {
                                 id, name, ..
@@ -731,7 +777,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                     memory_context: None,
                                     prompt_diagnostics: None,
                                 };
-                                stream_emitter.emit_payload(payload);
+                                stream_emitter.emit_payload(payload.clone());
+                                append_stream_event(&run_event_logger, &payload).await;
                             }
                             _ => {}
                         }
@@ -828,7 +875,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             memory_context: None,
                             prompt_diagnostics: None,
                         };
-                        stream_emitter.emit_payload(payload);
+                        stream_emitter.emit_payload(payload.clone());
+                        append_stream_event(&run_event_logger, &payload).await;
                     }
 
                     let payload = StreamTokenPayload {
@@ -854,7 +902,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                         memory_context: None,
                         prompt_diagnostics: None,
                     };
-                    stream_emitter.emit_payload(payload);
+                    stream_emitter.emit_payload(payload.clone());
+                    append_stream_event(&run_event_logger, &payload).await;
                     // Phase M4-C P5 — emit harness `StreamErrored`
                     // event from the inner-loop error path too.
                     if let Some(bus) = harness_event_bus_for_stream.as_ref() {
@@ -927,6 +976,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             stream_emitter.window().clone(),
             session_id.clone(),
             perm_rx,
+            Some(run_event_logger.clone()),
         );
 
         for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
@@ -945,31 +995,6 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 provider_request_id.as_str(),
                 tool_name
             );
-            // Emit running event
-            stream_emitter.emit_payload(StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                text: None,
-                thinking: None,
-                event_type: "tool_call_update".to_string(),
-                tool_call_id: Some(tool_id.clone()),
-                tool_name: Some(tool_name.clone()),
-                tool_status: Some("running".to_string()),
-                tool_args: None,
-                tool_result: None,
-                tool_duration_ms: None,
-                effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
-                policy_decision: Some("prompt".to_string()),
-                evidence_id: Some(policy_trace_id.clone()),
-                request_id: Some(provider_request_id.clone()),
-                task_outcome: None,
-                degraded_reason: None,
-                resume_available: None,
-                resume_cursor: None,
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-            });
-
             // Permission check: apply session-scoped remember decisions first.
             let remembered_decision = permission_overrides
                 .lock()
@@ -981,6 +1006,47 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                         .cloned()
                         .or_else(|| tool_map.get("*").cloned())
                 });
+            if let Some(decision) = remembered_decision.as_ref() {
+                append_remembered_permission_events(&run_event_logger, &tool_name, decision).await;
+            }
+            let running_policy_decision = match remembered_decision.as_ref() {
+                Some(PermissionPromptDecision::Allow) => "session_allow",
+                Some(PermissionPromptDecision::Deny { .. }) => "session_deny",
+                None => "prompt",
+            };
+            // Parse args once and reuse for the running + terminal events
+            // and the timeline/harness paths below.  The frontend relies on
+            // `tool_args` being present on at least one tool_call_update so
+            // tool cards (e.g. `WriteToolDiffCard`) can render path/content
+            // before the result comes back.
+            let tool_input = parse_tool_input_json(&input_json);
+
+            // Emit running event once the permission source is known.
+            let running_payload = StreamTokenPayload {
+                stream_id: stream_id_for_task.clone(),
+                text: None,
+                thinking: None,
+                event_type: "tool_call_update".to_string(),
+                tool_call_id: Some(tool_id.clone()),
+                tool_name: Some(tool_name.clone()),
+                tool_status: Some("running".to_string()),
+                tool_args: Some(tool_input.clone()),
+                tool_result: None,
+                tool_duration_ms: None,
+                effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
+                policy_decision: Some(running_policy_decision.to_string()),
+                evidence_id: Some(policy_trace_id.clone()),
+                request_id: Some(provider_request_id.clone()),
+                task_outcome: None,
+                degraded_reason: None,
+                resume_available: None,
+                resume_cursor: None,
+                context_budget_usage: None,
+                memory_context: None,
+                prompt_diagnostics: None,
+            };
+            stream_emitter.emit_payload(running_payload.clone());
+            append_stream_event(&run_event_logger, &running_payload).await;
             let permission_outcome = match remembered_decision {
                 Some(PermissionPromptDecision::Allow) => {
                     crate::modules::runtime::permissions::PermissionOutcome::Allow
@@ -1024,8 +1090,6 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     reason
                 );
             }
-
-            let tool_input = parse_tool_input_json(&input_json);
 
             timeline_session_messages.push(
                 crate::modules::runtime::session::ConversationMessage::tool_use(
@@ -1110,7 +1174,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             }
 
             // Emit completed/error event
-            stream_emitter.emit_payload(StreamTokenPayload {
+            let terminal_tool_payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
                 text: None,
                 thinking: None,
@@ -1118,7 +1182,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 tool_call_id: Some(tool_id.clone()),
                 tool_name: Some(tool_name.clone()),
                 tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
-                tool_args: None,
+                tool_args: Some(tool_input.clone()),
                 tool_result: Some(result_text.clone()),
                 tool_duration_ms: Some(duration_ms),
                 effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
@@ -1132,7 +1196,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 context_budget_usage: None,
                 memory_context: None,
                 prompt_diagnostics: None,
-            });
+            };
+            stream_emitter.emit_payload(terminal_tool_payload.clone());
+            append_stream_event(&run_event_logger, &terminal_tool_payload).await;
 
             // Append tool_use as assistant message, then tool_result as user message.
             // MiniMax requires this pairing: assistant tool_use + user tool_result.
@@ -1216,6 +1282,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
         stream_emitter,
+        run_event_logger,
         session_manager,
         app_session_clone,
         trajectory_manager_for_stream,
@@ -1241,6 +1308,25 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::runtime::event_log::{RunEventLogger, RunLogEntry};
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("if2ai-{label}-{nanos}"))
+    }
+
+    fn read_entries(path: &Path) -> Vec<RunLogEntry> {
+        std::fs::read_to_string(path)
+            .expect("read run log")
+            .lines()
+            .map(|line| serde_json::from_str::<RunLogEntry>(line).expect("parse run log entry"))
+            .collect()
+    }
 
     /// MIG-001-d structural smoke test: the extracted task helper
     /// is a `Send + Sync` async function whose returned future is
@@ -1262,5 +1348,28 @@ mod tests {
         // renames or re-splits the helper, this fails at compile
         // time so callers update in lockstep.
         let _: fn(StreamTaskInputs) -> _ = run_stream_task;
+    }
+
+    #[tokio::test]
+    async fn remembered_permission_events_are_logged() {
+        let root = unique_temp_root("remembered-permission-events");
+        let logger = RunEventLogger::for_base_dir(&root, "session-1", "run-1");
+
+        append_remembered_permission_events(
+            &logger,
+            "write_file",
+            &PermissionPromptDecision::Deny {
+                reason: "session override deny".to_string(),
+            },
+        )
+        .await;
+
+        let entries = read_entries(logger.file_path().expect("run log path"));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].event_type, "permission_requested");
+        assert_eq!(entries[1].event_type, "permission_resolved");
+        assert_eq!(entries[1].payload["decision"], "deny");
+        assert_eq!(entries[1].payload["reason"], "session override deny");
+        assert_eq!(entries[1].payload["source"], "session_override");
     }
 }

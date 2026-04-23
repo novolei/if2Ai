@@ -15,7 +15,6 @@ import {
   File,
   Folder,
   FolderOpen,
-  GitBranch,
   Globe,
   Laptop,
   Mic,
@@ -58,6 +57,9 @@ const SttButtonLazy = React.lazy(() =>
 import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode } from "@/lib/tauri"
 import { MemoryChip } from "@/components/memory/MemoryChip"
 import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
+import { WriteToolDiffCard } from "@/components/chat/WriteToolDiffCard"
+import { BranchPicker } from "@/components/chat/BranchPicker"
+import { SlashResultCard } from "@/components/chat/SlashResultCard"
 import { ContextBar } from "@/components/chat/ContextBar"
 import { VirtualMessageList } from "@/components/chat/VirtualMessageList"
 
@@ -125,6 +127,9 @@ interface ChatUIProps {
   projectLabel?: string
   defaultWorkdir?: string
   branchLabel?: string
+  onBranchChange?: (newBranch: string) => void
+  isGitRepo?: boolean | null
+  onGitRepoChanged?: () => void
   selectedModel?: string
   onModelChange?: React.Dispatch<React.SetStateAction<string>>
   permissionMode?: PermissionMode
@@ -231,6 +236,9 @@ export function ChatUI({
   projectLabel = 'if2Ai',
   defaultWorkdir,
   branchLabel = 'feature/consolidate-codebase',
+  onBranchChange,
+  isGitRepo = null,
+  onGitRepoChanged,
   selectedModel: selectedModelProp = '',
   onModelChange: onModelChangeProp,
   permissionMode: permissionModeProp = 'dangerFullAccess',
@@ -1038,6 +1046,72 @@ export function ChatUI({
     setProjectRailPreviewError(null)
   }, [])
 
+  /**
+   * 重新拉取一个已经打开的 preview tab 的内容，把 tab 数据替换成最新
+   * 磁盘版本。`projectPreviewDrafts[path]` 不动 —— 用户正在编辑的草稿
+   * 不能被外部写入静默覆盖；新内容只刷"原文"层（preview.content / tab
+   * 头里显示的元数据）。如果 path 没在打开列表里就忽略。
+   */
+  const refreshPreviewTab = React.useCallback(
+    async (absPath: string) => {
+      try {
+        const fresh = await readFilePreview(absPath)
+        setProjectPreviewTabs((current) => {
+          if (!current.some((item) => item.path === fresh.path)) return current
+          return current.map((item) => (item.path === fresh.path ? fresh : item))
+        })
+        // 用户没在编辑（不在 dirty 列表）才同步刷草稿；否则保留草稿，
+        // 让用户决定是否手动 reset。
+        setProjectPreviewDrafts((current) => {
+          if (projectPreviewDirtyPaths.includes(fresh.path)) return current
+          return { ...current, [fresh.path]: fresh.content ?? '' }
+        })
+      } catch (err) {
+        console.warn('[preview] refresh failed for', absPath, err)
+      }
+    },
+    [projectPreviewDirtyPaths],
+  )
+
+  /**
+   * Auto-refresh：监听 messages 里 file_write 工具调用完成事件，
+   * 当被写入的路径正好对应一个已经打开的 preview tab 时，自动拉一
+   * 次最新内容刷新展示。tool 流过来的 path 既可能是绝对路径也可能
+   * 是相对 workdir 的相对路径，两种 case 都比对一遍。
+   *
+   * processedToolIdsRef 记录已经处理过的 tool_call_id，避免同一条
+   * 消息在重渲染 / 状态变化时被重复拉取。
+   */
+  const processedToolIdsRef = React.useRef<Set<string>>(new Set())
+  React.useEffect(() => {
+    if (projectPreviewTabs.length === 0) return
+    for (const message of messages) {
+      if (message.role !== 'tool') continue
+      if (message.toolStatus !== 'completed') continue
+      const toolName = message.toolName ?? ''
+      if (!toolName.includes('file_write')) continue
+      const toolCallId = message.toolCallId
+      if (!toolCallId || processedToolIdsRef.current.has(toolCallId)) continue
+      const args = (message.toolArgs ?? {}) as Record<string, unknown>
+      const rawPath = typeof args.path === 'string' ? args.path : ''
+      if (!rawPath) continue
+      // 解析绝对路径：相对路径相对 effectiveWorkdir / defaultWorkdir
+      const root = message.effectiveWorkdir ?? defaultWorkdir ?? ''
+      const absCandidate = rawPath.startsWith('/')
+        ? rawPath
+        : root
+          ? `${root.replace(/\/+$/, '')}/${rawPath.replace(/^\/+/, '')}`
+          : rawPath
+      const matched = projectPreviewTabs.find(
+        (tab) => tab.path === absCandidate || tab.path === rawPath || tab.path.endsWith(`/${rawPath}`),
+      )
+      processedToolIdsRef.current.add(toolCallId)
+      if (matched) {
+        void refreshPreviewTab(matched.path)
+      }
+    }
+  }, [messages, projectPreviewTabs, defaultWorkdir, refreshPreviewTab])
+
   const closePreviewTab = React.useCallback((path: string) => {
     const timers = projectPreviewSaveTimersRef.current
     if (timers[path]) {
@@ -1175,6 +1249,9 @@ export function ChatUI({
             selectedStrength={selectedStrength}
             setSelectedStrength={setSelectedStrength}
             branchLabel={branchLabel}
+            onBranchChange={onBranchChange}
+            isGitRepo={isGitRepo}
+            onGitRepoChanged={onGitRepoChanged}
             isComposerFocused={isComposerFocused}
             setIsComposerFocused={setIsComposerFocused}
             isLeftPaneCollapsed={isLeftPaneCollapsed}
@@ -1230,6 +1307,7 @@ export function ChatUI({
               const next = projectPreviewDrafts[path] ?? ''
               void savePreviewDraft(path, next)
             }}
+            onRefresh={refreshPreviewTab}
           />
         ) : null}
       </div>
@@ -1284,7 +1362,16 @@ export function ChatUI({
             showProjectRailNotice(null)
           } catch (err) {
             console.error('Failed to read file preview:', err)
-            showProjectRailNotice('这个文件暂时不能在面板内预览。')
+            // 把 backend 的具体错因带出来，避免所有失败都吞成一句
+            // "暂时不能预览"，让用户没法判断是文件类型不支持、还是
+            // 体积超限、还是非 UTF-8 文本。
+            const raw = err instanceof Error ? err.message : String(err)
+            const friendly = raw.includes('too large')
+              ? '文件太大，无法在面板内预览，已用「外部打开」更稳妥。'
+              : raw.includes('not valid UTF-8')
+                ? '这个文件不是文本，且不属于图片/视频/PDF；请用「外部打开」。'
+                : '这个文件暂时不能在面板内预览。'
+            showProjectRailNotice(friendly)
           }
         }}
         onToggleFolder={handleToggleProjectRailFolder}
@@ -1926,6 +2013,9 @@ const ComposerDock = React.memo(function ComposerDock({
   selectedStrength,
   setSelectedStrength,
   branchLabel,
+  onBranchChange,
+  isGitRepo,
+  onGitRepoChanged,
   isComposerFocused,
   setIsComposerFocused,
   isLeftPaneCollapsed,
@@ -1964,6 +2054,9 @@ const ComposerDock = React.memo(function ComposerDock({
   selectedStrength: string
   setSelectedStrength: React.Dispatch<React.SetStateAction<string>>
   branchLabel: string
+  onBranchChange?: (newBranch: string) => void
+  isGitRepo?: boolean | null
+  onGitRepoChanged?: () => void
   isComposerFocused: boolean
   setIsComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
   isLeftPaneCollapsed: boolean
@@ -2419,10 +2512,13 @@ const ComposerDock = React.memo(function ComposerDock({
                 {workdirLabel}
               </span>
             )}
-            <span className="flex items-center gap-1 text-[11px] text-black/30">
-              <GitBranch className="h-[11px] w-[11px]" />
-              {branchLabel}
-            </span>
+            <BranchPicker
+              cwd={defaultWorkdir}
+              currentBranch={branchLabel}
+              onChanged={onBranchChange}
+              isGitRepo={isGitRepo ?? null}
+              onInitRepo={onGitRepoChanged}
+            />
           </div>
         )}
       </div>
@@ -2523,6 +2619,35 @@ function ToolCallMessage({
     typeof message.content === 'string' &&
     message.content.includes(WEB_SEARCH_NO_KEY_PREFIX)
 
+  // file_write 专用 diff 预览：toolArgs.path + toolArgs.content 都齐
+  // 时，展开后用 WriteToolDiffCard 渲染（图里那张绿色行号 +/- 卡片）。
+  // 真实的 `previous_content` 由 backend 在结构化 JSON 结果里下发；
+  // 解析失败 / 旧内容超出 64KiB 上限被裁掉时，回落为"全新增"渲染。
+  // status === 'error' 时跳过整张卡片，避免把失败请求的 content 当作
+  // "已写入"来展示。
+  const writeArgs = (message.toolArgs ?? {}) as Record<string, unknown>
+  const writePath = typeof writeArgs.path === 'string' ? writeArgs.path : ''
+  const writeContent = typeof writeArgs.content === 'string' ? writeArgs.content : ''
+  const writePreviousContent = React.useMemo(() => {
+    if (typeof message.content !== 'string' || !message.content.trim()) return ''
+    try {
+      const parsed = JSON.parse(message.content) as Record<string, unknown>
+      if (parsed && parsed.kind === 'file_write' && typeof parsed.previous_content === 'string') {
+        return parsed.previous_content
+      }
+    } catch {
+      // 旧版 backend 仍可能返回纯文本 "Successfully wrote to file: ..."；
+      // 此时 previous_content 不可得，按全新增渲染。
+    }
+    return ''
+  }, [message.content])
+  const showWriteDiff =
+    typeof message.toolName === 'string' &&
+    message.toolName.includes('file_write') &&
+    status !== 'error' &&
+    Boolean(writePath) &&
+    typeof writeArgs.content === 'string'
+
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
       <div
@@ -2618,6 +2743,15 @@ function ToolCallMessage({
 
         <CollapsibleContent className="overflow-hidden">
           <div className="ml-[10px] border-l-[1.5px] border-border/40 pl-3 pt-1">
+            {showWriteDiff && (
+              <div className="mb-2">
+                <WriteToolDiffCard
+                  path={writePath}
+                  newContent={writeContent}
+                  oldContent={writePreviousContent}
+                />
+              </div>
+            )}
             {showNoKeyBanner && (
               <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11.5px] leading-5 text-amber-700">
                 <span className="mt-0.5 shrink-0">⚠️</span>
@@ -2938,6 +3072,34 @@ const ChatMessage = React.memo(function ChatMessage({
 
   if (isTool) {
     return <ToolCallMessage message={message} defaultWorkdir={defaultWorkdir} />
+  }
+
+  // Slash 命令的静态结果（来自 `executeSlashCommand`，由 App.tsx 在
+  // 消息上打 `slashCommand` 标记）→ 用紧凑型单行卡片替代 markdown 气泡。
+  // 只在 assistant 侧生效；isUser 早就走了 `if (isUser)` 分支。
+  if (!isUser && !isTool && message.slashCommand && hasContent) {
+    return (
+      <div
+        className={cn(
+          'group flex flex-col items-start',
+          densityMode === 'compact' ? 'gap-1.5' : 'gap-2.5',
+        )}
+      >
+        <SlashResultCard
+          slashCommand={message.slashCommand}
+          content={message.content}
+        />
+        <div className="flex items-center gap-1.5 pl-1">
+          <MessageCopyButton
+            side="right"
+            copied={isCopied}
+            visible={showCopyButton}
+            onClick={() => onCopyMessage(message)}
+          />
+          <div className="text-[11px] leading-none text-black/32">{shortTime}</div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -4201,6 +4363,14 @@ function summarizeToolResult(content: string): string {
         default:
         // Fall through to generic handling.
       }
+    }
+
+    // file_write structured payload — emit a friendly one-liner so the
+    // tool-card summary doesn't dump the raw JSON (which can carry up
+    // to 64 KiB of pre-write content for the diff viewer).
+    if (record.kind === 'file_write' && record.ok === true) {
+      const path = typeof record.path === 'string' ? record.path : ''
+      return path ? `已写入 ${truncateText(path, 80)}` : '已写入文件'
     }
 
     const exitCode = typeof record.exit_code === 'number' ? record.exit_code : null

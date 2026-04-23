@@ -78,6 +78,14 @@ export interface Message {
    * Carries lane / entry / reason metadata only, never raw prompt text.
    */
   promptDiagnostics?: PromptDiagnosticsSummary;
+  /**
+   * When this assistant message is the static result of an
+   * `executeSlashCommand` invocation (e.g. `/diff`, `/branch`,
+   * `/worktree`), the renderer uses a compact single-line card instead
+   * of the regular markdown bubble.  Holds the original slash token
+   * including the leading `/` so the card can echo it as a chip.
+   */
+  slashCommand?: string;
 }
 
 export interface Conversation {
@@ -106,6 +114,29 @@ export interface ChatWorkspaceProps {
   activeSessionId: string | null;
   currentProject: Project | null;
   branchLabel: string;
+  /** Tri-state Git presence:
+   *   - `true`  → cwd is inside a git working tree, all pickers active
+   *   - `false` → cwd has no `.git`; pickers render disabled with a
+   *     "无 Git 仓库" hint and offer an "init now" affordance
+   *   - `null`  → still probing; UI assumes "active" optimistically so
+   *     the disabled state doesn't flash on every project switch */
+  isGitRepo?: boolean | null;
+  /** Fired after `git init` (or any other event that may have changed
+   *  the repo presence).  Parent should re-probe `gitIsRepo` and
+   *  refresh `branchLabel`. */
+  onGitRepoChanged?: () => void;
+  /** Optional callback invoked by `BranchPicker` after a successful
+   *  checkout / create.  Parent should refresh its `branchLabel` so the
+   *  composer pill reflects reality. */
+  onBranchChange?: (newBranch: string) => void;
+  /** Optional callback fired after `gitCreateWorktreeProject` registers
+   *  a worktree as a new project.  Parent should reload the project
+   *  list and (optionally) switch the active session into it. */
+  onWorktreeProjectCreated?: (project: {
+    id: string;
+    name: string;
+    workdir: string;
+  }) => void;
   activeTitle: string;
   activeMessages: Message[];
   input: string;

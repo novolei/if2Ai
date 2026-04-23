@@ -5,11 +5,15 @@
 use base64::Engine;
 use serde::Serialize;
 use std::path::PathBuf;
+// `Command` is still needed below by `open_path_in_file_manager` for
+// invoking `open` / `explorer` / `xdg-open`; git operations now go
+// through `crate::modules::git`.
 use std::process::Command;
 
 use tauri::State;
 
 use crate::commands::AppState;
+use crate::modules::git::worktree as git_worktree;
 use crate::modules::projects::{Project, ProjectError, ProjectMeta};
 
 /// Convert ProjectError to String for Tauri.
@@ -416,31 +420,15 @@ pub async fn create_permanent_worktree(
         .ok_or_else(|| String::from("项目工作目录没有父目录，无法创建工作树"))?
         .to_path_buf();
     let slug = slugify(&project.name);
-    let target_dir = parent.join(format!("{slug}-worktree"));
-    let branch_name = format!("if2ai/{slug}");
 
-    if target_dir.exists() {
-        return Err(format!("工作树目标已存在: {}", target_dir.display()));
-    }
-
-    let created_target = target_dir.clone();
+    // The target-path computation and existence preflight live inside
+    // `git_worktree::create_named`; we do not duplicate them here so
+    // any future rename of the directory pattern (e.g. timestamp suffix)
+    // cannot silently desync this caller.
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&source_dir)
-            .arg("worktree")
-            .arg("add")
-            .arg(&created_target)
-            .arg("-b")
-            .arg(&branch_name)
-            .output()
-            .map_err(|err| err.to_string())?;
-
-        if output.status.success() {
-            Ok(created_target.to_string_lossy().to_string())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-        }
+        git_worktree::create_named(&source_dir, &parent, &slug, "if2ai")
+            .map(|created| created.to_string_lossy().into_owned())
+            .map_err(String::from)
     })
     .await
     .map_err(|err| err.to_string())?

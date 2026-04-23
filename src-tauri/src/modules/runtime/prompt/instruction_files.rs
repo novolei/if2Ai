@@ -2,11 +2,17 @@
 //!
 //! Extracted from `runtime/prompt/mod.rs` in GFR-T1-G-1 (pure structural
 //! move; function bodies byte-identical).
+//!
+//! Git helpers were moved to [`crate::modules::git::status`] in the
+//! git-module migration; the wrappers below are kept for backward
+//! compatibility with the rest of the prompt module's call sites and
+//! delegate to the centralised implementation.
 
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use crate::modules::git::status as git_status;
 
 use super::{
     prepend_bullets, ContextFile, ProjectContext, MAX_INSTRUCTION_FILE_CHARS,
@@ -51,54 +57,17 @@ pub(super) fn push_context_file(
     }
 }
 
+/// Best-effort `git status --short --branch` snapshot for prompt
+/// injection.  Delegates to [`crate::modules::git::status::status_or_none`]
+/// which preserves the original "swallow all errors → None" semantics.
 pub(super) fn read_git_status(cwd: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .args(["--no-optional-locks", "status", "--short", "--branch"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    git_status::status_or_none(cwd)
 }
 
+/// Best-effort staged + unstaged diff snapshot for prompt injection.
+/// Delegates to [`crate::modules::git::status::diff_or_none`].
 pub(super) fn read_git_diff(cwd: &Path) -> Option<String> {
-    let mut sections = Vec::new();
-
-    let staged = read_git_output(cwd, &["diff", "--cached"])?;
-    if !staged.trim().is_empty() {
-        sections.push(format!("Staged changes:\n{}", staged.trim_end()));
-    }
-
-    let unstaged = read_git_output(cwd, &["diff"])?;
-    if !unstaged.trim().is_empty() {
-        sections.push(format!("Unstaged changes:\n{}", unstaged.trim_end()));
-    }
-
-    if sections.is_empty() {
-        None
-    } else {
-        Some(sections.join("\n\n"))
-    }
-}
-
-pub(super) fn read_git_output(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout).ok()
+    git_status::diff_or_none(cwd)
 }
 
 pub(super) fn render_project_context(project_context: &ProjectContext) -> String {

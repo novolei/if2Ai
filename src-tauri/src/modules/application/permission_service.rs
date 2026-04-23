@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 use crate::modules::harness::{AgentEvent, HarnessState};
+use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
@@ -30,6 +31,7 @@ pub(crate) struct TauriPermissionPrompter {
     window: tauri::WebviewWindow,
     session_id: String,
     receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
+    event_logger: Option<RunEventLogger>,
 }
 
 #[allow(dead_code)]
@@ -39,11 +41,13 @@ impl TauriPermissionPrompter {
         window: tauri::WebviewWindow,
         session_id: String,
         receiver: std::sync::mpsc::Receiver<PermissionPromptDecision>,
+        event_logger: Option<RunEventLogger>,
     ) -> Self {
         Self {
             window,
             session_id,
             receiver,
+            event_logger,
         }
     }
 }
@@ -73,6 +77,16 @@ impl PermissionPrompter for TauriPermissionPrompter {
                 ),
             }),
         );
+        if let Some(event_logger) = &self.event_logger {
+            let _ = event_logger.append_sync(
+                "permission_requested",
+                serde_json::json!({
+                    "tool_name": request.tool_name,
+                    "required_mode": request.required_mode.as_str(),
+                    "current_mode": request.current_mode.as_str(),
+                }),
+            );
+        }
 
         // 2. block waiting for frontend response (mpsc blocks — acceptable in sync context)
         match self
@@ -84,11 +98,39 @@ impl PermissionPrompter for TauriPermissionPrompter {
                     "[permission] decision received for session_id={}",
                     self.session_id
                 );
+                if let Some(event_logger) = &self.event_logger {
+                    let (decision_label, deny_reason) = match &decision {
+                        PermissionPromptDecision::Allow => ("allow", None),
+                        PermissionPromptDecision::Deny { reason } => {
+                            ("deny", Some(reason.as_str()))
+                        }
+                    };
+                    let _ = event_logger.append_sync(
+                        "permission_resolved",
+                        serde_json::json!({
+                            "tool_name": request.tool_name,
+                            "decision": decision_label,
+                            "reason": deny_reason,
+                        }),
+                    );
+                }
                 decision
             }
-            Err(_) => PermissionPromptDecision::Deny {
-                reason: "Permission request timed out".to_string(),
-            },
+            Err(_) => {
+                if let Some(event_logger) = &self.event_logger {
+                    let _ = event_logger.append_sync(
+                        "permission_resolved",
+                        serde_json::json!({
+                            "tool_name": request.tool_name,
+                            "decision": "deny",
+                            "reason": "timeout",
+                        }),
+                    );
+                }
+                PermissionPromptDecision::Deny {
+                    reason: "Permission request timed out".to_string(),
+                }
+            }
         }
     }
 }

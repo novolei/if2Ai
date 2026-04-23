@@ -89,10 +89,7 @@ pub async fn synthesize_and_persist<L: UtilityLlm + ?Sized>(
         ));
     }
 
-    let key = format!(
-        "reflection-{session_id}-{}",
-        chrono::Utc::now().timestamp()
-    );
+    let key = format!("reflection-{session_id}-{}", chrono::Utc::now().timestamp());
     memory
         .store_scoped(&key, body, MemoryCategory::Reflection, scope)
         .await?;
@@ -150,9 +147,8 @@ mod tests {
     #[tokio::test]
     async fn synthesize_persists_reflection_to_memory_provider() {
         let dir = tempfile::tempdir().unwrap();
-        let memory: SharedMemoryProvider = Arc::new(
-            SqliteMemoryProvider::new(dir.path().join("reflect.db")).unwrap(),
-        );
+        let memory: SharedMemoryProvider =
+            Arc::new(SqliteMemoryProvider::new(dir.path().join("reflect.db")).unwrap());
         let llm = MockUtilityLlm::new(vec![
             "Observation: the user prefers terse, code-first answers.".to_string(),
         ]);
@@ -164,7 +160,11 @@ mod tests {
             .unwrap();
 
         assert!(key.starts_with("reflection-sess-x-"));
-        let stored = memory.get_by_key(&key).await.unwrap().expect("entry written");
+        let stored = memory
+            .get_by_key(&key)
+            .await
+            .unwrap()
+            .expect("entry written");
         assert_eq!(stored.category, MemoryCategory::Reflection);
         assert!(stored.content.contains("terse"));
     }
@@ -172,9 +172,8 @@ mod tests {
     #[tokio::test]
     async fn synthesize_errors_on_empty_llm_response() {
         let dir = tempfile::tempdir().unwrap();
-        let memory: SharedMemoryProvider = Arc::new(
-            SqliteMemoryProvider::new(dir.path().join("reflect.db")).unwrap(),
-        );
+        let memory: SharedMemoryProvider =
+            Arc::new(SqliteMemoryProvider::new(dir.path().join("reflect.db")).unwrap());
         let llm = MockUtilityLlm::new(vec!["   ".to_string()]);
         let scope = MemoryExecutionScope::global();
         let err = synthesize_and_persist(&llm, &memory, &scope, "s", &[])

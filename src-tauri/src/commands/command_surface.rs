@@ -4,6 +4,8 @@
 //! grouped surfaces, rather than growing a single inline business
 //! command list forever.
 
+#![allow(clippy::crate_in_macro_def)]
+
 #[macro_export]
 macro_rules! host_lifecycle_commands {
     () => {
@@ -512,6 +514,25 @@ macro_rules! if2ai_command_surface {
             crate::commands::tts_download::tts_model_status,
             crate::commands::tts_download::tts_model_download_start,
             crate::commands::tts_download::tts_model_download_status,
+            crate::commands::git::git_status,
+            crate::commands::git::git_diff,
+            crate::commands::git::git_is_repo,
+            crate::commands::git::git_init_repo,
+            crate::commands::git::git_branches,
+            crate::commands::git::git_current_branch,
+            crate::commands::git::git_default_branch,
+            crate::commands::git::git_checkout_branch,
+            crate::commands::git::git_create_branch,
+            crate::commands::git::git_worktrees,
+            crate::commands::git::git_add_worktree,
+            crate::commands::git::git_remove_worktree,
+            crate::commands::git::git_prune_worktrees,
+            crate::commands::git::git_create_worktree_project,
+            crate::commands::git::git_commit,
+            crate::commands::git::git_commit_push_pr,
+            crate::commands::git::gh_available,
+            crate::commands::git::gh_create_pr,
+            crate::commands::git::gh_create_issue,
         ]
     };
 }

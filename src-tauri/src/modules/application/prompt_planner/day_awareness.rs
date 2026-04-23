@@ -105,13 +105,34 @@ struct TimeBucket {
 #[inline]
 fn bucket_for(hour: u32) -> TimeBucket {
     match hour {
-        0..=3 => TimeBucket { slug: "late_night", label_cn: "深夜" },
-        4..=6 => TimeBucket { slug: "early_morning", label_cn: "凌晨" },
-        7..=10 => TimeBucket { slug: "morning", label_cn: "上午" },
-        11..=13 => TimeBucket { slug: "midday", label_cn: "中午" },
-        14..=17 => TimeBucket { slug: "afternoon", label_cn: "下午" },
-        18..=21 => TimeBucket { slug: "evening", label_cn: "傍晚" },
-        _ => TimeBucket { slug: "night", label_cn: "夜晚" },
+        0..=3 => TimeBucket {
+            slug: "late_night",
+            label_cn: "深夜",
+        },
+        4..=6 => TimeBucket {
+            slug: "early_morning",
+            label_cn: "凌晨",
+        },
+        7..=10 => TimeBucket {
+            slug: "morning",
+            label_cn: "上午",
+        },
+        11..=13 => TimeBucket {
+            slug: "midday",
+            label_cn: "中午",
+        },
+        14..=17 => TimeBucket {
+            slug: "afternoon",
+            label_cn: "下午",
+        },
+        18..=21 => TimeBucket {
+            slug: "evening",
+            label_cn: "傍晚",
+        },
+        _ => TimeBucket {
+            slug: "night",
+            label_cn: "夜晚",
+        },
     }
 }
 
@@ -125,13 +146,34 @@ struct WeekdayLabel {
 fn weekday_label(wd: chrono::Weekday) -> WeekdayLabel {
     use chrono::Weekday::*;
     match wd {
-        Mon => WeekdayLabel { cn: "周一", en: "Mon" },
-        Tue => WeekdayLabel { cn: "周二", en: "Tue" },
-        Wed => WeekdayLabel { cn: "周三", en: "Wed" },
-        Thu => WeekdayLabel { cn: "周四", en: "Thu" },
-        Fri => WeekdayLabel { cn: "周五", en: "Fri" },
-        Sat => WeekdayLabel { cn: "周六", en: "Sat" },
-        Sun => WeekdayLabel { cn: "周日", en: "Sun" },
+        Mon => WeekdayLabel {
+            cn: "周一",
+            en: "Mon",
+        },
+        Tue => WeekdayLabel {
+            cn: "周二",
+            en: "Tue",
+        },
+        Wed => WeekdayLabel {
+            cn: "周三",
+            en: "Wed",
+        },
+        Thu => WeekdayLabel {
+            cn: "周四",
+            en: "Thu",
+        },
+        Fri => WeekdayLabel {
+            cn: "周五",
+            en: "Fri",
+        },
+        Sat => WeekdayLabel {
+            cn: "周六",
+            en: "Sat",
+        },
+        Sun => WeekdayLabel {
+            cn: "周日",
+            en: "Sun",
+        },
     }
 }
 

@@ -69,6 +69,7 @@ use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 use crate::modules::runtime::resume_cursor::{
     build_resume_cursor, extract_resume_cursor_marker, parse_resume_cursor,
@@ -91,6 +92,23 @@ use crate::modules::runtime::timeline_flush::{
 };
 
 use super::TurnService;
+
+async fn append_stream_terminal_error(
+    run_event_logger: &RunEventLogger,
+    stage: &'static str,
+    error: impl Into<String>,
+) {
+    let error = error.into();
+    let _ = run_event_logger
+        .append(
+            "stream_error",
+            serde_json::json!({
+                "stage": stage,
+                "error": error,
+            }),
+        )
+        .await;
+}
 
 // `MAX_REQUEST_*` budget constants now live with their consumers
 // in `stream_task.rs`; they are no longer referenced from
@@ -143,6 +161,7 @@ impl TurnService {
         let session_id = request.session_id.clone();
         let user_message = request.user_message.clone();
         let permission_mode = request.permission_mode.clone();
+        let run_id = uuid::Uuid::new_v4().to_string();
         let app_handle = self
             .deps
             .app_handle
@@ -153,28 +172,49 @@ impl TurnService {
                     .to_string()
             })?
             .clone();
+        let run_event_logger =
+            RunEventLogger::for_app_handle(&app_handle, session_id.clone(), run_id.clone());
         let stream_id = uuid::Uuid::new_v4().to_string();
         tracing::info!(
-            "[start_agent_stream] Starting - stream_id: {}, session_id: {}, requested_permission_mode: {}",
+            "[start_agent_stream] Starting - stream_id: {}, run_id: {}, session_id: {}, requested_permission_mode: {}",
             stream_id,
+            run_id,
             session_id,
             permission_mode
                 .as_deref()
                 .unwrap_or("dangerFullAccess(default)")
         );
+        let _ = run_event_logger
+            .append(
+                "run_started",
+                serde_json::json!({
+                    "caller": "start_agent_stream",
+                    "stream_id": stream_id.clone(),
+                    "permission_mode": permission_mode.clone(),
+                    "message_preview": user_message.chars().take(160).collect::<String>(),
+                }),
+            )
+            .await;
 
         // Get the main window for emitting events
-        let window = app_handle
-            .get_webview_window("main")
-            .ok_or_else(|| "Failed to get main window".to_string())?;
+        let window = match app_handle.get_webview_window("main") {
+            Some(window) => window,
+            None => {
+                let message = "Failed to get main window".to_string();
+                append_stream_terminal_error(&run_event_logger, "get_main_window", &message).await;
+                return Err(message);
+            }
+        };
 
         // Restore the session
-        let app_session = self
-            .deps
-            .session_manager
-            .restore_session(&session_id)
-            .await
-            .map_err(|e| e.to_string())?;
+        let app_session = match self.deps.session_manager.restore_session(&session_id).await {
+            Ok(session) => session,
+            Err(error) => {
+                let message = error.to_string();
+                append_stream_terminal_error(&run_event_logger, "restore_session", &message).await;
+                return Err(message);
+            }
+        };
 
         tracing::info!(
             "[start_agent_stream] Session restored, {} messages",
@@ -192,12 +232,24 @@ impl TurnService {
 
         let inbound_resume_cursor = extract_resume_cursor_marker(&user_message);
         if let Some(cursor_value) = inbound_resume_cursor.as_deref() {
-            let parsed_cursor = parse_resume_cursor(cursor_value)
-                .ok_or_else(|| format!("invalid resume cursor: {cursor_value}"))?;
+            let parsed_cursor = match parse_resume_cursor(cursor_value) {
+                Some(parsed_cursor) => parsed_cursor,
+                None => {
+                    let message = format!("invalid resume cursor: {cursor_value}");
+                    append_stream_terminal_error(
+                        &run_event_logger,
+                        "resume_cursor_parse",
+                        &message,
+                    )
+                    .await;
+                    return Err(message);
+                }
+            };
             if !session_contains_resume_cursor(&app_session, &parsed_cursor) {
-                return Err(format!(
-                    "resume cursor not found or expired: {cursor_value}"
-                ));
+                let message = format!("resume cursor not found or expired: {cursor_value}");
+                append_stream_terminal_error(&run_event_logger, "resume_cursor_lookup", &message)
+                    .await;
+                return Err(message);
             }
         }
 
@@ -265,7 +317,7 @@ impl TurnService {
         } else {
             Some(execution_context.project_id.clone())
         };
-        let prepared_stream = self
+        let prepared_stream = match self
             .prepare_chat_inputs(PrepareChatInputsRequest {
                 workdir: execution_context.workdir.clone(),
                 current_date: crate::modules::runtime::logical_day::get_today().display,
@@ -278,16 +330,34 @@ impl TurnService {
                 caller: "start_agent_stream",
             })
             .await
-            .map_err(|err| match err {
-                TurnServiceError::Provider(msg) => {
-                    tracing::error!("[start_agent_stream] Failed to create API client: {}", msg);
-                    msg
-                }
-                TurnServiceError::Prompt(p) => {
-                    tracing::error!("[start_agent_stream] Prompt planning failed: {}", p);
-                    p.to_string()
-                }
-            })?;
+        {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                let message = match err {
+                    TurnServiceError::Provider(msg) => {
+                        tracing::error!(
+                            "[start_agent_stream] Failed to create API client: {}",
+                            msg
+                        );
+                        msg
+                    }
+                    TurnServiceError::Prompt(p) => {
+                        tracing::error!("[start_agent_stream] Prompt planning failed: {}", p);
+                        p.to_string()
+                    }
+                };
+                let _ = run_event_logger
+                    .append(
+                        "stream_error",
+                        serde_json::json!({
+                            "stage": "prepare_chat_inputs",
+                            "error": message,
+                        }),
+                    )
+                    .await;
+                return Err(message);
+            }
+        };
         // MIG-002-a — request intelligence now acts as a real route gate.
         // Short-circuit for SpecializedSurface mode.
         use crate::modules::runtime::contracts::execution_mode::ExecutionMode;
@@ -298,10 +368,17 @@ impl TurnService {
                     route_hint = ?prepared_stream.execution_mode_decision.route_hint,
                     "[start_agent_stream] Short-circuiting: SpecializedSurface mode"
                 );
-                return Err(format!(
+                let routed_message = format!(
                     "Request routed to specialized surface: {:?}",
                     prepared_stream.execution_mode_decision.route_hint
-                ));
+                );
+                append_stream_terminal_error(
+                    &run_event_logger,
+                    "execution_mode_gate",
+                    &routed_message,
+                )
+                .await;
+                return Err(routed_message);
             }
             ExecutionMode::DirectExecute
             | ExecutionMode::AutoPlanExecute
@@ -408,6 +485,7 @@ impl TurnService {
         // changed.
         let stream_task_inputs = super::stream_task::StreamTaskInputs {
             stream_id_for_task,
+            run_event_logger,
             session_id: session_id.clone(),
             user_message_clone,
             permission_mode_for_stream,

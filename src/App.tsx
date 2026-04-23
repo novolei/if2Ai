@@ -1060,7 +1060,54 @@ function App() {
     : false;
   const activeTitle = activeConv?.title ?? "新对话";
   const todos = activeSessionId ? (sessionTodos[activeSessionId] ?? []) : [];
-  const branchLabel = "feature/consolidate-codebase";
+  // Live current branch + repo presence for the composer footer pickers.
+  // Refreshed whenever the active project changes; updated optimistically
+  // by `BranchPicker` / `GitActionsPicker` on successful checkout / init
+  // so the UI doesn't lag behind the dropdown.
+  //
+  // `isGitRepo === null` = still probing (treat as "assume yes" so we
+  // don't flash a disabled state while the IPC is in flight).
+  const [branchLabel, setBranchLabel] = useState<string>("");
+  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null);
+  // Bumping `gitProbeNonce` triggers a full re-probe of branch + repo
+  // status — used after `git init` to flip the pickers back on without
+  // tearing down / re-mounting the active session.
+  const [gitProbeNonce, setGitProbeNonce] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const cwd = currentProject?.workdir;
+    if (!cwd) {
+      setBranchLabel("");
+      setIsGitRepo(null);
+      return;
+    }
+    setIsGitRepo(null);
+    void import("@/modules/git/api").then(async ({ gitCurrentBranch, gitIsRepo }) => {
+      try {
+        const repo = await gitIsRepo(cwd);
+        if (cancelled) return;
+        setIsGitRepo(repo);
+        if (!repo) {
+          setBranchLabel("");
+          return;
+        }
+        try {
+          const branch = await gitCurrentBranch(cwd);
+          if (!cancelled) setBranchLabel(branch);
+        } catch {
+          if (!cancelled) setBranchLabel("");
+        }
+      } catch {
+        if (!cancelled) {
+          setIsGitRepo(false);
+          setBranchLabel("");
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject?.workdir, gitProbeNonce]);
   const minLeftPaneWidth = 280;
   const maxLeftPaneWidth = 520;
   const activeMessages = useMemo(
@@ -2240,12 +2287,17 @@ function App() {
         try {
           const result = await executeSlashCommand(messageText, sessionId);
           const assistantMsgId = crypto.randomUUID();
+          const slashToken = messageText
+            .trim()
+            .split(/\s+/, 1)[0];
           const assistantMsg: Message = {
             id: assistantMsgId,
             role: "assistant",
             content: result,
             timestamp: new Date(),
             isStreaming: false,
+            slashCommand:
+              slashToken && slashToken.startsWith("/") ? slashToken : undefined,
           };
           setConversations((prev) => {
             const currentConv = prev[sessionId];
@@ -3019,6 +3071,20 @@ function App() {
             activeSessionId={activeSessionId}
             currentProject={currentProject}
             branchLabel={branchLabel}
+            isGitRepo={isGitRepo}
+            onGitRepoChanged={() => setGitProbeNonce((n) => n + 1)}
+            onBranchChange={setBranchLabel}
+            onWorktreeProjectCreated={async (project) => {
+              // 把新 worktree 注册的 project 拉进 ProjectMeta 列表里
+              // → 侧栏立刻看见；同时把它选成活跃 project，再开一个新
+              // session 让用户直接在 worktree 里继续聊。
+              await loadProjects();
+              try {
+                setActiveProjectId(project.id);
+              } catch {
+                /* setActiveProjectId 可能依赖 store；调用失败时静默降级 */
+              }
+            }}
             activeTitle={activeTitle}
             activeMessages={activeMessages}
             input={input}

@@ -34,6 +34,7 @@
 
 ## Source Of Truth
 
+- [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
 - [UClaw Gap Migration Audit](../../staff-remediation/uclaw-gap-migration-audit.md)
 - [If2Ai Worker Adoption Design](../../staff-remediation/if2ai-worker-adoption-design.md)
 
@@ -62,3 +63,4 @@
 ## Execution Notes
 
 - 先保证 contract 清晰，再批量迁工具。
+- 本 Pack 的设计、实现、review、验收必须完整参照 [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)。

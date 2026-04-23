@@ -34,40 +34,39 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 #[allow(dead_code)]
 #[must_use]
 pub fn recall_explicit_entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _ctx: SharedToolContext| {
-            let memory = memory.clone();
-            Box::pin(async move {
-                let key = require_string(&args, "key")?;
-                match memory.get_by_key(&key).await {
-                    Ok(Some(entry)) => Ok(json!({
-                        "status": "ok",
-                        "key": entry.key,
-                        "content": entry.content,
-                        "category": entry.category.as_str(),
-                        "importance": entry.importance,
-                        "access_count": entry.access_count,
-                        "trust_score": entry.trust_score,
-                        "updated_at": entry.updated_at.to_rfc3339(),
-                    })
-                    .to_string()),
-                    Ok(None) => Ok(json!({ "status": "not_found", "key": key }).to_string()),
-                    Err(err) => Err(ToolError::Handler(format!(
-                        "memory_recall_explicit failed: {err}"
-                    ))),
-                }
-            })
-        },
-    );
+    let handler: ToolHandler = Arc::new(move |args: serde_json::Value, _ctx: SharedToolContext| {
+        let memory = memory.clone();
+        Box::pin(async move {
+            let key = require_string(&args, "key")?;
+            match memory.get_by_key(&key).await {
+                Ok(Some(entry)) => Ok(json!({
+                    "status": "ok",
+                    "key": entry.key,
+                    "content": entry.content,
+                    "category": entry.category.as_str(),
+                    "importance": entry.importance,
+                    "access_count": entry.access_count,
+                    "trust_score": entry.trust_score,
+                    "updated_at": entry.updated_at.to_rfc3339(),
+                })
+                .to_string()),
+                Ok(None) => Ok(json!({ "status": "not_found", "key": key }).to_string()),
+                Err(err) => Err(ToolError::Handler(format!(
+                    "memory_recall_explicit failed: {err}"
+                ))),
+            }
+        })
+    });
 
     ToolEntry {
         name: "memory_recall_explicit".to_string(),
         toolset: "memory".to_string(),
-        description: "Fetch one memory entry by exact key. Returns JSON `{status:'ok'|'not_found', \
+        description:
+            "Fetch one memory entry by exact key. Returns JSON `{status:'ok'|'not_found', \
                       key, content, category, importance, access_count, trust_score, updated_at}`. \
                       Use when you already know the key (e.g. from a prior `memory_recall`); \
                       prefer `memory_recall` for fuzzy / scope-aware lookup."
-            .to_string(),
+                .to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -92,29 +91,25 @@ pub fn recall_explicit_entry(memory: SharedMemoryProvider) -> ToolEntry {
 #[allow(dead_code)]
 #[must_use]
 pub fn update_entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _ctx: SharedToolContext| {
-            let memory = memory.clone();
-            Box::pin(async move {
-                let key = require_string(&args, "key")?;
-                let content = require_string(&args, "content")?;
-                match memory.update_content(&key, &content).await {
-                    Ok(()) => Ok(json!({
-                        "status": "ok",
-                        "key": key,
-                        "content_chars": content.chars().count(),
-                    })
-                    .to_string()),
-                    Err(MemoryError::KeyNotFound(_)) => {
-                        Ok(json!({ "status": "not_found", "key": key }).to_string())
-                    }
-                    Err(err) => Err(ToolError::Handler(format!(
-                        "memory_update failed: {err}"
-                    ))),
+    let handler: ToolHandler = Arc::new(move |args: serde_json::Value, _ctx: SharedToolContext| {
+        let memory = memory.clone();
+        Box::pin(async move {
+            let key = require_string(&args, "key")?;
+            let content = require_string(&args, "content")?;
+            match memory.update_content(&key, &content).await {
+                Ok(()) => Ok(json!({
+                    "status": "ok",
+                    "key": key,
+                    "content_chars": content.chars().count(),
+                })
+                .to_string()),
+                Err(MemoryError::KeyNotFound(_)) => {
+                    Ok(json!({ "status": "not_found", "key": key }).to_string())
                 }
-            })
-        },
-    );
+                Err(err) => Err(ToolError::Handler(format!("memory_update failed: {err}"))),
+            }
+        })
+    });
 
     ToolEntry {
         name: "memory_update".to_string(),
@@ -150,31 +145,29 @@ pub fn update_entry(memory: SharedMemoryProvider) -> ToolEntry {
 #[allow(dead_code)]
 #[must_use]
 pub fn link_entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _ctx: SharedToolContext| {
-            let memory = memory.clone();
-            Box::pin(async move {
-                let source = require_string(&args, "source_key")?;
-                let target = require_string(&args, "target_key")?;
-                let link_type = args
-                    .get("link_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("related_to")
-                    .to_string();
-                memory
-                    .create_link(&source, &target, &link_type)
-                    .await
-                    .map_err(|e| ToolError::Handler(format!("memory_link failed: {e}")))?;
-                Ok(json!({
-                    "status": "ok",
-                    "source_key": source,
-                    "target_key": target,
-                    "link_type": link_type,
-                })
-                .to_string())
+    let handler: ToolHandler = Arc::new(move |args: serde_json::Value, _ctx: SharedToolContext| {
+        let memory = memory.clone();
+        Box::pin(async move {
+            let source = require_string(&args, "source_key")?;
+            let target = require_string(&args, "target_key")?;
+            let link_type = args
+                .get("link_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("related_to")
+                .to_string();
+            memory
+                .create_link(&source, &target, &link_type)
+                .await
+                .map_err(|e| ToolError::Handler(format!("memory_link failed: {e}")))?;
+            Ok(json!({
+                "status": "ok",
+                "source_key": source,
+                "target_key": target,
+                "link_type": link_type,
             })
-        },
-    );
+            .to_string())
+        })
+    });
 
     ToolEntry {
         name: "memory_link".to_string(),
@@ -211,61 +204,59 @@ pub fn link_entry(memory: SharedMemoryProvider) -> ToolEntry {
 #[allow(dead_code)]
 #[must_use]
 pub fn consolidate_entry(memory: SharedMemoryProvider) -> ToolEntry {
-    let handler: ToolHandler = Arc::new(
-        move |args: serde_json::Value, _ctx: SharedToolContext| {
-            let memory = memory.clone();
-            Box::pin(async move {
-                let consolidated_key = require_string(&args, "consolidated_key")?;
-                let consolidated_content = require_string(&args, "consolidated_content")?;
-                let source_keys: Vec<String> = args
-                    .get("source_keys")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if source_keys.is_empty() {
-                    return Err(ToolError::Handler(
-                        "memory_consolidate requires at least one `source_keys` entry".into(),
-                    ));
-                }
-                let category = args
-                    .get("category")
-                    .and_then(|v| v.as_str())
-                    .map(|c| match c {
-                        "core" => MemoryCategory::Core,
-                        "daily" => MemoryCategory::Daily,
-                        "conversation" => MemoryCategory::Conversation,
-                        "working" => MemoryCategory::Working,
-                        "procedural" => MemoryCategory::Procedural,
-                        "reflection" => MemoryCategory::Reflection,
-                        other => MemoryCategory::Custom(other.to_string()),
-                    })
-                    .unwrap_or(MemoryCategory::Reflection);
-
-                let linked = memory
-                    .consolidate(
-                        &source_keys,
-                        &consolidated_key,
-                        &consolidated_content,
-                        category.clone(),
-                    )
-                    .await
-                    .map_err(|e| ToolError::Handler(format!("memory_consolidate failed: {e}")))?;
-
-                Ok(json!({
-                    "status": "ok",
-                    "consolidated_key": consolidated_key,
-                    "category": category.as_str(),
-                    "links_created": linked,
-                    "source_count": source_keys.len(),
+    let handler: ToolHandler = Arc::new(move |args: serde_json::Value, _ctx: SharedToolContext| {
+        let memory = memory.clone();
+        Box::pin(async move {
+            let consolidated_key = require_string(&args, "consolidated_key")?;
+            let consolidated_content = require_string(&args, "consolidated_content")?;
+            let source_keys: Vec<String> = args
+                .get("source_keys")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
                 })
-                .to_string())
+                .unwrap_or_default();
+            if source_keys.is_empty() {
+                return Err(ToolError::Handler(
+                    "memory_consolidate requires at least one `source_keys` entry".into(),
+                ));
+            }
+            let category = args
+                .get("category")
+                .and_then(|v| v.as_str())
+                .map(|c| match c {
+                    "core" => MemoryCategory::Core,
+                    "daily" => MemoryCategory::Daily,
+                    "conversation" => MemoryCategory::Conversation,
+                    "working" => MemoryCategory::Working,
+                    "procedural" => MemoryCategory::Procedural,
+                    "reflection" => MemoryCategory::Reflection,
+                    other => MemoryCategory::Custom(other.to_string()),
+                })
+                .unwrap_or(MemoryCategory::Reflection);
+
+            let linked = memory
+                .consolidate(
+                    &source_keys,
+                    &consolidated_key,
+                    &consolidated_content,
+                    category.clone(),
+                )
+                .await
+                .map_err(|e| ToolError::Handler(format!("memory_consolidate failed: {e}")))?;
+
+            Ok(json!({
+                "status": "ok",
+                "consolidated_key": consolidated_key,
+                "category": category.as_str(),
+                "links_created": linked,
+                "source_count": source_keys.len(),
             })
-        },
-    );
+            .to_string())
+        })
+    });
 
     ToolEntry {
         name: "memory_consolidate".to_string(),
@@ -315,8 +306,8 @@ fn require_string(args: &serde_json::Value, name: &str) -> Result<String, ToolEr
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::modules::memory::SqliteMemoryProvider;
     use crate::modules::memory::MemoryCategory;
+    use crate::modules::memory::SqliteMemoryProvider;
     use crate::modules::tools::context::ToolContext;
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
@@ -339,7 +330,9 @@ mod tests {
     async fn recall_explicit_returns_not_found_for_missing_key() {
         let (memory, _dir) = make_provider().await;
         let tool = recall_explicit_entry(memory);
-        let out = (tool.handler)(json!({ "key": "ghost" }), ctx()).await.unwrap();
+        let out = (tool.handler)(json!({ "key": "ghost" }), ctx())
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["status"], "not_found");
     }
@@ -359,7 +352,9 @@ mod tests {
             .unwrap();
         assert!(r.contains("\"status\":\"ok\""));
 
-        let read = (recall.handler)(json!({ "key": "k1" }), ctx()).await.unwrap();
+        let read = (recall.handler)(json!({ "key": "k1" }), ctx())
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_str(&read).unwrap();
         assert_eq!(v["content"], "v2");
     }

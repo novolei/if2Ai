@@ -197,11 +197,9 @@ pub async fn build_prompt_plan(
     // scenario header.  Skipped entirely when the slice is empty so
     // the prompt header stays tight.
     if !request.learned_traits.is_empty() {
-        if let Some(content) =
-            crate::modules::memory::learned_traits::render_learned_traits_block(
-                &request.learned_traits,
-            )
-        {
+        if let Some(content) = crate::modules::memory::learned_traits::render_learned_traits_block(
+            &request.learned_traits,
+        ) {
             blocks.push(PromptBlock {
                 id: "learned_traits".to_string(),
                 kind: PromptBlockKind::LearnedTraits,

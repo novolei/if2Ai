@@ -609,7 +609,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let key = key.to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let mut stmt = c.prepare(
                 "SELECT key, content, category, created_at, updated_at, importance,
                         access_count, trust_score, session_id, project_id
@@ -636,7 +638,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let content = content.to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let now = chrono::Utc::now().to_rfc3339();
             // Snapshot the current row first.  Best-effort — a
             // missing history table (older DB pre-P6) is ignored.
@@ -666,7 +670,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let key = key.to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let mut stmt = c.prepare(
                 "SELECT key, content, category, importance, trust_score,
                         valid_from, valid_to, source
@@ -715,7 +721,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let link_type = link_type.to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
             c.execute(
                 "INSERT OR IGNORE INTO memory_links
                     (source_key, target_key, link_type, created_at)
@@ -748,7 +756,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let category_str = category.as_str().to_string();
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let now = chrono::Utc::now().to_rfc3339();
             // MEM-MOD-P6 — snapshot existing entry (if any) before
             // overwriting via upsert so the temporal API can still
@@ -764,12 +774,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                     content = excluded.content,
                     category = excluded.category,
                     updated_at = excluded.updated_at",
-                params![
-                    consolidated_key,
-                    consolidated_content,
-                    category_str,
-                    now
-                ],
+                params![consolidated_key, consolidated_content, category_str, now],
             )
             .map_err(|e| MemoryError::Generic(format!("consolidate upsert failed: {e}")))?;
 
@@ -795,11 +800,7 @@ impl MemoryProvider for SqliteMemoryProvider {
     /// MEM-MOD-P1 — clamp `trust_score + delta` into `[-1.0, 1.0]` and
     /// persist the result.  Single-row UPDATE — cheap enough to be
     /// invoked from a per-turn LLM tool without batching.
-    async fn adjust_trust_score(
-        &self,
-        key: &str,
-        delta: f64,
-    ) -> Result<f64, MemoryError> {
+    async fn adjust_trust_score(&self, key: &str, delta: f64) -> Result<f64, MemoryError> {
         let key = key.to_string();
         let conn = self.conn.clone();
 
@@ -827,9 +828,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                  WHERE key = ?3",
                 params![new_score, chrono::Utc::now().to_rfc3339(), key],
             )
-            .map_err(|e| {
-                MemoryError::Generic(format!("trust_score update failed: {e}"))
-            })?;
+            .map_err(|e| MemoryError::Generic(format!("trust_score update failed: {e}")))?;
 
             Ok(new_score)
         })
@@ -911,8 +910,7 @@ fn bump_access_counts_in_results(
         return Ok(());
     }
 
-    let placeholders = std::iter::repeat("?")
-        .take(results.len())
+    let placeholders = std::iter::repeat_n("?", results.len())
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(

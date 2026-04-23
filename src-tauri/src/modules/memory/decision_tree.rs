@@ -88,7 +88,7 @@ Schema (every field optional unless required by the verb):
   { \"verb\": \"update\", \"existing_key\": \"<key>\" }
   { \"verb\": \"delete\", \"existing_key\": \"<key>\" }
 "
-        .to_string();
+    .to_string();
 
     let mut user = String::new();
     user.push_str("NEW FACT:\n");
@@ -120,8 +120,7 @@ pub fn parse_decision(raw: &str, candidates: &[MemoryEntry]) -> Option<DecisionP
     let body = strip_json_fence(raw.trim());
     let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
     let verb = parsed.get("verb")?.as_str()?;
-    let key_belongs_to_candidates =
-        |k: &str| candidates.iter().any(|c| c.key == k);
+    let key_belongs_to_candidates = |k: &str| candidates.iter().any(|c| c.key == k);
 
     match verb {
         "noop" => {
@@ -173,10 +172,16 @@ pub async fn decide_via_llm<L: UtilityLlm + ?Sized>(
 fn strip_json_fence(s: &str) -> &str {
     let s = s.trim();
     if let Some(stripped) = s.strip_prefix("```json") {
-        return stripped.trim_start_matches('\n').trim_end_matches("```").trim();
+        return stripped
+            .trim_start_matches('\n')
+            .trim_end_matches("```")
+            .trim();
     }
     if let Some(stripped) = s.strip_prefix("```") {
-        return stripped.trim_start_matches('\n').trim_end_matches("```").trim();
+        return stripped
+            .trim_start_matches('\n')
+            .trim_end_matches("```")
+            .trim();
     }
     s
 }

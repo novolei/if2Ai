@@ -39,6 +39,7 @@ use crate::modules::memory::{MemoryTicker, PinnedStore, SharedMemoryProvider};
 use crate::modules::runtime::budget::MAX_REQUEST_TOKEN_BUDGET_ESTIMATE;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
+use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
     ContentBlock, ConversationMessage, Session as RuntimeSession,
@@ -102,6 +103,7 @@ pub(super) struct FinalizeStreamInputs {
 
     // ── service handles ──
     pub stream_emitter: AgentStreamEmitter,
+    pub run_event_logger: RunEventLogger,
     pub session_manager: Arc<SessionManager>,
     pub app_session_clone: AppSession,
     pub trajectory_manager_for_stream: Option<Arc<TrajectoryManager>>,
@@ -172,6 +174,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
         stream_emitter,
+        run_event_logger,
         session_manager,
         app_session_clone,
         trajectory_manager_for_stream,
@@ -200,7 +203,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             "[start_agent_stream] Rewriting unverified completion claim to guarded message"
         );
         accumulated_text = guarded.clone();
-        stream_emitter.emit_payload(StreamTokenPayload {
+        let override_payload = StreamTokenPayload {
             stream_id: stream_id_for_task.clone(),
             text: Some(guarded),
             thinking: None,
@@ -222,7 +225,11 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
-        });
+        };
+        stream_emitter.emit_payload(override_payload.clone());
+        let _ = run_event_logger
+            .append("final_text_override", override_payload)
+            .await;
     }
 
     let user_visible_truth = TaskOutcomeResolver::resolve(
@@ -555,6 +562,19 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
                 .then_some(prompt_diagnostics_for_task),
         };
         stream_emitter.emit_payload(payload);
+        let _ = run_event_logger
+            .append(
+                "stream_complete",
+                serde_json::json!({
+                    "stream_id": stream_id_for_task.clone(),
+                    "request_id": provider_request_id.clone(),
+                    "task_outcome": user_visible_truth.task_outcome.to_string(),
+                    "degraded_reason": degraded_reason.clone(),
+                    "resume_available": user_visible_truth.resume_available,
+                    "resume_cursor": resume_cursor.clone(),
+                }),
+            )
+            .await;
         if terminal_status.is_none() {
             terminal_status = Some("completed");
         }

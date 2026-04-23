@@ -92,10 +92,7 @@ impl TurnHook for MemoryTicker {
         // three conditions are off in tests / legacy configs so this
         // is a true zero-cost addition for those paths.
         let reflection_threshold = self.config.reflection_threshold;
-        if reflection_threshold > 0
-            && count > 0
-            && count % reflection_threshold == 0
-        {
+        if reflection_threshold > 0 && count > 0 && count % reflection_threshold == 0 {
             if let Some((llm, memory)) = self.reflection_runtime() {
                 let scope_owned = scope.clone();
                 let session_owned = session_id.to_string();

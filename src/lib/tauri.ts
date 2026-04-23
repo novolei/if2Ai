@@ -509,13 +509,31 @@ export async function listDirectoryPreview(
   });
 }
 
+/**
+ * Read a file for inline preview.
+ *
+ * `maxBytes` is intentionally optional and **not defaulted** on the
+ * frontend.  Leaving it `undefined` lets the backend pick a sensible,
+ * **type-aware** default:
+ *   - binary (image / video / pdf): 10 MiB   (clamp 32 KiB ~ 32 MiB)
+ *   - text   (markdown / code / html):       128 KiB (clamp 1 KiB ~ 512 KiB)
+ *
+ * Hard-coding a 128 KiB cap on the frontend (the previous behaviour)
+ * killed PNG / JPEG / MP4 previews even at 200 KiB, raising
+ * `"file too large for inline preview"` from the backend and surfacing
+ * as the misleading "这个文件暂时不能在面板内预览。" toast in the rail.
+ *
+ * Pass `maxBytes` explicitly only for call sites that need a stricter
+ * cap (e.g. a settings preview where a multi-MB image would blow the
+ * UI out).
+ */
 export async function readFilePreview(
   path: string,
-  maxBytes = 128 * 1024,
+  maxBytes?: number,
 ): Promise<FilePreviewPayload> {
   return await invoke<FilePreviewPayload>("read_file_preview", {
     path,
-    maxBytes,
+    maxBytes: maxBytes ?? null,
   });
 }
 

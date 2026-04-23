@@ -113,11 +113,9 @@ pub fn run_migrations(
     )?;
 
     let max_existing: Option<u32> = conn
-        .query_row(
-            "SELECT MAX(version) FROM schema_migrations",
-            [],
-            |row| row.get::<_, Option<u32>>(0),
-        )
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get::<_, Option<u32>>(0)
+        })
         .unwrap_or(None);
 
     let mut report = MigrationReport::default();
@@ -146,9 +144,8 @@ pub fn run_migrations(
         }
 
         let tx_label = format!("v{} {}", migration.version, migration.name);
-        conn.execute_batch("BEGIN").map_err(|err| {
-            MigrationError(format!("failed to start tx for {tx_label}: {err}"))
-        })?;
+        conn.execute_batch("BEGIN")
+            .map_err(|err| MigrationError(format!("failed to start tx for {tx_label}: {err}")))?;
 
         match (migration.up)(conn).and_then(|()| {
             conn.execute(
@@ -208,7 +205,7 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool, MigrationError> 
 /// `'static` so [`run_migrations`] takes no allocation at boot.
 #[must_use]
 pub fn memory_migrations() -> &'static [Migration] {
-    &MEMORY_MIGRATIONS
+    MEMORY_MIGRATIONS
 }
 
 const MEMORY_MIGRATIONS: &[Migration] = &[
@@ -412,7 +409,11 @@ mod tests {
 
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.v1_backfilled);
-        assert_eq!(report.applied, vec![2, 3, 4], "v1 backfilled, v2+v3+v4 fresh");
+        assert_eq!(
+            report.applied,
+            vec![2, 3, 4],
+            "v1 backfilled, v2+v3+v4 fresh"
+        );
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
         assert!(table_exists(&c, "memory_entry_history").unwrap());

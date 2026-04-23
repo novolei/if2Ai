@@ -160,6 +160,19 @@
 | 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md)                  | draft    | 建立统一 worker/tool execution contract               |
 | 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | draft    | 让 harness replay/eval 建在 canonical run report 上   |
 | 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)                    | draft    | 把 activation/license 升级成真实生命周期系统          |
+| 16   | P0     | [MIG-016](./feature/migration-core/MIG-016-canonical-run-event-log-foundation.md)              | draft    | 建立 canonical run event log append-only 事实源       |
+| 17   | P0     | [MIG-017](./feature/migration-core/MIG-017-runtime-projection-chat-truth-cutover.md)           | draft    | 让聊天主 UI 真正切到 projection 单一真相              |
+| 18   | P1     | [MIG-018](./feature/migration-core/MIG-018-session-history-replay-and-paging.md)               | draft    | 建立 session history replay + paging                  |
+| 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | draft    | 让 pending permission 可恢复 / 可重连                 |
+| 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | draft    | 建立 session supervisor 生命周期真相                  |
+| 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | draft    | 建立 typed resume / run recovery contract             |
+| 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | draft    | 建立 tool attempt ledger + timeline contract          |
+| 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | draft    | 让 harness/run report 改读 event log                  |
+
+> Migration-Core canonical blueprint:
+> [If2Ai vNext Session Runtime Blueprint](../design-docs/if2ai-vnext-session-runtime-blueprint.md)
+>
+> `MIG-003`、`MIG-007`、`MIG-016` ~ `MIG-023` 必须完整参照该蓝图进行更新与任务实施。
 
 ### Migration-Core Priority Notes
 
@@ -175,6 +188,21 @@
 - `P3`
   - 最后再做 harness canonicalization 与 activation commercial lifecycle。
   - 这两项都很重要，但不应排在主产品链路稳定之前。
+
+### Session Continuity Extension
+
+- `P0`
+  - 先建立 `run event log + projection truth`，把 session 从“当前对象状态”升级成“可重放事实 + 前端投影”。
+  - 目标是给 paging、resume、report 提供唯一事实源。
+- `P1`
+  - 在事实源稳定后，补齐 `history replay / pending permission / session supervisor`。
+  - 目标是让断线、刷新、权限阻塞都成为可恢复的 session lifecycle。
+- `P2`
+  - 再把 `resume contract + tool attempt ledger` 升级成 typed runtime contract。
+  - 目标是让“不断流”不只体现在 UI，而是体现在可审计的运行语义上。
+- `P3`
+  - 最后把 canonical run report 接入 harness / eval。
+  - 目标是把 replay、grader、audit 统一收口到 event-log truth 上。
 
 ### Bug / Perf / Dep
 
