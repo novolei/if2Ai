@@ -175,6 +175,9 @@ export interface StreamToolCallUpdateEvent {
   policyDecision?: PolicyDecision;
   evidenceId?: string;
   requestId?: string;
+  /** Tool-attempt identifier from GAP-002 correlation contract.
+   *  Carried through for T-010 (MIG-007 Tool Execution Contract). */
+  attemptId?: string;
   receivedAt: number;
 }
 

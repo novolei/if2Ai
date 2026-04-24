@@ -155,7 +155,13 @@ pub struct Session {
     pub project_id: String,
     /// Session title.
     pub title: String,
-    /// Conversation messages.
+    /// Conversation messages (compatibility path — GAP-001).
+    ///
+    /// This field is retained for backward compatibility only.  Runtime
+    /// transcript facts must be read from the canonical run event log
+    /// via [`crate::modules::runtime::history`].  Do NOT add new
+    /// transcript/runtime fields to [`Session`]; they belong in the
+    /// event log.
     pub messages: Vec<ConversationMessage>,
     /// Creation timestamp (RFC3339).
     pub created_at: String,
@@ -194,6 +200,10 @@ pub struct Session {
     /// USD cost (P2-11). Updated by `stream_finalize` after each successful
     /// turn so the chat UI can render `本会话累计` without re-walking the
     /// whole transcript on every render.
+    ///
+    /// Compatibility note (GAP-001): In the target architecture, usage
+    /// totals are derived from the event log. This field is kept for the
+    /// transition period.
     ///
     /// Optional + `#[serde(default)]` so existing on-disk session JSON
     /// stays loadable; absent means "never recorded yet".

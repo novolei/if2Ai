@@ -87,6 +87,8 @@ export function translateAgentTokenPayload(
         policyDecision: payload.policy_decision,
         evidenceId: payload.evidence_id,
         requestId: payload.request_id,
+        // GAP-001/002: attemptId from correlation contract, for T-010
+        attemptId: payload.correlation?.attemptId,
         receivedAt,
       };
     }

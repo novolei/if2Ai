@@ -123,4 +123,30 @@ describe("runtime-projection truth (T-002 / MIG-003)", () => {
       assert.equal(event.runId, "run-canonical-42");
     }
   });
+
+  it("tool_call_update_carries_attemptId_from_correlation: GAP-002 attemptId is passed through to StreamToolCallUpdateEvent", () => {
+    // GAP-001/002: When a tool_call_update payload carries
+    // correlation.attemptId, the translator must include it in the
+    // output event so T-010 (Tool Execution Contract) can use it.
+    const payload = {
+      stream_id: "s1",
+      correlation: {
+        sessionId: "sess-1",
+        runId: "run-1",
+        attemptId: "attempt-42",
+      },
+      event_type: "tool_call_update" as const,
+      tool_call_id: "tc-99",
+      tool_name: "bash",
+      tool_status: "running",
+    };
+
+    const event = translateAgentTokenPayload(payload);
+    assert.ok(event, "tool_call_update must translate to a canonical event");
+    assert.equal(event.kind, "stream_tool_call_update");
+    if (event.kind === "stream_tool_call_update") {
+      assert.equal(event.attemptId, "attempt-42",
+        "attemptId must come from correlation.attemptId when present");
+    }
+  });
 });
