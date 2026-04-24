@@ -157,7 +157,7 @@
 | 8    | P1     | [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                    | **done** | 把 prompt planner 升级成 traceable contract           |
 | 9    | P1     | [MIG-005](./feature/migration-core/MIG-005-real-memory-lifecycle.md)                           | **done** | 打通真实 memory lifecycle 闭环                        |
 | 10   | P1     | [MIG-011](./feature/migration-core/MIG-011-desktop-host-thin-shell.md)                         | **done** | 把 Tauri host 收口成 desktop host thin shell          |
-| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | partial  | 把前端切到 canonical runtime projection 单一真相路径  |
+| 11   | P2     | [MIG-003](./feature/migration-core/MIG-003-runtime-event-projection-truth.md)                  | **done** | 把前端切到 canonical runtime projection 单一真相路径  |
 | 12   | P2     | [MIG-006](./feature/migration-core/MIG-006-frontend-shell-truth.md)                            | partial  | 建立统一 shell truth                                  |
 | 13   | P2     | [MIG-007](./feature/migration-core/MIG-007-worker-tool-execution-contract.md)                  | **done** | 建立统一 worker/tool execution contract               |
 | 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | partial  | 让 harness replay/eval 建在 canonical run report 上   |
@@ -213,7 +213,7 @@
 | Pack | Code-aligned status | Evidence | Remaining Gap |
 | ---- | ------------------- | -------- | ------------- |
 | MIG-011 | done | `desktop_host::{builder,setup}` exists; `tray_action_resolution_only_accepts_native_host_ids` passes | skip unless host boundary regresses |
-| MIG-003 | partial | `runtimeProjectionStore`, bridge, reducer, chat projection tests exist | `App.tsx` / chat still retain compatibility raw-stream and conversation-slice truth |
+| MIG-003 | done | translator supports correlation.runId precedence; bridge is sole ingestion entry; V2 Single Truth gate PASS | T-003 (Chat Cutover) needed to retire compatibility raw-stream listeners |
 | MIG-006 | partial | `AppShell`, `ContentRouter`, `bootstrapStore`, `sessionStore` exist | no complete shell truth store; activation/session/run/composer still split |
 | MIG-007 | done | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor` | skip; future attempt work belongs to MIG-022 |
 | MIG-008 | partial | `HarnessRunReport`, graders, compare, suite report exist | not yet derived from canonical event log / run report |
