@@ -16,6 +16,11 @@ use crate::modules::session::{ConversationUndoStatus, Session, SessionMeta};
 pub struct SessionHistoryPageResponse {
     pub event_page: crate::modules::runtime::history::SessionHistoryEventPage,
     pub replay: crate::modules::runtime::history::SessionHistoryReplay,
+    /// When the event log is empty and history falls back to session.json,
+    /// this field records the reason so callers can distinguish canonical
+    /// (event-log) reads from compatibility fallback reads.  GAP-001.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_session: Option<Session>,
 }
@@ -392,7 +397,18 @@ pub async fn get_session_history_page(
     )
     .map_err(|e| e.to_string())?;
     let replay = crate::modules::runtime::history::replay_session_history(&id, &event_page.entries);
+
+    // GAP-001: When the event log is empty on the first page, fall back to
+    // session.json as a compatibility source.  Record the fallback reason
+    // so callers and diagnostics can distinguish canonical event-log reads
+    // from legacy compatibility reads.
+    let mut fallback_reason = None;
     let fallback_session = if cursor.is_none() && event_page.entries.is_empty() {
+        fallback_reason = Some("session_history_fallback: event log is empty".to_string());
+        tracing::info!(
+            session_id = %id,
+            "[GAP-001] history fallback to session.json: event log has no entries"
+        );
         Some(
             state
                 .session_manager
@@ -407,6 +423,7 @@ pub async fn get_session_history_page(
     Ok(SessionHistoryPageResponse {
         event_page,
         replay,
+        fallback_reason,
         fallback_session,
     })
 }

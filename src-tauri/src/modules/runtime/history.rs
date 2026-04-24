@@ -617,4 +617,49 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tool_contents, vec!["first tool", "second tool"]);
     }
+
+    /// GAP-001 spec item 2: history reads prefer the event log over
+    /// session.json.  When event-log entries exist, the paging function
+    /// must return them (not an empty page).  When the event log is
+    /// absent, `read_session_history_event_page` returns an empty page
+    /// — callers interpret that as "need session.json fallback".
+    #[tokio::test]
+    async fn history_prefers_event_log_over_session_json() {
+        let root = unique_temp_root("prefers-event-log");
+        let logger = RunEventLogger::for_base_dir(&root, "session-pref", "run-1");
+        logger
+            .append(
+                "run_started",
+                serde_json::json!({ "message_preview": "from event log" }),
+            )
+            .await;
+        logger
+            .append("text_delta", serde_json::json!({ "text": "event answer" }))
+            .await;
+
+        // Event log has entries → page is non-empty, no fallback needed.
+        let page = read_session_history_event_page(&root, "session-pref", Some(20), None)
+            .expect("history page");
+        assert!(
+            !page.entries.is_empty(),
+            "event log has entries, page must not be empty"
+        );
+
+        let replay = replay_session_history("session-pref", &page.entries);
+        assert_eq!(replay.messages.len(), 2);
+        assert_eq!(replay.messages[0].content, "from event log");
+        assert_eq!(replay.messages[1].content, "event answer");
+    }
+
+    /// GAP-001: When no event log directory exists, the paging function
+    /// returns an empty page, signalling callers to fall back to
+    /// session.json.
+    #[test]
+    fn history_returns_empty_when_no_event_log() {
+        let root = unique_temp_root("no-event-log");
+        let page = read_session_history_event_page(&root, "session-no-log", Some(20), None)
+            .expect("history page");
+        assert!(page.entries.is_empty());
+        assert!(!page.has_more);
+    }
 }

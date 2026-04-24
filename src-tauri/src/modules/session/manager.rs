@@ -57,6 +57,9 @@ fn format_time(time: SystemTime) -> String {
 pub struct SessionMeta {
     /// Session ID (UUID v4).
     pub id: String,
+    /// Owning project ID (empty string for legacy sessions without project).
+    #[serde(default)]
+    pub project_id: String,
     /// Session title.
     pub title: String,
     /// Creation timestamp (RFC3339).
@@ -105,6 +108,7 @@ impl SessionMeta {
     pub fn from_session(session: &Session) -> Self {
         Self {
             id: session.id.clone(),
+            project_id: session.project_id.clone(),
             title: session.title.clone(),
             created_at: session.created_at.clone(),
             updated_at: session.updated_at.clone(),
@@ -1008,6 +1012,7 @@ mod tests {
     fn make_meta(memory_enabled: Option<bool>) -> SessionMeta {
         SessionMeta {
             id: "s1".into(),
+            project_id: String::new(),
             title: "t".into(),
             created_at: "2024-01-01T00:00:00Z".into(),
             updated_at: "2024-01-01T00:00:00Z".into(),
@@ -1052,7 +1057,8 @@ mod tests {
         // Pre-8A.4 sessions on disk lack the three memory_* keys; the
         // #[serde(default)] guards must keep them at None instead of
         // failing the round-trip (= silently corrupting the user's
-        // session list).
+        // session list).  Similarly, pre-GAP-001 sessions lack
+        // project_id which defaults to empty string.
         let legacy = r#"{
             "id": "s1",
             "title": "t",
@@ -1060,6 +1066,7 @@ mod tests {
             "updated_at": "2024-01-01T00:00:00Z"
         }"#;
         let meta: SessionMeta = serde_json::from_str(legacy).expect("legacy meta deserialises");
+        assert_eq!(meta.project_id, "");
         assert_eq!(meta.memory_enabled, None);
         assert!(meta.memory_disabled_since.is_none());
         assert!(meta.memory_reenabled_at.is_none());
@@ -1074,6 +1081,7 @@ mod tests {
         let when = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 4, 18, 12, 34, 56).unwrap();
         let meta = SessionMeta {
             id: "s1".into(),
+            project_id: "proj-42".into(),
             title: "t".into(),
             created_at: "2026-04-18T00:00:00Z".into(),
             updated_at: "2026-04-18T00:00:00Z".into(),
@@ -1093,6 +1101,7 @@ mod tests {
             "expected RFC3339 timestamp in {json}"
         );
         let back: SessionMeta = serde_json::from_str(&json).expect("deserialise");
+        assert_eq!(back.project_id, "proj-42");
         assert_eq!(back.memory_enabled, Some(false));
         assert_eq!(back.memory_disabled_since, Some(when));
         assert_eq!(back.soul_id.as_deref(), Some("if2ai-core"));
@@ -1188,5 +1197,72 @@ mod tests {
 
         let result = manager.restore_session("nonexistent-id").await;
         assert!(result.is_err());
+    }
+
+    // ── GAP-001 acceptance tests ──
+
+    /// GAP-001 spec item 1: SessionMeta 不含 transcript / tool_calls / thinking
+    /// 等 runtime 事实字段。此测试验证 SessionMeta 的 JSON 序列化中
+    /// 不出现任何 transcript 相关 key，防止未来回归。
+    #[test]
+    fn session_manager_metadata_without_runtime_transcript() {
+        let meta = make_meta(None);
+        let json = serde_json::to_string(&meta).expect("serialise SessionMeta");
+        let forbidden_keys = [
+            "messages",
+            "transcript",
+            "thinking",
+            "tool_calls",
+            "stream_id",
+            "run_id",
+            "event_log",
+        ];
+        for key in &forbidden_keys {
+            assert!(
+                !json.contains(key),
+                "SessionMeta must not contain transcript/runtime field: {key}"
+            );
+        }
+        // Confirm expected metadata keys are present
+        assert!(
+            json.contains("project_id"),
+            "SessionMeta should contain project_id"
+        );
+    }
+
+    /// GAP-001 spec item 3: 写入路径不得新增新的 transcript 字段到
+    /// session metadata。此回归测试维护一个已知的禁止字段列表，
+    /// 确保未来不会将 runtime 事实字段意外添加到 Session 结构。
+    #[test]
+    fn session_save_rejects_runtime_fact_regression() {
+        let session = Session::new("regression-check".into(), String::new());
+        let json = serde_json::to_string(&session).expect("serialise Session");
+        // Legacy `messages` field is allowed (compatibility path).
+        // New runtime fact fields that should never appear:
+        let disallowed = [
+            "transcript_blocks",
+            "thinking_log",
+            "tool_results",
+            "run_facts",
+            "event_cache",
+            "projection_snapshot",
+            "resume_state",
+        ];
+        for key in &disallowed {
+            assert!(
+                !json.contains(key),
+                "Session must not contain new runtime fact field: {key}"
+            );
+        }
+    }
+
+    /// GAP-001: Verify that `from_session` correctly extracts `project_id`
+    /// from Session into SessionMeta.
+    #[test]
+    fn session_meta_from_session_carries_project_id() {
+        let session = Session::new("test".into(), "proj-99".into());
+        let meta = SessionMeta::from_session(&session);
+        assert_eq!(meta.project_id, "proj-99");
+        assert_eq!(meta.id, session.id);
     }
 }
