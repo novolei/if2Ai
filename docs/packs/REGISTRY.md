@@ -163,10 +163,10 @@
 | 14   | P3     | [MIG-008](./feature/migration-core/MIG-008-harness-replay-and-eval-on-canonical-run-report.md) | partial  | 让 harness replay/eval 建在 canonical run report 上   |
 | 15   | P3     | [MIG-009](./feature/migration-core/MIG-009-activation-license-lifecycle.md)                    | partial  | 把 activation/license 升级成真实生命周期系统          |
 | 16   | P0     | [MIG-016](./feature/migration-core/MIG-016-canonical-run-event-log-foundation.md)              | **done** | 建立 canonical run event log append-only 事实源       |
-| 17   | P0     | [MIG-017](./feature/migration-core/MIG-017-runtime-projection-chat-truth-cutover.md)           | partial  | 让聊天主 UI 真正切到 projection 单一真相              |
+| 17   | P0     | [MIG-017](./feature/migration-core/MIG-017-runtime-projection-chat-truth-cutover.md)           | **done** | 让聊天主 UI 真正切到 projection 单一真相              |
 | 18   | P1     | [MIG-018](./feature/migration-core/MIG-018-session-history-replay-and-paging.md)               | **done** | 建立 session history replay + paging                  |
 | 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | **done** | 让 pending permission 可恢复 / 可重连                 |
-| 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | partial  | 建立 session supervisor 生命周期真相                  |
+| 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | **done** | 建立 session supervisor 生命周期真相                  |
 | 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | partial  | 建立 typed resume / run recovery contract             |
 | 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | partial  | 建立 tool attempt ledger + timeline contract          |
 | 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | partial  | 让 harness/run report 改读 event log                  |
@@ -219,10 +219,10 @@
 | MIG-008 | partial | `HarnessRunReport`, graders, compare, suite report exist | not yet derived from canonical event log / run report |
 | MIG-009 | partial | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
 | MIG-016 | done | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass | skip; hardening belongs to GAP-002 / GAP-008 |
-| MIG-017 | partial | chat projection + runtime projection tests pass | final UI still overlays `Conversation + RunProjection`; raw listener not transport-only everywhere |
+| MIG-017 | done (T-003) | chat UI reads projection-only; raw listener is transport-only; conversation-slice holds only user messages; `projectConversationMessagesFromRuns` contract documented | T-005 covers remaining raw listener retirement for permission/approvals |
 | MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | session.json fallback now traced via `fallback_reason` field (GAP-001 done) |
 | MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
-| MIG-020 | partial | lifecycle hooks/cost guard/self repair sidecars exist | no first-class `SessionSupervisor` snapshot owner yet |
+| MIG-020 | done (T-006) | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests | T-007 covers projector-side supervisor UI |
 | MIG-021 | partial | resume cursor and recoverable UI fields exist | missing typed `resume_reason` / `safe_to_retry_mutations` contract |
 | MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log | no stable attempt_id/attempt_no generation or ledger state machine |
 | MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |

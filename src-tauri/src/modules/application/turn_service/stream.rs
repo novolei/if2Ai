@@ -87,6 +87,7 @@ use crate::modules::runtime::stream_error_reason::{
 use crate::modules::runtime::stream_outcome::{
     ConversationTruth, ExecutionTruth, TaskOutcomeResolver,
 };
+use crate::modules::runtime::supervisor::SessionSupervisor;
 use crate::modules::runtime::timeline_flush::{
     flush_assistant_timeline_segment, PersistedTurnOutcome,
 };
@@ -172,6 +173,25 @@ impl TurnService {
                     .to_string()
             })?
             .clone();
+
+        // MIG-020 (T-006): Record supervisor lifecycle event — idle → running.
+        if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+            if let Ok(mut snap) = SessionSupervisor::load_or_create(&app_data_dir, &session_id) {
+                SessionSupervisor::start_run(&mut snap, run_id.clone());
+                if let Err(e) = crate::modules::runtime::supervisor::write_supervisor_snapshot(
+                    &app_data_dir,
+                    &snap,
+                ) {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        run_id = %run_id,
+                        error = %e,
+                        "[supervisor] failed to persist start_run"
+                    );
+                }
+            }
+        }
+
         let run_event_logger =
             RunEventLogger::for_app_handle(&app_handle, session_id.clone(), run_id.clone());
         let stream_id = uuid::Uuid::new_v4().to_string();
@@ -320,14 +340,24 @@ impl TurnService {
                     crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
                 };
 
+                let has_tool_use = content.iter().any(|block| {
+                    matches!(
+                        block,
+                        crate::modules::api::InputContentBlock::ToolUse { .. }
+                    )
+                });
+
                 InputMessage {
                     role,
                     content,
-                    // P-MULTI-API: forward captured assistant
-                    // chain-of-thought so the wire serializer can write
-                    // `reasoning_content` for thinking-required models
-                    // (Kimi-thinking-preview / DeepSeek-R1).
-                    thinking: msg.thinking.clone(),
+                    // Never replay full thinking with tool_call history. The
+                    // provider serializer adds an empty protocol placeholder
+                    // when a model requires `reasoning_content`.
+                    thinking: if has_tool_use {
+                        None
+                    } else {
+                        msg.thinking.clone()
+                    },
                 }
             })
             .collect();

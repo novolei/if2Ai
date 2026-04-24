@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `partial`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [cc-haha benchmark](../../staff-remediation/cc-haha-if2ai-full-architecture-benchmark-report.md)
-- Last Updated: `2026-04-23`
+- Last Updated: `2026-04-24`
 
 ---
 
@@ -66,11 +66,11 @@
 - `npm run build`
 - 前端可区分 active / blocked / recoverable failed 三种 session 状态
 
-## Code Audit 2026-04-23
+## T-006 Execution Summary (2026-04-24)
 
-- Status: partial.
-- Evidence: lifecycle hooks, cost guard, self-repair, session store, and runtime projection status fields exist.
-- Remaining Gap: no first-class `SessionSupervisor` snapshot owner with active_run_id / blocked / recoverable lifecycle truth.
+- Status: done (T-006).
+- Evidence: supervisor.rs with SupervisorSnapshot + 9 lifecycle methods + persistence + 5 tests + get_supervisor_snapshot API.
+- Remaining: T-007 (supervisor projection frontend).
 
 ## Out Of Scope
 

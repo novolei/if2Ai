@@ -339,6 +339,7 @@ struct StreamState {
 #[allow(dead_code)]
 const TEXT_BLOCK_INDEX: u32 = 0;
 const THINKING_BLOCK_INDEX: u32 = u32::MAX;
+const TOOL_CALL_REASONING_PLACEHOLDER: &str = "[reasoning omitted]";
 
 impl StreamState {
     fn new(model: String) -> Self {
@@ -813,23 +814,28 @@ fn translate_message(
                         Value::String(text)
                     },
                 );
-                obj.insert("tool_calls".into(), Value::Array(tool_calls.clone()));
+                if !tool_calls.is_empty() {
+                    obj.insert("tool_calls".into(), Value::Array(tool_calls.clone()));
+                }
 
-                // P-MULTI-API: write `reasoning_content` for models that
-                // capture it (Quirk::ReasoningRequiredInToolCalls).  When
-                // history pre-dates thinking capture we fall back to an
-                // empty string for assistant rows that carry tool_calls,
-                // since Kimi-thinking / DeepSeek-R1 will 400 otherwise.
+                // P-MULTI-API: some OpenAI-compatible reasoning models 400 if
+                // assistant tool_call history omits `reasoning_content`.
+                // The field is a protocol placeholder here, not context: never
+                // replay full thinking on tool_call rows or the next turn can
+                // echo the same internal plan every tool-loop iteration.
                 if cap.reasoning {
-                    let value = match &message.thinking {
-                        Some(t) => Value::String(t.clone()),
-                        None if cap.reasoning_required_in_tool_calls && !tool_calls.is_empty() => {
+                    let value = if cap.reasoning_required_in_tool_calls && !tool_calls.is_empty() {
+                        if message.thinking.is_none() {
                             tracing::warn!(
-                                "[openai_compat] padding empty reasoning_content for legacy assistant tool_call (history pre-dates thinking capture)"
+                                "[openai_compat] padding placeholder reasoning_content for assistant tool_call history"
                             );
-                            Value::String(String::new())
                         }
-                        None => return vec![Value::Object(obj)],
+                        Value::String(TOOL_CALL_REASONING_PLACEHOLDER.to_string())
+                    } else {
+                        match &message.thinking {
+                            Some(t) => Value::String(t.clone()),
+                            None => return vec![Value::Object(obj)],
+                        }
                     };
                     obj.insert("reasoning_content".into(), value);
                 }
@@ -1101,8 +1107,10 @@ impl StringExt for String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_chat_completion_request, chat_completions_endpoint, normalize_finish_reason,
-        openai_tool_choice, parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig,
+        build_chat_completion_request, build_chat_completion_request_for_provider,
+        chat_completions_endpoint, normalize_finish_reason, openai_tool_choice,
+        parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig,
+        TOOL_CALL_REASONING_PLACEHOLDER,
     };
     use crate::modules::api::error::ApiError;
     use crate::modules::api::types::{
@@ -1148,6 +1156,130 @@ mod tests {
         assert_eq!(payload["messages"][2]["role"], json!("tool"));
         assert_eq!(payload["tools"][0]["type"], json!("function"));
         assert_eq!(payload["tool_choice"], json!("auto"));
+    }
+
+    #[test]
+    fn assistant_text_history_omits_empty_tool_calls() {
+        let payload = build_chat_completion_request_for_provider(
+            &MessageRequest {
+                model: "qwen-plus".to_string(),
+                max_tokens: 64,
+                messages: vec![InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::Text {
+                        text: "hello".to_string(),
+                    }],
+                    thinking: None,
+                }],
+                system: None,
+                tools: None,
+                tool_choice: None,
+                stream: false,
+            },
+            "dashscope",
+        );
+
+        assert_eq!(payload["enable_thinking"], json!(true));
+        assert_eq!(payload["messages"][0]["role"], json!("assistant"));
+        assert_eq!(payload["messages"][0]["content"], json!("hello"));
+        assert!(payload["messages"][0].get("tool_calls").is_none());
+        assert!(payload["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn assistant_tool_history_pads_reasoning_content_when_required() {
+        let payload = build_chat_completion_request_for_provider(
+            &MessageRequest {
+                model: "qwen-plus".to_string(),
+                max_tokens: 64,
+                messages: vec![InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "call_1".to_string(),
+                        name: "read_file".to_string(),
+                        input: json!({"path": "README.md"}),
+                    }],
+                    thinking: None,
+                }],
+                system: None,
+                tools: None,
+                tool_choice: None,
+                stream: false,
+            },
+            "dashscope",
+        );
+
+        assert_eq!(payload["enable_thinking"], json!(true));
+        assert_eq!(
+            payload["messages"][0]["tool_calls"][0]["id"],
+            json!("call_1")
+        );
+        assert_eq!(
+            payload["messages"][0]["reasoning_content"],
+            json!(TOOL_CALL_REASONING_PLACEHOLDER)
+        );
+    }
+
+    #[test]
+    fn moonshot_kimi_k2_tool_history_pads_reasoning_content() {
+        let payload = build_chat_completion_request_for_provider(
+            &MessageRequest {
+                model: "kimi-k2.6".to_string(),
+                max_tokens: 64,
+                messages: vec![InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "conversation_search:7".to_string(),
+                        name: "conversation_search".to_string(),
+                        input: json!({"query": "五子棋 升级 功能 计划 TODO"}),
+                    }],
+                    thinking: None,
+                }],
+                system: None,
+                tools: None,
+                tool_choice: None,
+                stream: false,
+            },
+            "moonshot",
+        );
+
+        assert_eq!(
+            payload["messages"][0]["tool_calls"][0]["id"],
+            json!("conversation_search:7")
+        );
+        assert_eq!(
+            payload["messages"][0]["reasoning_content"],
+            json!(TOOL_CALL_REASONING_PLACEHOLDER)
+        );
+    }
+
+    #[test]
+    fn required_tool_history_does_not_replay_captured_thinking() {
+        let payload = build_chat_completion_request_for_provider(
+            &MessageRequest {
+                model: "kimi-k2.6".to_string(),
+                max_tokens: 64,
+                messages: vec![InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "read_file:1".to_string(),
+                        name: "read_file".to_string(),
+                        input: json!({"path": "gomoku.html"}),
+                    }],
+                    thinking: Some("previous private plan that must not be replayed".to_string()),
+                }],
+                system: None,
+                tools: None,
+                tool_choice: None,
+                stream: false,
+            },
+            "moonshot",
+        );
+
+        assert_eq!(
+            payload["messages"][0]["reasoning_content"],
+            json!(TOOL_CALL_REASONING_PLACEHOLDER)
+        );
     }
 
     #[test]

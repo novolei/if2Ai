@@ -189,7 +189,11 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
 /// for a hook that's intentionally fire-and-forget.
 #[tauri::command]
 #[allow(dead_code)]
-pub async fn close_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn close_session(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
     use crate::modules::memory::scope::MemoryExecutionScope;
     use crate::modules::runtime::conversation::TurnHook;
 
@@ -228,6 +232,25 @@ pub async fn close_session(state: State<'_, AppState>, id: String) -> Result<(),
     state
         .memory_ticker
         .on_session_end(&scope, &session.id, &session.messages);
+
+    // MIG-020 (T-006): Update supervisor state on session close.
+    if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+        if let Ok(mut snap) = crate::modules::runtime::supervisor::SessionSupervisor::load_or_create(
+            &app_data_dir,
+            &id,
+        ) {
+            crate::modules::runtime::supervisor::SessionSupervisor::close_session(&mut snap);
+            if let Err(e) =
+                crate::modules::runtime::supervisor::write_supervisor_snapshot(&app_data_dir, &snap)
+            {
+                tracing::warn!(
+                    session_id = %id,
+                    error = %e,
+                    "[supervisor] failed to persist close_session"
+                );
+            }
+        }
+    }
 
     Ok(())
 }
@@ -426,4 +449,27 @@ pub async fn get_session_history_page(
         fallback_reason,
         fallback_session,
     })
+}
+
+/// Read the canonical supervisor snapshot for a session (MIG-020 / T-006).
+///
+/// Returns the supervisor lifecycle state — active run, run status,
+/// blocked/recoverable, pending permission count, retry budget, and
+/// disconnect grace window.  The frontend uses this to render
+/// session-level status labels (active / blocked / recoverable failed)
+/// without assembling state from scattered sources.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn get_supervisor_snapshot(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<crate::modules::runtime::supervisor::SupervisorSnapshot, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let snapshot =
+        crate::modules::runtime::supervisor::SessionSupervisor::load_or_create(&base_dir, &id)
+            .map_err(|e| e.to_string())?;
+    Ok(snapshot)
 }

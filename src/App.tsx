@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 // MIG-012 — canonical App.tsx transport seam.
 //
 // Business helpers come from `@/api/*` domain facades;
@@ -199,19 +200,8 @@ function App() {
   // runner; the store transitions own every phase change.
   useEffect(() => {
     const signal = { cancelled: false };
-    void (async () => {
-      await runBootSequence(bootstrapStore, {
-        awaitGatewayReady,
-        getOnboardingState,
-        ensureDefaultWorkdir,
-        listProjects,
-        listProjectSessions,
-        signal,
-      });
-      if (signal.cancelled) return;
-      // Model bootstrap is orthogonal to project-list bootstrap;
-      // kept inline here until the future settings-store pack
-      // picks it up.
+    let unlistenModelsChanged: (() => void) | null = null;
+    const refreshActiveModel = async () => {
       try {
         const activeModel = await invoke<{
           provider_id: string;
@@ -225,30 +215,35 @@ function App() {
       } catch {
         // Fallback: leave empty so chat-ui shows first available model from list
       }
+    };
+    void (async () => {
+      await runBootSequence(bootstrapStore, {
+        awaitGatewayReady,
+        getOnboardingState,
+        ensureDefaultWorkdir,
+        listProjects,
+        listProjectSessions,
+        signal,
+      });
+      if (signal.cancelled) return;
+      // Model bootstrap is orthogonal to project-list bootstrap;
+      // kept inline here until the future settings-store pack
+      // picks it up.
+      await refreshActiveModel();
     })();
     // Refresh the active model whenever settings emit a change (provider
     // saved / role reassigned) so the chat dropdown follows ModelSettings.
     const onModelsChanged = () => {
-      void (async () => {
-        try {
-          const activeModel = await invoke<{
-            provider_id: string;
-            model_id: string;
-          } | null>("model_get_active");
-          if (activeModel) {
-            setSelectedModel(
-              `${activeModel.provider_id}/${activeModel.model_id}`,
-            );
-          }
-        } catch {
-          // ignore
-        }
-      })();
+      void refreshActiveModel();
     };
     window.addEventListener("if2ai:models-changed", onModelsChanged);
+    void listen("if2ai://models-changed", onModelsChanged).then((unlisten) => {
+      unlistenModelsChanged = unlisten;
+    });
     return () => {
       signal.cancelled = true;
       window.removeEventListener("if2ai:models-changed", onModelsChanged);
+      unlistenModelsChanged?.();
     };
   }, []);
 
@@ -1183,10 +1178,15 @@ function App() {
     return conv?.sessionTotals;
   }, [projectionRuns, activeSessionId, conversations]);
   const activeMessages = useMemo(() => {
+    // T-003 (MIG-017): Chat truth cutover — only user messages are passed
+    // to projection.  Assistant / tool / thinking / completion are derived
+    // from the canonical runtime-projection store, not from the legacy
+    // conversation slice.  The conversation slice retains user messages
+    // for anchoring assistant-run pairs.
     const baseMessages =
       activeConv?.messages.filter(
         (msg) =>
-          !(msg.role === "user" && msg.content.includes("[resume_cursor]")),
+          msg.role === "user" && !msg.content.includes("[resume_cursor]"),
       ) ?? [];
     return projectConversationMessagesFromRuns(
       baseMessages,

@@ -307,4 +307,73 @@ describe("chat run projection", () => {
       ["question", "projected answer"],
     );
   });
+
+  // T-003 (MIG-017): Verify projection-only truth — only user messages
+  // are fed in; assistant/tool/thinking/completion are all derived from
+  // the canonical RunProjection store.
+  it("derives all assistant and tool content from projection when only user messages are passed", () => {
+    const run: RunProjection = {
+      runId: "run-003",
+      sessionId: "session-1",
+      text: "projection-only assistant text",
+      thinking: "projection-only thinking",
+      thinkingStarted: true,
+      status: "completed",
+      taskOutcome: "completed",
+      resumeAvailable: false,
+      toolCalls: {
+        "tool-003": {
+          toolCallId: "tool-003",
+          toolName: "bash",
+          toolArgs: { cmd: "ls" },
+          status: "completed",
+          toolResult: "file listing",
+          firstSeenAt: 500,
+          lastUpdatedAt: 600,
+        },
+      },
+      contextBudgetUsage: {
+        totalTokens: 1000,
+        usedTokens: 300,
+        note: "",
+        contextAdvertisedTokens: 32000,
+      },
+      memoryItems: [],
+      lastUpdatedAt: 700,
+    };
+
+    // Only user messages — no assistant/tool placeholders
+    const messages = projectConversationMessagesFromRuns(
+      [
+        {
+          id: "user-003",
+          role: "user",
+          content: "list files",
+          timestamp: new Date(400),
+          streamId: "run-003",
+        },
+      ],
+      { "run-003": run },
+      "session-1",
+    );
+
+    // 3 messages: user, assistant, tool
+    assert.equal(messages.length, 3);
+    assert.equal(messages[0].role, "user");
+    assert.equal(messages[0].content, "list files");
+
+    assert.equal(messages[1].role, "assistant");
+    assert.equal(messages[1].content, "projection-only assistant text");
+    assert.equal(messages[1].thinking, "projection-only thinking");
+    assert.equal(messages[1].isStreaming, false);
+    assert.equal(messages[1].streamId, "run-003");
+
+    assert.equal(messages[2].role, "tool");
+    assert.equal(messages[2].toolName, "bash");
+    assert.equal(messages[2].content, "file listing");
+    assert.equal(messages[2].toolStatus, "completed");
+    // toolArgs is populated by projectToolCallToMessage
+    const toolMsg = messages[2] as any;
+    assert.equal(toolMsg.toolArgs?.cmd, "ls");
+  });
 });

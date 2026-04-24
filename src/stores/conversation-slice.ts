@@ -75,6 +75,15 @@ export function setConversation(conversation: Conversation): void {
 /**
  * Append a message to an existing conversation, or no-op if the session is
  * not yet tracked.
+ *
+ * @deprecated MIG-017 (T-003): This mutator writes to the legacy
+ * conversation-slice transcript.  Runtime transcript facts (assistant
+ * text / thinking / tool cards / completion) MUST flow through the
+ * canonical [`runtime-projection`] store.  **Do not call this function
+ * for assistant / tool / thinking / completion messages.**  It remains
+ * available for user-message anchoring (the slice still holds user
+ * messages that anchor runs for `projectConversationMessagesFromRuns`)
+ * and for non-runtime UI state updates.
  */
 export function appendMessage(sessionId: string, message: Message): void {
   const conv = _state.conversations[sessionId]
@@ -94,6 +103,10 @@ export function appendMessage(sessionId: string, message: Message): void {
 /**
  * Update a single message inside a conversation by `message.id`.
  * If the conversation or message is not found, this is a no-op.
+ *
+ * @deprecated MIG-017 (T-003): Same deprecation rationale as
+ * [`appendMessage`] — runtime transcript mutations belong in the
+ * projection store, not in the legacy conversation slice.
  */
 export function updateMessage(sessionId: string, message: Message): void {
   const conv = _state.conversations[sessionId]

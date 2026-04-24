@@ -41,7 +41,21 @@ export function extractMemoryStoreFields(
   return Object.keys(fields).length > 0 ? fields : null;
 }
 
-/** Replace streaming placeholders with canonical projection messages. */
+/** Replace streaming placeholders with canonical projection messages.
+ *
+ * ## T-003 (MIG-017) Chat Truth Cutover
+ *
+ * The `messages` parameter MUST only contain **user-role** messages
+ * (and may include a filter-out for `[resume_cursor]` markers).
+ * Assistant / tool / thinking / completion messages are derived
+ * entirely from the canonical [`RunProjection`] store — the
+ * conversation slice is no longer a source of runtime transcript
+ * truth.
+ *
+ * Each user message carries a `streamId` that anchors its
+ * corresponding run.  Unanchored runs (e.g. recovered from a
+ * projection checkpoint) are inserted by timestamp.
+ */
 export function projectConversationMessagesFromRuns(
   messages: readonly Message[],
   runs: Record<string, RunProjection>,

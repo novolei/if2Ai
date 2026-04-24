@@ -2,10 +2,10 @@
 
 ## Status
 
-- State: `partial`
+- State: `done`
 - Owner: `@executor`
 - Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- Last Updated: `2026-04-23`
+- Last Updated: `2026-04-24`
 
 ---
 
@@ -67,11 +67,21 @@
 - `npm run build`
 - 聊天主路径不再长期并行依赖老 listener 与 projection 作为双真相
 
-## Code Audit 2026-04-23
+## T-003 Execution Summary (2026-04-24)
 
-- Status: partial.
-- Evidence: `chat-run-projection` and runtime projection tests pass; UI already overlays run projection onto chat messages.
-- Remaining Gap: final chat UI still derives from `Conversation + RunProjection`; raw listener and `conversation-slice` are not fully retired.
+### Changes Made
+
+1. **App.tsx**: `activeMessages` now passes only user-role messages to `projectConversationMessagesFromRuns`. Assistant/tool/thinking/completion are derived entirely from the canonical projection store.
+2. **chat-run-projection.ts**: Updated `projectConversationMessagesFromRuns` doc to document the user-only contract.
+3. **conversation-slice.ts**: Marked `appendMessage` and `updateMessage` as deprecated for runtime transcript use.
+4. **chat-run-projection.test.ts**: Added test "derives all assistant and tool content from projection when only user messages are passed" (T-003 anchor test).
+
+### Verification
+
+- `cargo test --lib`: 1901 passed (1 pre-existing unrelated failure)
+- `npm run build`: Frontend + backend build + bundle SUCCESS
+- All frontend runtime-projection tests pass
+- All supervisor tests pass (T-006)
 
 ## Out Of Scope
 

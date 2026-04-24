@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::modules::api::InputMessage;
 use crate::modules::application::memory_candidate_extractor::{
@@ -50,6 +50,7 @@ use crate::modules::runtime::stream_emitter::{
 use crate::modules::runtime::stream_outcome::{
     ConversationTruth, ExecutionTruth, TaskOutcomeResolver,
 };
+use crate::modules::runtime::supervisor::SessionSupervisor;
 use crate::modules::runtime::timeline_flush::{
     flush_assistant_timeline_segment, PersistedTurnOutcome,
 };
@@ -284,6 +285,53 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         .resume_available
         .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
     let degraded_reason = user_visible_truth.degraded_reason.clone();
+    if user_visible_truth.task_outcome == "partial_success" && accumulated_text.trim().is_empty() {
+        let fallback = match degraded_reason.as_deref() {
+            Some("max_iterations_reached") => {
+                "已执行部分工具调用，但达到工具迭代上限，未能生成最终总结。你可以点击继续或重新发送，让我基于已有结果继续。"
+            }
+            Some(_) => "已执行部分工具调用，但本轮在生成最终总结前降级结束。你可以点击继续或重新发送，让我基于已有结果继续。",
+            None => "已执行部分工具调用，但本轮未生成最终总结。你可以点击继续或重新发送，让我基于已有结果继续。",
+        }
+        .to_string();
+        tracing::warn!(
+            "[start_agent_stream] Emitting partial-success fallback text: status={}, degraded={:?}",
+            terminal_status.unwrap_or("unknown"),
+            degraded_reason
+        );
+        accumulated_text = fallback.clone();
+        let override_payload = StreamTokenPayload {
+            stream_id: stream_id_for_task.clone(),
+            correlation: None,
+            text: Some(fallback),
+            thinking: None,
+            event_type: "final_text_override".to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_args: None,
+            tool_result: None,
+            tool_duration_ms: None,
+            effective_workdir: None,
+            policy_decision: None,
+            evidence_id: None,
+            request_id: Some(provider_request_id.clone()),
+            task_outcome: Some(user_visible_truth.task_outcome.to_string()),
+            degraded_reason: degraded_reason.clone(),
+            resume_available: Some(user_visible_truth.resume_available),
+            resume_cursor: resume_cursor.clone(),
+            context_budget_usage: None,
+            memory_context: None,
+            prompt_diagnostics: None,
+            turn_cost: None,
+            routing_info: None,
+            session_totals: None,
+        };
+        stream_emitter.emit_payload(override_payload.clone());
+        let _ = run_event_logger
+            .append("final_text_override", override_payload)
+            .await;
+    }
     let persisted_turn_outcome = PersistedTurnOutcome {
         task_outcome: user_visible_truth.task_outcome.to_string(),
         degraded_reason: degraded_reason.clone(),
@@ -927,4 +975,32 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         sanitize_invalid_tool_use_samples,
         last_stream_error_reason.as_deref().unwrap_or("none"),
     );
+
+    // MIG-020 (T-006): Record supervisor lifecycle event on run completion.
+    // Best-effort: supervisor persistence failures must never fail the turn.
+    if let Ok(app_data_dir) = app_handle_for_after_turn.path().app_data_dir() {
+        if let Ok(mut snap) = SessionSupervisor::load_or_create(&app_data_dir, &session_id) {
+            if stream_failed {
+                let reason = degraded_reason
+                    .clone()
+                    .unwrap_or_else(|| "stream_error".to_string());
+                if user_visible_truth.resume_available {
+                    SessionSupervisor::run_failed_recoverable(&mut snap, reason);
+                } else {
+                    SessionSupervisor::run_failed_final(&mut snap, reason);
+                }
+            } else {
+                SessionSupervisor::run_completed(&mut snap);
+            }
+            if let Err(e) =
+                crate::modules::runtime::supervisor::write_supervisor_snapshot(&app_data_dir, &snap)
+            {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "[supervisor] failed to persist completion"
+                );
+            }
+        }
+    }
 }
