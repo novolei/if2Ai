@@ -169,3 +169,18 @@ pub async fn model_get_role_config() -> Result<Vec<crate::modules::config::Model
 pub async fn model_set_role_config(role: String, model_ref: String) -> Result<(), String> {
     crate::modules::config::model_resolver::ModelResolver::set_role_config(&role, &model_ref).await
 }
+
+/// Look up the provider-advertised context window (in tokens) for a
+/// `(provider_id, model_id)` pair via the built-in `known_models`
+/// registry.  Falls back to
+/// [`crate::modules::application::provider_service::DEFAULT_CONTEXT_WINDOW`]
+/// (128k) for models we don't know yet so the UI never has to handle
+/// "unknown" specially.
+#[tauri::command]
+pub async fn model_get_context_window(provider_id: String, model_id: String) -> Result<u64, String> {
+    Ok(
+        crate::modules::provider::known_models::lookup(&provider_id, &model_id)
+            .map(|m| m.context)
+            .unwrap_or(crate::modules::application::provider_service::DEFAULT_CONTEXT_WINDOW),
+    )
+}

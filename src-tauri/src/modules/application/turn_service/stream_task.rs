@@ -118,6 +118,15 @@ pub(super) struct StreamTaskInputs {
     pub failover_provider_client: Option<crate::modules::api::ProviderClient>,
     pub lifecycle_hooks: std::sync::Arc<crate::modules::runtime::lifecycle_hooks::HookRegistry>,
     pub model_for_stream: String,
+    /// Provider id paired with [`model_for_stream`].  Forwarded into
+    /// the usage store so the per-role chart can break chat usage down
+    /// per vendor.
+    pub provider_id_for_stream: String,
+    /// Provider-advertised context window in tokens (post smart-routing).
+    /// Forwarded into preflight admission + final ContextBudget so the
+    /// UI bar reflects the actual model limit instead of a hardcoded
+    /// 30k baseline.
+    pub context_window_for_stream: u64,
     /// P1-8: smart-routing decision summary already computed in
     /// `turn_service` (see `apply_complexity_model_routing`). When `Some`
     /// it is forwarded into `stream_complete` so the chat UI can render a
@@ -127,6 +136,7 @@ pub(super) struct StreamTaskInputs {
     pub execution_context_for_task: SessionExecutionContext,
     pub tool_registry_clone: Arc<ToolRegistry>,
     pub session_manager: Arc<SessionManager>,
+    pub rolling_summarizer_for_stream: Arc<crate::modules::memory::summary::RollingSummarizer>,
     pub app_session_clone: AppSession,
     pub stream_emitter: AgentStreamEmitter,
     pub cancel_rx: oneshot::Receiver<()>,
@@ -215,10 +225,13 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         failover_provider_client,
         lifecycle_hooks,
         model_for_stream,
+        provider_id_for_stream,
+        context_window_for_stream,
         routing_info_for_stream,
         execution_context_for_task,
         tool_registry_clone,
         session_manager,
+        rolling_summarizer_for_stream,
         app_session_clone,
         stream_emitter,
         mut cancel_rx,
@@ -384,12 +397,21 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             accumulated_text.len()
         );
 
+        // Effective input-side token budget for preflight admission:
+        // model-advertised context window minus reserved output, with a
+        // hard floor of MAX_REQUEST_TOKEN_BUDGET_ESTIMATE so a missing
+        // / unknown model never ships with a tiny budget.
+        const PREFLIGHT_OUTPUT_RESERVE: u64 = 4_096;
+        let preflight_input_budget = (context_window_for_stream
+            .saturating_sub(PREFLIGHT_OUTPUT_RESERVE))
+        .max(MAX_REQUEST_TOKEN_BUDGET_ESTIMATE as u64) as usize;
+
         // Build API request for this iteration
         let (trimmed_session_messages, preflight_stats) = ContextGovernor.admit(
             &session_messages,
             MAX_REQUEST_MESSAGE_COUNT,
             MAX_REQUEST_CHAR_BUDGET,
-            MAX_REQUEST_TOKEN_BUDGET_ESTIMATE,
+            preflight_input_budget,
         );
         if preflight_stats.has_changes() {
             preflight_trim_rounds += 1;
@@ -464,7 +486,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             &request_messages,
             MAX_REQUEST_MESSAGE_COUNT,
             MAX_REQUEST_CHAR_BUDGET,
-            MAX_REQUEST_TOKEN_BUDGET_ESTIMATE,
+            preflight_input_budget,
         );
         if final_preflight_stats.has_changes() {
             preflight_trim_rounds += 1;
@@ -1501,10 +1523,13 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         sanitize_invalid_tool_use_samples,
         accumulated_usage,
         effective_model: model_for_stream.clone(),
+        effective_provider_id: provider_id_for_stream.clone(),
+        effective_context_window: context_window_for_stream,
         routing_info: routing_info_for_stream.clone(),
         stream_emitter,
         run_event_logger,
         session_manager,
+        rolling_summarizer_for_finalize: rolling_summarizer_for_stream,
         app_session_clone,
         trajectory_manager_for_stream,
         memory_provider_for_stream,

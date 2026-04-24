@@ -487,6 +487,7 @@ export function ChatWorkspace({
                   <div className="min-h-0 flex-1">
                     <ChatUI
                       sessionTitle={activeTitle}
+                      sessionId={activeSessionId}
                       projectLabel={currentProject?.name ?? "if2Ai"}
                       defaultWorkdir={currentProject?.workdir}
                       branchLabel={branchLabel}

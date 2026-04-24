@@ -148,6 +148,11 @@ pub struct TurnServiceDeps {
     /// the SQLite-backed store is unavailable).  Read on every turn
     /// to materialise the `LearnedTraits` prompt block (priority 93).
     pub learned_traits: Option<crate::modules::memory::learned_traits::LearnedTraitsStore>,
+    /// Rolling-summary orchestrator forwarded to `stream_finalize` so the
+    /// auto-compact path can invoke `RollingSummarizer` without going
+    /// through `AppState` (which is unavailable from inside the modules
+    /// crate-half).
+    pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
 }
 
 impl TurnServiceDeps {

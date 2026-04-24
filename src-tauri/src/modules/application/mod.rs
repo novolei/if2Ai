@@ -44,6 +44,7 @@
 
 pub mod activation;
 pub mod activation_service;
+pub mod compact_service;
 pub mod gateway_service;
 pub mod job_monitor;
 pub mod license_lifecycle_service;

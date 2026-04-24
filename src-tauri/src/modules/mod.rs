@@ -38,6 +38,7 @@ pub mod stt;
 pub mod system_check;
 pub mod tools;
 pub mod tts;
+pub mod usage;
 pub mod viewer_registry;
 
 #[allow(unused_imports)]

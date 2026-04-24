@@ -33,11 +33,26 @@ pub(super) fn build_memory_bootstrap(
     // empty()` that silently returned `""` for every call, which is
     // why memory.md was always blank, learned_traits stayed at 0,
     // and the compile pipeline reported every step SKIPPED.
+    //
+    // Per-role usage tagging: each shim instance carries its own
+    // caller label so the durable usage store can break the per-role
+    // dashboard down (chat / summarizer / compiler / utility /
+    // utility_large).  RollingSummarizer + MemoryCompiler get
+    // dedicated labels; everything else (reflection, learned-traits,
+    // small one-shots) shares the default `utility` label.
     let utility_llm: Arc<dyn modules::memory::UtilityLlm> = Arc::new(
         modules::memory::ChatProviderUtilityLlm::new(paths.if2ai_dir.clone()),
     );
+    let summarizer_llm: Arc<dyn modules::memory::UtilityLlm> = Arc::new(
+        modules::memory::ChatProviderUtilityLlm::new(paths.if2ai_dir.clone())
+            .with_caller(modules::usage::CALLER_SUMMARIZER),
+    );
+    let compiler_llm: Arc<dyn modules::memory::UtilityLlm> = Arc::new(
+        modules::memory::ChatProviderUtilityLlm::new(paths.if2ai_dir.clone())
+            .with_caller(modules::usage::CALLER_COMPILER),
+    );
     tracing::info!(
-        "[init] UtilityLlm bound to ChatProviderUtilityLlm (workdir={:?})",
+        "[init] UtilityLlm bound to ChatProviderUtilityLlm (workdir={:?}, callers=chat/summarizer/compiler/utility)",
         paths.if2ai_dir
     );
 
@@ -64,14 +79,14 @@ pub(super) fn build_memory_bootstrap(
 
     let rolling_summarizer = Arc::new(modules::memory::summary::RollingSummarizer::new(
         summary_store.clone(),
-        utility_llm.clone(),
+        summarizer_llm.clone(),
         job_runner.clone(),
         Some(threat_scanner.clone()),
     ));
 
     let memory_compiler = Arc::new(modules::memory::MemoryCompiler::new(
         summary_store.clone(),
-        utility_llm.clone(),
+        compiler_llm.clone(),
         job_runner.clone(),
         modules::runtime::config::current()
             .memory()

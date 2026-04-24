@@ -1587,6 +1587,70 @@ export function listenActivationStatusChanged(
   );
 }
 
+// ─── Per-role usage dashboard (Settings ▸ 用量统计) ─────────────────
+
+export type UsageWindow = "today" | "this_week" | "this_month" | "all_time";
+
+export interface CallerUsage {
+  caller: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  turns: number;
+}
+
+export interface UsageSummary {
+  window: string;
+  byCaller: CallerUsage[];
+  total: CallerUsage;
+}
+
+/**
+ * Aggregate the durable per-role usage store for one of four time
+ * windows. `window` matches the Rust `UsageWindow` snake-case enum.
+ */
+export async function usageSummary(window: UsageWindow): Promise<UsageSummary> {
+  return invoke<UsageSummary>("usage_summary", { window });
+}
+
+// ─── Manual /compact + auto-compact event ───────────────────────────
+
+export const CHAT_COMPACT_COMPLETED_EVENT = "chat_compact_completed";
+
+export interface CompactReport {
+  sessionId: string;
+  summarizedMessages: number;
+  freedTokens: number;
+  summaryExcerpt: string;
+  didCompact: boolean;
+}
+
+/**
+ * Manually compact a session: forces RollingSummarizer to fold the
+ * current message history into a summary and persist it. Bypasses
+ * the COMPACT_SKIP_WINDOW_SECS throttle. Returns a report so the UI
+ * can show how many messages were folded.
+ */
+export async function chatCompactSession(
+  sessionId: string,
+): Promise<CompactReport> {
+  return invoke<CompactReport>("chat_compact_session", { sessionId });
+}
+
+/**
+ * Subscribe to backend-emitted auto-compact events. Fires after the
+ * background tick (post-finalize) lands a new summary because the
+ * ContextBudget crossed the configured `IF2AI_AUTO_COMPACT_THRESHOLD`
+ * (default 85%).
+ */
+export function listenChatCompactCompleted(
+  cb: (report: CompactReport) => void,
+): Promise<UnlistenFn> {
+  return listen<CompactReport>(CHAT_COMPACT_COMPLETED_EVENT, (e) =>
+    cb(e.payload),
+  );
+}
+
 /** Phase M2.6 — wire-shape input for the deterministic classifier. */
 export interface RequestIntelligenceClassifyInput {
   userMessage: string;

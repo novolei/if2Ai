@@ -1282,6 +1282,35 @@ function App() {
     return () => unwire();
   }, []);
 
+  // Auto-compact: when the backend's stream_finalize crosses
+  // `IF2AI_AUTO_COMPACT_THRESHOLD` (default 85%) it spawns a
+  // background fold and emits `chat_compact_completed` with a tiny
+  // report. Show a single-line toast so the user knows the next turn
+  // will ship with a leaner context.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void (async () => {
+      const { listenChatCompactCompleted } = await import("@/lib/tauri");
+      unlisten = await listenChatCompactCompleted((report) => {
+        if (!report.didCompact) return;
+        const freed =
+          report.freedTokens > 0
+            ? `${(report.freedTokens / 1000).toFixed(1)}k`
+            : "0";
+        toast.success(
+          `上下文接近上限，已自动压缩 ${report.summarizedMessages} 条消息`,
+          {
+            description: `释放约 ${freed} tokens · 摘要：${report.summaryExcerpt}…`,
+            duration: 5000,
+          },
+        );
+      });
+    })();
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listenToChatPrefill((payload) => {
@@ -2593,6 +2622,65 @@ function App() {
             );
           } catch (err) {
             setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
+          }
+          return;
+        }
+
+        // /compact — manual context compaction (opt-out of skill / builtin
+        // slash routes). Calls the chat_compact_session IPC, then renders
+        // a tiny "已压缩 N 条消息，释放 X tokens" assistant message.
+        const trimmedSlash = messageText.trim();
+        if (trimmedSlash === "/compact" || trimmedSlash.startsWith("/compact ")) {
+          setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
+          try {
+            const { chatCompactSession } = await import("@/lib/tauri");
+            const report = await chatCompactSession(sessionId);
+            const assistantMsgId = crypto.randomUUID();
+            const content = report.didCompact
+              ? `已压缩 ${report.summarizedMessages} 条消息，释放约 ${
+                  report.freedTokens > 0
+                    ? `${(report.freedTokens / 1000).toFixed(1)}k`
+                    : "0"
+                } tokens。\n\n摘要预览：${report.summaryExcerpt}…`
+              : "上下文已是最新，无需压缩。";
+            const assistantMsg: Message = {
+              id: assistantMsgId,
+              role: "assistant",
+              content,
+              timestamp: new Date(),
+              isStreaming: false,
+              slashCommand: "/compact",
+            };
+            setConversations((prev) => {
+              const currentConv = prev[sessionId];
+              if (!currentConv) return prev;
+              return {
+                ...prev,
+                [sessionId]: {
+                  ...currentConv,
+                  messages: [...currentConv.messages, assistantMsg],
+                },
+              };
+            });
+          } catch (err) {
+            const errorMsg: Message = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `/compact 失败: ${String(err)}`,
+              timestamp: new Date(),
+              isStreaming: false,
+            };
+            setConversations((prev) => {
+              const currentConv = prev[sessionId];
+              if (!currentConv) return prev;
+              return {
+                ...prev,
+                [sessionId]: {
+                  ...currentConv,
+                  messages: [...currentConv.messages, errorMsg],
+                },
+              };
+            });
           }
           return;
         }

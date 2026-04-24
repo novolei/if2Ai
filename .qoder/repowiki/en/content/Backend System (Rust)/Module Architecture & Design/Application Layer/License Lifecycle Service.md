@@ -12,7 +12,23 @@
 - [test.rs](file://src-tauri/src/modules/provider/test.rs)
 - [activation-gate-and-license-lifecycle-design.md](file://docs/staff-remediation/activation-gate-and-license-lifecycle-design.md)
 - [MIG-009-activation-license-lifecycle.md](file://docs/packs/feature/migration-core/MIG-009-activation-license-lifecycle.md)
+- [activation/mod.rs](file://src-tauri/src/modules/application/activation/mod.rs)
+- [installation_id.rs](file://src-tauri/src/modules/application/activation/installation_id.rs)
+- [license_evaluator.rs](file://src-tauri/src/modules/application/activation/license_evaluator.rs)
+- [license_store.rs](file://src-tauri/src/modules/application/activation/license_store.rs)
+- [http_client.rs](file://src-tauri/src/modules/application/activation/http_client.rs)
+- [lifecycle_manager.rs](file://src-tauri/src/modules/application/activation/lifecycle_manager.rs)
+- [models.rs](file://src-tauri/src/modules/application/activation/models.rs)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Complete replacement of old activation system with new Ed25519-based license lifecycle system
+- Added comprehensive backend modules: InstallationId, LicenseEvaluator, LicenseStore, and LifecycleManager
+- New HTTP client implementation with retry policies and comprehensive error handling
+- Ed25519 digital signature verification for license authenticity
+- Atomic file-based license storage with secure permissions
+- Background lifecycle management with revoke checking and refresh coordination
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -26,77 +42,89 @@
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the license lifecycle service module that manages activation gating and license state transitions for the If2Ai platform. It covers the LicenseLifecycleService implementation, its integration with the ActivationService, and the canonical activation snapshot contract. The service is designed as a typed, contract-driven component that will evolve into a full-featured lifecycle manager while maintaining backward compatibility with the existing onboarding flow.
+This document explains the license lifecycle service module that manages activation gating and license state transitions for the If2Ai platform using a modern Ed25519-based authentication system. The new system replaces the legacy activation approach with a comprehensive backend architecture featuring secure license storage, cryptographic verification, and robust network communication.
+
+The LicenseLifecycleService now integrates with a complete activation subsystem including InstallationId generation, LicenseEvaluator with Ed25519 signature verification, LicenseStore for secure persistence, and LifecycleManager for background monitoring. This system provides enterprise-grade security and reliability for license management while maintaining backward compatibility with existing onboarding flows.
 
 ## Project Structure
-The license lifecycle service resides in the Rust backend under the application module and integrates with runtime contracts, onboarding state, and Tauri commands.
+The license lifecycle service now resides in a comprehensive activation subsystem under the application module, with dedicated modules for each core responsibility.
 
 ```mermaid
 graph TB
-subgraph "Rust Backend"
-A["commands/activation.rs<br/>Tauri commands"]
-B["modules/application/activation_service.rs<br/>ActivationService"]
-C["modules/application/license_lifecycle_service.rs<br/>LicenseLifecycleService"]
-D["modules/runtime/contracts/activation.rs<br/>Activation contract"]
-E["modules/onboarding/state.rs<br/>Onboarding state types"]
-F["modules/onboarding/store.rs<br/>Onboarding persistence"]
-G["modules/config/store.rs<br/>Config persistence"]
-H["modules/provider/test.rs<br/>Provider test utilities"]
+subgraph "New Activation Subsystem"
+A["activation/mod.rs<br/>Module entry point"]
+B["activation/installation_id.rs<br/>Device identification"]
+C["activation/license_evaluator.rs<br/>Ed25519 verification"]
+D["activation/license_store.rs<br/>Secure storage"]
+E["activation/http_client.rs<br/>Network client"]
+F["activation/lifecycle_manager.rs<br/>Background monitor"]
+G["activation/models.rs<br/>Wire formats & types"]
+end
+subgraph "Core Services"
+H["license_lifecycle_service.rs<br/>License lifecycle"]
+I["activation_service.rs<br/>Legacy bridge"]
+J["commands/activation.rs<br/>IPC interface"]
+K["runtime/contracts/activation.rs<br/>State contracts"]
 end
 A --> B
-B --> C
-B --> D
-B --> E
-B --> F
-B --> G
-B --> H
-C --> D
+A --> C
+A --> D
+A --> E
+A --> F
+A --> G
+H --> C
+H --> D
+H --> E
+I --> H
+J --> I
+K --> H
 ```
 
 **Diagram sources**
-- [activation.rs:1-127](file://src-tauri/src/commands/activation.rs#L1-L127)
-- [activation_service.rs:1-291](file://src-tauri/src/modules/application/activation_service.rs#L1-L291)
-- [license_lifecycle_service.rs:1-165](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L1-L165)
-- [activation.rs:1-262](file://src-tauri/src/modules/runtime/contracts/activation.rs#L1-L262)
-- [state.rs:1-330](file://src-tauri/src/modules/onboarding/state.rs#L1-L330)
-- [store.rs:1-199](file://src-tauri/src/modules/onboarding/store.rs#L1-L199)
-- [store.rs:1-302](file://src-tauri/src/modules/config/store.rs#L1-L302)
-- [test.rs:1-495](file://src-tauri/src/modules/provider/test.rs#L1-L495)
+- [activation/mod.rs:1-36](file://src-tauri/src/modules/application/activation/mod.rs#L1-L36)
+- [installation_id.rs:1-195](file://src-tauri/src/modules/application/activation/installation_id.rs#L1-L195)
+- [license_evaluator.rs:1-409](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L1-L409)
+- [license_store.rs:1-203](file://src-tauri/src/modules/application/activation/license_store.rs#L1-L203)
+- [http_client.rs:1-294](file://src-tauri/src/modules/application/activation/http_client.rs#L1-L294)
+- [lifecycle_manager.rs:1-93](file://src-tauri/src/modules/application/activation/lifecycle_manager.rs#L1-L93)
+- [models.rs:1-273](file://src-tauri/src/modules/application/activation/models.rs#L1-L273)
+- [license_lifecycle_service.rs:1-390](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L1-L390)
 
 **Section sources**
-- [license_lifecycle_service.rs:1-165](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L1-L165)
-- [activation_service.rs:1-291](file://src-tauri/src/modules/application/activation_service.rs#L1-L291)
-- [activation.rs:1-127](file://src-tauri/src/commands/activation.rs#L1-L127)
-- [activation.rs:1-262](file://src-tauri/src/modules/runtime/contracts/activation.rs#L1-L262)
-- [state.rs:1-330](file://src-tauri/src/modules/onboarding/state.rs#L1-L330)
-- [store.rs:1-199](file://src-tauri/src/modules/onboarding/store.rs#L1-L199)
-- [store.rs:1-302](file://src-tauri/src/modules/config/store.rs#L1-L302)
-- [test.rs:1-495](file://src-tauri/src/modules/provider/test.rs#L1-L495)
+- [activation/mod.rs:1-36](file://src-tauri/src/modules/application/activation/mod.rs#L1-L36)
+- [license_lifecycle_service.rs:1-390](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L1-L390)
+- [activation_service.rs:1-289](file://src-tauri/src/modules/application/activation_service.rs#L1-L289)
 
 ## Core Components
-- LicenseLifecycleService: Provides typed lifecycle transitions and builds canonical ActivationSnapshot instances. It currently returns placeholder snapshots reflecting the current phase scope.
-- ActivationService: Composes legacy onboarding logic with the new typed lifecycle surface, exposing a stable interface for the boot shell and IPC commands.
-- Runtime Contracts: Define the canonical activation state machine, status kinds, failure reasons, and snapshot structure.
-- Onboarding State and Persistence: Provide the source of truth for activation gating during the initial phase.
-- Provider Testing Utilities: Support preconditions validation and activation ceremony.
 
-Key responsibilities:
-- LicenseLifecycleService: Manages state transitions (local boot restore, request, redeem, refresh, revoke check, deactivate) and constructs snapshots with computed allowance flags.
-- ActivationService: Bridges legacy onboarding with the typed lifecycle, validates preconditions, runs the activation ceremony, and marks onboarding complete.
-- Contracts: Enforce a stable wire format for activation states and actions.
+### New Activation Subsystem Modules
+- **InstallationId**: Generates stable per-device identifiers using SHA-256 hashing with username, hostname, OS, and architecture components. Provides 8-character human-friendly device indicators.
+- **LicenseEvaluator**: Performs Ed25519 signature verification on license JWS tokens, validates claims, and enforces time-based constraints including offline grace periods.
+- **LicenseStore**: Atomic file-based storage with 0600 permissions, supporting secure license caching and persistence across application restarts.
+- **HTTP Client**: Comprehensive network client with retry policies, exponential backoff, jitter, and support for 429/503 status codes with Retry-After headers.
+- **Lifecycle Manager**: Background monitoring service that periodically checks for license revocation and refreshes state automatically.
+
+### Enhanced LicenseLifecycleService
+- **Ed25519 Integration**: Full cryptographic verification of license authenticity using built-in public keys
+- **Remote Backend Integration**: Complete HTTP client implementation for activation server communication
+- **Atomic Operations**: Secure license storage with atomic write patterns to prevent corruption
+- **Background Monitoring**: Automatic revoke checking and refresh coordination through lifecycle manager
+
+### Legacy Bridge Preservation
+- **ActivationService**: Maintains compatibility with existing onboarding flows while exposing new typed lifecycle interface
+- **Contract Compliance**: Preserves runtime activation contracts for seamless frontend integration
+- **IPC Compatibility**: Thin command layer that delegates to the new activation subsystem
 
 **Section sources**
-- [license_lifecycle_service.rs:33-130](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L33-L130)
-- [activation_service.rs:74-254](file://src-tauri/src/modules/application/activation_service.rs#L74-L254)
-- [activation.rs:22-154](file://src-tauri/src/modules/runtime/contracts/activation.rs#L22-L154)
-- [state.rs:151-202](file://src-tauri/src/modules/onboarding/state.rs#L151-L202)
+- [installation_id.rs:1-195](file://src-tauri/src/modules/application/activation/installation_id.rs#L1-L195)
+- [license_evaluator.rs:1-409](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L1-L409)
+- [license_store.rs:1-203](file://src-tauri/src/modules/application/activation/license_store.rs#L1-L203)
+- [http_client.rs:1-294](file://src-tauri/src/modules/application/activation/http_client.rs#L1-L294)
+- [lifecycle_manager.rs:1-93](file://src-tauri/src/modules/application/activation/lifecycle_manager.rs#L1-L93)
+- [license_lifecycle_service.rs:1-390](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L1-L390)
 
 ## Architecture Overview
-The system follows a layered architecture:
-- Commands layer: Thin Tauri command handlers delegate to the ActivationService.
-- Application layer: ActivationService composes onboarding state, configuration, provider testing, and the LicenseLifecycleService.
-- Contracts layer: Defines the canonical activation data structures and state machine.
-- Persistence layer: Onboarding state and configuration are persisted to the user's home directory.
+The new system follows a modular architecture with clear separation of concerns across cryptographic verification, network communication, storage, and lifecycle management.
 
 ```mermaid
 sequenceDiagram
@@ -104,267 +132,346 @@ participant UI as "Frontend Boot Shell"
 participant Cmd as "Tauri Command"
 participant ActSvc as "ActivationService"
 participant LifeSvc as "LicenseLifecycleService"
-participant Onboard as "Onboarding State"
-participant Config as "Config Store"
+participant Eval as "LicenseEvaluator"
+participant Store as "LicenseStore"
+participant Net as "HTTP Client"
 UI->>Cmd : activation_get_status()
 Cmd->>ActSvc : current_snapshot()
-ActSvc->>Onboard : load_state()
-Onboard-->>ActSvc : OnboardingState
-ActSvc->>LifeSvc : snapshot_with_kind(kind, None, None)
-LifeSvc-->>ActSvc : ActivationSnapshot
+ActSvc->>LifeSvc : local_boot_restore()
+LifeSvc->>Store : load()
+Store-->>LifeSvc : StoredLicense or None
+alt License exists
+LifeSvc->>Eval : evaluate(stored, installation_id, app_id)
+Eval-->>LifeSvc : LicenseValidity
+alt Valid
+LifeSvc-->>ActSvc : Activated snapshot
+else OfflineGrace
+LifeSvc-->>ActSvc : OfflineGrace snapshot
+else Expired/DeviceMismatch/AudienceMismatch/InvalidSignature
+LifeSvc->>Store : clear()
+LifeSvc-->>ActSvc : NeedsActivation snapshot
+end
+else No license
+LifeSvc-->>ActSvc : NeedsActivation snapshot
+end
 ActSvc-->>Cmd : ActivationSnapshot
 Cmd-->>UI : ActivationSnapshot
 ```
 
 **Diagram sources**
-- [activation.rs:123-126](file://src-tauri/src/commands/activation.rs#L123-L126)
-- [activation_service.rs:123-138](file://src-tauri/src/modules/application/activation_service.rs#L123-L138)
-- [license_lifecycle_service.rs:108-130](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L108-L130)
-- [state.rs:151-174](file://src-tauri/src/modules/onboarding/state.rs#L151-L174)
-- [store.rs:1-302](file://src-tauri/src/modules/config/store.rs#L1-L302)
+- [license_lifecycle_service.rs:100-137](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L100-L137)
+- [license_evaluator.rs:57-93](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L57-L93)
+- [license_store.rs:80-91](file://src-tauri/src/modules/application/activation/license_store.rs#L80-L91)
 
 ## Detailed Component Analysis
 
-### LicenseLifecycleService
-Purpose:
-- Owns canonical lifecycle transitions for ActivationLicense and returns typed ActivationSnapshot instances.
-- Enforces typed boundaries and defers remote backend integration to later slices.
-- Computes allows_main_shell internally to prevent caller-side recomputation.
+### LicenseLifecycleService (Enhanced)
+The LicenseLifecycleService now provides comprehensive Ed25519-based license management with full remote backend integration.
 
-Core methods:
-- local_boot_restore: Returns a placeholder snapshot indicating NeedsActivation.
-- request_license: Returns a snapshot indicating RequestingActivation.
-- redeem: Returns a snapshot indicating Redeeming.
-- refresh: Branches on current state to return Activated or NeedsActivation.
-- revoke_check: Placeholder returning Activated.
-- deactivate: Returns a snapshot with Deactivated and UserDeactivated failure reason.
+**Core Methods**:
+- **local_boot_restore**: Reads cached license, performs Ed25519 verification, and returns appropriate activation snapshot
+- **request_license**: Issues new activation requests with installation ID, app metadata, and platform information
+- **poll_request_status**: Monitors approval status for pending activation requests
+- **redeem_with_request_id**: Processes approved requests and persists license with secure storage
+- **redeem_by_invite_code**: Handles admin-preissued invite code redemption
+- **refresh**: Performs server-side license refresh with token rotation
+- **revoke_check**: Periodically verifies license status and handles revocation
+- **deactivate**: Clears local license cache (user-initiated deactivation)
 
-Snapshot construction:
-- snapshot_with_kind centralizes snapshot creation and computes allows_main_shell based on the status kind.
+**Security Features**:
+- Ed25519 signature verification against built-in public key
+- Device binding through installation ID validation
+- Audience validation for application ID matching
+- Time-based validation with offline grace period support
+- Clock rollback protection using trusted server timestamps
 
 ```mermaid
 classDiagram
 class LicenseLifecycleService {
 +new() LicenseLifecycleService
 +local_boot_restore() ActivationSnapshot
-+request_license() ActivationSnapshot
-+redeem() ActivationSnapshot
-+refresh(current_kind) ActivationSnapshot
++request_license(installation_id) ActivationRequestResponse
++poll_request_status(request_id) ActivationStatusResponse
++redeem_with_request_id(request_id, installation_id) ActivationSnapshot
++redeem_by_invite_code(code, installation_id) ActivationSnapshot
++refresh() ActivationSnapshot
 +revoke_check() ActivationSnapshot
 +deactivate() ActivationSnapshot
 }
-class Contract {
-<<enum>> ActivationStatusKind
-<<enum>> ActivationFailureReason
-<<struct>> ActivationSnapshot
-<<struct>> ActivationStatus
-<<struct>> ActivationLicense
+class LicenseEvaluator {
++evaluate(stored, installation_id, app_id) LicenseValidity
 }
-LicenseLifecycleService --> Contract : "returns"
+class LicenseStore {
++load() Option~StoredLicense~
++save(license) Result
++clear() Result
+}
+class ActivationHttpClient {
++request_activation(payload) ActivationRequestResponse
++fetch_activation_status(id) ActivationStatusResponse
++redeem(payload) RedeemResponse
++refresh(payload) RefreshResponse
++revoke_check(payload) RevokeCheckResponse
+}
+LicenseLifecycleService --> LicenseEvaluator : "uses"
+LicenseLifecycleService --> LicenseStore : "uses"
+LicenseLifecycleService --> ActivationHttpClient : "uses"
 ```
 
 **Diagram sources**
-- [license_lifecycle_service.rs:41-130](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L41-L130)
-- [activation.rs:22-154](file://src-tauri/src/modules/runtime/contracts/activation.rs#L22-L154)
+- [license_lifecycle_service.rs:76-302](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L76-L302)
+- [license_evaluator.rs:57-93](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L57-L93)
+- [license_store.rs:25-129](file://src-tauri/src/modules/application/activation/license_store.rs#L25-L129)
+- [http_client.rs:108-151](file://src-tauri/src/modules/application/activation/http_client.rs#L108-L151)
 
 **Section sources**
-- [license_lifecycle_service.rs:51-103](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L51-L103)
-- [license_lifecycle_service.rs:108-130](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L108-L130)
+- [license_lifecycle_service.rs:76-302](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L76-L302)
+- [license_evaluator.rs:57-93](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L57-L93)
 
-### ActivationService
-Purpose:
-- Composes legacy onboarding with the typed lifecycle surface.
-- Exposes a stable interface for the boot shell and IPC commands.
-- Validates preconditions, runs the activation ceremony, and completes onboarding.
+### LicenseEvaluator (New)
+Provides comprehensive Ed25519-based license validation with cryptographic verification and time-based constraints.
 
-Key responsibilities:
-- current_snapshot: Honesty mapping to onboarding state; returns Activated if onboarding is complete, otherwise NeedsActivation.
-- validate_preconditions: Checks security confirmation, provider configuration completeness, and channel configuration presence.
-- run_activation_ceremony: Sends a greeting to the configured provider and returns a ceremony result.
-- test_active_provider: Verifies provider connectivity.
-- complete_activation: Marks onboarding complete, persists state, updates configuration, and returns a typed snapshot.
+**Key Features**:
+- **Ed25519 Verification**: Built-in public key verification against server-signed JWS tokens
+- **Claim Validation**: Validates installation ID binding, audience matching, and expiration
+- **Offline Grace**: Supports grace period validation for offline scenarios
+- **Clock Protection**: Prevents clock rollback attacks using trusted server timestamps
+- **Error Handling**: Comprehensive error categorization for malformed, invalid, or expired licenses
 
-Integration points:
-- Uses LicenseLifecycleService for snapshot construction via snapshot_with_kind.
-- Loads and saves onboarding state from ~/.if2ai/state.json.
-- Persists configuration to ~/.if2ai/config.json with atomic writes.
-
-```mermaid
-sequenceDiagram
-participant UI as "Frontend"
-participant Cmd as "Tauri Command"
-participant ActSvc as "ActivationService"
-participant Onboard as "Onboarding State"
-participant Config as "Config Store"
-participant Provider as "Provider Test"
-UI->>Cmd : activation_validate()
-Cmd->>ActSvc : validate_preconditions()
-ActSvc->>Config : load_config()
-ActSvc-->>Cmd : ActivationChecklist
-Cmd-->>UI : ActivationChecklist
-UI->>Cmd : activation_complete()
-Cmd->>ActSvc : complete_activation()
-ActSvc->>Onboard : load_state()
-ActSvc->>Onboard : OnboardingFlow : : complete()
-ActSvc->>Onboard : save_state()
-ActSvc->>Config : load_config() / save_config()
-ActSvc-->>Cmd : ActivationSnapshot
-Cmd-->>UI : ActivationSnapshot
-```
-
-**Diagram sources**
-- [activation_service.rs:142-253](file://src-tauri/src/modules/application/activation_service.rs#L142-L253)
-- [activation.rs:75-108](file://src-tauri/src/commands/activation.rs#L75-L108)
-- [state.rs:151-202](file://src-tauri/src/modules/onboarding/state.rs#L151-L202)
-- [store.rs:39-68](file://src-tauri/src/modules/onboarding/store.rs#L39-L68)
-- [store.rs:74-115](file://src-tauri/src/modules/config/store.rs#L74-L115)
-- [test.rs:37-92](file://src-tauri/src/modules/provider/test.rs#L37-L92)
+**Validation Flow**:
+1. Parse and verify JWS structure and Ed25519 signature
+2. Extract and validate license claims (installation_id, audience, exp, offline_grace_exp)
+3. Check device binding and audience matching
+4. Apply time-based validation with skew tolerance
+5. Return appropriate validity status
 
 **Section sources**
-- [activation_service.rs:74-254](file://src-tauri/src/modules/application/activation_service.rs#L74-L254)
-- [activation.rs:75-108](file://src-tauri/src/commands/activation.rs#L75-L108)
-- [state.rs:151-202](file://src-tauri/src/modules/onboarding/state.rs#L151-L202)
-- [store.rs:39-68](file://src-tauri/src/modules/onboarding/store.rs#L39-L68)
-- [store.rs:74-115](file://src-tauri/src/modules/config/store.rs#L74-L115)
-- [test.rs:37-92](file://src-tauri/src/modules/provider/test.rs#L37-L92)
+- [license_evaluator.rs:1-409](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L1-L409)
 
-### Runtime Contracts for Activation
-Defines the canonical state machine and data structures:
-- ActivationStatusKind: Canonical states including CheckingLocal, NeedsActivation, RequestingActivation, PendingApproval, Redeeming, Activated, OfflineGrace, Expired, Revoked, Deactivated.
-- ActivationStatus: Rich status with optional metadata (message, grace_until, pending_request_id, failure_reason).
-- ActivationLicense: Summary of license details suitable for frontend display.
-- ActivationSnapshot: Full projection with allows_main_shell computed by the backend.
+### LicenseStore (New)
+Atomic file-based license storage with secure permissions and comprehensive error handling.
 
-```mermaid
-classDiagram
-class ActivationStatusKind {
-<<enum>>
-+CheckingLocal
-+NeedsActivation
-+RequestingActivation
-+PendingApproval
-+Redeeming
-+Activated
-+OfflineGrace
-+Expired
-+Revoked
-+Deactivated
-}
-class ActivationFailureReason {
-<<enum>>
-+NoLocalLicenseOffline
-+ServerExpired
-+ServerRevoked
-+UserDeactivated
-+RefreshTransient
-+Other
-}
-class ActivationLicense {
-+string licenseId
-+string? plan
-+string issuedAt
-+string? expiresAt
-+string? lastRefreshedAt
-}
-class ActivationStatus {
-+ActivationStatusKind kind
-+string? message
-+string? graceUntil
-+string? pendingRequestId
-+ActivationFailureReason? failureReason
-}
-class ActivationSnapshot {
-+ActivationStatus status
-+ActivationLicense? license
-+bool allowsMainShell
-+CorrelationIds correlation
-+string capturedAt
-}
-ActivationSnapshot --> ActivationStatus
-ActivationStatus --> ActivationStatusKind
-ActivationStatus --> ActivationFailureReason
-ActivationSnapshot --> ActivationLicense
-```
+**Storage Features**:
+- **Atomic Writes**: Temporary file creation followed by atomic rename to prevent corruption
+- **Secure Permissions**: 0600 file permissions on Unix systems for sensitive license data
+- **Directory Management**: Automatic creation of activation directory with proper permissions
+- **Error Handling**: Comprehensive error types for I/O, serialization, and deserialization failures
+- **Cross-Platform**: Platform-specific permission handling for Unix systems
 
-**Diagram sources**
-- [activation.rs:22-154](file://src-tauri/src/modules/runtime/contracts/activation.rs#L22-L154)
+**Persistence Pattern**:
+1. Write to temporary `.tmp` file with proper permissions
+2. Serialize JSON data with pretty formatting
+3. Atomic rename to final license file path
+4. Set secure permissions on final file
 
 **Section sources**
-- [activation.rs:22-154](file://src-tauri/src/modules/runtime/contracts/activation.rs#L22-L154)
+- [license_store.rs:1-203](file://src-tauri/src/modules/application/activation/license_store.rs#L1-L203)
 
-### State Persistence Patterns
-Onboarding state and configuration persistence:
-- Onboarding state: Stored in ~/.if2ai/state.json with atomic write semantics and 0600 permissions.
-- Configuration: Stored in ~/.if2ai/config.json with atomic write semantics and 0600 permissions.
-- Both use temporary files and rename operations to ensure atomicity and prevent corruption.
+### HTTP Client (New)
+Comprehensive network client with robust retry policies and comprehensive error handling.
 
-```mermaid
-flowchart TD
-Start(["Save Operation"]) --> EnsureDir["Ensure ~/.if2ai exists"]
-EnsureDir --> WriteTemp["Write to temp file"]
-WriteTemp --> SetPerms["Set file permissions (0600)"]
-SetPerms --> Rename["Rename temp to final path"]
-Rename --> End(["Complete"])
-Start --> ReadFile["Read existing file"]
-ReadFile --> Parse["Parse JSON/YAML"]
-Parse --> Exists{"Exists?"}
-Exists --> |Yes| Continue["Continue with saved state"]
-Exists --> |No| Default["Use default/new state"]
-```
+**Network Features**:
+- **Retry Policy**: UClaw-compatible retry with exponential backoff (5 attempts, 0.5s-4s base delay)
+- **Jitter**: ±20% jitter to prevent thundering herd effects
+- **Status Handling**: Automatic retry for 429/503 status codes with Retry-After support
+- **Timeout Control**: 12-second per-request timeout with configurable base URL
+- **Environment Configuration**: IF2AI_ACTIVATION_BASE_URL environment variable support
 
-**Diagram sources**
-- [store.rs:87-121](file://src-tauri/src/modules/onboarding/store.rs#L87-L121)
-- [store.rs:83-115](file://src-tauri/src/modules/config/store.rs#L83-L115)
+**API Endpoints**:
+- **POST /v1/activations/request**: License activation request
+- **GET /v1/activations/request/{id}**: Request status polling
+- **POST /v1/activations/redeem**: License redemption
+- **POST /v1/activations/redeem-by-code**: Invite code redemption
+- **POST /v1/licenses/refresh**: License refresh
+- **POST /v1/licenses/revoke-check**: Revocation status check
 
 **Section sources**
-- [store.rs:39-121](file://src-tauri/src/modules/onboarding/store.rs#L39-L121)
-- [store.rs:74-115](file://src-tauri/src/modules/config/store.rs#L74-L115)
+- [http_client.rs:1-294](file://src-tauri/src/modules/application/activation/http_client.rs#L1-L294)
+
+### Lifecycle Manager (New)
+Background monitoring service for automatic license state management.
+
+**Monitoring Features**:
+- **Periodic Checks**: Default 60-second intervals for revoke and refresh monitoring
+- **State Change Detection**: Compares signature (kind, allows_main_shell) to detect meaningful changes
+- **Event Emission**: Emits Tauri events with full ActivationSnapshot when state changes
+- **Failure Resilience**: Logs and continues on network failures, retrying on next interval
+- **Integration Ready**: Designed to work with desktop host lifecycle management
+
+**Background Loop**:
+1. Sleep for configured interval (default 60 seconds)
+2. Execute revoke_check via LicenseLifecycleService
+3. Compare signature with previous tick
+4. Emit event if state changed or gate is currently blocked
+5. Log and continue on failures
+
+**Section sources**
+- [lifecycle_manager.rs:1-93](file://src-tauri/src/modules/application/activation/lifecycle_manager.rs#L1-L93)
+
+### InstallationId (New)
+Stable per-device identifier generation with human-friendly indicators.
+
+**Identifier Features**:
+- **Stability**: Consistent across app restarts and upgrades within ~/.if2ai/data root
+- **Uniqueness**: Different values for fresh installations or wiped data roots
+- **Hash-Based**: SHA-256 of app_id + "::" + system identifiers
+- **Human-Friendly**: 8-character Crockford-style alphabet indicator for UI display
+- **Cache Storage**: Persistent caching in ~/.if2ai/activation/installation_id
+
+**Generation Algorithm**:
+1. Combine app_id with system identifiers (username, hostname, OS, architecture)
+2. Apply SHA-256 hashing and encode as hex string
+3. Cache result in installation_id file for future use
+4. Generate 8-character indicator using big-endian bit extraction
+
+**Section sources**
+- [installation_id.rs:1-195](file://src-tauri/src/modules/application/activation/installation_id.rs#L1-L195)
+
+### Models and Data Structures (New)
+Comprehensive wire format definitions and local storage schemas.
+
+**Wire Formats**:
+- **ActivationRequestPayload**: Installation and app metadata for license requests
+- **ActivationStatusResponse**: Request status with approval indicators
+- **RedeemResponse**: License token, refresh token, and timing information
+- **RefreshResponse**: License renewal with rotation and scheduling
+- **RevokeCheckResponse**: Revocation status and server timestamp
+
+**Local Storage**:
+- **StoredLicense**: On-disk license representation with security metadata
+- **LicenseClaims**: Decoded JWT claims for validation and display
+- **LicenseValidity**: Enumerated validation outcomes for state management
+
+**Section sources**
+- [models.rs:1-273](file://src-tauri/src/modules/application/activation/models.rs#L1-L273)
+
+### ActivationService (Enhanced)
+Maintains legacy onboarding compatibility while exposing new typed lifecycle interface.
+
+**Enhanced Responsibilities**:
+- **Legacy Bridge**: Preserves existing onboarding ceremony and state management
+- **Typed Interface**: Exposes new LicenseLifecycleService through canonical contracts
+- **Precondition Validation**: Maintains system check, security confirmation, and provider configuration validation
+- **Ceremony Management**: Preserves first-launch greeting functionality
+- **Configuration Integration**: Seamlessly integrates with new activation system
+
+**Current Snapshot Logic**:
+- **Boot Priority**: License-based activation takes precedence over onboarding state
+- **Fallback Behavior**: Missing or invalid licenses fall back to NeedsActivation
+- **Contract Compliance**: Returns canonical ActivationSnapshot for frontend integration
+
+**Section sources**
+- [activation_service.rs:1-289](file://src-tauri/src/modules/application/activation_service.rs#L1-L289)
 
 ## Dependency Analysis
-- LicenseLifecycleService depends on runtime activation contracts for types and constants.
-- ActivationService depends on LicenseLifecycleService, onboarding state, configuration store, and provider testing utilities.
-- Commands layer depends on ActivationService for all activation-related operations.
+The new activation system introduces a comprehensive dependency graph with clear module boundaries and interfaces.
 
 ```mermaid
 graph LR
-Cmd["commands/activation.rs"] --> ActSvc["activation_service.rs"]
-ActSvc --> LifeSvc["license_lifecycle_service.rs"]
-ActSvc --> Onboard["onboarding/state.rs"]
-ActSvc --> OnboardStore["onboarding/store.rs"]
-ActSvc --> ConfigStore["config/store.rs"]
-ActSvc --> ProviderTest["provider/test.rs"]
-LifeSvc --> Contracts["runtime/contracts/activation.rs"]
+subgraph "External Dependencies"
+Req["reqwest"]
+Ed25519["ed25519-dalek"]
+Sha2["sha2"]
+Serde["serde"]
+Async["tokio/async-trait"]
+end
+subgraph "Internal Dependencies"
+Models["activation/models.rs"]
+Store["activation/license_store.rs"]
+Eval["activation/license_evaluator.rs"]
+Http["activation/http_client.rs"]
+Install["activation/installation_id.rs"]
+Life["license_lifecycle_service.rs"]
+Act["activation_service.rs"]
+end
+Life --> Models
+Life --> Store
+Life --> Eval
+Life --> Http
+Life --> Install
+Act --> Life
+Http --> Req
+Eval --> Ed25519
+Install --> Sha2
+Store --> Serde
+Store --> Async
 ```
 
 **Diagram sources**
-- [activation.rs:21-26](file://src-tauri/src/commands/activation.rs#L21-L26)
-- [activation_service.rs:39-47](file://src-tauri/src/modules/application/activation_service.rs#L39-L47)
-- [license_lifecycle_service.rs:33-37](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L33-L37)
-- [activation.rs:18-21](file://src-tauri/src/modules/runtime/contracts/activation.rs#L18-L21)
+- [license_lifecycle_service.rs:24-42](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L24-L42)
+- [http_client.rs:22-30](file://src-tauri/src/modules/application/activation/http_client.rs#L22-L30)
+- [license_evaluator.rs:18-24](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L18-L24)
+- [license_store.rs:9-13](file://src-tauri/src/modules/application/activation/license_store.rs#L9-L13)
+- [installation_id.rs:21-24](file://src-tauri/src/modules/application/activation/installation_id.rs#L21-L24)
 
 **Section sources**
-- [activation_service.rs:39-47](file://src-tauri/src/modules/application/activation_service.rs#L39-L47)
-- [license_lifecycle_service.rs:33-37](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L33-L37)
-- [activation.rs:18-21](file://src-tauri/src/modules/runtime/contracts/activation.rs#L18-L21)
+- [license_lifecycle_service.rs:24-42](file://src-tauri/src/modules/application/license_lifecycle_service.rs#L24-L42)
+- [http_client.rs:22-30](file://src-tauri/src/modules/application/activation/http_client.rs#L22-L30)
+- [license_evaluator.rs:18-24](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L18-L24)
+- [license_store.rs:9-13](file://src-tauri/src/modules/application/activation/license_store.rs#L9-L13)
+- [installation_id.rs:21-24](file://src-tauri/src/modules/application/activation/installation_id.rs#L21-L24)
 
 ## Performance Considerations
-- Asynchronous operations: All lifecycle and service methods are async to avoid blocking the Tauri command thread.
-- Minimal I/O: LicenseLifecycleService currently avoids network calls and disk I/O, focusing on snapshot construction.
-- Atomic persistence: Onboarding and configuration persistence uses atomic write patterns to minimize corruption risk.
-- Provider testing timeouts: Provider connectivity checks enforce strict timeouts to prevent UI stalls.
+The new system implements several performance optimizations and reliability features:
+
+**Network Optimization**:
+- **Connection Pooling**: Reuse HTTP client connections through reqwest builder pattern
+- **Retry Intelligence**: Smart retry logic only for transient server errors (429/503)
+- **Backoff Strategy**: Exponential backoff with jitter prevents server overload
+- **Timeout Management**: 12-second per-request timeouts balance responsiveness with reliability
+
+**Storage Efficiency**:
+- **Atomic Operations**: Temporary file writes prevent corruption and partial state
+- **Minimal I/O**: License evaluation operates on cached data, avoiding frequent network calls
+- **Efficient Serialization**: Pretty-printed JSON for human readability, minimal parsing overhead
+- **Permission Management**: One-time permission setting per directory/file operation
+
+**Cryptographic Performance**:
+- **Lazy Loading**: Ed25519 verifying key loaded once and reused across evaluations
+- **Minimal Parsing**: Claims decoded only when needed for display or validation
+- **Efficient Hashing**: SHA-256 computation cached in installation ID generation
+
+**Background Processing**:
+- **Non-blocking**: Lifecycle manager runs as separate async task without blocking main thread
+- **Interval Control**: Configurable 60-second intervals balance responsiveness with resource usage
+- **Failure Isolation**: Network failures in lifecycle loop don't affect main application flow
 
 ## Troubleshooting Guide
-Common scenarios and resolutions:
-- Onboarding state not found: The system defaults to NeedsActivation and logs a debug message. Verify ~/.if2ai/state.json exists and is readable.
-- Provider configuration errors: Activation preconditions fail if provider is incomplete. Ensure base_url and API key are set appropriately for the selected provider.
-- Activation ceremony failures: The greeting test is non-fatal; the ceremony proceeds without a first-response message if the test times out or fails.
-- Configuration persistence errors: Atomic write failures indicate filesystem issues. Check permissions and available disk space in ~/.if2ai/.
+Common scenarios and resolutions for the new Ed25519-based activation system:
+
+**License Verification Failures**:
+- **InvalidSignature**: License JWS signature doesn't match built-in public key. Verify license authenticity and server integrity.
+- **DeviceMismatch**: Installation ID in license doesn't match current device. Clear cache and re-activate with same device.
+- **AudienceMismatch**: License app_id doesn't match current application. Verify correct application registration.
+- **MalformedJws**: License JWS structure invalid. Contact support for license regeneration.
+
+**Network Communication Issues**:
+- **Transport Errors**: Network connectivity problems. Check IF2AI_ACTIVATION_BASE_URL environment variable and network access.
+- **ServerBusy/Queueing**: Server overload conditions. Wait for retry and check Retry-After headers.
+- **InvalidResponse**: Unexpected server responses. Verify server version compatibility and network integrity.
+
+**Storage and Persistence Problems**:
+- **Permission Denied**: File system permission issues. Check ~/.if2ai/activation directory permissions (should be 0700).
+- **Atomic Write Failures**: Disk space or file system corruption. Verify available disk space and file system health.
+- **Corrupted Cache**: License file damaged. Remove ~/.if2ai/activation/license.json and re-activate.
+
+**Background Monitor Issues**:
+- **Missing Events**: Lifecycle manager not emitting state changes. Check Tauri event system and application lifecycle.
+- **Excessive Logging**: Frequent retry messages indicate network instability. Monitor server availability and network conditions.
 
 **Section sources**
-- [activation_service.rs:124-129](file://src-tauri/src/modules/application/activation_service.rs#L124-L129)
-- [activation_service.rs:168-194](file://src-tauri/src/modules/application/activation_service.rs#L168-L194)
-- [store.rs:76-84](file://src-tauri/src/modules/onboarding/store.rs#L76-L84)
-- [test.rs:124-153](file://src-tauri/src/modules/provider/test.rs#L124-L153)
+- [license_evaluator.rs:177-188](file://src-tauri/src/modules/application/activation/license_evaluator.rs#L177-L188)
+- [http_client.rs:197-237](file://src-tauri/src/modules/application/activation/http_client.rs#L197-L237)
+- [license_store.rs:15-23](file://src-tauri/src/modules/application/activation/license_store.rs#L15-L23)
+- [lifecycle_manager.rs:67-72](file://src-tauri/src/modules/application/activation/lifecycle_manager.rs#L67-L72)
 
 ## Conclusion
-The license lifecycle service module establishes a typed, contract-driven foundation for activation gating and license state management. It preserves backward compatibility with the existing onboarding flow while preparing the ground for future remote license backend integration. The design emphasizes stability, atomic persistence, and clear separation of concerns across layers.
+The new Ed25519-based license lifecycle system represents a comprehensive replacement of the legacy activation infrastructure with enterprise-grade security, reliability, and maintainability. The system successfully integrates cryptographic verification, secure storage, robust networking, and background monitoring while preserving backward compatibility with existing onboarding flows.
+
+Key achievements include:
+- **Security Enhancement**: Ed25519 digital signatures provide strong license authenticity guarantees
+- **Reliability Improvements**: Atomic storage operations, comprehensive error handling, and background monitoring
+- **Developer Experience**: Clean module boundaries, comprehensive documentation, and test coverage
+- **Future Extensibility**: Modular design supports easy addition of new features and integrations
+
+The system maintains the canonical activation contracts and IPC interfaces while providing a solid foundation for future enhancements including advanced license management features, multi-platform credential storage, and enhanced telemetry capabilities.

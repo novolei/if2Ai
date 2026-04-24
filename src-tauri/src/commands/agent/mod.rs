@@ -54,6 +54,7 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         trajectory_manager: state.trajectory_manager.clone(),
         app_handle,
         learned_traits: state.learned_traits.clone(),
+        rolling_summarizer: state.rolling_summarizer.clone(),
     })
 }
 

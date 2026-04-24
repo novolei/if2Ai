@@ -19,9 +19,14 @@
  */
 
 import { useState } from 'react'
-import { Brain, Coins } from 'lucide-react'
+import { Brain, Coins, Layers } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ContextBudgetUsage, SessionTotals } from '@/lib/tauri'
+import {
+  chatCompactSession,
+  type ContextBudgetUsage,
+  type SessionTotals,
+} from '@/lib/tauri'
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import { useContextBarMode } from './useContextBarMode'
 
@@ -46,6 +51,11 @@ export interface ContextBarProps {
   sessionTotals?: SessionTotals
   /** Additional CSS class names. */
   className?: string
+  /**
+   * Active session id, required for the manual compact button.
+   * When absent the compact button is hidden.
+   */
+  sessionId?: string
 }
 
 function formatCostUsd(cost: number): string {
@@ -104,11 +114,39 @@ function pct(value: number, total: number): number {
  * Compact token-budget bar rendered above the chat input when
  * `ContextBudgetUsage` data is present in the latest stream payload.
  */
-export function ContextBar({ usage, windowSize, sessionTotals, className }: ContextBarProps) {
+export function ContextBar({
+  usage,
+  windowSize,
+  sessionTotals,
+  className,
+  sessionId,
+}: ContextBarProps) {
   // Phase 8B.10 / T-UI-2 — wire the memory badge to the CompiledMemoryViewer modal.
   const [memoryViewerOpen, setMemoryViewerOpen] = useState(false)
+  const [compactBusy, setCompactBusy] = useState(false)
   const [mode] = useContextBarMode()
   const sessionOnly = mode === 'session-only'
+
+  const onCompact = async () => {
+    if (!sessionId || compactBusy) return
+    setCompactBusy(true)
+    try {
+      const report = await chatCompactSession(sessionId)
+      if (report.didCompact) {
+        const freed =
+          report.freedTokens > 0
+            ? `${(report.freedTokens / 1000).toFixed(1)}k`
+            : '0'
+        toast.success(`已压缩 ${report.summarizedMessages} 条消息，释放约 ${freed} tokens`)
+      } else {
+        toast('上下文已是最新，无需压缩')
+      }
+    } catch (err) {
+      toast.error(`压缩失败：${(err as Error).message ?? err}`)
+    } finally {
+      setCompactBusy(false)
+    }
+  }
 
   // Render the budget block only when usage data is available, but still
   // render the per-session totals row below when only that one is present
@@ -258,6 +296,25 @@ export function ContextBar({ usage, windowSize, sessionTotals, className }: Cont
         >
           {Math.round(usedPct)}%
         </span>
+
+        {/* Compact button — surfaces from 85% so users can fold the
+            history before the auto-compact background tick fires.
+            Hidden without a session id. */}
+        {sessionId && usedPct >= 85 && (
+          <button
+            type="button"
+            onClick={() => void onCompact()}
+            disabled={compactBusy}
+            className={cn(
+              'inline-flex items-center gap-1 rounded bg-amber-500/20 px-1.5 py-0.5 text-amber-700 transition-colors hover:bg-amber-500/30',
+              'disabled:cursor-not-allowed disabled:opacity-60',
+            )}
+            title="手动压缩历史：把已发送消息折叠为摘要，释放上下文空间"
+          >
+            <Layers className="h-3 w-3" aria-hidden />
+            {compactBusy ? '压缩中…' : '压缩'}
+          </button>
+        )}
       </div>
       </>
       ) : null}

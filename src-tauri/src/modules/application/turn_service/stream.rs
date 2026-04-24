@@ -459,8 +459,9 @@ impl TurnService {
         let prompt_diagnostics_enabled_for_task = prepared_stream.prompt_diagnostics_enabled;
         let RuntimeProviderResolution {
             provider_client,
-            provider_id: _provider_id,
+            provider_id,
             model,
+            context_window,
             request_timeout: _request_timeout,
         } = prepared_stream.provider;
         let system_prompt_with_memory = prepared_stream.prompt.text;
@@ -587,10 +588,13 @@ impl TurnService {
             failover_provider_client,
             lifecycle_hooks,
             model_for_stream,
+            provider_id_for_stream: provider_id,
+            context_window_for_stream: context_window,
             routing_info_for_stream,
             execution_context_for_task,
             tool_registry_clone,
             session_manager,
+            rolling_summarizer_for_stream: self.deps.rolling_summarizer.clone(),
             app_session_clone,
             stream_emitter,
             cancel_rx,

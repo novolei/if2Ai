@@ -108,6 +108,13 @@ pub(super) struct FinalizeStreamInputs {
     /// Effective model id used for this turn (post smart-routing). Drives
     /// pricing lookup + RoutingInfoPayload `effective_model`.
     pub effective_model: String,
+    /// Provider id paired with [`effective_model`].  Forwarded to the
+    /// usage store so the per-role aggregations carry vendor breakdowns.
+    pub effective_provider_id: String,
+    /// Provider-advertised context window (in tokens) for the effective
+    /// model. Drives ContextBar `total_budget` so the bar reflects the
+    /// real model limit instead of a fixed 30k baseline.
+    pub effective_context_window: u64,
     /// P1-8: routing decision summary already attached to TurnContext.
     pub routing_info: Option<crate::modules::runtime::stream_emitter::RoutingInfoPayload>,
 
@@ -115,6 +122,7 @@ pub(super) struct FinalizeStreamInputs {
     pub stream_emitter: AgentStreamEmitter,
     pub run_event_logger: RunEventLogger,
     pub session_manager: Arc<SessionManager>,
+    pub rolling_summarizer_for_finalize: Arc<crate::modules::memory::summary::RollingSummarizer>,
     pub app_session_clone: AppSession,
     pub trajectory_manager_for_stream: Option<Arc<TrajectoryManager>>,
     pub memory_provider_for_stream: SharedMemoryProvider,
@@ -185,10 +193,13 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         sanitize_invalid_tool_use_samples,
         accumulated_usage,
         effective_model,
+        effective_provider_id,
+        effective_context_window,
         routing_info,
         stream_emitter,
         run_event_logger,
         session_manager,
+        rolling_summarizer_for_finalize,
         app_session_clone,
         trajectory_manager_for_stream,
         memory_provider_for_stream,
@@ -433,6 +444,19 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             .unwrap_or_default();
         totals.record(final_usage, cost);
         updated_app_session.session_totals = Some(totals);
+
+        // Per-role usage durable log (Settings ▸ 用量统计 page).  Best
+        // effort — failures inside the store are logged but never bubble
+        // back to the chat turn (observability, not control flow).
+        crate::modules::usage::record_turn_usage(crate::modules::usage::TurnUsageRecord {
+            caller: crate::modules::usage::CALLER_CHAT.to_string(),
+            provider_id: effective_provider_id.clone(),
+            model_id: effective_model.clone(),
+            usage: final_usage,
+            cost_usd: cost,
+            session_id: Some(stream_session_id_for_after_turn.clone()),
+        });
+
         Some(cost)
     } else {
         None
@@ -670,7 +694,12 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             .map(|i| crate::modules::runtime::budget::estimate_tokens(&i.content))
             .sum();
         const OUTPUT_RESERVE: usize = 4_096;
-        let total_budget = MAX_REQUEST_TOKEN_BUDGET_ESTIMATE
+        // Real model context window drives the bar; legacy 30k baseline
+        // stays as a hard floor for unknown / undersized models so we
+        // never display a tinier-than-30k cap.
+        let context_floor =
+            MAX_REQUEST_TOKEN_BUDGET_ESTIMATE.max(effective_context_window as usize);
+        let total_budget = context_floor
             .max(system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE + 1024);
         let used = system_tokens + history_tokens + memory_tokens + OUTPUT_RESERVE;
         let remaining = total_budget.saturating_sub(used);
@@ -756,6 +785,35 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             .await;
         if terminal_status.is_none() {
             terminal_status = Some("completed");
+        }
+
+        // Auto-compact: if the budget bar just crossed the configured
+        // threshold (default 85%), kick off RollingSummarizer in the
+        // background so the *next* turn ships with a leaner context.
+        // The actual compact runs in `chat_compact::spawn_auto_compact`
+        // and emits `chat_compact_completed` on success so the UI can
+        // toast.
+        use crate::modules::application::compact_service as cs;
+        if cs::auto_compact_enabled() && total_budget > 0 {
+            let used_pct = used as f32 / total_budget as f32;
+            let threshold = cs::auto_compact_threshold();
+            if used_pct >= threshold {
+                {
+                    tracing::info!(
+                        target: "if2ai::compact",
+                        session_id = %stream_session_id_for_after_turn,
+                        used_pct,
+                        threshold,
+                        "auto-compact: threshold crossed, spawning background fold"
+                    );
+                    cs::spawn_auto_compact(
+                        app_handle_for_after_turn.clone(),
+                        session_manager.clone(),
+                        rolling_summarizer_for_finalize.clone(),
+                        stream_session_id_for_after_turn.clone(),
+                    );
+                }
+            }
         }
     }
 

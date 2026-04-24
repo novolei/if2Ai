@@ -42,10 +42,18 @@ pub struct RuntimeProviderResolution {
     pub provider_id: String,
     /// Resolved model id (e.g. `"claude-3-5-sonnet"`, `"gpt-4o"`).
     pub model: String,
+    /// Provider-advertised context window in tokens. Looked up via
+    /// [`crate::modules::provider::known_models::lookup`]; falls back to
+    /// [`DEFAULT_CONTEXT_WINDOW`] for unknown models.
+    pub context_window: u64,
     /// Per-request overall timeout derived from the loaded
     /// [`ProviderTransportConfig`].
     pub request_timeout: Duration,
 }
+
+/// Conservative fallback context window when a model is not in the
+/// `known_models` registry. 128k matches openhanako-main's default.
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
 
 /// Load the provider transport policy for the given working
 /// directory.
@@ -119,10 +127,18 @@ pub async fn resolve_chat_runtime_provider(
         }
     };
 
+    let context_window = crate::modules::provider::known_models::lookup(
+        &resolved.provider_id,
+        &resolved.model_id,
+    )
+    .map(|m| m.context)
+    .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+
     Ok(RuntimeProviderResolution {
         provider_client,
         provider_id: resolved.provider_id,
         model: resolved.model_id,
+        context_window,
         request_timeout,
     })
 }
@@ -177,6 +193,13 @@ pub fn apply_complexity_model_routing(
             cheap_model = %cheap,
             "[smart_routing] low complexity → cheap model"
         );
+        // Re-derive context window for the cheap model id so ContextBar
+        // and preflight bounds reflect the actually-used model.
+        if let Some(known) =
+            crate::modules::provider::known_models::lookup(&resolution.provider_id, &cheap)
+        {
+            resolution.context_window = known.context;
+        }
         resolution.model = cheap;
     } else {
         tracing::debug!(

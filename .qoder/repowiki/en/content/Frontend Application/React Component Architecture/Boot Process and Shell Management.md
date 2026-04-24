@@ -6,7 +6,9 @@
 - [BootShell.tsx](file://src/boot/BootShell.tsx)
 - [MainShell.tsx](file://src/shell/MainShell.tsx)
 - [use-boot-route.ts](file://src/boot/use-boot-route.ts)
+- [ActivationGate.tsx](file://src/boot/activation/ActivationGate.tsx)
 - [ActivationGateOverlay.tsx](file://src/boot/ActivationGateOverlay.tsx)
+- [useActivationGate.ts](file://src/boot/activation/useActivationGate.ts)
 - [App.tsx](file://src/App.tsx)
 - [AppShell.tsx](file://src/modules/app-shell/AppShell.tsx)
 - [main.tsx](file://src/main.tsx)
@@ -23,11 +25,12 @@
 
 ## Update Summary
 **Changes Made**
-- Updated boot orchestration section to reflect new boot-orchestrator.ts component
-- Added documentation for testable boot sequence with injected dependencies
-- Updated architecture diagrams to show the new separation of concerns
-- Enhanced dependency analysis to include the new orchestrator pattern
-- Added information about configurable timing parameters and cancellation support
+- Updated activation gate section to reflect new comprehensive ActivationGate component replacing ActivationGateOverlay
+- Added documentation for OTP input flow, device indicators, and real-time license status updates
+- Enhanced activation flow documentation with detailed state machine and user interaction patterns
+- Updated architecture diagrams to show the new ActivationGate component structure
+- Added information about the new activation components (BetaInviteBadge, DeviceIndicator, DigitSphere, OtpCells)
+- Revised activation gate overlay documentation to reflect the new component-based approach
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -45,6 +48,8 @@
 ## Introduction
 This document explains the boot process and shell management system that determines whether to show the onboarding flow or the main application interface during startup. The system has been refactored to use a dedicated boot orchestrator pattern that encapsulates the complex boot sequence, making it testable and maintainable. It covers the BootShell and MainShell components, their responsibilities, and how they handle different application states. It also documents the boot route determination logic, cross-window synchronization for onboarding resets, the transition process between boot and main shells, and how the system integrates with Tauri IPC for backend communication during boot.
 
+**Updated** The activation system has been enhanced with a comprehensive ActivationGate component that replaces the previous ActivationGateOverlay, providing a full-featured activation flow with OTP input, device indicators, and real-time license status updates.
+
 ## Project Structure
 The boot and shell management system spans several modules with a clear separation of concerns:
 - Boot orchestrator that encapsulates the complete boot sequence
@@ -54,6 +59,7 @@ The boot and shell management system spans several modules with a clear separati
 - Tauri IPC integration for onboarding and activation
 - Cross-window synchronization for settings-driven state changes
 - Bootstrap store for managing boot phase state
+- Comprehensive activation gate system with OTP flow and device indicators
 
 ```mermaid
 graph TB
@@ -68,45 +74,66 @@ E["AppShell.tsx<br/>Surface composition"]
 F["BootShell.tsx<br/>Splash/Onboarding/Main"]
 G["MainShell.tsx<br/>Chrome + Navigation"]
 H["use-boot-route.ts<br/>Route decision"]
-I["ActivationGateOverlay.tsx<br/>Activation gating"]
-J["crossWindowSync.ts<br/>Cross-window events"]
-K["main.tsx<br/>Window routing"]
+I["ActivationGate.tsx<br/>Full activation flow"]
+J["ActivationGateOverlay.tsx<br/>Overlay wrapper"]
+K["crossWindowSync.ts<br/>Cross-window events"]
+L["main.tsx<br/>Window routing"]
+end
+subgraph "Activation Components"
+M["useActivationGate.ts<br/>State machine logic"]
+N["BetaInviteBadge.tsx<br/>Beta invitation badge"]
+O["DeviceIndicator.tsx<br/>Device identification"]
+P["DigitSphere.tsx<br/>Fibonacci digit sphere"]
+Q["OtpCells.tsx<br/>OTP input visualization"]
+R["GateBackdrop.tsx<br/>Modal backdrop"]
+S["GateCardStripes.tsx<br/>Card stripes"]
 end
 subgraph "State Management"
-L["bootstrap-store.ts<br/>Boot phase state"]
-M["use-bootstrap-store.ts<br/>React adapter"]
+T["bootstrap-store.ts<br/>Boot phase state"]
+U["use-bootstrap-store.ts<br/>React adapter"]
 end
 subgraph "Runtime Projection"
-N["runtime-projection-bridge.ts<br/>Bridge wiring"]
-O["runtime-projection-store.ts<br/>Global store"]
+V["runtime-projection-bridge.ts<br/>Bridge wiring"]
+W["runtime-projection-store.ts<br/>Global store"]
 end
 subgraph "Tauri Backend"
-P["onboarding.rs<br/>State machine"]
-Q["activation.rs<br/>Activation snapshot"]
+X["onboarding.rs<br/>State machine"]
+Y["activation.rs<br/>Activation snapshot"]
 end
 A --> B
 D --> A
-E --> L
+E --> T
 F --> G
 H --> I
-J --> D
+I --> M
+I --> N
+I --> O
+I --> P
+I --> Q
+I --> R
+I --> S
+J --> I
 K --> D
-L --> M
-N --> O
-N --> P
-N --> Q
+L --> D
+T --> U
+V --> W
+V --> X
+V --> Y
 ```
 
 **Diagram sources**
-- [boot-orchestrator.ts:1-162](file://src/boot/boot-orchestrator.ts#L1-L162)
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
+- [boot-orchestrator.ts:1-169](file://src/boot/boot-orchestrator.ts#L1-L169)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
 - [AppShell.tsx:54-106](file://src/modules/app-shell/AppShell.tsx#L54-L106)
 - [bootstrap-store.ts:1-159](file://src/state/bootstrap-store.ts#L1-L159)
 - [use-bootstrap-store.ts:1-28](file://src/state/use-bootstrap-store.ts#L1-L28)
+- [ActivationGate.tsx:1-256](file://src/boot/activation/ActivationGate.tsx#L1-L256)
+- [useActivationGate.ts:1-401](file://src/boot/activation/useActivationGate.ts#L1-L401)
+- [ActivationGateOverlay.tsx:1-41](file://src/boot/ActivationGateOverlay.tsx#L1-L41)
 
 **Section sources**
-- [boot-orchestrator.ts:1-162](file://src/boot/boot-orchestrator.ts#L1-L162)
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
+- [boot-orchestrator.ts:1-169](file://src/boot/boot-orchestrator.ts#L1-L169)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
 - [AppShell.tsx:54-106](file://src/modules/app-shell/AppShell.tsx#L54-L106)
 - [bootstrap-store.ts:1-159](file://src/state/bootstrap-store.ts#L1-L159)
 
@@ -115,23 +142,29 @@ N --> Q
 - **BootShell**: Renders splash, onboarding, or main content based on the current boot route and always mounts global overlays (notifications and activation gate).
 - **MainShell**: Provides the main application chrome (version watermark, execution mode pill, global navbar) and delegates content rendering to children.
 - **useBootRoute**: Derives a canonical 4-state boot route from local flags and the activation projection snapshot.
-- **ActivationGateOverlay**: Displays an activation gate overlay when the activation snapshot indicates main shell access is blocked.
+- **ActivationGate**: **Updated** Comprehensive activation flow component with OTP input, device indicators, real-time status updates, and full visual fidelity to the SwiftUI counterpart.
+- **ActivationGateOverlay**: **Updated** Overlay wrapper that conditionally renders the ActivationGate component based on activation snapshot state.
+- **useActivationGate**: **Updated** State machine hook that drives the activation modal with comprehensive flow control, error handling, and real-time status updates.
 - **Bootstrap Store**: Manages boot phase state (splash, onboarding, main, error) and provides explicit actions for state transitions.
 - **Runtime projection bridge/store**: Bridges backend events and activation snapshots into a global store for reactive consumption.
 - **Tauri IPC**: Provides onboarding state checks and activation snapshot retrieval during boot.
 
 **Section sources**
-- [boot-orchestrator.ts:1-162](file://src/boot/boot-orchestrator.ts#L1-L162)
-- [BootShell.tsx:38-82](file://src/boot/BootShell.tsx#L38-L82)
+- [boot-orchestrator.ts:1-169](file://src/boot/boot-orchestrator.ts#L1-L169)
+- [BootShell.tsx:31-83](file://src/boot/BootShell.tsx#L31-L83)
 - [MainShell.tsx:44-85](file://src/shell/MainShell.tsx#L44-L85)
 - [use-boot-route.ts:44-92](file://src/boot/use-boot-route.ts#L44-L92)
-- [ActivationGateOverlay.tsx:49-96](file://src/boot/ActivationGateOverlay.tsx#L49-L96)
+- [ActivationGate.tsx:1-256](file://src/boot/activation/ActivationGate.tsx#L1-L256)
+- [ActivationGateOverlay.tsx:29-40](file://src/boot/ActivationGateOverlay.tsx#L29-L40)
+- [useActivationGate.ts:93-401](file://src/boot/activation/useActivationGate.ts#L93-L401)
 - [bootstrap-store.ts:23-91](file://src/state/bootstrap-store.ts#L23-L91)
 - [runtime-projection-bridge.ts:88-194](file://src/runtime-projection/runtime-projection-bridge.ts#L88-L194)
 - [runtime-projection-store.ts:132-134](file://src/runtime-projection/runtime-projection-store.ts#L132-L134)
 
 ## Architecture Overview
 The boot process coordinates asynchronous operations, ensures minimum splash duration, and decides between onboarding and main shell based on backend activation state. The new boot orchestrator pattern encapsulates the complex sequence while maintaining testability and configurability. The runtime projection pipeline continuously feeds activation snapshots, enabling dynamic gating even after boot.
+
+**Updated** The activation system now features a comprehensive component hierarchy with real-time status updates, OTP input flow, and device identification capabilities.
 
 ```mermaid
 sequenceDiagram
@@ -164,16 +197,17 @@ App->>Route : useBootRoute({showSplash, showOnboarding})
 Route-->>App : BootRouteDecision
 App->>Boot : Render surface based on BootRouteDecision
 Boot->>Main : Render MainShell when allowed
+Note over Boot,Main : ActivationGateOverlay conditionally renders ActivationGate
 ```
 
 **Diagram sources**
 - [main.tsx:16-43](file://src/main.tsx#L16-L43)
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.ts:119-140](file://src/state/bootstrap-store.ts#L119-L140)
 - [runtime-projection-bridge.ts:172-178](file://src/runtime-projection/runtime-projection-bridge.ts#L172-L178)
 - [use-boot-route.ts:61-72](file://src/boot/use-boot-route.ts#L61-L72)
-- [BootShell.tsx:58-73](file://src/boot/BootShell.tsx#L58-L73)
+- [BootShell.tsx:58-81](file://src/boot/BootShell.tsx#L58-L81)
 - [MainShell.tsx:52-85](file://src/shell/MainShell.tsx#L52-L85)
 
 ## Detailed Component Analysis
@@ -213,10 +247,10 @@ SelectProject --> BootReady["store.bootReady()<br/>Return 'ready'"]
 ```
 
 **Diagram sources**
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 
 **Section sources**
-- [boot-orchestrator.ts:1-162](file://src/boot/boot-orchestrator.ts#L1-L162)
+- [boot-orchestrator.ts:1-169](file://src/boot/boot-orchestrator.ts#L1-L169)
 
 ### App Shell Integration
 The App component now serves as a minimal orchestrator that delegates the complex boot sequence to the boot orchestrator:
@@ -234,7 +268,7 @@ The App component now serves as a minimal orchestrator that delegates the comple
 - Model selection remains inline as it's orthogonal to project bootstrapping
 
 **Section sources**
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
 
 ### Bootstrap Store Management
 The bootstrap store provides a clean separation of concerns for boot phase state:
@@ -304,7 +338,7 @@ MountOverlays --> End(["Done"])
 - [BootShell.tsx:58-81](file://src/boot/BootShell.tsx#L58-L81)
 
 **Section sources**
-- [BootShell.tsx:38-82](file://src/boot/BootShell.tsx#L38-L82)
+- [BootShell.tsx:31-83](file://src/boot/BootShell.tsx#L31-L83)
 
 ### MainShell Component
 Responsibilities:
@@ -385,29 +419,79 @@ Main --> End
 **Section sources**
 - [use-boot-route.ts:44-92](file://src/boot/use-boot-route.ts#L44-L92)
 
-### Activation Gate Overlay
-The ActivationGateOverlay renders only when the activation snapshot indicates main shell access is blocked:
-- If activation is null or allowsMainShell is true, render nothing.
-- Otherwise, render a modal with a status message and a reload action that refreshes the activation snapshot.
+### Activation Gate System
+**Updated** The activation system has been completely redesigned with a comprehensive ActivationGate component that replaces the previous ActivationGateOverlay.
 
-```mermaid
-flowchart TD
-Start(["ActivationGateOverlay"]) --> Read["Read activation from store"]
-Read --> Exists{"activation exists?"}
-Exists --> |No| Null["Return null"]
-Exists --> |Yes| Allowed{"allowsMainShell?"}
-Allowed --> |Yes| Null
-Allowed --> |No| Render["Render overlay with status + Reload"]
-Render --> End(["Done"])
-Null --> End
-```
+#### ActivationGate Component
+The ActivationGate is a full-screen activation modal that provides a complete activation experience:
 
-**Diagram sources**
-- [ActivationGateOverlay.tsx:49-61](file://src/boot/ActivationGateOverlay.tsx#L49-L61)
-- [ActivationGateOverlay.tsx:63-95](file://src/boot/ActivationGateOverlay.tsx#L63-L95)
+**Core Features:**
+- **Visual Fidelity**: 1:1 visual port of UClaw's `ActivationGateView.swift`
+- **Full Modal Structure**: Frosted backdrop, red/orange diagonal-stripe card, centered content
+- **Fibonacci Digit Sphere**: Animated 3D sphere with multilingual character display
+- **OTP Input Flow**: 8-cell OTP with five visual phases (idle, filling, verifying, success, error)
+- **Real-time Status Updates**: Dynamic status messages with dots loading indicator
+- **Dual Input Modes**: Automatic activation with OTP generation or manual code entry
+- **Device Identification**: Click-to-copy device identifier with full installation ID support
+- **Beta Invitation Badge**: Orange gradient badge with sparkle icon
+- **Responsive Design**: Full-width layout with proper spacing and accessibility
+
+**Component Structure:**
+- GateBackdrop: Frosted glass effect background
+- GateCardStripes: Diagonal red/orange striped card foundation
+- DigitSphere: Animated 3D character sphere with Fibonacci distribution
+- OtpCells: Interactive 8-digit OTP input with visual feedback
+- BetaInviteBadge: Top-right invitation badge
+- DeviceIndicator: Bottom-right device identification
+- DotsLoading: Status indicator with animated dots
+
+#### ActivationGateOverlay
+The ActivationGateOverlay serves as a conditional renderer that wraps the ActivationGate component:
+
+**Responsibilities:**
+- Reads activation snapshot from runtime projection store
+- Conditionally renders ActivationGate based on activation state
+- Handles close requests and snapshot refresh
+- Maintains overlay semantics for boot process
+
+**Conditional Rendering Logic:**
+- If activation is null → render nothing (boot still loading)
+- If activation allowsMainShell → render nothing (main shell allowed)
+- Otherwise → render ActivationGate modal
+
+#### useActivationGate Hook
+**Updated** The useActivationGate hook provides comprehensive state machine logic for the activation flow:
+
+**State Machine Stages:**
+- `idle`: Initial state, ready for user action
+- `checkingLocalLicense`: Checking existing activation status
+- `requesting`: Creating new activation request
+- `waitingApproval`: Waiting for administrator approval
+- `redeeming`: Processing OTP redemption
+- `temporaryUnavailable`: Temporary service unavailability
+- `activated`: Activation successful
+- `offlineGrace`: Offline grace period
+
+**OTP Phases:**
+- `idle`: Empty cells with blinking caret
+- `filling`: Left-to-right cell filling animation
+- `verifying`: Merged verification box
+- `success`: Green success state
+- `error`: Red error state with shake animation
+
+**Key Capabilities:**
+- Real-time status updates via retry event listening
+- Automatic OTP fill animation with configurable timing
+- Manual code input with validation and submission
+- Device identification and copy-to-clipboard functionality
+- Graceful error handling with user-friendly messages
+- Success ceremony with delayed modal closure
+- Offline grace period support
 
 **Section sources**
-- [ActivationGateOverlay.tsx:49-96](file://src/boot/ActivationGateOverlay.tsx#L49-L96)
+- [ActivationGate.tsx:1-256](file://src/boot/activation/ActivationGate.tsx#L1-L256)
+- [ActivationGateOverlay.tsx:29-40](file://src/boot/ActivationGateOverlay.tsx#L29-L40)
+- [useActivationGate.ts:93-401](file://src/boot/activation/useActivationGate.ts#L93-L401)
 
 ### Cross-Window Synchronization for Onboarding Resets
 The system uses Tauri events to synchronize state across windows:
@@ -428,11 +512,11 @@ Main->>Main : bootstrapStore.enterOnboarding()
 
 **Diagram sources**
 - [crossWindowSync.ts:79-111](file://src/lib/crossWindowSync.ts#L79-L111)
-- [App.tsx:117-121](file://src/App.tsx#L117-L121)
+- [App.tsx:167-173](file://src/App.tsx#L167-L173)
 
 **Section sources**
 - [crossWindowSync.ts:1-112](file://src/lib/crossWindowSync.ts#L1-L112)
-- [App.tsx:117-121](file://src/App.tsx#L117-L121)
+- [App.tsx:167-173](file://src/App.tsx#L167-L173)
 
 ### Transition Between Boot and Main Shells
 The transition occurs after the boot routine completes:
@@ -460,14 +544,14 @@ end
 ```
 
 **Diagram sources**
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.ts:119-140](file://src/state/bootstrap-store.ts#L119-L140)
 - [use-boot-route.ts:61-72](file://src/boot/use-boot-route.ts#L61-L72)
 - [BootShell.tsx:58-73](file://src/boot/BootShell.tsx#L58-L73)
 - [MainShell.tsx:52-85](file://src/shell/MainShell.tsx#L52-L85)
 
 **Section sources**
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.ts:119-140](file://src/state/bootstrap-store.ts#L119-L140)
 - [use-boot-route.ts:81-91](file://src/boot/use-boot-route.ts#L81-L91)
 - [BootShell.tsx:58-73](file://src/boot/BootShell.tsx#L58-L73)
@@ -481,6 +565,14 @@ The boot process relies on Tauri IPC commands:
 - Model selection: invoke model_get_active to set the active model.
 - Activation snapshot: activation_get_status is fetched via the runtime projection bridge to determine gating.
 
+**Updated** The activation system integrates with Tauri IPC through the useActivationGate hook, which handles:
+- Installation ID retrieval for device identification
+- Activation status checking for initial state
+- License request creation and polling
+- OTP redemption processing
+- Retry status listening for error handling
+- Real-time status updates via event listeners
+
 ```mermaid
 graph TB
 A["boot-orchestrator.ts"] --> B["onboarding_get_state()"]
@@ -489,21 +581,29 @@ A --> D["listProjects()"]
 A --> E["listProjectSessions()"]
 F["App.tsx"] --> G["model_get_active (invoke)"]
 H["Runtime Projection Bridge"] --> I["activation_get_status()"]
-B --> J["useBootRoute decision"]
-H --> K["ActivationSnapshot in store"]
+J["useActivationGate.ts"] --> K["activationGetInstallationId()"]
+J --> L["activationGetStatus()"]
+J --> M["activationRequestLicense()"]
+J --> N["activationPollRequestStatus()"]
+J --> O["activationRedeemWithRequestId()"]
+J --> P["activationRedeemByInviteCode()"]
+J --> Q["listenActivationRetryStatus()"]
+H --> K
 ```
 
 **Diagram sources**
 - [boot-orchestrator.ts:80-157](file://src/boot/boot-orchestrator.ts#L80-L157)
-- [App.tsx:140-149](file://src/App.tsx#L140-L149)
+- [App.tsx:215-227](file://src/App.tsx#L215-L227)
 - [runtime-projection-bridge.ts:172-178](file://src/runtime-projection/runtime-projection-bridge.ts#L172-L178)
+- [useActivationGate.ts:35-46](file://src/boot/activation/useActivationGate.ts#L35-L46)
 - [onboarding.rs:15-24](file://src-tauri/src/commands/onboarding.rs#L15-L24)
 - [activation.rs:123-126](file://src-tauri/src/commands/activation.rs#L123-L126)
 
 **Section sources**
 - [boot-orchestrator.ts:80-157](file://src/boot/boot-orchestrator.ts#L80-L157)
-- [App.tsx:140-149](file://src/App.tsx#L140-L149)
+- [App.tsx:215-227](file://src/App.tsx#L215-L227)
 - [runtime-projection-bridge.ts:172-178](file://src/runtime-projection/runtime-projection-bridge.ts#L172-L178)
+- [useActivationGate.ts:35-46](file://src/boot/activation/useActivationGate.ts#L35-L46)
 - [onboarding.rs:15-24](file://src-tauri/src/commands/onboarding.rs#L15-L24)
 - [activation.rs:123-126](file://src-tauri/src/commands/activation.rs#L123-L126)
 
@@ -528,8 +628,8 @@ The new boot orchestrator pattern represents a significant architectural improve
 The orchestrator is thoroughly tested with mock dependencies, covering happy paths, error conditions, and cancellation scenarios. Tests verify state transitions and ensure the orchestrator behaves correctly under various conditions.
 
 **Section sources**
-- [boot-orchestrator.ts:39-56](file://src/boot/boot-orchestrator.ts#L39-L56)
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [boot-orchestrator.ts:40-58](file://src/boot/boot-orchestrator.ts#L40-L58)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.test.ts:97-175](file://src/state/bootstrap-store.test.ts#L97-L175)
 
 ## Dependency Analysis
@@ -540,6 +640,9 @@ The boot and shell management system exhibits clear separation of concerns with 
 - **bootstrap-store** provides canonical boot phase state management.
 - **Runtime projection bridge/store** provides a canonical source of truth for activation gating.
 - **Tauri IPC commands** are accessed through a thin wrapper in tauri.ts.
+- **ActivationGate system** provides comprehensive activation flow with component-based architecture.
+
+**Updated** The activation system introduces a new layer of component dependencies with the useActivationGate hook managing complex state transitions and user interactions.
 
 ```mermaid
 graph LR
@@ -548,7 +651,16 @@ App --> Store["bootstrap-store.ts"]
 Orchestrator --> Store
 Route["use-boot-route.ts"] --> Boot["BootShell.tsx"]
 Boot --> Main["MainShell.tsx"]
-Boot --> Gate["ActivationGateOverlay.tsx"]
+Boot --> GateOverlay["ActivationGateOverlay.tsx"]
+GateOverlay --> Gate["ActivationGate.tsx"]
+Gate --> StateMachine["useActivationGate.ts"]
+Gate --> Components["Activation Components"]
+Components --> BetaBadge["BetaInviteBadge.tsx"]
+Components --> DeviceInd["DeviceIndicator.tsx"]
+Components --> DigitSphere["DigitSphere.tsx"]
+Components --> OtpCells["OtpCells.tsx"]
+Components --> Backdrop["GateBackdrop.tsx"]
+Components --> CardStripes["GateCardStripes.tsx"]
 Bridge["runtime-projection-bridge.ts"] --> Store
 App --> IPC["tauri.ts"]
 IPC --> Onboard["onboarding.rs"]
@@ -556,13 +668,15 @@ IPC --> Act["activation.rs"]
 ```
 
 **Diagram sources**
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.ts:119-140](file://src/state/bootstrap-store.ts#L119-L140)
 - [use-boot-route.ts:61-72](file://src/boot/use-boot-route.ts#L61-L72)
 - [BootShell.tsx:58-81](file://src/boot/BootShell.tsx#L58-L81)
 - [MainShell.tsx:52-85](file://src/shell/MainShell.tsx#L52-L85)
-- [ActivationGateOverlay.tsx:49-61](file://src/boot/ActivationGateOverlay.tsx#L49-L61)
+- [ActivationGateOverlay.tsx:29-40](file://src/boot/ActivationGateOverlay.tsx#L29-L40)
+- [ActivationGate.tsx:45-36](file://src/boot/activation/ActivationGate.tsx#L45-L36)
+- [useActivationGate.ts:93-399](file://src/boot/activation/useActivationGate.ts#L93-L399)
 - [runtime-projection-bridge.ts:88-194](file://src/runtime-projection/runtime-projection-bridge.ts#L88-L194)
 - [runtime-projection-store.ts:132-134](file://src/runtime-projection/runtime-projection-store.ts#L132-L134)
 - [tauri.ts:427-429](file://src/lib/tauri.ts#L427-L429)
@@ -570,13 +684,15 @@ IPC --> Act["activation.rs"]
 - [activation.rs:123-126](file://src-tauri/src/commands/activation.rs#L123-L126)
 
 **Section sources**
-- [App.tsx:123-154](file://src/App.tsx#L123-L154)
-- [boot-orchestrator.ts:64-157](file://src/boot/boot-orchestrator.ts#L64-L157)
+- [App.tsx:147-253](file://src/App.tsx#L147-L253)
+- [boot-orchestrator.ts:66-164](file://src/boot/boot-orchestrator.ts#L66-L164)
 - [bootstrap-store.ts:119-140](file://src/state/bootstrap-store.ts#L119-L140)
 - [use-boot-route.ts:61-72](file://src/boot/use-boot-route.ts#L61-L72)
 - [BootShell.tsx:58-81](file://src/boot/BootShell.tsx#L58-L81)
 - [MainShell.tsx:52-85](file://src/shell/MainShell.tsx#L52-L85)
-- [ActivationGateOverlay.tsx:49-61](file://src/boot/ActivationGateOverlay.tsx#L49-L61)
+- [ActivationGateOverlay.tsx:29-40](file://src/boot/ActivationGateOverlay.tsx#L29-L40)
+- [ActivationGate.tsx:45-36](file://src/boot/activation/ActivationGate.tsx#L45-L36)
+- [useActivationGate.ts:93-399](file://src/boot/activation/useActivationGate.ts#L93-L399)
 - [runtime-projection-bridge.ts:88-194](file://src/runtime-projection/runtime-projection-bridge.ts#L88-L194)
 - [runtime-projection-store.ts:132-134](file://src/runtime-projection/runtime-projection-store.ts#L132-L134)
 - [tauri.ts:427-429](file://src/lib/tauri.ts#L427-L429)
@@ -590,6 +706,14 @@ IPC --> Act["activation.rs"]
 - **Activation snapshot refresh**: Performed on-demand to minimize unnecessary network calls.
 - **Cancellation support**: Allows aborting long-running boot sequences when needed.
 - **Parallel operations**: Onboarding check and splash timer run concurrently to reduce boot time.
+- **Activation flow optimization**: OTP animations and state transitions are optimized for smooth user experience.
+- **Component lazy loading**: Activation components are only rendered when needed, reducing initial bundle size.
+
+**Updated** The activation system includes performance optimizations such as:
+- Animation frame management for DigitSphere component
+- Debounced status updates to prevent excessive re-renders
+- Efficient OTP input handling with immediate visual feedback
+- Graceful degradation when network requests fail
 
 ## Testing Strategy
 The boot orchestrator is designed with comprehensive test coverage:
@@ -607,6 +731,13 @@ The boot orchestrator is designed with comprehensive test coverage:
 - Verify bootstrap store state after each operation
 - Test both synchronous and asynchronous scenarios
 
+**Updated** The activation system includes comprehensive testing for:
+- State machine transitions across all stages
+- OTP input validation and redemption flow
+- Error handling for network failures and invalid codes
+- Device identification and clipboard functionality
+- Real-time status updates and retry mechanisms
+
 **Section sources**
 - [bootstrap-store.test.ts:97-175](file://src/state/bootstrap-store.test.ts#L97-L175)
 
@@ -618,12 +749,25 @@ Common issues and recovery strategies:
 - **Project/session initialization failures**: The boot routine catches errors and continues with reduced functionality; check backend connectivity and permissions.
 - **Boot sequence cancellation**: If a boot is cancelled mid-execution, the store remains in its previous state without partial mutations.
 - **Model selection failures**: The model selection step is separate from boot and uses invoke with fallback behavior.
+- **Activation flow failures**: Check network connectivity, validate OTP input format, and ensure device identification is available.
+- **Real-time status updates not working**: Verify activation status event listeners are properly registered and functioning.
+
+**Updated** Additional troubleshooting for activation system:
+- **OTP input not working**: Ensure manual input mode is properly toggled and input is exactly 8 characters
+- **Device indicator missing**: Check installation ID retrieval and clipboard permissions
+- **Activation status stuck**: Manually trigger refresh via activation overlay or check backend service status
+- **Animation performance issues**: Verify requestAnimationFrame usage and component cleanup on unmount
 
 **Section sources**
 - [boot-orchestrator.ts:94-98](file://src/boot/boot-orchestrator.ts#L94-L98)
-- [ActivationGateOverlay.tsx:52-54](file://src/boot/ActivationGateOverlay.tsx#L52-L54)
+- [ActivationGateOverlay.tsx:32-34](file://src/boot/ActivationGateOverlay.tsx#L32-L34)
 - [crossWindowSync.ts:79-111](file://src/lib/crossWindowSync.ts#L79-L111)
-- [App.tsx:140-149](file://src/App.tsx#L140-L149)
+- [App.tsx:215-227](file://src/App.tsx#L215-L227)
+- [useActivationGate.ts:111-128](file://src/boot/activation/useActivationGate.ts#L111-L128)
 
 ## Conclusion
-The boot process and shell management system has been significantly improved through the introduction of the boot orchestrator pattern. The new architecture cleanly separates orchestration, presentation, and state management while providing testability and configurability. The boot orchestrator encapsulates the complex boot sequence with explicit dependencies, making it maintainable and testable. App.tsx now serves as a minimal orchestrator that delegates boot management to the dedicated orchestrator, while the bootstrap store provides canonical state management. The runtime projection pipeline supplies activation gating, and Tauri IPC integration remains centralized through a thin wrapper. Cross-window synchronization enables responsive settings-driven state changes, while timeout and error handling improve resilience. The new pattern establishes a foundation for future enhancements while maintaining backward compatibility and improving code quality.
+The boot process and shell management system has been significantly improved through the introduction of the boot orchestrator pattern. The new architecture cleanly separates orchestration, presentation, and state management while providing testability and configurability. The boot orchestrator encapsulates the complex boot sequence with explicit dependencies, making it maintainable and testable. App.tsx now serves as a minimal orchestrator that delegates boot management to the dedicated orchestrator, while the bootstrap store provides canonical state management. The runtime projection pipeline supplies activation gating, and Tauri IPC integration remains centralized through a thin wrapper. Cross-window synchronization enables responsive settings-driven state changes, while timeout and error handling improve resilience.
+
+**Updated** The activation system has been completely redesigned with a comprehensive ActivationGate component that provides a full-featured activation experience. The new system includes OTP input flow, device identification, real-time status updates, and a complete visual fidelity to the original SwiftUI implementation. The activation components are modular and testable, with the useActivationGate hook providing robust state machine logic for handling complex activation scenarios. The overlay system maintains backward compatibility while enabling the new comprehensive activation flow.
+
+The new pattern establishes a foundation for future enhancements while maintaining backward compatibility and improving code quality. The activation system now provides enterprise-grade activation capabilities with proper error handling, user feedback, and real-time status updates. The component-based architecture ensures maintainability and extensibility for future activation features.

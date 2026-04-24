@@ -297,6 +297,8 @@ pub mod stt;
 pub mod tools;
 pub mod tts;
 pub mod tts_download;
+pub mod chat_compact;
+pub mod usage;
 pub mod web_search;
 
 #[allow(unused_imports)]
@@ -439,11 +441,16 @@ pub use onboarding::{
 };
 #[allow(unused_imports)]
 pub use provider::{
-    model_get_active, model_get_role_config, model_list_available, model_select, model_set_active,
-    model_set_role_config, model_test, provider_configure, provider_configure_with_models,
-    provider_get_all_configured_models, provider_get_config, provider_get_configured_models,
-    provider_list, provider_list_configured, provider_list_models, provider_test,
+    model_get_active, model_get_context_window, model_get_role_config, model_list_available,
+    model_select, model_set_active, model_set_role_config, model_test, provider_configure,
+    provider_configure_with_models, provider_get_all_configured_models, provider_get_config,
+    provider_get_configured_models, provider_list, provider_list_configured, provider_list_models,
+    provider_test,
 };
+#[allow(unused_imports)]
+pub use usage::usage_summary;
+#[allow(unused_imports)]
+pub use chat_compact::{chat_compact_session, CompactReport, COMPACT_COMPLETED_EVENT};
 #[allow(unused_imports)]
 pub use request_intelligence::{request_intelligence_classify, RequestIntelligenceClassifyInput};
 #[allow(unused_imports)]

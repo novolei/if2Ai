@@ -7,10 +7,21 @@
 - [ThinkingBlock.tsx](file://src/components/chat/ThinkingBlock.tsx)
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 - [chat-ui.tsx](file://src/components/ui/chat-ui.tsx)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added documentation for new ModelPicker component with popover interface
+- Added documentation for ThinkingLevelButton for reasoning controls
+- Added documentation for ThinkingModeChip for model capability display
+- Updated chat UI integration to include live model synchronization
+- Enhanced component architecture overview with new reasoning controls
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -24,10 +35,10 @@
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the chat interface components that power conversational UIs in the project. It focuses on five key components: ChatMessage, VirtualMessageList, ThinkingBlock, ToolCallMessage, and ContextBar. It covers chat interaction patterns, message rendering, virtualization techniques, component props, event handling, state management, performance optimizations for large message lists and streaming responses, and accessibility considerations.
+This document explains the chat interface components that power conversational UIs in the project. It focuses on seven key components: ChatMessage, VirtualMessageList, ThinkingBlock, ToolCallMessage, ContextBar, ModelPicker, ThinkingLevelButton, and ThinkingModeChip. It covers chat interaction patterns, message rendering, virtualization techniques, component props, event handling, state management, performance optimizations for large message lists and streaming responses, and accessibility considerations.
 
 ## Project Structure
-The chat UI is composed of modular components under src/components/chat and integrates with shared types and the main chat UI implementation.
+The chat UI is composed of modular components under src/components/chat and integrates with shared types and the main chat UI implementation. The new ModelPicker component provides live model synchronization, while ThinkingLevelButton and ThinkingModeChip enhance reasoning control capabilities.
 
 ```mermaid
 graph TB
@@ -40,6 +51,9 @@ CM["ChatMessage.tsx"]
 TB["ThinkingBlock.tsx"]
 TCM["ToolCallMessage.tsx"]
 CB["ContextBar.tsx"]
+MP["ModelPicker.tsx"]
+TLB["ThinkingLevelButton.tsx"]
+TMC["ThinkingModeChip.tsx"]
 ERR["ErrorCard.tsx"]
 end
 subgraph "Types"
@@ -47,6 +61,8 @@ T["types.ts"]
 end
 ChatUI --> VM
 ChatUI --> CM
+ChatUI --> MP
+ChatUI --> TLB
 CM --> TB
 CM --> TCM
 CM --> ERR
@@ -57,6 +73,9 @@ VM --> T
 TCM --> T
 TB --> T
 CB --> T
+MP --> T
+TLB --> T
+TMC --> T
 ```
 
 **Diagram sources**
@@ -66,6 +85,9 @@ CB --> T
 - [ThinkingBlock.tsx](file://src/components/chat/ThinkingBlock.tsx)
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
 
@@ -76,6 +98,9 @@ CB --> T
 - [ThinkingBlock.tsx](file://src/components/chat/ThinkingBlock.tsx)
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
 
@@ -85,6 +110,9 @@ CB --> T
 - ThinkingBlock: Collapsible assistant chain-of-thought display with duration labeling and expand/collapse behavior.
 - ToolCallMessage: Renders tool invocation messages with status glyphs, collapsible details, copy actions, and special handling for memory_store decisions.
 - ContextBar: Token budget visualization above the composer, showing system, memory, history, output reserve, and remaining tokens, plus a memory viewer trigger.
+- **ModelPicker**: Popover-based model selector with search functionality, live model synchronization, and provider/model display formatting.
+- **ThinkingLevelButton**: Interactive reasoning effort controller with persistent state across browser tabs and cross-tab synchronization.
+- **ThinkingModeChip**: Capability indicator displaying model reasoning support levels (required, optional, effort) with color-coded visual states.
 
 **Section sources**
 - [ChatMessage.tsx](file://src/components/chat/ChatMessage.tsx)
@@ -92,10 +120,13 @@ CB --> T
 - [ThinkingBlock.tsx](file://src/components/chat/ThinkingBlock.tsx)
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 
 ## Architecture Overview
-The chat UI composes VirtualMessageList to efficiently render large histories, delegates per-message rendering to ChatMessage, and integrates ThinkingBlock and ToolCallMessage for specialized content. ContextBar displays contextual token usage and memory insights.
+The chat UI composes VirtualMessageList to efficiently render large histories, delegates per-message rendering to ChatMessage, and integrates ThinkingBlock and ToolCallMessage for specialized content. ContextBar displays contextual token usage and memory insights. The new ModelPicker provides live model synchronization, while ThinkingLevelButton and ThinkingModeChip enhance reasoning control capabilities.
 
 ```mermaid
 sequenceDiagram
@@ -103,6 +134,9 @@ participant User as "User"
 participant ChatUI as "chat-ui.tsx"
 participant VM as "VirtualMessageList"
 participant CM as "ChatMessage"
+participant MP as "ModelPicker"
+participant TLB as "ThinkingLevelButton"
+participant TMC as "ThinkingModeChip"
 participant TB as "ThinkingBlock"
 participant TCM as "ToolCallMessage"
 participant ERR as "ErrorCard"
@@ -119,6 +153,11 @@ end
 opt "error state"
 CM->>ERR : "Render error/recovery card"
 end
+opt "composer interaction"
+ChatUI->>MP : "Model selection"
+ChatUI->>TLB : "Reasoning level toggle"
+ChatUI->>TMC : "Model capability display"
+end
 CM-->>VM : "Message item"
 VM-->>ChatUI : "Visible items"
 ChatUI-->>User : "Updated transcript"
@@ -128,6 +167,9 @@ ChatUI-->>User : "Updated transcript"
 - [chat-ui.tsx](file://src/components/ui/chat-ui.tsx)
 - [VirtualMessageList.tsx](file://src/components/chat/VirtualMessageList.tsx)
 - [ChatMessage.tsx](file://src/components/chat/ChatMessage.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [ThinkingBlock.tsx](file://src/components/chat/ThinkingBlock.tsx)
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
@@ -312,6 +354,126 @@ Null --> Done
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 
+### ModelPicker
+- Purpose: Popover-based model selector with search functionality, live model synchronization, and provider/model display formatting.
+- Key props:
+  - availableItems: ModelPickerItem[] - Flat list of provider/model combinations
+  - selected: string - Currently selected model value (format: 'provider/model')
+  - onChange: (value: string) => void - Callback when model selection changes
+  - disabled?: boolean - Disables the component
+  - placeholder?: string - Placeholder text when no models available
+  - className?: string - Additional CSS classes
+- Behavior:
+  - Uses popover interface with search and filtering capabilities
+  - Maintains local state for open/closed state and search query
+  - Displays current model label with chevron indicator
+  - Shows loading state when no models available
+  - Supports keyboard navigation and accessibility features
+- Integration:
+  - Integrated into composer bottom bar alongside other controls
+  - Triggers model_set_active Tauri command on selection changes
+  - Automatically refreshes available models when settings change
+
+```mermaid
+flowchart TD
+Start(["ModelPicker(props)"]) --> Init["Initialize state<br/>open/query"]
+Init --> Trigger["PopoverTrigger<br/>current model label"]
+Trigger --> Content["PopoverContent<br/>search + list"]
+Content --> Search["Search input<br/>filter items"]
+Search --> List["Filtered items<br/>click to change"]
+List --> Change["onChange callback<br/>close popover"]
+Change --> End(["Done"])
+```
+
+**Diagram sources**
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+
+**Section sources**
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [chat-ui.tsx](file://src/components/ui/chat-ui.tsx)
+
+### ThinkingLevelButton
+- Purpose: Interactive reasoning effort controller with persistent state across browser tabs and cross-tab synchronization.
+- Key props:
+  - visible: boolean - Controls component visibility based on model capability
+  - className?: string - Additional CSS classes
+- Behavior:
+  - Manages reasoning level state using localStorage with cross-tab synchronization
+  - Cycles through levels: off → low → medium → high → off
+  - Persists state to localStorage with automatic cross-tab updates
+  - Provides tooltip with current and next state information
+  - Uses emoji icons and text labels for different reasoning levels
+- State Management:
+  - Uses custom hook useThinkingLevel for state persistence
+  - Subscribes to storage events for cross-tab synchronization
+  - Defaults to "medium" level when no stored preference exists
+
+```mermaid
+classDiagram
+class ThinkingLevelButton {
++visible : boolean
++className? : string
++level : ThinkingLevel
++setLevel(next)
++next : ThinkingLevel
++useThinkingLevel() [level, update]
+}
+class ThinkingLevel {
+<<enumeration>>
+off
+low
+medium
+high
+}
+ThinkingLevelButton --> ThinkingLevel
+```
+
+**Diagram sources**
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+
+**Section sources**
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+
+### ThinkingModeChip
+- Purpose: Capability indicator displaying model reasoning support levels with color-coded visual states.
+- Key props:
+  - model: { reasoning?: boolean; reasoning_required_in_tool_calls?: boolean; supports_reasoning_effort?: boolean }
+  - className?: string - Additional CSS classes
+  - compact?: boolean - Renders as compact icon-only display
+- Behavior:
+  - Displays different visual states based on model capabilities:
+    - Required (rose): reasoning_required_in_tool_calls (Kimi-thinking, DeepSeek-R1)
+    - Optional (jade): reasoning true but no required quirk
+    - Effort (sky): supports reasoning_effort parameter (o1, o3, GPT-5)
+  - Hidden when model has no reasoning capability
+  - Shows tooltips with capability explanations
+  - Compact mode displays only icon with tooltip
+- Visual States:
+  - Required: Rose background with brain icon and "推理 · 强约束" label
+  - Optional: Jade background with sparkles icon and "推理" label
+  - Effort: Sky background with zap icon and "推理可调" label
+
+```mermaid
+flowchart TD
+Start(["ThinkingModeChip(model)"]) --> CheckReasoning{"model.reasoning?"}
+CheckReasoning --> |No| Hide["Return null"]
+CheckReasoning --> |Yes| CheckRequired{"reasoning_required_in_tool_calls?"}
+CheckRequired --> |Yes| Required["Rose chip<br/>brain icon<br/>强约束"]
+CheckRequired --> |No| CheckEffort{"supports_reasoning_effort?"}
+CheckEffort --> |Yes| Effort["Sky chip<br/>zap icon<br/>可调"]
+CheckEffort --> |No| Optional["Jade chip<br/>sparkles icon<br/>推理"]
+Required --> End(["Done"])
+Effort --> End
+Optional --> End
+Hide --> End
+```
+
+**Diagram sources**
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
+
+**Section sources**
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
+
 ## Dependency Analysis
 - ChatMessage depends on:
   - ThinkingBlock for assistant thinking
@@ -324,6 +486,16 @@ Null --> Done
 - ContextBar depends on:
   - ContextBudgetUsage type
   - CompiledMemoryViewer modal
+- **ModelPicker depends on:**
+  - Popover components from @/components/ui/popover
+  - ModelPickerItem interface for type safety
+  - Tauri commands for model list management
+- **ThinkingLevelButton depends on:**
+  - LocalStorage API for state persistence
+  - Custom hook useThinkingLevel for cross-tab synchronization
+- **ThinkingModeChip depends on:**
+  - Color scheme utilities for visual states
+  - Lucide icons for visual representation
 
 ```mermaid
 graph LR
@@ -334,6 +506,10 @@ CM --> T["types.ts"]
 VM["VirtualMessageList.tsx"] --> T
 VM --> CM
 CB["ContextBar.tsx"] --> T
+MP["ModelPicker.tsx"] --> POP["Popover.tsx"]
+MP --> T
+TLB["ThinkingLevelButton.tsx"] --> LS["LocalStorage API"]
+TMC["ThinkingModeChip.tsx"] --> COLORS["Color Utilities"]
 ```
 
 **Diagram sources**
@@ -343,6 +519,9 @@ CB["ContextBar.tsx"] --> T
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 
 **Section sources**
@@ -352,6 +531,9 @@ CB["ContextBar.tsx"] --> T
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 - [types.ts](file://src/modules/chat/types.ts)
 
 ## Performance Considerations
@@ -365,8 +547,10 @@ CB["ContextBar.tsx"] --> T
   - Assistant messages show a loading indicator during streaming and defer voice controls until content is finalized.
 - Large histories:
   - VirtualMessageList thresholds kick in at a high-enough count to keep the transcript responsive even with hundreds of messages.
-
-[No sources needed since this section provides general guidance]
+- **New Performance Optimizations:**
+  - ModelPicker uses React.memo for efficient re-renders and maintains local state to avoid unnecessary re-renders.
+  - ThinkingLevelButton persists state to localStorage to avoid re-computation across page reloads.
+  - ThinkingModeChip uses conditional rendering to hide when no capabilities exist.
 
 ## Troubleshooting Guide
 - Messages not appearing at bottom:
@@ -379,6 +563,16 @@ CB["ContextBar.tsx"] --> T
   - Confirm usage ContextBudgetUsage is provided; otherwise the component renders nothing.
 - Error/recovery cards not showing:
   - Check message.error fields and taskOutcome/resumeCursor to ensure proper classification and recovery flow.
+- **ModelPicker issues:**
+  - If no models appear, verify that model_list_available Tauri command returns data and that the component receives availableItems.
+  - Check that onChange callback properly handles model selection changes.
+  - Ensure model_set_active Tauri command is properly invoked on selection.
+- **ThinkingLevelButton issues:**
+  - If state doesn't persist across tabs, verify localStorage access and storage event handling.
+  - Check that useThinkingLevel hook is properly initialized and cross-tab synchronization works.
+- **ThinkingModeChip issues:**
+  - If chip doesn't appear, ensure model.reasoning is true and the model object contains proper capability flags.
+  - Verify that compact mode is not hiding the chip unintentionally.
 
 **Section sources**
 - [VirtualMessageList.tsx](file://src/components/chat/VirtualMessageList.tsx)
@@ -386,6 +580,9 @@ CB["ContextBar.tsx"] --> T
 - [ToolCallMessage.tsx](file://src/components/chat/ToolCallMessage.tsx)
 - [ContextBar.tsx](file://src/components/chat/ContextBar.tsx)
 - [ErrorCard.tsx](file://src/components/chat/ErrorCard.tsx)
+- [ModelPicker.tsx](file://src/components/chat/ModelPicker.tsx)
+- [ThinkingLevelButton.tsx](file://src/components/chat/ThinkingLevelButton.tsx)
+- [ThinkingModeChip.tsx](file://src/components/chat/ThinkingModeChip.tsx)
 
 ## Conclusion
-The chat interface leverages modular components to deliver a responsive, accessible, and extensible conversational UI. VirtualMessageList ensures smooth performance for large histories, ChatMessage centralizes rendering logic with specialized subcomponents, ThinkingBlock enhances transparency into assistant reasoning, ToolCallMessage provides rich tool interaction details, and ContextBar offers contextual token awareness. Together, these components support robust chat workflows and maintain high usability across diverse interaction patterns.
+The chat interface leverages modular components to deliver a responsive, accessible, and extensible conversational UI. VirtualMessageList ensures smooth performance for large histories, ChatMessage centralizes rendering logic with specialized subcomponents, ThinkingBlock enhances transparency into assistant reasoning, ToolCallMessage provides rich tool interaction details, and ContextBar offers contextual token awareness. The new ModelPicker component enables live model synchronization with provider/model management, while ThinkingLevelButton and ThinkingModeChip provide sophisticated reasoning control capabilities with persistent state management. Together, these components support robust chat workflows and maintain high usability across diverse interaction patterns.

@@ -204,6 +204,11 @@ fn builtin_specs() -> Vec<SlashCommandSpecDto> {
             description: "List available agents".into(),
             category: "utility".into(),
         },
+        SlashCommandSpecDto {
+            name: "/compact".into(),
+            description: "Manually compact conversation history into a summary".into(),
+            category: "session".into(),
+        },
     ];
     specs.extend(git_slash_specs());
     specs

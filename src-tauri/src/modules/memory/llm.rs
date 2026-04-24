@@ -160,13 +160,32 @@ pub struct ChatProviderUtilityLlm {
     /// overrides will be honoured once a future slice threads the
     /// turn's `workdir` through the memory pipeline.
     workdir: std::path::PathBuf,
+    /// Caller label written into the durable `usage` store every time
+    /// `complete()` actually consumes provider tokens. Defaults to
+    /// `"utility"`; override via [`with_caller`] to differentiate
+    /// summarizer / compiler / utility_large work in the per-role
+    /// dashboard.
+    caller: &'static str,
 }
 
 impl ChatProviderUtilityLlm {
-    /// Construct a new chat-provider-backed shim.
+    /// Construct a new chat-provider-backed shim with the default
+    /// `"utility"` caller label.
     #[must_use]
     pub fn new(workdir: std::path::PathBuf) -> Self {
-        Self { workdir }
+        Self {
+            workdir,
+            caller: crate::modules::usage::CALLER_UTILITY,
+        }
+    }
+
+    /// Override the usage-store caller label (e.g. `"summarizer"`,
+    /// `"compiler"`, `"utility_large"`). Callers should use the
+    /// `crate::modules::usage::CALLER_*` constants.
+    #[must_use]
+    pub fn with_caller(mut self, caller: &'static str) -> Self {
+        self.caller = caller;
+        self
     }
 }
 
@@ -223,6 +242,32 @@ impl UtilityLlm for ChatProviderUtilityLlm {
         )
         .await
         .map_err(|e| MemoryError::Generic(format!("UtilityLlm.send: {e}")))?;
+
+        // Best-effort per-role usage logging.  `response.usage` is the
+        // provider-billable counts; cost falls back to the same
+        // pricing table the chat path uses. The store itself
+        // short-circuits zero-token records so non-emitting providers
+        // don't spam empty rows.
+        let api_usage = &response.usage;
+        let usage = crate::modules::runtime::usage::TokenUsage {
+            input_tokens: api_usage.input_tokens,
+            output_tokens: api_usage.output_tokens,
+            cache_creation_input_tokens: api_usage.cache_creation_input_tokens,
+            cache_read_input_tokens: api_usage.cache_read_input_tokens,
+        };
+        if usage.total_tokens() > 0 {
+            let cost = crate::modules::runtime::usage::cost_for_usage(usage, &resolution.model);
+            crate::modules::usage::record_turn_usage(
+                crate::modules::usage::TurnUsageRecord {
+                    caller: self.caller.to_string(),
+                    provider_id: resolution.provider_id.clone(),
+                    model_id: resolution.model.clone(),
+                    usage,
+                    cost_usd: cost,
+                    session_id: None,
+                },
+            );
+        }
 
         let text = response
             .content

@@ -131,6 +131,8 @@ interface ChatUIProps {
   onStop?: () => void
   isLoading?: boolean
   sessionTitle?: string
+  /** Active session id (used by ContextBar's manual /compact button). */
+  sessionId?: string
   projectLabel?: string
   defaultWorkdir?: string
   branchLabel?: string
@@ -242,6 +244,7 @@ export function ChatUI({
   onStop,
   isLoading,
   sessionTitle = '重构桌面端 UI 为 shadcn 体系',
+  sessionId,
   projectLabel = 'if2Ai',
   defaultWorkdir,
   branchLabel = 'feature/consolidate-codebase',
@@ -1256,6 +1259,7 @@ export function ChatUI({
                   usage={latestContextBudgetUsage}
                   windowSize={messages.length}
                   sessionTotals={sessionTotals}
+                  sessionId={sessionId}
                 />
               </div>
             </div>

@@ -297,6 +297,7 @@ impl TurnService {
             provider_client,
             provider_id: _provider_id,
             model,
+            context_window: _context_window,
             request_timeout,
         } = prepared.provider;
         tracing::info!("[run_agent_turn] API client created, model: {}", model);
