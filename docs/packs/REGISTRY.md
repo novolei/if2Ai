@@ -220,7 +220,7 @@
 | MIG-009 | partial | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
 | MIG-016 | done | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass | skip; hardening belongs to GAP-002 / GAP-008 |
 | MIG-017 | partial | chat projection + runtime projection tests pass | final UI still overlays `Conversation + RunProjection`; raw listener not transport-only everywhere |
-| MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | skip; session.json fallback retirement belongs to GAP-001 |
+| MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | session.json fallback now traced via `fallback_reason` field (GAP-001 done) |
 | MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
 | MIG-020 | partial | lifecycle hooks/cost guard/self repair sidecars exist | no first-class `SessionSupervisor` snapshot owner yet |
 | MIG-021 | partial | resume cursor and recoverable UI fields exist | missing typed `resume_reason` / `safe_to_retry_mutations` contract |
@@ -233,7 +233,7 @@
 
 | 顺序 | 优先级 | Pack | 状态 | Goal |
 | ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md) | draft | 拆分 `session.json` 混合事实源 |
+| 1 | P0 | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md) | **done** | 拆分 `session.json` 混合事实源 |
 | 2 | P0 | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md) | **done** | 统一 runtime envelope / stream payload / run log contract |
 | 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | draft | 前端 runtime UI 收敛到 projection-first |
 | 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | draft | 瘦身 command boundary 与 AppState 聚合 |
