@@ -27,6 +27,11 @@ use crate::modules::runtime::budget::ContextBudget;
 
 /// Application state shared across all Tauri commands.
 pub struct AppState {
+    /// Application service registry (GAP-004 T-009).
+    /// New commands route through services in this registry rather than
+    /// accessing domain internals directly.  Existing direct fields are
+    /// retained for backward compatibility during the transition.
+    pub service_registry: Arc<crate::modules::application::ServiceRegistry>,
     /// Session manager for conversation persistence.
     pub session_manager: Arc<SessionManager>,
     /// Tool registry for available tools.
@@ -178,12 +183,11 @@ pub struct AppState {
 /// Bundled into a struct so that `AppState::new` does not exceed the
 /// clippy `too_many_arguments` limit (7).
 pub struct AppStateConfig {
-    /// Session manager for conversation persistence.
-    pub session_manager: SessionManager,
-    /// Tool registry for available tools.
-    pub tool_registry: ToolRegistry,
-    /// Project manager for multi-project support.
-    pub project_manager: ProjectManager,
+    /// Application service registry (GAP-004 T-009).
+    /// Owns the core business services (SessionManager, ToolRegistry,
+    /// ProjectManager).  [`AppState::new`] extracts individual `Arc<>`
+    /// references from the registry for backward-compatible field access.
+    pub service_registry: crate::modules::application::ServiceRegistry,
     /// Shared memory provider (SQLite / Vector / Hybrid).
     pub memory_provider: SharedMemoryProvider,
     /// Context budget configuration (default: 4000 tokens, 10/20/30/40%).
@@ -230,10 +234,16 @@ impl AppState {
     /// even when their backing stores or init routines are unavailable.
     #[must_use]
     pub fn new(cfg: AppStateConfig) -> Self {
+        // GAP-004 T-009: service_registry is the canonical container;
+        // individual fields are extracted here for backward-compatible
+        // `state.session_manager` / `state.tool_registry` /
+        // `state.project_manager` access.
+        let registry = Arc::new(cfg.service_registry);
         Self {
-            session_manager: Arc::new(cfg.session_manager),
-            tool_registry: Arc::new(cfg.tool_registry),
-            project_manager: Arc::new(cfg.project_manager),
+            session_manager: registry.session_manager.clone(),
+            tool_registry: registry.tool_registry.clone(),
+            project_manager: registry.project_manager.clone(),
+            service_registry: registry,
             permission_senders: Arc::new(Mutex::new(HashMap::new())),
             permission_overrides: Arc::new(Mutex::new(HashMap::new())),
             stream_cancel_senders: Arc::new(Mutex::new(HashMap::new())),
@@ -293,11 +303,11 @@ pub mod slash;
 // to satisfy the application/* layering constraint (CHARTER §2.1).
 // No re-export here — call sites import via the runtime module
 // path directly.
+pub mod chat_compact;
 pub mod stt;
 pub mod tools;
 pub mod tts;
 pub mod tts_download;
-pub mod chat_compact;
 pub mod usage;
 pub mod web_search;
 
@@ -433,6 +443,8 @@ pub use activation::{
 #[allow(unused_imports)]
 pub use channel::{channel_configure, channel_list, channel_list_configured, channel_test};
 #[allow(unused_imports)]
+pub use chat_compact::{chat_compact_session, CompactReport, COMPACT_COMPLETED_EVENT};
+#[allow(unused_imports)]
 pub use config::{config_load, config_reset_onboarding, config_save, config_validate};
 #[allow(unused_imports)]
 pub use onboarding::{
@@ -443,14 +455,11 @@ pub use onboarding::{
 pub use provider::{
     model_get_active, model_get_context_window, model_get_role_config, model_list_available,
     model_select, model_set_active, model_set_role_config, model_test, provider_configure,
-    provider_configure_with_models, provider_get_all_configured_models, provider_get_config,
-    provider_get_configured_models, provider_list, provider_list_configured, provider_list_models,
+    provider_configure_with_model_capabilities, provider_configure_with_models,
+    provider_get_all_configured_models, provider_get_config, provider_get_configured_models,
+    provider_list, provider_list_configured, provider_list_models, provider_probe_model_thinking,
     provider_test,
 };
-#[allow(unused_imports)]
-pub use usage::usage_summary;
-#[allow(unused_imports)]
-pub use chat_compact::{chat_compact_session, CompactReport, COMPACT_COMPLETED_EVENT};
 #[allow(unused_imports)]
 pub use request_intelligence::{request_intelligence_classify, RequestIntelligenceClassifyInput};
 #[allow(unused_imports)]
@@ -467,6 +476,8 @@ pub use tts::{
     tts_stream_start, tts_stream_status, tts_synthesize, tts_upload_user_voice, tts_voice_audio,
     tts_warm_voice_preview, tts_warmup_status, ProviderHandle, ProviderState, TtsState,
 };
+#[allow(unused_imports)]
+pub use usage::usage_summary;
 
 // TTS model download commands
 #[allow(unused_imports)]

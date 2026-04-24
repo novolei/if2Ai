@@ -1,7 +1,41 @@
 # GAP-004: Command Boundary Thinning
 
 ## Status
-- State: draft
+- State: done
+- Updated: 2026-04-25
+
+## T-009 Execution Summary
+
+1. **`service_registry.rs`** (NEW) — Created `ServiceRegistry` struct bundling
+   `SessionManager`, `ToolRegistry`, and `ProjectManager` behind a single
+   `Arc<ServiceRegistry>` field on `AppState`.  Individual `Arc<>` refs are
+   extracted in `AppState::new` for backward-compatible `state.session_manager`
+   / `state.tool_registry` / `state.project_manager` access.
+
+2. **`commands/mod.rs`** — Added `service_registry: Arc<ServiceRegistry>` to
+   `AppState`.  Removed `session_manager`/`tool_registry`/`project_manager`
+   from `AppStateConfig` (now constructed via `ServiceRegistry::new`).
+   `AppState::new` extracts individual `Arc<>` clones from the registry.
+
+3. **`bootstrap/app.rs`** — Constructs `ServiceRegistry::new(session_manager,
+   tool_registry, project_manager)` before `AppStateConfig`, passing the
+   registry as a single argument instead of three ad-hoc fields.
+
+4. **Unified error mapping** — Added `map_command_error(context, error) -> String`
+   for consistent command-layer error serialization.
+
+5. **Module registration** — `service_registry` module registered in
+   `application/mod.rs` with `pub use service_registry::{...}`.
+
+### Contract Compliance
+- No IPC command names or payload shapes changed
+- No new dependencies introduced
+- All existing direct field access paths (`state.session_manager`, etc.) preserved
+- Pattern established for new commands to route through `state.service_registry`
+
+### Verification
+- `cargo check` PASS
+- `cargo test --lib -- service_registry` 2/2 PASS
 
 ## Goal
 瘦身 `commands/mod.rs` 与 command adapters，让 IPC 层只做参数校验、错误序列化、service 调用，不继续承载业务编排。

@@ -1,7 +1,36 @@
 # GAP-003: Frontend Projection Single Truth
 
 ## Status
-- State: draft
+- State: done
+- Updated: 2026-04-25
+
+## T-005 Execution Summary
+
+T-003 (MIG-017) already completed the core cutover:
+- `activeMessages` passes only user messages to `projectConversationMessagesFromRuns`
+- Assistant/tool/thinking/completion are derived from `runtimeProjectionStore`
+- `appendMessage` / `updateMessage` are `@deprecated` in conversation-slice
+
+T-005 formalized the remaining GAP-003 contracts:
+
+1. **`conversation-slice.ts`** — Added explicit GAP-003 contract docs: store is a
+   "compatibility / display adapter", NOT a source of transcript truth.
+   Permitted uses (user anchoring, non-transcript UI state, metadata) and
+   prohibited uses (assistant/tool/thinking/completion messages, raw stream
+   transcript mutations) are enumerated.
+
+2. **`session-store.ts`** — Added GAP-003 single truth contract: store holds
+   only **pointers** (active session ID cursor), NOT transcript truth.
+
+3. **`chat-run-projection.test.ts`** — Added "replaces legacy assistant/tool
+   placeholders with projection-derived content" test (GAP-003), verifying
+   that `projectConversationMessagesFromRuns` never leaks non-user messages
+   through as-is.
+
+### Verification
+- `cargo check --manifest-path src-tauri/Cargo.toml` PASS
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib -- service_registry` 2/2 PASS
+- `npx vitest run src/runtime-projection/chat-run-projection.test.ts` 9/9 PASS
 
 ## Goal
 把 chat/runtime UI 的最终展示事实从 `conversation-slice + raw listener + projection` 并行态收敛到 projection-first。

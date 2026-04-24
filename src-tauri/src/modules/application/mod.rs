@@ -61,6 +61,7 @@ pub mod prompt_planner;
 pub mod provider_service;
 pub mod real_api_client;
 pub mod request_intelligence_service;
+pub mod service_registry;
 pub mod stream_cancel_service;
 pub mod stream_emitter_service;
 pub mod tool_executor;
@@ -121,6 +122,7 @@ pub(crate) use real_api_client::RealApiClient;
 pub use request_intelligence_service::{
     classify as classify_request_intelligence, RequestIntelligenceInput, RequestIntelligenceOutput,
 };
+pub use service_registry::{map_command_error, ServiceRegistry};
 pub(crate) use stream_emitter_service::{dispatch_after_turn, MEMORY_AFTER_TURN_TRACE_VERSION};
 pub(crate) use tool_executor::ToolRegistryExecutor;
 pub(crate) use tool_heuristics::{

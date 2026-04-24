@@ -308,6 +308,73 @@ describe("chat run projection", () => {
     );
   });
 
+  // GAP-003 (T-005): Verify projection single truth — confirms that
+  // `projectConversationMessagesFromRuns` never leaks non-user messages
+  // through as-is (assistant/tool placeholders from the legacy slice are
+  // replaced by projection-derived content).
+  it("replaces legacy assistant/tool placeholders with projection-derived content", () => {
+    const run: RunProjection = {
+      runId: "run-gap003",
+      sessionId: "session-1",
+      text: "projection answer",
+      thinking: "",
+      thinkingStarted: false,
+      status: "completed",
+      taskOutcome: "completed",
+      resumeAvailable: false,
+      toolCalls: {},
+      memoryItems: [],
+      lastUpdatedAt: 2000,
+    };
+
+    // Legacy slice passes assistant + tool placeholders — the function
+    // must replace them, not pass them through verbatim.
+    const messages = projectConversationMessagesFromRuns(
+      [
+        {
+          id: "user-gap003",
+          role: "user",
+          content: "q",
+          timestamp: new Date(1000),
+          streamId: "run-gap003",
+        },
+        {
+          id: "legacy-asst",
+          role: "assistant",
+          content: "legacy content that must be replaced",
+          timestamp: new Date(1500),
+          streamId: "run-gap003",
+          isStreaming: true,
+        },
+        {
+          id: "legacy-tool",
+          role: "tool",
+          content: "legacy tool result that must be removed",
+          timestamp: new Date(1600),
+          streamId: "run-gap003",
+          toolCallId: "legacy-tc",
+          toolName: "legacy-tool",
+          toolStatus: "running",
+        },
+      ],
+      { "run-gap003": run },
+      "session-1",
+    );
+
+    // Only user + projection-derived assistant (tool placeholders with no
+    // matching run tool calls are dropped).
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].role, "user");
+    assert.equal(messages[0].content, "q");
+    assert.equal(messages[1].role, "assistant");
+    assert.equal(messages[1].content, "projection answer");
+    // Projection replaces legacy placeholders with new ids (e.g.
+    // "assistant-run-gap003"), confirming the placeholder is NOT
+    // passed through verbatim.
+    assert.ok(messages[1].id.startsWith("assistant-"));
+    assert.equal(messages[1].streamId, "run-gap003");
+  });
+
   // T-003 (MIG-017): Verify projection-only truth — only user messages
   // are fed in; assistant/tool/thinking/completion are all derived from
   // the canonical RunProjection store.

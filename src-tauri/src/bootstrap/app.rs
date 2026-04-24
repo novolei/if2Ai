@@ -37,6 +37,14 @@ pub fn build_app_bootstrap(paths: &super::BootPaths) -> super::AppBootstrap {
     );
 
     let project_manager = modules::projects::ProjectManager::new(paths.projects_dir.clone());
+
+    // GAP-004 (T-009): Bundle core services into a ServiceRegistry so
+    // AppState holds a single Arc<ServiceRegistry> instead of ad-hoc
+    // fields.  Individual Arc<> refs are extracted in AppState::new
+    // for backward-compatible direct field access.
+    let service_registry =
+        modules::application::ServiceRegistry::new(session_manager, tool_registry, project_manager);
+
     let onboarding_flow = modules::onboarding::flow::OnboardingFlow;
     let context_budget = load_context_budget();
     let trajectory_manager = init_trajectory_manager(paths);
@@ -48,9 +56,7 @@ pub fn build_app_bootstrap(paths: &super::BootPaths) -> super::AppBootstrap {
 
     super::AppBootstrap {
         app_state_config: commands::AppStateConfig {
-            session_manager,
-            tool_registry,
-            project_manager,
+            service_registry,
             memory_provider: memory_bootstrap.memory_provider,
             context_budget,
             onboarding_flow,

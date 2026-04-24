@@ -235,8 +235,8 @@
 | ---- | ------ | ---- | ---- | ---- |
 | 1 | P0 | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md) | **done** | 拆分 `session.json` 混合事实源 |
 | 2 | P0 | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md) | **done** | 统一 runtime envelope / stream payload / run log contract |
-| 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | draft | 前端 runtime UI 收敛到 projection-first |
-| 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | draft | 瘦身 command boundary 与 AppState 聚合 |
+| 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | **done** | 前端 runtime UI 收敛到 projection-first |
+| 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | **done** | 瘦身 command boundary 与 AppState 聚合 |
 | 5 | P1 | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md) | draft | 拆分 `stream_task.rs` god-file 职责 |
 | 6 | P1 | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | draft | 统一 memory UI 读模型 |
 | 7 | P2 | [GAP-007](./feature/architecture-gaps/GAP-007-harness-event-log-truth-cutover.md) | draft | harness/report 改读 canonical event log |

@@ -6,6 +6,16 @@
 // project list / project-keyed sessions map populated at boot)
 // but too cross-cutting for per-component `useState`.
 //
+// ## GAP-003 (T-005) Single Truth Contract
+//
+// This store holds only **pointers** — the active session ID
+// cursor — NOT transcript truth.  Session transcript (messages,
+// tool calls, thinking, completion state) lives in the
+// [`runtime-projection`] store via
+// `projectConversationMessagesFromRuns`.  The conversation
+// slice is a compatibility / display adapter, NOT a truth
+// source.
+//
 // Lives next to the existing
 // `src/stores/conversation-slice.ts` (chat-side per-session
 // runtime state) and the MIG-013

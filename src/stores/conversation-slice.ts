@@ -1,11 +1,28 @@
 /**
  * Conversation store slice — module-level singleton backed by `useSyncExternalStore`.
  *
- * Extracts the heavy per-session conversation state that previously lived
- * directly in `App.tsx`, reducing that component's God-state footprint.
+ * ## GAP-003 (T-005) Projection Single Truth Contract
  *
- * All mutation functions are exported as plain functions so they can be
- * called outside React components (e.g., from Tauri stream event handlers).
+ * This store is a **compatibility / display adapter**, NOT a source of
+ * runtime transcript truth.  The canonical transcript lives in the
+ * [`runtime-projection`] store (`projectConversationMessagesFromRuns`).
+ *
+ * Permitted uses:
+ * - User-message anchoring (the slice holds user messages that anchor
+ *   runs for `projectConversationMessagesFromRuns`)
+ * - Non-transcript UI state: loading flags, todo lists, title stages,
+ *   stream abort handles
+ * - Conversation-level metadata: `title`, `projectId`, `sessionTotals`
+ *
+ * Prohibited uses:
+ * - Assistant / tool / thinking / completion messages — these MUST
+ *   flow through the projection store, not conversation-slice
+ * - Raw stream transcript mutations — the transport layer feeds
+ *   `runtimeProjectionStore`, not this slice
+ *
+ * The `@deprecated` annotations on [`appendMessage`] and
+ * [`updateMessage`] reinforce this contract.  They remain available
+ * only for user-message anchoring and non-transcript UI state updates.
  *
  * Follows the same pattern as `browser-slice.ts`.
  */
