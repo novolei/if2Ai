@@ -56,6 +56,8 @@ export interface CorrelationIds {
   streamId?: string
   /** Optional turn / step counter inside a run. */
   turnIndex?: number
+  /** Optional tool-attempt identifier inside a run. */
+  attemptId?: string
 }
 
 /** Canonical envelope wrapping every runtime-emitted event. */
@@ -410,6 +412,9 @@ export interface PromptDiagnosticsSummary {
 /** Stream token payload emitted on the `agent-token` channel. */
 export interface StreamTokenPayload {
   stream_id: string
+  /** Cross-cutting correlation ids. When present, `runId` takes
+   * precedence over `stream_id` for run identification. */
+  correlation?: CorrelationIds
   text?: string
   thinking?: string
   event_type:

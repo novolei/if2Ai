@@ -46,7 +46,9 @@ function nowMs(): number {
 export function translateAgentTokenPayload(
   payload: StreamTokenPayload,
 ): CanonicalRuntimeEvent | null {
-  const runId = payload.stream_id;
+  // T-002: Prefer correlation.runId when available (set by GAP-002
+  // contract unification), fall back to legacy stream_id.
+  const runId = payload.correlation?.runId ?? payload.stream_id;
   const receivedAt = nowMs();
 
   switch (payload.event_type) {

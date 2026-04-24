@@ -2,78 +2,66 @@
 
 ## Status
 
-- State: `partial`
-- Owner: `@executor`
-- Gap Module: [runtime-projection-and-shell](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- Last Updated: `2026-04-23`
+- State: `active`
+- Task Ref: T-002 (docs/vnext_new/task.md §2)
+- Spec Ref: §7.1 MIG-003 (docs/vnext_new/spec.md)
+- Design Ref: §3.2 Step 1 (docs/vnext_new/design.md)
+- Depends On: T-001 (GAP-002 done)
+- Last Updated: `2026-04-24`
 
 ---
 
 ## Goal
 
-把 if2Ai 前端从“老 listener + projection bridge 并行运行”迁移到“canonical runtime event -> processor -> projection store -> UI”单一真相路径。
+确保 runtime-projection-bridge 是唯一 runtime event ingestion 入口；translator 扩展支持 T-001 新增的 correlation 字段；前端不再新增直接消费 raw agent-token 的代码路径。
 
-## Why Now
+## Spec (verifiable)
 
-1. 只要 projection 仍是并行层，前端就不会真正受 runtime state 驱动。
-2. UClaw 的前端闭环能力主要来自 event ingestion 和 AppStore 投影稳定，而不是单个页面设计。
-3. 当前 `App.tsx` 与 `chat-ui.tsx` 过大，说明 runtime 语义尚未被 store 接管。
+- runtime-projection-bridge 确认为唯一 runtime event ingestion 入口 → 测试 `bridge_is_only_ingestion_entry`
+- translator 支持 correlation 字段传递 → 测试 `translator_preserves_correlation_from_payload`
+- 前端不新增直接消费 raw agent-token 的代码路径 → `npm run build` 通过 + grep 无新增 `listen.*agent-token`
+- stream_run_bound event 可从 payload correlation.runId 派生 → 测试 `run_bound_event_uses_correlation_run_id`
 
-## Allowed Files
+## Files (scope — write list)
 
-- `src/runtime-projection/**`
-- `src/App.tsx`
-- `src/components/ui/chat-ui.tsx`
-- `src/modules/chat/components/**`
-- `src/lib/tauri.ts`
-- `src/**/*.test.*`
+- `src/runtime-projection/runtime-event-translator.ts` (modify — 扩展 translator 支持 correlation)
+- `src/runtime-projection/runtime-projection-bridge.ts` (modify — 确认唯一入口 + run_bound 从 correlation 派生)
+- `src/runtime-projection/types.ts` (modify — event variant 扩展 correlation)
+- `src/runtime-projection/runtime-projection-store.ts` (modify — 如需)
 
-## Forbidden Files
+## Reads (read-only inputs)
 
-- `src-tauri/src/modules/learning/**`
-- `src-tauri/src/modules/harness/**`
-- `docs/exec-plans/**`
+- docs/vnext_new/spec.md §7.1 MIG-003
+- docs/vnext_new/design.md §3.2 Step 1
+- docs/design-docs/if2ai-vnext-session-runtime-blueprint.md
+- src/lib/tauri.ts — listenToStream / listenToAgentTokenStream
+- src/api/conversations.ts — ChatStreamHandle
 
-## Source Of Truth
+## Contract (review must check)
 
-- [Current Architecture](../../../../ARCHITECTURE.md)
-- [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)
-- [UClaw Gap Migration Audit](../../staff-remediation/uclaw-gap-migration-audit.md)
-- [Runtime Projection And Shell Usage](../../staff-remediation/gap-modules/runtime-projection-and-shell/01-usage-guide.md)
-- [Runtime Projection And Shell Implementation](../../staff-remediation/gap-modules/runtime-projection-and-shell/02-implementation.md)
+### vNext 通用约束
+- [ ] 不新增直接消费 raw Tauri event 的 UI surface（No New Raw Consumer）
+- [ ] 无 unwrap() / expect() / todo!() 在非测试代码
+- [ ] 跨模块用 crate::modules::*
 
-## UClaw References
+### 本 Pack 特有约束
+- runtime-projection-bridge 是唯一将 backend wire payload 转为 CanonicalRuntimeEvent 的地方
+- translator 中 runId 优先从 payload.correlation.runId 读取，fallback 到 payload.stream_id
+- ChatStreamHandle.subscribe 只用于 transport side-effect（TTS/Todo/resume），不派生展示内容
+- 不引入新的二次真相
 
-- [run_state/projection.rs](/Users/ryanliu/Documents/iClaw/UClaw/uclaw-rs/src/run_state/projection.rs)
-- [RuntimeEventProcessor.swift](/Users/ryanliu/Documents/iClaw/UClaw/UClawApp/UClaw/UClaw/Core/RuntimeEvents/RuntimeEventProcessor.swift)
-- [AppStore+EventProcessing.swift](/Users/ryanliu/Documents/iClaw/UClaw/UClawApp/UClaw/UClaw/Core/Store/AppStore+EventProcessing.swift)
+## Out of Scope
+- ❌ 不做 Chat Truth Cutover（属于 T-003 MIG-017）
+- ❌ 不做 projection single truth 完整收口（属于 T-005 GAP-003）
+- ❌ 不改后端 Rust 代码
+- ❌ 不顺手重构 chat-ui.tsx
 
-## Required Changes
-
-1. 明确唯一 runtime event ingestion 入口。
-2. 停止让 chat 页面直接理解底层 event payload。
-3. 把老 stream listener 逐步 cutover 到 projection store。
-4. 让 run state、approval state、memory state、turn state 通过统一 reducer 投影。
-
-## Acceptance
-
+## Verify
 - `npm run build`
-- 关键聊天 UI 不再同时依赖老 listener 与 projection bridge 作为双真相
-- 至少一条前端状态投影测试通过
+- `npm test -- runtime-projection`
+- vNext 专项门：
+  - [ ] V2 Single Truth: `grep -r "listen.*agent-token" src/modules/ | grep -v node_modules | grep -v ".test."`
 
-## Code Audit 2026-04-23
-
-- Status: partial.
-- Evidence: `runtimeProjectionStore`, bridge, reducer, `chat-run-projection`, and projection/history tests exist; targeted frontend tests passed.
-- Remaining Gap: `App.tsx` / chat still use compatibility raw stream listeners and `conversation-slice`; final UI is not yet projection-only.
-
-## Out Of Scope
-
-- 不做 settings 页整理
-- 不做 strategy diagnostics
-- 不做 activation 商业逻辑
-
-## Execution Notes
-
-- 先缩真相来源，再缩 UI 文件体积。
-- 本 Pack 的设计、实现、review、验收必须完整参照 [If2Ai vNext Session Runtime Blueprint](../../../design-docs/if2ai-vnext-session-runtime-blueprint.md)。
+## Done
+- 上面 verify 全 PASS
+- REGISTRY 状态改为 done
