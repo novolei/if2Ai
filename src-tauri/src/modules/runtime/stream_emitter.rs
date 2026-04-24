@@ -55,6 +55,7 @@ use tauri::{Emitter, WebviewWindow};
 // (`super::contracts::memory`) so this module no longer depends on
 // the `application` layer.  Reverse `runtime -> application`
 // dependencies are forbidden.
+use super::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
 use super::contracts::memory::MemoryItemProjection;
 use super::contracts::prompt::PromptDiagnosticsSummary;
 
@@ -167,6 +168,14 @@ pub struct SessionUsageTotalsPayload {
 #[derive(Serialize, Clone, Debug)]
 pub struct StreamTokenPayload {
     pub stream_id: String,
+    /// Cross-cutting correlation ids carried alongside the payload.
+    ///
+    /// Populated by the emitter so downstream consumers (event log,
+    /// frontend translator) can correlate events without scraping the
+    /// payload body. When `None`, the event is pre-correlation
+    /// (legacy path); M2+ will always set this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<CorrelationIds>,
     pub text: Option<String>,
     pub thinking: Option<String>,
     pub event_type: String,
@@ -218,6 +227,7 @@ impl StreamTokenPayload {
     pub fn skeleton(stream_id: impl Into<String>, event_type: impl Into<String>) -> Self {
         Self {
             stream_id: stream_id.into(),
+            correlation: None,
             text: None,
             thinking: None,
             event_type: event_type.into(),
@@ -242,6 +252,75 @@ impl StreamTokenPayload {
             routing_info: None,
             session_totals: None,
         }
+    }
+
+    /// Convert this wire payload into a canonical
+    /// [`RuntimeEventEnvelope`].
+    ///
+    /// The conversion is lossless: every field on
+    /// [`StreamTokenPayload`] is preserved in the envelope's
+    /// `payload` JSON, and correlation ids are promoted into the
+    /// envelope's `correlation` field. When `self.correlation` is
+    /// `None`, a minimal correlation is derived from `stream_id`
+    /// (mapped to `stream_id` in [`CorrelationIds`]) for backwards
+    /// compatibility.
+    ///
+    /// Returns `None` when the `event_type` string does not map to
+    /// any [`RuntimeEventType`] variant. This should never happen in
+    /// production; callers should log a warning on `None`.
+    pub fn to_envelope(&self) -> Option<RuntimeEventEnvelope> {
+        let event_type = map_event_type_to_runtime(&self.event_type)?;
+        let correlation = self.correlation.clone().unwrap_or_else(|| CorrelationIds {
+            stream_id: Some(self.stream_id.clone()),
+            ..CorrelationIds::default()
+        });
+        let payload = serde_json::to_value(self).unwrap_or_else(
+            |error| serde_json::json!({ "serialization_error": error.to_string() }),
+        );
+
+        Some(RuntimeEventEnvelope::new(
+            event_type,
+            &self.event_type,
+            correlation,
+            payload,
+        ))
+    }
+}
+
+/// Map a [`StreamTokenPayload`] `event_type` string to a canonical
+/// [`RuntimeEventType`] variant.
+///
+/// Every `event_type` value emitted by the agent loop must appear
+/// here. If a new event type is added upstream without updating this
+/// function, the `to_envelope` conversion will return `None` and
+/// callers should treat it as a contract drift failure.
+fn map_event_type_to_runtime(event_type: &str) -> Option<RuntimeEventType> {
+    match event_type {
+        // Conversation family
+        "text_delta"
+        | "thinking_delta"
+        | "thinking_start"
+        | "final_text_override"
+        | "stream_complete"
+        | "stream_error"
+        | "run_started" => Some(RuntimeEventType::Conversation),
+        // Tool family
+        "tool_call_update" => Some(RuntimeEventType::Tool),
+        // Permission family (placeholder — M1.7 will add concrete events)
+        "permission_request" | "permission_decision" => Some(RuntimeEventType::Permission),
+        // Memory family
+        "memory_write_decision" | "memory_after_turn" => Some(RuntimeEventType::Memory),
+        // Activation family
+        "activation_status_changed" => Some(RuntimeEventType::Activation),
+        // Execution-mode family
+        "execution_mode_decision" => Some(RuntimeEventType::ExecutionMode),
+        // Harness family
+        "harness_recording" | "harness_eval" => Some(RuntimeEventType::Harness),
+        // System family
+        "boot_phase_changed" | "session_opened" | "session_closed" => {
+            Some(RuntimeEventType::System)
+        }
+        _ => None,
     }
 }
 
@@ -372,5 +451,56 @@ mod tests {
         assert!(p.task_outcome.is_none());
         assert!(p.memory_context.is_none());
         assert!(p.prompt_diagnostics.is_none());
+        assert!(p.correlation.is_none());
+    }
+
+    #[test]
+    fn stream_payload_maps_to_runtime_envelope() {
+        // Every known event_type must map to a RuntimeEventType variant
+        let known_types = [
+            "text_delta",
+            "thinking_delta",
+            "thinking_start",
+            "final_text_override",
+            "stream_complete",
+            "stream_error",
+            "run_started",
+            "tool_call_update",
+        ];
+        for et in &known_types {
+            let p = StreamTokenPayload::skeleton("s1", *et);
+            let envelope = p.to_envelope().unwrap_or_else(|| {
+                panic!("event_type '{et}' should map to a RuntimeEventType variant")
+            });
+            assert_eq!(envelope.payload_family.0, *et);
+            // Without explicit correlation, stream_id is promoted
+            assert_eq!(envelope.correlation.stream_id.as_deref(), Some("s1"));
+        }
+
+        // Unknown event_type returns None
+        let unknown = StreamTokenPayload::skeleton("s1", "unknown_event_xyz");
+        assert!(unknown.to_envelope().is_none());
+    }
+
+    #[test]
+    fn stream_payload_to_envelope_preserves_correlation() {
+        let correlation = CorrelationIds {
+            session_id: Some("sess-1".into()),
+            run_id: Some("run-1".into()),
+            stream_id: Some("s1".into()),
+            project_id: None,
+            turn_index: Some(3),
+            attempt_id: Some("att-7".into()),
+        };
+        let mut p = StreamTokenPayload::skeleton("s1", "text_delta");
+        p.text = Some("hello".into());
+        p.correlation = Some(correlation.clone());
+
+        let envelope = p.to_envelope().expect("text_delta should map");
+        assert_eq!(envelope.correlation.run_id.as_deref(), Some("run-1"));
+        assert_eq!(envelope.correlation.session_id.as_deref(), Some("sess-1"));
+        assert_eq!(envelope.correlation.attempt_id.as_deref(), Some("att-7"));
+        assert_eq!(envelope.correlation.turn_index, Some(3));
+        assert_eq!(envelope.event_type, RuntimeEventType::Conversation);
     }
 }

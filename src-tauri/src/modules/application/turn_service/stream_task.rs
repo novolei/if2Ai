@@ -349,6 +349,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             );
             let payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
+                correlation: None,
                 text: None,
                 thinking: None,
                 event_type: "stream_complete".to_string(),
@@ -402,9 +403,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         // hard floor of MAX_REQUEST_TOKEN_BUDGET_ESTIMATE so a missing
         // / unknown model never ships with a tiny budget.
         const PREFLIGHT_OUTPUT_RESERVE: u64 = 4_096;
-        let preflight_input_budget = (context_window_for_stream
-            .saturating_sub(PREFLIGHT_OUTPUT_RESERVE))
-        .max(MAX_REQUEST_TOKEN_BUDGET_ESTIMATE as u64) as usize;
+        let preflight_input_budget =
+            (context_window_for_stream.saturating_sub(PREFLIGHT_OUTPUT_RESERVE))
+                .max(MAX_REQUEST_TOKEN_BUDGET_ESTIMATE as u64) as usize;
 
         // Build API request for this iteration
         let (trimmed_session_messages, preflight_stats) = ContextGovernor.admit(
@@ -543,6 +544,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             );
             let payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
+                correlation: None,
                 text: None,
                 thinking: None,
                 event_type: "stream_error".to_string(),
@@ -639,6 +641,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 let degraded_reason = user_visible_truth.degraded_reason.clone();
                 let payload = StreamTokenPayload {
                     stream_id: stream_id_for_task.clone(),
+                    correlation: None,
                     text: None,
                     thinking: None,
                     event_type: "stream_error".to_string(),
@@ -752,6 +755,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             }
                             let payload = StreamTokenPayload {
                                 stream_id: stream_id_for_task.clone(),
+                                correlation: None,
                                 text: Some(text),
                                 thinking: None,
                                 event_type: "text_delta".to_string(),
@@ -784,6 +788,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             emitted_stream_delta_in_iteration = true;
                             let payload = StreamTokenPayload {
                                 stream_id: stream_id_for_task.clone(),
+                                correlation: None,
                                 text: None,
                                 thinking: Some(thinking),
                                 event_type: "thinking_delta".to_string(),
@@ -880,6 +885,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             crate::modules::api::OutputContentBlock::Thinking { .. } => {
                                 let payload = StreamTokenPayload {
                                     stream_id: stream_id_for_task.clone(),
+                                    correlation: None,
                                     text: None,
                                     thinking: None,
                                     event_type: "thinking_start".to_string(),
@@ -915,6 +921,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                                 index_to_tool_name.insert(start_event.index, name.clone());
                                 let payload = StreamTokenPayload {
                                     stream_id: stream_id_for_task.clone(),
+                                    correlation: None,
                                     text: None,
                                     thinking: None,
                                     event_type: "tool_call_update".to_string(),
@@ -1058,6 +1065,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                             .unwrap_or_else(|| "unknown".to_string());
                         let payload = StreamTokenPayload {
                             stream_id: stream_id_for_task.clone(),
+                            correlation: None,
                             text: None,
                             thinking: None,
                             event_type: "tool_call_update".to_string(),
@@ -1090,6 +1098,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
 
                     let payload = StreamTokenPayload {
                         stream_id: stream_id_for_task.clone(),
+                        correlation: None,
                         text: None,
                         thinking: None,
                         event_type: "stream_error".to_string(),
@@ -1236,6 +1245,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             // Emit running event once the permission source is known.
             let running_payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
+                correlation: None,
                 text: None,
                 thinking: None,
                 event_type: "tool_call_update".to_string(),
@@ -1395,6 +1405,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             // Emit completed/error event
             let terminal_tool_payload = StreamTokenPayload {
                 stream_id: stream_id_for_task.clone(),
+                correlation: None,
                 text: None,
                 thinking: None,
                 event_type: "tool_call_update".to_string(),

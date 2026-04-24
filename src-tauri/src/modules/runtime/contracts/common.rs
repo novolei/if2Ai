@@ -123,6 +123,14 @@ pub struct CorrelationIds {
     /// Optional turn / step counter inside a run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_index: Option<u32>,
+    /// Optional tool-attempt identifier inside a run.
+    ///
+    /// Uniquely identifies a single tool invocation attempt within a
+    /// run. When a tool call is retried, each attempt gets a distinct
+    /// `attempt_id` (monotonically increasing `attempt_no` is tracked
+    /// separately in the attempt ledger, T-013).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
 }
 
 /// Canonical envelope wrapping every runtime-emitted event.
@@ -205,5 +213,33 @@ mod tests {
     fn schema_version_defaults_to_current() {
         let v = SchemaVersion::default();
         assert_eq!(v.0, CONTRACTS_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn correlation_ids_attempt_id_round_trips() {
+        let corr = CorrelationIds {
+            session_id: Some("s1".into()),
+            run_id: Some("r1".into()),
+            stream_id: Some("st1".into()),
+            attempt_id: Some("att-42".into()),
+            ..CorrelationIds::default()
+        };
+        let json = serde_json::to_string(&corr).unwrap();
+        let back: CorrelationIds = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.attempt_id.as_deref(), Some("att-42"));
+        assert_eq!(back.run_id.as_deref(), Some("r1"));
+    }
+
+    #[test]
+    fn correlation_ids_attempt_id_skipped_when_none() {
+        let corr = CorrelationIds {
+            session_id: Some("s1".into()),
+            ..CorrelationIds::default()
+        };
+        let json = serde_json::to_string(&corr).unwrap();
+        assert!(
+            !json.contains("attemptId"),
+            "attempt_id should be skipped when None: {json}"
+        );
     }
 }

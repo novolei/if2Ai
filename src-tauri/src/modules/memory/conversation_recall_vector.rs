@@ -57,7 +57,7 @@ pub fn f32_slice_to_blob(v: &[f32]) -> Vec<u8> {
 /// Decode a little-endian f32 BLOB back to `Vec<f32>`. `None` on bad length.
 #[must_use]
 pub fn blob_to_f32_slice(blob: &[u8]) -> Option<Vec<f32>> {
-    if blob.len() % 4 != 0 {
+    if !blob.len().is_multiple_of(4) {
         return None;
     }
     let mut v = Vec::with_capacity(blob.len() / 4);

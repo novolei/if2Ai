@@ -238,6 +238,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         accumulated_text = guarded.clone();
         let override_payload = StreamTokenPayload {
             stream_id: stream_id_for_task.clone(),
+            correlation: None,
             text: Some(guarded),
             thinking: None,
             event_type: "final_text_override".to_string(),
@@ -744,6 +745,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
 
         let payload = StreamTokenPayload {
             stream_id: stream_id_for_task.clone(),
+            correlation: None,
             text: None,
             thinking: None,
             event_type: "stream_complete".to_string(),

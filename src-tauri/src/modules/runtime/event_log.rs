@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use super::contracts::common::RuntimeEventEnvelope;
+
 /// One durable append-only run-log record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunLogEntry {
@@ -53,6 +55,46 @@ impl RunLogEntry {
             correlation_id: None,
             tool_call_id: None,
             attempt_id: None,
+        }
+    }
+
+    /// Construct a [`RunLogEntry`] from a canonical
+    /// [`RuntimeEventEnvelope`].
+    ///
+    /// The envelope provides all correlation identifiers, event type,
+    /// timestamp, and payload. This method adds the durable-log
+    /// concerns (`event_id`, `seq`, session/run scoping) that the
+    /// envelope deliberately does not carry.
+    ///
+    /// When `correlation.session_id` or `correlation.run_id` are
+    /// `None`, the caller must provide explicit fallback values
+    /// through the `session_id` and `run_id` parameters.
+    pub fn from_envelope(
+        envelope: &RuntimeEventEnvelope,
+        seq: u64,
+        session_id: impl Into<String>,
+        run_id: impl Into<String>,
+    ) -> Self {
+        let corr = &envelope.correlation;
+        Self {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            session_id: corr.session_id.clone().unwrap_or_else(|| session_id.into()),
+            run_id: corr.run_id.clone().unwrap_or_else(|| run_id.into()),
+            seq,
+            event_type: format!(
+                "{}:{}",
+                serde_json::to_value(envelope.event_type)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                envelope.payload_family.0
+            ),
+            occurred_at: envelope.emitted_at.clone(),
+            payload: envelope.payload.clone(),
+            causation_id: None,
+            correlation_id: corr.stream_id.clone(),
+            tool_call_id: None,
+            attempt_id: corr.attempt_id.clone(),
         }
     }
 }
@@ -319,5 +361,86 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].event_type, "stream_error");
         assert_eq!(entries[0].run_id, "run-2");
+    }
+
+    #[test]
+    fn run_log_entry_from_envelope_round_trips() {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+
+        let envelope = RuntimeEventEnvelope::new(
+            RuntimeEventType::Conversation,
+            "text_delta",
+            CorrelationIds {
+                session_id: Some("sess-1".into()),
+                run_id: Some("run-1".into()),
+                stream_id: Some("s1".into()),
+                project_id: None,
+                turn_index: Some(0),
+                attempt_id: Some("att-3".into()),
+            },
+            serde_json::json!({ "text": "hello" }),
+        );
+
+        let entry = RunLogEntry::from_envelope(&envelope, 1, "fallback-sess", "fallback-run");
+
+        assert_eq!(entry.session_id, "sess-1");
+        assert_eq!(entry.run_id, "run-1");
+        assert_eq!(entry.seq, 1);
+        assert!(entry.event_type.contains("conversation"));
+        assert!(entry.event_type.contains("text_delta"));
+        assert_eq!(entry.attempt_id.as_deref(), Some("att-3"));
+        assert_eq!(entry.correlation_id.as_deref(), Some("s1"));
+
+        // Round-trip through JSON
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RunLogEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "sess-1");
+        assert_eq!(back.run_id, "run-1");
+        assert_eq!(back.seq, 1);
+        assert_eq!(back.attempt_id.as_deref(), Some("att-3"));
+    }
+
+    #[test]
+    fn correlation_run_id_is_set_for_run_scoped_events() {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+
+        // Run-scoped events: stream_complete, stream_error, run_started
+        // must have correlation.run_id set.
+        let run_scoped_families = ["stream_complete", "stream_error", "run_started"];
+
+        for family in &run_scoped_families {
+            let envelope = RuntimeEventEnvelope::new(
+                RuntimeEventType::Conversation,
+                *family,
+                CorrelationIds {
+                    session_id: Some("sess-1".into()),
+                    run_id: Some("run-1".into()),
+                    ..CorrelationIds::default()
+                },
+                serde_json::json!({}),
+            );
+            let entry = RunLogEntry::from_envelope(&envelope, 1, "fallback-sess", "fallback-run");
+            assert_eq!(
+                entry.run_id, "run-1",
+                "run_scoped event '{family}' must have run_id set"
+            );
+        }
+    }
+
+    #[test]
+    fn from_envelope_uses_fallback_when_correlation_missing() {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+
+        let envelope = RuntimeEventEnvelope::new(
+            RuntimeEventType::Tool,
+            "tool_call_update",
+            CorrelationIds::default(), // no session_id / run_id
+            serde_json::json!({ "tool": "read_file" }),
+        );
+
+        let entry = RunLogEntry::from_envelope(&envelope, 5, "fb-sess", "fb-run");
+        assert_eq!(entry.session_id, "fb-sess");
+        assert_eq!(entry.run_id, "fb-run");
+        assert_eq!(entry.seq, 5);
     }
 }
