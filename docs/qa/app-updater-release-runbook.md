@@ -35,7 +35,7 @@ npm run release:one-click -- --bump patch
 - 用本地 `~/.tauri/if2ai-updater.key` 和 `.pub` 注入 Tauri updater 签名环境。
 - 运行版本一致性检查、Tauri build、manifest dry-run 校验。
 - 只 stage 三个版本文件，提交 `chore(release): vX.Y.Z`，打 annotated tag，并 push branch + tag。
-- tag push 会触发 GitHub Release workflow，由 CI 在 `macos-15` / `macos-15-intel` 构建 arm64/x86_64 signed updater artifact，并聚合上传双平台 manifest。
+- 脚本会显式 dispatch GitHub Release workflow；默认只构建 `darwin-aarch64`，需要 Intel 时再传 `--targets=universal`。
 
 常用一键参数:
 
@@ -43,15 +43,20 @@ npm run release:one-click -- --bump patch
 npm run release:one-click -- --dry-run --bump patch
 npm run release:one-click -- --bump minor
 npm run release:one-click -- --version 0.5.0
+npm run release:one-click -- --bump patch --targets=universal
 npm run release:one-click -- --bump patch --local-upload
 ```
 
 说明:
 
 - `--dry-run` 只预览下一版本、tag 和远端 tag 占用，不改文件。
+- `--targets=arm64` 是默认值，只跑 Apple Silicon release build，适合日常 updater 验证和内部发布。
+- `--targets=universal` 会同时跑 arm64 + x86_64，适合公开正式 release 或需要 Intel 安装包时使用。
 - 默认允许工作区存在其它未提交业务改动，但版本文件必须干净，脚本只会提交版本文件。
-- `--local-upload` 会在 tag push 后用本地已构建产物直接上传 release；默认推荐让 GitHub Release workflow 上传。
+- `--local-upload` 会用本地已构建产物直接上传 release，不 dispatch GitHub Release workflow。
+- `--no-dispatch` 只 push branch + tag，不启动 GitHub Release workflow。
 - CI 不再使用 `macos-13`；Intel 构建走 `macos-15-intel`，避免旧 runner 退役和长时间 queued。
+- Release workflow 不再由 tag push 自动触发，避免误打 tag 或失败重试反复消耗 macOS minutes。
 
 手动分步流程仍可用:
 

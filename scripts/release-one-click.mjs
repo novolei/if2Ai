@@ -10,18 +10,21 @@ const dryRun = args.flags.has('dry-run')
 const skipBuild = args.flags.has('skip-build')
 const skipChecks = args.flags.has('skip-checks')
 const localUpload = args.flags.has('local-upload')
+const noDispatch = args.flags.has('no-dispatch')
 const allowVersionDirty = args.flags.has('allow-version-dirty')
 const bump = args.values.get('bump') || args.positionals[0] || 'patch'
 const explicitVersion = args.values.get('version')
 const repo = args.values.get('repo') || process.env.GITHUB_REPOSITORY || 'novolei/if2Ai'
 const channel = args.values.get('channel') || 'stable'
 const remote = args.values.get('remote') || 'origin'
+const targets = args.values.get('targets') || 'arm64'
 const currentBranch = gitOutput(['branch', '--show-current'])
 const currentVersion = readVersion()
 const nextVersion = explicitVersion || bumpVersion(currentVersion, bump)
 const tag = args.values.get('tag') || `v${nextVersion}`
 
 assertSemver(nextVersion)
+assertTargets(targets)
 assertCleanVersionFiles()
 assertTagIsAvailable(tag)
 
@@ -29,6 +32,7 @@ console.log(`release: ${currentVersion} -> ${nextVersion}`)
 console.log(`tag: ${tag}`)
 console.log(`repo: ${repo}`)
 console.log(`branch: ${currentBranch}`)
+console.log(`ci_targets: ${targets}`)
 
 if (dryRun) {
   console.log('dry-run: no files changed, no build, no commit, no tag, no push')
@@ -78,8 +82,24 @@ if (localUpload) {
     `--updater-artifact=${uploadArtifacts.updater}`,
     `--signature=${uploadArtifacts.signature}`,
   ])
+} else if (!noDispatch) {
+  run('gh', [
+    'workflow',
+    'run',
+    'release.yml',
+    '--repo',
+    repo,
+    '--ref',
+    tag,
+    '-f',
+    `release_targets=${targets}`,
+    '-f',
+    `channel=${channel}`,
+  ])
+  console.log(`dispatched release workflow for ${tag} (${targets})`)
+  console.log(`workflow: https://github.com/${repo}/actions/workflows/release.yml`)
 } else {
-  console.log(`pushed ${tag}; GitHub release workflow will build and upload signed updater artifacts`)
+  console.log(`pushed ${tag}; skipped release workflow dispatch because --no-dispatch was set`)
   console.log(`workflow: https://github.com/${repo}/actions/workflows/release.yml`)
 }
 
@@ -117,6 +137,12 @@ function bumpVersion(version, releaseType) {
 function assertSemver(version) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`expected semver x.y.z, got: ${version}`)
+  }
+}
+
+function assertTargets(value) {
+  if (!['arm64', 'universal'].includes(value)) {
+    throw new Error(`expected --targets=arm64 or --targets=universal, got: ${value}`)
   }
 }
 

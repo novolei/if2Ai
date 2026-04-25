@@ -4,38 +4,33 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
+      release_targets:
+        description: "Release build targets: arm64 or universal."
+        required: true
+        default: arm64
+        type: choice
+        options:
+          - arm64
+          - universal
       manifest_path:
         description: Path to the generated If2Ai release manifest.
-        required: true
+        required: false
         default: dist/release/if2ai-release-manifest.json
       channel:
         description: Release channel to validate.
-        required: true
+        required: false
         default: stable
 
 jobs:
   build-signed-updater-artifacts:
     name: release-ci::build_signed_updater_artifacts
     if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 70
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            tauri_platform: darwin-aarch64
-            platform: darwin
-            arch: aarch64
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            tauri_platform: darwin-x86_64
-            platform: darwin
-            arch: x86_64
+      matrix: ${{ fromJSON(github.event.inputs.release_targets == 'universal' && '{"include":[{"runner":"macos-15","target":"aarch64-apple-darwin","tauri_platform":"darwin-aarch64","platform":"darwin","arch":"aarch64"},{"runner":"macos-15-intel","target":"x86_64-apple-darwin","tauri_platform":"darwin-x86_64","platform":"darwin","arch":"x86_64"}]}' || '{"include":[{"runner":"macos-15","target":"aarch64-apple-darwin","tauri_platform":"darwin-aarch64","platform":"darwin","arch":"aarch64"}]}') }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -50,6 +45,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            src-tauri/target/
+          key: release-cargo-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-cargo-${{ runner.os }}-${{ matrix.target }}-
 
       - name: Install frontend dependencies
         run: npm ci
@@ -145,6 +153,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build-signed-updater-artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -204,8 +213,9 @@ jobs:
 
   app-updater-manifest-gate:
     name: release-ci::app_updater_manifest_gate
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 
