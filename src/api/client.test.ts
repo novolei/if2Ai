@@ -47,6 +47,7 @@ import {
 } from "./projects.ts";
 import { executeSlashCommand, resolveSkillSlash } from "./slash.ts";
 import { getOnboardingState } from "./onboarding.ts";
+import { checkAppUpdater, getAppUpdaterState } from "./updater.ts";
 import { openSettingsWindow } from "./window.ts";
 
 interface RecordedCall {
@@ -311,5 +312,26 @@ describe("api/onboarding + api/window — wire contract", () => {
       calls.map((c) => c.command),
       ["onboarding_get_state", "open_settings_window"],
     );
+  });
+});
+
+describe("api/updater — wire contract", () => {
+  it("getAppUpdaterState and checkAppUpdater use the typed updater facade", async () => {
+    const { client, calls } = recordingClient({
+      app_updater_get_state: { status: "idle", current_version: "0.4.0" },
+      app_updater_check: { status: "no_update", current_version: "0.4.0" },
+    });
+    setApiClient(client);
+
+    await getAppUpdaterState();
+    await checkAppUpdater("https://example.com/if2ai/manifest.json");
+
+    assert.deepEqual(calls, [
+      { command: "app_updater_get_state", args: undefined },
+      {
+        command: "app_updater_check",
+        args: { manifestUrl: "https://example.com/if2ai/manifest.json" },
+      },
+    ]);
   });
 });

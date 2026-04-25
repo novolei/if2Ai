@@ -308,6 +308,7 @@ pub mod stt;
 pub mod tools;
 pub mod tts;
 pub mod tts_download;
+pub mod updater;
 pub mod usage;
 pub mod web_search;
 
@@ -482,3 +483,5 @@ pub use usage::usage_summary;
 // TTS model download commands
 #[allow(unused_imports)]
 pub use tts_download::{tts_model_download_start, tts_model_download_status, tts_model_status};
+#[allow(unused_imports)]
+pub use updater::{app_updater_check, app_updater_get_state};

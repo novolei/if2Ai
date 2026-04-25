@@ -1,4 +1,15 @@
-import { Shield, Globe, Sparkles, ExternalLink, Rocket, RotateCcw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  Globe,
+  Loader2,
+  Rocket,
+  Shield,
+  Sparkles,
+  RotateCcw,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AgentOrb } from '@/components/AgentOrb'
 import { SettingsSurface } from '../components/SettingsSurface'
@@ -7,6 +18,17 @@ import { configResetOnboarding } from '@/lib/tauri'
 import { toast } from 'sonner'
 import { broadcastChange } from '@/lib/crossWindowSync'
 import { APP_VERSION_LABEL } from '@/lib/appVersion'
+import {
+  checkAppUpdater,
+  getAppUpdaterState,
+  type UpdaterCheckResult,
+  type UpdaterRuntimeState,
+} from '@/api/updater'
+import {
+  APP_UPDATER_STATE_LABELS,
+  updaterUiStateFromResult,
+  type AppUpdaterUiState,
+} from './app-updater-state'
 
 const btnOutline =
   'window-no-drag h-7 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 text-[11.5px] font-medium shadow-none hover:bg-black/[0.05]'
@@ -47,6 +69,76 @@ function FeatureCard({ icon: Icon, title, text, accent }: FeatureCardProps) {
 }
 
 export function AboutSettingsPage({}: SettingsPageProps) {
+  const [updaterState, setUpdaterState] = useState<UpdaterRuntimeState | null>(null)
+  const [checkResult, setCheckResult] = useState<UpdaterCheckResult | null>(null)
+  const [uiState, setUiState] = useState<AppUpdaterUiState>('idle')
+
+  useEffect(() => {
+    let cancelled = false
+    void getAppUpdaterState()
+      .then((state) => {
+        if (!cancelled) setUpdaterState(state)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setUiState('failed')
+          setCheckResult({
+            status: 'failed',
+            current_version: APP_VERSION_LABEL.replace(/^v/, ''),
+            diagnostic: String(error),
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const updaterCopy = APP_UPDATER_STATE_LABELS[uiState]
+  const updaterDetail = useMemo(() => {
+    if (checkResult?.diagnostic) return checkResult.diagnostic
+    if (checkResult?.latest_version) {
+      return `当前 ${checkResult.current_version} · 最新 ${checkResult.latest_version}`
+    }
+    if (updaterState?.manifest_url) return updaterState.manifest_url
+    return '未配置 IF2AI_UPDATE_MANIFEST_URL'
+  }, [checkResult, updaterState])
+
+  const handleCheckUpdate = async () => {
+    setUiState('checking')
+    setCheckResult(null)
+    try {
+      const result = await checkAppUpdater(updaterState?.manifest_url ?? null)
+      setCheckResult(result)
+      setUiState(updaterUiStateFromResult(result))
+      if (result.status === 'update_available') {
+        toast.success('发现新版本', {
+          description: `If2Ai ${result.latest_version ?? ''} 可用`,
+        })
+      } else if (result.status === 'no_update') {
+        toast.success('已是最新版本')
+      } else {
+        toast.error('检查更新失败', {
+          description: result.diagnostic ?? APP_UPDATER_STATE_LABELS.failed.description,
+        })
+      }
+    } catch (error) {
+      setUiState('failed')
+      setCheckResult({
+        status: 'failed',
+        current_version: updaterState?.current_version ?? APP_VERSION_LABEL.replace(/^v/, ''),
+        diagnostic: String(error),
+      })
+      toast.error('检查更新失败', { description: String(error) })
+    }
+  }
+
+  const openArtifact = () => {
+    const url = checkResult?.artifact_url ?? checkResult?.release_notes_url
+    if (!url) return
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {/* ── Hero ── */}
@@ -70,11 +162,75 @@ export function AboutSettingsPage({}: SettingsPageProps) {
                 <ExternalLink className="mr-1.5 h-3 w-3" />
                 查看文档
               </Button>
-              <Button className={btnPrimary}>
-                <Rocket className="mr-1.5 h-3 w-3" />
-                检查更新
+              <Button
+                className={btnPrimary}
+                onClick={() => void handleCheckUpdate()}
+                disabled={uiState === 'checking'}
+              >
+                {uiState === 'checking' ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <Rocket className="mr-1.5 h-3 w-3" />
+                )}
+                {uiState === 'checking' ? '检查中' : '检查更新'}
               </Button>
             </div>
+          </div>
+        </div>
+      </SettingsSurface>
+
+      {/* ── App updater ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <SectionLabel>App Updater</SectionLabel>
+            <div className="flex items-center gap-2">
+              <span className="flex size-8 items-center justify-center rounded-xl bg-jade/10 text-jade">
+                {uiState === 'failed' ? (
+                  <AlertTriangle className="h-4 w-4 text-amber-700" />
+                ) : uiState === 'ready' ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : uiState === 'checking' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Rocket className="h-4 w-4" />
+                )}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[12.5px] font-semibold tracking-tight">
+                  {updaterCopy.title}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {updaterDetail}
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
+              {updaterCopy.description}
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2 sm:self-end">
+            <Button
+              variant="outline"
+              className={btnOutline}
+              disabled={!checkResult?.artifact_url && !checkResult?.release_notes_url}
+              onClick={openArtifact}
+            >
+              <ExternalLink className="mr-1.5 h-3 w-3" />
+              打开下载
+            </Button>
+            <Button
+              className={btnPrimary}
+              onClick={() => void handleCheckUpdate()}
+              disabled={uiState === 'checking'}
+            >
+              {uiState === 'checking' ? (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              ) : (
+                <Rocket className="mr-1.5 h-3 w-3" />
+              )}
+              检查
+            </Button>
           </div>
         </div>
       </SettingsSurface>

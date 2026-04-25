@@ -556,6 +556,8 @@ macro_rules! if2ai_command_surface {
             crate::commands::tts_download::tts_model_status,
             crate::commands::tts_download::tts_model_download_start,
             crate::commands::tts_download::tts_model_download_status,
+            crate::commands::updater::app_updater_get_state,
+            crate::commands::updater::app_updater_check,
             crate::commands::git::git_status,
             crate::commands::git::git_diff,
             crate::commands::git::git_is_repo,

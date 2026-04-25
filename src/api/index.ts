@@ -20,4 +20,5 @@ export * from "./projects";
 export * from "./sessions";
 export * from "./slash";
 export * from "./streaming";
+export * from "./updater";
 export * from "./window";

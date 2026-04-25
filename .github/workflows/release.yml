@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: Path to the generated If2Ai release manifest.
+        required: true
+        default: dist/release/if2ai-release-manifest.json
+      channel:
+        description: Release channel to validate.
+        required: true
+        default: stable
+
+jobs:
+  app-updater-manifest-gate:
+    name: release-ci::app_updater_manifest_gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate app updater release manifest
+        env:
+          MANIFEST_PATH: ${{ inputs.manifest_path }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = process.env.MANIFEST_PATH
+          if (!path || !fs.existsSync(path)) {
+            throw new Error(`release manifest is required: ${path || '(missing input)'}`)
+          }
+
+          const manifest = JSON.parse(fs.readFileSync(path, 'utf8'))
+          const expectedChannel = process.env.RELEASE_CHANNEL || 'stable'
+          if (manifest.schema !== 'if2ai.release-manifest') {
+            throw new Error(`schema mismatch: ${manifest.schema}`)
+          }
+          if (manifest.version !== 1) {
+            throw new Error(`unsupported manifest version: ${manifest.version}`)
+          }
+          if (manifest.channel !== expectedChannel) {
+            throw new Error(`channel mismatch: expected=${expectedChannel}, actual=${manifest.channel}`)
+          }
+          if (!manifest.latest_version || typeof manifest.latest_version !== 'string') {
+            throw new Error('latest_version is required')
+          }
+          if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length === 0) {
+            throw new Error('at least one release artifact is required')
+          }
+
+          for (const artifact of manifest.artifacts) {
+            if (!artifact.platform || !artifact.arch) {
+              throw new Error('artifact platform and arch are required')
+            }
+            if (!/^https:\/\//.test(artifact.url || '')) {
+              throw new Error(`artifact url must use https: ${artifact.url}`)
+            }
+            const hasSignature = typeof artifact.signature === 'string' && artifact.signature.trim().length > 0
+            const hasSha256 = typeof artifact.checksum_sha256 === 'string' && /^[a-fA-F0-9]{64}$/.test(artifact.checksum_sha256)
+            if (!hasSignature && !hasSha256) {
+              throw new Error(`${artifact.platform}/${artifact.arch} requires signature or checksum_sha256`)
+            }
+            if (expectedChannel === 'stable' && !hasSignature) {
+              throw new Error(`${artifact.platform}/${artifact.arch} stable release requires signature`)
+            }
+          }
+
+          console.log(`validated ${manifest.artifacts.length} updater artifact(s) for ${manifest.channel} ${manifest.latest_version}`)
+          NODE

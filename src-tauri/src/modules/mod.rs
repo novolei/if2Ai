@@ -38,6 +38,7 @@ pub mod stt;
 pub mod system_check;
 pub mod tools;
 pub mod tts;
+pub mod updater;
 pub mod usage;
 pub mod viewer_registry;
 
@@ -72,3 +73,5 @@ pub use scheduler::*;
 pub use session::*;
 #[allow(unused_imports)]
 pub use tools::*;
+#[allow(unused_imports)]
+pub use updater::*;
