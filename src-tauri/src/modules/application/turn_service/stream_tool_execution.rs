@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use uuid::Uuid;
+
 use crate::modules::api::InputMessage;
 use crate::modules::application::permission_service::TauriPermissionPrompter;
 use crate::modules::application::tool_executor::ToolRegistryExecutor;
@@ -28,6 +30,7 @@ use crate::modules::runtime::permissions::{
 };
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::stream_emitter::{AgentStreamEmitter, StreamTokenPayload};
+use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::timeline_flush::flush_assistant_timeline_segment;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
@@ -158,6 +161,11 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
 
     for (tool_id, tool_name, input_json) in pending_tool_uses.into_iter() {
         let policy_trace_id = AuditEmitter::new_trace_id();
+        let attempt_id = Uuid::new_v4().to_string();
+        let correlation_ids = CorrelationIds {
+            attempt_id: Some(attempt_id.clone()),
+            ..Default::default()
+        };
         let diag_key = format!(
             "stream_id={};trace_id={};request_id={}",
             stream_id, policy_trace_id, provider_request_id
@@ -198,7 +206,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         // Emit running event once the permission source is known.
         let running_payload = StreamTokenPayload {
             stream_id: stream_id.clone(),
-            correlation: None,
+            correlation: Some(correlation_ids.clone()),
             text: None,
             thinking: None,
             event_type: "tool_call_update".to_string(),
@@ -250,7 +258,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             );
             let terminal_tool_payload = StreamTokenPayload {
                 stream_id: stream_id.clone(),
-                correlation: None,
+                correlation: Some(correlation_ids.clone()),
                 text: None,
                 thinking: None,
                 event_type: "tool_call_update".to_string(),
@@ -418,6 +426,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                     &input_json,
                     &policy_trace_id,
                     Some(provider_request_id.as_str()),
+                    Some(attempt_id.as_str()),
                 ) {
                     Ok(output) => (output, false),
                     Err(e) => (e.to_string(), true),
@@ -452,7 +461,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         // Emit completed/error event.
         let terminal_tool_payload = StreamTokenPayload {
             stream_id: stream_id.clone(),
-            correlation: None,
+            correlation: Some(correlation_ids.clone()),
             text: None,
             thinking: None,
             event_type: "tool_call_update".to_string(),

@@ -47,7 +47,6 @@ pub async fn chat_compact_session(
 ) -> Result<CompactReport, String> {
     let session_manager = state.session_manager.clone();
     let rolling_summarizer = state.rolling_summarizer.clone();
-    drop(state);
 
     compact_service::run_compact(session_manager, rolling_summarizer, session_id).await
 }

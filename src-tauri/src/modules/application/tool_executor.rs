@@ -86,6 +86,7 @@ impl ToolRegistryExecutor {
         input: &str,
         trace_id: &str,
         request_id: Option<&str>,
+        attempt_id: Option<&str>,
     ) -> Result<String, ToolError> {
         if let Some(ref allow) = self.definition_allowlist {
             if !allow.contains(tool_name) {
@@ -97,10 +98,11 @@ impl ToolRegistryExecutor {
         let args = parse_tool_input_json(input);
         let switches = load_control_plane_switches(&self.execution_context.workdir);
         tracing::info!(
-            "[tool_executor] control_plane_v2_enabled={}, boundary_enforce_mode={}, sandbox_strict_mode={}",
+            "[tool_executor] control_plane_v2_enabled={}, boundary_enforce_mode={}, sandbox_strict_mode={}, attempt_id='{}'",
             switches.control_plane_v2_enabled,
             switches.boundary_enforce_mode.as_str(),
-            switches.sandbox_strict_mode
+            switches.sandbox_strict_mode,
+            attempt_id.unwrap_or("none"),
         );
         // P1-9 + P2-14 — emit a bounded, redacted observer event before
         // dispatch. No-op unless `IF2AI_OBSERVER=log`; payload is always
@@ -155,7 +157,7 @@ impl ToolRegistryExecutor {
 impl ToolExecutor for ToolRegistryExecutor {
     fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         let trace_id = AuditEmitter::new_trace_id();
-        self.execute_with_trace(tool_name, input, &trace_id, None)
+        self.execute_with_trace(tool_name, input, &trace_id, None, None)
     }
 
     fn get_definitions(&self) -> Vec<crate::modules::api::ToolDefinition> {

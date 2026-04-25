@@ -133,7 +133,8 @@ export type CanonicalRuntimeEvent =
   | ActivationSnapshotEvent
   | ExecutionModeDecisionEvent
   | ExecutionModeManualOverrideEvent
-  | ProjectionDiscardSessionRunsEvent;
+  | ProjectionDiscardSessionRunsEvent
+  | SupervisorSnapshotEvent;
 
 export interface StreamRunBoundEvent {
   kind: "stream_run_bound";
@@ -420,6 +421,45 @@ export interface ProjectionDiscardSessionRunsEvent {
   receivedAt: number;
 }
 
+/**
+ * T-007 — supervisor snapshot event dispatched when the backend
+ * `SessionSupervisor` emits a state change or the frontend fetches
+ * the initial snapshot via `get_supervisor_snapshot`.
+ *
+ * Carries the full supervisor payload so the reducer can do a
+ * complete snapshot replacement (latest-wins semantics).
+ */
+export interface SupervisorSnapshotEvent {
+  kind: "supervisor_snapshot";
+  sessionId: string;
+  status: SupervisorStatus;
+  activeRunId: string | null;
+  activeRunStatus: RunStatus | null;
+  pendingPermissionCount: number;
+  lastErrorKind: string | null;
+  recoverable: boolean;
+  retryBudgetRemaining: number;
+  disconnectGraceUntil: string | null;
+  lastUpdatedAt: string;
+  receivedAt: number;
+}
+
+/** Top-level supervisor lifecycle states (mirrors Rust `SupervisorStatus`). */
+export type SupervisorStatus =
+  | "idle"
+  | "running"
+  | "blocked"
+  | "recoverable_failed"
+  | "completed"
+  | "closed";
+
+/** Per-run status (mirrors Rust `RunStatus`). */
+export type RunStatus =
+  | "streaming"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
 // ───────────────────────── Projection state ────────────────────────
 
 /** Per-run projection state assembled from the stream event family. */
@@ -586,6 +626,25 @@ export interface ExecutionModeProjection {
   lastUpdatedAt: number;
 }
 
+/**
+ * T-007 — supervisor projection per session (latest-wins).
+ * Populated by `SupervisorSnapshotEvent`; `null` until the
+ * first backend snapshot arrives.
+ */
+export interface SupervisorProjection {
+  sessionId: string;
+  status: SupervisorStatus;
+  activeRunId: string | null;
+  activeRunStatus: RunStatus | null;
+  pendingPermissionCount: number;
+  lastErrorKind: string | null;
+  recoverable: boolean;
+  retryBudgetRemaining: number;
+  disconnectGraceUntil: string | null;
+  lastUpdatedAt: string;
+  capturedAt: number;
+}
+
 /** Top-level snapshot consumed by future M2.4 stores. */
 export interface RuntimeProjectionSnapshot {
   /** Runs indexed by `runId`. */
@@ -597,6 +656,8 @@ export interface RuntimeProjectionSnapshot {
   activation: ActivationProjection | null;
   /** `null` until backend emits an execution-mode decision event. */
   executionMode: ExecutionModeProjection | null;
+  /** T-007 — `null` until backend emits a supervisor snapshot event. */
+  supervisor: SupervisorProjection | null;
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -615,5 +676,6 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     },
     activation: null,
     executionMode: null,
+    supervisor: null,
   };
 }

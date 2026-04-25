@@ -155,6 +155,47 @@ export interface ActivationAction<TPayload = unknown> {
   requestedAt: string
 }
 
+// ───────────────────────── Supervisor contract ──────────────────────
+
+/** Canonical supervisor status discriminator (6 states).
+ * Mirrors `SupervisorStatus` in Rust. */
+export type SupervisorStatus =
+  | 'idle'
+  | 'running'
+  | 'blocked'
+  | 'recoverable_failed'
+  | 'completed'
+  | 'closed'
+
+/** Per-run status carried inside the supervisor snapshot.
+ * Mirrors `RunStatus` in Rust. */
+export type RunStatus =
+  | 'streaming'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+/** Canonical supervisor snapshot — the single backend-side answer
+ * to "what is the session lifecycle state?". Persisted per-session
+ * so the frontend can recover it after a refresh.
+ *
+ * Consumed by the runtime-projection bridge via a fetch seam
+ * (`get_supervisor_snapshot` IPC command) on boot and on session
+ * switch (T-007). */
+export interface SupervisorSnapshot {
+  sessionId: string
+  status: SupervisorStatus
+  activeRunId: string | null
+  activeRunStatus: RunStatus | null
+  pendingPermissionCount: number
+  lastErrorKind: string | null
+  recoverable: boolean
+  retryBudgetRemaining: number
+  disconnectGraceUntil: string | null
+  /** RFC3339 timestamp of the last mutation. */
+  lastUpdatedAt: string
+}
+
 // ───────────────────────── Execution-mode contract ─────────────────
 
 /** Canonical, closed set of runtime execution modes. Adding a value

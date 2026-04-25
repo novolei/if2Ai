@@ -21,6 +21,7 @@ import type {
   MemoryWriteDecisionPayload,
   PermissionRequestPayload,
   StreamTokenPayload,
+  SupervisorSnapshot,
 } from "@/transport/contracts";
 
 import type {
@@ -31,6 +32,7 @@ import type {
   MemoryLifecycleEvent,
   MemoryWriteDecisionEvent,
   PermissionRequestEvent,
+  SupervisorSnapshotEvent,
 } from "./types.ts";
 import { translatePromptDiagnosticsSummary } from "./types.ts";
 
@@ -318,6 +320,33 @@ export function translateExecutionModeDecision(
     ambiguousEscalated: payload.classifierAmbiguousEscalated ?? false,
     escalationSource: payload.classifierEscalationSource,
     policyVersion: payload.classifierPolicyVersion,
+    receivedAt: nowMs(),
+  };
+}
+
+/**
+ * T-007 — translate one [`SupervisorSnapshot`] (returned by the
+ * `get_supervisor_snapshot` IPC command) into a canonical
+ * [`SupervisorSnapshotEvent`].
+ *
+ * Consumed via a **fetch seam**: the bridge calls
+ * `getSupervisorSnapshot()` on boot and on state changes.
+ */
+export function translateSupervisorSnapshot(
+  payload: SupervisorSnapshot,
+): SupervisorSnapshotEvent {
+  return {
+    kind: "supervisor_snapshot",
+    sessionId: payload.sessionId,
+    status: payload.status,
+    activeRunId: payload.activeRunId ?? null,
+    activeRunStatus: payload.activeRunStatus ?? null,
+    pendingPermissionCount: payload.pendingPermissionCount,
+    lastErrorKind: payload.lastErrorKind ?? null,
+    recoverable: payload.recoverable,
+    retryBudgetRemaining: payload.retryBudgetRemaining,
+    disconnectGraceUntil: payload.disconnectGraceUntil ?? null,
+    lastUpdatedAt: payload.lastUpdatedAt,
     receivedAt: nowMs(),
   };
 }

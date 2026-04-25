@@ -322,6 +322,26 @@ export function reduceRuntimeEvent(
         },
       };
     }
+    case "supervisor_snapshot":
+      // T-007 — latest-wins supervisor projection. Full replacement
+      // per session so consumers always see the most recent backend
+      // snapshot without needing to merge per-field deltas.
+      return {
+        ...prev,
+        supervisor: {
+          sessionId: event.sessionId,
+          status: event.status,
+          activeRunId: event.activeRunId,
+          activeRunStatus: event.activeRunStatus,
+          pendingPermissionCount: event.pendingPermissionCount,
+          lastErrorKind: event.lastErrorKind,
+          recoverable: event.recoverable,
+          retryBudgetRemaining: event.retryBudgetRemaining,
+          disconnectGraceUntil: event.disconnectGraceUntil,
+          lastUpdatedAt: event.lastUpdatedAt,
+          capturedAt: event.receivedAt,
+        },
+      };
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.

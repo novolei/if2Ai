@@ -18,6 +18,7 @@ import type {
   SessionIdentityInput,
   SessionMeta,
 } from "@/lib/tauri";
+import type { SupervisorSnapshot } from "@/transport/contracts";
 
 export type {
   ConversationUndoStatus,
@@ -157,6 +158,17 @@ export async function deleteSession(id: string): Promise<void> {
  */
 export async function closeSession(id: string): Promise<void> {
   return getApiClient().call<void>("close_session", { id });
+}
+
+/** Fetch the canonical supervisor snapshot for a session (T-007).
+ * Returns the full lifecycle state: active run, permission block,
+ * recoverability, retry budget, and disconnect grace. */
+export async function getSupervisorSnapshot(
+  id: string,
+): Promise<SupervisorSnapshot> {
+  return getApiClient().call<SupervisorSnapshot>("get_supervisor_snapshot", {
+    id,
+  });
 }
 
 /** Pin / unpin a session in the project rail. */

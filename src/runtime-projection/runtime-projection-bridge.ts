@@ -58,6 +58,7 @@ import {
   requestIntelligenceClassify,
   type RequestIntelligenceClassifyInput,
 } from '@/lib/tauri'
+import { getSupervisorSnapshot } from '@/api/sessions'
 
 import {
   runtimeProjectionStore,
@@ -71,6 +72,7 @@ import {
   translateMemoryEventPayload,
   translateMemoryWriteDecision,
   translatePermissionRequestPayload,
+  translateSupervisorSnapshot,
 } from './runtime-event-translator'
 
 /** Cleanup handle returned by [`wireRuntimeProjectionListeners`]. */
@@ -178,6 +180,13 @@ export function wireRuntimeProjectionListeners(
   // "unknown", not "blocked".
   void refreshActivationSnapshot(store)
 
+  // T-007 — one-shot supervisor snapshot fetch on wire.  Reads the
+  // session supervisor's current lifecycle state so the UI can
+  // render active/blocked/recoverable labels without assembling
+  // state from scattered sources.  Failure leaves `snapshot.supervisor`
+  // as `null`; consumers MUST treat `null` as "unknown".
+  void refreshSupervisorSnapshot(store)
+
   // Server-driven transitions: the Rust `lifecycle_manager` emits
   // `activation_status_changed` when its periodic `revoke_check`
   // observes a state delta (e.g. admin revoke on the VPS).  Refresh
@@ -259,6 +268,27 @@ export async function refreshExecutionModeDecision(
     // eslint-disable-next-line no-console
     console.error(
       '[runtime-projection-bridge] request_intelligence_classify failed',
+      err,
+    )
+  }
+}
+
+/**
+ * T-007 — one-shot supervisor snapshot fetch. Called on wire and on
+ * demand when the active session changes. Failure leaves
+ * `snapshot.supervisor` as `null`.
+ */
+export async function refreshSupervisorSnapshot(
+  store: RuntimeProjectionStore = runtimeProjectionStore,
+  sessionId?: string,
+): Promise<void> {
+  try {
+    const payload = await getSupervisorSnapshot(sessionId ?? '')
+    store.dispatch(translateSupervisorSnapshot(payload))
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[runtime-projection-bridge] get_supervisor_snapshot failed',
       err,
     )
   }
