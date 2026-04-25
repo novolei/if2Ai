@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   ExternalLink,
   Globe,
   Loader2,
@@ -11,6 +12,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { AgentOrb } from '@/components/AgentOrb'
 import { SettingsSurface } from '../components/SettingsSurface'
 import type { SettingsPageProps } from '../types'
@@ -20,13 +22,19 @@ import { broadcastChange } from '@/lib/crossWindowSync'
 import { APP_VERSION_LABEL } from '@/lib/appVersion'
 import {
   checkAppUpdater,
+  downloadAndInstallAppUpdate,
+  downloadAndOpenAppUpdate,
   getAppUpdaterState,
+  onAppUpdaterState,
+  setAppUpdaterPreferences,
   type UpdaterCheckResult,
   type UpdaterRuntimeState,
 } from '@/api/updater'
 import {
   APP_UPDATER_STATE_LABELS,
+  updaterProgressPercent,
   updaterUiStateFromResult,
+  updaterUiStateFromRuntime,
   type AppUpdaterUiState,
 } from './app-updater-state'
 
@@ -35,6 +43,12 @@ const btnOutline =
 
 const btnPrimary =
   'window-no-drag h-7 rounded-xl bg-jade px-3 text-[11.5px] font-medium text-white shadow-none hover:bg-jade/90'
+
+const channelLabels = {
+  stable: 'Stable 通道',
+  beta: 'Beta 通道',
+  nightly: 'Nightly 通道',
+} as const
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -77,7 +91,10 @@ export function AboutSettingsPage({}: SettingsPageProps) {
     let cancelled = false
     void getAppUpdaterState()
       .then((state) => {
-        if (!cancelled) setUpdaterState(state)
+        if (!cancelled) {
+          setUpdaterState(state)
+          setUiState(updaterUiStateFromRuntime(state))
+        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -94,21 +111,45 @@ export function AboutSettingsPage({}: SettingsPageProps) {
     }
   }, [])
 
-  const updaterCopy = APP_UPDATER_STATE_LABELS[uiState]
-  const updaterDetail = useMemo(() => {
-    if (checkResult?.diagnostic) return checkResult.diagnostic
-    if (checkResult?.latest_version) {
-      return `当前 ${checkResult.current_version} · 最新 ${checkResult.latest_version}`
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let cancelled = false
+    void onAppUpdaterState((state) => {
+      setUpdaterState(state)
+      setUiState(updaterUiStateFromRuntime(state))
+    }).then((dispose) => {
+      if (cancelled) dispose()
+      else unlisten = dispose
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
     }
-    if (updaterState?.manifest_url) return updaterState.manifest_url
-    return '未配置 IF2AI_UPDATE_MANIFEST_URL'
-  }, [checkResult, updaterState])
+  }, [])
+
+  const updaterCopy = APP_UPDATER_STATE_LABELS[uiState]
+  const effectiveLatestVersion = checkResult?.latest_version ?? updaterState?.latest_version
+  const effectiveReleaseNotesUrl = checkResult?.release_notes_url ?? updaterState?.release_notes_url
+  const effectiveArtifactUrl = checkResult?.artifact_url ?? updaterState?.artifact_url
+  const updaterProgress = updaterProgressPercent(
+    updaterState?.downloaded_bytes,
+    updaterState?.total_bytes,
+  )
+  const updaterDetail = useMemo(() => {
+    const current = updaterState?.current_version ?? checkResult?.current_version ?? APP_VERSION_LABEL.replace(/^v/, '')
+    const channel = updaterState?.channel ? channelLabels[updaterState.channel] : 'Stable 通道'
+    if (effectiveLatestVersion) {
+      return `当前 v${current.replace(/^v/, '')} · 最新 v${effectiveLatestVersion.replace(/^v/, '')} · ${channel}`
+    }
+    if (updaterState?.checked_at) return `当前 v${current.replace(/^v/, '')} · ${channel} · 已检查`
+    return `当前 ${APP_VERSION_LABEL} · ${channel} · 使用默认更新源`
+  }, [checkResult, effectiveLatestVersion, updaterState])
 
   const handleCheckUpdate = async () => {
     setUiState('checking')
     setCheckResult(null)
     try {
-      const result = await checkAppUpdater(updaterState?.manifest_url ?? null)
+      const result = await checkAppUpdater()
       setCheckResult(result)
       setUiState(updaterUiStateFromResult(result))
       if (result.status === 'update_available') {
@@ -134,9 +175,77 @@ export function AboutSettingsPage({}: SettingsPageProps) {
   }
 
   const openArtifact = () => {
-    const url = checkResult?.artifact_url ?? checkResult?.release_notes_url
+    const url = effectiveReleaseNotesUrl ?? effectiveArtifactUrl
     if (!url) return
     window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  const handleDownloadUpdate = async () => {
+    setUiState('downloading')
+    try {
+      const result = await downloadAndInstallAppUpdate()
+      if (result.status === 'installing' || result.status === 'downloaded') {
+        toast.success('更新安装已启动', {
+          description: '系统安装器已接管流程，If2Ai 可能会自动退出或重启。',
+        })
+        setUiState(result.status === 'installing' ? 'installing' : 'downloaded')
+      } else if (result.status === 'no_update') {
+        toast.success('已是最新版本')
+        setUiState('ready')
+      } else {
+        toast.error('下载更新失败', { description: result.diagnostic ?? '请稍后重试。' })
+        setUiState('failed')
+      }
+    } catch (error) {
+      setUiState('failed')
+      toast.error('下载更新失败', { description: String(error) })
+    }
+  }
+
+  const handleLegacyDownload = async () => {
+    setUiState('downloading')
+    try {
+      const result = await downloadAndOpenAppUpdate(updaterState?.manifest_url ?? null)
+      if (result.status === 'downloaded') {
+        toast.success('更新包已下载', {
+          description: result.local_path
+            ? `已打开安装包：${result.local_path}`
+            : '已打开系统安装器，请按提示完成安装。',
+        })
+        setUiState('downloaded')
+      } else if (result.status === 'no_update') {
+        toast.success('已是最新版本')
+        setUiState('ready')
+      } else {
+        toast.error('下载更新失败', { description: result.diagnostic ?? '请稍后重试。' })
+        setUiState('failed')
+      }
+    } catch (error) {
+      setUiState('failed')
+      toast.error('下载更新失败', { description: String(error) })
+    }
+  }
+
+  const handleAutoCheckChange = async (checked: boolean) => {
+    const next = {
+      auto_check_enabled: checked,
+      channel: updaterState?.channel ?? 'stable',
+    } as const
+    setUpdaterState((state) => (state ? { ...state, auto_check_enabled: checked } : state))
+    try {
+      const state = await setAppUpdaterPreferences(next)
+      setUpdaterState(state)
+      setUiState(updaterUiStateFromRuntime(state))
+    } catch (error) {
+      toast.error('保存更新偏好失败', { description: String(error) })
+    }
+  }
+
+  const copyDiagnostic = async () => {
+    const detail = updaterState?.diagnostic ?? checkResult?.diagnostic
+    if (!detail) return
+    await navigator.clipboard.writeText(detail)
+    toast.success('诊断信息已复制')
   }
 
   return (
@@ -162,18 +271,6 @@ export function AboutSettingsPage({}: SettingsPageProps) {
                 <ExternalLink className="mr-1.5 h-3 w-3" />
                 查看文档
               </Button>
-              <Button
-                className={btnPrimary}
-                onClick={() => void handleCheckUpdate()}
-                disabled={uiState === 'checking'}
-              >
-                {uiState === 'checking' ? (
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                ) : (
-                  <Rocket className="mr-1.5 h-3 w-3" />
-                )}
-                {uiState === 'checking' ? '检查中' : '检查更新'}
-              </Button>
             </div>
           </div>
         </div>
@@ -181,55 +278,121 @@ export function AboutSettingsPage({}: SettingsPageProps) {
 
       {/* ── App updater ── */}
       <SettingsSurface className="px-5 py-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4">
           <div className="min-w-0">
-            <SectionLabel>App Updater</SectionLabel>
-            <div className="flex items-center gap-2">
-              <span className="flex size-8 items-center justify-center rounded-xl bg-jade/10 text-jade">
-                {uiState === 'failed' ? (
-                  <AlertTriangle className="h-4 w-4 text-amber-700" />
-                ) : uiState === 'ready' ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : uiState === 'checking' ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Rocket className="h-4 w-4" />
-                )}
-              </span>
-              <div className="min-w-0">
-                <div className="text-[12.5px] font-semibold tracking-tight">
-                  {updaterCopy.title}
-                </div>
-                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {updaterDetail}
-                </div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <SectionLabel>软件更新</SectionLabel>
+              <div className="flex items-center gap-2 rounded-full border border-black/[0.07] bg-black/[0.02] px-2.5 py-1 text-[10.5px] text-muted-foreground">
+                <span>自动检查</span>
+                <Switch
+                  checked={updaterState?.auto_check_enabled ?? true}
+                  onCheckedChange={(checked) => void handleAutoCheckChange(checked)}
+                  aria-label="自动检查更新"
+                />
               </div>
             </div>
-            <p className="mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-              {updaterCopy.description}
-            </p>
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex size-9 items-center justify-center rounded-xl bg-jade/10 text-jade">
+                {uiState === 'failed' ? <AlertTriangle className="h-4 w-4 text-amber-700" /> : null}
+                {uiState === 'ready' ? <CheckCircle2 className="h-4 w-4" /> : null}
+                {uiState === 'checking' || uiState === 'downloading' || uiState === 'installing' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : null}
+                {uiState === 'idle' || uiState === 'available' || uiState === 'downloaded' ? (
+                  <Rocket className="h-4 w-4" />
+                ) : null}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13.5px] font-semibold tracking-tight">
+                  {uiState === 'available' && effectiveLatestVersion
+                    ? `发现新版本 v${effectiveLatestVersion.replace(/^v/, '')}`
+                    : updaterCopy.title}
+                </div>
+                <div className="mt-0.5 text-[11.5px] leading-5 text-muted-foreground">
+                  {updaterDetail}
+                </div>
+                <p className="mt-1.5 max-w-2xl text-[11px] leading-5 text-muted-foreground">
+                  {updaterCopy.description}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="flex shrink-0 gap-2 sm:self-end">
+
+          {(uiState === 'downloading' || uiState === 'installing' || uiState === 'downloaded') && (
+            <div className="rounded-xl border border-black/[0.06] bg-black/[0.018] px-3 py-2.5">
+              <div className="mb-2 flex items-center justify-between text-[10.5px] text-muted-foreground">
+                <span>
+                  {uiState === 'installing'
+                    ? '正在交给系统安装器'
+                    : uiState === 'downloaded'
+                      ? '下载完成'
+                      : '正在下载更新包'}
+                </span>
+                <span>{updaterProgress === null ? '校验中' : `${updaterProgress}%`}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-black/[0.06]">
+                <div
+                  className={`h-full rounded-full bg-jade transition-all ${
+                    updaterProgress === null ? 'w-1/3 animate-pulse' : ''
+                  }`}
+                  style={updaterProgress === null ? undefined : { width: `${updaterProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {uiState === 'failed' && (updaterState?.diagnostic || checkResult?.diagnostic) ? (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2.5">
+              <div className="text-[11.5px] font-medium text-amber-800">检查更新失败</div>
+              <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-amber-900/70">
+                {updaterState?.diagnostic ?? checkResult?.diagnostic}
+              </div>
+              <Button variant="outline" className={`${btnOutline} mt-2`} onClick={copyDiagnostic}>
+                <Copy className="mr-1.5 h-3 w-3" />
+                复制诊断信息
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="outline"
               className={btnOutline}
-              disabled={!checkResult?.artifact_url && !checkResult?.release_notes_url}
+              disabled={!effectiveReleaseNotesUrl && !effectiveArtifactUrl}
               onClick={openArtifact}
             >
               <ExternalLink className="mr-1.5 h-3 w-3" />
-              打开下载
+              查看发布说明
             </Button>
             <Button
-              className={btnPrimary}
-              onClick={() => void handleCheckUpdate()}
-              disabled={uiState === 'checking'}
+              variant="outline"
+              className={btnOutline}
+              disabled={uiState !== 'failed'}
+              onClick={() => void handleLegacyDownload()}
             >
-              {uiState === 'checking' ? (
+              <ExternalLink className="mr-1.5 h-3 w-3" />
+              兼容下载
+            </Button>
+            {uiState === 'available' ? (
+              <Button className={btnPrimary} onClick={() => void handleDownloadUpdate()}>
+                <ExternalLink className="mr-1.5 h-3 w-3" />
+                下载并安装
+              </Button>
+            ) : null}
+            <Button
+              className={uiState === 'available' ? btnOutline : btnPrimary}
+              variant={uiState === 'available' ? 'outline' : 'default'}
+              onClick={() => void handleCheckUpdate()}
+              disabled={uiState === 'checking' || uiState === 'downloading' || uiState === 'installing'}
+            >
+              {uiState === 'downloading' ? (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              ) : uiState === 'checking' ? (
                 <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
               ) : (
                 <Rocket className="mr-1.5 h-3 w-3" />
               )}
-              检查
+              {uiState === 'checking' ? '正在检查' : '检查更新'}
             </Button>
           </div>
         </div>

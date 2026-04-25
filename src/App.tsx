@@ -52,6 +52,7 @@ import {
   type SessionIdentityInput,
   type SessionMeta,
 } from "@/api";
+import { checkAppUpdater, getAppUpdaterState } from "@/api/updater";
 import { invoke } from "@/lib/tauri";
 import type {
   PermissionMode,
@@ -252,7 +253,12 @@ function App() {
   const [activeSection, setActiveSection] = useState<AppSection>(() => {
     if (typeof window === "undefined") return "chat";
     const stored = localStorage.getItem("lastActiveSection");
-    return stored === "skills" || stored === "automation" ? stored : "chat";
+    return stored === "skills" ||
+      stored === "automation" ||
+      stored === "memory" ||
+      stored === "jiaochang"
+      ? stored
+      : "chat";
   });
   // MIG-013 — these four slices live in the bootstrap store.
   // Reads go through `useBootstrapSelector` so React re-renders
@@ -1288,6 +1294,38 @@ function App() {
   useEffect(() => {
     const unwire = wireRuntimeProjectionListeners();
     return () => unwire();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const lastCheckKey = "if2ai:app-updater:last-check-ms";
+    const lastToastKey = "if2ai:app-updater:last-toast-version";
+    const now = Date.now();
+    const lastCheck = Number(localStorage.getItem(lastCheckKey) || "0");
+    if (now - lastCheck < 6 * 60 * 60 * 1000) return;
+    localStorage.setItem(lastCheckKey, String(now));
+    void getAppUpdaterState()
+      .then((state) => {
+        if (!state.auto_check_enabled) return null;
+        return checkAppUpdater();
+      })
+      .then((result) => {
+        if (!result) return;
+        if (cancelled || result.status !== "update_available") return;
+        const latest = result.latest_version ?? "新版本";
+        if (localStorage.getItem(lastToastKey) === latest) return;
+        localStorage.setItem(lastToastKey, latest);
+        toast.info(`If2Ai ${latest} 可更新`, {
+          description: "已发现 GitHub Release 更新包，可在设置 > 关于中下载并安装。",
+          duration: 9000,
+        });
+      })
+      .catch((error) => {
+        console.debug("[app-updater] background check failed", error);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Auto-compact: when the backend's stream_finalize crosses

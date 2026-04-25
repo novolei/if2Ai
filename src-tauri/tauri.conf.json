@@ -37,6 +37,7 @@
     },
     "bundle": {
         "active": true,
+        "createUpdaterArtifacts": true,
         "resources": [
             "resources/bundled-skills",
             "resources/bundled-skills/README.md",
@@ -51,6 +52,17 @@
         "macOS": {
             "minimumSystemVersion": "11.0",
             "infoPlist": "Info.plist"
+        }
+    },
+    "plugins": {
+        "updater": {
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGNjM2OTVFODk2QTA5MUUKUldRZUNXcUpYbWxqSCtuMGpCZDRRRkpuM1RUSmZuc2VPdXFKQnRYRTFkdGt3UTJUUEgwMW5TM1YK",
+            "endpoints": [
+                "https://github.com/novolei/if2Ai/releases/latest/download/latest.json"
+            ],
+            "windows": {
+                "installMode": "passive"
+            }
         }
     }
 }

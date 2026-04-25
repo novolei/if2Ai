@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   APP_UPDATER_STATE_LABELS,
+  updaterProgressPercent,
   updaterUiStateFromResult,
+  updaterUiStateFromRuntime,
   type AppUpdaterUiState,
 } from "./app-updater-state.ts";
 
@@ -14,6 +16,8 @@ describe("settings_ui — app updater state machine", () => {
       "checking",
       "available",
       "downloading",
+      "downloaded",
+      "installing",
       "ready",
       "failed",
     ];
@@ -47,5 +51,29 @@ describe("settings_ui — app updater state machine", () => {
       }),
       "failed",
     );
+  });
+
+  it("maps runtime events onto visible settings states", () => {
+    assert.equal(updaterUiStateFromRuntime(null), "idle");
+    assert.equal(
+      updaterUiStateFromRuntime({
+        status: "latest",
+        current_version: "0.4.0",
+        channel: "stable",
+        auto_check_enabled: true,
+      }),
+      "ready",
+    );
+    assert.equal(
+      updaterUiStateFromRuntime({
+        status: "error",
+        current_version: "0.4.0",
+        channel: "stable",
+        auto_check_enabled: true,
+      }),
+      "failed",
+    );
+    assert.equal(updaterProgressPercent(50, 200), 25);
+    assert.equal(updaterProgressPercent(null, 200), null);
   });
 });

@@ -484,4 +484,7 @@ pub use usage::usage_summary;
 #[allow(unused_imports)]
 pub use tts_download::{tts_model_download_start, tts_model_download_status, tts_model_status};
 #[allow(unused_imports)]
-pub use updater::{app_updater_check, app_updater_get_state};
+pub use updater::{
+    app_updater_check, app_updater_check_manifest, app_updater_download_and_install,
+    app_updater_download_and_open, app_updater_get_state, app_updater_set_preferences,
+};
