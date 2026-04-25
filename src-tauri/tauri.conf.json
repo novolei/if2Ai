@@ -1,6 +1,6 @@
 {
     "productName": "If2Ai",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "identifier": "dev.if2ai.desktop",
     "build": {
         "beforeBuildCommand": "npm run build:web",
