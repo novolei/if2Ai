@@ -26,9 +26,10 @@ pub struct SessionHistoryPageResponse {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SessionIdentityInput {
+    #[serde(default, alias = "soulId")]
     pub soul_id: Option<String>,
+    #[serde(default, alias = "personaId")]
     pub persona_id: Option<String>,
 }
 
@@ -327,6 +328,35 @@ pub async fn set_session_identity(
         .await
         .map(|session| SessionMeta::from_session(&session))
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionIdentityInput;
+
+    #[test]
+    fn session_identity_input_accepts_frontend_snake_case() {
+        let input: SessionIdentityInput = serde_json::from_value(serde_json::json!({
+            "soul_id": "if2ai-core",
+            "persona_id": "execution-partner"
+        }))
+        .expect("deserialize snake_case identity");
+
+        assert_eq!(input.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(input.persona_id.as_deref(), Some("execution-partner"));
+    }
+
+    #[test]
+    fn session_identity_input_accepts_tauri_camel_case() {
+        let input: SessionIdentityInput = serde_json::from_value(serde_json::json!({
+            "soulId": "if2ai-core",
+            "personaId": "execution-partner"
+        }))
+        .expect("deserialize camelCase identity");
+
+        assert_eq!(input.soul_id.as_deref(), Some("if2ai-core"));
+        assert_eq!(input.persona_id.as_deref(), Some("execution-partner"));
+    }
 }
 
 /// Replace session-scoped active skill ids (prompt + low-trust tool attenuation).

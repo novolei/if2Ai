@@ -12,7 +12,7 @@
 
 | Pack   | Type | Goal | Owner |
 | ------ | ---- | ---- | ----- |
-| _(无)_ | —    | —    | —     |
+| [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature | Updater transport + release manifest + settings state machine + CI release gates | executor |
 
 ## Recently Done
 

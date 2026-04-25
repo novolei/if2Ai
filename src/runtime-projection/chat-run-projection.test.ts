@@ -308,6 +308,66 @@ describe("chat run projection", () => {
     );
   });
 
+  it("keeps historical assistant messages without matching projection while projecting the live run", () => {
+    const liveRun: RunProjection = {
+      runId: "run-live",
+      sessionId: "session-1",
+      text: "live projected answer",
+      thinking: "",
+      thinkingStarted: false,
+      status: "streaming",
+      resumeAvailable: false,
+      toolCalls: {},
+      memoryItems: [],
+      lastUpdatedAt: 4000,
+    };
+
+    const messages = projectConversationMessagesFromRuns(
+      [
+        {
+          id: "user-old",
+          role: "user",
+          content: "old question",
+          timestamp: new Date(1000),
+        },
+        {
+          id: "assistant-old",
+          role: "assistant",
+          content: "old answer must stay visible",
+          timestamp: new Date(2000),
+        },
+        {
+          id: "user-live",
+          role: "user",
+          content: "new question",
+          timestamp: new Date(3000),
+        },
+        {
+          id: "assistant-live-placeholder",
+          role: "assistant",
+          content: "",
+          timestamp: new Date(3500),
+          streamId: "run-live",
+          isStreaming: true,
+        },
+      ],
+      { "run-live": liveRun },
+      "session-1",
+    );
+
+    assert.deepEqual(
+      messages.map((message) => message.content),
+      [
+        "old question",
+        "old answer must stay visible",
+        "new question",
+        "live projected answer",
+      ],
+    );
+    assert.equal(messages[3].streamId, "run-live");
+    assert.equal(messages[3].isStreaming, true);
+  });
+
   // GAP-003 (T-005): Verify projection single truth — confirms that
   // `projectConversationMessagesFromRuns` never leaks non-user messages
   // through as-is (assistant/tool placeholders from the legacy slice are

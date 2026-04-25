@@ -1178,16 +1178,22 @@ function App() {
     return conv?.sessionTotals;
   }, [projectionRuns, activeSessionId, conversations]);
   const activeMessages = useMemo(() => {
-    // T-003 (MIG-017): Chat truth cutover — only user messages are passed
-    // to projection.  Assistant / tool / thinking / completion are derived
-    // from the canonical runtime-projection store, not from the legacy
-    // conversation slice.  The conversation slice retains user messages
-    // for anchoring assistant-run pairs.
+    const hasProjectionRunsForSession =
+      activeSessionId &&
+      Object.values(projectionRuns).some((run) => run.sessionId === activeSessionId);
+    if (!hasProjectionRunsForSession && activeConv?.messages.some((msg) => msg.role !== "user")) {
+      return activeConv.messages.map((msg) => ({
+        ...msg,
+        content: msg.content || " ",
+      }));
+    }
+    // T-003 (MIG-017): Chat truth cutover — assistant / tool / thinking /
+    // completion for any run present in the projection store are derived from
+    // canonical projection. Persisted historical messages that have no
+    // matching run projection must remain visible while a new turn streams.
     const baseMessages =
-      activeConv?.messages.filter(
-        (msg) =>
-          msg.role === "user" && !msg.content.includes("[resume_cursor]"),
-      ) ?? [];
+      activeConv?.messages.filter((msg) => !msg.content.includes("[resume_cursor]")) ??
+      [];
     return projectConversationMessagesFromRuns(
       baseMessages,
       projectionRuns,
