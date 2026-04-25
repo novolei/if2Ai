@@ -220,16 +220,16 @@
 | MIG-011 | done | `desktop_host::{builder,setup}` exists; `tray_action_resolution_only_accepts_native_host_ids` passes | skip unless host boundary regresses |
 | MIG-003 | done | translator supports correlation.runId precedence; bridge is sole ingestion entry; V2 Single Truth gate PASS | T-003 (Chat Cutover) needed to retire compatibility raw-stream listeners |
 | MIG-006 | partial | `AppShell`, `ContentRouter`, `bootstrapStore`, `sessionStore` exist | no complete shell truth store; activation/session/run/composer still split |
-| MIG-007 | done | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor` | skip; future attempt work belongs to MIG-022 |
+| MIG-007 | done | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor`; T-010 adds UUID attempt_id generation + populates StreamTokenPayload.correlation | — |
 | MIG-008 | partial | `HarnessRunReport`, graders, compare, suite report exist | not yet derived from canonical event log / run report |
 | MIG-009 | partial | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
 | MIG-016 | done | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass | skip; hardening belongs to GAP-002 / GAP-008 |
 | MIG-017 | done (T-003) | chat UI reads projection-only; raw listener is transport-only; conversation-slice holds only user messages; `projectConversationMessagesFromRuns` contract documented | T-005 covers remaining raw listener retirement for permission/approvals |
 | MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | session.json fallback now traced via `fallback_reason` field (GAP-001 done) |
 | MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
-| MIG-020 | done (T-006) | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests | T-007 covers projector-side supervisor UI |
+| MIG-020 | done | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests + T-007 frontend projection pipeline | — |
 | MIG-021 | partial | resume cursor and recoverable UI fields exist | missing typed `resume_reason` / `safe_to_retry_mutations` contract |
-| MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log | no stable attempt_id/attempt_no generation or ledger state machine |
+| MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log; T-010 generates UUID attempt_id per tool call and populates StreamTokenPayload.correlation | no stable attempt_no increment or ledger state machine (T-013) |
 | MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |
 
 ### Architecture Gap Pipeline
