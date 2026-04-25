@@ -1,6 +1,6 @@
 [package]
 name = "if2ai-backend"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 # 与 [[bin]] harness-cli 并存时，cargo run / tauri dev 需默认入口（否则 Cargo 无法选择 binary）
 default-run = "if2ai-backend"
