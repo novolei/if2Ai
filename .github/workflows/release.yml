@@ -23,13 +23,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            args: --target aarch64-apple-darwin
-          - os: macos-13
-            args: --target x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            tauri_platform: darwin-aarch64
+            platform: darwin
+            arch: aarch64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            tauri_platform: darwin-x86_64
+            platform: darwin
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -40,30 +46,133 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ contains(matrix.args, 'aarch64') && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+          targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build signed Tauri bundle
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           IF2AI_UPDATER_PUBKEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: If2Ai ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'nightly') }}
-          args: ${{ matrix.args }}
+        run: npm run build -- --target ${{ matrix.target }}
 
       - name: Verify signed updater assets exist
         run: |
-          find src-tauri/target/release/bundle -type f \( -name '*.app.tar.gz' -o -name '*.sig' -o -name '*.dmg' \) -print
-          test -n "$(find src-tauri/target/release/bundle -type f -name '*.app.tar.gz' -print -quit)"
-          test -n "$(find src-tauri/target/release/bundle -type f -name '*.app.tar.gz.sig' -print -quit)"
+          find target src-tauri/target -type f \( -name '*.app.tar.gz' -o -name '*.sig' -o -name '*.dmg' \) -print 2>/dev/null || true
+          test -n "$(find target src-tauri/target -type f -name '*.app.tar.gz' -print -quit 2>/dev/null)"
+          test -n "$(find target src-tauri/target -type f -name '*.app.tar.gz.sig' -print -quit 2>/dev/null)"
+          test -n "$(find target src-tauri/target -type f -name '*.dmg' -print -quit 2>/dev/null)"
+
+      - name: Stage release assets
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          RELEASE_TAURI_PLATFORM: ${{ matrix.tauri_platform }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_VERSION#v}"
+          OUT_DIR="dist/release-artifacts/${RELEASE_TAURI_PLATFORM}"
+          export OUT_DIR
+          mkdir -p "$OUT_DIR"
+
+          INSTALLER="$(find target src-tauri/target -type f -name '*.dmg' ! -name 'rw.*.dmg' -print 2>/dev/null | sort | tail -n 1)"
+          UPDATER="$(find target src-tauri/target -type f -name '*.app.tar.gz' -print 2>/dev/null | sort | tail -n 1)"
+          SIGNATURE="${UPDATER}.sig"
+
+          test -n "$INSTALLER"
+          test -n "$UPDATER"
+          test -f "$SIGNATURE"
+
+          INSTALLER_OUT="$OUT_DIR/If2Ai_${VERSION}_${RELEASE_ARCH}.dmg"
+          UPDATER_OUT="$OUT_DIR/If2Ai_${VERSION}_${RELEASE_TAURI_PLATFORM}.app.tar.gz"
+          SIGNATURE_OUT="${UPDATER_OUT}.sig"
+
+          cp "$INSTALLER" "$INSTALLER_OUT"
+          cp "$UPDATER" "$UPDATER_OUT"
+          cp "$SIGNATURE" "$SIGNATURE_OUT"
+
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const entry = {
+            platform: process.env.RELEASE_PLATFORM,
+            arch: process.env.RELEASE_ARCH,
+            tauri_target: process.env.RELEASE_TAURI_PLATFORM,
+            installer_path: `${process.env.OUT_DIR || `dist/release-artifacts/${process.env.RELEASE_TAURI_PLATFORM}`}/If2Ai_${process.env.RELEASE_VERSION.replace(/^v/, '')}_${process.env.RELEASE_ARCH}.dmg`,
+            updater_path: `${process.env.OUT_DIR || `dist/release-artifacts/${process.env.RELEASE_TAURI_PLATFORM}`}/If2Ai_${process.env.RELEASE_VERSION.replace(/^v/, '')}_${process.env.RELEASE_TAURI_PLATFORM}.app.tar.gz`,
+            signature_path: `${process.env.OUT_DIR || `dist/release-artifacts/${process.env.RELEASE_TAURI_PLATFORM}`}/If2Ai_${process.env.RELEASE_VERSION.replace(/^v/, '')}_${process.env.RELEASE_TAURI_PLATFORM}.app.tar.gz.sig`,
+          }
+          fs.writeFileSync(`${process.env.OUT_DIR || `dist/release-artifacts/${process.env.RELEASE_TAURI_PLATFORM}`}/artifact-set.json`, `${JSON.stringify({ artifacts: [entry] }, null, 2)}\n`)
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.tauri_platform }}
+          path: dist/release-artifacts/${{ matrix.tauri_platform }}
+
+  publish-release-manifest:
+    name: release-ci::publish_release_manifest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-signed-updater-artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release-artifacts
+
+      - name: Merge release artifact set
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const root = 'dist/release-artifacts'
+          const entries = []
+          function walk(dir) {
+            for (const name of fs.readdirSync(dir)) {
+              const file = path.join(dir, name)
+              const stat = fs.statSync(file)
+              if (stat.isDirectory()) walk(file)
+              else if (name === 'artifact-set.json') {
+                const artifactSet = JSON.parse(fs.readFileSync(file, 'utf8'))
+                const dir = path.dirname(file)
+                entries.push(...artifactSet.artifacts.map((entry) => ({
+                  ...entry,
+                  installer_path: path.join(dir, path.basename(entry.installer_path)),
+                  updater_path: path.join(dir, path.basename(entry.updater_path)),
+                  signature_path: path.join(dir, path.basename(entry.signature_path)),
+                })))
+              }
+            }
+          }
+          walk(root)
+          entries.sort((a, b) => `${a.platform}-${a.arch}`.localeCompare(`${b.platform}-${b.arch}`))
+          if (entries.length === 0) throw new Error('no release artifact entries found')
+          fs.writeFileSync(path.join(root, 'artifact-set.json'), `${JSON.stringify({ artifacts: entries }, null, 2)}\n`)
+          console.log(JSON.stringify(entries, null, 2))
+          NODE
+
+      - name: Publish GitHub Release manifests and assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/publish-github-release.mjs \
+            --artifact-set=dist/release-artifacts/artifact-set.json \
+            --repo="${GITHUB_REPOSITORY}" \
+            --channel=stable \
+            --version="${VERSION}" \
+            --tag="${GITHUB_REF_NAME}"
 
   app-updater-manifest-gate:
     name: release-ci::app_updater_manifest_gate

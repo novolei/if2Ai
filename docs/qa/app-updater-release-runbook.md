@@ -35,7 +35,7 @@ npm run release:one-click -- --bump patch
 - 用本地 `~/.tauri/if2ai-updater.key` 和 `.pub` 注入 Tauri updater 签名环境。
 - 运行版本一致性检查、Tauri build、manifest dry-run 校验。
 - 只 stage 三个版本文件，提交 `chore(release): vX.Y.Z`，打 annotated tag，并 push branch + tag。
-- tag push 会触发 GitHub Release workflow，由 CI 构建并上传 signed updater artifact。
+- tag push 会触发 GitHub Release workflow，由 CI 在 `macos-15` / `macos-15-intel` 构建 arm64/x86_64 signed updater artifact，并聚合上传双平台 manifest。
 
 常用一键参数:
 
@@ -51,6 +51,7 @@ npm run release:one-click -- --bump patch --local-upload
 - `--dry-run` 只预览下一版本、tag 和远端 tag 占用，不改文件。
 - 默认允许工作区存在其它未提交业务改动，但版本文件必须干净，脚本只会提交版本文件。
 - `--local-upload` 会在 tag push 后用本地已构建产物直接上传 release；默认推荐让 GitHub Release workflow 上传。
+- CI 不再使用 `macos-13`；Intel 构建走 `macos-15-intel`，避免旧 runner 退役和长时间 queued。
 
 手动分步流程仍可用:
 
@@ -83,8 +84,8 @@ npm run release:github -- --build=patch --repo=novolei/if2Ai --channel=stable
 - `dist/release/if2ai-release-manifest.json`
 - `dist/release/latest.json`
 - GitHub Release artifact，例如 `If2Ai_0.4.1_aarch64.dmg`
-- Tauri updater artifact，例如 `If2Ai.app.tar.gz`
-- Tauri signature，例如 `If2Ai.app.tar.gz.sig`
+- Tauri updater artifact，例如 `If2Ai_0.4.1_darwin-aarch64.app.tar.gz`
+- Tauri signature，例如 `If2Ai_0.4.1_darwin-aarch64.app.tar.gz.sig`
 
 manifest URL 约定:
 

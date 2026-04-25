@@ -18,6 +18,7 @@ const outDir = resolve(root, args.get('out-dir') || process.env.RELEASE_OUT_DIR 
 const artifactArg = args.get('artifact')
 const updaterArtifactArg = args.get('updater-artifact')
 const signatureArg = args.get('signature')
+const artifactSetArg = args.get('artifact-set')
 const build = args.get('build')
 if (build) {
   run('bash', ['scripts/release-macos.sh', build])
@@ -25,72 +26,77 @@ if (build) {
 const effectivePackageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
 const effectiveVersion = args.get('version') || effectivePackageJson.version
 const effectiveTag = args.get('tag') || `v${effectiveVersion}`
-const artifactPath = artifactArg ? resolve(root, artifactArg) : findArtifact(outDir, effectiveVersion)
-const updaterArtifactPath = updaterArtifactArg
-  ? resolve(root, updaterArtifactArg)
-  : findUpdaterArtifact(effectiveVersion)
-const signaturePath = signatureArg ? resolve(root, signatureArg) : `${updaterArtifactPath}.sig`
+const releaseArtifacts = artifactSetArg
+  ? readArtifactSet(artifactSetArg)
+  : [
+      inferSingleArtifact({
+        artifactPath: artifactArg ? resolve(root, artifactArg) : findArtifact(outDir, effectiveVersion),
+        updaterArtifactPath: updaterArtifactArg
+          ? resolve(root, updaterArtifactArg)
+          : findUpdaterArtifact(effectiveVersion),
+        signaturePath: signatureArg,
+      }),
+    ]
 const manifestDir = resolve(root, args.get('manifest-dir') || 'dist/release')
 const manifestPath = resolve(manifestDir, 'if2ai-release-manifest.json')
 const tauriManifestPath = resolve(manifestDir, 'latest.json')
 const dryRun = args.get('dry-run') === 'true'
 
-if (!existsSync(artifactPath)) {
-  throw new Error(`release artifact not found: ${artifactPath}`)
-}
-if (!existsSync(updaterArtifactPath)) {
-  throw new Error(`signed updater artifact not found: ${updaterArtifactPath}`)
-}
-if (!existsSync(signaturePath)) {
-  throw new Error(`updater signature not found: ${signaturePath}`)
+for (const artifact of releaseArtifacts) {
+  if (!existsSync(artifact.installer_path)) {
+    throw new Error(`release artifact not found: ${artifact.installer_path}`)
+  }
+  if (!existsSync(artifact.updater_path)) {
+    throw new Error(`signed updater artifact not found: ${artifact.updater_path}`)
+  }
+  if (!existsSync(artifact.signature_path)) {
+    throw new Error(`updater signature not found: ${artifact.signature_path}`)
+  }
 }
 
 mkdirSync(manifestDir, { recursive: true })
 
-const artifactName = basename(artifactPath)
-const updaterArtifactName = basename(updaterArtifactPath)
-const updaterSignatureName = basename(signaturePath)
-const checksum = sha256File(updaterArtifactPath)
-const signature = readFileSync(signaturePath, 'utf8').trim()
-const releaseUrl = `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(artifactName)}`
-const updaterUrl = `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(updaterArtifactName)}`
-const updaterSignatureUrl = `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(updaterSignatureName)}`
 const manifestUrl = `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/if2ai-release-manifest.json`
 const tauriManifestUrl = `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/latest.json`
-const platform =
-  process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'windows' : 'linux'
-const arch = process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x86_64' : process.arch
-const tauriTarget = `${platform}-${arch}`
+const publishedAt = new Date().toISOString()
+const manifestArtifacts = releaseArtifacts.map((artifact) => {
+  const installerName = basename(artifact.installer_path)
+  const updaterName = basename(artifact.updater_path)
+  const signatureName = basename(artifact.signature_path)
+  return {
+    platform: artifact.platform,
+    arch: artifact.arch,
+    url: `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(updaterName)}`,
+    installer_url: `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(installerName)}`,
+    signature_url: `https://github.com/${ownerRepo}/releases/download/${effectiveTag}/${encodeURIComponent(signatureName)}`,
+    checksum_sha256: sha256File(artifact.updater_path),
+    signature: readFileSync(artifact.signature_path, 'utf8').trim(),
+  }
+})
+const tauriPlatforms = Object.fromEntries(
+  releaseArtifacts.map((artifact, index) => [
+    artifact.tauri_target || `${artifact.platform}-${artifact.arch}`,
+    {
+      signature: manifestArtifacts[index].signature,
+      url: manifestArtifacts[index].url,
+    },
+  ]),
+)
 const manifest = {
   schema: 'if2ai.release-manifest',
   version: 1,
   channel,
   latest_version: effectiveVersion,
   release_notes_url: `https://github.com/${ownerRepo}/releases/tag/${effectiveTag}`,
-  published_at: new Date().toISOString(),
-  artifacts: [
-    {
-      platform,
-      arch,
-      url: updaterUrl,
-      installer_url: releaseUrl,
-      signature_url: updaterSignatureUrl,
-      checksum_sha256: checksum,
-      signature,
-    },
-  ],
+  published_at: publishedAt,
+  artifacts: manifestArtifacts,
 }
 const tauriManifest = {
   version: effectiveVersion,
   notes: `If2Ai ${effectiveTag}`,
   pub_date: manifest.published_at,
   release_notes_url: `https://github.com/${ownerRepo}/releases/tag/${effectiveTag}`,
-  platforms: {
-    [tauriTarget]: {
-      signature,
-      url: updaterUrl,
-    },
-  },
+  platforms: tauriPlatforms,
 }
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
@@ -99,8 +105,10 @@ run('node', ['scripts/validate-release-manifest.mjs', manifestPath, channel])
 
 console.log(`manifest: ${manifestPath}`)
 console.log(`tauri_manifest: ${tauriManifestPath}`)
-console.log(`artifact: ${artifactPath}`)
-console.log(`updater_artifact: ${updaterArtifactPath}`)
+for (const artifact of releaseArtifacts) {
+  console.log(`artifact[${artifact.tauri_target || `${artifact.platform}-${artifact.arch}`}]: ${artifact.installer_path}`)
+  console.log(`updater_artifact[${artifact.tauri_target || `${artifact.platform}-${artifact.arch}`}]: ${artifact.updater_path}`)
+}
 console.log(`manifest_url: ${manifestUrl}`)
 console.log(`tauri_manifest_url: ${tauriManifestUrl}`)
 
@@ -115,15 +123,13 @@ const releaseExists = spawnSync('gh', ['release', 'view', effectiveTag, '--repo'
   encoding: 'utf8',
 })
 if (releaseExists.status === 0) {
-  run('gh', ['release', 'upload', effectiveTag, artifactPath, updaterArtifactPath, signaturePath, manifestPath, tauriManifestPath, '--repo', ownerRepo, '--clobber'])
+  run('gh', ['release', 'upload', effectiveTag, ...uploadPaths(), manifestPath, tauriManifestPath, '--repo', ownerRepo, '--clobber'])
 } else {
   run('gh', [
     'release',
     'create',
     effectiveTag,
-    artifactPath,
-    updaterArtifactPath,
-    signaturePath,
+    ...uploadPaths(),
     manifestPath,
     tauriManifestPath,
     '--repo',
@@ -132,6 +138,52 @@ if (releaseExists.status === 0) {
     `If2Ai ${effectiveTag}`,
     '--notes',
     `If2Ai ${effectiveTag}\n\nUpdater manifest: ${manifestUrl}\nTauri updater manifest: ${tauriManifestUrl}`,
+  ])
+}
+
+function inferSingleArtifact({ artifactPath, updaterArtifactPath, signaturePath }) {
+  const platform =
+    process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'windows' : 'linux'
+  const arch = process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x86_64' : process.arch
+  return {
+    platform,
+    arch,
+    tauri_target: `${platform}-${arch}`,
+    installer_path: artifactPath,
+    updater_path: updaterArtifactPath,
+    signature_path: signaturePath ? resolve(root, signaturePath) : `${updaterArtifactPath}.sig`,
+  }
+}
+
+function readArtifactSet(path) {
+  const artifactSetPath = resolve(root, path)
+  const artifactSet = JSON.parse(readFileSync(artifactSetPath, 'utf8'))
+  if (!Array.isArray(artifactSet.artifacts) || artifactSet.artifacts.length === 0) {
+    throw new Error(`artifact set requires non-empty artifacts: ${artifactSetPath}`)
+  }
+  return artifactSet.artifacts.map((artifact) => {
+    const platform = artifact.platform
+    const arch = artifact.arch
+    if (!platform || !arch) {
+      throw new Error(`artifact set entry requires platform and arch: ${JSON.stringify(artifact)}`)
+    }
+    const updaterPath = resolve(root, artifact.updater_path || artifact.updater)
+    return {
+      platform,
+      arch,
+      tauri_target: artifact.tauri_target || `${platform}-${arch}`,
+      installer_path: resolve(root, artifact.installer_path || artifact.installer),
+      updater_path: updaterPath,
+      signature_path: resolve(root, artifact.signature_path || artifact.signature || `${updaterPath}.sig`),
+    }
+  })
+}
+
+function uploadPaths() {
+  return releaseArtifacts.flatMap((artifact) => [
+    artifact.installer_path,
+    artifact.updater_path,
+    artifact.signature_path,
   ])
 }
 
