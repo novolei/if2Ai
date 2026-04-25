@@ -10,6 +10,7 @@
         "check:version": "node scripts/check-version-consistency.mjs",
         "jiaochang:assets": "node scripts/generate-jiaochang-fr008-assets.mjs",
         "release:github": "node scripts/publish-github-release.mjs",
+        "release:one-click": "node scripts/release-one-click.mjs",
         "release:manifest:validate": "node scripts/validate-release-manifest.mjs",
         "tauri": "tauri",
         "tauri:dev": "tauri dev",

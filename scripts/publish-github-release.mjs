@@ -150,14 +150,17 @@ function findArtifact(dir, artifactVersion) {
 }
 
 function findUpdaterArtifact(artifactVersion) {
-  const bundleRoot = resolve(root, 'src-tauri/target/release/bundle')
-  const candidates = collectFiles(bundleRoot)
+  const bundleRoots = [
+    resolve(root, 'target/release/bundle'),
+    resolve(root, 'src-tauri/target/release/bundle'),
+  ]
+  const candidates = bundleRoots.flatMap((bundleRoot) => collectFiles(bundleRoot))
     .filter((file) => file.endsWith('.app.tar.gz') || file.endsWith('.AppImage') || file.endsWith('.msi.zip') || file.endsWith('.nsis.zip') || file.endsWith('.exe'))
     .filter((file) => file.includes(artifactVersion) || basename(file).includes('If2Ai.app.tar.gz'))
     .filter((file) => existsSync(`${file}.sig`))
     .sort((a, b) => scoreUpdaterArtifact(b) - scoreUpdaterArtifact(a))
   if (candidates.length === 0) {
-    throw new Error(`no signed Tauri updater artifact for ${artifactVersion} under ${bundleRoot}`)
+    throw new Error(`no signed Tauri updater artifact for ${artifactVersion} under ${bundleRoots.join(', ')}`)
   }
   return candidates[0]
 }
