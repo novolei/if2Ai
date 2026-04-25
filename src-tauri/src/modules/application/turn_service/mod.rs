@@ -38,9 +38,13 @@
 //!   on_turn_complete + diag log) out of `stream_task.rs` into
 //!   the sibling [`stream_finalize::finalize_stream_task`] free
 //!   function. `stream_task.rs` shrank from 1698 → 1249 LOC;
-//!   `stream_finalize.rs` is a new ~640 LOC sibling. Further
-//!   intra-loop splits (per-iteration tool-exec helpers) are
-//!   deferred to a future GFR pack with snapshot-diff coverage.
+//!   `stream_finalize.rs` is a new ~640 LOC sibling.
+//! - GAP-005 — extracted the inner SSE event-processing loop
+//!   into [`stream_event_loop::run_stream_event_loop`], the per-iteration
+//!   preflight/request builder into [`stream_preflight::build_iteration_request`],
+//!   and the tool-batch execution loop into
+//!   [`stream_tool_execution::execute_tool_batch`]. `stream_task.rs` now
+//!   serves as the pure orchestrator under 800 LOC.
 //!
 //! Strict layering (CHARTER §2.1 hard constraint, also restated in
 //! MIG-001 §4):
@@ -76,8 +80,11 @@ use crate::modules::tools::ToolRegistry;
 
 mod run;
 mod stream;
+mod stream_event_loop;
 mod stream_finalize;
+mod stream_preflight;
 mod stream_task;
+mod stream_tool_execution;
 
 #[cfg(test)]
 mod tests;

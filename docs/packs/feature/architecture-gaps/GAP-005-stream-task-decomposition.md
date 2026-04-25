@@ -1,7 +1,7 @@
 # GAP-005: Stream Task Decomposition
 
 ## Status
-- State: draft
+- State: done
 
 ## Goal
 拆分 `turn_service/stream_task.rs` 的 model loop、tool loop、event emission、permission wait、finalization 职责，降低执行主链 god-file 风险。

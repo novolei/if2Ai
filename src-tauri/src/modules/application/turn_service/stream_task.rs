@@ -191,7 +191,10 @@ pub(super) struct StreamTaskInputs {
     pub harness_bus_for_after_turn: Option<EventBus>,
 }
 
-async fn append_stream_event(run_event_logger: &RunEventLogger, payload: &StreamTokenPayload) {
+pub(super) async fn append_stream_event(
+    run_event_logger: &RunEventLogger,
+    payload: &StreamTokenPayload,
+) {
     let event_type = match payload.event_type.as_str() {
         "thinking_start" => "thinking_started",
         "tool_call_update" => match payload.tool_status.as_deref() {
@@ -206,7 +209,7 @@ async fn append_stream_event(run_event_logger: &RunEventLogger, payload: &Stream
     let _ = run_event_logger.append(event_type, payload.clone()).await;
 }
 
-async fn append_remembered_permission_events(
+pub(super) async fn append_remembered_permission_events(
     run_event_logger: &RunEventLogger,
     tool_name: &str,
     decision: &PermissionPromptDecision,
@@ -315,7 +318,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let mut completion_already_emitted = false;
     let mut has_successful_tool = false;
     let mut has_successful_mutating_tool = false;
-    let mut terminal_status: Option<&'static str> = None;
+    let mut terminal_status: Option<&'static str>;
 
     // Phase 6E harness: emit TurnStarted at the top of the spawned task
     // so all timing measurements include API client setup time.
@@ -443,140 +446,39 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             current_finalization_reason
         );
 
-        // Effective input-side token budget for preflight admission:
-        // model-advertised context window minus reserved output, with a
-        // hard floor of MAX_REQUEST_TOKEN_BUDGET_ESTIMATE so a missing
-        // / unknown model never ships with a tiny budget.
-        const PREFLIGHT_OUTPUT_RESERVE: u64 = 4_096;
-        let preflight_input_budget =
-            (context_window_for_stream.saturating_sub(PREFLIGHT_OUTPUT_RESERVE))
-                .max(MAX_REQUEST_TOKEN_BUDGET_ESTIMATE as u64) as usize;
-
-        // Build API request for this iteration
-        let (trimmed_session_messages, preflight_stats) = ContextGovernor.admit(
-            &session_messages,
-            MAX_REQUEST_MESSAGE_COUNT,
-            MAX_REQUEST_CHAR_BUDGET,
-            preflight_input_budget,
-        );
-        if preflight_stats.has_changes() {
-            preflight_trim_rounds += 1;
-            preflight_dropped_messages_total += preflight_stats.dropped_messages;
-            preflight_trimmed_chars_total += preflight_stats.trimmed_chars;
-            tracing::warn!(
-                "[start_agent_stream] preflight request trim: stream_id={}, session_id={}, before_messages={}, after_messages={}, before_chars={}, after_chars={}, dropped_messages={}, trimmed_chars={}",
-                stream_id_for_task,
-                session_id,
-                preflight_stats.before_messages,
-                preflight_stats.after_messages,
-                preflight_stats.before_chars,
-                preflight_stats.after_chars,
-                preflight_stats.dropped_messages,
-                preflight_stats.trimmed_chars,
-            );
-        }
-        let (sanitized_session_messages, sanitize_stats) =
-            sanitize_messages_for_provider(&trimmed_session_messages);
-        if sanitize_stats.has_changes() {
-            sanitize_rounds += 1;
-            sanitized_dropped_empty_messages += sanitize_stats.dropped_empty_messages;
-            sanitized_dropped_orphan_tool_results += sanitize_stats.dropped_orphan_tool_results;
-            sanitized_dropped_unmatched_tool_uses += sanitize_stats.dropped_unmatched_tool_uses;
-            sanitized_dropped_invalid_tool_use_inputs +=
-                sanitize_stats.dropped_invalid_tool_use_inputs;
-            extend_sample_ids(
-                &mut sanitize_orphan_samples,
-                &sanitize_stats.orphan_tool_result_ids,
-                12,
-            );
-            extend_sample_ids(
-                &mut sanitize_unmatched_samples,
-                &sanitize_stats.unmatched_tool_use_ids,
-                12,
-            );
-            extend_sample_ids(
-                &mut sanitize_invalid_tool_use_samples,
-                &sanitize_stats.invalid_tool_use_input_ids,
-                12,
-            );
-            tracing::warn!(
-                "[start_agent_stream] sanitized malformed tool history before request: stream_id={}, session_id={}, before_messages={}, after_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, dropped_invalid_tool_use_inputs={}, orphan_tool_result_ids={:?}, unmatched_tool_use_ids={:?}, invalid_tool_use_input_ids={:?}",
-                stream_id_for_task,
-                session_id,
-                session_messages.len(),
-                sanitized_session_messages.len(),
-                sanitize_stats.dropped_empty_messages,
-                sanitize_stats.dropped_orphan_tool_results,
-                sanitize_stats.dropped_unmatched_tool_uses,
-                sanitize_stats.dropped_invalid_tool_use_inputs,
-                sanitize_stats.orphan_tool_result_ids,
-                sanitize_stats.unmatched_tool_use_ids,
-                sanitize_stats.invalid_tool_use_input_ids,
-            );
-        }
-        let mut request_messages = sanitized_session_messages.clone();
-        if preflight_stats.has_changes() || sanitize_stats.has_changes() {
-            request_messages.insert(
-                0,
-                InputMessage::user_text(format!(
-                    "[context_trim_notice] dropped_messages={}, dropped_empty_messages={}, dropped_orphan_tool_results={}, dropped_unmatched_tool_uses={}, dropped_invalid_tool_use_inputs={}",
-                    preflight_stats.dropped_messages,
-                    sanitize_stats.dropped_empty_messages,
-                    sanitize_stats.dropped_orphan_tool_results,
-                    sanitize_stats.dropped_unmatched_tool_uses,
-                    sanitize_stats.dropped_invalid_tool_use_inputs
-                )),
-            );
-        }
-        let (final_request_messages, final_preflight_stats) = ContextGovernor.admit(
-            &request_messages,
-            MAX_REQUEST_MESSAGE_COUNT,
-            MAX_REQUEST_CHAR_BUDGET,
-            preflight_input_budget,
-        );
-        if final_preflight_stats.has_changes() {
-            preflight_trim_rounds += 1;
-            preflight_dropped_messages_total += final_preflight_stats.dropped_messages;
-            preflight_trimmed_chars_total += final_preflight_stats.trimmed_chars;
-            tracing::warn!(
-                "[start_agent_stream] final preflight trim: stream_id={}, session_id={}, before_messages={}, after_messages={}, before_chars={}, after_chars={}, dropped_messages={}, trimmed_chars={}",
-                stream_id_for_task,
-                session_id,
-                final_preflight_stats.before_messages,
-                final_preflight_stats.after_messages,
-                final_preflight_stats.before_chars,
-                final_preflight_stats.after_chars,
-                final_preflight_stats.dropped_messages,
-                final_preflight_stats.trimmed_chars,
-            );
-        }
-        session_messages = final_request_messages;
-        let request_messages_for_iteration = if force_final_response {
-            let mut messages = session_messages.clone();
-            messages.push(InputMessage::user_text(format!(
-                "[agent_loop_control] Stop calling tools now. Produce a concise final user-facing summary in the user's language. Include: completed work, last successful tool evidence, what remains, and how to continue if needed. reason={current_finalization_reason}; iteration={tool_loop_iter}/{max_iterations}"
-            )));
-            messages
-        } else {
-            session_messages.clone()
-        };
-        let iter_api_request = MessageRequest {
-            model: model_for_stream.clone(),
-            max_tokens: 4096,
-            messages: request_messages_for_iteration,
-            system: if system_prompt_for_stream.is_empty() {
-                None
-            } else {
-                Some(system_prompt_for_stream.clone())
+        // Build the iteration request via the extracted preflight module (GAP-005).
+        let preflight_result = super::stream_preflight::build_iteration_request(
+            super::stream_preflight::PreflightContext {
+                session_messages: &session_messages,
+                tool_defs: &tool_defs_for_stream,
+                system_prompt: &system_prompt_for_stream,
+                model: &model_for_stream,
+                context_window: context_window_for_stream,
+                force_final_response,
+                finalization_reason: &current_finalization_reason,
+                tool_loop_iter,
+                max_iterations,
+                stream_id: &stream_id_for_task,
+                session_id: &session_id,
             },
-            tools: if force_final_response || tool_defs_for_stream.is_empty() {
-                None
-            } else {
-                Some(tool_defs_for_stream.clone())
-            },
-            tool_choice: None,
-            stream: true,
-        };
+        );
+        let iter_api_request = preflight_result.request;
+        session_messages = preflight_result.session_messages;
+        preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
+        preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
+        preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;
+        sanitize_rounds += preflight_result.sanitize_rounds_added;
+        sanitized_dropped_empty_messages += preflight_result.sanitized_dropped_empty_messages_added;
+        sanitized_dropped_orphan_tool_results +=
+            preflight_result.sanitized_dropped_orphan_tool_results_added;
+        sanitized_dropped_unmatched_tool_uses +=
+            preflight_result.sanitized_dropped_unmatched_tool_uses_added;
+        sanitized_dropped_invalid_tool_use_inputs +=
+            preflight_result.sanitized_dropped_invalid_tool_use_inputs_added;
+        sanitize_orphan_samples.extend(preflight_result.sanitize_orphan_samples_added);
+        sanitize_unmatched_samples.extend(preflight_result.sanitize_unmatched_samples_added);
+        sanitize_invalid_tool_use_samples
+            .extend(preflight_result.sanitize_invalid_tool_use_samples_added);
 
         if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
             &cost_guard_cfg,
@@ -638,7 +540,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             break;
         }
 
-        let mut stream = match crate::modules::provider::resilience::stream_message_with_resilience(
+        let stream = match crate::modules::provider::resilience::stream_message_with_resilience(
             &provider_client_for_stream,
             failover_provider_client.as_ref(),
             &iter_api_request,
@@ -755,457 +657,44 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             );
         }
 
-        // Tool call tracking for this iteration — uses block index to support
-        // parallel tool calls (each tool_call has its own index in the stream).
-        let mut tool_arguments: HashMap<String, String> = HashMap::new();
-        let mut index_to_tool_id: HashMap<u32, String> = HashMap::new();
-        let mut index_to_tool_name: HashMap<u32, String> = HashMap::new();
-        let mut pending_tool_uses: Vec<(String, String, String)> = Vec::new();
-        let mut retry_outer_after_timeout = false;
-        let mut emitted_stream_delta_in_iteration = false;
-
-        loop {
-            let next_event = tokio::select! {
-                _ = &mut cancel_rx => {
-                    tracing::info!("[start_agent_stream] Stream cancelled while waiting for provider event");
-                    stream_failed = true;
-                    last_stream_error_reason = Some("cancelled_by_user".to_string());
-                    terminal_status = Some("cancelled_by_user");
-                    break;
-                }
-                event = stream.next_event() => event,
-            };
-            match next_event {
-                Ok(Some(event)) => match event {
-                    ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
-                        crate::modules::api::ContentBlockDelta::TextDelta { text } => {
-                            accumulated_text.push_str(&text);
-                            emitted_stream_delta_in_iteration = true;
-                            token_count += 1;
-                            // Log every 5 text deltas to track streaming progress
-                            if token_count.is_multiple_of(5) {
-                                tracing::info!(
-                                    "[start_agent_stream] text_delta: +{} chars, accumulated {} total",
-                                    text.len(),
-                                    accumulated_text.len()
-                                );
-                            }
-                            if token_count.is_multiple_of(SAVE_INTERVAL) {
-                                let mut interim_session = app_session_clone.clone();
-                                interim_session.messages.push(
-                                    crate::modules::runtime::session::ConversationMessage {
-                                        role: crate::modules::runtime::session::MessageRole::Assistant,
-                                        blocks: vec![ContentBlock::Text {
-                                            text: accumulated_text.clone(),
-                                        }],
-                                        usage: None,
-                                        thinking: if accumulated_thinking.is_empty() {
-                                            None
-                                        } else {
-                                            Some(accumulated_thinking.clone())
-                                        },
-                                        task_outcome: None,
-                                        degraded_reason: None,
-                                        resume_available: None,
-                                        resume_cursor: None,
-                                        request_id: Some(provider_request_id.clone()),
-                                    },
-                                );
-                                let _ = session_manager.save_session(&interim_session).await;
-                                tracing::debug!(
-                                    "[start_agent_stream] Periodic session save at token {}",
-                                    token_count
-                                );
-                            }
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                correlation: None,
-                                text: Some(text),
-                                thinking: None,
-                                event_type: "text_delta".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                                effective_workdir: None,
-                                policy_decision: None,
-                                evidence_id: None,
-                                request_id: Some(provider_request_id.clone()),
-                                task_outcome: None,
-                                degraded_reason: None,
-                                resume_available: None,
-                                resume_cursor: None,
-                                context_budget_usage: None,
-                                memory_context: None,
-                                prompt_diagnostics: None,
-                                turn_cost: None,
-                                routing_info: None,
-                                session_totals: None,
-                            };
-                            stream_emitter.emit_payload(payload.clone());
-                            append_stream_event(&run_event_logger, &payload).await;
-                        }
-                        crate::modules::api::ContentBlockDelta::ThinkingDelta { thinking } => {
-                            accumulated_thinking.push_str(&thinking);
-                            emitted_stream_delta_in_iteration = true;
-                            let payload = StreamTokenPayload {
-                                stream_id: stream_id_for_task.clone(),
-                                correlation: None,
-                                text: None,
-                                thinking: Some(thinking),
-                                event_type: "thinking_delta".to_string(),
-                                tool_call_id: None,
-                                tool_name: None,
-                                tool_status: None,
-                                tool_args: None,
-                                tool_result: None,
-                                tool_duration_ms: None,
-                                effective_workdir: None,
-                                policy_decision: None,
-                                evidence_id: None,
-                                request_id: Some(provider_request_id.clone()),
-                                task_outcome: None,
-                                degraded_reason: None,
-                                resume_available: None,
-                                resume_cursor: None,
-                                context_budget_usage: None,
-                                memory_context: None,
-                                prompt_diagnostics: None,
-                                turn_cost: None,
-                                routing_info: None,
-                                session_totals: None,
-                            };
-                            stream_emitter.emit_payload(payload.clone());
-                            append_stream_event(&run_event_logger, &payload).await;
-                        }
-                        crate::modules::api::ContentBlockDelta::SignatureDelta { .. } => {}
-                        crate::modules::api::ContentBlockDelta::InputJsonDelta { partial_json } => {
-                            // Route delta to the correct tool_call via block index.
-                            if let Some(tool_id) = index_to_tool_id.get(&delta_event.index).cloned()
-                            {
-                                tool_arguments
-                                    .entry(tool_id)
-                                    .or_default()
-                                    .push_str(&partial_json);
-                            }
-                        }
-                    },
-                    ApiStreamEvent::ContentBlockStop(stop_event) => {
-                        // Extract completed tool_call as its block ends
-                        if let Some(tool_id) = index_to_tool_id.remove(&stop_event.index) {
-                            let tool_name = index_to_tool_name
-                                .remove(&stop_event.index)
-                                .unwrap_or_default();
-                            if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                                pending_tool_uses.push((tool_id, tool_name, input_json));
-                            }
-                        }
-                    }
-                    ApiStreamEvent::MessageStop(_) => {
-                        // Extract any remaining tools (fallback — should already
-                        // have been caught by ContentBlockStop above)
-                        for (index, tool_id) in index_to_tool_id.drain() {
-                            let tool_name = index_to_tool_name.remove(&index).unwrap_or_default();
-                            if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                                pending_tool_uses.push((tool_id, tool_name, input_json));
-                            }
-                        }
-
-                        // Commit this LLM call's usage into the turn-wide
-                        // accumulator and reset for the next tool-loop call.
-                        accumulated_usage.input_tokens = accumulated_usage
-                            .input_tokens
-                            .saturating_add(current_call_usage.input_tokens);
-                        accumulated_usage.output_tokens = accumulated_usage
-                            .output_tokens
-                            .saturating_add(current_call_usage.output_tokens);
-                        accumulated_usage.cache_creation_input_tokens = accumulated_usage
-                            .cache_creation_input_tokens
-                            .saturating_add(current_call_usage.cache_creation_input_tokens);
-                        accumulated_usage.cache_read_input_tokens = accumulated_usage
-                            .cache_read_input_tokens
-                            .saturating_add(current_call_usage.cache_read_input_tokens);
-                        tracing::info!(
-                            "[start_agent_stream] MessageStop: this_call_usage in={} out={} cache_w={} cache_r={} | turn_total in={} out={}",
-                            current_call_usage.input_tokens,
-                            current_call_usage.output_tokens,
-                            current_call_usage.cache_creation_input_tokens,
-                            current_call_usage.cache_read_input_tokens,
-                            accumulated_usage.input_tokens,
-                            accumulated_usage.output_tokens,
-                        );
-                        current_call_usage = crate::modules::runtime::usage::TokenUsage::default();
-
-                        tracing::info!(
-                            "[start_agent_stream] MessageStop received, {} pending tool uses",
-                            pending_tool_uses.len()
-                        );
-                        break;
-                    }
-                    ApiStreamEvent::ContentBlockStart(start_event) => {
-                        match start_event.content_block {
-                            crate::modules::api::OutputContentBlock::Thinking { .. } => {
-                                let payload = StreamTokenPayload {
-                                    stream_id: stream_id_for_task.clone(),
-                                    correlation: None,
-                                    text: None,
-                                    thinking: None,
-                                    event_type: "thinking_start".to_string(),
-                                    tool_call_id: None,
-                                    tool_name: None,
-                                    tool_status: None,
-                                    tool_args: None,
-                                    tool_result: None,
-                                    tool_duration_ms: None,
-                                    effective_workdir: None,
-                                    policy_decision: None,
-                                    evidence_id: None,
-                                    request_id: Some(provider_request_id.clone()),
-                                    task_outcome: None,
-                                    degraded_reason: None,
-                                    resume_available: None,
-                                    resume_cursor: None,
-                                    context_budget_usage: None,
-                                    memory_context: None,
-                                    prompt_diagnostics: None,
-                                    turn_cost: None,
-                                    routing_info: None,
-                                    session_totals: None,
-                                };
-                                stream_emitter.emit_payload(payload.clone());
-                                append_stream_event(&run_event_logger, &payload).await;
-                            }
-                            crate::modules::api::OutputContentBlock::ToolUse {
-                                id, name, ..
-                            } => {
-                                // Track by block index to support parallel tool calls
-                                index_to_tool_id.insert(start_event.index, id.clone());
-                                index_to_tool_name.insert(start_event.index, name.clone());
-                                let payload = StreamTokenPayload {
-                                    stream_id: stream_id_for_task.clone(),
-                                    correlation: None,
-                                    text: None,
-                                    thinking: None,
-                                    event_type: "tool_call_update".to_string(),
-                                    tool_call_id: Some(id.clone()),
-                                    tool_name: Some(name.clone()),
-                                    tool_status: Some("queued".to_string()),
-                                    tool_args: None,
-                                    tool_result: None,
-                                    tool_duration_ms: None,
-                                    effective_workdir: None,
-                                    policy_decision: None,
-                                    evidence_id: Some(id.clone()),
-                                    request_id: Some(provider_request_id.clone()),
-                                    task_outcome: None,
-                                    degraded_reason: None,
-                                    resume_available: None,
-                                    resume_cursor: None,
-                                    context_budget_usage: None,
-                                    memory_context: None,
-                                    prompt_diagnostics: None,
-                                    turn_cost: None,
-                                    routing_info: None,
-                                    session_totals: None,
-                                };
-                                stream_emitter.emit_payload(payload.clone());
-                                append_stream_event(&run_event_logger, &payload).await;
-                            }
-                            _ => {}
-                        }
-                    }
-                    ApiStreamEvent::MessageStart(ev) => {
-                        // P1-7 / P2-11: Anthropic ships `input_tokens` +
-                        // cache fields here, then `output_tokens` on the
-                        // `message_delta`; OpenAI compat seeds zeros here
-                        // and fills both on its synthesised `message_delta`.
-                        // Max-merge keeps both vendors honest.
-                        let u = &ev.message.usage;
-                        current_call_usage.input_tokens =
-                            current_call_usage.input_tokens.max(u.input_tokens);
-                        current_call_usage.output_tokens =
-                            current_call_usage.output_tokens.max(u.output_tokens);
-                        current_call_usage.cache_creation_input_tokens = current_call_usage
-                            .cache_creation_input_tokens
-                            .max(u.cache_creation_input_tokens);
-                        current_call_usage.cache_read_input_tokens = current_call_usage
-                            .cache_read_input_tokens
-                            .max(u.cache_read_input_tokens);
-                    }
-                    ApiStreamEvent::MessageDelta(ev) => {
-                        let u = &ev.usage;
-                        current_call_usage.input_tokens =
-                            current_call_usage.input_tokens.max(u.input_tokens);
-                        current_call_usage.output_tokens =
-                            current_call_usage.output_tokens.max(u.output_tokens);
-                        current_call_usage.cache_creation_input_tokens = current_call_usage
-                            .cache_creation_input_tokens
-                            .max(u.cache_creation_input_tokens);
-                        current_call_usage.cache_read_input_tokens = current_call_usage
-                            .cache_read_input_tokens
-                            .max(u.cache_read_input_tokens);
-                    }
-                },
-                Ok(None) => {
-                    // Stream ended without MessageStop - extract any remaining tools
-                    for (index, tool_id) in index_to_tool_id.drain() {
-                        let tool_name = index_to_tool_name.remove(&index).unwrap_or_default();
-                        if let Some(input_json) = tool_arguments.remove(&tool_id) {
-                            pending_tool_uses.push((tool_id, tool_name, input_json));
-                        }
-                    }
-                    // Salvage any usage we did capture before the truncation.
-                    accumulated_usage.input_tokens = accumulated_usage
-                        .input_tokens
-                        .saturating_add(current_call_usage.input_tokens);
-                    accumulated_usage.output_tokens = accumulated_usage
-                        .output_tokens
-                        .saturating_add(current_call_usage.output_tokens);
-                    accumulated_usage.cache_creation_input_tokens = accumulated_usage
-                        .cache_creation_input_tokens
-                        .saturating_add(current_call_usage.cache_creation_input_tokens);
-                    accumulated_usage.cache_read_input_tokens = accumulated_usage
-                        .cache_read_input_tokens
-                        .saturating_add(current_call_usage.cache_read_input_tokens);
-                    current_call_usage = crate::modules::runtime::usage::TokenUsage::default();
-                    tracing::info!(
-                        "[start_agent_stream] Stream ended (Ok(None)), {} pending tool uses",
-                        pending_tool_uses.len()
-                    );
-                    break;
-                }
-                Err(e) => {
-                    let stream_error_reason = format_stream_error_reason(&e);
-                    if is_network_timeout_reason(&stream_error_reason)
-                        && index_to_tool_id.is_empty()
-                        && tool_arguments.is_empty()
-                        && pending_tool_uses.is_empty()
-                        && !emitted_stream_delta_in_iteration
-                        && stream_event_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
-                    {
-                        stream_event_retry_count += 1;
-                        retry_outer_after_timeout = true;
-                        tracing::warn!(
-                            "[start_agent_stream] stream-event timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
-                            stream_id_for_task,
-                            session_id,
-                            stream_event_retry_count,
-                            MAX_STREAM_RETRY_ON_TIMEOUT,
-                            stream_error_reason
-                        );
-                        break;
-                    }
-                    last_stream_error_reason = Some(stream_error_reason.clone());
-                    if terminal_status.is_none() {
-                        terminal_status = Some("stream_error");
-                    }
-                    tracing::error!(
-                        "[start_agent_stream] Background task stream error: {}",
-                        stream_error_reason
-                    );
-                    let user_visible_truth = TaskOutcomeResolver::resolve(
-                        ExecutionTruth {
-                            has_successful_tool,
-                            has_successful_mutating_tool,
-                        },
-                        &ConversationTruth {
-                            stream_failed: true,
-                            terminal_status: terminal_status.unwrap_or("stream_error"),
-                            last_stream_error_reason: Some(stream_error_reason.clone()),
-                        },
-                    );
-                    let resume_cursor = user_visible_truth.resume_available.then(|| {
-                        build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count)
-                    });
-                    let degraded_reason = user_visible_truth.degraded_reason.clone();
-
-                    // Force-settle any in-flight tool cards so frontend does not
-                    // keep them in queued/running after stream failure.
-                    for (index, tool_id) in index_to_tool_id.drain() {
-                        let tool_name = index_to_tool_name
-                            .remove(&index)
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let payload = StreamTokenPayload {
-                            stream_id: stream_id_for_task.clone(),
-                            correlation: None,
-                            text: None,
-                            thinking: None,
-                            event_type: "tool_call_update".to_string(),
-                            tool_call_id: Some(tool_id.clone()),
-                            tool_name: Some(tool_name),
-                            tool_status: Some("error".to_string()),
-                            tool_args: None,
-                            tool_result: Some(stream_error_reason.clone()),
-                            tool_duration_ms: None,
-                            effective_workdir: Some(
-                                execution_context_for_policy.workdir.display().to_string(),
-                            ),
-                            policy_decision: None,
-                            evidence_id: Some(tool_id),
-                            request_id: Some(provider_request_id.clone()),
-                            task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                            degraded_reason: degraded_reason.clone(),
-                            resume_available: Some(user_visible_truth.resume_available),
-                            resume_cursor: resume_cursor.clone(),
-                            context_budget_usage: None,
-                            memory_context: None,
-                            prompt_diagnostics: None,
-                            turn_cost: None,
-                            routing_info: None,
-                            session_totals: None,
-                        };
-                        stream_emitter.emit_payload(payload.clone());
-                        append_stream_event(&run_event_logger, &payload).await;
-                    }
-
-                    let payload = StreamTokenPayload {
-                        stream_id: stream_id_for_task.clone(),
-                        correlation: None,
-                        text: None,
-                        thinking: None,
-                        event_type: "stream_error".to_string(),
-                        tool_call_id: None,
-                        tool_name: None,
-                        tool_status: None,
-                        tool_args: None,
-                        tool_result: Some(stream_error_reason),
-                        tool_duration_ms: None,
-                        effective_workdir: None,
-                        policy_decision: None,
-                        evidence_id: None,
-                        request_id: Some(provider_request_id.clone()),
-                        task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                        degraded_reason,
-                        resume_available: Some(user_visible_truth.resume_available),
-                        resume_cursor,
-                        context_budget_usage: None,
-                        memory_context: None,
-                        prompt_diagnostics: None,
-                        turn_cost: None,
-                        routing_info: None,
-                        session_totals: None,
-                    };
-                    stream_emitter.emit_payload(payload.clone());
-                    append_stream_event(&run_event_logger, &payload).await;
-                    // Phase M4-C P5 — emit harness `StreamErrored`
-                    // event from the inner-loop error path too.
-                    if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                        let _ = bus.emit(AgentEvent::StreamErrored {
-                            session_id: session_id.clone(),
-                            reason: last_stream_error_reason
-                                .clone()
-                                .unwrap_or_else(|| "unknown_stream_error".to_string()),
-                            resume_available: user_visible_truth.resume_available,
-                            at: chrono::Utc::now(),
-                        });
-                    }
-                    stream_failed = true;
-                    break;
-                }
-            }
-        }
+        // Run the extracted inner SSE event-processing loop (GAP-005).
+        let event_loop_ctx = super::stream_event_loop::StreamEventLoopContext {
+            stream,
+            cancel_rx,
+            stream_id: stream_id_for_task.clone(),
+            session_id: session_id.clone(),
+            provider_request_id: provider_request_id.clone(),
+            accumulated_text,
+            accumulated_thinking,
+            token_count,
+            current_call_usage,
+            accumulated_usage,
+            stream_emitter: stream_emitter.clone(),
+            run_event_logger: run_event_logger.clone(),
+            app_session: app_session_clone.clone(),
+            session_manager: session_manager.clone(),
+            harness_bus: harness_event_bus_for_stream.clone(),
+            execution_context: execution_context_for_policy.clone(),
+            has_successful_tool,
+            has_successful_mutating_tool,
+            model: model_for_stream.clone(),
+            stream_event_retry_count,
+        };
+        let loop_result = super::stream_event_loop::run_stream_event_loop(event_loop_ctx).await;
+        let mut pending_tool_uses = loop_result.pending_tool_uses;
+        accumulated_text = loop_result.accumulated_text;
+        accumulated_thinking = loop_result.accumulated_thinking;
+        token_count = loop_result.token_count;
+        current_call_usage = loop_result.current_call_usage;
+        accumulated_usage = loop_result.accumulated_usage;
+        stream_failed = loop_result.stream_failed;
+        last_stream_error_reason = loop_result.last_stream_error_reason;
+        terminal_status = loop_result.terminal_status;
+        let retry_outer_after_timeout = loop_result.retry_outer_after_timeout;
+        stream_event_retry_count = loop_result.stream_event_retry_count;
+        let _emitted_stream_delta_in_iteration = loop_result.emitted_stream_delta_in_iteration;
+        completion_already_emitted = loop_result.completion_already_emitted;
+        cancel_rx = loop_result.cancel_rx;
 
         if retry_outer_after_timeout {
             tokio::time::sleep(Duration::from_millis(350)).await;
@@ -1256,432 +745,49 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
         }
 
-        tracing::info!(
-            "[start_agent_stream] Executing {} tools, accumulated_text so far: {} chars",
-            pending_tool_uses.len(),
-            accumulated_text.len()
-        );
-
-        // Persist the assistant segment that led to these tool calls before
-        // the tool results so reload preserves chronological order.
-        flush_assistant_timeline_segment(
-            &mut timeline_session_messages,
-            &mut accumulated_text,
-            &mut accumulated_thinking,
-            None,
-        );
-
-        // Execute each tool and append results to session_messages
-
-        // Set up TauriPermissionPrompter for interactive permission requests
-        let (perm_tx, perm_rx): (
-            std::sync::mpsc::Sender<PermissionPromptDecision>,
-            std::sync::mpsc::Receiver<PermissionPromptDecision>,
-        ) = std::sync::mpsc::channel();
-        match permission_senders.lock() {
-            Ok(mut senders) => {
-                senders.insert(session_id.clone(), perm_tx);
-            }
-            Err(e) => {
-                tracing::error!(
-                    "[start_agent_stream] failed to lock permission_senders: {}",
-                    e
-                );
-            }
+        // Execute the extracted tool batch (GAP-005).
+        let tool_ctx = super::stream_tool_execution::ToolExecutionContext {
+            pending_tool_uses: std::mem::take(&mut pending_tool_uses),
+            stream_id: stream_id_for_task.clone(),
+            session_id: session_id.clone(),
+            provider_request_id: provider_request_id.clone(),
+            accumulated_text,
+            accumulated_thinking,
+            session_messages,
+            timeline_session_messages,
+            stream_emitter: stream_emitter.clone(),
+            run_event_logger: run_event_logger.clone(),
+            tool_registry: tool_registry_clone.clone(),
+            tool_executor,
+            permission_senders: permission_senders.clone(),
+            permission_overrides: permission_overrides.clone(),
+            permission_policy: permission_policy.clone(),
+            execution_context: execution_context_for_task.clone(),
+            harness_bus: harness_event_bus_for_stream.clone(),
+            mode,
+            invalid_tool_args_streak,
+            has_successful_tool,
+            has_successful_mutating_tool,
+            sanitized_dropped_invalid_tool_use_inputs,
+            sanitize_invalid_tool_use_samples,
+        };
+        let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
+        accumulated_text = tool_result.accumulated_text;
+        accumulated_thinking = tool_result.accumulated_thinking;
+        session_messages = tool_result.session_messages;
+        timeline_session_messages = tool_result.timeline_session_messages;
+        has_successful_tool = tool_result.has_successful_tool;
+        has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
+        force_final_response_next =
+            force_final_response_next || tool_result.force_final_response_next;
+        if finalization_reason.is_none() {
+            finalization_reason = tool_result.finalization_reason;
         }
-        let mut prompter = TauriPermissionPrompter::new(
-            stream_emitter.window().clone(),
-            session_id.clone(),
-            perm_rx,
-            Some(run_event_logger.clone()),
-        );
-
-        for (tool_id, tool_name, input_json) in pending_tool_uses.drain(..) {
-            let policy_trace_id = AuditEmitter::new_trace_id();
-            let diag_key = format!(
-                "stream_id={};trace_id={};request_id={}",
-                stream_id_for_task, policy_trace_id, provider_request_id
-            );
-            tracing::info!(
-                "[stream_audit_link] diag_key={}, stream_id={}, session_id={}, tool_call_id={}, trace_id={}, request_id={}, tool_name={}",
-                diag_key,
-                stream_id_for_task,
-                session_id,
-                tool_id,
-                policy_trace_id,
-                provider_request_id.as_str(),
-                tool_name
-            );
-            // Permission check: apply session-scoped remember decisions first.
-            let remembered_decision = permission_overrides
-                .lock()
-                .ok()
-                .and_then(|all| all.get(&session_id).cloned())
-                .and_then(|tool_map| {
-                    tool_map
-                        .get(&tool_name)
-                        .cloned()
-                        .or_else(|| tool_map.get("*").cloned())
-                });
-            if let Some(decision) = remembered_decision.as_ref() {
-                append_remembered_permission_events(&run_event_logger, &tool_name, decision).await;
-            }
-            let running_policy_decision = match remembered_decision.as_ref() {
-                Some(PermissionPromptDecision::Allow) => "session_allow",
-                Some(PermissionPromptDecision::Deny { .. }) => "session_deny",
-                None => "prompt",
-            };
-            // Parse args once and reuse for the running + terminal events
-            // and the timeline/harness paths below.  The frontend relies on
-            // `tool_args` being present on at least one tool_call_update so
-            // tool cards (e.g. `WriteToolDiffCard`) can render path/content
-            // before the result comes back.
-            let tool_input = parse_tool_input_json(&input_json);
-
-            // Emit running event once the permission source is known.
-            let running_payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "tool_call_update".to_string(),
-                tool_call_id: Some(tool_id.clone()),
-                tool_name: Some(tool_name.clone()),
-                tool_status: Some("running".to_string()),
-                tool_args: Some(tool_input.clone()),
-                tool_result: None,
-                tool_duration_ms: None,
-                effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
-                policy_decision: Some(running_policy_decision.to_string()),
-                evidence_id: Some(policy_trace_id.clone()),
-                request_id: Some(provider_request_id.clone()),
-                task_outcome: None,
-                degraded_reason: None,
-                resume_available: None,
-                resume_cursor: None,
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(running_payload.clone());
-            append_stream_event(&run_event_logger, &running_payload).await;
-            if let Some(validation_error) = tool_registry_clone.validate(&tool_name, &tool_input) {
-                invalid_tool_args_streak += 1;
-                sanitized_dropped_invalid_tool_use_inputs += 1;
-                if sanitize_invalid_tool_use_samples.len() < 12 {
-                    sanitize_invalid_tool_use_samples
-                        .push(format!("{}:{}:{}", tool_id, tool_name, validation_error));
-                }
-                tracing::warn!(
-                    "[start_agent_stream] invalid tool args blocked before execution: stream_id={}, session_id={}, tool_call_id={}, tool_name={}, error={}, streak={}",
-                    stream_id_for_task,
-                    session_id,
-                    tool_id,
-                    tool_name,
-                    validation_error,
-                    invalid_tool_args_streak
-                );
-
-                crate::modules::runtime::self_repair::record_tool_outcome(&tool_name, false);
-                let invalid_result = format!(
-                    "invalid tool arguments: {validation_error}. The tool `{tool_name}` was not executed. Re-issue the tool call with a complete JSON object matching its schema."
-                );
-                let terminal_tool_payload = StreamTokenPayload {
-                    stream_id: stream_id_for_task.clone(),
-                    correlation: None,
-                    text: None,
-                    thinking: None,
-                    event_type: "tool_call_update".to_string(),
-                    tool_call_id: Some(tool_id.clone()),
-                    tool_name: Some(tool_name.clone()),
-                    tool_status: Some("error".to_string()),
-                    tool_args: Some(tool_input.clone()),
-                    tool_result: Some(invalid_result.clone()),
-                    tool_duration_ms: Some(0),
-                    effective_workdir: Some(
-                        execution_context_for_policy.workdir.display().to_string(),
-                    ),
-                    policy_decision: Some("blocked_invalid_args".to_string()),
-                    evidence_id: Some(policy_trace_id.clone()),
-                    request_id: Some(provider_request_id.clone()),
-                    task_outcome: None,
-                    degraded_reason: None,
-                    resume_available: None,
-                    resume_cursor: None,
-                    context_budget_usage: None,
-                    memory_context: None,
-                    prompt_diagnostics: None,
-                    turn_cost: None,
-                    routing_info: None,
-                    session_totals: None,
-                };
-                stream_emitter.emit_payload(terminal_tool_payload.clone());
-                append_stream_event(&run_event_logger, &terminal_tool_payload).await;
-
-                session_messages.push(crate::modules::api::InputMessage {
-                    role: "assistant".to_string(),
-                    content: vec![crate::modules::api::InputContentBlock::ToolUse {
-                        id: tool_id.clone(),
-                        name: tool_name.clone(),
-                        input: tool_input.clone(),
-                    }],
-                    thinking: None,
-                });
-                session_messages.push(crate::modules::api::InputMessage {
-                    role: "user".to_string(),
-                    content: vec![crate::modules::api::InputContentBlock::ToolResult {
-                        tool_use_id: tool_id.clone(),
-                        content: vec![crate::modules::api::ToolResultContentBlock::Text {
-                            text: summarize_tool_result_for_model(
-                                &tool_name,
-                                &tool_id,
-                                &invalid_result,
-                                true,
-                            ),
-                        }],
-                        is_error: true,
-                    }],
-                    thinking: None,
-                });
-                timeline_session_messages.push(
-                    crate::modules::runtime::session::ConversationMessage::tool_use(
-                        tool_id.clone(),
-                        tool_name.clone(),
-                        input_json.clone(),
-                    ),
-                );
-                timeline_session_messages.push(
-                    crate::modules::runtime::session::ConversationMessage::tool_result(
-                        tool_id.clone(),
-                        tool_name.clone(),
-                        invalid_result,
-                        true,
-                    ),
-                );
-                if let Some(last_message) = timeline_session_messages.last_mut() {
-                    last_message.request_id = Some(provider_request_id.clone());
-                }
-
-                if invalid_tool_args_streak >= INVALID_TOOL_ARGS_LIMIT {
-                    tracing::warn!(
-                        "[start_agent_stream] repeated invalid tool args detected; next iteration will force final summary. stream_id={}, session_id={}, streak={}",
-                        stream_id_for_task,
-                        session_id,
-                        invalid_tool_args_streak
-                    );
-                    force_final_response_next = true;
-                    finalization_reason = Some("invalid_tool_args_repeated".to_string());
-                }
-                continue;
-            }
-            invalid_tool_args_streak = 0;
-            let permission_outcome = match remembered_decision {
-                Some(PermissionPromptDecision::Allow) => {
-                    crate::modules::runtime::permissions::PermissionOutcome::Allow
-                }
-                Some(PermissionPromptDecision::Deny { reason }) => {
-                    crate::modules::runtime::permissions::PermissionOutcome::Deny { reason }
-                }
-                None => permission_policy.authorize(&tool_name, &input_json, Some(&mut prompter)),
-            };
-            match &permission_outcome {
-                crate::modules::runtime::permissions::PermissionOutcome::Allow => {
-                    AuditEmitter::policy_decision_made(
-                        &policy_trace_id,
-                        &execution_context_for_policy.session_id,
-                        &tool_name,
-                        &execution_context_for_policy.workdir,
-                        mode,
-                        "allow",
-                        Some(provider_request_id.as_str()),
-                    );
-                }
-                crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } => {
-                    AuditEmitter::policy_decision_made(
-                        &policy_trace_id,
-                        &execution_context_for_policy.session_id,
-                        &tool_name,
-                        &execution_context_for_policy.workdir,
-                        mode,
-                        &format!("deny:{reason}"),
-                        Some(provider_request_id.as_str()),
-                    );
-                }
-            }
-            if let crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } =
-                &permission_outcome
-            {
-                tracing::warn!(
-                    "[start_agent_stream] Permission denied for tool '{}' in mode {}: {}",
-                    tool_name,
-                    mode.as_str(),
-                    reason
-                );
-            }
-
-            let timeline_tool_use = crate::modules::runtime::session::ConversationMessage::tool_use(
-                tool_id.clone(),
-                tool_name.clone(),
-                input_json.clone(),
-            );
-            timeline_session_messages.push(timeline_tool_use);
-
-            let start_time = std::time::Instant::now();
-            let denied_by_policy = matches!(
-                permission_outcome,
-                crate::modules::runtime::permissions::PermissionOutcome::Deny { .. }
-            );
-            // Phase 6E harness: emit ToolCalled before invocation.
-            crate::modules::harness::agent_loop_integration::emit_tool_called(
-                harness_event_bus_for_stream.as_ref(),
-                &session_id,
-                &tool_name,
-                &input_json.to_string(),
-            );
-            // Phase M4-C P2 — emit harness `PrepareStepExecuted`
-            // shadow trace.  Calls the typed
-            // `prepare_step_execution` seam with the actual
-            // tool args + policy and records what the seam
-            // would decide.  Production dispatch still goes
-            // through the existing `permission_policy.authorize`
-            // path above; this trace is for governance only
-            // (no enforcement until M4.8 gate work).
-            if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                let parsed_args = parse_tool_input_json(&input_json);
-                let prep_out = crate::modules::control_plane::prepare_step_execution::prepare_step_execution(
-                    crate::modules::control_plane::prepare_step_execution::PrepareStepExecutionInput {
-                        tool_name: &tool_name,
-                        session_context: &execution_context_for_policy,
-                        args: &parsed_args,
-                        permission_policy: permission_policy.clone(),
-                    },
-                );
-                let _ = bus.emit(AgentEvent::PrepareStepExecuted {
-                    session_id: session_id.clone(),
-                    tool_name: tool_name.clone(),
-                    outcome: prep_out.outcome,
-                    boundary: prep_out.boundary_decision,
-                    permission: prep_out.permission_decision,
-                    sandbox: prep_out.sandbox_policy,
-                    policy_version: prep_out.policy_version,
-                    at: chrono::Utc::now(),
-                });
-            }
-            let (result_text, is_error) = match permission_outcome {
-                crate::modules::runtime::permissions::PermissionOutcome::Allow => {
-                    match tool_executor.execute_with_trace(
-                        &tool_name,
-                        &input_json,
-                        &policy_trace_id,
-                        Some(provider_request_id.as_str()),
-                    ) {
-                        Ok(output) => (output, false),
-                        Err(e) => (e.to_string(), true),
-                    }
-                }
-                crate::modules::runtime::permissions::PermissionOutcome::Deny { reason } => {
-                    (reason, true)
-                }
-            };
-            let safety = crate::modules::security::safety::shared_safety_layer();
-            let sanitized_tool = safety.sanitize_tool_output(&tool_name, &result_text);
-            let wrapped_for_llm = safety.wrap_for_llm(&tool_name, &sanitized_tool.content);
-            let policy_decision = if denied_by_policy { "deny" } else { "allow" };
-            let duration_ms = start_time.elapsed().as_millis() as u64;
-            if !is_error {
-                has_successful_tool = true;
-            }
-            // Phase 6E harness: emit ToolResult after invocation.
-            crate::modules::harness::agent_loop_integration::emit_tool_result(
-                harness_event_bus_for_stream.as_ref(),
-                &session_id,
-                &tool_name,
-                !is_error,
-                duration_ms,
-            );
-            if is_mutating_tool_success(&tool_name, &input_json, is_error) {
-                has_successful_mutating_tool = true;
-            }
-            crate::modules::runtime::self_repair::record_tool_outcome(&tool_name, !is_error);
-
-            // Emit completed/error event
-            let terminal_tool_payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "tool_call_update".to_string(),
-                tool_call_id: Some(tool_id.clone()),
-                tool_name: Some(tool_name.clone()),
-                tool_status: Some(if is_error { "error" } else { "completed" }.to_string()),
-                tool_args: Some(tool_input.clone()),
-                tool_result: Some(sanitized_tool.content.clone()),
-                tool_duration_ms: Some(duration_ms),
-                effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
-                policy_decision: Some(policy_decision.to_string()),
-                evidence_id: Some(policy_trace_id.clone()),
-                request_id: Some(provider_request_id.clone()),
-                task_outcome: None,
-                degraded_reason: None,
-                resume_available: None,
-                resume_cursor: None,
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(terminal_tool_payload.clone());
-            append_stream_event(&run_event_logger, &terminal_tool_payload).await;
-
-            // Append tool_use as assistant message, then tool_result as user message.
-            // MiniMax requires this pairing: assistant tool_use + user tool_result.
-            session_messages.push(crate::modules::api::InputMessage {
-                role: "assistant".to_string(),
-                content: vec![crate::modules::api::InputContentBlock::ToolUse {
-                    id: tool_id.clone(),
-                    name: tool_name.clone(),
-                    input: tool_input,
-                }],
-                // Do not feed full thinking back into the next model call.
-                // OpenAI-compatible providers that require the field get an
-                // empty `reasoning_content` placeholder in `translate_message`.
-                thinking: None,
-            });
-            session_messages.push(crate::modules::api::InputMessage {
-                role: "user".to_string(),
-                content: vec![crate::modules::api::InputContentBlock::ToolResult {
-                    tool_use_id: tool_id.clone(),
-                    content: vec![crate::modules::api::ToolResultContentBlock::Text {
-                        text: summarize_tool_result_for_model(
-                            &tool_name,
-                            &tool_id,
-                            &wrapped_for_llm,
-                            is_error,
-                        ),
-                    }],
-                    is_error,
-                }],
-                thinking: None,
-            });
-
-            // Also collect session-format message for persistence in order.
-            timeline_session_messages.push(
-                crate::modules::runtime::session::ConversationMessage::tool_result(
-                    tool_id,
-                    tool_name,
-                    sanitized_tool.content,
-                    is_error,
-                ),
-            );
-            if let Some(last_message) = timeline_session_messages.last_mut() {
-                last_message.request_id = Some(provider_request_id.clone());
-            }
-        }
+        invalid_tool_args_streak = tool_result.invalid_tool_args_streak;
+        sanitized_dropped_invalid_tool_use_inputs =
+            tool_result.sanitized_dropped_invalid_tool_use_inputs;
+        sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
+        tool_executor = tool_result.tool_executor;
         // Continue outer loop → send next LLM request with tool results
         tracing::info!(
             "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",
