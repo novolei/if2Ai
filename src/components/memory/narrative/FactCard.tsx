@@ -9,7 +9,7 @@
  */
 
 import { MessageSquare, Sparkles } from 'lucide-react'
-import type { SessionSummaryDto } from '@/lib/tauri'
+import type { SessionSummaryDto } from '@/api/memory'
 
 export interface FactCardProps {
   /** Session-summary row to render. */

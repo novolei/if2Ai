@@ -8,7 +8,7 @@
 import { GripVertical, X } from 'lucide-react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { PinnedItemDto } from '@/lib/tauri'
+import type { PinnedItemDto } from '@/api/memory'
 
 export interface PinItemProps {
   pin: PinnedItemDto

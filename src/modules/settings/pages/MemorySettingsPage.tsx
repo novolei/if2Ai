@@ -24,13 +24,13 @@ import {
   getMemoryConfig,
   setMemoryConfig,
   exportTrajectories,
-  memoryClearAll,
   DEFAULT_PROMOTION_THRESHOLDS,
   type MemoryConfigInput,
   type MemoryRecallMode,
   type MemoryPolicyEnforceMode,
   type PromotionThresholds,
 } from '@/lib/tauri'
+import { memoryClearAll } from '@/api/memory'
 
 interface SlotConfig {
   label: string

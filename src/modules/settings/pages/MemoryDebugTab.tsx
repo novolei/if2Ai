@@ -25,7 +25,7 @@ import {
   type CompileSkipReason,
   type CompiledMemoryDto,
   type PinnedItemDto,
-} from '@/lib/tauri'
+} from "@/api/memory"
 
 type Scope = 'current' | 'all' | 'project' | 'global'
 

@@ -52,10 +52,16 @@ import {
   memoryPromotionCandidates,
   memoryRecall,
   memorySummariesList,
+  pinnedGet,
+  type CompileReport,
+  type CompileResult,
+  type CompileSkipReason,
+  type CompiledMemoryDto,
   type MemoryEntryDto,
   type MemoryPromotionCandidateDto,
   type MemoryScopeArgs,
   type MemoryScopeKind,
+  type PinnedItemDto,
   type SessionSummaryDto,
 } from "@/lib/tauri";
 
@@ -76,12 +82,18 @@ export {
   memoryPromotionCandidates,
   memoryRecall,
   memorySummariesList,
+  pinnedGet,
 };
 export type {
+  CompileReport,
+  CompileResult,
+  CompileSkipReason,
+  CompiledMemoryDto,
   MemoryEntryDto,
   MemoryPromotionCandidateDto,
   MemoryScopeArgs,
   MemoryScopeKind,
+  PinnedItemDto,
   SessionSummaryDto,
 };
 

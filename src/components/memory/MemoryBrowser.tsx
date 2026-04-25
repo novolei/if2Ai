@@ -27,7 +27,7 @@ import {
   type MemoryPromotionCandidateDto,
   type MemoryScopeArgs,
   type MemoryScopeKind,
-} from '@/lib/tauri'
+} from '@/api/memory'
 
 const PAGE_SIZE = 20
 

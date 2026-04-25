@@ -23,7 +23,7 @@ import {
   memoryCompiledClear,
   memoryCompiledRead,
   type CompiledMemoryDto,
-} from '@/lib/tauri'
+} from '@/api/memory'
 
 export interface CompiledMemoryViewerProps {
   /** Whether the modal is currently visible. */

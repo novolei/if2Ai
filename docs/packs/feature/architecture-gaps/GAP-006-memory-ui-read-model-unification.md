@@ -1,7 +1,7 @@
 # GAP-006: Memory UI Read Model Unification
 
 ## Status
-- State: draft
+- State: done
 
 ## Goal
 统一 memory evidence、recent events、MemoryBrowser、MemoryDebugTab 的前端读面，避免 memory 状态由多条 IPC/read model 分别推断。

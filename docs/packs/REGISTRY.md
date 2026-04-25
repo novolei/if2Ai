@@ -4,7 +4,7 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-22
+> 最后更新: 2026-04-25
 
 ---
 
@@ -12,12 +12,17 @@
 
 | Pack   | Type | Goal | Owner |
 | ------ | ---- | ---- | ----- |
-| [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature | Updater transport + release manifest + settings state machine + CI release gates | executor |
+| [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | executor |
+| [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md) | feature | Runtime cockpit adapter + i18n + strategy | executor |
+| [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md) | feature | Jiaochang shell + fixture cockpit | executor |
+| [APP-UPDATER-002](./feature/app-updater/APP-UPDATER-002-release-ci-signed-artifact.md) | feature | Release CI + signed Tauri updater artifact | executor |
+| [APP-UPDATER-003](./feature/app-updater/APP-UPDATER-003-client-state-machine-ux.md) | feature | Client updater state machine + settings UX | executor |
 
 ## Recently Done
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature | Updater transport + release manifest + settings state machine + CI release gates | 2026-04-25 |
 | [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | feature | Prompt control panel + diagnostics projection | 2026-04-22 |
 | [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | feature | Utility / coordinator prompt lanes | 2026-04-22 |
 | [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | feature | Tool prompt catalog + conditional injection | 2026-04-22 |
@@ -237,8 +242,8 @@
 | 2 | P0 | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md) | **done** | 统一 runtime envelope / stream payload / run log contract |
 | 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | **done** | 前端 runtime UI 收敛到 projection-first |
 | 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | **done** | 瘦身 command boundary 与 AppState 聚合 |
-| 5 | P1 | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md) | draft | 拆分 `stream_task.rs` god-file 职责 |
-| 6 | P1 | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | draft | 统一 memory UI 读模型 |
+| 5 | P1 | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md) | **done** | 拆分 `stream_task.rs` god-file 职责 |
+| 6 | P1 | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | **done** | 统一 memory UI 读模型 |
 | 7 | P2 | [GAP-007](./feature/architecture-gaps/GAP-007-harness-event-log-truth-cutover.md) | draft | harness/report 改读 canonical event log |
 | 8 | P2 | [GAP-008](./feature/architecture-gaps/GAP-008-contract-drift-guardrails.md) | draft | 建立前后端 contract drift guardrails |
 

@@ -18,7 +18,7 @@ import { toast } from 'sonner'
 import { Loader2, RefreshCw, Search, X } from 'lucide-react'
 import { DateGroupHeader } from './DateGroupHeader'
 import { FactCard } from './FactCard'
-import { memorySummariesList, type SessionSummaryDto } from '@/lib/tauri'
+import { memorySummariesList, type SessionSummaryDto } from '@/api/memory'
 
 export interface MemoryNarrativeViewerProps {
   /** Whether the modal is currently visible. */
