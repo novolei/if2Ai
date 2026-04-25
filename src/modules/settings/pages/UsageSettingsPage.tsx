@@ -95,10 +95,10 @@ function fmtTokens(n: number): string {
 }
 
 function fmtCost(usd: number): string {
-  if (usd <= 0) return '$0.00'
-  if (usd < 0.01) return `$${usd.toFixed(4)}`
-  if (usd < 1) return `$${usd.toFixed(3)}`
-  return `$${usd.toFixed(2)}`
+  if (usd <= 0) return '约 $0.00'
+  if (usd < 0.01) return `约 $${usd.toFixed(4)}`
+  if (usd < 1) return `约 $${usd.toFixed(3)}`
+  return `约 $${usd.toFixed(2)}`
 }
 
 const EMPTY_BY_CALLER: CallerUsage = {
@@ -332,6 +332,7 @@ export function UsageSettingsPage({ state, actions }: SettingsPageProps) {
           数据持久化于 <code className="rounded bg-black/[0.04] px-1">~/.if2ai/usage/usage.sqlite</code>，
           按 logical-day（04:00 截断）聚合到日 / 周 / 月。 `chat` 来自 turn_service 主流；
           `summarizer` / `compiler` / `utility` 来自 memory pipeline 的 ChatProviderUtilityLlm 包装层。
+          成本为估算值；未知模型价格会按默认档估算，精确计费以服务商账单为准。
         </p>
       </SettingsSurface>
 

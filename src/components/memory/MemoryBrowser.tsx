@@ -21,9 +21,9 @@ import { Button } from '@/components/ui/button'
 import {
   memoryDelete,
   memoryDemote,
+  memoryExport,
   memoryPromote,
   memoryPromotionCandidates,
-  memoryRecall,
   type MemoryPromotionCandidateDto,
   type MemoryScopeArgs,
   type MemoryScopeKind,
@@ -57,6 +57,13 @@ const SCOPE_OPTIONS: ReadonlyArray<{ id: ScopeFilter; label: string; help: strin
   { id: 'session', label: '会话', help: '当前会话 + 当前项目 + 全局记忆' },
 ]
 
+function normalizeMemoryKeyForDuplicateHint(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/^episode:session:/, '')
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '')
+}
+
 export function MemoryBrowser({
   onStartWindowDrag,
   activeProjectId,
@@ -68,6 +75,7 @@ export function MemoryBrowser({
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('all')
   const [totalCount, setTotalCount] = useState<number | null>(null)
+  const [searchTotalCount, setSearchTotalCount] = useState<number | null>(null)
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all')
   const [promotionOpen, setPromotionOpen] = useState(false)
   const [candidates, setCandidates] = useState<MemoryPromotionCandidateDto[]>([])
@@ -135,22 +143,13 @@ export function MemoryBrowser({
     setError(null)
     try {
       const category = activeCategory === 'all' ? null : activeCategory
-      // 走 `memory_recall({query: ''})` 而不是 `memory_export`：
-      // backend 的 recall 路径会顺手 bump 每条命中的 `access_count`
-      // (sqlite_provider/provider_impl.rs::bump_access_counts_in_results)，
-      // 而 export 是只读快照路径，故意不 bump 以免污染数据库。
-      // 用户对"在 Memory Browser 里看了一下"的直觉就是"我访问过它"，
-      // 所以 browse 路径走 recall 更合理；export 仍然保留给"导出整库
-      // 不留痕"的场景（设置页 / 后端工具）。
-      // limit 给一个高上限，足够大多数库；超过这个量再做 backend 分页。
-      const results = await memoryRecall({
-        query: '',
+      const results = await memoryExport({
         category,
-        limit: 1000,
         scope: effectiveScope,
       })
       setEntries(results)
       setTotalCount(results.length)
+      setSearchTotalCount(null)
     } catch (e) {
       setError(`加载记忆失败: ${e}`)
     } finally {
@@ -168,14 +167,19 @@ export function MemoryBrowser({
     setError(null)
     try {
       const category = activeCategory === 'all' ? null : activeCategory
-      const results = await memoryRecall({
-        query: searchQuery.trim(),
+      const allEntries = await memoryExport({
         category,
-        limit: PAGE_SIZE,
         scope: effectiveScope,
       })
+      const needle = searchQuery.trim().toLowerCase()
+      const results = allEntries.filter((entry) =>
+        [entry.key, entry.content, entry.category]
+          .some((value) => value.toLowerCase().includes(needle)),
+      )
       setEntries(results)
-      setTotalCount(null)
+      setTotalCount(allEntries.length)
+      setSearchTotalCount(results.length)
+      setPageIndex(0)
     } catch (e) {
       setError(`搜索失败: ${e}`)
     } finally {
@@ -268,6 +272,17 @@ export function MemoryBrowser({
 
   const applyPromotion = async (cand: MemoryPromotionCandidateDto) => {
     if (cand.target_tier === 'session') return // backend rejects this anyway
+    const confirmed = window.confirm(
+      [
+        `确认晋升记忆「${cand.key}」？`,
+        '',
+        `范围: ${cand.current_tier} -> ${cand.target_tier}`,
+        `原因: ${cand.reason}`,
+        '',
+        '这会影响后续对话可见的记忆范围；如结果不符合预期，可在记忆卡片中降级。',
+      ].join('\n'),
+    )
+    if (!confirmed) return
     try {
       await memoryPromote({
         key: cand.key,
@@ -295,7 +310,9 @@ export function MemoryBrowser({
           <div className="flex items-center gap-3">
             {totalCount !== null && (
               <span className="text-[12px] text-black/40">
-                共 {totalCount} 条记忆
+                {searchTotalCount !== null
+                  ? `${searchTotalCount} / ${totalCount} 条匹配`
+                  : `共 ${totalCount} 条记忆`}
               </span>
             )}
             <Button
@@ -350,6 +367,7 @@ export function MemoryBrowser({
               variant="ghost"
               onClick={() => {
                 setSearchQuery('')
+                setSearchTotalCount(null)
                 loadEntries()
               }}
             >
@@ -447,6 +465,12 @@ export function MemoryBrowser({
             <ul className="flex flex-col gap-1.5">
               {candidates.map((c) => {
                 const needsProjectId = c.target_tier === 'project' && !activeProjectId
+                const duplicateCount = candidates.filter(
+                  (item) =>
+                    item.key !== c.key &&
+                    normalizeMemoryKeyForDuplicateHint(item.key) ===
+                      normalizeMemoryKeyForDuplicateHint(c.key),
+                ).length
                 return (
                   <li
                     key={c.key}
@@ -461,6 +485,11 @@ export function MemoryBrowser({
                         {' · '}
                         {c.reason}
                       </div>
+                      {duplicateCount > 0 ? (
+                        <div className="mt-0.5 text-[10.5px] text-rose-600/80">
+                          检测到 {duplicateCount} 条相似候选，建议先复核/合并再晋升
+                        </div>
+                      ) : null}
                     </div>
                     <Button
                       type="button"
@@ -495,9 +524,15 @@ export function MemoryBrowser({
           </div>
         ) : entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-[14px] text-black/50">暂无记忆条目</p>
+            <p className="text-[14px] text-black/50">
+              {searchQuery.trim()
+                ? `未找到包含「${searchQuery.trim()}」的记忆`
+                : '暂无记忆条目'}
+            </p>
             <p className="mt-1 text-[12px] text-black/30">
-              记忆会在对话过程中自动存储
+              {searchQuery.trim() && totalCount !== null
+                ? `当前范围共 ${totalCount} 条，匹配 0 条`
+                : '记忆会在对话过程中自动存储'}
             </p>
           </div>
         ) : (

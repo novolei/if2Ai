@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Clock,
+  Brain,
   Folder,
   FolderOpen,
   Hash,
   MessageSquare,
+  Settings,
+  SlidersHorizontal,
 } from 'lucide-react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { cn } from '@/lib/utils'
 import type { ProjectMeta, SessionMeta } from '@/lib/tauri'
+import { openSettingsWindow } from '@/api/window'
 import {
   Command,
   CommandEmpty,
@@ -21,6 +25,13 @@ import {
 
 /** Maximum sessions shown per group when no query is typed. */
 const MAX_RECENT = 8
+
+const SETTINGS_RESULTS = [
+  { id: 'settings:providers', label: '服务商配置', hint: 'Provider / API Key / Base URL', icon: SlidersHorizontal },
+  { id: 'settings:models', label: '模型配置', hint: '主聊天模型 / Thinking 支持', icon: Brain },
+  { id: 'settings:memory', label: '记忆设置', hint: 'Memory / 编译 / 晋升', icon: Brain },
+  { id: 'settings:prompt', label: 'Prompt Diagnostics', hint: '身份 / Prompt / 诊断', icon: Settings },
+]
 
 interface GlobalSearchProps {
   open: boolean
@@ -86,6 +97,13 @@ export function GlobalSearch({
     return projects.filter((p) => p.name.toLowerCase().includes(q))
   }, [projects, q])
 
+  const matchedSettings = useMemo(() => {
+    if (!q) return SETTINGS_RESULTS.slice(0, 3)
+    return SETTINGS_RESULTS.filter((item) =>
+      `${item.label} ${item.hint}`.toLowerCase().includes(q),
+    )
+  }, [q])
+
   const handleSelectSession = (projectId: string, sessionId: string) => {
     onSelectSession(projectId, sessionId)
     onOpenChange(false)
@@ -97,6 +115,7 @@ export function GlobalSearch({
   }
 
   const hasResults = matchedSessions.length > 0 || matchedProjects.length > 0
+    || matchedSettings.length > 0
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -175,7 +194,37 @@ export function GlobalSearch({
                 </CommandGroup>
               )}
 
-              {matchedSessions.length > 0 && matchedProjects.length > 0 && (
+              {matchedSessions.length > 0 && (matchedProjects.length > 0 || matchedSettings.length > 0) && (
+                <CommandSeparator />
+              )}
+
+              {matchedSettings.length > 0 && (
+                <CommandGroup heading="设置与命令">
+                  {matchedSettings.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <CommandItem
+                        key={item.id}
+                        value={item.id}
+                        onSelect={() => {
+                          void openSettingsWindow()
+                          onOpenChange(false)
+                        }}
+                      >
+                        <Icon className="size-3.5 shrink-0 text-muted-foreground/40" strokeWidth={1.5} />
+                        <span className="min-w-0 flex-1 truncate text-foreground/75">
+                          {item.label}
+                        </span>
+                        <span className="max-w-[220px] shrink-0 truncate text-[10.5px] text-muted-foreground/35">
+                          {item.hint}
+                        </span>
+                      </CommandItem>
+                    )
+                  })}
+                </CommandGroup>
+              )}
+
+              {matchedSettings.length > 0 && matchedProjects.length > 0 && (
                 <CommandSeparator />
               )}
 

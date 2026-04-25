@@ -9,9 +9,9 @@ interface TurnCostChipProps {
 }
 
 function formatCost(cost: number): string {
-  if (cost <= 0) return "$0.0000";
-  if (cost < 0.0001) return "<$0.0001";
-  return `$${cost.toFixed(4)}`;
+  if (cost <= 0) return "约 $0.0000";
+  if (cost < 0.0001) return "约 <$0.0001";
+  return `约 $${cost.toFixed(4)}`;
 }
 
 /**
@@ -21,7 +21,7 @@ function formatCost(cost: number): string {
  */
 export function TurnCostChip({ turnCost, className }: TurnCostChipProps) {
   const cost = formatCost(turnCost.costUsd);
-  const showCost = cost !== "$0.0000";
+  const showCost = turnCost.costUsd > 0;
   const tooltip = [
     `model: ${turnCost.model || "unknown"}`,
     `input: ${turnCost.inputTokens.toLocaleString()}`,
@@ -32,7 +32,7 @@ export function TurnCostChip({ turnCost, className }: TurnCostChipProps) {
     turnCost.cacheCreationInputTokens > 0
       ? `cache write: ${turnCost.cacheCreationInputTokens.toLocaleString()}`
       : null,
-    `cost: ${cost}`,
+    `estimated cost: ${cost}`,
   ]
     .filter(Boolean)
     .join("\n");

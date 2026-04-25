@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Toaster } from '@/components/ui/sonner'
 import { SETTINGS_SECTIONS } from '../data'
@@ -32,6 +32,11 @@ export function SettingsShell({
 }: SettingsShellProps) {
   const section = SETTINGS_SECTIONS.find((item) => item.id === activeSection) ?? SETTINGS_SECTIONS[0]
   const Icon = section.icon
+  const titleRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    titleRef.current?.focus({ preventScroll: true })
+  }, [activeSection])
 
   return (
     <div className="relative isolate flex h-screen overflow-hidden bg-transparent text-foreground">
@@ -54,7 +59,13 @@ export function SettingsShell({
               <Icon className="h-4 w-4 text-jade" />
             </div>
             <div>
-              <div className="text-[16px] font-semibold tracking-tight">{section.label}</div>
+              <div
+                ref={titleRef}
+                tabIndex={-1}
+                className="text-[16px] font-semibold tracking-tight outline-none"
+              >
+                {section.label}
+              </div>
               <p className="text-[11.5px] leading-4 text-muted-foreground">{section.description}</p>
             </div>
           </div>

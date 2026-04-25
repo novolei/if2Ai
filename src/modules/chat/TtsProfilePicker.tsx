@@ -107,8 +107,9 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="inline-flex max-w-[180px] items-center gap-1 rounded-lg border border-black/[0.08] bg-white/85 px-2 py-1 text-[10.5px] hover:bg-white"
-        title={`Profile: ${active.name} · ${active.voice_id} · ${active.playback_rate.toFixed(2)}×`}
+        title={`语音 Profile: ${active.name} · ${active.voice_id} · ${active.playback_rate.toFixed(2)}×`}
       >
+        <span className="shrink-0 text-muted-foreground/60">语音:</span>
         <span className="truncate font-medium text-foreground/85">{active.name}</span>
         <span className="font-mono text-[9.5px] text-muted-foreground">
           {active.playback_rate.toFixed(2)}×

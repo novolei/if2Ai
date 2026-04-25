@@ -1,12 +1,12 @@
 /**
- * ThinkingBlock — Collapsible display of assistant chain-of-thought.
+ * ThinkingBlock — Collapsible display of provider thinking diagnostics.
  *
  * Extracted from `src/components/ui/chat-ui.tsx` as part of the FE-G
  * God-Component split.  This is the canonical implementation; chat-ui.tsx
  * will import from here once the migration is complete.
  *
  * Two variants:
- *   - `ThinkingBlock` — full collapsible block with the thinking text
+ *   - `ThinkingBlock` — collapsed-by-default diagnostic block
  *   - `ThinkingSummaryNode` — compact non-expandable summary for non-primary messages
  */
 
@@ -24,17 +24,15 @@ function formatDuration(value: number): string {
 
 /** Summarise long thinking text to a single-line preview. */
 function summarizeThinkingText(thinking: string): string {
-  const lines = thinking.split('\n').filter((l) => l.trim().length > 0)
-  const first = lines[0]?.trim()
-  if (!first) return '已完成思考'
-  const normalized = first.replace(/\s+/g, ' ')
-  return normalized.length > 44 ? normalized.slice(0, 44) + '…' : normalized
+  const lineCount = thinking.split('\n').filter((l) => l.trim().length > 0).length
+  if (lineCount <= 0) return '已完成思考'
+  return lineCount === 1 ? '已完成上下文判断' : `已完成上下文判断 · ${lineCount} 段`
 }
 
 // ── ThinkingBlock ─────────────────────────────────────────────────────────────
 
 export interface ThinkingBlockProps {
-  /** The raw chain-of-thought text from the model. */
+  /** Provider diagnostic thinking text. Hidden unless explicitly expanded. */
   thinking: string
   /** Optional duration in milliseconds shown alongside the header. */
   thinkingTime?: number
@@ -43,7 +41,7 @@ export interface ThinkingBlockProps {
 }
 
 /**
- * Collapsible block that renders the model's chain-of-thought.
+ * Collapsible block that renders provider thinking diagnostics.
  * Used for the primary (latest) assistant message in a turn.
  */
 export function ThinkingBlock({
@@ -98,7 +96,7 @@ export function ThinkingBlock({
 // ── ThinkingSummaryNode ───────────────────────────────────────────────────────
 
 export interface ThinkingSummaryNodeProps {
-  /** The raw chain-of-thought text — summarised to a single line. */
+  /** Provider diagnostic thinking text, summarised to a safe single line. */
   thinking: string
   /** Optional duration in milliseconds. */
   thinkingTime?: number

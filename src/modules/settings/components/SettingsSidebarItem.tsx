@@ -18,6 +18,7 @@ export function SettingsSidebarItem({
     <button
       type="button"
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
       className={cn(
         'window-no-drag flex h-9 w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition-colors',
         active

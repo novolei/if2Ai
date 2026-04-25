@@ -59,10 +59,10 @@ export interface ContextBarProps {
 }
 
 function formatCostUsd(cost: number): string {
-  if (cost <= 0) return '$0.00'
-  if (cost < 0.01) return `$${cost.toFixed(4)}`
-  if (cost < 1) return `$${cost.toFixed(3)}`
-  return `$${cost.toFixed(2)}`
+  if (cost <= 0) return '约 $0.00'
+  if (cost < 0.01) return `约 $${cost.toFixed(4)}`
+  if (cost < 1) return `约 $${cost.toFixed(3)}`
+  return `约 $${cost.toFixed(2)}`
 }
 
 // ── Segment config ────────────────────────────────────────────────────────────

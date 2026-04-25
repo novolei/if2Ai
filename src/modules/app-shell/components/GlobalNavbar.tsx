@@ -1,5 +1,6 @@
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { ArrowUpCircle, Brain, MessageSquare, Settings } from 'lucide-react'
+import { toast } from 'sonner'
 import type { AppSection } from '../types'
 import { NavTooltipButton } from './NavTooltipButton'
 
@@ -85,7 +86,11 @@ export function GlobalNavbar({
           icon={ArrowUpCircle}
           label="检查更新"
           ghost
-          onClick={() => {}}
+          onClick={() =>
+            toast.info('自动更新暂未接入', {
+              description: '当前版本可在「设置 > 关于」查看；后续会在这里显示检查进度。',
+            })
+          }
         />
         <NavTooltipButton
           icon={Settings}

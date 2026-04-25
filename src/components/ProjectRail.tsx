@@ -208,7 +208,10 @@ export function ProjectRail({
         return latestB - latestA;
       });
     }
-    return list;
+    if (!activeProjectId) return list;
+    const active = list.find((project) => project.id === activeProjectId);
+    if (!active) return list;
+    return [active, ...list.filter((project) => project.id !== activeProjectId)];
   }, [projects, projectSessions, sortOrder, hideEmpty]);
 
   /** Expand or collapse every project at once. */
