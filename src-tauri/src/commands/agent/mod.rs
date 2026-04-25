@@ -128,10 +128,19 @@ pub async fn start_agent_stream(
     session_id: String,
     user_message: String,
     permission_mode: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
 ) -> Result<String, String> {
     let stream_cancel_senders = state.stream_cancel_senders.clone();
     let permission_senders = state.permission_senders.clone();
     let permission_overrides = state.permission_overrides.clone();
+    if let (Some(provider_id), Some(model_id)) = (provider_id.as_deref(), model_id.as_deref()) {
+        crate::modules::config::model_resolver::ModelResolver::set_role_config(
+            "chat",
+            &format!("{provider_id}/{model_id}"),
+        )
+        .await?;
+    }
     let service = make_turn_service(&state, Some(app_handle));
     service
         .stream_turn(crate::modules::application::StreamTurnRequest {

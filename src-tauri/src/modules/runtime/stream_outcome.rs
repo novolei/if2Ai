@@ -38,6 +38,17 @@ impl TaskOutcomeResolver {
             };
         }
 
+        if matches!(
+            conversation.terminal_status,
+            "repeated_tool_batch_no_progress" | "invalid_tool_args_repeated"
+        ) {
+            return UserVisibleTruth {
+                task_outcome: "partial_success",
+                degraded_reason: Some(conversation.terminal_status.to_string()),
+                resume_available: true,
+            };
+        }
+
         if conversation.terminal_status == "cancelled_by_user" {
             return UserVisibleTruth {
                 task_outcome: "failed",
@@ -88,7 +99,11 @@ impl TaskOutcomeResolver {
 fn is_resumable_terminal_status(status: &str) -> bool {
     matches!(
         status,
-        "stream_error" | "failed_to_start_stream" | "model_stop_no_tools"
+        "stream_error"
+            | "failed_to_start_stream"
+            | "model_stop_no_tools"
+            | "repeated_tool_batch_no_progress"
+            | "invalid_tool_args_repeated"
     )
 }
 
@@ -148,6 +163,27 @@ mod tests {
         assert_eq!(
             outcome.degraded_reason.as_deref(),
             Some("max_iterations_reached")
+        );
+    }
+
+    #[test]
+    fn repeated_tool_batch_is_partial_success_not_completed() {
+        let outcome = TaskOutcomeResolver::resolve(
+            ExecutionTruth {
+                has_successful_tool: true,
+                has_successful_mutating_tool: false,
+            },
+            &ConversationTruth {
+                stream_failed: false,
+                terminal_status: "repeated_tool_batch_no_progress",
+                last_stream_error_reason: None,
+            },
+        );
+        assert_eq!(outcome.task_outcome, "partial_success");
+        assert!(outcome.resume_available);
+        assert_eq!(
+            outcome.degraded_reason.as_deref(),
+            Some("repeated_tool_batch_no_progress")
         );
     }
 }

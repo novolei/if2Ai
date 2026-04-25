@@ -6,9 +6,9 @@
 //! `~/.if2ai/usage/usage.sqlite`; see
 //! [`crate::modules::usage::sqlite_store`].
 
-use crate::modules::usage::{global_store, UsageSummary, UsageWindow};
 #[allow(unused_imports)]
 use crate::modules::usage::UsageStore as _;
+use crate::modules::usage::{global_store, UsageSummary, UsageWindow};
 
 // `UsageStore` is brought into scope so the `summary(...)` method
 // resolves on the `Arc<dyn UsageStore>` returned by `global_store()`.

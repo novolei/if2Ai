@@ -365,7 +365,9 @@ mod tests {
 
     #[test]
     fn run_log_entry_from_envelope_round_trips() {
-        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+        use crate::modules::runtime::contracts::common::{
+            CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+        };
 
         let envelope = RuntimeEventEnvelope::new(
             RuntimeEventType::Conversation,
@@ -402,7 +404,9 @@ mod tests {
 
     #[test]
     fn correlation_run_id_is_set_for_run_scoped_events() {
-        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+        use crate::modules::runtime::contracts::common::{
+            CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+        };
 
         // Run-scoped events: stream_complete, stream_error, run_started
         // must have correlation.run_id set.
@@ -429,7 +433,9 @@ mod tests {
 
     #[test]
     fn from_envelope_uses_fallback_when_correlation_missing() {
-        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+        use crate::modules::runtime::contracts::common::{
+            CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+        };
 
         let envelope = RuntimeEventEnvelope::new(
             RuntimeEventType::Tool,

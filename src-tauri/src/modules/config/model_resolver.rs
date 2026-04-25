@@ -279,12 +279,25 @@ impl ModelResolver {
     /// Get the current active model selection.
     pub async fn get_active_model() -> Result<Option<ModelSelection>, String> {
         let config = Self::load_config().await?;
+        if let Some(chat_role) = config.role_models.iter().find(|r| r.role == "chat") {
+            if let Some(model_ref) = chat_role.model_ref.as_deref() {
+                if let Some(model) = ModelRef::parse(model_ref) {
+                    return Ok(Some(ModelSelection {
+                        provider_id: model.provider_id,
+                        model_id: model.model_id,
+                        auth_variant: None,
+                    }));
+                }
+            }
+        }
         Ok(config.active_model.clone())
     }
 
     /// Set the active model selection.
     pub async fn set_active_model(provider_id: &str, model_id: &str) -> Result<(), String> {
-        crate::modules::provider::service::select_model(provider_id, model_id).await
+        crate::modules::provider::service::select_model(provider_id, model_id).await?;
+        let model_ref = format!("{provider_id}/{model_id}");
+        Self::set_role_config("chat", &model_ref).await
     }
 
     /// Get all role-based model assignments.
@@ -333,6 +346,13 @@ impl ModelResolver {
             .save_config(&{
                 let mut cfg = config;
                 cfg.role_models = role_models;
+                if role == "chat" {
+                    cfg.active_model = Some(crate::modules::config::ModelSelection {
+                        provider_id: model.provider_id.clone(),
+                        model_id: model.model_id.clone(),
+                        auth_variant: None,
+                    });
+                }
                 cfg
             })
             .await

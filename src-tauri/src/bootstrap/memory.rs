@@ -251,6 +251,15 @@ fn create_memory_provider(
             let memory_root = modules::config::store::if2ai_data_root().join("memory");
             let db_path = memory_root.join("vector_db");
             let sqlite_path = Some(memory_root.join("memory.db"));
+            tracing::info!(
+                memory_root = %memory_root.display(),
+                vector_db_path = %db_path.display(),
+                sqlite_path = %sqlite_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                "[memory] resolving VectorMemoryProvider paths"
+            );
 
             let config = modules::memory::VectorProviderConfig {
                 db_path,

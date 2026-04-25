@@ -105,14 +105,15 @@ pub async fn resolve_chat_runtime_provider(
                     .to_string()
             })?;
             let client = ClawApiClient::from_auth(AuthSource::ApiKey(api_key))
-                .with_base_url(resolved.base_url)
+                .with_base_url(resolved.base_url.clone())
                 .with_transport_policy(&policy);
             ProviderClient::ClawApi(client)
         }
         "openai-completions" => {
             let api_key = resolved.api_key.unwrap_or_default();
             let client = OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai())
-                .with_base_url(resolved.base_url)
+                .with_base_url(resolved.base_url.clone())
+                .with_provider_id(resolved.provider_id.clone())
                 .with_retry_policy(
                     policy.max_retries(),
                     Duration::from_millis(policy.initial_backoff_ms()),
@@ -127,12 +128,10 @@ pub async fn resolve_chat_runtime_provider(
         }
     };
 
-    let context_window = crate::modules::provider::known_models::lookup(
-        &resolved.provider_id,
-        &resolved.model_id,
-    )
-    .map(|m| m.context)
-    .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+    let context_window =
+        crate::modules::provider::known_models::lookup(&resolved.provider_id, &resolved.model_id)
+            .map(|m| m.context)
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
 
     Ok(RuntimeProviderResolution {
         provider_client,
@@ -223,15 +222,32 @@ pub async fn resolve_optional_failover_openai_client(
         _ => return Ok(None),
     };
     let api_key = std::env::var("IF2AI_FAILOVER_API_KEY").unwrap_or_default();
+    let provider_id = std::env::var("IF2AI_FAILOVER_PROVIDER_ID")
+        .ok()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| derive_provider_id_from_base_url(&base));
     let policy = load_provider_transport_policy(workdir);
     let client = OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai())
         .with_base_url(base)
+        .with_provider_id(provider_id)
         .with_retry_policy(
             policy.max_retries(),
             Duration::from_millis(policy.initial_backoff_ms()),
             Duration::from_millis(policy.max_backoff_ms()),
         );
     Ok(Some(ProviderClient::OpenAi(client)))
+}
+
+fn derive_provider_id_from_base_url(base_url: &str) -> String {
+    let url_lower = base_url.to_ascii_lowercase();
+    for provider in crate::modules::provider::known_providers::KNOWN_PROVIDERS {
+        if !provider.default_base_url.is_empty()
+            && url_lower.contains(&provider.default_base_url.to_ascii_lowercase())
+        {
+            return provider.id.to_string();
+        }
+    }
+    "openai".to_string()
 }
 
 #[cfg(test)]

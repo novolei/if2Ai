@@ -286,7 +286,7 @@ pub fn spawn_scheduler_self_repair_watchdog(scheduler: SharedScheduler) {
             handle.spawn(task(scheduler));
         }
         Err(_) => {
-            tracing::warn!(
+            tracing::debug!(
                 "[self_repair] no current Tokio runtime at watchdog spawn site; \
                  falling back to dedicated thread"
             );

@@ -7,6 +7,7 @@
 
 use crate::modules::config::{ConfigService, ProviderConfig};
 use crate::modules::provider::registry::builtin_providers;
+use crate::modules::provider::service::{ModelCapabilitySelection, ThinkingProbeResult};
 use crate::modules::provider::test::test_provider_connection;
 use crate::modules::provider::types::{Model, TestResult};
 
@@ -73,6 +74,26 @@ pub async fn provider_configure_with_models(
 ) -> Result<(), String> {
     crate::modules::provider::service::configure_provider_with_models(&provider_config, &model_ids)
         .await
+}
+
+#[tauri::command]
+pub async fn provider_probe_model_thinking(
+    provider_config: ProviderConfig,
+    model_id: String,
+) -> Result<ThinkingProbeResult, String> {
+    crate::modules::provider::service::probe_model_thinking(&provider_config, &model_id).await
+}
+
+#[tauri::command]
+pub async fn provider_configure_with_model_capabilities(
+    provider_config: ProviderConfig,
+    models: Vec<ModelCapabilitySelection>,
+) -> Result<(), String> {
+    crate::modules::provider::service::configure_provider_with_model_capabilities(
+        &provider_config,
+        &models,
+    )
+    .await
 }
 
 /// Get previously configured model IDs for a given provider.
@@ -167,7 +188,24 @@ pub async fn model_get_role_config() -> Result<Vec<crate::modules::config::Model
 /// * `model_ref` - Model reference in "provider_id/model_id" format
 #[tauri::command]
 pub async fn model_set_role_config(role: String, model_ref: String) -> Result<(), String> {
-    crate::modules::config::model_resolver::ModelResolver::set_role_config(&role, &model_ref).await
+    crate::modules::config::model_resolver::ModelResolver::set_role_config(&role, &model_ref)
+        .await?;
+
+    // The chat role is also the user-visible composer default. Keep the
+    // shortcut active_model in lockstep so all windows can refresh from one
+    // canonical command (`model_get_active`) after settings changes.
+    if role == "chat" {
+        let model = crate::modules::config::ModelRef::parse(&model_ref).ok_or_else(|| {
+            format!("Invalid model reference '{model_ref}'. Expected 'provider_id/model_id'.")
+        })?;
+        crate::modules::config::model_resolver::ModelResolver::set_active_model(
+            &model.provider_id,
+            &model.model_id,
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Look up the provider-advertised context window (in tokens) for a
@@ -177,7 +215,10 @@ pub async fn model_set_role_config(role: String, model_ref: String) -> Result<()
 /// (128k) for models we don't know yet so the UI never has to handle
 /// "unknown" specially.
 #[tauri::command]
-pub async fn model_get_context_window(provider_id: String, model_id: String) -> Result<u64, String> {
+pub async fn model_get_context_window(
+    provider_id: String,
+    model_id: String,
+) -> Result<u64, String> {
     Ok(
         crate::modules::provider::known_models::lookup(&provider_id, &model_id)
             .map(|m| m.context)

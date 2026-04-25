@@ -19,7 +19,9 @@ use thiserror::Error;
 
 use crate::modules::config::store::if2ai_data_root;
 
-use super::{CallerUsage, SharedUsageStore, TurnUsageRecord, UsageStore, UsageSummary, UsageWindow};
+use super::{
+    CallerUsage, SharedUsageStore, TurnUsageRecord, UsageStore, UsageSummary, UsageWindow,
+};
 
 #[derive(Debug, Error)]
 pub enum UsageStoreError {
@@ -101,10 +103,7 @@ impl UsageStore for SqliteUsageStore {
         let week_local = format!("{:04}-W{:02}", iso_week.year(), iso_week.week());
         let month_local = format!("{:04}-{:02}", date.year(), date.month());
 
-        let conn = self
-            .conn
-            .lock()
-            .expect("usage store mutex poisoned");
+        let conn = self.conn.lock().expect("usage store mutex poisoned");
         conn.execute(
             "INSERT INTO turn_usage (
                 ts_utc, day_local, week_local, month_local,
@@ -129,10 +128,7 @@ impl UsageStore for SqliteUsageStore {
     }
 
     fn summary(&self, window: UsageWindow) -> Result<UsageSummary, UsageStoreError> {
-        let conn = self
-            .conn
-            .lock()
-            .expect("usage store mutex poisoned");
+        let conn = self.conn.lock().expect("usage store mutex poisoned");
 
         let logical_day = crate::modules::runtime::logical_day::get_today();
         let date = logical_day.date;

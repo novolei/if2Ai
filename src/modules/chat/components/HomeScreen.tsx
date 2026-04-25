@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { cn } from '@/lib/utils'
 import type { PermissionMode, ProjectMeta } from '@/lib/tauri'
 import type { RecentSession } from '../types'
@@ -59,6 +60,7 @@ export function HomeScreen({
   >([])
   useEffect(() => {
     let cancelled = false
+    let unlistenModelsChanged: (() => void) | null = null
     const refresh = async () => {
       try {
         const groups = await invoke<
@@ -85,9 +87,13 @@ export function HomeScreen({
     void refresh()
     const onChanged = () => void refresh()
     window.addEventListener('if2ai:models-changed', onChanged)
+    void listen('if2ai://models-changed', onChanged).then((unlisten) => {
+      unlistenModelsChanged = unlisten
+    })
     return () => {
       cancelled = true
       window.removeEventListener('if2ai:models-changed', onChanged)
+      unlistenModelsChanged?.()
     }
   }, [])
   const [localInput, setLocalInput] = useState('')
@@ -169,9 +175,9 @@ export function HomeScreen({
 
         {/* ── Title ── */}
         <h1 className="text-center text-[28px] font-[450] tracking-[-0.02em] text-black/88 md:text-[32px]">
-          What should we build in{' '}
+          今天想在{' '}
           <span className="font-semibold text-black">{projectName}</span>
-          ？
+          里完成什么？
         </h1>
 
         {/* ── Composer card ── */}

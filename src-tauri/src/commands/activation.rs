@@ -281,9 +281,7 @@ pub async fn activation_redeem_by_invite_code(
 }
 
 #[tauri::command]
-pub async fn activation_refresh(
-    app: AppHandle,
-) -> Result<ActivationSnapshot, ActivationErrorDto> {
+pub async fn activation_refresh(app: AppHandle) -> Result<ActivationSnapshot, ActivationErrorDto> {
     lifecycle(&app).refresh().await.map_err(Into::into)
 }
 

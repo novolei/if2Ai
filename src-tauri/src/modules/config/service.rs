@@ -169,6 +169,7 @@ impl ConfigService {
                         name: model.model_id.clone(),
                         input: vec!["text".to_string()],
                         context_window: None,
+                        supports_thinking: None,
                     }],
                 },
             )]

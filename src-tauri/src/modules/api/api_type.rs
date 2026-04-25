@@ -52,9 +52,7 @@ impl ApiType {
                 ("x-api-key", api_key.to_string()),
                 ("anthropic-version", "2023-06-01".to_string()),
             ],
-            Self::OpenAiCompletions
-            | Self::OpenAiResponses
-            | Self::OpenAiCodexResponses => {
+            Self::OpenAiCompletions | Self::OpenAiResponses | Self::OpenAiCodexResponses => {
                 vec![("Authorization", format!("Bearer {api_key}"))]
             }
         }
@@ -115,10 +113,7 @@ mod tests {
             ApiType::OpenAiCompletions.endpoint_suffix(),
             "/chat/completions"
         );
-        assert_eq!(
-            ApiType::AnthropicMessages.endpoint_suffix(),
-            "/v1/messages"
-        );
+        assert_eq!(ApiType::AnthropicMessages.endpoint_suffix(), "/v1/messages");
         assert_eq!(ApiType::OpenAiResponses.endpoint_suffix(), "/responses");
         assert_eq!(
             ApiType::OpenAiCodexResponses.endpoint_suffix(),

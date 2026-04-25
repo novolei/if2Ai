@@ -199,13 +199,16 @@ impl ActivationHttpClient {
                             .map_err(|e| NetworkFailure::Decoding(e.to_string()));
                     }
 
-                    let server_err: Option<ServerErrorResponse> = serde_json::from_slice(&bytes).ok();
+                    let server_err: Option<ServerErrorResponse> =
+                        serde_json::from_slice(&bytes).ok();
                     let code = server_err
                         .as_ref()
                         .and_then(|e| e.code.clone())
                         .unwrap_or_else(|| format!("http_{}", status.as_u16()));
-                    let retry_after_sec =
-                        server_err.as_ref().and_then(|e| e.retry_after_sec).filter(|n| *n > 0);
+                    let retry_after_sec = server_err
+                        .as_ref()
+                        .and_then(|e| e.retry_after_sec)
+                        .filter(|n| *n > 0);
                     let message = server_err
                         .as_ref()
                         .map(|e| e.error.clone())

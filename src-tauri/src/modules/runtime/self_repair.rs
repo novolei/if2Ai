@@ -96,7 +96,7 @@ pub fn spawn_self_repair_watchdog(memory_ticker: Arc<MemoryTicker>) {
             handle.spawn(task(memory_ticker));
         }
         Err(_) => {
-            tracing::warn!(
+            tracing::debug!(
                 "[self_repair] no current Tokio runtime at watchdog spawn site; \
                  falling back to dedicated thread"
             );

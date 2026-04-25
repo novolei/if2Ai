@@ -28,6 +28,7 @@ import {
   executeSlashCommand,
   getOnboardingState,
   getSession,
+  getSessionHistoryPage,
   listenToChatPrefill,
   listProjects,
   listProjectSessions,
@@ -60,6 +61,7 @@ import type {
 import { toast } from "sonner";
 import {
   projectConversationMessagesFromRuns,
+  replayRunLogEntriesToMessages,
   runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
@@ -1461,9 +1463,25 @@ function App() {
     );
 
     try {
-      const fullSession = await getSession(sessionId);
+      const [fullSession, historyPage] = await Promise.all([
+        getSession(sessionId),
+        getSessionHistoryPage(sessionId, { limit: 1000 }).catch((error) => {
+          console.warn("Failed to load session run-log history:", error);
+          return null;
+        }),
+      ]);
       const baseTimestamp = new Date(fullSession.updated_at);
-      const convertedMessages: Message[] = [];
+      let convertedMessages: Message[] = [];
+      const replayedMessages =
+        historyPage && historyPage.eventPage.entries.length > 0
+          ? replayRunLogEntriesToMessages(
+              historyPage.eventPage.entries,
+              sessionId,
+            ).map((message) => ({
+              ...message,
+              disableAnimation: true,
+            }))
+          : [];
       const toolMessageIndexById = new Map<string, number>();
       let recoveredTodos: TodoItem[] = [];
 
@@ -1580,6 +1598,14 @@ function App() {
             ...messageOutcome,
           });
         }
+      }
+
+      if (
+        replayedMessages.some(
+          (message) => message.role === "assistant" || message.role === "tool",
+        )
+      ) {
+        convertedMessages = replayedMessages;
       }
 
       setConversations((prev) => ({
@@ -1831,6 +1857,7 @@ function App() {
       soulId: updated.soul_id ?? null,
       personaId: updated.persona_id ?? null,
     });
+    return updated;
   };
 
   const handleCreateProject = async (name: string, workdir: string) => {
@@ -2338,6 +2365,7 @@ function App() {
               sessionId,
               userMessage: skillInvocation,
               permissionMode,
+              selectedModel,
             });
             runtimeProjectionStore.dispatch({
               kind: "stream_run_bound",
@@ -2749,6 +2777,7 @@ function App() {
         sessionId,
         userMessage: userMsg.content,
         permissionMode,
+        selectedModel,
       });
       runtimeProjectionStore.dispatch({
         kind: "stream_run_bound",

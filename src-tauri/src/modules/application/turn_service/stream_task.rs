@@ -96,6 +96,36 @@ use crate::modules::tools::ToolRegistry;
 // streaming budget constants live next to ContextBudget.
 // Imported above.
 
+const DEFAULT_MAX_TOOL_LOOP_ITERATIONS: usize = 10;
+const MIN_MAX_TOOL_LOOP_ITERATIONS: usize = 3;
+const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
+const INVALID_TOOL_ARGS_LIMIT: usize = 2;
+
+fn agent_max_iterations() -> usize {
+    std::env::var("IF2AI_AGENT_MAX_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|value| value.max(MIN_MAX_TOOL_LOOP_ITERATIONS))
+        .unwrap_or(DEFAULT_MAX_TOOL_LOOP_ITERATIONS)
+}
+
+fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> String {
+    let mut parts = pending_tool_uses
+        .iter()
+        .map(|(_, tool_name, input_json)| {
+            let compact_input = input_json.split_whitespace().collect::<Vec<_>>().join(" ");
+            let compact_input = if compact_input.chars().count() > 240 {
+                format!("{}...", compact_input.chars().take(240).collect::<String>())
+            } else {
+                compact_input
+            };
+            format!("{tool_name}:{compact_input}")
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("|")
+}
+
 /// All state captured by the original
 /// `tokio::spawn(async move { ... })` closure inside
 /// `stream_turn`. Bundled into a struct so the spawn call site
@@ -259,8 +289,13 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         stream_id_for_task
     );
 
-    let max_iterations: usize = 10;
+    let max_iterations: usize = agent_max_iterations();
     let mut tool_loop_iter: usize = 0;
+    let mut force_final_response_next = false;
+    let mut finalization_reason: Option<String> = None;
+    let mut last_tool_batch_signature: Option<String> = None;
+    let mut repeated_tool_batch_count = 0usize;
+    let mut invalid_tool_args_streak = 0usize;
     let mut session_messages = messages_for_stream.clone();
     let mut accumulated_text = String::new();
     let mut accumulated_thinking = String::new();
@@ -390,12 +425,22 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             break;
         }
         tool_loop_iter += 1;
+        let force_final_response = force_final_response_next || tool_loop_iter >= max_iterations;
+        let current_finalization_reason = if force_final_response {
+            finalization_reason
+                .clone()
+                .unwrap_or_else(|| "max_iterations_finalization_pass".to_string())
+        } else {
+            String::new()
+        };
 
         tracing::info!(
-            "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}",
+            "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}, force_final_response={}, finalization_reason={}",
             tool_loop_iter,
             session_messages.len(),
-            accumulated_text.len()
+            accumulated_text.len(),
+            force_final_response,
+            current_finalization_reason
         );
 
         // Effective input-side token budget for preflight admission:
@@ -506,16 +551,25 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             );
         }
         session_messages = final_request_messages;
+        let request_messages_for_iteration = if force_final_response {
+            let mut messages = session_messages.clone();
+            messages.push(InputMessage::user_text(format!(
+                "[agent_loop_control] Stop calling tools now. Produce a concise final user-facing summary in the user's language. Include: completed work, last successful tool evidence, what remains, and how to continue if needed. reason={current_finalization_reason}; iteration={tool_loop_iter}/{max_iterations}"
+            )));
+            messages
+        } else {
+            session_messages.clone()
+        };
         let iter_api_request = MessageRequest {
             model: model_for_stream.clone(),
             max_tokens: 4096,
-            messages: session_messages.clone(),
+            messages: request_messages_for_iteration,
             system: if system_prompt_for_stream.is_empty() {
                 None
             } else {
                 Some(system_prompt_for_stream.clone())
             },
-            tools: if tool_defs_for_stream.is_empty() {
+            tools: if force_final_response || tool_defs_for_stream.is_empty() {
                 None
             } else {
                 Some(tool_defs_for_stream.clone())
@@ -711,7 +765,17 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         let mut emitted_stream_delta_in_iteration = false;
 
         loop {
-            match stream.next_event().await {
+            let next_event = tokio::select! {
+                _ = &mut cancel_rx => {
+                    tracing::info!("[start_agent_stream] Stream cancelled while waiting for provider event");
+                    stream_failed = true;
+                    last_stream_error_reason = Some("cancelled_by_user".to_string());
+                    terminal_status = Some("cancelled_by_user");
+                    break;
+                }
+                event = stream.next_event() => event,
+            };
+            match next_event {
                 Ok(Some(event)) => match event {
                     ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
                         crate::modules::api::ContentBlockDelta::TextDelta { text } => {
@@ -1155,9 +1219,41 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 accumulated_text.len()
             );
             if terminal_status.is_none() {
-                terminal_status = Some("model_stop_no_tools");
+                terminal_status = match finalization_reason.as_deref() {
+                    Some("invalid_tool_args_repeated") => Some("invalid_tool_args_repeated"),
+                    Some("repeated_tool_batch_no_progress") => {
+                        Some("repeated_tool_batch_no_progress")
+                    }
+                    _ => Some("model_stop_no_tools"),
+                };
             }
             break;
+        }
+        if force_final_response {
+            tracing::warn!(
+                "[start_agent_stream] Provider emitted tool calls during finalization pass; ending as max_iterations_reached. pending_tool_uses={}",
+                pending_tool_uses.len()
+            );
+            terminal_status = Some("max_iterations_reached");
+            break;
+        }
+
+        let current_tool_batch_signature = tool_batch_signature(&pending_tool_uses);
+        if last_tool_batch_signature.as_deref() == Some(current_tool_batch_signature.as_str()) {
+            repeated_tool_batch_count += 1;
+        } else {
+            repeated_tool_batch_count = 1;
+            last_tool_batch_signature = Some(current_tool_batch_signature);
+        }
+        if repeated_tool_batch_count >= REPEATED_TOOL_BATCH_LIMIT {
+            tracing::warn!(
+                "[start_agent_stream] repeated tool batch detected; next iteration will force final summary. stream_id={}, session_id={}, repeated_count={}",
+                stream_id_for_task,
+                session_id,
+                repeated_tool_batch_count
+            );
+            force_final_response_next = true;
+            finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
         }
 
         tracing::info!(
@@ -1272,6 +1368,116 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             };
             stream_emitter.emit_payload(running_payload.clone());
             append_stream_event(&run_event_logger, &running_payload).await;
+            if let Some(validation_error) = tool_registry_clone.validate(&tool_name, &tool_input) {
+                invalid_tool_args_streak += 1;
+                sanitized_dropped_invalid_tool_use_inputs += 1;
+                if sanitize_invalid_tool_use_samples.len() < 12 {
+                    sanitize_invalid_tool_use_samples
+                        .push(format!("{}:{}:{}", tool_id, tool_name, validation_error));
+                }
+                tracing::warn!(
+                    "[start_agent_stream] invalid tool args blocked before execution: stream_id={}, session_id={}, tool_call_id={}, tool_name={}, error={}, streak={}",
+                    stream_id_for_task,
+                    session_id,
+                    tool_id,
+                    tool_name,
+                    validation_error,
+                    invalid_tool_args_streak
+                );
+
+                crate::modules::runtime::self_repair::record_tool_outcome(&tool_name, false);
+                let invalid_result = format!(
+                    "invalid tool arguments: {validation_error}. The tool `{tool_name}` was not executed. Re-issue the tool call with a complete JSON object matching its schema."
+                );
+                let terminal_tool_payload = StreamTokenPayload {
+                    stream_id: stream_id_for_task.clone(),
+                    correlation: None,
+                    text: None,
+                    thinking: None,
+                    event_type: "tool_call_update".to_string(),
+                    tool_call_id: Some(tool_id.clone()),
+                    tool_name: Some(tool_name.clone()),
+                    tool_status: Some("error".to_string()),
+                    tool_args: Some(tool_input.clone()),
+                    tool_result: Some(invalid_result.clone()),
+                    tool_duration_ms: Some(0),
+                    effective_workdir: Some(
+                        execution_context_for_policy.workdir.display().to_string(),
+                    ),
+                    policy_decision: Some("blocked_invalid_args".to_string()),
+                    evidence_id: Some(policy_trace_id.clone()),
+                    request_id: Some(provider_request_id.clone()),
+                    task_outcome: None,
+                    degraded_reason: None,
+                    resume_available: None,
+                    resume_cursor: None,
+                    context_budget_usage: None,
+                    memory_context: None,
+                    prompt_diagnostics: None,
+                    turn_cost: None,
+                    routing_info: None,
+                    session_totals: None,
+                };
+                stream_emitter.emit_payload(terminal_tool_payload.clone());
+                append_stream_event(&run_event_logger, &terminal_tool_payload).await;
+
+                session_messages.push(crate::modules::api::InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![crate::modules::api::InputContentBlock::ToolUse {
+                        id: tool_id.clone(),
+                        name: tool_name.clone(),
+                        input: tool_input.clone(),
+                    }],
+                    thinking: None,
+                });
+                session_messages.push(crate::modules::api::InputMessage {
+                    role: "user".to_string(),
+                    content: vec![crate::modules::api::InputContentBlock::ToolResult {
+                        tool_use_id: tool_id.clone(),
+                        content: vec![crate::modules::api::ToolResultContentBlock::Text {
+                            text: summarize_tool_result_for_model(
+                                &tool_name,
+                                &tool_id,
+                                &invalid_result,
+                                true,
+                            ),
+                        }],
+                        is_error: true,
+                    }],
+                    thinking: None,
+                });
+                timeline_session_messages.push(
+                    crate::modules::runtime::session::ConversationMessage::tool_use(
+                        tool_id.clone(),
+                        tool_name.clone(),
+                        input_json.clone(),
+                    ),
+                );
+                timeline_session_messages.push(
+                    crate::modules::runtime::session::ConversationMessage::tool_result(
+                        tool_id.clone(),
+                        tool_name.clone(),
+                        invalid_result,
+                        true,
+                    ),
+                );
+                if let Some(last_message) = timeline_session_messages.last_mut() {
+                    last_message.request_id = Some(provider_request_id.clone());
+                }
+
+                if invalid_tool_args_streak >= INVALID_TOOL_ARGS_LIMIT {
+                    tracing::warn!(
+                        "[start_agent_stream] repeated invalid tool args detected; next iteration will force final summary. stream_id={}, session_id={}, streak={}",
+                        stream_id_for_task,
+                        session_id,
+                        invalid_tool_args_streak
+                    );
+                    force_final_response_next = true;
+                    finalization_reason = Some("invalid_tool_args_repeated".to_string());
+                }
+                continue;
+            }
+            invalid_tool_args_streak = 0;
             let permission_outcome = match remembered_decision {
                 Some(PermissionPromptDecision::Allow) => {
                     crate::modules::runtime::permissions::PermissionOutcome::Allow
@@ -1316,13 +1522,12 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                 );
             }
 
-            timeline_session_messages.push(
-                crate::modules::runtime::session::ConversationMessage::tool_use(
-                    tool_id.clone(),
-                    tool_name.clone(),
-                    input_json.clone(),
-                ),
+            let timeline_tool_use = crate::modules::runtime::session::ConversationMessage::tool_use(
+                tool_id.clone(),
+                tool_name.clone(),
+                input_json.clone(),
             );
+            timeline_session_messages.push(timeline_tool_use);
 
             let start_time = std::time::Instant::now();
             let denied_by_policy = matches!(
@@ -1442,10 +1647,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     name: tool_name.clone(),
                     input: tool_input,
                 }],
-                // P-MULTI-API: in-flight assistant tool_use blocks come
-                // straight from the live SSE; if accumulated_thinking has
-                // content it's already attached on the previous text
-                // segment, so we leave None here.
+                // Do not feed full thinking back into the next model call.
+                // OpenAI-compatible providers that require the field get an
+                // empty `reasoning_content` placeholder in `translate_message`.
                 thinking: None,
             });
             session_messages.push(crate::modules::api::InputMessage {

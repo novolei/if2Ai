@@ -1,9 +1,8 @@
 //! P-MULTI-API — Known model dictionary keyed by `(provider, model_id_substr)`.
 //!
-//! Adopts the openhanako-main convention: explicit `reasoning: bool` plus
-//! a small `Quirk` enum that captures the wire-level requirements
-//! providers like Kimi-thinking-preview and DeepSeek-R1 enforce. Lives
-//! as `'static` so look-up is allocation-free at request build time.
+//! Adopts the UClaw/openhanako pattern of separating display metadata
+//! from wire-level quirks. Static rows cover known public models; runtime
+//! user overrides in `~/.if2ai/models.json` cover newly discovered models.
 
 /// Wire-level oddities that flow into request serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +54,22 @@ pub static KNOWN_MODELS: &[KnownModel] = &[
         quirks: &[Quirk::ReasoningRequiredInToolCalls],
     },
     KnownModel {
+        provider: "moonshot",
+        id_substr: "kimi-k2.6",
+        display: "Kimi K2.6",
+        context: 256_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
+    KnownModel {
+        provider: "moonshot",
+        id_substr: "kimi-k2.5",
+        display: "Kimi K2.5",
+        context: 256_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
+    KnownModel {
         provider: "kimi-coding",
         id_substr: "kimi",
         display: "Kimi (Coding Plan)",
@@ -74,6 +89,34 @@ pub static KNOWN_MODELS: &[KnownModel] = &[
         provider: "minimax",
         id_substr: "minimax-m2",
         display: "MiniMax M2",
+        context: 256_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
+    // Ollama cloud models are exposed through the `ollama` provider id
+    // even when the upstream model family is MiniMax. The upstream cloud
+    // endpoint enables thinking and rejects assistant tool_call history
+    // without `reasoning_content`.
+    KnownModel {
+        provider: "ollama",
+        id_substr: "minimax-m2.7:cloud",
+        display: "MiniMax M2.7 Cloud",
+        context: 256_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
+    KnownModel {
+        provider: "ollama",
+        id_substr: "minimax-2.7:cloud",
+        display: "MiniMax 2.7 Cloud",
+        context: 256_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
+    KnownModel {
+        provider: "ollama",
+        id_substr: "minimax-m2.5:cloud",
+        display: "MiniMax M2.5 Cloud",
         context: 256_000,
         reasoning: true,
         quirks: &[Quirk::ReasoningRequiredInToolCalls],
@@ -102,7 +145,12 @@ pub static KNOWN_MODELS: &[KnownModel] = &[
         display: "Qwen 3",
         context: 1_000_000,
         reasoning: true,
-        quirks: &[Quirk::EnableThinkingFlag],
+        // DashScope requires `reasoning_content` on every assistant
+        // tool_call message when `enable_thinking: true` is active.
+        quirks: &[
+            Quirk::EnableThinkingFlag,
+            Quirk::ReasoningRequiredInToolCalls,
+        ],
     },
     KnownModel {
         provider: "dashscope",
@@ -110,7 +158,10 @@ pub static KNOWN_MODELS: &[KnownModel] = &[
         display: "Qwen Plus",
         context: 1_000_000,
         reasoning: true,
-        quirks: &[Quirk::EnableThinkingFlag],
+        quirks: &[
+            Quirk::EnableThinkingFlag,
+            Quirk::ReasoningRequiredInToolCalls,
+        ],
     },
     KnownModel {
         provider: "dashscope",
@@ -243,6 +294,28 @@ mod tests {
     }
 
     #[test]
+    fn lookup_matches_kimi_k2_reasoning_models() {
+        let k26 = lookup("moonshot", "kimi-k2.6").unwrap();
+        assert!(k26.reasoning);
+        assert!(k26.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+
+        let k25 = lookup("moonshot", "kimi-k2.5").unwrap();
+        assert!(k25.reasoning);
+        assert!(k25.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+    }
+
+    #[test]
+    fn lookup_matches_ollama_minimax_cloud_reasoning_models() {
+        let m27 = lookup("ollama", "minimax-m2.7:cloud").unwrap();
+        assert!(m27.reasoning);
+        assert!(m27.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+
+        let short = lookup("ollama", "minimax-2.7:cloud").unwrap();
+        assert!(short.reasoning);
+        assert!(short.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+    }
+
+    #[test]
     fn lookup_matches_versioned_deepseek_r1() {
         let m = lookup("deepseek", "deepseek-r1-0528").unwrap();
         assert!(m.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
@@ -264,7 +337,11 @@ mod tests {
     #[test]
     fn known_quirks_compile() {
         // Smoke: Quirk variants used in the table.
-        let q = &[Quirk::EnableThinkingFlag, Quirk::ReasoningRequiredInToolCalls, Quirk::ReasoningEffort];
+        let q = &[
+            Quirk::EnableThinkingFlag,
+            Quirk::ReasoningRequiredInToolCalls,
+            Quirk::ReasoningEffort,
+        ];
         assert_eq!(q.len(), 3);
     }
 }

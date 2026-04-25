@@ -119,8 +119,7 @@ pub async fn run_compact(
     };
 
     let summary_token_estimate = estimate_tokens(&record.summary);
-    let freed_tokens =
-        (slice_token_estimate as i64).saturating_sub(summary_token_estimate as i64);
+    let freed_tokens = (slice_token_estimate as i64).saturating_sub(summary_token_estimate as i64);
     let summary_excerpt: String = record.summary.chars().take(140).collect();
 
     Ok(CompactReport {

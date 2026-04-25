@@ -59,7 +59,10 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::modules::harness::HarnessState;
-use crate::modules::identity::{resolve_identity, IdentityRegistry, SessionIdentityOverride};
+use crate::modules::identity::{
+    apply_identity_customization_pack, read_identity_customization_pack, resolve_identity,
+    IdentityRegistry, SessionIdentityOverride,
+};
 use crate::modules::learning::trajectory::TrajectoryManager;
 use crate::modules::learning::LearningModule;
 use crate::modules::memory::retrieval::ActiveRetrievalManager;
@@ -384,10 +387,37 @@ impl TurnService {
         } else {
             None
         };
+        let builtin_identity_registry = IdentityRegistry::builtin();
+        let identity_pack = read_identity_customization_pack().unwrap_or_else(|error| {
+            tracing::warn!(
+                caller = request.caller,
+                "[turn_service] failed to read identity customization pack: {}",
+                error
+            );
+            Default::default()
+        });
+        let effective_identity_registry =
+            apply_identity_customization_pack(&builtin_identity_registry, &identity_pack);
         let identity_resolution = resolve_identity(
-            &IdentityRegistry::builtin(),
+            &effective_identity_registry,
             runtime_config.identity(),
             session_identity_override.as_ref(),
+        );
+        let session_soul_id = session_identity_override
+            .as_ref()
+            .and_then(|identity| identity.soul_id.as_deref());
+        let session_persona_id = session_identity_override
+            .as_ref()
+            .and_then(|identity| identity.persona_id.as_deref());
+        tracing::info!(
+            caller = request.caller,
+            session_id = ?request.session_id,
+            session_soul_id = ?session_soul_id,
+            session_persona_id = ?session_persona_id,
+            resolved_soul_id = %identity_resolution.resolved.soul_id,
+            resolved_persona_id = ?identity_resolution.resolved.persona_id,
+            resolved_source = ?identity_resolution.resolved.source,
+            "[turn_service] resolved identity for turn"
         );
         for warning in &identity_resolution.warnings {
             tracing::warn!(

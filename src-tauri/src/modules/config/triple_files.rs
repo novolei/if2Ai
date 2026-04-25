@@ -11,7 +11,8 @@
 use std::collections::HashMap;
 
 use crate::modules::config::store::{
-    auth_json_path, models_json_path, providers_yaml_path, write_json, write_yaml, ConfigStoreError,
+    auth_json_path, models_json_path, providers_yaml_path, read_json, write_json, write_yaml,
+    ConfigStoreError,
 };
 use crate::modules::config::types::{
     AppConfig, AuthEntry, AuthJson, ModelEntry, ModelsJson, ModelsProviderEntry, ProviderConfig,
@@ -26,7 +27,9 @@ use crate::modules::config::types::{
 pub async fn sync_to_triple_files(config: &AppConfig) -> Result<(), ConfigStoreError> {
     let providers_yaml = build_providers_yaml(config);
     let auth_json = build_auth_json(config);
-    let models_json = build_models_json(config);
+    let existing_models_json = read_json::<ModelsJson>(&models_json_path()).await?;
+    let models_json =
+        build_models_json_preserving_capabilities(config, existing_models_json.as_ref());
 
     write_yaml(&providers_yaml, &providers_yaml_path()).await?;
     write_json(&auth_json, &auth_json_path()).await?;
@@ -110,6 +113,13 @@ pub(crate) fn build_auth_json(config: &AppConfig) -> AuthJson {
 /// 1. `configured_providers` — cumulative store of all ever-configured providers
 /// 2. `active_provider` — fallback for configs that predate `configured_providers`
 pub(crate) fn build_models_json(config: &AppConfig) -> ModelsJson {
+    build_models_json_preserving_capabilities(config, None)
+}
+
+fn build_models_json_preserving_capabilities(
+    config: &AppConfig,
+    existing: Option<&ModelsJson>,
+) -> ModelsJson {
     let mut providers = HashMap::new();
 
     // Helper: look up a provider's connection details from the cumulative store first,
@@ -127,6 +137,12 @@ pub(crate) fn build_models_json(config: &AppConfig) -> ModelsJson {
     for selection in &config.selected_models {
         let key = provider_key(&selection.provider_id, selection.auth_variant.as_deref());
         let provider = find_provider(&selection.provider_id, selection.auth_variant.as_deref());
+        let supports_thinking = supports_thinking_for_model(
+            existing,
+            &key,
+            &selection.provider_id,
+            &selection.model_id,
+        );
 
         let entry = providers.entry(key).or_insert_with(|| {
             let api_type = detect_api_type(
@@ -146,12 +162,15 @@ pub(crate) fn build_models_json(config: &AppConfig) -> ModelsJson {
             name: selection.model_id.clone(),
             input: vec!["text".to_string()],
             context_window: None,
+            supports_thinking,
         });
     }
 
     // 2. Also include active_provider/active_model if not already covered
     if let (Some(provider), Some(model)) = (&config.active_provider, &config.active_model) {
         let key = provider_key(&provider.provider_id, provider.auth_variant.as_deref());
+        let supports_thinking =
+            supports_thinking_for_model(existing, &key, &provider.provider_id, &model.model_id);
         if let std::collections::hash_map::Entry::Vacant(e) = providers.entry(key) {
             let api_type = detect_api_type(&provider.provider_id, &provider.base_url);
             e.insert(ModelsProviderEntry {
@@ -163,12 +182,29 @@ pub(crate) fn build_models_json(config: &AppConfig) -> ModelsJson {
                     name: model.model_id.clone(),
                     input: vec!["text".to_string()],
                     context_window: None,
+                    supports_thinking,
                 }],
             });
         }
     }
 
     ModelsJson { providers }
+}
+
+fn supports_thinking_for_model(
+    existing: Option<&ModelsJson>,
+    provider_key: &str,
+    provider_id: &str,
+    model_id: &str,
+) -> Option<bool> {
+    existing
+        .and_then(|models| models.providers.get(provider_key))
+        .and_then(|entry| entry.models.iter().find(|model| model.id == model_id))
+        .and_then(|model| model.supports_thinking)
+        .or_else(|| {
+            crate::modules::provider::known_models::lookup(provider_id, model_id)
+                .and_then(|model| model.reasoning.then_some(true))
+        })
 }
 
 /// Generate a unique key for a provider, accounting for auth variants.

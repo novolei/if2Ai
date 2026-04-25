@@ -30,7 +30,7 @@ interface SidebarTopProps {
   onUpdateSessionIdentity?: (
     sessionId: string,
     identity: SessionIdentityInput,
-  ) => Promise<void>
+  ) => Promise<SessionMeta | void>
 }
 
 function resolveAgentDisplayName(settings: PromptControlSettings | null): string {
@@ -216,8 +216,12 @@ export function SidebarTop({
     nextPersonaId: string | null,
   ) => {
     if (!activeSessionId || !onUpdateSessionIdentity) return
+    const nextPersona = nextPersonaId
+      ? (catalog?.personas.find((persona) => persona.id === nextPersonaId) ??
+        null)
+      : null
     const nextSoulId =
-      effectiveSessionMeta?.soul_id ?? effectiveSoulId ?? null
+      nextPersona?.soul_id ?? effectiveSessionMeta?.soul_id ?? effectiveSoulId ?? null
     // Optimistic UI: flip avatar/title immediately so the user gets
     // instant feedback. The reconciliation effect above will retire
     // this patch as soon as the parent prop catches up (or when the
@@ -229,13 +233,23 @@ export function SidebarTop({
     })
     setSaving(true)
     try {
-      await onUpdateSessionIdentity(activeSessionId, {
+      const updated = await onUpdateSessionIdentity(activeSessionId, {
         // Keep whichever soul was already active on the session (or fall
-        // back to the resolved soul) so we don't accidentally widen the
-        // override scope from the quick-pick UI.
+        // back to the selected persona's owning soul) so the backend
+        // prompt resolver sees the same persona the UI just showed.
         soul_id: nextSoulId,
         persona_id: nextPersonaId,
       })
+      if (
+        updated &&
+        (updated.persona_id ?? null) !== nextPersonaId
+      ) {
+        throw new Error(
+          `后端返回的 Persona 不匹配：expected=${nextPersonaId ?? 'global'}, actual=${
+            updated.persona_id ?? 'global'
+          }`,
+        )
+      }
       toast.success(
         nextPersonaId
           ? '已切换 Persona'

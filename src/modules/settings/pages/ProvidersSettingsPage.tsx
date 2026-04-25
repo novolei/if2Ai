@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, RefreshCw, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,31 @@ interface KnownProvider {
   service_category: ServiceCategory;
   auth_type: "api-key" | "oauth" | "none";
   supports_models: boolean;
+}
+
+interface ThinkingProbeResult {
+  modelId: string;
+  supportsThinking: boolean;
+  chunksRead: number;
+  error?: string | null;
+}
+
+interface ModelCapabilitySelection {
+  id: string;
+  supportsThinking: boolean;
+}
+
+interface AvailableModelGroup {
+  provider_id: string;
+  provider_name: string;
+  models: Array<{
+    model_id: string;
+    name: string;
+    context_window?: number | null;
+    reasoning?: boolean;
+    reasoning_required_in_tool_calls?: boolean;
+    supports_reasoning_effort?: boolean;
+  }>;
 }
 
 /** Built-in provider catalogue mirrored from `known_providers.rs`.
@@ -133,6 +159,7 @@ export function ProvidersSettingsPage() {
     // dropdown reflects the latest provider+model set without a
     // hard reload. Listened via `window.addEventListener('if2ai:models-changed', …)`.
     window.dispatchEvent(new CustomEvent("if2ai:models-changed"));
+    void emit("if2ai://models-changed");
   }, [getConfiguredProviders, getAllConfiguredModels]);
 
   useEffect(() => {
@@ -225,14 +252,14 @@ interface ProviderDetailProps {
 }
 
 function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps) {
-  const { testProvider, loadModels, configureProviderWithModels, getProviderConfig } =
-    useOnboarding();
+  const { testProvider, loadModels, getProviderConfig, getConfiguredModels } = useOnboarding();
 
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(provider.default_base_url);
   const [apiType, setApiType] = useState<ApiType>(provider.default_api);
   const [availableModels, setAvailableModels] = useState<Model[]>([]);
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
+  const [probeResults, setProbeResults] = useState<Map<string, ThinkingProbeResult>>(new Map());
   const [busy, setBusy] = useState(false);
 
   // Hydrate from saved config when the provider switches.
@@ -242,14 +269,51 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
     setApiKey("");
     setAvailableModels([]);
     setSelectedModelIds(new Set());
+    setProbeResults(new Map());
     void (async () => {
-      const cfg = await getProviderConfig(provider.id);
+      const [cfg, savedModelIds] = await Promise.all([
+        getProviderConfig(provider.id),
+        getConfiguredModels(provider.id),
+      ]);
       if (cfg) {
         setApiKey(cfg.api_key ?? "");
         setBaseUrl(cfg.base_url ?? provider.default_base_url);
       }
+      if (savedModelIds.length > 0) {
+        let groupModels = new Map<string, AvailableModelGroup["models"][number]>();
+        try {
+          const groups = await invoke<AvailableModelGroup[]>("model_list_available");
+          const group = groups.find((item) => item.provider_id === provider.id);
+          groupModels = new Map((group?.models ?? []).map((model) => [model.model_id, model]));
+        } catch {
+          groupModels = new Map();
+        }
+        setAvailableModels(
+          savedModelIds.map((id) => {
+            const saved = groupModels.get(id);
+            return {
+              id,
+              name: saved?.name ?? id,
+              context_window: saved?.context_window ?? null,
+              max_tokens: null,
+              modality: "Text",
+              reasoning: saved?.reasoning ?? false,
+              reasoning_required_in_tool_calls:
+                saved?.reasoning_required_in_tool_calls ?? false,
+              supports_reasoning_effort: saved?.supports_reasoning_effort ?? false,
+            } satisfies Model;
+          }),
+        );
+        setSelectedModelIds(new Set(savedModelIds));
+      }
     })();
-  }, [provider.id, provider.default_api, provider.default_base_url, getProviderConfig]);
+  }, [
+    provider.id,
+    provider.default_api,
+    provider.default_base_url,
+    getProviderConfig,
+    getConfiguredModels,
+  ]);
 
   const handleLoadModels = useCallback(async () => {
     setBusy(true);
@@ -278,6 +342,58 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
       return next;
     });
   }, []);
+
+  const probeSelectedModels = useCallback(
+    async (modelIds: string[], config: ProviderConfig): Promise<ModelCapabilitySelection[]> => {
+      if (modelIds.length === 0) return [];
+      toast.info(`正在探测 ${modelIds.length} 个模型的 Thinking 支持...`);
+      const results = await Promise.all(
+        modelIds.map(async (modelId): Promise<ThinkingProbeResult> => {
+          try {
+            return await invoke<ThinkingProbeResult>("provider_probe_model_thinking", {
+              providerConfig: config,
+              modelId,
+            });
+          } catch (error) {
+            return {
+              modelId,
+              supportsThinking: false,
+              chunksRead: 0,
+              error: (error as Error).message ?? String(error),
+            };
+          }
+        }),
+      );
+
+      setProbeResults(new Map(results.map((result) => [result.modelId, result])));
+      setAvailableModels((prev) =>
+        prev.map((model) => {
+          const probe = results.find((result) => result.modelId === model.id);
+          if (!probe) return model;
+          return {
+            ...model,
+            reasoning: probe.supportsThinking || model.reasoning,
+            reasoning_required_in_tool_calls:
+              probe.supportsThinking || model.reasoning_required_in_tool_calls,
+          };
+        }),
+      );
+
+      const supported = results.filter((result) => result.supportsThinking).length;
+      const failed = results.filter((result) => result.error).length;
+      if (failed > 0) {
+        toast.warning(`Thinking 探测完成：${supported} 个支持，${failed} 个探测失败并按不支持写入。`);
+      } else {
+        toast.success(`Thinking 探测完成：${supported} 个模型支持。`);
+      }
+
+      return results.map((result) => ({
+        id: result.modelId,
+        supportsThinking: result.supportsThinking,
+      }));
+    },
+    [],
+  );
 
   const handleTest = useCallback(async () => {
     if (provider.auth_type === "api-key" && !apiKey) {
@@ -316,8 +432,13 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
         base_url: baseUrl || null,
         display_name: provider.display_name,
       };
-      await configureProviderWithModels(config, Array.from(selectedModelIds));
-      toast.success("已保存");
+      const selectedIds = Array.from(selectedModelIds);
+      const models = await probeSelectedModels(selectedIds, config);
+      await invoke("provider_configure_with_model_capabilities", {
+        providerConfig: config,
+        models,
+      });
+      toast.success("已保存，并写入模型 Thinking 探测结果");
       onSaved();
     } catch (e) {
       toast.error(`保存失败: ${(e as Error).message ?? e}`);
@@ -330,7 +451,7 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
     baseUrl,
     availableModels,
     selectedModelIds,
-    configureProviderWithModels,
+    probeSelectedModels,
     onSaved,
   ]);
 
@@ -454,12 +575,13 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
 
         {availableModels.length === 0 ? (
           <p className="rounded-md border border-dashed border-black/10 bg-black/[0.02] px-3 py-4 text-center text-[11px] text-black/35">
-            点击「读取模型」从供应商加载可用模型。
+            暂无已保存模型。点击「读取模型」从供应商加载可用模型。
           </p>
         ) : (
           <ul className="divide-y divide-black/[0.05] rounded-md border border-black/[0.06]">
             {availableModels.map((model) => {
               const checked = selectedModelIds.has(model.id);
+              const probe = probeResults.get(model.id);
               return (
                 <li key={model.id}>
                   <button
@@ -485,6 +607,19 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <ThinkingModeChip model={model} compact />
+                      {probe ? (
+                        <span
+                          className={cn(
+                            "rounded px-1.5 text-[9.5px]",
+                            probe.supportsThinking
+                              ? "bg-jade/[0.10] text-jade"
+                              : "bg-black/[0.05] text-black/35",
+                          )}
+                          title={probe.error || `chunks: ${probe.chunksRead}`}
+                        >
+                          {probe.supportsThinking ? "probe:on" : "probe:off"}
+                        </span>
+                      ) : null}
                       {model.context_window ? (
                         <span className="rounded bg-black/[0.05] px-1.5 text-[9.5px] text-black/40">
                           {(model.context_window / 1000).toFixed(0)}K

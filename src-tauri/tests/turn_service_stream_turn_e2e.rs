@@ -74,6 +74,21 @@ fn make_memory_ticker() -> Arc<MemoryTicker> {
     ))
 }
 
+fn make_rolling_summarizer() -> Arc<RollingSummarizer> {
+    let store: Arc<dyn SessionSummaryStore> = Arc::new(NullSessionSummaryStore::new());
+    let llm: Arc<dyn UtilityLlm> = Arc::new(MockUtilityLlm::empty());
+    let jobs_db = std::env::temp_dir().join(format!(
+        "if2ai-rolling-jobs-stream-{}.db",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos()
+    ));
+    let job_runner =
+        Arc::new(JobRunner::open(jobs_db.as_path(), 3, 2).expect("on-disk JobRunner constructs"));
+    Arc::new(RollingSummarizer::new(store, llm, job_runner, None))
+}
+
 async fn make_service_without_app_handle() -> (TurnService, PathBuf) {
     let root = unique_temp_root("turn-service-stream-e2e");
     let sessions_dir = root.join("sessions");
@@ -110,6 +125,7 @@ async fn make_service_without_app_handle() -> (TurnService, PathBuf) {
         // IPC adapter forgot to plumb an `AppHandle` through.
         app_handle: None,
         learned_traits: None,
+        rolling_summarizer: make_rolling_summarizer(),
     };
 
     (TurnService::new(deps), root)

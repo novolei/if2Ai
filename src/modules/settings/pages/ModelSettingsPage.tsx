@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
 import { toast } from 'sonner'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { CompactInput } from '../components/CompactInput'
@@ -115,7 +116,8 @@ function ModelDropdown({
   const selectedLabel = value ? value.split('/').slice(1).join('/') : '未设置'
   const providerLabel = value ? value.split('/')[0] : null
 
-  const hasModels = groups.some((g) => g.models.length > 0)
+  const visibleGroups = groups.filter((g) => g.models.length > 0)
+  const hasModels = visibleGroups.length > 0
 
   return (
     <div ref={containerRef} className="relative">
@@ -172,7 +174,7 @@ function ModelDropdown({
           </button>
 
           {/* Grouped models */}
-          {groups.map((group) => (
+          {visibleGroups.map((group) => (
             <div key={group.provider_id}>
               <div className="border-t border-black/[0.05] bg-black/[0.016] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-widest text-black/30">
                 {group.provider_name}
@@ -355,6 +357,7 @@ export function ModelSettingsPage() {
       // Notify chat surfaces so the model dropdown updates immediately
       // when the user changes the active "chat" role here.
       window.dispatchEvent(new CustomEvent('if2ai:models-changed'))
+      void emit('if2ai://models-changed')
     } catch (err) {
       toast.error('设置失败', { description: String(err) })
       void loadRoleConfigs()

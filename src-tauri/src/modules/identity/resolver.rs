@@ -26,6 +26,42 @@ pub fn resolve_identity(
     let session_soul = session_override.and_then(|override_| override_.soul_id.as_deref());
     let session_persona = session_override.and_then(|override_| override_.persona_id.as_deref());
 
+    if let Some(persona_id) = session_persona {
+        match registry.persona(persona_id) {
+            Some(persona) => {
+                if let Some(soul_id) = session_soul {
+                    if soul_id != persona.soul_id {
+                        warnings.push(format!(
+                            "session override persona '{}' belongs to soul '{}', not session soul '{}'; using persona soul",
+                            persona.id, persona.soul_id, soul_id
+                        ));
+                    }
+                }
+                if let Some(soul) = registry.soul(&persona.soul_id) {
+                    return IdentityResolution {
+                        resolved: ResolvedIdentity {
+                            soul_id: soul.id.clone(),
+                            soul_version: soul.version.clone(),
+                            persona_id: Some(persona.id.clone()),
+                            persona_version: Some(persona.version.clone()),
+                            source: IdentitySource::SessionOverride,
+                        },
+                        warnings,
+                    };
+                }
+                warnings.push(format!(
+                    "session override persona '{}' points to missing soul '{}'; falling back",
+                    persona.id, persona.soul_id
+                ));
+            }
+            None => {
+                warnings.push(format!(
+                    "session override persona_id '{persona_id}' was not found; falling back"
+                ));
+            }
+        }
+    }
+
     let (soul_id, source) = if let Some(soul_id) = session_soul {
         if registry.soul(soul_id).is_some() {
             (soul_id.to_string(), IdentitySource::SessionOverride)
@@ -43,7 +79,7 @@ pub fn resolve_identity(
         .soul(&soul_id)
         .expect("resolved soul id must exist in registry");
 
-    let persona_candidate = session_persona.or(defaults.default_persona_id.as_deref());
+    let persona_candidate = defaults.default_persona_id.as_deref();
 
     let (persona_id, persona_version) = match persona_candidate {
         Some(persona_id) => match registry.persona(persona_id) {
@@ -102,6 +138,9 @@ fn fallback_soul(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::identity::custom_pack::{
+        apply_identity_customization_pack, CustomPersonaDefinition, IdentityCustomizationPack,
+    };
     use crate::modules::identity::settings::{IdentitySettings, SessionIdentityOverride};
     use crate::modules::identity::{PersonaDefinition, SoulDefinition};
     use std::collections::BTreeMap;
@@ -129,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_persona_is_dropped() {
+    fn session_persona_mismatch_prefers_persona_soul() {
         let souls = BTreeMap::from([
             (
                 "if2ai-core".to_string(),
@@ -184,9 +223,74 @@ mod tests {
         };
 
         let resolution = resolve_identity(&registry, &defaults, Some(&session));
-        assert_eq!(resolution.resolved.persona_id, None);
-        assert_eq!(resolution.resolved.soul_id, "if2ai-core");
+        assert_eq!(
+            resolution.resolved.persona_id.as_deref(),
+            Some("foreign-persona")
+        );
+        assert_eq!(resolution.resolved.soul_id, "other-soul");
+        assert_eq!(resolution.resolved.source, IdentitySource::SessionOverride);
         assert_eq!(resolution.warnings.len(), 1);
+    }
+
+    #[test]
+    fn session_persona_without_soul_wins_over_global_default() {
+        let registry = IdentityRegistry::builtin();
+        let defaults = IdentitySettings {
+            default_soul_id: Some("if2ai-core".to_string()),
+            default_persona_id: Some("staff-architect".to_string()),
+            ..IdentitySettings::default()
+        };
+        let session = SessionIdentityOverride {
+            soul_id: None,
+            persona_id: Some("execution-partner".to_string()),
+        };
+
+        let resolution = resolve_identity(&registry, &defaults, Some(&session));
+        assert_eq!(resolution.resolved.source, IdentitySource::SessionOverride);
+        assert_eq!(
+            resolution.resolved.persona_id.as_deref(),
+            Some("execution-partner")
+        );
+        assert_eq!(resolution.resolved.soul_id, "if2ai-core");
+        assert!(resolution.warnings.is_empty());
+    }
+
+    #[test]
+    fn custom_session_persona_wins_over_global_default() {
+        let pack = IdentityCustomizationPack {
+            custom_personas: BTreeMap::from([(
+                "custom-warm-coach".to_string(),
+                CustomPersonaDefinition {
+                    soul_id: "if2ai-core".to_string(),
+                    name: "Custom Warm Coach".to_string(),
+                    summary: "User-created persona".to_string(),
+                    avatar_id: None,
+                    tone_rules: vec!["warmer".to_string()],
+                    collaboration_rules: vec!["coach".to_string()],
+                    output_preferences: vec!["brief".to_string()],
+                },
+            )]),
+            ..IdentityCustomizationPack::default()
+        };
+        let registry = apply_identity_customization_pack(&IdentityRegistry::builtin(), &pack);
+        let defaults = IdentitySettings {
+            default_soul_id: Some("if2ai-core".to_string()),
+            default_persona_id: Some("staff-architect".to_string()),
+            ..IdentitySettings::default()
+        };
+        let session = SessionIdentityOverride {
+            soul_id: None,
+            persona_id: Some("custom-warm-coach".to_string()),
+        };
+
+        let resolution = resolve_identity(&registry, &defaults, Some(&session));
+        assert_eq!(resolution.resolved.source, IdentitySource::SessionOverride);
+        assert_eq!(
+            resolution.resolved.persona_id.as_deref(),
+            Some("custom-warm-coach")
+        );
+        assert_eq!(resolution.resolved.persona_version.as_deref(), Some("user"));
+        assert!(resolution.warnings.is_empty());
     }
 
     #[test]

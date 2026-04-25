@@ -43,6 +43,7 @@ impl GlobalThinkingPolicy {
 pub enum CapabilitySource {
     GlobalPolicy,
     UserOverride,
+    UserConfig,
     KnownDict,
     Default,
 }
@@ -118,6 +119,14 @@ pub fn resolve(
         return cap;
     }
 
+    if supports_thinking_from_models_json(provider_id, model_id) {
+        let mut cap = ModelCapability::disabled();
+        cap.reasoning = true;
+        cap.reasoning_required_in_tool_calls = true;
+        cap.source = CapabilitySource::UserConfig;
+        return cap;
+    }
+
     if let Some(km) = known_models::lookup(provider_id, model_id) {
         let mut cap = ModelCapability::disabled();
         cap.reasoning = km.reasoning;
@@ -139,6 +148,45 @@ pub fn resolve(
     }
 
     ModelCapability::disabled()
+}
+
+fn supports_thinking_from_models_json(provider_id: &str, model_id: &str) -> bool {
+    let path = crate::modules::config::store::models_json_path();
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return false,
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let providers = match parsed.get("providers").and_then(|p| p.as_object()) {
+        Some(providers) => providers,
+        None => return false,
+    };
+    let provider_entries = providers.iter().filter(|(key, _)| {
+        key.as_str() == provider_id || key.starts_with(&format!("{provider_id}::"))
+    });
+    for (_, entry) in provider_entries {
+        let Some(models) = entry.get("models").and_then(|m| m.as_array()) else {
+            continue;
+        };
+        for model in models {
+            let id = model
+                .get("id")
+                .and_then(|id| id.as_str())
+                .unwrap_or_default();
+            if id == model_id
+                && model
+                    .get("supportsThinking")
+                    .and_then(|flag| flag.as_bool())
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -200,7 +248,22 @@ mod tests {
         let cap = resolve("dashscope", "qwen3-plus", None, GlobalThinkingPolicy::Auto);
         assert!(cap.reasoning);
         assert_eq!(cap.enable_thinking_flag, Some(true));
-        assert!(!cap.reasoning_required_in_tool_calls);
+        // DashScope requires reasoning_content on assistant tool_call messages
+        // when enable_thinking is active.
+        assert!(cap.reasoning_required_in_tool_calls);
+    }
+
+    #[test]
+    fn dict_resolves_ollama_minimax_cloud_reasoning_required() {
+        let cap = resolve(
+            "ollama",
+            "minimax-m2.7:cloud",
+            None,
+            GlobalThinkingPolicy::Auto,
+        );
+        assert!(cap.reasoning);
+        assert!(cap.reasoning_required_in_tool_calls);
+        assert_eq!(cap.source, CapabilitySource::KnownDict);
     }
 
     #[test]

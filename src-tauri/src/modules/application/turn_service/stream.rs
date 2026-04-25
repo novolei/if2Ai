@@ -494,6 +494,12 @@ impl TurnService {
             context_window,
             request_timeout: _request_timeout,
         } = prepared_stream.provider;
+        tracing::info!(
+            "[start_agent_stream] resolved chat model provider_id='{}', model='{}', context_window={}",
+            provider_id,
+            model,
+            context_window
+        );
         let system_prompt_with_memory = prepared_stream.prompt.text;
 
         // Clone everything needed for the background task

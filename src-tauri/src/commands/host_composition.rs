@@ -89,13 +89,19 @@ fn build_tts_state() -> TtsState {
     let on_evict: Arc<dyn Fn() + Send + Sync + 'static> = Arc::new(move || {
         let now_ms = boot_for_evict.elapsed().as_millis() as i64;
         state_changed_at.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-        let state_arc = state_arc.clone();
-        let _ = tauri::async_runtime::block_on(async move {
-            let mut guard = state_arc.write().await;
-            *guard = super::tts::ProviderState::Evicted {
-                elapsed_seconds: 0.0,
-            };
-        });
+        match state_arc.try_write() {
+            Ok(mut guard) => {
+                *guard = super::tts::ProviderState::Evicted {
+                    elapsed_seconds: 0.0,
+                };
+            }
+            Err(error) => {
+                tracing::debug!(
+                    ?error,
+                    "TTS provider state busy during idle eviction; provider slot was evicted"
+                );
+            }
+        }
     });
 
     let evictor = Arc::new(crate::modules::tts::manager::eviction::IdleEvictor::spawn(

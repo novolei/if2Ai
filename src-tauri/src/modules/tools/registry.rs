@@ -559,22 +559,21 @@ impl ToolRegistry {
     pub fn validate(&self, name: &str, args: &Value) -> Option<String> {
         let entry = self.get(name)?;
 
-        // Basic schema validation
-        if let Some(obj) = args.as_object() {
-            if let Some(schema_obj) = entry
-                .input_schema
-                .get("properties")
-                .and_then(|p| p.as_object())
-            {
-                for (key, schema) in schema_obj {
-                    if schema
-                        .get("required")
-                        .and_then(|r| r.as_bool())
-                        .unwrap_or(false)
-                        && !obj.contains_key(key)
-                    {
-                        return Some(format!("missing required parameter: {key}"));
-                    }
+        let Some(obj) = args.as_object() else {
+            return Some("tool input must be a JSON object".to_string());
+        };
+
+        // JSON Schema's `required` lives at the object level, not inside each
+        // property. Keep this lightweight so every tool benefits before its
+        // handler receives malformed args.
+        if let Some(required) = entry
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+        {
+            for key in required.iter().filter_map(|value| value.as_str()) {
+                if !obj.contains_key(key) {
+                    return Some(format!("missing required parameter: {key}"));
                 }
             }
         }

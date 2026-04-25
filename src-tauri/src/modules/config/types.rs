@@ -454,6 +454,10 @@ pub struct ModelEntry {
     pub input: Vec<String>,
     #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
+    /// Optional runtime override for reasoning-capable models discovered
+    /// outside the built-in registry.
+    #[serde(rename = "supportsThinking", skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
 }
 
 /// Represents the auth.json structure.

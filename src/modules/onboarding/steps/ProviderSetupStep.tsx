@@ -11,6 +11,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Check, Loader2, X, Circle, Eye, EyeOff, Shield, Search, CheckSquare, Square } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { OnboardingLayout } from '../components/OnboardingLayout';
@@ -19,6 +20,18 @@ import { StepProgressBar } from '../components/StepProgressBar';
 import { RightPanelHeader } from '../components/RightPanelHeader';
 import { useOnboarding } from '../hooks/useOnboarding';
 import type { ProviderConfig, Model } from '../types';
+
+interface ThinkingProbeResult {
+  modelId: string;
+  supportsThinking: boolean;
+  chunksRead: number;
+  error?: string | null;
+}
+
+interface ModelCapabilitySelection {
+  id: string;
+  supportsThinking: boolean;
+}
 
 // Inject animation keyframes once (idempotent across HMR)
 if (typeof document !== 'undefined' && !document.getElementById('onboarding-provider-keyframes')) {
@@ -725,7 +738,7 @@ function ProviderConfigPanel({
   onClose: () => void;
   onProviderConfigured: (providerId: string) => void;
 }) {
-  const { testProvider, loadModels, configureProviderWithModels, getConfiguredModels, getProviderConfig } =
+  const { testProvider, loadModels, getConfiguredModels, getProviderConfig } =
     useOnboarding();
 
   const [selectedSubChoice, setSelectedSubChoice] = useState<string | null>(
@@ -990,6 +1003,56 @@ function ProviderConfigPanel({
     });
   }, [filteredModels, visibleAllSelected]);
 
+  const probeSelectedModels = useCallback(
+    async (modelIds: string[], config: ProviderConfig): Promise<ModelCapabilitySelection[]> => {
+      toast.info(`正在探测 ${modelIds.length} 个模型的 Thinking 支持...`);
+      const results = await Promise.all(
+        modelIds.map(async (modelId): Promise<ThinkingProbeResult> => {
+          try {
+            return await invoke<ThinkingProbeResult>('provider_probe_model_thinking', {
+              providerConfig: config,
+              modelId,
+            });
+          } catch (error) {
+            return {
+              modelId,
+              supportsThinking: false,
+              chunksRead: 0,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+
+      setModels((prev) =>
+        prev.map((model) => {
+          const probe = results.find((result) => result.modelId === model.id);
+          if (!probe) return model;
+          return {
+            ...model,
+            reasoning: probe.supportsThinking || model.reasoning,
+            reasoning_required_in_tool_calls:
+              probe.supportsThinking || model.reasoning_required_in_tool_calls,
+          };
+        }),
+      );
+
+      const supported = results.filter((result) => result.supportsThinking).length;
+      const failed = results.filter((result) => result.error).length;
+      if (failed > 0) {
+        toast.warning(`Thinking 探测完成：${supported} 个支持，${failed} 个探测失败并按不支持写入。`);
+      } else {
+        toast.success(`Thinking 探测完成：${supported} 个模型支持。`);
+      }
+
+      return results.map((result) => ({
+        id: result.modelId,
+        supportsThinking: result.supportsThinking,
+      }));
+    },
+    [],
+  );
+
   const handleConfirm = useCallback(async () => {
     if (selectedModelIds.size === 0) return;
 
@@ -1002,7 +1065,12 @@ function ProviderConfigPanel({
         base_url: baseUrl || null,
         display_name: provider.displayName,
       };
-      await configureProviderWithModels(config, Array.from(selectedModelIds));
+      const selectedIds = Array.from(selectedModelIds);
+      const modelsWithCapabilities = await probeSelectedModels(selectedIds, config);
+      await invoke('provider_configure_with_model_capabilities', {
+        providerConfig: config,
+        models: modelsWithCapabilities,
+      });
 
       // 通知父组件刷新已配置 provider 列表（不关面板）
       onProviderConfigured(provider.id);
@@ -1027,7 +1095,7 @@ function ProviderConfigPanel({
       });
       setIsSaving(false);
     }
-  }, [provider, apiKey, baseUrl, selectedModelIds, configureProviderWithModels, onProviderConfigured]);
+  }, [provider, apiKey, baseUrl, selectedModelIds, probeSelectedModels, onProviderConfigured]);
 
   const logoUrl = provider.logoAsset
     ? new URL(

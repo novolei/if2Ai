@@ -29,12 +29,19 @@ export async function startAgentStream(
   sessionId: string,
   userMessage: string,
   permissionMode?: PermissionMode,
+  selectedModel?: string,
 ): Promise<string> {
-  return getApiClient().call<string>('start_agent_stream', {
+  const [providerId, modelId] = selectedModel?.split('/') ?? []
+  const args: Record<string, unknown> = {
     sessionId,
     userMessage,
     permissionMode,
-  })
+  }
+  if (providerId && modelId) {
+    args.providerId = providerId
+    args.modelId = modelId
+  }
+  return getApiClient().call<string>('start_agent_stream', args)
 }
 
 /** Cancel an in-flight streaming turn. Safe to call on an

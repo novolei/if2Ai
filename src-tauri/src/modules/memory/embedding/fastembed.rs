@@ -46,11 +46,20 @@ impl FastEmbedProvider {
     /// Uses `multilingual-e5-small` (384d) for multilingual support.
     /// Downloads the model on first use and caches it locally.
     pub fn new() -> Result<Self, EmbeddingError> {
+        tracing::info!(
+            model = "MultilingualE5Small",
+            "initializing FastEmbed embedding model"
+        );
         let model = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_show_download_progress(false),
         )
         .map_err(|e| EmbeddingError::ModelError(e.to_string()))?;
+        tracing::info!(
+            model = "MultilingualE5Small",
+            dimension = Self::DIMENSION,
+            "FastEmbed embedding model initialized"
+        );
 
         Ok(Self {
             model: Mutex::new(model),

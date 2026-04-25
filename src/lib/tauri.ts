@@ -227,12 +227,19 @@ export async function startAgentStream(
   sessionId: string,
   userMessage: string,
   permissionMode?: PermissionMode,
+  selectedModel?: string,
 ): Promise<string> {
-  return await invoke<string>("start_agent_stream", {
+  const [providerId, modelId] = selectedModel?.split("/") ?? [];
+  const args: Record<string, unknown> = {
     sessionId,
     userMessage,
     permissionMode,
-  });
+  };
+  if (providerId && modelId) {
+    args.providerId = providerId;
+    args.modelId = modelId;
+  }
+  return await invoke<string>("start_agent_stream", args);
 }
 
 /**

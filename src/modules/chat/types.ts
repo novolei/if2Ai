@@ -191,7 +191,7 @@ export interface ChatWorkspaceProps {
   onUpdateSessionIdentity: (
     sessionId: string,
     identity: SessionIdentityInput,
-  ) => Promise<void>;
+  ) => Promise<SessionMeta | void>;
   onOpenInFinder: (projectId: string) => void | Promise<unknown>;
   onCreatePermanentWorktree: (projectId: string) => void | Promise<unknown>;
   onInputChange: (value: string) => void;

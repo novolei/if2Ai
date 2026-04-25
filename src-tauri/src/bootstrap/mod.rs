@@ -58,11 +58,23 @@ pub struct AppBootstrap {
 /// invokes before [`build_app_bootstrap`].
 #[must_use]
 pub fn resolve_boot_paths() -> BootPaths {
-    resolve_boot_paths_from_inputs(
+    let paths = resolve_boot_paths_from_inputs(
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| String::from("."))),
         std::env::var("IF2AI_SESSIONS_DIR").ok().map(PathBuf::from),
         std::env::var("IF2AI_PROJECTS_DIR").ok().map(PathBuf::from),
-    )
+    );
+    tracing::info!(
+        build_profile = if cfg!(debug_assertions) { "debug" } else { "release" },
+        bundle_version = env!("CARGO_PKG_VERSION"),
+        config_root = %paths.if2ai_dir.display(),
+        memory_root = %paths.memory_root.display(),
+        app_data_dir = %dirs::data_local_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "unavailable".to_string()),
+        argv0 = %std::env::args().next().unwrap_or_else(|| "unknown".to_string()),
+        "[init] resolved desktop storage roots"
+    );
+    paths
 }
 
 pub use app::build_app_bootstrap;

@@ -1,5 +1,6 @@
 import * as React from "react"
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import {
   ArrowDown,
   ArrowUp,
@@ -287,6 +288,7 @@ export function ChatUI({
   // models / providers without a hard reload.
   React.useEffect(() => {
     let cancelled = false
+    let unlistenModelsChanged: (() => void) | null = null
     const refresh = async () => {
       try {
         const groups = await invoke<Array<{
@@ -318,9 +320,13 @@ export function ChatUI({
     void refresh()
     const onChanged = () => void refresh()
     window.addEventListener('if2ai:models-changed', onChanged)
+    void listen('if2ai://models-changed', onChanged).then((unlisten) => {
+      unlistenModelsChanged = unlisten
+    })
     return () => {
       cancelled = true
       window.removeEventListener('if2ai:models-changed', onChanged)
+      unlistenModelsChanged?.()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -3188,7 +3194,6 @@ const ChatMessage = React.memo(function ChatMessage({
                     <ThinkingBlock
                       thinking={message.thinking ?? ''}
                       thinkingTime={message.thinkingTime}
-                      defaultOpen
                     />
                   ) : (
                     <ThinkingSummaryNode
@@ -4885,9 +4890,9 @@ function permissionModeLabelFor(value: PermissionMode) {
 }
 
 function summarizeThinkingText(thinking: string): string {
-  const firstLine = firstNonEmptyLine(thinking)
-  if (!firstLine) return '已完成思考'
-  return truncateText(firstLine.replace(/\s+/g, ' '), 44)
+  const lineCount = thinking.split('\n').filter((line) => line.trim().length > 0).length
+  if (lineCount <= 0) return '已完成思考'
+  return lineCount === 1 ? '已完成上下文判断' : `已完成上下文判断 · ${lineCount} 段`
 }
 
 function MenuItemButton({

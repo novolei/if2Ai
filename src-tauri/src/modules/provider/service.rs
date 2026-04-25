@@ -10,11 +10,34 @@
 //! - `select_model()`: Saves model selection via ConfigService
 
 use crate::modules::api::providers::resolve_model_alias;
-use crate::modules::config::{ConfigService, ProviderConfig};
+use crate::modules::config::store::{models_json_path, read_json, write_json};
+use crate::modules::config::{ConfigService, ModelsJson, ProviderConfig};
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use super::client::PROVIDER_HTTP_CLIENT;
 use super::registry::builtin_providers;
 use super::types::{Model, ModelModality, Provider};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCapabilitySelection {
+    pub id: String,
+    #[serde(rename = "supportsThinking")]
+    pub supports_thinking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingProbeResult {
+    #[serde(rename = "modelId")]
+    pub model_id: String,
+    #[serde(rename = "supportsThinking")]
+    pub supports_thinking: bool,
+    #[serde(rename = "chunksRead")]
+    pub chunks_read: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 /// List all 14 builtin providers.
 #[must_use]
@@ -338,6 +361,238 @@ pub async fn configure_provider_with_models(
         })
         .await
         .map_err(|e| format!("Failed to save provider config: {e}"))
+}
+
+/// Configure a provider and persist per-model runtime capability probes.
+pub async fn configure_provider_with_model_capabilities(
+    provider_config: &ProviderConfig,
+    models: &[ModelCapabilitySelection],
+) -> Result<(), String> {
+    let model_ids = models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>();
+    configure_provider_with_models(provider_config, &model_ids).await?;
+
+    let path = models_json_path();
+    let mut models_json = read_json::<ModelsJson>(&path)
+        .await
+        .map_err(|e| format!("Failed to read models.json: {e}"))?
+        .ok_or_else(|| "models.json not found after provider save".to_string())?;
+
+    let provider_key = provider_key(provider_config);
+    let Some(entry) = models_json.providers.get_mut(&provider_key) else {
+        return Err(format!(
+            "Provider '{}' not found in models.json after save",
+            provider_key
+        ));
+    };
+
+    for selected in models {
+        if let Some(model) = entry
+            .models
+            .iter_mut()
+            .find(|model| model.id == selected.id)
+        {
+            model.supports_thinking = Some(selected.supports_thinking);
+        }
+    }
+
+    write_json(&models_json, &path)
+        .await
+        .map_err(|e| format!("Failed to write models.json capability probes: {e}"))
+}
+
+fn provider_key(provider_config: &ProviderConfig) -> String {
+    match provider_config
+        .auth_variant
+        .as_deref()
+        .filter(|v| !v.is_empty())
+    {
+        Some(variant) => format!("{}::{}", provider_config.provider_id, variant),
+        None => provider_config.provider_id.clone(),
+    }
+}
+
+/// Probe whether a model actually emits thinking/reasoning fields.
+pub async fn probe_model_thinking(
+    provider_config: &ProviderConfig,
+    model_id: &str,
+) -> Result<ThinkingProbeResult, String> {
+    if model_id.trim().is_empty() {
+        return Err("model_id is required".to_string());
+    }
+    if provider_config.provider_id == "anthropic" {
+        return Ok(ThinkingProbeResult {
+            model_id: model_id.to_string(),
+            supports_thinking: false,
+            chunks_read: 0,
+            error: Some("anthropic-messages probe is not supported yet".to_string()),
+        });
+    }
+
+    let base = provider_config
+        .base_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| {
+            if provider_config.provider_id == "ollama" {
+                "http://localhost:11434/v1"
+            } else {
+                ""
+            }
+        });
+    if base.is_empty() {
+        return Err("base_url is required for thinking probe".to_string());
+    }
+    let endpoint = format!(
+        "{}/chat/completions",
+        openai_compat_base_url(&provider_config.provider_id, base)
+    );
+
+    let mut req = PROVIDER_HTTP_CLIENT.post(&endpoint);
+    if let Some(api_key) = provider_config
+        .api_key
+        .as_deref()
+        .filter(|key| !key.is_empty())
+    {
+        req = req.bearer_auth(api_key);
+    }
+
+    let response = req
+        .json(&thinking_probe_body(&provider_config.provider_id, model_id))
+        .send()
+        .await
+        .map_err(|e| format!("thinking probe HTTP error: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let raw = response.text().await.unwrap_or_default();
+        return Ok(ThinkingProbeResult {
+            model_id: model_id.to_string(),
+            supports_thinking: false,
+            chunks_read: 0,
+            error: Some(format!(
+                "http {}: {}",
+                status.as_u16(),
+                raw.chars().take(160).collect::<String>()
+            )),
+        });
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut line_buf = String::new();
+    let mut chunks_read = 0u32;
+    let mut supports_thinking = false;
+    let thinking_fields = [
+        "thinking",
+        "reasoning_content",
+        "reasoning",
+        "thinking_content",
+    ];
+
+    'outer: while let Some(chunk) =
+        tokio::time::timeout(std::time::Duration::from_secs(20), stream.next())
+            .await
+            .unwrap_or(None)
+    {
+        let bytes = match chunk {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return Ok(ThinkingProbeResult {
+                    model_id: model_id.to_string(),
+                    supports_thinking: false,
+                    chunks_read,
+                    error: Some(format!("stream chunk error: {error}")),
+                });
+            }
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        for ch in text.chars() {
+            if ch == '\n' {
+                let line = line_buf.trim().to_string();
+                line_buf.clear();
+                let data = if let Some(data) = line.strip_prefix("data:") {
+                    data.trim()
+                } else {
+                    continue;
+                };
+                if data == "[DONE]" {
+                    break 'outer;
+                }
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                    chunks_read += 1;
+                    if json_has_thinking_field(&value, &thinking_fields) {
+                        supports_thinking = true;
+                        break 'outer;
+                    }
+                    if chunks_read >= 60 {
+                        break 'outer;
+                    }
+                }
+            } else {
+                line_buf.push(ch);
+            }
+        }
+    }
+
+    Ok(ThinkingProbeResult {
+        model_id: model_id.to_string(),
+        supports_thinking,
+        chunks_read,
+        error: None,
+    })
+}
+
+fn openai_compat_base_url(provider_id: &str, base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if provider_id == "ollama" && !trimmed.ends_with("/v1") {
+        format!("{trimmed}/v1")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn thinking_probe_body(provider_id: &str, model_id: &str) -> serde_json::Value {
+    let mut body = json!({
+        "model": model_id,
+        "messages": [{ "role": "user", "content": "hi" }],
+        "stream": true,
+        "max_tokens": 64,
+    });
+    if provider_id == "ollama" {
+        body["think"] = serde_json::Value::Bool(true);
+    }
+    if provider_id == "dashscope" || provider_id == "dashscope-coding" {
+        body["enable_thinking"] = serde_json::Value::Bool(true);
+        body["thinking_budget"] = json!(8192);
+    }
+    body
+}
+
+fn json_has_thinking_field(value: &serde_json::Value, fields: &[&str]) -> bool {
+    if let Some(delta) = value
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("delta"))
+    {
+        for field in fields {
+            if delta
+                .get(field)
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return true;
+            }
+        }
+    }
+
+    value
+        .get("message")
+        .and_then(|message| message.get("thinking"))
+        .and_then(|thinking| thinking.as_str())
+        .is_some_and(|thinking| !thinking.trim().is_empty())
 }
 
 /// Get previously configured models for a given provider.

@@ -48,6 +48,7 @@ export interface ChatTurnRequest {
   sessionId: string
   userMessage: string
   permissionMode?: PermissionMode
+  selectedModel?: string
 }
 
 /** Decision shape forwarded to the backend permission service.
@@ -100,8 +101,8 @@ export interface ChatStreamHandle {
 export async function startChatTurn(
   request: ChatTurnRequest,
 ): Promise<ChatStreamHandle> {
-  const { sessionId, userMessage, permissionMode } = request
-  const streamId = await startAgentStream(sessionId, userMessage, permissionMode)
+  const { sessionId, userMessage, permissionMode, selectedModel } = request
+  const streamId = await startAgentStream(sessionId, userMessage, permissionMode, selectedModel)
   return {
     streamId,
     subscribe: (handler) => listenToStream(streamId, handler),

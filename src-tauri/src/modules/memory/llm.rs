@@ -257,16 +257,14 @@ impl UtilityLlm for ChatProviderUtilityLlm {
         };
         if usage.total_tokens() > 0 {
             let cost = crate::modules::runtime::usage::cost_for_usage(usage, &resolution.model);
-            crate::modules::usage::record_turn_usage(
-                crate::modules::usage::TurnUsageRecord {
-                    caller: self.caller.to_string(),
-                    provider_id: resolution.provider_id.clone(),
-                    model_id: resolution.model.clone(),
-                    usage,
-                    cost_usd: cost,
-                    session_id: None,
-                },
-            );
+            crate::modules::usage::record_turn_usage(crate::modules::usage::TurnUsageRecord {
+                caller: self.caller.to_string(),
+                provider_id: resolution.provider_id.clone(),
+                model_id: resolution.model.clone(),
+                usage,
+                cost_usd: cost,
+                session_id: None,
+            });
         }
 
         let text = response
