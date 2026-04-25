@@ -1,6 +1,6 @@
 # If2Ai - AI Agent Desktop Application
 
-一个基于 Tauri + Rust + Svelte 的跨平台 AI 智能体桌面应用，旨在为 [hermes-agent](https://github.com/) 提供现代的桌面应用版本。
+一个基于 Tauri + Rust + Svelte 的跨平台 AI 智能体桌面应用，旨在为**创建一个老少皆宜**提供现代的桌面应用版本。
 
 ## 📋 项目概述
 
