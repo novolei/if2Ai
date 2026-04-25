@@ -66,10 +66,18 @@ jobs:
 
       - name: Verify signed updater assets exist
         run: |
-          find target src-tauri/target -type f \( -name '*.app.tar.gz' -o -name '*.sig' -o -name '*.dmg' \) -print 2>/dev/null || true
-          test -n "$(find target src-tauri/target -type f -name '*.app.tar.gz' -print -quit 2>/dev/null)"
-          test -n "$(find target src-tauri/target -type f -name '*.app.tar.gz.sig' -print -quit 2>/dev/null)"
-          test -n "$(find target src-tauri/target -type f -name '*.dmg' -print -quit 2>/dev/null)"
+          set -euo pipefail
+          BUNDLE_ROOTS=()
+          [[ -d target ]] && BUNDLE_ROOTS+=(target)
+          [[ -d src-tauri/target ]] && BUNDLE_ROOTS+=(src-tauri/target)
+          if [[ ${#BUNDLE_ROOTS[@]} -eq 0 ]]; then
+            echo "No Tauri target directories found"
+            exit 1
+          fi
+          find "${BUNDLE_ROOTS[@]}" -type f \( -name '*.app.tar.gz' -o -name '*.sig' -o -name '*.dmg' \) -print
+          test -n "$(find "${BUNDLE_ROOTS[@]}" -type f -name '*.app.tar.gz' -print -quit)"
+          test -n "$(find "${BUNDLE_ROOTS[@]}" -type f -name '*.app.tar.gz.sig' -print -quit)"
+          test -n "$(find "${BUNDLE_ROOTS[@]}" -type f -name '*.dmg' -print -quit)"
 
       - name: Stage release assets
         env:
@@ -84,8 +92,19 @@ jobs:
           export OUT_DIR
           mkdir -p "$OUT_DIR"
 
-          INSTALLER="$(find target src-tauri/target -type f -name '*.dmg' ! -name 'rw.*.dmg' -print 2>/dev/null | sort | tail -n 1)"
-          UPDATER="$(find target src-tauri/target -type f -name '*.app.tar.gz' -print 2>/dev/null | sort | tail -n 1)"
+          BUNDLE_ROOTS=()
+          [[ -d target ]] && BUNDLE_ROOTS+=(target)
+          [[ -d src-tauri/target ]] && BUNDLE_ROOTS+=(src-tauri/target)
+          if [[ ${#BUNDLE_ROOTS[@]} -eq 0 ]]; then
+            echo "No Tauri target directories found"
+            exit 1
+          fi
+
+          echo "Available release assets:"
+          find "${BUNDLE_ROOTS[@]}" -type f \( -name '*.app.tar.gz' -o -name '*.sig' -o -name '*.dmg' \) -print
+
+          INSTALLER="$(find "${BUNDLE_ROOTS[@]}" -type f -name '*.dmg' ! -name 'rw.*.dmg' -print | sort | tail -n 1)"
+          UPDATER="$(find "${BUNDLE_ROOTS[@]}" -type f -name '*.app.tar.gz' -print | sort | tail -n 1)"
           SIGNATURE="${UPDATER}.sig"
 
           test -n "$INSTALLER"
