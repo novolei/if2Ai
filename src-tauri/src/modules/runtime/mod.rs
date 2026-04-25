@@ -29,6 +29,7 @@ pub mod pending_permission;
 pub mod permissions;
 pub mod prompt;
 pub mod prompt_tools_guide;
+pub mod recoverability;
 pub mod remote;
 pub mod resume_cursor;
 pub mod sandbox;

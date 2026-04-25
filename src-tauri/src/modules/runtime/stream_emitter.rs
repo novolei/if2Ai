@@ -58,6 +58,7 @@ use tauri::{Emitter, WebviewWindow};
 use super::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
 use super::contracts::memory::MemoryItemProjection;
 use super::contracts::prompt::PromptDiagnosticsSummary;
+use super::recoverability::ResumeRecoverability;
 
 /// Canonical Tauri event name used by the agent-loop streaming
 /// path. Held as a `pub const` so the M2 frontend translator can
@@ -194,6 +195,13 @@ pub struct StreamTokenPayload {
     pub degraded_reason: Option<String>,
     pub resume_available: Option<bool>,
     pub resume_cursor: Option<String>,
+    /// Structured recoverability payload (MIG-021).
+    ///
+    /// Populated on `stream_complete` / `stream_error` so the
+    /// frontend can render typed resume CTAs without parsing
+    /// free-form `degraded_reason` strings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recoverability: Option<ResumeRecoverability>,
     /// Token-budget breakdown for this turn — populated on
     /// `stream_complete` so the frontend `ContextBar` can render
     /// usage live. Never present on per-token `text_delta` events.
@@ -245,6 +253,7 @@ impl StreamTokenPayload {
             degraded_reason: None,
             resume_available: None,
             resume_cursor: None,
+            recoverability: None,
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,

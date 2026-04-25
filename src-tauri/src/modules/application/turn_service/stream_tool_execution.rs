@@ -24,13 +24,13 @@ use crate::modules::harness::{agent_loop_integration, AgentEvent, EventBus};
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, summarize_tool_result_for_model,
 };
+use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::{
     PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
 };
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::stream_emitter::{AgentStreamEmitter, StreamTokenPayload};
-use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::timeline_flush::flush_assistant_timeline_segment;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
@@ -224,6 +224,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             degraded_reason: None,
             resume_available: None,
             resume_cursor: None,
+            recoverability: None,
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
@@ -276,6 +277,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 degraded_reason: None,
                 resume_available: None,
                 resume_cursor: None,
+                recoverability: None,
                 context_budget_usage: None,
                 memory_context: None,
                 prompt_diagnostics: None,
@@ -479,6 +481,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             degraded_reason: None,
             resume_available: None,
             resume_cursor: None,
+            recoverability: None,
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,

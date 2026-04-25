@@ -257,6 +257,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             degraded_reason: None,
             resume_available: None,
             resume_cursor: None,
+            recoverability: None,
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
@@ -320,6 +321,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             degraded_reason: degraded_reason.clone(),
             resume_available: Some(user_visible_truth.resume_available),
             resume_cursor: resume_cursor.clone(),
+            recoverability: None,
             context_budget_usage: None,
             memory_context: None,
             prompt_diagnostics: None,
@@ -811,6 +813,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             degraded_reason: degraded_reason.clone(),
             resume_available: Some(user_visible_truth.resume_available),
             resume_cursor: resume_cursor.clone(),
+            recoverability: Some(user_visible_truth.recoverability.clone()),
             context_budget_usage: Some(usage),
             memory_context: memory_payload,
             prompt_diagnostics: prompt_diagnostics_enabled_for_task

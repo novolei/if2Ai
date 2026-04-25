@@ -21,8 +21,11 @@ use crate::modules::runtime::conversation::{
 use crate::modules::runtime::pending_permission::PendingPermissionRecord;
 #[cfg(test)]
 use crate::modules::runtime::permissions::PermissionMode;
+use crate::modules::runtime::resume_cursor::{build_resume_cursor, parse_resume_cursor};
 #[cfg(test)]
 use crate::modules::runtime::session::ContentBlock;
+use crate::modules::runtime::session::ConversationMessage;
+use crate::modules::runtime::session::MessageRole;
 
 /// Phase M1.1 / MIG-001-a — construct a per-call [`TurnService`]
 /// from the already-shared `AppState` handles. Held as a small
@@ -196,6 +199,73 @@ pub fn stop_agent_stream(state: State<'_, AppState>, stream_id: String) -> Resul
         &state.stream_cancel_senders,
         stream_id,
     )
+}
+
+/// Resume a previously-stopped agent run from its resume cursor.
+///
+/// Looks up the latest resume cursor from the session's assistant
+/// messages, wraps it in the `[resume_cursor]` marker protocol, and
+/// delegates to [`crate::modules::application::TurnService::stream_turn`].
+///
+/// When `user_message` is `None` or empty, a default continuation
+/// prompt is used.
+#[tauri::command]
+pub async fn resume_run(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    session_id: String,
+    user_message: Option<String>,
+    permission_mode: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+) -> Result<String, String> {
+    let session = state
+        .session_manager
+        .restore_session(&session_id)
+        .await
+        .map_err(|e| format!("Failed to load session: {e}"))?;
+
+    // Find the latest assistant message with a resume cursor.
+    let resume_cursor = session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::Assistant && m.resume_cursor.is_some())
+        .and_then(|m| m.resume_cursor.clone())
+        .ok_or_else(|| "No resume cursor found in session".to_string())?;
+
+    // Validate the cursor is well-formed.
+    let _ = parse_resume_cursor(&resume_cursor)
+        .ok_or_else(|| format!("Invalid resume cursor: {resume_cursor}"))?;
+
+    let user_text = user_message
+        .as_deref()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or("请继续完成未完成的任务。");
+    let resume_message = format!("[resume_cursor] {resume_cursor}; {user_text}");
+
+    let stream_cancel_senders = state.stream_cancel_senders.clone();
+    let permission_senders = state.permission_senders.clone();
+    let permission_overrides = state.permission_overrides.clone();
+    if let (Some(provider_id), Some(model_id)) = (provider_id.as_deref(), model_id.as_deref()) {
+        crate::modules::config::model_resolver::ModelResolver::set_role_config(
+            "chat",
+            &format!("{provider_id}/{model_id}"),
+        )
+        .await?;
+    }
+
+    let service = make_turn_service(&state, Some(app_handle));
+    service
+        .stream_turn(crate::modules::application::StreamTurnRequest {
+            session_id,
+            user_message: resume_message,
+            permission_mode,
+            stream_cancel_senders,
+            permission_senders,
+            permission_overrides,
+        })
+        .await
 }
 
 // TauriPermissionPrompter moved to

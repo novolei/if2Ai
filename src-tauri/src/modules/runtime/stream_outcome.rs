@@ -1,5 +1,9 @@
 //! Task outcome aggregation for stream execution truths.
 
+use super::recoverability::{
+    classify_resume_reason, safe_to_retry_mutations, ResumeRecoverability,
+};
+
 /// Tool execution truth aggregated from one stream run.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExecutionTruth {
@@ -21,6 +25,39 @@ pub(crate) struct UserVisibleTruth {
     pub(crate) task_outcome: &'static str,
     pub(crate) degraded_reason: Option<String>,
     pub(crate) resume_available: bool,
+    /// Structured recoverability payload (MIG-021).
+    ///
+    /// Replaces the free-form `resume_available` boolean for
+    /// frontend resume CTA rendering. Always present — use
+    /// [`ResumeRecoverability::available`] to check.
+    pub(crate) recoverability: ResumeRecoverability,
+}
+
+/// Construct a [`UserVisibleTruth`] with a derived
+/// [`ResumeRecoverability`] from the raw outcome fields.
+fn new_truth(
+    task_outcome: &'static str,
+    degraded_reason: Option<String>,
+    resume_available: bool,
+    terminal_status: &str,
+    has_successful_mutating_tool: bool,
+) -> UserVisibleTruth {
+    let recoverability = if resume_available {
+        let reason = classify_resume_reason(terminal_status, degraded_reason.as_deref());
+        let safe = safe_to_retry_mutations(has_successful_mutating_tool);
+        match reason {
+            Some(r) => ResumeRecoverability::resumable(r, safe, 0),
+            None => ResumeRecoverability::none(),
+        }
+    } else {
+        ResumeRecoverability::none()
+    };
+    UserVisibleTruth {
+        task_outcome,
+        degraded_reason,
+        resume_available,
+        recoverability,
+    }
 }
 
 pub(crate) struct TaskOutcomeResolver;
@@ -31,38 +68,46 @@ impl TaskOutcomeResolver {
         conversation: &ConversationTruth,
     ) -> UserVisibleTruth {
         if conversation.terminal_status == "max_iterations_reached" {
-            return UserVisibleTruth {
-                task_outcome: "partial_success",
-                degraded_reason: Some("max_iterations_reached".to_string()),
-                resume_available: true,
-            };
+            return new_truth(
+                "partial_success",
+                Some("max_iterations_reached".to_string()),
+                true,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
         }
 
         if matches!(
             conversation.terminal_status,
             "repeated_tool_batch_no_progress" | "invalid_tool_args_repeated"
         ) {
-            return UserVisibleTruth {
-                task_outcome: "partial_success",
-                degraded_reason: Some(conversation.terminal_status.to_string()),
-                resume_available: true,
-            };
+            return new_truth(
+                "partial_success",
+                Some(conversation.terminal_status.to_string()),
+                true,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
         }
 
         if conversation.terminal_status == "cancelled_by_user" {
-            return UserVisibleTruth {
-                task_outcome: "failed",
-                degraded_reason: Some("cancelled_by_user".to_string()),
-                resume_available: false,
-            };
+            return new_truth(
+                "failed",
+                Some("cancelled_by_user".to_string()),
+                false,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
         }
 
         if !conversation.stream_failed {
-            return UserVisibleTruth {
-                task_outcome: "completed",
-                degraded_reason: None,
-                resume_available: false,
-            };
+            return new_truth(
+                "completed",
+                None,
+                false,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
         }
 
         let degraded_reason = if execution.has_successful_mutating_tool {
@@ -81,18 +126,22 @@ impl TaskOutcomeResolver {
         let resumable = is_resumable_terminal_status(conversation.terminal_status);
 
         if has_execution_evidence {
-            return UserVisibleTruth {
-                task_outcome: "partial_success",
+            return new_truth(
+                "partial_success",
                 degraded_reason,
-                resume_available: true,
-            };
+                true,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
         }
 
-        UserVisibleTruth {
-            task_outcome: "failed",
+        new_truth(
+            "failed",
             degraded_reason,
-            resume_available: resumable,
-        }
+            resumable,
+            conversation.terminal_status,
+            execution.has_successful_mutating_tool,
+        )
     }
 }
 
@@ -109,6 +158,7 @@ fn is_resumable_terminal_status(status: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::recoverability::ResumeReason;
     use super::{ConversationTruth, ExecutionTruth, TaskOutcomeResolver};
 
     #[test]
@@ -126,6 +176,12 @@ mod tests {
         );
         assert_eq!(outcome.task_outcome, "failed");
         assert!(outcome.resume_available);
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::FailedToStartStream)
+        );
+        assert!(outcome.recoverability.safe_to_retry_mutations);
     }
 
     #[test]
@@ -143,6 +199,12 @@ mod tests {
         );
         assert_eq!(outcome.task_outcome, "partial_success");
         assert!(outcome.resume_available);
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::ReadOnlySuccessBeforeFailure)
+        );
+        assert!(outcome.recoverability.safe_to_retry_mutations);
     }
 
     #[test]
@@ -164,6 +226,12 @@ mod tests {
             outcome.degraded_reason.as_deref(),
             Some("max_iterations_reached")
         );
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::MaxIterationsReached)
+        );
+        assert!(!outcome.recoverability.safe_to_retry_mutations);
     }
 
     #[test]
@@ -185,5 +253,11 @@ mod tests {
             outcome.degraded_reason.as_deref(),
             Some("repeated_tool_batch_no_progress")
         );
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::RepeatedToolBatchNoProgress)
+        );
+        assert!(outcome.recoverability.safe_to_retry_mutations);
     }
 }

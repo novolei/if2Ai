@@ -12,9 +12,6 @@
 
 | Pack   | Type | Goal | Owner |
 | ------ | ---- | ---- | ----- |
-| [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | executor |
-| [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md) | feature | Runtime cockpit adapter + i18n + strategy | executor |
-| [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md) | feature | Jiaochang shell + fixture cockpit | executor |
 | [APP-UPDATER-002](./feature/app-updater/APP-UPDATER-002-release-ci-signed-artifact.md) | feature | Release CI + signed Tauri updater artifact | executor |
 | [APP-UPDATER-003](./feature/app-updater/APP-UPDATER-003-client-state-machine-ux.md) | feature | Client updater state machine + settings UX | executor |
 
@@ -22,6 +19,9 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | 2026-04-25 |
+| [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md) | feature | Runtime cockpit adapter + i18n + strategy | 2026-04-25 |
+| [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md) | feature | Jiaochang shell + fixture cockpit | 2026-04-25 |
 | [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature | Updater transport + release manifest + settings state machine + CI release gates | 2026-04-25 |
 | [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | feature | Prompt control panel + diagnostics projection | 2026-04-22 |
 | [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | feature | Utility / coordinator prompt lanes | 2026-04-22 |
@@ -148,6 +148,17 @@
 | ------ | ---- | ---- | ----- |
 | _(无)_ | —    | —    | —     |
 
+### Smart Browser Pipeline
+
+基于 [Smart Browser Architecture](../design-docs/smart-browser-architecture.md)，把现有 Rust CDP 浏览器、runtime projection、browser-use MCP、cloud escalation 收口成一个产品级浏览器能力面。
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [FEAT-SB-001](./feature/smart-browser/FEAT-SB-001-smart-browser-contract.md) | done | 建立 Smart Browser backend/command/observation/event contract |
+| 2 | P0 | [FEAT-SB-002](./feature/smart-browser/FEAT-SB-002-browser-runtime-projection.md) | done | 把 browser status 接入 runtime projection/timeline |
+| 3 | P1 | [FEAT-SB-003](./feature/smart-browser/FEAT-SB-003-browser-use-mcp-backend.md) | done | 通过 MCP stdio 接入 browser-use backend |
+| 4 | P2 | [FEAT-SB-004](./feature/smart-browser/FEAT-SB-004-agentic-browser-cloud-escalation.md) | done | 接入 agentic retry 与 cloud escalation approval |
+
 ### Migration-Core Pipeline
 
 | 顺序 | 优先级 | Pack                                                                                           | 状态     | Goal                                                  |
@@ -172,7 +183,7 @@
 | 18   | P1     | [MIG-018](./feature/migration-core/MIG-018-session-history-replay-and-paging.md)               | **done** | 建立 session history replay + paging                  |
 | 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | **done** | 让 pending permission 可恢复 / 可重连                 |
 | 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | **done** | 建立 session supervisor 生命周期真相                  |
-| 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | partial  | 建立 typed resume / run recovery contract             |
+| 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | **done** | 建立 typed resume / run recovery contract             |
 | 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | partial  | 建立 tool attempt ledger + timeline contract          |
 | 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | partial  | 让 harness/run report 改读 event log                  |
 
@@ -228,7 +239,7 @@
 | MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | session.json fallback now traced via `fallback_reason` field (GAP-001 done) |
 | MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
 | MIG-020 | done | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests + T-007 frontend projection pipeline | — |
-| MIG-021 | partial | resume cursor and recoverable UI fields exist | missing typed `resume_reason` / `safe_to_retry_mutations` contract |
+| MIG-021 | done | `recoverability.rs` with ResumeReason (9 variants), ResumeRecoverability, classify_resume_reason, safe_to_retry_mutations; integrated into TaskOutcomeResolver and StreamTokenPayload; recoverability populated on stream_complete/stream_error; resume_run Tauri command; 14 recoverability + 4 stream_outcome tests pass | — |
 | MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log; T-010 generates UUID attempt_id per tool call and populates StreamTokenPayload.correlation | no stable attempt_no increment or ledger state machine (T-013) |
 | MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |
 
