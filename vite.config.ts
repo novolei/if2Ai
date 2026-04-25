@@ -24,6 +24,23 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('/@codemirror/') || id.includes('/codemirror/')) return 'vendor-editor'
+            if (id.includes('/lucide-react/')) return 'vendor-icons'
+            if (id.includes('/@tauri-apps/')) return 'vendor-tauri'
+            return 'vendor-core'
+          }
+          if (id.includes('/src/modules/settings/')) return 'settings'
+          if (id.includes('/src/modules/git/')) return 'git-workbench'
+          if (id.includes('/src/components/memory/')) return 'memory'
+          return undefined
+        },
+      },
+    },
   },
   // 编译期常量：与 package.json / tauri.conf.json / Cargo.toml 通过
   // scripts/release-macos.sh 同步 bump，单一信源 = package.json。
