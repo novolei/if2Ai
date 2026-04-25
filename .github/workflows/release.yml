@@ -51,6 +51,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install native build dependencies
+        run: |
+          brew install protobuf
+          echo "PROTOC=$(brew --prefix protobuf)/bin/protoc" >> "$GITHUB_ENV"
+          "$(brew --prefix protobuf)/bin/protoc" --version
+
       - name: Build signed Tauri bundle
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
