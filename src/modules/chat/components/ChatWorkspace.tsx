@@ -77,7 +77,7 @@ function HeaderViewStyleControls({
           字体
         </DropdownMenuLabel>
         <DropdownMenuItem
-          className="h-8 justify-between"
+          className={cn("h-8 justify-between", fontMode === "sans" && "the-finals-selected-menu-item")}
           onSelect={() => onFontModeChange("sans")}
         >
           <span className="inline-flex items-center gap-2">
@@ -87,7 +87,7 @@ function HeaderViewStyleControls({
           {fontMode === "sans" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="h-8 justify-between"
+          className={cn("h-8 justify-between", fontMode === "serif" && "the-finals-selected-menu-item")}
           onSelect={() => onFontModeChange("serif")}
         >
           <span className="inline-flex items-center gap-2">
@@ -101,7 +101,7 @@ function HeaderViewStyleControls({
           密度
         </DropdownMenuLabel>
         <DropdownMenuItem
-          className="h-8 justify-between"
+          className={cn("h-8 justify-between", densityMode === "comfortable" && "the-finals-selected-menu-item")}
           onSelect={() => onDensityModeChange("comfortable")}
         >
           <span className="inline-flex items-center gap-2">
@@ -111,7 +111,7 @@ function HeaderViewStyleControls({
           {densityMode === "comfortable" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="h-8 justify-between"
+          className={cn("h-8 justify-between", densityMode === "compact" && "the-finals-selected-menu-item")}
           onSelect={() => onDensityModeChange("compact")}
         >
           <span className="inline-flex items-center gap-2">

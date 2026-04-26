@@ -342,6 +342,7 @@ export function BranchPicker({
                     key={b.name}
                     type="button"
                     disabled={isBusy}
+                    aria-selected={isCurrent}
                     onClick={() => handleCheckout(b.name)}
                     className={cn(
                       // outline-none + focus-visible bg：见 GitActionsPicker
@@ -349,6 +350,7 @@ export function BranchPicker({
                       // 描边被 PopoverContent overflow-hidden 切成两条横
                       // 线的渲染异常。
                       'flex w-full items-start gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground',
+                      isCurrent && 'the-finals-selected-menu-item',
                       isBusy && 'opacity-60',
                     )}
                   >

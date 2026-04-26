@@ -232,7 +232,7 @@ export function HomeScreen({
                   <ChevronDown className="h-3 w-3" />
                 </button>
                 {permissionDropdownOpen && (
-                  <div className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[140px] overflow-hidden rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
+                  <div className="home-project-menu absolute left-0 top-[calc(100%+4px)] z-50 min-w-[140px] overflow-hidden rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
                     {(['readOnly', 'workspaceWrite', 'dangerFullAccess'] as PermissionMode[]).map(
                       (mode) => (
                         <button
@@ -243,8 +243,8 @@ export function HomeScreen({
                             setPermissionDropdownOpen(false)
                           }}
                           className={cn(
-                            'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
-                            permissionMode === mode ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                            'home-project-menu-item flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
+                            permissionMode === mode ? 'home-project-menu-item-active font-semibold text-foreground' : 'text-muted-foreground'
                           )}
                         >
                           {PERMISSION_LABELS[mode]}
@@ -269,7 +269,7 @@ export function HomeScreen({
                   <ChevronDown className="h-3 w-3" />
                 </button>
                 {modelDropdownOpen && availableModelItems.length > 0 && (
-                  <div className="absolute right-0 top-[calc(100%+4px)] z-50 max-h-[280px] min-w-[200px] overflow-y-auto rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
+                  <div className="home-project-menu absolute right-0 top-[calc(100%+4px)] z-50 max-h-[280px] min-w-[200px] overflow-y-auto rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
                     {availableModelItems.map((item) => (
                       <button
                         key={item.value}
@@ -283,9 +283,9 @@ export function HomeScreen({
                           setModelDropdownOpen(false)
                         }}
                         className={cn(
-                          'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
+                          'home-project-menu-item flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
                           selectedModel === item.value
-                            ? 'font-semibold text-foreground'
+                            ? 'home-project-menu-item-active font-semibold text-foreground'
                             : 'text-muted-foreground'
                         )}
                       >
@@ -348,7 +348,7 @@ export function HomeScreen({
 
             {/* Project dropdown */}
             {projectDropdownOpen && (
-              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[280px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-token-lg backdrop-blur-xl">
+              <div className="home-project-menu absolute left-0 top-[calc(100%+8px)] z-50 w-[280px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-token-lg backdrop-blur-xl">
                 {/* Search */}
                 <div className="flex items-center gap-2 border-b border-border/70 px-3.5 py-2.5">
                   <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -386,8 +386,8 @@ export function HomeScreen({
                           setProjectSearch('')
                         }}
                         className={cn(
-                          'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground',
-                          selectedProjectId === project.id && 'bg-accent text-accent-foreground'
+                          'home-project-menu-item flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground',
+                          selectedProjectId === project.id && 'home-project-menu-item-active bg-accent text-accent-foreground'
                         )}
                       >
                         <FolderGit2
@@ -426,7 +426,7 @@ export function HomeScreen({
                         setIsPickingFolder(false)
                       }
                     }}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                    className="home-project-menu-footer flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                   >
                     <PlusCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span className="text-[13px] text-muted-foreground">

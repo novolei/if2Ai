@@ -133,12 +133,14 @@ export function ModelPicker({
                   <button
                     key={item.value}
                     type="button"
+                    aria-selected={isCurrent}
                     onClick={() => {
                       onChange(item.value)
                       setOpen(false)
                     }}
                     className={cn(
                       'flex w-full items-center gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground',
+                      isCurrent && 'the-finals-selected-menu-item',
                     )}
                     title={item.label}
                   >
