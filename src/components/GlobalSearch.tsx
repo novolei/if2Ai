@@ -134,6 +134,7 @@ export function GlobalSearch({
         <DialogPrimitive.Content
           aria-describedby={undefined}
           className={cn(
+            'global-search-panel',
             'fixed left-1/2 top-[22%] z-50 w-[min(92vw,560px)] -translate-x-1/2',
             'overflow-hidden rounded-2xl border border-black/[0.07]',
             'bg-white/92 shadow-[0_20px_60px_rgba(0,0,0,0.18),0_4px_16px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.06)]',
@@ -145,7 +146,6 @@ export function GlobalSearch({
           )}
         >
           <DialogPrimitive.Title className="sr-only">全局搜索</DialogPrimitive.Title>
-
           <Command shouldFilter={false}>
             <CommandInput
               value={query}
@@ -277,7 +277,7 @@ export function GlobalSearch({
               )}
 
               {/* ── Footer hint ─────────────────────────────────── */}
-              <div className="flex items-center justify-end gap-3 border-t border-black/[0.05] px-3.5 py-2">
+              <div className="global-search-footer flex items-center justify-end gap-3 border-t border-black/[0.05] px-3.5 py-2">
                 <span className="text-[10.5px] text-muted-foreground/35">
                   <kbd className="rounded bg-black/[0.06] px-1 py-0.5 font-mono text-[10px]">↑↓</kbd>
                   {' '}导航
