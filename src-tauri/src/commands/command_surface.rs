@@ -320,6 +320,11 @@ macro_rules! if2ai_command_surface {
         tauri::generate_handler![
             crate::commands::gateway::get_gateway_url,
             crate::commands::gateway::get_gateway_health,
+            crate::commands::jiaochang_audio::jiaochang_audio_plugin_register,
+            crate::commands::jiaochang_audio::jiaochang_audio_plugin_list,
+            crate::commands::jiaochang_audio::jiaochang_audio_plugin_resolve_track_url,
+            crate::commands::jiaochang_audio::jiaochang_audio_plugin_cache_info,
+            crate::commands::jiaochang_audio::jiaochang_audio_plugin_cache_clear,
             crate::commands::window::open_settings_window,
             crate::commands::window::close_settings_window,
             crate::commands::window::open_browser_viewer_window,

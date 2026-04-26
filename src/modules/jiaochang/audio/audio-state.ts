@@ -28,6 +28,10 @@ export interface JiaochangMusicTrack {
   availableQualities?: JiaochangAudioQuality[]
   license?: string
   localGrant?: JiaochangLocalMusicGrant
+  pluginSource?: {
+    pluginId: string
+    source: string
+  }
 }
 
 export interface JiaochangResolvedTrackUrl {
