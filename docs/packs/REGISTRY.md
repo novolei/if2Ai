@@ -188,7 +188,7 @@
 | 19   | P1     | [MIG-019](./feature/migration-core/MIG-019-pending-permission-recovery.md)                     | **done** | 让 pending permission 可恢复 / 可重连                 |
 | 20   | P1     | [MIG-020](./feature/migration-core/MIG-020-session-supervisor-foundation.md)                   | **done** | 建立 session supervisor 生命周期真相                  |
 | 21   | P2     | [MIG-021](./feature/migration-core/MIG-021-resume-contract-and-run-recovery.md)                | **done** | 建立 typed resume / run recovery contract             |
-| 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | partial  | 建立 tool attempt ledger + timeline contract          |
+| 22   | P2     | [MIG-022](./feature/migration-core/MIG-022-tool-attempt-ledger-and-timeline-contract.md)       | **done** | 建立 tool attempt ledger + timeline contract          |
 | 23   | P3     | [MIG-023](./feature/migration-core/MIG-023-canonical-run-report-from-event-log.md)             | partial  | 让 harness/run report 改读 event log                  |
 
 > Migration-Core canonical blueprint:
@@ -244,7 +244,7 @@
 | MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
 | MIG-020 | done | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests + T-007 frontend projection pipeline | — |
 | MIG-021 | done | `recoverability.rs` with ResumeReason (9 variants), ResumeRecoverability, classify_resume_reason, safe_to_retry_mutations; integrated into TaskOutcomeResolver and StreamTokenPayload; recoverability populated on stream_complete/stream_error; resume_run Tauri command; 14 recoverability + 4 stream_outcome tests pass | — |
-| MIG-022 | partial | `tool_call_id` and `attempt_id` fields exist in run log; T-010 generates UUID attempt_id per tool call and populates StreamTokenPayload.correlation | no stable attempt_no increment or ledger state machine (T-013) |
+| MIG-022 | done | T-013: full attempt ledger (8 states) + attempt_no counter + file persistence + `get_tool_attempt_ledger` Tauri cmd + stream_tool_execution integration + 8 tests; TS types in contracts.ts + `getToolAttemptLedger` facade | — |
 | MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |
 
 ### Architecture Gap Pipeline
