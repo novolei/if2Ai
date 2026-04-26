@@ -1,4 +1,5 @@
 import type { JiaochangAudioError, JiaochangAudioSlot, JiaochangMusicTrack } from './audio-state.ts'
+import type { JiaochangAudioPluginRuntimeEvent } from './plugin-source-adapter.ts'
 
 export type JiaochangAudioEventName =
   | 'track:resolved'
@@ -10,6 +11,7 @@ export type JiaochangAudioEventName =
   | 'track:error'
   | 'library:changed'
   | 'slot:swapped'
+  | 'plugin:event'
 
 export interface JiaochangAudioEventPayload {
   trackId?: string
@@ -18,6 +20,7 @@ export interface JiaochangAudioEventPayload {
   duration?: number
   error?: JiaochangAudioError
   tracks?: JiaochangMusicTrack[]
+  pluginEvent?: JiaochangAudioPluginRuntimeEvent
 }
 
 export type JiaochangAudioEventListener = (payload: JiaochangAudioEventPayload) => void

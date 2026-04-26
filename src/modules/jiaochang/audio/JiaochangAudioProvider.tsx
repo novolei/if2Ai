@@ -14,6 +14,7 @@ import {
 } from './audio-state.ts'
 import { resolveTrackUrl } from './resolve-track-url.ts'
 import { createDefaultSourceAdapters } from './source-adapters.ts'
+import { subscribeJiaochangAudioPluginEvents } from './plugin-source-adapter.ts'
 import {
   createBundledTrackLibrary,
   createLocalTrackFromGrant,
@@ -57,6 +58,28 @@ export function JiaochangAudioProvider({ children }: { children: ReactNode }) {
 
   const activeAudio = state.primarySlot === 'A' ? audioARef.current : audioBRef.current
   const activeTrack = useMemo(() => getActiveTrack(state), [state])
+
+  useEffect(() => {
+    let disposed = false
+    let cleanup: (() => void) | null = null
+    subscribeJiaochangAudioPluginEvents((pluginEvent) => {
+      eventBusRef.current.emit('plugin:event', { pluginEvent, trackId: pluginEvent.track_id })
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten()
+          return
+        }
+        cleanup = unlisten
+      })
+      .catch(() => {
+        cleanup = null
+      })
+    return () => {
+      disposed = true
+      cleanup?.()
+    }
+  }, [])
 
   useEffect(() => {
     const audio = activeAudio

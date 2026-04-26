@@ -5,6 +5,7 @@ import type {
   JiaochangTrackSource,
 } from './audio-state.ts'
 import { createBundledTrackLibrary } from './track-library.ts'
+import { createPluginSourceAdapter } from './plugin-source-adapter.ts'
 
 export interface JiaochangSourceAdapter {
   id: string
@@ -67,7 +68,7 @@ export function createDefaultSourceAdapters(): JiaochangSourceAdapter[] {
     createBundledSourceAdapter(),
     createLocalSourceAdapter(),
     createDisabledServiceSourceAdapter(),
-    createDisabledPluginSourceAdapter(),
+    createPluginSourceAdapter(),
   ]
 }
 
