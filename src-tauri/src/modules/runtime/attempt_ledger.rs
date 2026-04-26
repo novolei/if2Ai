@@ -149,10 +149,7 @@ impl ToolAttemptLedger {
     }
 
     /// Query all attempts for a session.
-    pub fn by_session_id(
-        app_data_dir: &Path,
-        session_id: &str,
-    ) -> io::Result<Vec<ToolAttempt>> {
+    pub fn by_session_id(app_data_dir: &Path, session_id: &str) -> io::Result<Vec<ToolAttempt>> {
         Self::load_all(app_data_dir, session_id)
     }
 
@@ -182,14 +179,14 @@ impl ToolAttemptLedger {
 ///
 /// If an attempt with the same `attempt_id` already exists, it is replaced
 /// (state transition update). Otherwise, the record is appended.
-pub fn record_attempt(
-    app_data_dir: &Path,
-    attempt: &ToolAttempt,
-) -> io::Result<()> {
+pub fn record_attempt(app_data_dir: &Path, attempt: &ToolAttempt) -> io::Result<()> {
     let mut records = ToolAttemptLedger::load_all(app_data_dir, &attempt.session_id)?;
 
     // Replace existing entry with same attempt_id, or append new.
-    if let Some(existing) = records.iter_mut().find(|a| a.attempt_id == attempt.attempt_id) {
+    if let Some(existing) = records
+        .iter_mut()
+        .find(|a| a.attempt_id == attempt.attempt_id)
+    {
         *existing = attempt.clone();
     } else {
         records.push(attempt.clone());
@@ -199,11 +196,7 @@ pub fn record_attempt(
 }
 
 /// Batch-save all records for a session (used in tests and migrations).
-fn save_attempts(
-    app_data_dir: &Path,
-    session_id: &str,
-    records: &[ToolAttempt],
-) -> io::Result<()> {
+fn save_attempts(app_data_dir: &Path, session_id: &str, records: &[ToolAttempt]) -> io::Result<()> {
     let path = attempt_ledger_path(app_data_dir, session_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -337,15 +330,15 @@ impl ToolAttemptLedgerResponse {
     pub fn from_attempts(session_id: String, attempts: Vec<ToolAttempt>) -> Self {
         let mut stats: HashMap<String, AttemptStats> = HashMap::new();
         for a in &attempts {
-            let entry = stats.entry(a.tool_call_id.clone()).or_insert_with(|| {
-                AttemptStats {
+            let entry = stats
+                .entry(a.tool_call_id.clone())
+                .or_insert_with(|| AttemptStats {
                     tool_name: a.tool_name.clone(),
                     total_attempts: 0,
                     succeeded: false,
                     last_status: a.status_to_str(),
                     last_failure_kind: None,
-                }
-            });
+                });
             entry.total_attempts += 1;
             entry.last_status = a.status_to_str();
             if a.status == ToolAttemptStatus::Completed {
@@ -489,13 +482,11 @@ mod tests {
         record_attempt(dir.path(), &a2).unwrap();
 
         // Query by run_id
-        let by_run =
-            ToolAttemptLedger::by_run_id(dir.path(), session, "run-1").unwrap();
+        let by_run = ToolAttemptLedger::by_run_id(dir.path(), session, "run-1").unwrap();
         assert_eq!(by_run.len(), 2);
 
         // Query by tool_call_id
-        let by_tool =
-            ToolAttemptLedger::by_tool_call_id(dir.path(), session, "toolu_001").unwrap();
+        let by_tool = ToolAttemptLedger::by_tool_call_id(dir.path(), session, "toolu_001").unwrap();
         assert_eq!(by_tool.len(), 1);
         assert_eq!(by_tool[0].tool_name, "read_file");
 
@@ -511,7 +502,10 @@ mod tests {
 
         let all_after = ToolAttemptLedger::by_session_id(dir.path(), session).unwrap();
         assert_eq!(all_after.len(), 2); // Still 2, replaced not appended
-        let reloaded_a1 = all_after.iter().find(|a| a.attempt_id == a1.attempt_id).unwrap();
+        let reloaded_a1 = all_after
+            .iter()
+            .find(|a| a.attempt_id == a1.attempt_id)
+            .unwrap();
         assert_eq!(reloaded_a1.status, ToolAttemptStatus::Completed);
 
         delete_attempt_ledger(dir.path(), session).unwrap();

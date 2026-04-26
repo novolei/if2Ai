@@ -40,11 +40,11 @@ use crate::modules::runtime::budget::MAX_REQUEST_TOKEN_BUDGET_ESTIMATE;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::projection::{self, ProjectionCheckpoint};
 use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
     ContentBlock, ConversationMessage, Session as RuntimeSession,
 };
-use crate::modules::runtime::projection::{self, ProjectionCheckpoint};
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
@@ -1013,7 +1013,13 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             let last_seq = run_event_logger.current_seq();
             let existing = projection::load_checkpoint(&app_data_dir, &session_id).ok();
             let snapshot = existing
-                .and_then(|r| if r.checkpoint_exists { Some(r.snapshot) } else { None })
+                .and_then(|r| {
+                    if r.checkpoint_exists {
+                        Some(r.snapshot)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(serde_json::Value::Null);
             let cp = ProjectionCheckpoint::new(session_id.clone(), last_seq, snapshot);
             if let Err(e) = projection::save_checkpoint(&app_data_dir, &cp) {

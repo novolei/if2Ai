@@ -62,11 +62,7 @@ pub struct ProjectionCheckpoint {
 
 impl ProjectionCheckpoint {
     /// Create a new checkpoint with the given snapshot and last applied seq.
-    pub fn new(
-        session_id: String,
-        last_applied_seq: u64,
-        snapshot: serde_json::Value,
-    ) -> Self {
+    pub fn new(session_id: String, last_applied_seq: u64, snapshot: serde_json::Value) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             meta: ProjectionCheckpointMeta {
@@ -102,10 +98,7 @@ pub struct ProjectionCheckpointResponse {
 ///
 /// Best-effort: IO errors are logged but not propagated so checkpoint
 /// failures never block the main execution path.
-pub fn save_checkpoint(
-    app_data_dir: &Path,
-    checkpoint: &ProjectionCheckpoint,
-) -> io::Result<()> {
+pub fn save_checkpoint(app_data_dir: &Path, checkpoint: &ProjectionCheckpoint) -> io::Result<()> {
     let path = checkpoint_path(app_data_dir, &checkpoint.meta.session_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -127,9 +120,8 @@ pub fn load_checkpoint(
     let path = checkpoint_path(app_data_dir, session_id);
     match fs::read(&path) {
         Ok(bytes) => {
-            let checkpoint: ProjectionCheckpoint =
-                serde_json::from_slice(&bytes)
-                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            let checkpoint: ProjectionCheckpoint = serde_json::from_slice(&bytes)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             Ok(ProjectionCheckpointResponse {
                 snapshot: checkpoint.snapshot,
                 last_applied_seq: checkpoint.meta.last_applied_seq,
@@ -138,15 +130,13 @@ pub fn load_checkpoint(
                 checkpoint_updated_at: Some(checkpoint.meta.updated_at),
             })
         }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            Ok(ProjectionCheckpointResponse {
-                snapshot: serde_json::Value::Null,
-                last_applied_seq: 0,
-                checkpoint_exists: false,
-                loaded_from_checkpoint: false,
-                checkpoint_updated_at: None,
-            })
-        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(ProjectionCheckpointResponse {
+            snapshot: serde_json::Value::Null,
+            last_applied_seq: 0,
+            checkpoint_exists: false,
+            loaded_from_checkpoint: false,
+            checkpoint_updated_at: None,
+        }),
         Err(err) => Err(err),
     }
 }

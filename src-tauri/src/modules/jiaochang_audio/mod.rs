@@ -157,7 +157,10 @@ impl JiaochangAudioPluginRuntime {
 
         let plugin_id = input.plugin_id.clone();
         let track_id = input.track_id.clone();
-        emit_event(app, JiaochangAudioPluginEvent::resolving(&plugin_id, &track_id));
+        emit_event(
+            app,
+            JiaochangAudioPluginEvent::resolving(&plugin_id, &track_id),
+        );
         let key = cache_key(&input);
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -204,17 +207,32 @@ impl Default for JiaochangAudioPluginRuntime {
 
 impl JiaochangAudioPluginEvent {
     fn resolving(plugin_id: &str, track_id: &str) -> Self {
-        Self::new("resolving", plugin_id, Some(track_id), "plugin worker resolving URL")
+        Self::new(
+            "resolving",
+            plugin_id,
+            Some(track_id),
+            "plugin worker resolving URL",
+        )
     }
 
     fn resolved(plugin_id: &str, track_id: &str, url: &str) -> Self {
-        let mut event = Self::new("resolved", plugin_id, Some(track_id), "plugin worker resolved URL");
+        let mut event = Self::new(
+            "resolved",
+            plugin_id,
+            Some(track_id),
+            "plugin worker resolved URL",
+        );
         event.url = Some(url.to_string());
         event
     }
 
     fn cache_hit(plugin_id: &str, track_id: &str, url: &str) -> Self {
-        let mut event = Self::new("cache_hit", plugin_id, Some(track_id), "server URL cache hit");
+        let mut event = Self::new(
+            "cache_hit",
+            plugin_id,
+            Some(track_id),
+            "server URL cache hit",
+        );
         event.url = Some(url.to_string());
         event.cache_hit = true;
         event
@@ -262,7 +280,10 @@ async fn resolve_in_worker(
         .cloned()
         .ok_or_else(|| format!("Plugin source '{}' is not registered", input.plugin_id))?;
     if !manifest.enabled {
-        return Err(format!("Plugin source '{}' is disabled", manifest.plugin_id));
+        return Err(format!(
+            "Plugin source '{}' is disabled",
+            manifest.plugin_id
+        ));
     }
     let url = render_template(&manifest.resolver_template, input);
     validate_url_against_manifest(&url, &manifest)?;
@@ -317,14 +338,19 @@ fn render_template(template: &str, input: &JiaochangPluginTrackResolveInput) -> 
         ("{track_id}", input.track_id.as_str()),
         ("{plugin_id}", input.plugin_id.as_str()),
         ("{source}", input.source.as_str()),
-        ("{source_track_id}", input.source_track_id.as_deref().unwrap_or("")),
+        (
+            "{source_track_id}",
+            input.source_track_id.as_deref().unwrap_or(""),
+        ),
         ("{quality}", input.quality.as_str()),
         ("{title}", input.title.as_str()),
         ("{artist}", input.artist.as_deref().unwrap_or("")),
     ];
-    replacements.iter().fold(template.to_string(), |acc, (key, value)| {
-        acc.replace(key, &urlencoding::encode(value))
-    })
+    replacements
+        .iter()
+        .fold(template.to_string(), |acc, (key, value)| {
+            acc.replace(key, &urlencoding::encode(value))
+        })
 }
 
 fn validate_url_against_manifest(
@@ -378,8 +404,8 @@ mod tests {
             version: Some("0.1.0".to_string()),
             enabled: true,
             allowed_hosts: vec!["music.example.test".to_string()],
-            resolver_template:
-                "https://music.example.test/{source}/{source_track_id}?q={quality}".to_string(),
+            resolver_template: "https://music.example.test/{source}/{source_track_id}?q={quality}"
+                .to_string(),
         }
     }
 
