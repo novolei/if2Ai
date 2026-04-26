@@ -213,6 +213,9 @@ export interface UseOnboardingReturn {
   systemReport: SystemReport | null;
   isChecking: boolean;
   downloadProgress: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  downloadError: string | null;
   isDownloading: boolean;
 
   // Provider

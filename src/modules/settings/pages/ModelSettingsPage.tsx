@@ -6,7 +6,7 @@ import { SettingsSurface } from '../components/SettingsSurface'
 import { CompactInput } from '../components/CompactInput'
 import {
   Brain, Cpu, MessageSquare, Wrench, FileText, Zap, Globe,
-  ChevronDown, Check, AlertCircle, RefreshCw,
+  ChevronDown, Check, AlertCircle, RefreshCw, Download, CheckCircle, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TtsModelSection } from './TtsModelSection'
@@ -17,6 +17,17 @@ const DEFAULT_MODEL_NAME = 'intfloat/multilingual-e5-small'
 interface ModelConfig {
   embedded_model_name: string
   hf_mirror_url?: string | null
+}
+
+interface EmbeddedModelStatus {
+  downloaded: boolean
+  progress: number | null
+  size_mb: number
+  status: { status: 'Pass' } | { status: 'Fail'; reason: string } | { status: 'Running' } | { status: 'Pending' }
+}
+
+interface SystemReport {
+  embedded_model: EmbeddedModelStatus
 }
 
 /** Known HuggingFace mirror presets */
@@ -90,6 +101,13 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 MB'
+  const mb = bytes / (1024 * 1024)
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
+  return `${Math.round(mb)} MB`
 }
 
 // ── Model Dropdown ────────────────────────────────────────────────────────────
@@ -247,6 +265,13 @@ export function ModelSettingsPage() {
   const [mirrorUrl, setMirrorUrl] = useState('')
   const [savingMirror, setSavingMirror] = useState(false)
 
+  /** Embedded vector model runtime status */
+  const [vectorStatus, setVectorStatus] = useState<EmbeddedModelStatus | null>(null)
+  const [loadingVectorStatus, setLoadingVectorStatus] = useState(true)
+  const [downloadingVectorModel, setDownloadingVectorModel] = useState(false)
+  const [vectorDownloadProgress, setVectorDownloadProgress] = useState(0)
+  const [vectorDownloadError, setVectorDownloadError] = useState<string | null>(null)
+
   /** Which role's dropdown is open — null means all closed */
   const [openRoleId, setOpenRoleId] = useState<string | null>(null)
 
@@ -286,6 +311,27 @@ export function ModelSettingsPage() {
     }
   }, [])
 
+  const loadVectorStatus = useCallback(async () => {
+    setLoadingVectorStatus(true)
+    try {
+      const report = await invoke<SystemReport>('system_check_run')
+      setVectorStatus(report.embedded_model)
+      const percent = report.embedded_model.downloaded
+        ? 100
+        : report.embedded_model.progress
+          ? Math.max(0, Math.min(100, report.embedded_model.progress * 100))
+          : 0
+      setVectorDownloadProgress(percent)
+      if (report.embedded_model.status.status === 'Running') {
+        setDownloadingVectorModel(true)
+      }
+    } catch (err) {
+      setVectorDownloadError(String(err))
+    } finally {
+      setLoadingVectorStatus(false)
+    }
+  }, [])
+
   const loadRoleConfigs = useCallback(async () => {
     try {
       const roles = await invoke<ModelRoleConfig[]>('model_get_role_config')
@@ -320,9 +366,37 @@ export function ModelSettingsPage() {
 
   useEffect(() => {
     void loadEmbeddedConfig()
+    void loadVectorStatus()
     void loadRoleConfigs()
     void loadModels()
-  }, [loadEmbeddedConfig, loadRoleConfigs, loadModels])
+  }, [loadEmbeddedConfig, loadVectorStatus, loadRoleConfigs, loadModels])
+
+  useEffect(() => {
+    if (!downloadingVectorModel) return
+
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const progress = await invoke<number>('embedded_model_progress')
+        if (cancelled) return
+        const percent = Math.max(0, Math.min(100, progress * 100))
+        setVectorDownloadProgress(percent)
+        if (percent >= 100) {
+          setDownloadingVectorModel(false)
+          await loadVectorStatus()
+        }
+      } catch {
+        // The terminal download call owns the final error. Keep polling best-effort.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => void poll(), 900)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [downloadingVectorModel, loadVectorStatus])
 
   const handleSaveEmbedded = async () => {
     if (!modelName.trim()) {
@@ -342,6 +416,27 @@ export function ModelSettingsPage() {
       toast.error('保存失败', { description: String(err) })
     } finally {
       setSavingEmbedded(false)
+    }
+  }
+
+  const handleDownloadVectorModel = async () => {
+    if (downloadingVectorModel) return
+    setDownloadingVectorModel(true)
+    setVectorDownloadProgress(0)
+    setVectorDownloadError(null)
+    try {
+      await invoke('embedded_model_download')
+      setVectorDownloadProgress(100)
+      await loadVectorStatus()
+      toast.success('向量化模型下载完成', {
+        description: '本地记忆检索和语义召回现在可以使用 FastEmbed。',
+      })
+    } catch (err) {
+      const message = String(err)
+      setVectorDownloadError(message)
+      toast.error('向量化模型下载失败', { description: message })
+    } finally {
+      setDownloadingVectorModel(false)
     }
   }
 
@@ -367,6 +462,21 @@ export function ModelSettingsPage() {
   }
 
   const configuredCount = roleConfigs.filter((r) => r.model_ref !== null).length
+  const vectorReady = vectorStatus?.downloaded === true || vectorStatus?.status.status === 'Pass'
+  const vectorFailed = Boolean(vectorDownloadError) || vectorStatus?.status.status === 'Fail'
+  const vectorSizeBytes = (vectorStatus?.size_mb ?? 120) * 1024 * 1024
+  const vectorDownloadedBytes = vectorReady
+    ? vectorSizeBytes
+    : Math.round((vectorDownloadProgress / 100) * vectorSizeBytes)
+  const vectorStatusCopy = loadingVectorStatus
+    ? { title: '正在检测模型状态', desc: '确认本地 FastEmbed 缓存是否已经存在。' }
+    : vectorReady
+      ? { title: '模型已就绪', desc: '向量检索和语义召回可以直接使用。' }
+      : downloadingVectorModel
+        ? { title: '正在下载模型', desc: '下载过程中可以留在此页，也可以稍后回来查看。' }
+        : vectorFailed
+          ? { title: '模型未就绪', desc: vectorDownloadError ?? (vectorStatus?.status.status === 'Fail' ? vectorStatus.status.reason : '请检查网络后重试。') }
+          : { title: '未检测到本地模型', desc: '点击下载后会缓存到 ~/.if2ai/models/fastembed/，之后可离线使用。' }
 
   return (
     <div className="flex flex-col gap-3">
@@ -505,6 +615,117 @@ export function ModelSettingsPage() {
           >
             {savingEmbedded ? '保存中…' : '保存'}
           </button>
+        </div>
+
+        <div
+          className={cn(
+            'mt-4 rounded-2xl border p-4 transition-colors',
+            vectorReady
+              ? 'border-jade/20 bg-jade/[0.045]'
+              : vectorFailed
+                ? 'border-status-error/20 bg-status-error/[0.045]'
+                : downloadingVectorModel
+                  ? 'border-brand-orange/20 bg-brand-orange/[0.045]'
+                  : 'border-black/[0.06] bg-black/[0.018]',
+          )}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={cn(
+                'flex size-9 shrink-0 items-center justify-center rounded-2xl',
+                vectorReady
+                  ? 'bg-jade/12 text-jade'
+                  : vectorFailed
+                    ? 'bg-status-error/12 text-status-error'
+                    : downloadingVectorModel
+                      ? 'bg-brand-orange/12 text-brand-orange'
+                      : 'bg-black/[0.05] text-black/40',
+              )}
+            >
+              {loadingVectorStatus ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : vectorReady ? (
+                <CheckCircle className="size-4" />
+              ) : vectorFailed ? (
+                <AlertCircle className="size-4" />
+              ) : downloadingVectorModel ? (
+                <Download className="size-4 animate-bounce" />
+              ) : (
+                <Download className="size-4" />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[12.5px] font-semibold text-foreground/86">
+                    {vectorStatusCopy.title}
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
+                    {vectorStatusCopy.desc}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void loadVectorStatus()}
+                    disabled={loadingVectorStatus || downloadingVectorModel}
+                    className="flex size-8 items-center justify-center rounded-xl border border-black/[0.08] bg-white/50 text-black/35 transition-colors hover:bg-white hover:text-black/60 disabled:cursor-not-allowed disabled:opacity-45"
+                    aria-label="重新检测向量化模型"
+                  >
+                    <RefreshCw
+                      className={cn(
+                        'size-3.5',
+                        (loadingVectorStatus || downloadingVectorModel) && 'animate-spin',
+                      )}
+                    />
+                  </button>
+                  {!vectorReady && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadVectorModel()}
+                      disabled={downloadingVectorModel || loadingVectorStatus}
+                      className="flex h-8 items-center gap-1.5 rounded-xl bg-jade px-3.5 text-[12px] font-semibold text-white transition-colors hover:bg-jade/90 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {downloadingVectorModel ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          下载中
+                        </>
+                      ) : (
+                        <>
+                          <Download className="size-3.5" />
+                          下载模型
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {(downloadingVectorModel || vectorReady || vectorDownloadProgress > 0) && (
+                <div className="mt-3">
+                  <div className="mb-1.5 flex items-center justify-between text-[10.5px] tabular-nums text-muted-foreground">
+                    <span>
+                      {formatBytes(vectorDownloadedBytes)} / {formatBytes(vectorSizeBytes)}
+                    </span>
+                    <span>{Math.round(vectorReady ? 100 : vectorDownloadProgress)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-black/[0.06]">
+                    <div
+                      className={cn(
+                        'h-full rounded-full transition-[width] duration-300',
+                        vectorReady ? 'bg-jade' : vectorFailed ? 'bg-status-error' : 'bg-brand-orange',
+                      )}
+                      style={{
+                        width: `${Math.max(0, Math.min(100, vectorReady ? 100 : vectorDownloadProgress))}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </SettingsSurface>
 

@@ -9,7 +9,9 @@
 use std::process::Stdio;
 use tokio::process::Command;
 
-use super::model_download::{embedded_model_exists, get_download_progress, MODEL_SIZE_MB};
+use super::model_download::{
+    embedded_model_exists, get_download_progress, is_download_in_progress, MODEL_SIZE_MB,
+};
 use super::types::{CheckStatus, CpuInfo, EmbeddedModelStatus, GpuInfo, MemoryInfo, SystemReport};
 
 // ── CPU Detection ───────────────────────────────────────────────────────────
@@ -172,6 +174,7 @@ pub async fn run_full_check() -> SystemReport {
     // Embedded model check is synchronous
     let model_exists = embedded_model_exists();
     let model_progress = get_download_progress();
+    let model_downloading = is_download_in_progress();
 
     let embedded_model = if model_exists {
         EmbeddedModelStatus {
@@ -180,7 +183,7 @@ pub async fn run_full_check() -> SystemReport {
             size_mb: MODEL_SIZE_MB,
             status: CheckStatus::Pass,
         }
-    } else if model_progress > 0.0 {
+    } else if model_downloading {
         EmbeddedModelStatus {
             downloaded: false,
             progress: Some(model_progress),

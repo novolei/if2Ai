@@ -6,6 +6,48 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@font-face {
+  font-family: "Poppins";
+  font-style: normal;
+  font-weight: 500;
+  src: url("/src/assets/themes/the-finals/fonts/poppins-500.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 300;
+  src: url("/src/assets/themes/the-finals/fonts/saira-condensed-300.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 500;
+  src: url("/src/assets/themes/the-finals/fonts/saira-condensed-500.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/src/assets/themes/the-finals/fonts/saira-condensed-700.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Saira Extra Condensed";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/src/assets/themes/the-finals/fonts/saira-extra-condensed-400.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Saira Extra Condensed";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/src/assets/themes/the-finals/fonts/saira-extra-condensed-700.ttf") format("truetype");
+}
+
 /* ══════════════════════════════════════════════════════════════════
    Paico @theme inline — maps CSS variables to Tailwind color tokens
    ══════════════════════════════════════════════════════════════════ */
@@ -609,6 +651,96 @@
   --jiaochang-border: #34353d;
 }
 
+[data-theme="theFinals"] {
+  color-scheme: dark;
+
+  --fontSans: "Saira Condensed", "Poppins", "PingFang SC", "Helvetica Neue", sans-serif;
+  --fontSerif: "Saira Extra Condensed", "Saira Condensed", "PingFang SC", sans-serif;
+  --fontMono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+  --background: #161618;
+  --foreground: #fff4df;
+  --card: #252326;
+  --card-foreground: #fff4df;
+  --popover: #f7f1e6;
+  --popover-foreground: #19191b;
+  --primary: #d91f3c;
+  --primary-foreground: #fff4df;
+  --secondary: #2f2d31;
+  --secondary-foreground: #fff4df;
+  --muted: #2b292d;
+  --muted-foreground: #bcb3a7;
+  --accent: #ffd23f;
+  --accent-foreground: #171719;
+  --border: rgb(255 244 223 / 0.17);
+  --input: rgb(255 244 223 / 0.13);
+  --ring: #ffd23f;
+  --destructive: #ff3358;
+  --destructive-foreground: #fff4df;
+
+  --jade: #d91f3c;
+  --jade-light: rgb(217 31 60 / 0.16);
+  --jade-dim: #ff4964;
+  --teal: #ffd23f;
+  --teal-light: rgb(255 210 63 / 0.16);
+  --celadon: #fff4df;
+  --celadon-light: rgb(255 244 223 / 0.13);
+  --mist: #2f2d31;
+  --mist-dark: #1e1d20;
+  --sand: #fff4df;
+  --sand-warm: #f4c247;
+  --stone: #bcb3a7;
+  --ink: #fff4df;
+
+  --surface: #19191b;
+  --surface-raised: rgb(37 35 38 / 0.90);
+  --surface-overlay: rgb(25 25 27 / 0.86);
+  --sidebar: rgb(18 18 20 / 0.86);
+  --sidebar-foreground: #fff4df;
+  --sidebar-primary: #d91f3c;
+  --sidebar-primary-foreground: #fff4df;
+  --sidebar-accent: rgb(217 31 60 / 0.18);
+  --sidebar-accent-foreground: #fff4df;
+  --sidebar-border: rgb(255 244 223 / 0.16);
+  --sidebar-ring: #ffd23f;
+  --inspector: rgb(20 20 22 / 0.88);
+  --inspector-border: rgb(255 244 223 / 0.16);
+  --shadow-color: rgb(0 0 0 / 0.62);
+  --shadow-xs: 0 1px 4px 0 rgb(0 0 0 / 0.34);
+  --shadow-sm: 0 3px 12px 0 rgb(0 0 0 / 0.42);
+  --shadow-md: 0 8px 28px 0 rgb(0 0 0 / 0.50);
+  --shadow-lg: 0 22px 64px -10px rgb(0 0 0 / 0.70);
+  --shadow-ring: 0 0 0 3px rgb(255 210 63 / 0.28);
+
+  --bg-texture:
+    linear-gradient(115deg, transparent 0 44%, rgb(217 31 60 / 0.18) 44% 46%, transparent 46% 100%),
+    repeating-linear-gradient(0deg, rgb(255 244 223 / 0.035) 0 1px, transparent 1px 7px);
+  --app-shell-bg: #141416;
+  --app-main-bg: #171719;
+  --app-main-gradient-1:
+    linear-gradient(90deg, rgb(10 10 12 / 0.84), rgb(10 10 12 / 0.58) 38%, rgb(10 10 12 / 0.74)),
+    url("/src/assets/themes/the-finals/s10-keyart-bkg.png");
+  --app-main-gradient-2:
+    radial-gradient(circle at 15% 16%, rgb(217 31 60 / 0.42) 0%, transparent 28%),
+    radial-gradient(circle at 84% 12%, rgb(255 210 63 / 0.22) 0%, transparent 24%),
+    linear-gradient(118deg, transparent 0 52%, rgb(217 31 60 / 0.26) 52% 56%, transparent 56%);
+  --app-main-gradient-3:
+    repeating-linear-gradient(0deg, rgb(255 244 223 / 0.030) 0 1px, transparent 1px 9px),
+    repeating-linear-gradient(90deg, rgb(255 244 223 / 0.022) 0 1px, transparent 1px 72px);
+  --app-rail-bg: rgb(17 17 19 / 0.84);
+  --chat-sidebar-bg: rgb(19 18 21 / 0.86);
+  --chat-sidebar-bg-soft: rgb(19 18 21 / 0.72);
+  --jiaochang-bg: #171719;
+  --jiaochang-header-bg: rgb(25 25 27 / 0.86);
+  --jiaochang-panel-bg: rgb(37 35 38 / 0.82);
+  --jiaochang-card-bg: rgb(47 45 49 / 0.86);
+  --jiaochang-stage-bg: #201f23;
+  --jiaochang-text: #fff4df;
+  --jiaochang-muted: #bcb3a7;
+  --jiaochang-accent: #ffd23f;
+  --jiaochang-border: rgb(255 244 223 / 0.18);
+}
+
 /* ══════════════════════════════════════════════════════════════════
    BASE STYLES
    ══════════════════════════════════════════════════════════════════ */
@@ -654,6 +786,326 @@
   [data-theme="qingye"] body,
   [data-theme="black"] body {
     letter-spacing: 0;
+  }
+
+  [data-theme="theFinals"] body {
+    letter-spacing: 0.01em;
+  }
+
+  [data-theme="theFinals"] h1,
+  [data-theme="theFinals"] h1 *,
+  [data-theme="theFinals"] h2,
+  [data-theme="theFinals"] h2 *,
+  [data-theme="theFinals"] h3,
+  [data-theme="theFinals"] h3 *,
+  [data-theme="theFinals"] h4,
+  [data-theme="theFinals"] h4 * {
+    font-style: italic;
+    font-weight: 800;
+    letter-spacing: 0.015em;
+    text-transform: uppercase;
+  }
+
+  [data-theme="theFinals"] #app::before {
+    content: "";
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(100deg, transparent 0 10%, rgb(255 244 223 / 0.055) 10% 10.5%, transparent 10.5% 100%),
+      linear-gradient(100deg, transparent 0 78%, rgb(217 31 60 / 0.20) 78% 81%, transparent 81% 100%),
+      radial-gradient(circle at 20% 15%, rgb(255 210 63 / 0.10), transparent 18%);
+    mix-blend-mode: screen;
+    opacity: 0.72;
+  }
+
+  [data-theme="theFinals"] #app::after {
+    content: "THE FINALS";
+    pointer-events: none;
+    position: fixed;
+    right: clamp(18px, 4vw, 72px);
+    bottom: clamp(18px, 3vw, 52px);
+    z-index: 1;
+    max-width: 44vw;
+    color: rgb(255 244 223 / 0.055);
+    font-family: "Saira Extra Condensed", "Saira Condensed", var(--fontSans);
+    font-size: clamp(58px, 13vw, 188px);
+    font-style: italic;
+    font-weight: 700;
+    line-height: 0.78;
+    letter-spacing: 0.02em;
+    text-align: right;
+    text-transform: uppercase;
+    transform: skewX(-10deg);
+  }
+
+  [data-theme="theFinals"] .surface-glass,
+  [data-theme="theFinals"] [role="dialog"],
+  [data-theme="theFinals"] [data-radix-popper-content-wrapper] > * {
+    border-color: rgb(255 244 223 / 0.18);
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.05),
+      0 24px 80px rgb(0 0 0 / 0.48);
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator {
+    border-color: rgb(255 244 223 / 0.20);
+    background:
+      linear-gradient(112deg, rgb(26 24 27 / 0.94) 0 58%, rgb(217 31 60 / 0.22) 58% 74%, rgb(26 24 27 / 0.94) 74%),
+      rgb(25 25 27 / 0.92);
+    color: #fff4df;
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.05),
+      0 14px 34px rgb(0 0 0 / 0.48),
+      inset 0 1px 0 rgb(255 244 223 / 0.08);
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+      linear-gradient(100deg, transparent 0 18%, rgb(255 244 223 / 0.075) 18% 19%, transparent 19% 100%),
+      repeating-linear-gradient(0deg, rgb(255 244 223 / 0.035) 0 1px, transparent 1px 6px);
+    opacity: 0.74;
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator .tts-profile-trigger {
+    border-color: rgb(255 244 223 / 0.15);
+    background:
+      linear-gradient(112deg, rgb(47 45 49 / 0.96) 0 66%, rgb(217 31 60 / 0.18) 66%),
+      #2f2d31;
+    color: #fff4df;
+    box-shadow:
+      inset 0 0 0 1px rgb(255 244 223 / 0.04),
+      0 8px 20px rgb(0 0 0 / 0.28);
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator .tts-profile-trigger:hover {
+    border-color: rgb(255 210 63 / 0.38);
+    background:
+      linear-gradient(112deg, rgb(65 58 48 / 0.98) 0 66%, rgb(217 31 60 / 0.28) 66%),
+      #3a3330;
+    color: #ffd23f;
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator .text-muted-foreground,
+  [data-theme="theFinals"] .agent-voice-indicator .text-muted-foreground\/60 {
+    color: rgb(255 244 223 / 0.66) !important;
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator .text-foreground\/85 {
+    color: rgb(255 244 223 / 0.92) !important;
+  }
+
+  [data-theme="theFinals"] .agent-voice-indicator button:hover {
+    background: rgb(255 210 63 / 0.16);
+    color: #ffd23f;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu {
+    border-color: rgb(255 244 223 / 0.22);
+    background:
+      linear-gradient(112deg, rgb(24 23 26 / 0.97) 0 62%, rgb(217 31 60 / 0.13) 62% 78%, rgb(24 23 26 / 0.97) 78%),
+      #181719;
+    color: #fff4df;
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.06),
+      0 24px 70px rgb(0 0 0 / 0.62),
+      inset 0 1px 0 rgb(255 244 223 / 0.08);
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(0deg, rgb(255 244 223 / 0.026) 0 1px, transparent 1px 7px),
+      linear-gradient(100deg, transparent 0 76%, rgb(217 31 60 / 0.16) 76% 81%, transparent 81%);
+    opacity: 0.88;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu button {
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item:hover {
+    background:
+      linear-gradient(90deg, rgb(255 210 63 / 0.18), rgb(217 31 60 / 0.12)),
+      rgb(47 45 49 / 0.92);
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item-active {
+    background:
+      linear-gradient(90deg, rgb(217 31 60 / 0.86), rgb(217 31 60 / 0.48) 68%, rgb(255 210 63 / 0.20)),
+      #d91f3c;
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item-active .text-muted-foreground,
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item-active .text-foreground\/90,
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item:hover .text-muted-foreground,
+  [data-theme="theFinals"] .tts-profile-menu .tts-profile-item:hover .text-foreground\/90 {
+    color: #fff4df !important;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .text-foreground\/90 {
+    color: rgb(255 244 223 / 0.94) !important;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .text-muted-foreground {
+    color: rgb(255 244 223 / 0.68) !important;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu .text-amber-500,
+  [data-theme="theFinals"] .tts-profile-menu .text-violet-500 {
+    background: rgb(255 210 63 / 0.18) !important;
+    color: #ffd23f !important;
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu-footer {
+    border-color: rgb(255 244 223 / 0.16);
+    background: rgb(12 12 14 / 0.44);
+    color: rgb(255 244 223 / 0.78);
+  }
+
+  [data-theme="theFinals"] .tts-profile-menu-footer:hover {
+    background: rgb(255 210 63 / 0.16);
+    color: #ffd23f;
+  }
+
+  [data-theme="theFinals"] .scroll-to-bottom-guard {
+    border-color: rgb(255 210 63 / 0.34);
+    background:
+      linear-gradient(135deg, rgb(255 244 223 / 0.96), rgb(255 210 63 / 0.88)),
+      #ffd23f;
+    color: #171719;
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.12),
+      0 0 24px rgb(217 31 60 / 0.24),
+      0 16px 42px rgb(0 0 0 / 0.44);
+  }
+
+  [data-theme="theFinals"] .scroll-to-bottom-guard:hover {
+    border-color: rgb(255 244 223 / 0.72);
+    background:
+      linear-gradient(135deg, #d91f3c, #ff3358 58%, #ffd23f),
+      #d91f3c;
+    color: #fff4df;
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.18),
+      0 0 34px rgb(217 31 60 / 0.42),
+      0 18px 48px rgb(0 0 0 / 0.56);
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover {
+    border-color: rgb(255 244 223 / 0.22);
+    background:
+      linear-gradient(112deg, rgb(24 23 26 / 0.97) 0 61%, rgb(217 31 60 / 0.13) 61% 79%, rgb(24 23 26 / 0.97) 79%),
+      #181719;
+    color: #fff4df;
+    box-shadow:
+      0 0 0 1px rgb(255 244 223 / 0.06),
+      0 28px 84px rgb(0 0 0 / 0.68),
+      inset 0 1px 0 rgb(255 244 223 / 0.08);
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(0deg, rgb(255 244 223 / 0.026) 0 1px, transparent 1px 7px),
+      linear-gradient(100deg, transparent 0 72%, rgb(217 31 60 / 0.15) 72% 78%, transparent 78%);
+    opacity: 0.92;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover .border-b,
+  [data-theme="theFinals"] .persona-switch-popover .bg-border\/55 {
+    border-color: rgb(255 244 223 / 0.15) !important;
+    background-color: rgb(255 244 223 / 0.14) !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover .text-muted-foreground {
+    color: rgb(255 244 223 / 0.66) !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover .text-foreground\/75,
+  [data-theme="theFinals"] .persona-switch-popover .text-foreground\/88 {
+    color: rgb(255 244 223 / 0.94) !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover .text-amber-500 {
+    color: #ff9f1c !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-popover .bg-amber-500\/12 {
+    border: 1px solid rgb(255 210 63 / 0.20);
+    background: rgb(255 210 63 / 0.14) !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-row {
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .persona-switch-row:hover {
+    background:
+      linear-gradient(90deg, rgb(255 210 63 / 0.16), rgb(217 31 60 / 0.12)),
+      rgb(47 45 49 / 0.90);
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .persona-switch-row-active {
+    background:
+      linear-gradient(90deg, rgb(217 31 60 / 0.80), rgb(217 31 60 / 0.46) 68%, rgb(255 210 63 / 0.18)),
+      #d91f3c;
+    color: #fff4df;
+  }
+
+  [data-theme="theFinals"] .persona-switch-row-active .text-muted-foreground,
+  [data-theme="theFinals"] .persona-switch-row-active .text-foreground\/88,
+  [data-theme="theFinals"] .persona-switch-row:hover .text-muted-foreground,
+  [data-theme="theFinals"] .persona-switch-row:hover .text-foreground\/88 {
+    color: #fff4df !important;
+  }
+
+  [data-theme="theFinals"] .persona-switch-row .border-dashed,
+  [data-theme="theFinals"] .persona-switch-row .border-black\/\[0\.08\] {
+    border-color: rgb(255 244 223 / 0.24) !important;
+    background-color: rgb(37 35 38 / 0.96) !important;
+    box-shadow: inset 0 0 0 1px rgb(255 244 223 / 0.05);
+  }
+
+  [data-theme="theFinals"] button,
+  [data-theme="theFinals"] [role="button"] {
+    font-family: "Saira Condensed", var(--fontSans);
+    font-weight: 600;
+  }
+
+  [data-theme="theFinals"] ::selection {
+    background: rgb(217 31 60 / 0.46);
+    color: #fff4df;
   }
 
   h1, h2, h3 {
@@ -836,6 +1288,35 @@
   }
   70% {
     transform: translateY(3px);
+  }
+}
+
+@keyframes if2ai-updater-arrow-loop {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-28px);
+  }
+}
+
+@keyframes if2ai-updater-banner-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes if2ai-updater-bulb-float {
+  0%, 100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(3deg);
   }
 }
 

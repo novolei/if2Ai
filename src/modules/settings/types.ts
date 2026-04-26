@@ -8,6 +8,7 @@ export type SettingsSectionId =
   | "skills"
   | "tools"
   | "mcp-services"
+  | "jiaochang-audio"
   | "web-search"
   | "memory"
   | "model"
@@ -22,7 +23,7 @@ export type SettingsSectionId =
   | "prompt-diagnostics"
   | "about";
 
-export type ThemeMode = "system" | "current" | "warm-paper" | "qingye" | "black";
+export type ThemeMode = "system" | "current" | "warm-paper" | "qingye" | "black" | "theFinals";
 export type FontMode = "serif" | "sans";
 
 export interface SettingsSectionMeta {

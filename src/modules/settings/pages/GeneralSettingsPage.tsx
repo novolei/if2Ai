@@ -84,6 +84,20 @@ const themeCards: Array<{
       </>
     ),
   },
+  {
+    id: 'theFinals',
+    title: 'THE FINALS',
+    subtitle: '竞技赛场',
+    className:
+      'bg-[#d91f3c] bg-[linear-gradient(90deg,rgba(12,12,14,0.58),rgba(217,31,60,0.70)),url("/src/assets/themes/the-finals/s10-keyart-bkg.png")] bg-cover bg-center text-white shadow-[0_14px_34px_rgba(217,31,60,0.22)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,rgba(255,255,255,0.18)_0_16%,transparent_16%_36%,rgba(0,0,0,0.30)_36%_62%,transparent_62%)] before:opacity-80 after:absolute after:right-3 after:top-3 after:h-7 after:w-24 after:bg-[url("/src/assets/themes/the-finals/s10-logo.png")] after:bg-contain after:bg-right after:bg-no-repeat after:opacity-90',
+    preview: (
+      <>
+        <span className="bg-[#fff4df]" />
+        <span className="bg-[#ffd23f]" />
+        <span className="bg-[#171719]" />
+      </>
+    ),
+  },
 ]
 
 function ThemePreviewCard({
@@ -232,7 +246,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
             跟随系统
           </button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {themeCards.map((theme) => (
             <ThemePreviewCard
               key={theme.id}

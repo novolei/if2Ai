@@ -9,6 +9,7 @@ import {
   Link2,
   Mic,
   Plug,
+  Music2,
   Radio,
   Search,
   Settings,
@@ -62,6 +63,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     label: "MCP 服务",
     description: "管理 stdio / remote MCP 服务，作为 agentic tool runtime 的外部能力层。",
     icon: Plug,
+  },
+  {
+    id: "jiaochang-audio",
+    label: "校场音源",
+    description: "注册插件音源 manifest、查看事件日志并管理服务端 URL cache。",
+    icon: Music2,
   },
   {
     id: "web-search",

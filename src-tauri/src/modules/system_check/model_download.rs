@@ -1,26 +1,32 @@
 //! Embedded model (multilingual-e5-small) download via fastembed-rs.
 //!
 //! Uses the `fastembed` crate to download and cache
-//! `intfloat/multilingual-e5-small` (384-dim, ~120 MB) from HuggingFace.
+//! `intfloat/multilingual-e5-small` (384-dim, ~487 MB) from HuggingFace.
 //! This matches the uclaw-rs reference implementation exactly.
 //!
 //! - Thread-safe progress tracking via `AtomicU64`
 //! - Download handled by fastembed's internal ORT downloader
 //! - Resumable (fastembed caches by model hash)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
 /// Display name of the embedded model (matches HuggingFace model card).
 pub const MODEL_NAME: &str = "intfloat/multilingual-e5-small";
 pub const MODEL_DETAIL: &str = "多语言向量化模型 · 384 维";
-/// Approximate model size in MB (actual: ~117 MB on disk).
-pub const MODEL_SIZE_MB: u64 = 120;
+/// Approximate model size in MB for the current FastEmbed ONNX cache.
+pub const MODEL_SIZE_MB: u64 = 487;
+const MODEL_SIZE_BYTES: u64 = MODEL_SIZE_MB * 1024 * 1024;
+const PROGRESS_SCALE: u64 = 1_000_000;
 
 /// Global download progress store (f64 * 1_000_000 as u64).
 pub static DOWNLOAD_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a download task is currently active.
+pub static DOWNLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Global cancellation flag for model downloads.
 pub static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -34,17 +40,27 @@ pub static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 ///
 /// Returns an error if the download fails (network error, disk full, etc.)
 /// or if the download is cancelled.
-pub async fn download_embedded_model<F>(
-    _model_url: Option<&str>,
-    _progress_callback: Option<F>,
-) -> Result<(), DownloadError>
-where
-    F: Fn(u64, u64) + Send + Sync + 'static,
-{
+pub async fn download_embedded_model(app: Option<tauri::AppHandle>) -> Result<(), DownloadError> {
+    if DOWNLOAD_IN_PROGRESS.swap(true, Ordering::Relaxed) {
+        return Ok(());
+    }
+
     DOWNLOAD_CANCELLED.store(false, Ordering::Relaxed);
     let dest_dir = embedded_model_dir();
+    DOWNLOAD_PROGRESS.store(0, Ordering::Relaxed);
+    update_progress_from_cache_size(&dest_dir);
 
-    tokio::task::spawn_blocking(move || {
+    let monitor_dir = dest_dir.clone();
+    let monitor_app = app.clone();
+    let monitor = tokio::spawn(async move {
+        while is_download_in_progress() {
+            let downloaded = update_progress_from_cache_size(&monitor_dir);
+            emit_progress_if_possible(monitor_app.as_ref(), downloaded, MODEL_SIZE_BYTES);
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
+
+    let result = tokio::task::spawn_blocking(move || {
         // fastembed handles the download + caching internally
         let _model = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
@@ -54,12 +70,19 @@ where
         .map_err(|e| DownloadError::Network(format!("fastembed download failed: {e}")))?;
 
         // Report completion
-        DOWNLOAD_PROGRESS.store(1_000_000, Ordering::Relaxed);
+        DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
 
         Ok(())
     })
     .await
-    .map_err(|e| DownloadError::Io("spawn_blocking failed".to_string(), e.into()))??;
+    .map_err(|e| DownloadError::Io("spawn_blocking failed".to_string(), e.into()));
+
+    DOWNLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
+    monitor.abort();
+
+    result??;
+    DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
+    emit_progress_if_possible(app.as_ref(), MODEL_SIZE_BYTES, MODEL_SIZE_BYTES);
 
     Ok(())
 }
@@ -73,6 +96,12 @@ pub fn cancel_download() {
 pub fn reset_progress() {
     DOWNLOAD_PROGRESS.store(0, Ordering::Relaxed);
     DOWNLOAD_CANCELLED.store(false, Ordering::Relaxed);
+    DOWNLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
+}
+
+/// Returns whether a model download is actively running.
+pub fn is_download_in_progress() -> bool {
+    DOWNLOAD_IN_PROGRESS.load(Ordering::Relaxed)
 }
 
 /// Returns the embedded model cache directory path.
@@ -91,14 +120,130 @@ pub(crate) fn embedded_model_dir() -> PathBuf {
 /// (e.g. `BAAI-bge-small-en-v1.5` or `intfloat-multilingual-e5-small`)
 /// inside the cache dir. We check if the cache dir itself has any content.
 pub fn embedded_model_exists() -> bool {
-    let dir = embedded_model_dir();
+    embedded_model_exists_in(&embedded_model_dir())
+}
+
+fn embedded_model_exists_in(dir: &Path) -> bool {
     if !dir.exists() {
         return false;
     }
-    // Check if fastembed created any model subdirectory
-    match std::fs::read_dir(&dir) {
-        Ok(entries) => entries.count() > 0,
-        Err(_) => false,
+
+    fastembed_snapshot_complete(dir) || legacy_flat_cache_complete(dir)
+}
+
+fn fastembed_snapshot_complete(cache_dir: &Path) -> bool {
+    let repo_dir = cache_dir.join("models--intfloat--multilingual-e5-small");
+    let refs_main = repo_dir.join("refs").join("main");
+    let Ok(revision) = std::fs::read_to_string(refs_main) else {
+        return false;
+    };
+    let snapshot = repo_dir.join("snapshots").join(revision.trim());
+    required_snapshot_artifacts()
+        .iter()
+        .all(|relative| is_non_empty_file(&snapshot.join(relative)))
+}
+
+fn required_snapshot_artifacts() -> [&'static str; 5] {
+    [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "onnx/model.onnx",
+    ]
+}
+
+fn legacy_flat_cache_complete(dir: &Path) -> bool {
+    has_artifact_recursive(dir, "model.onnx", 0)
+        && has_artifact_recursive(dir, "tokenizer.json", 0)
+        && has_artifact_recursive(dir, "config.json", 0)
+}
+
+fn has_artifact_recursive(dir: &Path, target_name: &str, depth: usize) -> bool {
+    if depth > 6 {
+        return false;
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+
+    entries.filter_map(Result::ok).any(|entry| {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if name.starts_with('.') || name.ends_with(".lock") {
+            return false;
+        }
+
+        let path = entry.path();
+        if path.is_file() {
+            return name == target_name && is_non_empty_file(&path);
+        }
+        path.is_dir() && has_artifact_recursive(&path, target_name, depth + 1)
+    })
+}
+
+#[cfg(test)]
+fn is_model_artifact_name(name: &str) -> bool {
+    name.ends_with(".onnx")
+        || name.ends_with(".json")
+        || name.ends_with(".txt")
+        || name.ends_with(".safetensors")
+        || name.ends_with(".bin")
+        || name == "model.onnx"
+        || name == "tokenizer.json"
+        || name == "config.json"
+}
+
+fn is_non_empty_file(path: &Path) -> bool {
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+fn update_progress_from_cache_size(dir: &Path) -> u64 {
+    let downloaded = cache_size_bytes(dir).min(MODEL_SIZE_BYTES);
+    let scaled = downloaded.saturating_mul(PROGRESS_SCALE) / MODEL_SIZE_BYTES;
+    DOWNLOAD_PROGRESS.fetch_max(scaled, Ordering::Relaxed);
+    downloaded
+}
+
+fn cache_size_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name.ends_with(".lock") {
+                return 0;
+            }
+
+            let path = entry.path();
+            if path.is_dir() {
+                cache_size_bytes(&path)
+            } else {
+                path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+            }
+        })
+        .sum()
+}
+
+fn emit_progress_if_possible(
+    app: Option<&tauri::AppHandle>,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+) {
+    if let Some(app) = app {
+        crate::modules::onboarding::events::emit_download_progress(
+            app,
+            MODEL_NAME,
+            downloaded_bytes.min(total_bytes),
+            total_bytes,
+        );
     }
 }
 
@@ -110,7 +255,7 @@ pub fn get_download_progress() -> f64 {
     if progress == 0 && embedded_model_exists() {
         return 1.0;
     }
-    (progress as f64) / 1_000_000.0
+    (progress as f64) / (PROGRESS_SCALE as f64)
 }
 
 // ── Error type ──────────────────────────────────────────────────────────────
@@ -130,9 +275,19 @@ pub enum DownloadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn test_reset_progress_sets_zero() {
+        let _guard = test_lock();
         DOWNLOAD_PROGRESS.store(500_000, Ordering::Relaxed);
         reset_progress();
         assert_eq!(DOWNLOAD_PROGRESS.load(Ordering::Relaxed), 0);
@@ -140,9 +295,18 @@ mod tests {
 
     #[test]
     fn test_cancel_download_sets_flag() {
+        let _guard = test_lock();
         DOWNLOAD_CANCELLED.store(false, Ordering::Relaxed);
         cancel_download();
         assert!(DOWNLOAD_CANCELLED.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_reset_progress_clears_in_progress_flag() {
+        let _guard = test_lock();
+        DOWNLOAD_IN_PROGRESS.store(true, Ordering::Relaxed);
+        reset_progress();
+        assert!(!is_download_in_progress());
     }
 
     #[test]
@@ -154,5 +318,47 @@ mod tests {
             "Model dir should contain .if2ai/models/fastembed, got: {}",
             path
         );
+    }
+
+    #[test]
+    fn test_model_artifact_filter_ignores_finder_metadata() {
+        assert!(!is_model_artifact_name(".DS_Store"));
+        assert!(is_model_artifact_name("model.onnx"));
+        assert!(is_model_artifact_name("tokenizer.json"));
+    }
+
+    #[test]
+    fn test_fastembed_snapshot_layout_is_detected() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("models--intfloat--multilingual-e5-small");
+        let snapshot = repo.join("snapshots").join("abc123");
+        std::fs::create_dir_all(snapshot.join("onnx")).unwrap();
+        std::fs::create_dir_all(repo.join("refs")).unwrap();
+        std::fs::write(repo.join("refs").join("main"), "abc123").unwrap();
+
+        for artifact in required_snapshot_artifacts() {
+            std::fs::write(snapshot.join(artifact), b"x").unwrap();
+        }
+
+        assert!(embedded_model_exists_in(temp.path()));
+    }
+
+    #[test]
+    fn test_fastembed_snapshot_layout_requires_onnx_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("models--intfloat--multilingual-e5-small");
+        let snapshot = repo.join("snapshots").join("abc123");
+        std::fs::create_dir_all(snapshot.join("onnx")).unwrap();
+        std::fs::create_dir_all(repo.join("refs")).unwrap();
+        std::fs::write(repo.join("refs").join("main"), "abc123").unwrap();
+
+        for artifact in required_snapshot_artifacts()
+            .into_iter()
+            .filter(|artifact| *artifact != "onnx/model.onnx")
+        {
+            std::fs::write(snapshot.join(artifact), b"x").unwrap();
+        }
+
+        assert!(!embedded_model_exists_in(temp.path()));
     }
 }

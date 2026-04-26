@@ -3729,6 +3729,16 @@ function App() {
       );
       const result = await checkAppUpdater();
       if (result.status !== "update_available") {
+        setAppUpdaterState((state) =>
+          state
+            ? {
+                ...state,
+                status: result.status === "no_update" ? "latest" : "error",
+                diagnostic: result.diagnostic ?? null,
+                checked_at: new Date().toISOString(),
+              }
+            : state,
+        );
         if (result.status === "no_update") {
           toast.success("已是最新版本");
         } else {
@@ -3738,6 +3748,20 @@ function App() {
         }
         return;
       }
+      setAppUpdaterState((state) =>
+        state
+          ? {
+              ...state,
+              status: "available",
+              latest_version: result.latest_version ?? state.latest_version,
+              release_notes_url:
+                result.release_notes_url ?? state.release_notes_url,
+              artifact_url: result.artifact_url ?? state.artifact_url,
+              diagnostic: null,
+              checked_at: new Date().toISOString(),
+            }
+          : state,
+      );
     }
 
     setAppUpdaterState((state) =>
@@ -3746,12 +3770,31 @@ function App() {
     try {
       const result = await downloadAndInstallAppUpdate();
       if (result.status === "installing" || result.status === "downloaded") {
+        setAppUpdaterState((state) =>
+          state
+            ? {
+                ...state,
+                status: result.status,
+                latest_version: result.latest_version ?? state.latest_version,
+                artifact_url: result.artifact_url ?? state.artifact_url,
+                diagnostic: null,
+              }
+            : state,
+        );
         toast.success("更新安装已启动", {
           description: "系统安装器已接管流程，If2Ai 可能会自动退出或重启。",
         });
       } else if (result.status === "no_update") {
+        setAppUpdaterState((state) =>
+          state ? { ...state, status: "latest", diagnostic: null } : state,
+        );
         toast.success("已是最新版本");
       } else {
+        setAppUpdaterState((state) =>
+          state
+            ? { ...state, status: "error", diagnostic: result.diagnostic ?? null }
+            : state,
+        );
         toast.error("下载更新失败", {
           description: result.diagnostic ?? "请稍后重试。",
         });

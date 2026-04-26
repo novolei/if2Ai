@@ -36,6 +36,10 @@ export interface JiaochangPluginResolvedTrack {
   evidence: string
 }
 
+export interface JiaochangAudioPluginCacheInfo {
+  entries: number
+}
+
 export interface JiaochangAudioPluginRuntimeEvent {
   event_type: 'registered' | 'resolving' | 'resolved' | 'cache_hit' | 'error'
   plugin_id: string
@@ -92,6 +96,18 @@ export async function listJiaochangAudioPluginSources(
   invokeCommand: JiaochangPluginInvoke = invoke,
 ): Promise<JiaochangAudioPluginManifest[]> {
   return invokeCommand<JiaochangAudioPluginManifest[]>('jiaochang_audio_plugin_list')
+}
+
+export async function getJiaochangAudioPluginCacheInfo(
+  invokeCommand: JiaochangPluginInvoke = invoke,
+): Promise<JiaochangAudioPluginCacheInfo> {
+  return invokeCommand<JiaochangAudioPluginCacheInfo>('jiaochang_audio_plugin_cache_info')
+}
+
+export async function clearJiaochangAudioPluginCache(
+  invokeCommand: JiaochangPluginInvoke = invoke,
+): Promise<JiaochangAudioPluginCacheInfo> {
+  return invokeCommand<JiaochangAudioPluginCacheInfo>('jiaochang_audio_plugin_cache_clear')
 }
 
 export function subscribeJiaochangAudioPluginEvents(

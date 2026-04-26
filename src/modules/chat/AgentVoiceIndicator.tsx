@@ -211,7 +211,7 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
     <div
       ref={containerRef}
       style={positioningStyle}
-      className={`pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border/70 bg-popover/92 px-1.5 py-1.5 text-[10.5px] text-popover-foreground shadow-sm backdrop-blur-md transition-shadow ${
+      className={`agent-voice-indicator pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border/70 bg-popover/92 px-1.5 py-1.5 text-[10.5px] text-popover-foreground shadow-sm backdrop-blur-md transition-shadow ${
         dragging ? 'shadow-md' : ''
       }`}
     >

@@ -19,6 +19,8 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [FEAT-JC-007](./feature/jiaochang/FEAT-JC-007-plugin-source-settings-ui.md) | feature | Plugin source settings UI | 2026-04-26 |
+| [FEAT-JC-006](./feature/jiaochang/FEAT-JC-006-plugin-source-sandbox.md) | feature | Plugin source sandbox | 2026-04-26 |
 | [FEAT-JC-005](./feature/jiaochang/FEAT-JC-005-audio-player-foundation.md) | feature | Audio player foundation | 2026-04-26 |
 | [FEAT-JC-004](./feature/jiaochang/FEAT-JC-004-path-replay-runtime-anchors.md) | feature | Path replay + runtime anchors | 2026-04-26 |
 | [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | 2026-04-25 |

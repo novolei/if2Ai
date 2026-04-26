@@ -28,8 +28,8 @@ pub async fn system_check_run() -> Result<SystemReport, String> {
 ///
 /// Progress can be tracked via `embedded_model_progress()`.
 #[tauri::command]
-pub async fn embedded_model_download() -> Result<(), String> {
-    download_embedded_model::<fn(u64, u64)>(None, None)
+pub async fn embedded_model_download(app: tauri::AppHandle) -> Result<(), String> {
+    download_embedded_model(Some(app))
         .await
         .map_err(|e| format!("Download failed: {e}"))
 }

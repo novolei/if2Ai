@@ -47,11 +47,6 @@ interface SystemCheckStepProps {
   onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
-/** Determine if a check status counts as "passing" for the continue button. */
-function isCheckPassing(status: CheckStatus): boolean {
-  return status.status === 'Pass' || status.status === 'Fail';
-}
-
 /** Extract human-readable status label. */
 function statusLabel(status: CheckStatus): string {
   switch (status.status) {
@@ -177,6 +172,7 @@ function StatusIcon({ status }: { status: CheckStatus }) {
 export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckStepProps) {
   const {
     systemReport,
+    isChecking,
     downloadProgress,
     downloadedBytes,
     totalBytes,
@@ -186,6 +182,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
     downloadEmbeddedModel,
   } = useOnboarding();
   const { bytesPerSec, eta } = useDownloadMetrics(downloadedBytes, totalBytes, isDownloading);
+  const autoDownloadRequestedRef = useRef(false);
 
   // Auto-run system check on mount
   useEffect(() => {
@@ -197,17 +194,28 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
   // Only model download is blocking. CPU/GPU/Memory are info-only (always Pass).
   const modelDownloaded = report?.embedded_model.downloaded ?? false;
   const modelStatus = report?.embedded_model.status;
-  const modelDone = modelDownloaded || (modelStatus && isCheckPassing(modelStatus));
+  const modelDone = modelDownloaded || modelStatus?.status === 'Pass';
 
   // allPassed only depends on model download completion
   const allPassed = modelDone;
 
-  // Auto-download model on mount if not already downloaded
+  // Auto-download once after the first report confirms the model is missing.
+  // Stale backend progress used to report "Running" without an active task; the
+  // Rust side now distinguishes active downloads, but this guard also prevents
+  // duplicate starts under React StrictMode.
   useEffect(() => {
-    if (report && !modelDownloaded && !isDownloading && modelStatus?.status === 'Pending') {
+    if (
+      report &&
+      !autoDownloadRequestedRef.current &&
+      !modelDownloaded &&
+      !downloadError &&
+      !isDownloading &&
+      modelStatus?.status === 'Pending'
+    ) {
+      autoDownloadRequestedRef.current = true;
       downloadEmbeddedModel();
     }
-  }, [report, modelDownloaded, isDownloading, modelStatus, downloadEmbeddedModel]);
+  }, [report, modelDownloaded, downloadError, isDownloading, modelStatus, downloadEmbeddedModel]);
 
   // Refresh system report after download finishes → enables continue button
   const prevDownloadingRef = useRef(isDownloading);
@@ -263,6 +271,12 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           : 0;
 
   const modelSizeMb = report?.embedded_model.size_mb ?? 120;
+  const modelTotalBytes = totalBytes > 0 ? totalBytes : modelSizeMb * 1024 * 1024;
+  const modelDownloadedBytes = downloadedBytes > 0
+    ? downloadedBytes
+    : modelDownloaded
+      ? modelTotalBytes
+      : Math.round((modelPercent / 100) * modelTotalBytes);
 
   const modelRowStatus: CheckStatus = modelDownloaded
     ? { status: 'Pass' }
@@ -279,9 +293,9 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           stepLabel="STEP 2: 系统预检"
           title="先体检，再安装。"
           bullets={[
-            '检测 CPU/GPU/内存 信息',
-            '自动下载 multilingual-e5-small 模型',
-            '模型下载完成后即可继续',
+            '先快速读取 CPU/GPU/内存',
+            '随后自动准备 FastEmbed 向量模型',
+            '模型就绪后自动解锁下一步',
           ]}
         >
           {/* Summary card — semi-transparent on orange bg, matching Step 4 style */}
@@ -365,8 +379,8 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[9.5px] tabular-nums" style={{ color: 'rgba(255,255,255,0.55)' }}>
                     <span>
-                      {totalBytes > 0
-                        ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+                      {modelTotalBytes > 0
+                        ? `${formatBytes(modelDownloadedBytes)} / ${formatBytes(modelTotalBytes)}`
                         : '准备下载…'}
                     </span>
                     <span>{Math.round(modelPercent)}%{eta > 0 && eta < 3600 ? ` · ${formatEta(eta)}` : ''}</span>
@@ -381,9 +395,11 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                     ? '✓ 全部检测通过，可以进入下一步'
                     : downloadError
                       ? '⚠ 下载遇到问题，请在左侧重试'
-                      : isDownloading || modelStatus?.status === 'Running'
+                      : isChecking
+                        ? '检测硬件环境中…'
+                        : isDownloading || modelStatus?.status === 'Running'
                         ? `下载中 · ${bytesPerSec > 0 ? `${formatBytes(bytesPerSec)}/s` : '建立连接中'}`
-                        : '请等待检测完成，模型将自动下载'}
+                        : '检测完成后会自动开始下载'}
                 </span>
               </div>
             </div>
@@ -400,14 +416,14 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           2
         </div>
         <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
-          先完成系统预检
+          准备本地向量模型
         </h1>
       </div>
 
       {/* Left content area */}
       <div className="flex-1 overflow-y-auto px-8 pb-6">
         <p className="text-token-sm text-muted-foreground mb-5 leading-relaxed">
-          检查并安装必要的 Embedded 和 Embedding 模型，用于后续检索。
+          If2Ai 会先确认设备信息，然后自动下载 FastEmbed 向量模型。这个模型用于本地记忆检索和语义召回，只需要准备一次。
         </p>
 
         {/* ── Unified check card ── */}
@@ -415,8 +431,11 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           {/* Card header */}
           <div className="px-4 py-3 border-b border-border">
             <h2 className="text-token-sm font-semibold text-foreground font-sans">
-              环境检测 &amp; 模型下载
+              自动准备流程
             </h2>
+            <p className="mt-1 text-token-xs text-muted-foreground">
+              先检测环境，再下载模型；下载完成后「下一步」会自动可用。
+            </p>
           </div>
 
           {/* Hardware check items */}
@@ -495,7 +514,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                   {MODEL_NAME}
                 </p>
                 <p className="text-token-xs text-muted-foreground mt-0.5">
-                  {MODEL_DETAIL} · 单次下载
+                  {MODEL_DETAIL} · 约 {modelSizeMb} MB · 单次下载
                 </p>
               </div>
 
@@ -536,8 +555,8 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                     {modelDownloaded
                       ? '模型已就绪 · 可继续下一步'
                       : totalBytes > 0
-                        ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
-                        : `正在下载 · ${formatBytes(modelSizeMb * 1024 * 1024)} 总量`}
+                        ? `${formatBytes(modelDownloadedBytes)} / ${formatBytes(modelTotalBytes)}`
+                        : `正在下载 · ${formatBytes(modelTotalBytes)} 总量`}
                   </span>
                   <span className={cn('text-token-xs tabular-nums font-medium', modelDownloaded && 'text-status-success')}>
                     {Math.round(modelPercent)}%

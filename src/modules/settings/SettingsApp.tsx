@@ -29,6 +29,7 @@ import { ModelSettingsPage } from "./pages/ModelSettingsPage";
 import { ProvidersSettingsPage } from "./pages/ProvidersSettingsPage";
 import { ToolSettingsPage } from "./pages/ToolSettingsPage";
 import { McpServicesSettingsPage } from "./pages/McpServicesSettingsPage";
+import { JiaochangAudioSettingsPage } from "./pages/JiaochangAudioSettingsPage";
 import { TtsProfilesPage } from "./pages/TtsProfilesPage";
 import { TtsSettingsPage } from "./pages/TtsSettingsPage";
 import { TtsTestPage } from "./pages/TtsTestPage";
@@ -223,6 +224,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         return <ToolSettingsPage />;
       case "mcp-services":
         return <McpServicesSettingsPage />;
+      case "jiaochang-audio":
+        return <JiaochangAudioSettingsPage />;
       case "web-search":
         return <WebSearchSettingsPage />;
       case "memory":

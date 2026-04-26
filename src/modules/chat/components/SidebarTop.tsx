@@ -379,7 +379,7 @@ export function SidebarTop({
                 left: popoverPos.left,
                 width: POPOVER_WIDTH,
               }}
-              className="window-no-drag z-[60] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-[0_18px_48px_rgba(15,23,42,0.24)] backdrop-blur-md"
+              className="persona-switch-popover window-no-drag z-[60] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-[0_18px_48px_rgba(15,23,42,0.24)] backdrop-blur-md"
             >
               <div className="border-b border-border/65 px-4 py-3">
                 <div className="flex items-center justify-between gap-2">
@@ -464,9 +464,9 @@ function PopoverPersonaRow({
       type="button"
       onClick={onClick}
       className={cn(
-        'group flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-all',
+        'persona-switch-row group flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-all',
         active
-          ? 'bg-primary/12'
+          ? 'persona-switch-row-active bg-primary/12'
           : 'hover:bg-accent hover:text-accent-foreground',
       )}
     >

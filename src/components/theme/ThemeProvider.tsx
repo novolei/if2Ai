@@ -12,7 +12,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 
-export type Theme = 'system' | 'current' | 'warm-paper' | 'qingye' | 'black'
+export type Theme = 'system' | 'current' | 'warm-paper' | 'qingye' | 'black' | 'theFinals'
 type ResolvedTheme = Exclude<Theme, 'system'>
 type ResolvedScheme = 'light' | 'dark'
 
@@ -44,7 +44,8 @@ function getStoredTheme(): Theme {
       stored === 'current' ||
       stored === 'warm-paper' ||
       stored === 'qingye' ||
-      stored === 'black'
+      stored === 'black' ||
+      stored === 'theFinals'
     ) {
       return stored
     }
@@ -62,7 +63,7 @@ function resolveTheme(preference: Theme, systemDark: boolean): ResolvedTheme {
 }
 
 function themeScheme(theme: ResolvedTheme): ResolvedScheme {
-  return theme === 'qingye' || theme === 'black' ? 'dark' : 'light'
+  return theme === 'qingye' || theme === 'black' || theme === 'theFinals' ? 'dark' : 'light'
 }
 
 /** ThemeProvider — apply at the root of the React tree. */

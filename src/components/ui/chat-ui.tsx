@@ -1228,7 +1228,7 @@ export function ChatUI({
                       behavior: 'smooth',
                     })
                   }}
-                  className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-popover/95 text-popover-foreground shadow-token-lg transition-transform duration-200 hover:-translate-y-0.5 hover:bg-accent hover:text-accent-foreground"
+                  className="scroll-to-bottom-guard pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-popover/95 text-popover-foreground shadow-token-lg transition-transform duration-200 hover:-translate-y-0.5 hover:bg-accent hover:text-accent-foreground"
                   aria-label="滚动到底部"
                 >
                   <ArrowDown className="h-[18px] w-[18px]" />

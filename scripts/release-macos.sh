@@ -21,6 +21,10 @@
 # Env overrides:
 #   RELEASE_OUT_DIR=/some/dir   override output directory
 #   MACOSX_DEPLOYMENT_TARGET=11.0 (forced; required by whisper.cpp std::filesystem)
+#   TAURI_SIGNING_PRIVATE_KEY=/path-or-value supplied by CI/local shell; if unset,
+#      this script auto-loads ~/.tauri/if2ai-updater.key for Tauri updater signing.
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD=... optional; defaults to empty for the
+#      local if2ai updater key generated without a passphrase.
 
 set -euo pipefail
 
@@ -32,6 +36,23 @@ BUMP="${1:-patch}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 
 cd "$REPO_ROOT"
+
+# ── Step 0: Tauri updater signing key ───────────────────────────────────────
+# Tauri refuses release builds when updater.pubkey is configured but no private
+# key is present. CI should inject TAURI_SIGNING_PRIVATE_KEY via secrets; local
+# builds fall back to the checked-on-this-machine keypair under ~/.tauri.
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+    LOCAL_UPDATER_KEY="$HOME/.tauri/if2ai-updater.key"
+    if [[ -f "$LOCAL_UPDATER_KEY" ]]; then
+        export TAURI_SIGNING_PRIVATE_KEY="$(cat "$LOCAL_UPDATER_KEY")"
+        echo "==> Loaded Tauri updater signing key from $LOCAL_UPDATER_KEY"
+    else
+        echo "⚠️  TAURI_SIGNING_PRIVATE_KEY is unset and $LOCAL_UPDATER_KEY was not found." >&2
+        echo "   If src-tauri/tauri.conf.json contains an updater pubkey, Tauri build will fail." >&2
+    fi
+fi
+
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
 # ── Step 1: version bump ────────────────────────────────────────────────────
 CURRENT="$(node -p "require('./package.json').version")"
@@ -108,6 +129,18 @@ clean_dmg_state
 echo "==> Tauri build $APP_NAME $VERSION (app)"
 npx tauri build --bundles app
 
+APP_BUNDLE_PATH="target/release/bundle/macos/$APP_NAME.app"
+APP_RESTAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/if2ai-release-app.XXXXXX")"
+trap 'rm -rf "$APP_RESTAGE_DIR"' EXIT
+
+if [[ ! -d "$APP_BUNDLE_PATH" ]]; then
+    echo "❌ Expected app bundle was not produced: $APP_BUNDLE_PATH" >&2
+    exit 1
+fi
+
+echo "==> Snapshot .app for post-dmg restore"
+ditto "$APP_BUNDLE_PATH" "$APP_RESTAGE_DIR/$APP_NAME.app"
+
 DMG_MAX_RETRIES=3
 dmg_attempt=1
 while (( dmg_attempt <= DMG_MAX_RETRIES )); do
@@ -125,11 +158,14 @@ while (( dmg_attempt <= DMG_MAX_RETRIES )); do
     ((dmg_attempt++))
 done
 
-# Tauri's --bundles dmg cleans the macos/.app dir as a side-effect; rebuild it
-# so the productbuild step downstream has the .app available.
-if [[ ! -d "target/release/bundle/macos/$APP_NAME.app" ]]; then
-    echo "==> Re-stage .app (dmg pass cleaned it)"
-    npx tauri build --bundles app
+# Tauri's --bundles dmg can clean the macos/.app dir as a side-effect. Restore
+# the first build's app bundle instead of running another tauri build, otherwise
+# beforeBuildCommand (`npm run build:web`) runs a second time and looks like a
+# release loop.
+if [[ ! -d "$APP_BUNDLE_PATH" ]]; then
+    echo "==> Restore .app snapshot (dmg pass cleaned it)"
+    mkdir -p "$(dirname "$APP_BUNDLE_PATH")"
+    ditto "$APP_RESTAGE_DIR/$APP_NAME.app" "$APP_BUNDLE_PATH"
 fi
 
 # ── Step 4: stage + productbuild ────────────────────────────────────────────

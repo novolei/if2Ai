@@ -156,17 +156,46 @@ export function useOnboarding(): UseOnboardingReturn {
     setIsDownloading(true);
     setDownloadProgress(0);
     setDownloadedBytes(0);
-    setTotalBytes(0);
     setDownloadError(null);
     try {
       await invoke('embedded_model_download');
+      setDownloadProgress(100);
+      setDownloadedBytes((current) => totalBytes > 0 ? totalBytes : current);
     } catch (err) {
       console.error('[onboarding] Model download failed:', err);
       setDownloadError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsDownloading(false);
     }
-  }, []);
+  }, [totalBytes]);
+
+  useEffect(() => {
+    if (!isDownloading) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const progress = await invoke<number>('embedded_model_progress');
+        if (cancelled) return;
+        const percent = Math.max(0, Math.min(100, progress * 100));
+        setDownloadProgress(percent);
+        setDownloadedBytes((current) => {
+          if (totalBytes <= 0) return current;
+          return Math.max(current, Math.round((percent / 100) * totalBytes));
+        });
+      } catch {
+        // The download command itself reports terminal errors; progress polling
+        // is best-effort and should not interrupt onboarding.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 900);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isDownloading, totalBytes]);
 
   const confirmSecurity = useCallback(async () => {
     await invoke('security_confirm');
