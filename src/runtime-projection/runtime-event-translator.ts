@@ -35,6 +35,7 @@ import type {
   SupervisorSnapshotEvent,
 } from "./types.ts";
 import { translatePromptDiagnosticsSummary } from "./types.ts";
+export { translateBrowserStatusPayload } from './browser-events.ts'
 
 function nowMs(): number {
   return Date.now();

@@ -272,6 +272,22 @@ pub async fn rename_session(
         .map_err(|e| e.to_string())
 }
 
+/// Generate a compact session title identity (`title_icon + title`).
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn generate_session_title(
+    state: State<'_, AppState>,
+    id: String,
+    title_hint: Option<String>,
+) -> Result<SessionMeta, String> {
+    state
+        .session_manager
+        .generate_session_title_with_llm(&id, title_hint, Some(state.utility_llm.clone()))
+        .await
+        .map(|session| SessionMeta::from_session(&session))
+        .map_err(|e| e.to_string())
+}
+
 /// Set the pinned state of a session.
 #[tauri::command]
 #[allow(dead_code)]
@@ -502,4 +518,92 @@ pub async fn get_supervisor_snapshot(
         crate::modules::runtime::supervisor::SessionSupervisor::load_or_create(&base_dir, &id)
             .map_err(|e| e.to_string())?;
     Ok(snapshot)
+}
+
+/// Query the tool attempt ledger for a session (MIG-022 / T-013).
+///
+/// Returns all tool invocation attempts recorded for the session,
+/// optionally filtered by `run_id` or `tool_call_id`.  Includes
+/// per-tool_call_id summary statistics (total attempts, success,
+/// last failure kind).
+///
+/// The frontend uses this to render attempt timelines and tool
+/// card retry histories.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn get_tool_attempt_ledger(
+    app_handle: AppHandle,
+    session_id: String,
+    run_id: Option<String>,
+    tool_call_id: Option<String>,
+) -> Result<crate::modules::runtime::attempt_ledger::ToolAttemptLedgerResponse, String> {
+    use crate::modules::runtime::attempt_ledger::{ToolAttemptLedger, ToolAttemptLedgerResponse};
+
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let attempts = if let Some(ref rid) = run_id {
+        ToolAttemptLedger::by_run_id(&base_dir, &session_id, rid).map_err(|e| e.to_string())?
+    } else if let Some(ref tcid) = tool_call_id {
+        ToolAttemptLedger::by_tool_call_id(&base_dir, &session_id, tcid)
+            .map_err(|e| e.to_string())?
+    } else {
+        ToolAttemptLedger::by_session_id(&base_dir, &session_id).map_err(|e| e.to_string())?
+    };
+
+    Ok(ToolAttemptLedgerResponse::from_attempts(
+        session_id, attempts,
+    ))
+}
+
+/// Load the projection checkpoint for a session (T-020).
+///
+/// Performs cold-start: loads the projection checkpoint if available,
+/// returning the frontend's serialized `RuntimeProjectionSnapshot`
+/// along with the last applied event log sequence number. If no
+/// checkpoint exists, returns an empty snapshot so the frontend
+/// performs a full replay.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn get_session_projection_checkpoint(
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<crate::modules::runtime::projection::ProjectionCheckpointResponse, String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    crate::modules::runtime::projection::load_checkpoint(&base_dir, &session_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Save a projection checkpoint for a session (T-020).
+///
+/// Stores the frontend's serialized `RuntimeProjectionSnapshot` along with
+/// the last applied event log sequence number. The frontend calls this
+/// after processing terminal events (stream_complete, stream_error)
+/// to enable fast cold-start via `get_session_projection_checkpoint`.
+#[tauri::command]
+#[allow(dead_code)]
+pub async fn save_session_projection_checkpoint(
+    app_handle: AppHandle,
+    session_id: String,
+    snapshot: serde_json::Value,
+    last_applied_seq: u64,
+) -> Result<(), String> {
+    let base_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let checkpoint = crate::modules::runtime::projection::ProjectionCheckpoint::new(
+        session_id,
+        last_applied_seq,
+        snapshot,
+    );
+    crate::modules::runtime::projection::save_checkpoint(&base_dir, &checkpoint)
+        .map_err(|e| e.to_string())
 }

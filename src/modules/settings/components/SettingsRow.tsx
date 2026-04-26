@@ -33,7 +33,7 @@ export function SettingsRow({ title, description, children, className, inline }:
   return (
     <div
       className={cn(
-        'flex flex-col gap-3 rounded-xl border border-black/[0.06] bg-black/[0.016] px-4 py-3 lg:flex-row lg:items-center lg:justify-between',
+        'flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 lg:flex-row lg:items-center lg:justify-between',
         className,
       )}
     >

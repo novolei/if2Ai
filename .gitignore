@@ -41,6 +41,7 @@ dist-tauri/
 .harness-reports/
 
 # ML model caches — large binary files, never commit
+.fastembed_cache/
 src-tauri/.fastembed_cache/
 
 # Python bytecode cache

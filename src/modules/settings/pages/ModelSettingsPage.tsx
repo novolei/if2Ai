@@ -578,7 +578,7 @@ export function ModelSettingsPage() {
         <SectionLabel>说明</SectionLabel>
         <div className="flex flex-col gap-2 text-[11.5px] leading-[1.6] text-muted-foreground">
           <p>
-            if2AI 使用{' '}
+            If2Ai 使用{' '}
             <code className="rounded bg-black/5 px-1 text-[11px] font-mono">fastembed-rs</code>{' '}
             进行本地文本向量化，支持 100+ 语言（中/英/日/韩等）。
           </p>

@@ -28,6 +28,7 @@ import { MemorySettingsPage } from "./pages/MemorySettingsPage";
 import { ModelSettingsPage } from "./pages/ModelSettingsPage";
 import { ProvidersSettingsPage } from "./pages/ProvidersSettingsPage";
 import { ToolSettingsPage } from "./pages/ToolSettingsPage";
+import { McpServicesSettingsPage } from "./pages/McpServicesSettingsPage";
 import { TtsProfilesPage } from "./pages/TtsProfilesPage";
 import { TtsSettingsPage } from "./pages/TtsSettingsPage";
 import { TtsTestPage } from "./pages/TtsTestPage";
@@ -36,6 +37,7 @@ import { StrategyDiagnosticsPage } from "./pages/StrategyDiagnosticsPage";
 import { PromptDiagnosticsPage } from "./pages/PromptDiagnosticsPage";
 import { AgentIdentitySettingsPage } from "./pages/AgentIdentitySettingsPage";
 import { AgentLimitsSettingsPage } from "./pages/AgentLimitsSettingsPage";
+import { useTheme } from "@/components/theme/ThemeProvider";
 
 interface SettingsAppProps {
   onClose: () => void;
@@ -46,7 +48,7 @@ const DEFAULT_FONT_MODE: FontMode = "sans";
 export function SettingsApp({ onClose }: SettingsAppProps) {
   const [activeSection, setActiveSection] =
     useState<SettingsSectionId>("general");
-  const [theme, setTheme] = useState<ThemeMode>("system");
+  const { theme, setTheme } = useTheme();
   const [fontMode, setFontMode] = useState<FontMode>(DEFAULT_FONT_MODE);
   const [language, setLanguage] = useState("zh-CN");
   const [startupMode, setStartupMode] = useState("last");
@@ -172,7 +174,7 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
 
   const actions: SettingsActions = useMemo(
     () => ({
-      setTheme,
+      setTheme: (value: ThemeMode) => setTheme(value),
       setFontMode,
       setLanguage,
       setStartupMode,
@@ -184,7 +186,7 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
       setApiKey,
       setBaseUrl,
     }),
-    [],
+    [setTheme],
   );
 
   const content = (() => {
@@ -219,6 +221,8 @@ export function SettingsApp({ onClose }: SettingsAppProps) {
         );
       case "tools":
         return <ToolSettingsPage />;
+      case "mcp-services":
+        return <McpServicesSettingsPage />;
       case "web-search":
         return <WebSearchSettingsPage />;
       case "memory":

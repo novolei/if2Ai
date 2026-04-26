@@ -29,6 +29,7 @@ import {
   getOnboardingState,
   getSession,
   getSessionHistoryPage,
+  generateSessionTitle,
   listenToChatPrefill,
   listProjects,
   listProjectSessions,
@@ -52,7 +53,13 @@ import {
   type SessionIdentityInput,
   type SessionMeta,
 } from "@/api";
-import { checkAppUpdater, getAppUpdaterState } from "@/api/updater";
+import {
+  checkAppUpdater,
+  downloadAndInstallAppUpdate,
+  getAppUpdaterState,
+  onAppUpdaterState,
+  type UpdaterRuntimeState,
+} from "@/api/updater";
 import { invoke } from "@/lib/tauri";
 import type {
   PermissionMode,
@@ -60,6 +67,7 @@ import type {
   StreamTokenPayload,
 } from "@/transport/contracts";
 import { toast } from "sonner";
+import appIconAsset from "@/assets/app-icon.png";
 import {
   projectConversationMessagesFromRuns,
   replayRunLogEntriesToMessages,
@@ -128,10 +136,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const appIconSrc = `${new URL("../src-tauri/icons/icon-128.png", import.meta.url).href}?v=20260414c`;
+const appIconSrc = appIconAsset;
 const PLACEHOLDER_SESSION_TITLE = "新对话";
-const MAX_AUTO_TITLE_TURNS = 3;
-const MAX_AUTO_RENAME_COUNT = 2;
+const MAX_AUTO_RENAME_COUNT = 1;
 const GENERIC_USER_PROMPTS = [
   "继续",
   "继续完成",
@@ -361,6 +368,12 @@ function App() {
   const [leftPaneWidth, setLeftPaneWidth] = useState(240);
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [appUpdaterState, setAppUpdaterState] =
+    useState<UpdaterRuntimeState | null>(null);
+  const [dismissedUpdaterBannerVersion, setDismissedUpdaterBannerVersion] =
+    useState<string | null>(() =>
+      localStorage.getItem("if2ai:app-updater:dismissed-banner-version"),
+    );
   // MIG-014 — `conversations` lives in the chat store
   // (conversation-slice.ts). Reads go through `useChatStore`;
   // writes go through `setConversations` wrapper that diffs
@@ -535,6 +548,7 @@ function App() {
   );
   // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({});
+  const pendingAutoTitleSessionIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     sessionTitleStatesRef.current = sessionTitleStates;
   }, [sessionTitleStates]);
@@ -840,6 +854,11 @@ function App() {
     );
   };
 
+  const currentTitleIsResolved = (title: string): boolean => {
+    const normalized = title.trim();
+    return Boolean(normalized && normalized !== PLACEHOLDER_SESSION_TITLE);
+  };
+
   const isMeaningfulUserMessage = (content: string): boolean => {
     const normalized = normalizeSessionTitleSource(content);
     if (!normalized) return false;
@@ -894,7 +913,7 @@ function App() {
 
   const getInitialSessionTitleState = (
     title: string,
-    existingMessages: Message[] = [],
+    _existingMessages: Message[] = [],
   ): SessionTitleState => {
     if (title && title !== PLACEHOLDER_SESSION_TITLE) {
       return {
@@ -903,9 +922,8 @@ function App() {
       };
     }
 
-    const userTurnCount = getMeaningfulUserMessages(existingMessages).length;
     return {
-      stage: userTurnCount === 0 ? "placeholder" : "provisional",
+      stage: "placeholder",
       autoRenameCount: 0,
     };
   };
@@ -936,7 +954,11 @@ function App() {
     );
     if (!hasAiReply) return;
 
-    if (meaningfulTurnCount > MAX_AUTO_TITLE_TURNS) {
+    if (conversation.titlePending || pendingAutoTitleSessionIdsRef.current.has(sessionId)) {
+      return;
+    }
+
+    if (currentTitleIsResolved(conversation.title)) {
       setSessionTitleStates((prev) => ({
         ...prev,
         [sessionId]: {
@@ -948,58 +970,21 @@ function App() {
       return;
     }
 
-    const currentTitle = conversation.title || PLACEHOLDER_SESSION_TITLE;
     // P3: pass the owning conversation so [resume_cursor] resolves correctly
     const initialCandidate = getInitialSessionTitleCandidate(
       conversation.messages,
       conversation,
     );
-    if (
-      titleState.stage === "placeholder" &&
-      initialCandidate &&
-      !areTitlesSimilar(initialCandidate, currentTitle)
-    ) {
-      syncSessionTitle(projectId, sessionId, initialCandidate);
+    if (titleState.stage === "placeholder" && initialCandidate) {
+      syncGeneratedSessionTitle(projectId, sessionId, initialCandidate);
       setSessionTitleStates((prev) => ({
         ...prev,
         [sessionId]: {
-          stage: "provisional",
-          autoRenameCount: 1,
+          stage: "locked",
+          autoRenameCount: MAX_AUTO_RENAME_COUNT,
         },
       }));
       return;
-    }
-
-    if (
-      titleState.stage === "provisional" &&
-      titleState.autoRenameCount < MAX_AUTO_RENAME_COUNT
-    ) {
-      const correctionCandidate = getCorrectionTitleCandidate(
-        conversation.messages,
-        currentTitle,
-        conversation,
-      );
-      if (correctionCandidate) {
-        syncSessionTitle(projectId, sessionId, correctionCandidate);
-        setSessionTitleStates((prev) => ({
-          ...prev,
-          [sessionId]: {
-            stage: "locked",
-            autoRenameCount: titleState.autoRenameCount + 1,
-          },
-        }));
-        return;
-      }
-
-      if (meaningfulTurnCount >= MAX_AUTO_TITLE_TURNS) {
-        setSessionTitleStates((prev) => ({
-          ...prev,
-          [sessionId]: {
-            ...titleState,
-            stage: "locked",
-          },
-        }));
-      }
     }
   };
 
@@ -1067,6 +1052,108 @@ function App() {
     });
   };
 
+  const syncGeneratedSessionTitle = (
+    projectId: string,
+    sessionId: string,
+    titleHint: string,
+  ) => {
+    const nextTitle = titleHint.trim();
+    if (!nextTitle) return;
+
+    const previousTitle =
+      conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE;
+    const previousSession =
+      projectSessions[projectId]?.find((session) => session.id === sessionId) ??
+      null;
+    pendingAutoTitleSessionIdsRef.current.add(sessionId);
+
+    setConversations((prev) => {
+      const conversation = prev[sessionId];
+      if (!conversation || conversation.title === nextTitle) return prev;
+      return {
+        ...prev,
+        [sessionId]: {
+          ...conversation,
+          title: nextTitle,
+          titlePending: true,
+        },
+      };
+    });
+
+    setProjectSessions((prev) => {
+      const sessions = prev[projectId];
+      if (!sessions) return prev;
+      return {
+        ...prev,
+        [projectId]: sessions.map((session) =>
+          session.id === sessionId
+            ? { ...session, title: nextTitle, title_pending: true }
+            : session,
+        ),
+      };
+    });
+
+    void generateSessionTitle(sessionId, nextTitle)
+      .then((updated) => {
+        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
+        setConversations((prev) => {
+          const conversation = prev[sessionId];
+          if (!conversation) return prev;
+          return {
+            ...prev,
+            [sessionId]: {
+              ...conversation,
+              title: updated.title,
+              titleIcon: updated.title_icon ?? null,
+              titlePending: Boolean(updated.title_pending),
+            },
+          };
+        });
+        setProjectSessions((prev) => {
+          const sessions = prev[projectId];
+          if (!sessions) return prev;
+          return {
+            ...prev,
+            [projectId]: sessions.map((session) =>
+              session.id === sessionId ? { ...session, ...updated } : session,
+            ),
+          };
+        });
+      })
+      .catch((err) => {
+        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
+        console.error("Failed to generate session title:", err);
+        setConversations((prev) => {
+          const conversation = prev[sessionId];
+          if (!conversation || conversation.title !== nextTitle) return prev;
+          return {
+            ...prev,
+            [sessionId]: {
+              ...conversation,
+              title: previousTitle,
+              titlePending: false,
+            },
+          };
+        });
+        setProjectSessions((prev) => {
+          const sessions = prev[projectId];
+          if (!sessions) return prev;
+          return {
+            ...prev,
+            [projectId]: sessions.map((session) =>
+              session.id === sessionId
+                ? previousSession ?? {
+                    ...session,
+                    title: previousTitle,
+                    title_pending: false,
+                  }
+                : session,
+            ),
+          };
+        });
+      });
+  };
+
   const activeConv = activeSessionId ? conversations[activeSessionId] : null;
   const activeSessionMeta = useMemo(() => {
     if (!activeProjectId || !activeSessionId) return null;
@@ -1088,6 +1175,8 @@ function App() {
           projectId,
           projectName: project?.name ?? projectId,
           title: s.title,
+          titleIcon: s.title_icon ?? null,
+          titlePending: Boolean(s.title_pending),
           updatedAt: s.updated_at,
         });
       }
@@ -1255,25 +1344,29 @@ function App() {
   const activeMeaningfulUserMsgCount = useMemo(
     () =>
       activeConv
-        ? activeConv.messages.filter(
+        ? activeMessages.filter(
             (m) => m.role === "user" && isMeaningfulUserMessage(m.content),
           ).length
         : 0,
     // isMeaningfulUserMessage is a stable pure function defined in the same render scope
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeConv?.messages],
+    [activeConv, activeMessages],
   );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const activeAiReplyCount = useMemo(
     () =>
-      activeConv?.messages.filter((m) => m.role === "assistant").length ?? 0,
-    [activeConv?.messages],
+      activeConv ? activeMessages.filter((m) => m.role === "assistant").length : 0,
+    [activeConv, activeMessages],
   );
 
-  // Only re-run when meaningful counters change — avoids firing on every streaming update
+  // Only re-run when meaningful counters change. Use activeMessages because the
+  // visible assistant reply can be projected before it lands in activeConv.messages.
   useEffect(() => {
     if (!activeConv || !activeSessionId) return;
-    maybeAutoRenameSession(activeConv.projectId, activeSessionId, activeConv);
+    maybeAutoRenameSession(activeConv.projectId, activeSessionId, {
+      ...activeConv,
+      messages: activeMessages,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, activeMeaningfulUserMsgCount, activeAiReplyCount]);
 
@@ -1298,6 +1391,28 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void getAppUpdaterState()
+      .then((state) => {
+        if (!cancelled) setAppUpdaterState(state);
+      })
+      .catch((error) => {
+        console.debug("[app-updater] failed to load state", error);
+      });
+    void onAppUpdaterState((state) => {
+      setAppUpdaterState(state);
+    }).then((dispose) => {
+      if (cancelled) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const lastCheckKey = "if2ai:app-updater:last-check-ms";
     const lastToastKey = "if2ai:app-updater:last-toast-version";
     const now = Date.now();
@@ -1306,11 +1421,32 @@ function App() {
     localStorage.setItem(lastCheckKey, String(now));
     void getAppUpdaterState()
       .then((state) => {
+        if (!cancelled) setAppUpdaterState(state);
         if (!state.auto_check_enabled) return null;
         return checkAppUpdater();
       })
       .then((result) => {
         if (!result) return;
+        if (!cancelled) {
+          setAppUpdaterState((state) =>
+            state
+              ? {
+                  ...state,
+                  status:
+                    result.status === "update_available"
+                      ? "available"
+                      : result.status === "no_update"
+                        ? "latest"
+                        : "error",
+                  latest_version: result.latest_version ?? state.latest_version,
+                  release_notes_url:
+                    result.release_notes_url ?? state.release_notes_url,
+                  artifact_url: result.artifact_url ?? state.artifact_url,
+                  diagnostic: result.diagnostic ?? null,
+                }
+              : state,
+          );
+        }
         if (cancelled || result.status !== "update_available") return;
         const latest = result.latest_version ?? "新版本";
         if (localStorage.getItem(lastToastKey) === latest) return;
@@ -1447,7 +1583,12 @@ function App() {
           inMem.title &&
           inMem.title !== PLACEHOLDER_SESSION_TITLE
         ) {
-          return { ...s, title: inMem.title };
+          return {
+            ...s,
+            title: inMem.title,
+            title_icon: inMem.title_icon ?? s.title_icon ?? null,
+            title_pending: inMem.title_pending ?? s.title_pending,
+          };
         }
         return s;
       });
@@ -1655,6 +1796,10 @@ function App() {
             fullSession.title ||
             sessionMeta?.title ||
             PLACEHOLDER_SESSION_TITLE,
+          titleIcon: fullSession.title_icon ?? sessionMeta?.title_icon ?? null,
+          titlePending: Boolean(
+            fullSession.title_pending ?? sessionMeta?.title_pending,
+          ),
           messages: convertedMessages,
           updatedAt: new Date(fullSession.updated_at),
           sessionTotals: fullSession.session_totals,
@@ -1676,6 +1821,8 @@ function App() {
           id: sessionId,
           projectId,
           title: sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
+          titleIcon: sessionMeta?.title_icon ?? null,
+          titlePending: Boolean(sessionMeta?.title_pending),
           messages: [],
           updatedAt: new Date(),
         },
@@ -1716,6 +1863,8 @@ function App() {
           id: session.id,
           projectId,
           title: PLACEHOLDER_SESSION_TITLE,
+          titleIcon: session.title_icon ?? null,
+          titlePending: Boolean(session.title_pending),
           messages: [],
           updatedAt: new Date(),
         },
@@ -1916,6 +2065,8 @@ function App() {
           id: session.id,
           projectId: newProject.id,
           title: PLACEHOLDER_SESSION_TITLE,
+          titleIcon: session.title_icon ?? null,
+          titlePending: Boolean(session.title_pending),
           messages: [],
           updatedAt: new Date(),
         },
@@ -3549,6 +3700,72 @@ function App() {
     void promptDownloadSenseVoiceAfterOnboarding();
   };
 
+  const latestUpdaterVersion = appUpdaterState?.latest_version ?? null;
+  const updaterBannerVisible =
+    appUpdaterState?.status === "available" &&
+    Boolean(latestUpdaterVersion) &&
+    dismissedUpdaterBannerVersion !== latestUpdaterVersion;
+
+  const handleDismissUpdaterBanner = useCallback(() => {
+    const version = latestUpdaterVersion;
+    if (!version) return;
+    localStorage.setItem("if2ai:app-updater:dismissed-banner-version", version);
+    setDismissedUpdaterBannerVersion(version);
+  }, [latestUpdaterVersion]);
+
+  const handleRunUpdaterFromRail = useCallback(async () => {
+    const status = appUpdaterState?.status;
+    if (
+      status === "checking" ||
+      status === "downloading" ||
+      status === "installing"
+    ) {
+      return;
+    }
+
+    if (status !== "available") {
+      setAppUpdaterState((state) =>
+        state ? { ...state, status: "checking", diagnostic: null } : state,
+      );
+      const result = await checkAppUpdater();
+      if (result.status !== "update_available") {
+        if (result.status === "no_update") {
+          toast.success("已是最新版本");
+        } else {
+          toast.error("检查更新失败", {
+            description: result.diagnostic ?? "请稍后重试。",
+          });
+        }
+        return;
+      }
+    }
+
+    setAppUpdaterState((state) =>
+      state ? { ...state, status: "downloading", diagnostic: null } : state,
+    );
+    try {
+      const result = await downloadAndInstallAppUpdate();
+      if (result.status === "installing" || result.status === "downloaded") {
+        toast.success("更新安装已启动", {
+          description: "系统安装器已接管流程，If2Ai 可能会自动退出或重启。",
+        });
+      } else if (result.status === "no_update") {
+        toast.success("已是最新版本");
+      } else {
+        toast.error("下载更新失败", {
+          description: result.diagnostic ?? "请稍后重试。",
+        });
+      }
+    } catch (error) {
+      setAppUpdaterState((state) =>
+        state
+          ? { ...state, status: "error", diagnostic: String(error) }
+          : state,
+      );
+      toast.error("下载更新失败", { description: String(error) });
+    }
+  }, [appUpdaterState?.status]);
+
   // MIG-013 — App.tsx renders via the canonical
   // `<AppShell>` container. Boot phase / boot surface decision
   // moved into `AppShell` (which reads the bootstrap store
@@ -3560,6 +3777,11 @@ function App() {
         activeSection,
         onSelectSection: setActiveSection,
         onOpenSettings: () => openSettingsWindow(),
+        onRunUpdater: handleRunUpdaterFromRail,
+        updaterStatus: appUpdaterState?.status,
+        updaterLatestVersion: latestUpdaterVersion,
+        updaterBannerVisible,
+        onDismissUpdaterBanner: handleDismissUpdaterBanner,
         appIconSrc,
       }}
       onWindowDrag={handleWindowDragForAppShell}

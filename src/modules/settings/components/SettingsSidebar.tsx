@@ -1,5 +1,6 @@
-import { Sparkles, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import appIconUrl from '@/assets/app-icon.png'
 import { SETTINGS_SECTIONS } from '../data'
 import type { SettingsSectionId } from '../types'
 import { SettingsSidebarItem } from './SettingsSidebarItem'
@@ -30,7 +31,7 @@ async function startDrag(e: React.MouseEvent<HTMLElement>) {
 
 export function SettingsSidebar({ activeSection, onSectionChange, onClose }: SettingsSidebarProps) {
   return (
-    <aside className="flex w-[200px] shrink-0 flex-col border-r border-black/[0.07] bg-[#f0f1f2] px-3 pb-3 select-none">
+    <aside className="flex w-[200px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 pb-3 text-sidebar-foreground select-none">
 
       {/* ── Traffic-light clearance + drag strip ──────────────────────────
           macOS overlays the close/minimize/zoom buttons (~12-24 px from top)
@@ -51,14 +52,22 @@ export function SettingsSidebar({ activeSection, onSectionChange, onClose }: Set
             draggable image element, which would also show an I-beam cursor */}
         <div className="flex items-center gap-2 pointer-events-none">
           <div
-            className="flex size-6 items-center justify-center rounded-[7px] bg-jade"
-            style={{ boxShadow: '0 1.5px 4px color-mix(in oklch, var(--jade) 40%, transparent)' }}
+            className="relative size-7 overflow-hidden rounded-[8px]"
+            style={{
+              boxShadow:
+                '0 1px 0 0.5px rgba(255,255,255,0.58), 0 0 0 0.5px rgba(0,0,0,0.12), 0 3px 8px rgba(239,68,38,0.18)',
+            }}
           >
-            <Sparkles className="size-3 text-white" strokeWidth={1.8} />
+            <img
+              src={appIconUrl}
+              alt="If2Ai"
+              className="size-full object-cover"
+              draggable={false}
+            />
           </div>
           <div>
             <div className="text-[12.5px] font-bold tracking-tight text-foreground/80">If2Ai</div>
-            <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-black/25">
+            <div className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
               设置
             </div>
           </div>
@@ -68,7 +77,7 @@ export function SettingsSidebar({ activeSection, onSectionChange, onClose }: Set
           type="button"
           data-window-no-drag="true"
           onClick={onClose}
-          className="pointer-events-auto flex size-6 items-center justify-center rounded-lg text-black/30 transition-colors hover:bg-black/[0.07] hover:text-black/60"
+          className="pointer-events-auto flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           aria-label="关闭设置"
         >
           <X className="size-3.5" />

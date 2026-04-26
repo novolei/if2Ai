@@ -7,6 +7,7 @@ export type SettingsSectionId =
   | "agent-limits"
   | "skills"
   | "tools"
+  | "mcp-services"
   | "web-search"
   | "memory"
   | "model"
@@ -21,7 +22,7 @@ export type SettingsSectionId =
   | "prompt-diagnostics"
   | "about";
 
-export type ThemeMode = "system" | "light" | "dark";
+export type ThemeMode = "system" | "current" | "warm-paper" | "qingye" | "black";
 export type FontMode = "serif" | "sans";
 
 export interface SettingsSectionMeta {

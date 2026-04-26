@@ -1,16 +1,29 @@
 import { useEffect, useState } from "react";
 import {
+  AlignJustify,
+  Check,
   ChevronLeft,
   ChevronRight,
   Globe,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
   Redo2,
+  Rows3,
+  Type,
   Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { GitActionsPicker } from "@/components/chat/GitActionsPicker";
 import { GitWorkbenchDialog } from "@/components/chat/GitWorkbenchDialog";
 import { cn } from "@/lib/utils";
@@ -40,68 +53,75 @@ function HeaderViewStyleControls({
   onFontModeChange: (mode: FontMode) => void;
   onDensityModeChange: (mode: DensityMode) => void;
 }) {
+  const fontLabel = fontMode === "serif" ? "衬线" : "无衬线";
+  const densityLabel = densityMode === "compact" ? "紧凑" : "舒适";
+
   return (
-    <div className="inline-flex items-center gap-2 px-1 py-0.5 text-[12px] text-black/62">
-      <div className="inline-flex items-center gap-1.5">
-        <span className="select-none text-[11px] font-medium text-black/50">
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          aria-label="文字显示设置"
+          title={`文字显示：${fontLabel} · ${densityLabel}`}
+        >
+          <Type className="h-3.5 w-3.5" strokeWidth={1.8} />
+          <span className="max-w-[72px] truncate">{fontLabel}</span>
+          <span className="text-muted-foreground/55">·</span>
+          <span>{densityLabel}</span>
+          <ChevronRight className="h-3 w-3 rotate-90 opacity-70" strokeWidth={1.8} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={8} className="w-[184px]">
+        <DropdownMenuLabel className="px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           字体
-        </span>
-        <button
-          type="button"
-          onClick={() => onFontModeChange("sans")}
-          className={cn(
-            "inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] font-semibold transition-colors",
-            fontMode === "sans"
-              ? "text-black/92"
-              : "text-black/42 hover:text-black/70",
-          )}
+        </DropdownMenuLabel>
+        <DropdownMenuItem
+          className="h-8 justify-between"
+          onSelect={() => onFontModeChange("sans")}
         >
-          Aa
-        </button>
-        <button
-          type="button"
-          onClick={() => onFontModeChange("serif")}
-          className={cn(
-            "inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] font-semibold transition-colors",
-            fontMode === "serif"
-              ? "font-serif text-black/92"
-              : "font-serif text-black/42 hover:text-black/70",
-          )}
+          <span className="inline-flex items-center gap-2">
+            <Type className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[12.5px] font-medium">无衬线</span>
+          </span>
+          {fontMode === "sans" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="h-8 justify-between"
+          onSelect={() => onFontModeChange("serif")}
         >
-          Aa
-        </button>
-      </div>
-      <div className="h-5 w-px bg-black/10" />
-      <div className="inline-flex items-center gap-1.5">
-        <span className="select-none text-[11px] font-medium text-black/50">
+          <span className="inline-flex items-center gap-2">
+            <span className="font-serif text-[13px] font-semibold text-muted-foreground">Aa</span>
+            <span className="text-[12.5px] font-medium">衬线</span>
+          </span>
+          {fontMode === "serif" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="px-2.5 py-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           密度
-        </span>
-        <button
-          type="button"
-          onClick={() => onDensityModeChange("compact")}
-          className={cn(
-            "inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] transition-colors",
-            densityMode === "compact"
-              ? "text-black/92"
-              : "text-black/42 hover:text-black/70",
-          )}
+        </DropdownMenuLabel>
+        <DropdownMenuItem
+          className="h-8 justify-between"
+          onSelect={() => onDensityModeChange("comfortable")}
         >
-          ≡
-        </button>
-        <button
-          type="button"
-          onClick={() => onDensityModeChange("comfortable")}
-          className={cn(
-            "inline-flex h-7 min-w-7 items-center justify-center rounded-md px-2 text-[12px] transition-colors",
-            densityMode === "comfortable"
-              ? "text-black/92"
-              : "text-black/42 hover:text-black/70",
-          )}
+          <span className="inline-flex items-center gap-2">
+            <AlignJustify className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[12.5px] font-medium">舒适</span>
+          </span>
+          {densityMode === "comfortable" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="h-8 justify-between"
+          onSelect={() => onDensityModeChange("compact")}
         >
-          ☰
-        </button>
-      </div>
-    </div>
+          <span className="inline-flex items-center gap-2">
+            <Rows3 className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-[12.5px] font-medium">紧凑</span>
+          </span>
+          {densityMode === "compact" ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -245,7 +265,7 @@ export function ChatWorkspace({
       <ErrorBoundary
         fallback={
           <aside
-            className="absolute inset-y-0 left-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/56 backdrop-blur-[2px]"
+            className="absolute inset-y-0 left-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-border/60 bg-[var(--chat-sidebar-bg-soft,rgba(238,240,241,0.56))] backdrop-blur-[2px]"
             style={{ width: leftPaneWidth }}
           >
             <SidebarTop
@@ -256,7 +276,7 @@ export function ChatWorkspace({
               activeTitle={activeTitle}
               onUpdateSessionIdentity={onUpdateSessionIdentity}
             />
-            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
+            <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-muted-foreground">
               左侧栏加载异常
             </div>
           </aside>
@@ -264,7 +284,7 @@ export function ChatWorkspace({
       >
         <aside
           className={cn(
-            "absolute inset-y-0 left-0 z-20 flex min-h-0 origin-left flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-black/5 bg-[#eef0f1]/88 shadow-[18px_0_36px_rgba(15,23,42,0.08)] backdrop-blur-[6px] transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "absolute inset-y-0 left-0 z-20 flex min-h-0 origin-left flex-col overflow-hidden rounded-tr-[18px] rounded-br-[18px] border-r border-border/60 bg-[var(--chat-sidebar-bg,rgba(238,240,241,0.88))] shadow-[18px_0_36px_rgba(15,23,42,0.08)] backdrop-blur-[6px] transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
             isLeftPaneCollapsed
               ? "pointer-events-none -translate-x-full opacity-0"
               : "translate-x-0 opacity-100",
@@ -284,7 +304,7 @@ export function ChatWorkspace({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden select-none">
               <ErrorBoundary
                 fallback={
-                  <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-black/35">
+                  <div className="flex h-full min-h-0 flex-1 items-center justify-center px-4 text-[13px] text-muted-foreground">
                     左侧栏加载异常
                   </div>
                 }
@@ -328,15 +348,15 @@ export function ChatWorkspace({
         <ErrorBoundary
           fallback={(errorMessage) => (
             <div className="flex h-full min-h-0 items-center justify-center px-6">
-              <div className="max-w-md rounded-3xl border border-black/5 bg-white px-6 py-5 text-center shadow-sm">
+              <div className="max-w-md rounded-3xl border border-border bg-card px-6 py-5 text-center shadow-sm">
                 <div className="text-[14px] font-semibold tracking-tight">
                   主内容加载异常
                 </div>
-                <div className="mt-2 text-[12px] leading-5 text-black/45">
+                <div className="mt-2 text-[12px] leading-5 text-muted-foreground">
                   主工作区发生了运行时错误，但左侧栏仍然保持可用。
                 </div>
                 {errorMessage ? (
-                  <div className="mt-3 rounded-xl border border-black/6 bg-black/[0.03] px-3 py-2 text-left font-mono text-[11px] leading-5 text-black/55">
+                  <div className="mt-3 rounded-xl border border-border bg-muted px-3 py-2 text-left font-mono text-[11px] leading-5 text-muted-foreground">
                     {errorMessage}
                   </div>
                 ) : null}
@@ -346,14 +366,14 @@ export function ChatWorkspace({
         >
           <div className="flex min-h-0 flex-1 flex-col">
             <header
-              className="window-drag flex h-14 shrink-0 items-center justify-between border-b border-black/5 px-4 select-none lg:px-5"
+              className="window-drag flex h-14 shrink-0 items-center justify-between border-b border-border/60 px-4 select-none lg:px-5"
               onMouseDown={onStartWindowDrag}
             >
               <div className="flex min-w-0 items-center gap-3">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.92),rgba(242,236,227,0.92))] hover:text-black/82 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-accent-foreground hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                   data-window-no-drag="true"
                   onClick={onToggleLeftPane}
                 >
@@ -363,8 +383,14 @@ export function ChatWorkspace({
                     <ChevronLeft className="h-4 w-4" />
                   )}
                 </Button>
-                <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-black/5 text-black/70 lg:flex">
-                  <MessageSquare className="h-4 w-4" />
+                <div className="hidden h-9 w-9 items-center justify-center rounded-xl bg-muted text-[17px] leading-none text-muted-foreground lg:flex">
+                  {activeSessionMeta?.title_pending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.8} />
+                  ) : activeSessionMeta?.title_icon ? (
+                    <span className="session-emoji" aria-hidden="true">{activeSessionMeta.title_icon}</span>
+                  ) : (
+                    <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
+                  )}
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -461,7 +487,7 @@ export function ChatWorkspace({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,0.94),rgba(243,236,226,0.94))] hover:text-black/82 hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
+                  className="window-no-drag h-9 w-9 rounded-full text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-accent-foreground hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                   data-window-no-drag="true"
                   title={isRightRailOpen ? "收起侧边抽屉" : "展开侧边抽屉"}
                   aria-label={

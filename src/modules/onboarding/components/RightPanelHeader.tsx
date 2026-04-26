@@ -3,7 +3,7 @@
  *
  * Displays on the orange gradient background. Shows:
  * - Top row: step-specific label + "设置中" badge (optional)
- * - App branding: if2AI logo + name
+ * - App branding: If2Ai logo + name
  * - Step-specific title
  * - Optional bullet points
  *
@@ -63,20 +63,21 @@ export function RightPanelHeader({
         )}
       </div>
 
-      {/* App branding: logo + if2AI */}
+      {/* App branding: logo + If2Ai */}
       <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl overflow-hidden">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-[0_1px_0_0.5px_rgba(255,255,255,0.46),0_0_0_0.5px_rgba(0,0,0,0.10),0_8px_20px_rgba(18,24,38,0.16)]">
           <img
             src={APP_ICON_URL}
-            alt="if2AI"
-            className="h-full w-full object-contain"
+            alt="If2Ai"
+            className="h-full w-full object-cover"
+            draggable={false}
           />
         </div>
         <span
           className="font-sans text-[20px] font-bold tracking-tight"
           style={{ color: 'rgba(255,255,255,0.95)' }}
         >
-          if2AI
+          If2Ai
         </span>
       </div>
 

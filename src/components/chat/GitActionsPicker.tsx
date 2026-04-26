@@ -282,10 +282,10 @@ export function GitActionsPicker({
         if (noRepo) {
           return (
             <>
-              <div className="px-3.5 pb-1 pt-2.5 text-[11.5px] text-black/40">
+              <div className="px-3.5 pb-1 pt-2.5 text-[11.5px] text-muted-foreground">
                 Git 操作
               </div>
-              <div className="px-3.5 pb-2 text-[11.5px] leading-5 text-black/55">
+              <div className="px-3.5 pb-2 text-[11.5px] leading-5 text-muted-foreground">
                 当前项目目录还不是 Git 仓库。初始化后即可使用提交、分支、PR 等功能。
               </div>
               <ActionItem
@@ -299,7 +299,7 @@ export function GitActionsPicker({
         }
         return (
           <>
-            <div className="px-3.5 pb-1 pt-2.5 text-[11.5px] text-black/40">
+            <div className="px-3.5 pb-1 pt-2.5 text-[11.5px] text-muted-foreground">
               Git 操作
             </div>
             {onOpenWorkbench && (
@@ -360,7 +360,7 @@ export function GitActionsPicker({
               onChange={(e) => setCommitMessage(e.target.value)}
               placeholder="Commit message"
               rows={3}
-              className="w-full resize-none rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-[13px] text-black/85 outline-none placeholder:text-black/30 focus:border-black/30"
+              className="w-full resize-none rounded-lg border border-border/70 bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
             <PrimaryButton disabled={!commitMessage.trim()} onClick={runCommit}>
               提交
@@ -376,7 +376,7 @@ export function GitActionsPicker({
               value={branchName}
               onChange={(e) => setBranchName(e.target.value)}
               placeholder="新分支名"
-              className="w-full rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-[13px] outline-none focus:border-black/30"
+              className="w-full rounded-lg border border-border/70 bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
             <PrimaryButton disabled={!branchName.trim()} onClick={runCreateBranch}>
               创建并检出
@@ -394,15 +394,15 @@ export function GitActionsPicker({
               value={worktreeBranch}
               onChange={(e) => setWorktreeBranch(e.target.value)}
               placeholder="分支名（不存在则自动创建）"
-              className="w-full rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-[13px] outline-none focus:border-black/30"
+              className="w-full rounded-lg border border-border/70 bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
             <input
               value={worktreeTarget}
               onChange={(e) => setWorktreeTarget(e.target.value)}
               placeholder={targetSuggestion || '目标目录（可选，默认与项目同级）'}
-              className="w-full rounded-lg border border-black/10 bg-white/70 px-3 py-2 font-mono text-[12px] outline-none focus:border-black/30"
+              className="w-full rounded-lg border border-border/70 bg-muted px-3 py-2 font-mono text-[12px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
-            <p className="text-[11px] leading-4 text-black/40">
+            <p className="text-[11px] leading-4 text-muted-foreground">
               成功后会自动注册为新项目；侧边栏会刷新出现，你可以直接切过去继续聊。
             </p>
             <PrimaryButton disabled={!trimmedBranch} onClick={runCreateWorktree}>
@@ -421,14 +421,14 @@ export function GitActionsPicker({
               value={prTitle}
               onChange={(e) => setPrTitle(e.target.value)}
               placeholder="PR 标题"
-              className="w-full rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-[13px] outline-none focus:border-black/30"
+              className="w-full rounded-lg border border-border/70 bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
             <textarea
               value={prBody}
               onChange={(e) => setPrBody(e.target.value)}
               placeholder="PR 描述（可选）"
               rows={3}
-              className="w-full resize-none rounded-lg border border-black/10 bg-white/70 px-3 py-2 text-[13px] outline-none placeholder:text-black/30 focus:border-black/30"
+              className="w-full resize-none rounded-lg border border-border/70 bg-muted px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
             />
             <PrimaryButton disabled={!prTitle.trim()} onClick={runCreatePr}>
               {ghOk === false ? '生成草稿' : '提交并创建'}
@@ -442,7 +442,7 @@ export function GitActionsPicker({
 
       case 'busy':
         return (
-          <div className="flex items-center justify-center gap-2 py-7 text-[13px] leading-6 text-black/55">
+          <div className="flex items-center justify-center gap-2 py-7 text-[13px] leading-6 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             {mode.label}
           </div>
@@ -455,7 +455,7 @@ export function GitActionsPicker({
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="mt-2.5 w-full rounded-lg bg-black/80 px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90"
+              className="mt-2.5 w-full rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground hover:opacity-90"
             >
               完成
             </button>
@@ -471,7 +471,7 @@ export function GitActionsPicker({
             <button
               type="button"
               onClick={() => setMode({ kind: 'menu' })}
-              className="mt-2.5 w-full rounded-lg border border-black/10 bg-white px-3 py-1.5 text-[12px] font-medium text-black/70 hover:bg-black/[0.03]"
+              className="mt-2.5 w-full rounded-lg border border-border/70 bg-muted px-3 py-1.5 text-[12px] font-medium text-foreground hover:bg-accent hover:text-accent-foreground"
             >
               返回
             </button>
@@ -494,7 +494,7 @@ export function GitActionsPicker({
             // 仍然 clickable，因为下拉里有"初始化 Git 仓库"。
             noRepo
               ? 'border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-300 hover:bg-amber-100'
-              : 'border-black/[0.08] text-black/55 hover:border-black/14 hover:bg-black/[0.05] hover:text-black/82',
+              : 'border-border/70 text-muted-foreground hover:border-border hover:bg-accent hover:text-accent-foreground',
             className,
           )}
           data-window-no-drag="true"
@@ -504,10 +504,10 @@ export function GitActionsPicker({
           {noRepo ? (
             <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
           ) : (
-            <GitCommitHorizontal className="h-3.5 w-3.5 text-black/55" strokeWidth={1.75} />
+            <GitCommitHorizontal className="h-3.5 w-3.5" strokeWidth={1.75} />
           )}
           <span>{noRepo ? '初始化 Git' : '提交'}</span>
-          <ChevronDown className={cn('h-3 w-3', noRepo ? 'text-amber-600' : 'text-black/45')} />
+          <ChevronDown className={cn('h-3 w-3', noRepo ? 'text-amber-600' : 'text-muted-foreground')} />
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -515,7 +515,7 @@ export function GitActionsPicker({
         sideOffset={12}
         collisionPadding={16}
         className={cn(
-          'w-[240px] overflow-hidden rounded-2xl border border-black/[0.06] bg-white/95 p-0 text-[13px] backdrop-blur-2xl backdrop-saturate-150',
+          'w-[240px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 p-0 text-[13px] text-popover-foreground backdrop-blur-2xl backdrop-saturate-150',
           'shadow-[0_2px_4px_rgba(0,0,0,0.04),0_8px_20px_rgba(0,0,0,0.08),0_24px_56px_rgba(0,0,0,0.16),0_0_0_0.5px_rgba(0,0,0,0.04)]',
           'origin-[var(--radix-popover-content-transform-origin)] transition-all duration-200 ease-out',
           'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-top-1',
@@ -544,9 +544,9 @@ function ActionItem({
       // `outline-none` 抑制 WebKit `:focus-visible` 默认蓝色描边；
       // 用 `focus-visible:bg-...` 给键盘用户保留可见的焦点反馈，
       // 同时不会被 PopoverContent 的 overflow-hidden 切成横线。
-      className="flex w-full items-center gap-2.5 px-3.5 py-1.5 text-left text-[11.5px] leading-6 text-black/82 outline-none transition-colors hover:bg-black/[0.035] focus-visible:bg-black/[0.05]"
+      className="flex w-full items-center gap-2.5 px-3.5 py-1.5 text-left text-[11.5px] leading-6 text-popover-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
     >
-      <span className="text-black/55">{icon}</span>
+      <span className="text-muted-foreground">{icon}</span>
       {label}
     </button>
   )
@@ -564,11 +564,11 @@ function FormShell({
   return (
     <div className="px-3.5 py-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11.5px] font-medium text-black/55">{title}</span>
+        <span className="text-[11.5px] font-medium text-muted-foreground">{title}</span>
         <button
           type="button"
           onClick={onCancel}
-          className="flex size-5 items-center justify-center rounded-full text-black/35 hover:bg-black/[0.05] hover:text-black/70"
+          className="flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           aria-label="取消"
         >
           <X className="h-3 w-3" />
@@ -593,7 +593,7 @@ function PrimaryButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="rounded-lg bg-black/80 px-3 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+      className="rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {children}
     </button>
@@ -662,11 +662,11 @@ function PrDraftView({
   return (
     <div className="px-3.5 py-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11.5px] font-medium text-black/55">PR 草稿</span>
+        <span className="text-[11.5px] font-medium text-muted-foreground">PR 草稿</span>
         <button
           type="button"
           onClick={onBack}
-          className="flex size-5 items-center justify-center rounded-full text-black/35 hover:bg-black/[0.05] hover:text-black/70"
+          className="flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           aria-label="返回"
         >
           <X className="h-3 w-3" />
@@ -674,14 +674,14 @@ function PrDraftView({
       </div>
       <GhMissingBanner />
       <div className="mt-2 space-y-1.5">
-        <div className="text-[11px] uppercase tracking-wider text-black/40">命令</div>
-        <pre className="m-0 max-h-[160px] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-black/[0.06] bg-black/[0.03] px-2.5 py-2 font-mono text-[11.5px] leading-5 text-black/75">
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground">命令</div>
+        <pre className="m-0 max-h-[160px] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border/70 bg-muted px-2.5 py-2 font-mono text-[11.5px] leading-5 text-foreground/80">
           {command}
         </pre>
         <button
           type="button"
           onClick={onCopy}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-black/80 px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground hover:opacity-90"
         >
           {copied ? (
             <>

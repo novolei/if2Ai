@@ -189,33 +189,33 @@ export function ErrorCard({
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-[6px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5"
+      className="relative w-full overflow-hidden rounded-[6px] border border-rose-500/40 bg-rose-500/10 px-3 py-2.5"
       role="alert"
       aria-label={`错误：${title}`}
     >
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-rose-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/8">
-          <AlertTriangle className="h-3.5 w-3.5 text-rose-500/92" aria-hidden />
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/14">
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-500" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-rose-800/90">{title}</div>
-            <span className="rounded-full border border-rose-300/70 bg-rose-100/70 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-700/90">
+            <div className="text-[12.5px] font-medium leading-4.5 text-rose-500">{title}</div>
+            <span className="rounded-full border border-rose-500/40 bg-rose-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-500">
               {kindLabel}
             </span>
           </div>
           {suggestion && (
-            <div className="mt-0.5 text-[11.5px] leading-4.5 text-rose-700/68">{suggestion}</div>
+            <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">{suggestion}</div>
           )}
-          <div className="mt-1.25 break-words rounded-md bg-white/32 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-600/72">
+          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-500/90">
             {truncateText(error, 500)}
           </div>
           {isConnection && onRetry && (
             <button
               type="button"
               onClick={onRetry}
-              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
             >
               <RotateCcw className="h-3 w-3" aria-hidden />
               重试
@@ -225,7 +225,7 @@ export function ErrorCard({
             <button
               type="button"
               onClick={() => onResume(resumeCursor)}
-              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
             >
               继续未完成任务
             </button>
@@ -266,35 +266,35 @@ export function RecoveryCard({
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-[6px] border border-emerald-200/70 bg-emerald-50/55 px-3 py-2.5"
+      className="relative w-full overflow-hidden rounded-[6px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5"
       role="status"
       aria-label="任务已部分完成"
     >
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-emerald-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10">
-          <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+          <Check className="h-3.5 w-3.5 text-emerald-500" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-900/90">
+            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-500">
               任务已部分完成
             </div>
-            <span className="rounded-full border border-emerald-300/70 bg-emerald-100/80 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-700/90">
+            <span className="rounded-full border border-emerald-500/35 bg-emerald-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-500">
               {isRecovering ? '恢复中' : '可继续恢复'}
             </span>
           </div>
-          <div className="mt-0.5 text-[11.5px] leading-4.5 text-emerald-800/70">
+          <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">
             {isRecovering
               ? '正在基于已保留的恢复点继续补全未完成部分，不会重复已确认的副作用操作。'
               : '已保留本轮已确认的执行结果。继续后只补全未完成部分，不会重复已确认的副作用操作。'}
           </div>
           {reasonLabel && (
-            <div className="mt-1 text-[11px] leading-4 text-emerald-700/75">
+            <div className="mt-1 text-[11px] leading-4 text-emerald-500/85">
               中断原因：{reasonLabel}
             </div>
           )}
-          <div className="mt-1.25 break-words rounded-md bg-white/45 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-700/70">
+          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-500/85">
             {truncateText(error, 500)}
           </div>
           {resumeCursor && onResume && (
@@ -302,7 +302,7 @@ export function RecoveryCard({
               type="button"
               onClick={() => onResume(resumeCursor)}
               disabled={isRecovering}
-              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-100/90 px-2.5 py-1 text-[11px] font-medium text-emerald-800 transition-colors hover:bg-emerald-200/80 disabled:cursor-default disabled:opacity-60"
+              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/14 px-2.5 py-1 text-[11px] font-medium text-emerald-500 transition-colors hover:bg-emerald-500/22 disabled:cursor-default disabled:opacity-60"
             >
               <RotateCcw className="h-3 w-3" aria-hidden />
               {isRecovering ? '正在恢复未完成任务…' : '继续未完成任务'}

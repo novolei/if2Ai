@@ -53,12 +53,13 @@ import {
   listenActivationStatusChanged,
   listenMemoryAfterTurn,
   listenMemoryEvent,
+  listenToBrowserStatus,
   listenToAgentTokenStream,
   listenToPermissionRequests,
   requestIntelligenceClassify,
   type RequestIntelligenceClassifyInput,
 } from '@/lib/tauri'
-import { getSupervisorSnapshot } from '@/api/sessions'
+import { getSessionProjectionCheckpoint, getSupervisorSnapshot } from '@/api/sessions'
 
 import {
   runtimeProjectionStore,
@@ -67,6 +68,7 @@ import {
 import {
   translateActivationSnapshot,
   translateAgentTokenPayload,
+  translateBrowserStatusPayload,
   translateExecutionModeDecision,
   translateMemoryAfterTurn,
   translateMemoryEventPayload,
@@ -125,6 +127,13 @@ export function wireRuntimeProjectionListeners(
       }
     }),
     'agent-token',
+  )
+
+  track(
+    listenToBrowserStatus((payload) => {
+      store.dispatch(translateBrowserStatusPayload(payload))
+    }),
+    'browser-status',
   )
 
   track(
@@ -289,6 +298,35 @@ export async function refreshSupervisorSnapshot(
     // eslint-disable-next-line no-console
     console.error(
       '[runtime-projection-bridge] get_supervisor_snapshot failed',
+      err,
+    )
+  }
+}
+
+/**
+ * T-020 — one-shot projection checkpoint fetch for cold-start.
+ * Called when the active session changes. Loads the checkpoint
+ * from disk, restores the projection snapshot, so incremental
+ * replays only need events after `last_applied_seq`.
+ *
+ * If no checkpoint exists or the snapshot is null, the store is
+ * reset to empty. Failure leaves the store as-is.
+ */
+export async function loadSessionProjectionCheckpoint(
+  store: RuntimeProjectionStore = runtimeProjectionStore,
+  sessionId: string,
+): Promise<void> {
+  try {
+    const payload = await getSessionProjectionCheckpoint(sessionId)
+    if (payload.checkpointExists && payload.snapshot != null) {
+      store.restoreSnapshot(
+        payload.snapshot as import('./types.ts').RuntimeProjectionSnapshot,
+      )
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[runtime-projection-bridge] get_session_projection_checkpoint failed',
       err,
     )
   }

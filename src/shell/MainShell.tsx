@@ -37,6 +37,11 @@ export interface MainShellNavbarProps {
   activeSection: AppSection
   onSelectSection: (section: AppSection) => void
   onOpenSettings: () => void
+  onRunUpdater?: () => void
+  updaterStatus?: 'idle' | 'available' | 'checking' | 'downloading' | 'downloaded' | 'installing' | 'latest' | 'error'
+  updaterLatestVersion?: string | null
+  updaterBannerVisible?: boolean
+  onDismissUpdaterBanner?: () => void
   onStartWindowDrag: (event: { clientX: number; clientY: number }) => void
   appIconSrc: string
 }
@@ -52,7 +57,7 @@ export interface MainShellProps {
 export function MainShell({ navbar, children }: MainShellProps) {
   return (
     <div
-      className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[#f6f7f8] text-foreground"
+      className="relative isolate grid h-screen min-h-0 min-w-0 overflow-hidden bg-[var(--app-shell-bg,#f6f7f8)] text-foreground"
       style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}
     >
       <AppVersionWatermark />
@@ -66,15 +71,20 @@ export function MainShell({ navbar, children }: MainShellProps) {
         activeSection={navbar.activeSection}
         onSelectSection={navbar.onSelectSection}
         onOpenSettings={navbar.onOpenSettings}
+        onRunUpdater={navbar.onRunUpdater}
+        updaterStatus={navbar.updaterStatus}
+        updaterLatestVersion={navbar.updaterLatestVersion}
+        updaterBannerVisible={navbar.updaterBannerVisible}
+        onDismissUpdaterBanner={navbar.onDismissUpdaterBanner}
         onStartWindowDrag={navbar.onStartWindowDrag}
         appIconSrc={navbar.appIconSrc}
       />
-      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#f6f7f8]">
+      <main className="relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--app-main-bg,#f6f7f8)]">
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
-          <div className="absolute inset-0 bg-[#f6f7f8]" />
-          <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(246,247,248,0)_0%,rgba(246,247,248,0.12)_46%,rgba(246,247,248,0.76)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.76)_18%,rgba(255,255,255,0)_52%),radial-gradient(circle_at_50%_100%,rgba(242,244,246,0.94)_0%,rgba(242,244,246,0.62)_34%,rgba(242,244,246,0.18)_68%,rgba(242,244,246,0)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.5),transparent_28%),radial-gradient(circle_at_86%_90%,rgba(242,244,246,0.34),transparent_30%)]" />
+          <div className="absolute inset-0 bg-[var(--app-main-bg,#f6f7f8)]" />
+          <div className="absolute inset-0 bg-[image:var(--app-main-gradient-1,linear-gradient(135deg,rgba(246,247,248,0)_0%,rgba(246,247,248,0.12)_46%,rgba(246,247,248,0.76)_100%))]" />
+          <div className="absolute inset-0 bg-[image:var(--app-main-gradient-2,radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.76)_18%,rgba(255,255,255,0)_52%),radial-gradient(circle_at_50%_100%,rgba(242,244,246,0.94)_0%,rgba(242,244,246,0.62)_34%,rgba(242,244,246,0.18)_68%,rgba(242,244,246,0)_100%))]" />
+          <div className="absolute inset-0 bg-[image:var(--app-main-gradient-3,radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.5),transparent_28%),radial-gradient(circle_at_86%_90%,rgba(242,244,246,0.34),transparent_30%))]" />
         </div>
         <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {children}

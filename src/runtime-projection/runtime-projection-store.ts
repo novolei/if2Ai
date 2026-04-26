@@ -51,6 +51,9 @@ export interface RuntimeProjectionStore {
   flush(): void
   /** Reset to an empty snapshot. Useful for hot-reload + tests. */
   reset(): void
+  /** T-020 — restore a serialized checkpoint snapshot. Replaces the
+   * internal state with `snapshot`, firing listeners. */
+  restoreSnapshot(snapshot: RuntimeProjectionSnapshot): void
 }
 
 export interface CreateRuntimeProjectionStoreOptions {
@@ -118,6 +121,13 @@ export function createRuntimeProjectionStore(
       const fresh = emptyProjectionSnapshot()
       if (fresh !== snapshot) {
         snapshot = fresh
+        notifyAll()
+      }
+    },
+    restoreSnapshot(next: RuntimeProjectionSnapshot) {
+      queue.reset()
+      if (next !== snapshot) {
+        snapshot = next
         notifyAll()
       }
     },

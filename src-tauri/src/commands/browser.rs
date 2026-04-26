@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::modules::browser::chrome_finder::find_chrome_binary;
 use crate::modules::browser::events::emit_browser_status;
@@ -24,6 +24,14 @@ use crate::modules::browser::profile::{
 };
 use crate::modules::browser::registry::{BrowserRegistry, BrowserStatusEntry};
 use crate::modules::browser::session::{ActionLogEntry, NavigateResult};
+use crate::modules::runtime::permissions::{PermissionMode, PermissionOutcome};
+use crate::modules::smart_browser::cloud::{
+    authorize_cloud_escalation, decide_cloud_escalation, CloudEscalationDecision,
+    CloudEscalationRequest,
+};
+use crate::modules::smart_browser::contract::{
+    SmartBrowserBackend, SmartBrowserEscalationState, SmartBrowserRisk,
+};
 
 /// Response payload for `get_chrome_status`.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -82,6 +90,116 @@ pub async fn request_browser_status(
 ) -> Result<(), String> {
     emit_browser_status(&app, &session_id, &registry).await;
     Ok(())
+}
+
+/// Request escalation from the local/MCP browser lane to browser-use cloud.
+#[tauri::command]
+pub async fn request_smart_browser_cloud_escalation(
+    session_id: String,
+    reason: String,
+    app: AppHandle,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<CloudEscalationDecision, String> {
+    let request = CloudEscalationRequest {
+        session_id: session_id.clone(),
+        reason,
+        risks: vec![SmartBrowserRisk::CloudEscalation],
+    };
+    let decision = decide_cloud_escalation(&request, false);
+    emit_smart_browser_escalation_status(
+        &app,
+        &registry,
+        &session_id,
+        SmartBrowserEscalationState::ApprovalRequired,
+        Some("cloud_escalation_requested".to_string()),
+    )
+    .await;
+    Ok(decision)
+}
+
+/// Approve browser-use cloud escalation for a Smart Browser session.
+#[tauri::command]
+pub async fn approve_smart_browser_cloud_escalation(
+    session_id: String,
+    reason: String,
+    app: AppHandle,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<CloudEscalationDecision, String> {
+    match authorize_cloud_escalation(PermissionMode::Allow, true) {
+        PermissionOutcome::Allow => {
+            let request = CloudEscalationRequest {
+                session_id: session_id.clone(),
+                reason,
+                risks: vec![SmartBrowserRisk::CloudEscalation],
+            };
+            let decision = decide_cloud_escalation(&request, true);
+            emit_smart_browser_escalation_status(
+                &app,
+                &registry,
+                &session_id,
+                SmartBrowserEscalationState::Approved,
+                Some("cloud_escalation_approved".to_string()),
+            )
+            .await;
+            Ok(decision)
+        }
+        PermissionOutcome::Deny { reason } => Err(reason),
+    }
+}
+
+/// Deny browser-use cloud escalation for a Smart Browser session.
+#[tauri::command]
+pub async fn deny_smart_browser_cloud_escalation(
+    session_id: String,
+    reason: String,
+    app: AppHandle,
+    registry: State<'_, Arc<BrowserRegistry>>,
+) -> Result<CloudEscalationDecision, String> {
+    let request = CloudEscalationRequest {
+        session_id: session_id.clone(),
+        reason,
+        risks: vec![SmartBrowserRisk::CloudEscalation],
+    };
+    let mut decision = decide_cloud_escalation(&request, false);
+    decision.state = SmartBrowserEscalationState::Blocked;
+    emit_smart_browser_escalation_status(
+        &app,
+        &registry,
+        &session_id,
+        SmartBrowserEscalationState::Blocked,
+        Some("cloud_escalation_blocked".to_string()),
+    )
+    .await;
+    Ok(decision)
+}
+
+async fn emit_smart_browser_escalation_status(
+    app: &AppHandle,
+    registry: &Arc<BrowserRegistry>,
+    session_id: &str,
+    escalation_state: SmartBrowserEscalationState,
+    last_action: Option<String>,
+) {
+    let event = crate::modules::browser::events::BrowserStatusEvent {
+        session_id: session_id.to_string(),
+        running: registry.is_running(session_id),
+        url: registry.current_url(session_id),
+        thumbnail: None,
+        backend: SmartBrowserBackend::BrowserUseCloud,
+        title: None,
+        taken_over: registry.is_taken_over(session_id),
+        last_action,
+        downloads_count: 0,
+        console_count: 0,
+        network_error_count: 0,
+        escalation_state,
+    };
+    if let Err(error) = app.emit("browser-status", &event) {
+        tracing::warn!(
+            session_id,
+            "failed to emit cloud escalation status: {error}"
+        );
+    }
 }
 
 // ── Profile management (Phase 7C, slice 7C.1) ────────────────────────────────

@@ -10,14 +10,14 @@ export const CompactInput = forwardRef<HTMLInputElement, CompactInputProps>(
     return (
       <div className="flex flex-col gap-1.5">
         {label && (
-          <label className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+          <label className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/70">
             {label}
           </label>
         )}
         <input
           ref={ref}
           className={cn(
-            'h-8 rounded-xl border border-black/[0.09] bg-black/[0.02] px-3 text-[12px] font-medium',
+            'h-8 rounded-xl border border-border/70 bg-muted/30 px-3 text-[12px] font-medium',
             'outline-none transition-all',
             'placeholder:text-muted-foreground/40 placeholder:font-normal',
             'focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15',

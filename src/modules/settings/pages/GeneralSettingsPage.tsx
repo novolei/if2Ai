@@ -4,23 +4,130 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Check } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { SettingsToggleRow } from '../components/SettingsToggleRow'
-import type { SettingsPageProps } from '../types'
+import type { SettingsPageProps, ThemeMode } from '../types'
 
 const controlClass =
-  'h-8 rounded-xl border border-black/[0.09] bg-black/[0.025] px-3 text-[12px] font-medium shadow-none transition-all focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15 focus-visible:ring-[3px] focus-visible:ring-jade/15'
+  'h-8 rounded-xl border border-border/70 bg-muted/30 px-3 text-[12px] font-medium shadow-none transition-all focus:border-jade/40 focus:ring-[3px] focus:ring-jade/15 focus-visible:ring-[3px] focus-visible:ring-jade/15'
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-widest text-black/30">
+    <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/70">
       {children}
     </div>
   )
 }
 
 function Divider() {
-  return <div className="my-0.5 border-t border-black/[0.05]" />
+  return <div className="my-0.5 border-t border-border/55" />
+}
+
+const themeCards: Array<{
+  id: Exclude<ThemeMode, 'system'>
+  title: string
+  subtitle: string
+  className: string
+  preview: React.ReactNode
+}> = [
+  {
+    id: 'current',
+    title: '当前',
+    subtitle: '已有主题',
+    className: 'bg-[#f4faf9] text-[#243332]',
+    preview: (
+      <>
+        <span className="bg-[#e8eeee]" />
+        <span className="bg-[#dbecea]" />
+        <span className="bg-[#21b57b]" />
+      </>
+    ),
+  },
+  {
+    id: 'warm-paper',
+    title: '新暖纸',
+    subtitle: '纸感白天',
+    className: 'bg-[#f4efe4] text-[#2c2924]',
+    preview: (
+      <>
+        <span className="bg-[#e7decc]" />
+        <span className="bg-[#fbf7ed]" />
+        <span className="bg-[#4e7f9b]" />
+      </>
+    ),
+  },
+  {
+    id: 'qingye',
+    title: '青夜',
+    subtitle: '柔和夜间',
+    className: 'bg-[#30464e] text-[#c8d6dc]',
+    preview: (
+      <>
+        <span className="bg-[#263941]" />
+        <span className="bg-[#3c535b]" />
+        <span className="bg-[#c67d95]" />
+      </>
+    ),
+  },
+  {
+    id: 'black',
+    title: '黑色',
+    subtitle: '深色专注',
+    className: 'bg-[#18191d] text-[#dedee3]',
+    preview: (
+      <>
+        <span className="bg-[#24252b]" />
+        <span className="bg-[#2f2e35]" />
+        <span className="bg-[#c19a3b]" />
+      </>
+    ),
+  },
+]
+
+function ThemePreviewCard({
+  selected,
+  onSelect,
+  title,
+  subtitle,
+  className,
+  preview,
+}: {
+  selected: boolean
+  onSelect: () => void
+  title: string
+  subtitle: string
+  className: string
+  preview: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'group relative flex h-[104px] flex-col justify-between overflow-hidden rounded-[8px] border px-4 py-3 text-left shadow-[0_10px_24px_rgba(0,0,0,0.045)] transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_30px_rgba(0,0,0,0.075)]',
+        selected ? 'border-foreground ring-2 ring-foreground/85' : 'border-border/40',
+        className,
+      )}
+      aria-pressed={selected}
+    >
+      <div className="flex justify-end gap-1.5">
+        <div className="flex gap-1.5 [&>span]:h-2 [&>span]:w-7 [&>span]:rounded-full">
+          {preview}
+        </div>
+      </div>
+      <div>
+        <div className="text-[18px] font-semibold leading-tight tracking-tight">{title}</div>
+        <div className="mt-1 text-[12.5px] opacity-70">{subtitle}</div>
+      </div>
+      {selected ? (
+        <span className="absolute right-2.5 top-2.5 flex size-5 items-center justify-center rounded-full bg-card/95 text-foreground shadow-sm">
+          <Check className="size-3.5" strokeWidth={2.4} />
+        </span>
+      ) : null}
+    </button>
+  )
 }
 
 export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
@@ -36,7 +143,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
       {/* ── Profile ── */}
       <SettingsSurface className="px-5 py-4">
         <div className="flex items-center gap-4">
-          <Avatar className="size-11 rounded-2xl border border-black/[0.07]">
+          <Avatar className="size-11 rounded-2xl border border-border/70">
             <AvatarFallback className="rounded-2xl bg-jade/10 text-[13px] font-bold text-jade">
               {initials}
             </AvatarFallback>
@@ -54,7 +161,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
               </Badge>
               <Badge
                 variant="outline"
-                className="rounded-lg border-black/10 px-1.5 py-0 text-[9.5px] text-black/40"
+                className="rounded-lg border-border/70 px-1.5 py-0 text-[9.5px] text-muted-foreground"
               >
                 Local
               </Badge>
@@ -65,7 +172,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
           </div>
           <Button
             variant="outline"
-            className="window-no-drag h-7 rounded-xl border-black/[0.09] bg-black/[0.025] px-3 text-[11.5px] shadow-none hover:bg-black/[0.05]"
+            className="window-no-drag h-7 rounded-xl border-border/70 bg-muted/30 px-3 text-[11.5px] shadow-none hover:bg-muted/50"
           >
             更换头像
           </Button>
@@ -77,7 +184,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
         <SectionLabel>账户信息</SectionLabel>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="username" className="text-[11px] font-medium text-black/40">
+            <Label htmlFor="username" className="text-[11px] font-medium text-muted-foreground">
               用户名
             </Label>
             <Input
@@ -89,7 +196,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="email" className="text-[11px] font-medium text-black/40">
+            <Label htmlFor="email" className="text-[11px] font-medium text-muted-foreground">
               邮箱
             </Label>
             <Input
@@ -100,6 +207,43 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
               className={controlClass}
             />
           </div>
+        </div>
+      </SettingsSurface>
+
+      {/* ── Theme picker ── */}
+      <SettingsSurface className="px-5 py-4">
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div>
+            <SectionLabel>主题</SectionLabel>
+            <div className="text-[12px] text-muted-foreground">
+              选择后立即应用到当前窗口，并会保存到下次启动。
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => actions.setTheme('system')}
+            className={cn(
+              'h-8 rounded-xl border px-3 text-[11.5px] font-medium transition-colors',
+              state.theme === 'system'
+                ? 'border-jade/40 bg-jade/10 text-jade'
+                : 'border-border/70 bg-muted/30 text-muted-foreground hover:bg-muted/50',
+            )}
+          >
+            跟随系统
+          </button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {themeCards.map((theme) => (
+            <ThemePreviewCard
+              key={theme.id}
+              selected={state.theme === theme.id}
+              onSelect={() => actions.setTheme(theme.id)}
+              title={theme.title}
+              subtitle={theme.subtitle}
+              className={theme.className}
+              preview={theme.preview}
+            />
+          ))}
         </div>
       </SettingsSurface>
 
@@ -139,22 +283,6 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
               ),
             },
             {
-              title: '主题模式',
-              desc: '控制系统外观基调',
-              node: (
-                <Select value={state.theme} onValueChange={actions.setTheme}>
-                  <SelectTrigger className={controlClass}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="system">跟随系统</SelectItem>
-                    <SelectItem value="light">浅色</SelectItem>
-                    <SelectItem value="dark">深色</SelectItem>
-                  </SelectContent>
-                </Select>
-              ),
-            },
-            {
               title: '界面密度',
               desc: '控制列表与表单间距',
               node: (
@@ -188,7 +316,7 @@ export function GeneralSettingsPage({ state, actions }: SettingsPageProps) {
           ].map((item) => (
             <div
               key={item.title}
-              className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.06] bg-black/[0.016] px-3.5 py-2.5"
+              className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/25 px-3.5 py-2.5"
             >
               <div className="min-w-0">
                 <div className="text-[12.5px] font-medium tracking-tight">{item.title}</div>

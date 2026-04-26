@@ -134,7 +134,8 @@ export type CanonicalRuntimeEvent =
   | ExecutionModeDecisionEvent
   | ExecutionModeManualOverrideEvent
   | ProjectionDiscardSessionRunsEvent
-  | SupervisorSnapshotEvent;
+  | SupervisorSnapshotEvent
+  | SmartBrowserProjectionEvent;
 
 export interface StreamRunBoundEvent {
   kind: "stream_run_bound";
@@ -444,6 +445,41 @@ export interface SupervisorSnapshotEvent {
   receivedAt: number;
 }
 
+export type SmartBrowserBackend =
+  | "local_rust_cdp"
+  | "browser_use_mcp"
+  | "browser_use_cloud";
+
+export type SmartBrowserEscalationState =
+  | "none"
+  | "suggested"
+  | "approval_required"
+  | "approved"
+  | "active"
+  | "blocked";
+
+export interface SmartBrowserDiagnosticsProjection {
+  downloads: number;
+  console: number;
+  networkErrors: number;
+}
+
+export interface SmartBrowserProjectionEvent {
+  kind: "smart_browser_projection";
+  sessionId: string;
+  smartBrowserSessionId: string;
+  backend: SmartBrowserBackend;
+  running: boolean;
+  url: string | null;
+  title: string | null;
+  thumbnail: string | null;
+  takenOver: boolean;
+  lastAction: string | null;
+  diagnostics: SmartBrowserDiagnosticsProjection;
+  escalationState: SmartBrowserEscalationState;
+  receivedAt: number;
+}
+
 /** Top-level supervisor lifecycle states (mirrors Rust `SupervisorStatus`). */
 export type SupervisorStatus =
   | "idle"
@@ -645,6 +681,21 @@ export interface SupervisorProjection {
   capturedAt: number;
 }
 
+export interface SmartBrowserProjection {
+  sessionId: string;
+  smartBrowserSessionId: string;
+  backend: SmartBrowserBackend;
+  running: boolean;
+  url: string | null;
+  title: string | null;
+  thumbnail: string | null;
+  takenOver: boolean;
+  lastAction: string | null;
+  diagnostics: SmartBrowserDiagnosticsProjection;
+  escalationState: SmartBrowserEscalationState;
+  lastUpdatedAt: number;
+}
+
 /** Top-level snapshot consumed by future M2.4 stores. */
 export interface RuntimeProjectionSnapshot {
   /** Runs indexed by `runId`. */
@@ -658,6 +709,8 @@ export interface RuntimeProjectionSnapshot {
   executionMode: ExecutionModeProjection | null;
   /** T-007 — `null` until backend emits a supervisor snapshot event. */
   supervisor: SupervisorProjection | null;
+  /** Smart Browser sessions indexed by `smartBrowserSessionId`. */
+  browsers: Record<string, SmartBrowserProjection>;
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -677,5 +730,6 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     activation: null,
     executionMode: null,
     supervisor: null,
+    browsers: {},
   };
 }

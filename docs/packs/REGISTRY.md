@@ -4,7 +4,7 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-25
+> 最后更新: 2026-04-26
 
 ---
 
@@ -19,6 +19,8 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [FEAT-JC-005](./feature/jiaochang/FEAT-JC-005-audio-player-foundation.md) | feature | Audio player foundation | 2026-04-26 |
+| [FEAT-JC-004](./feature/jiaochang/FEAT-JC-004-path-replay-runtime-anchors.md) | feature | Path replay + runtime anchors | 2026-04-26 |
 | [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | 2026-04-25 |
 | [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md) | feature | Runtime cockpit adapter + i18n + strategy | 2026-04-25 |
 | [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md) | feature | Jiaochang shell + fixture cockpit | 2026-04-25 |

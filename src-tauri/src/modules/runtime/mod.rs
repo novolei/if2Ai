@@ -2,6 +2,7 @@
 //! Migrated from /rust/crates/runtime
 //! Provides the core agent execution engine
 
+pub mod attempt_ledger;
 pub mod bash;
 pub mod block_conversion;
 pub mod bootstrap;
@@ -27,6 +28,7 @@ pub mod mcp_stdio;
 pub mod oauth;
 pub mod pending_permission;
 pub mod permissions;
+pub mod projection;
 pub mod prompt;
 pub mod prompt_tools_guide;
 pub mod recoverability;

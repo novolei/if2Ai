@@ -72,6 +72,16 @@ export function BrowserViewerPage() {
           running: true,
           url: payload.url,
           thumbnail: payload.thumbnail,
+          backend: payload.backend ?? 'local_rust_cdp',
+          title: payload.title ?? null,
+          takenOver: payload.taken_over ?? false,
+          lastAction: payload.last_action ?? null,
+          diagnostics: {
+            downloads: payload.downloads_count ?? 0,
+            console: payload.console_count ?? 0,
+            networkErrors: payload.network_error_count ?? 0,
+          },
+          escalationState: payload.escalation_state ?? 'none',
         })
         // Mirror the current URL into the native WKWebView content area.
         // This is especially important when the viewer is opened after the AI

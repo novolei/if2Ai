@@ -1189,7 +1189,7 @@ export function ChatUI({
   }, [schedulePreviewAutosave])
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-transparent">
+    <div className="relative flex h-full min-h-0 flex-col bg-transparent text-foreground">
       <div className={cn('grid min-h-0 flex-1', isPreviewFocusMode ? 'grid-cols-2' : 'grid-cols-1')}>
         <div className="relative flex min-h-0 flex-col">
           <ChatTranscript
@@ -1228,7 +1228,7 @@ export function ChatUI({
                       behavior: 'smooth',
                     })
                   }}
-                  className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-black/8 bg-white/95 text-black/78 shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-transform duration-200 hover:-translate-y-0.5 hover:bg-white"
+                  className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-popover/95 text-popover-foreground shadow-token-lg transition-transform duration-200 hover:-translate-y-0.5 hover:bg-accent hover:text-accent-foreground"
                   aria-label="滚动到底部"
                 >
                   <ArrowDown className="h-[18px] w-[18px]" />
@@ -2394,19 +2394,19 @@ const ComposerDock = React.memo(function ComposerDock({
               rows={1}
               onFocus={() => setIsComposerFocused(true)}
               onBlur={() => setIsComposerFocused(false)}
-              className="min-h-[46px] max-h-[180px] resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[13px] leading-6 shadow-none focus-visible:ring-0 placeholder:text-muted-foreground disabled:bg-transparent disabled:opacity-100"
+              className="min-h-[46px] max-h-[180px] resize-none rounded-none border-0 !bg-transparent px-0 py-0 text-[13px] leading-6 shadow-none focus-visible:ring-0 placeholder:text-muted-foreground disabled:!bg-transparent disabled:opacity-100"
               placeholder="向 AI 提问，@ 添加文件，/ 输入命令，$ 使用技能"
             />
           </div>
 
           {/* Bottom bar — mirrors Home composer: [+ | permission] … [model | | mic | send] */}
           {/* -mx-4 px-4 lets the border-t bleed to the card edges while keeping content aligned */}
-          <div className="flex items-center justify-between border-t border-black/[0.06] -mx-4 px-4 pt-2 pb-2">
+          <div className="flex items-center justify-between border-t border-border/55 -mx-4 px-4 pt-2 pb-2">
             {/* Left: attach + permission */}
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 aria-label="添加附件"
                 disabled={isLoading}
               >
@@ -2418,7 +2418,7 @@ const ComposerDock = React.memo(function ComposerDock({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                     disabled={isLoading}
                   >
                     {permissionModeLabelFor(permissionMode)}
@@ -2462,7 +2462,7 @@ const ComposerDock = React.memo(function ComposerDock({
                 }}
               />
 
-              <div className="h-3.5 w-px bg-black/10" />
+              <div className="h-3.5 w-px bg-border/70" />
 
               {/* 语音输入按钮（SenseVoice STT） */}
               <React.Suspense fallback={null}>
@@ -2491,8 +2491,8 @@ const ComposerDock = React.memo(function ComposerDock({
                   isLoading
                     ? 'bg-destructive text-white hover:opacity-90'
                     : input.trim()
-                      ? 'bg-black text-white hover:bg-black/80'
-                      : 'bg-black/10 text-black/30 cursor-not-allowed'
+                      ? 'bg-primary text-primary-foreground hover:opacity-90'
+                      : 'bg-muted text-muted-foreground cursor-not-allowed'
                 )}
                 aria-label={isLoading ? '停止生成' : '发送消息'}
               >
@@ -2520,14 +2520,14 @@ const ComposerDock = React.memo(function ComposerDock({
               <button
                 type="button"
                 onClick={onProjectPillClick}
-                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-black/40 transition-colors hover:bg-black/[0.04] hover:text-black/60"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <FolderOpen className="h-[11px] w-[11px]" />
                 {projectLabel}
               </button>
             )}
             {workdirLabel && (
-              <span className="flex items-center gap-1 text-[11px] text-black/30">
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground/80">
                 <Laptop className="h-[11px] w-[11px]" />
                 {workdirLabel}
               </span>
@@ -2773,7 +2773,7 @@ function ToolCallMessage({
               </div>
             )}
             {showNoKeyBanner && (
-              <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11.5px] leading-5 text-amber-700">
+              <div className="mb-2 flex items-start gap-2 rounded-lg border border-amber-500/35 bg-amber-500/12 px-2.5 py-2 text-[11.5px] leading-5 text-amber-500">
                 <span className="mt-0.5 shrink-0">⚠️</span>
                 <span>
                   当前使用 DuckDuckGo 免费搜索，结果质量有限。
@@ -2791,8 +2791,8 @@ function ToolCallMessage({
                   <div
                     key={`${line}-${index}`}
                     className={cn(
-                      'flex min-w-0 items-center gap-1.5 text-[11.5px] leading-5 text-muted-foreground/36',
-                      index === 0 && 'px-0.5 py-0.5 text-muted-foreground/42'
+                      'flex min-w-0 items-center gap-1.5 text-[11.5px] leading-5 text-muted-foreground/78',
+                      index === 0 && 'px-0.5 py-0.5 text-muted-foreground'
                     )}
                   >
                     {index === 0 ? (
@@ -2834,16 +2834,16 @@ function SlashCommandSuggestions({
       <div
         className="pointer-events-auto w-full overflow-hidden rounded-2xl"
         style={{
-          background: 'rgba(255,255,255,0.97)',
+          background: 'color-mix(in srgb, hsl(var(--popover)) 96%, transparent)',
           backdropFilter: 'blur(24px) saturate(180%)',
           WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-          border: '1px solid rgba(0,0,0,0.09)',
+          border: '1px solid color-mix(in srgb, hsl(var(--border)) 75%, transparent)',
           boxShadow:
             '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)',
         }}
       >
         {/* Header bar */}
-        <div className="flex items-center justify-between border-b border-black/[0.055] px-4 py-2.5">
+        <div className="flex items-center justify-between border-b border-border/65 px-4 py-2.5">
           <div className="flex items-center gap-2">
             <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-jade/10 text-[11px] font-bold text-jade">
               /
@@ -2852,7 +2852,7 @@ function SlashCommandSuggestions({
               {rawInput ?? '/'}
             </span>
           </div>
-          <span className="text-[10.5px] font-medium tracking-wide text-black/28">Tab 补全</span>
+          <span className="text-[10.5px] font-medium tracking-wide text-muted-foreground">Tab 补全</span>
         </div>
 
         {/* Suggestion rows */}
@@ -2865,7 +2865,7 @@ function SlashCommandSuggestions({
                 'flex w-full cursor-pointer items-center gap-3 px-4 py-[7px] text-left transition-colors',
                 i === selectedIndex
                   ? 'bg-jade/[0.07] text-jade'
-                  : 'text-foreground/55 hover:bg-black/[0.025] hover:text-foreground/80'
+                  : 'text-popover-foreground/70 hover:bg-accent hover:text-accent-foreground'
               )}
               onClick={() => onSelect(cmd)}
             >
@@ -2873,7 +2873,7 @@ function SlashCommandSuggestions({
               <div
                 className={cn(
                   'flex size-[22px] shrink-0 items-center justify-center rounded-[6px] text-[11px] font-bold transition-colors',
-                  i === selectedIndex ? 'bg-jade/[0.14] text-jade' : 'bg-black/[0.05] text-black/32'
+                  i === selectedIndex ? 'bg-jade/[0.14] text-jade' : 'bg-muted text-muted-foreground'
                 )}
               >
                 /
@@ -2886,7 +2886,7 @@ function SlashCommandSuggestions({
 
               {/* Enter hint for selected */}
               {i === selectedIndex && (
-                <kbd className="shrink-0 rounded-md border border-black/[0.08] bg-black/[0.04] px-1.5 py-[2px] font-sans text-[10px] font-medium text-black/35">
+                <kbd className="shrink-0 rounded-md border border-border/70 bg-muted px-1.5 py-[2px] font-sans text-[10px] font-medium text-muted-foreground">
                   ↵
                 </kbd>
               )}
@@ -2927,22 +2927,22 @@ function AtFileSuggestions({
       <div
         className="pointer-events-auto w-full overflow-hidden rounded-2xl"
         style={{
-          background: 'rgba(255,255,255,0.97)',
+          background: 'color-mix(in srgb, hsl(var(--popover)) 96%, transparent)',
           backdropFilter: 'blur(24px) saturate(180%)',
           WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-          border: '1px solid rgba(0,0,0,0.09)',
+          border: '1px solid color-mix(in srgb, hsl(var(--border)) 75%, transparent)',
           boxShadow:
             '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)',
         }}
       >
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-2 border-b border-black/[0.055] px-3 py-2">
+        <div className="flex items-center gap-2 border-b border-border/65 px-3 py-2">
           {/* Back button (shown when inside a subfolder) */}
           {isInSubfolder && onNavigateUp && (
             <button
               type="button"
               onClick={() => onNavigateUp()}
-              className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/60"
+              className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               title="返回上层 (←)"
             >
               <ChevronRight className="size-3.5 rotate-180" />
@@ -2961,9 +2961,9 @@ function AtFileSuggestions({
                 {/* Ancestors (truncated to last 2) */}
                 {breadcrumbs.slice(-2).map((crumb, idx, arr) => (
                   <React.Fragment key={crumb.name + idx}>
-                    <span className="shrink-0 text-[11px] font-medium text-black/28">{crumb.name}</span>
+                    <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{crumb.name}</span>
                     {idx < arr.length - 1 || currentDirName ? (
-                      <ChevronRight className="size-2.5 shrink-0 text-black/20" />
+                      <ChevronRight className="size-2.5 shrink-0 text-muted-foreground/55" />
                     ) : null}
                   </React.Fragment>
                 ))}
@@ -2981,7 +2981,7 @@ function AtFileSuggestions({
           </div>
 
           {/* Hint */}
-          <span className="ml-auto shrink-0 text-[10px] font-medium text-black/22">
+          <span className="ml-auto shrink-0 text-[10px] font-medium text-muted-foreground">
             {isInSubfolder ? '← 返回  ↵ 选中  → 进入' : '↑↓ 选择  ↵/→ 进入  Tab 选中'}
           </span>
         </div>
@@ -2999,7 +2999,7 @@ function AtFileSuggestions({
                   'flex w-full cursor-pointer items-center gap-3 px-3 py-[7px] text-left transition-colors',
                   isSelected
                     ? 'bg-jade/[0.07] text-jade'
-                    : 'text-foreground/55 hover:bg-black/[0.025] hover:text-foreground/80'
+                    : 'text-popover-foreground/70 hover:bg-accent hover:text-accent-foreground'
                 )}
                 onClick={() => {
                   if (isFolder && onNavigateInto) {
@@ -3018,8 +3018,8 @@ function AtFileSuggestions({
                         ? 'bg-jade/[0.14] text-jade'
                         : 'bg-jade/[0.10] text-jade'
                       : isFolder
-                        ? 'bg-black/[0.05] text-black/40'
-                        : 'bg-black/[0.04] text-black/32'
+                        ? 'bg-muted text-muted-foreground'
+                        : 'bg-muted text-muted-foreground/80'
                   )}
                 >
                   {isFolder ? <Folder className="size-3" /> : <FileText className="size-3" />}
@@ -3035,11 +3035,11 @@ function AtFileSuggestions({
                   <ChevronRight
                     className={cn(
                       'size-3 shrink-0 transition-colors',
-                      isSelected ? 'text-jade/60' : 'text-black/20'
+                      isSelected ? 'text-jade/60' : 'text-muted-foreground/55'
                     )}
                   />
                 ) : isSelected ? (
-                  <kbd className="shrink-0 rounded-md border border-black/[0.08] bg-black/[0.04] px-1.5 py-[2px] font-sans text-[10px] font-medium text-black/35">
+                  <kbd className="shrink-0 rounded-md border border-border/70 bg-muted px-1.5 py-[2px] font-sans text-[10px] font-medium text-muted-foreground">
                     ↵
                   </kbd>
                 ) : null}
@@ -3050,8 +3050,8 @@ function AtFileSuggestions({
 
         {/* ── Footer hint (browse mode only) ─────────────────────────────── */}
         {isInSubfolder && (
-          <div className="border-t border-black/[0.04] px-4 py-1.5">
-            <span className="text-[10px] text-black/25">
+          <div className="border-t border-border/55 px-4 py-1.5">
+            <span className="text-[10px] text-muted-foreground">
               Tab 选中当前目录作为引用
             </span>
           </div>
@@ -3116,7 +3116,7 @@ const ChatMessage = React.memo(function ChatMessage({
             visible={showCopyButton}
             onClick={() => onCopyMessage(message)}
           />
-          <div className="text-[11px] leading-none text-black/32">{shortTime}</div>
+          <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
         </div>
       </div>
     )
@@ -3143,7 +3143,7 @@ const ChatMessage = React.memo(function ChatMessage({
               visible={showCopyButton}
               onClick={() => onCopyMessage(message)}
             />
-            <div className="text-[11px] leading-none text-black/32">{shortTime}</div>
+            <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
           </div>
         </div>
       ) : (
@@ -3185,7 +3185,7 @@ const ChatMessage = React.memo(function ChatMessage({
             <>
               <div
                 className={cn(
-                  'pt-0 font-normal text-black/80',
+                  'pt-0 font-normal text-foreground/86',
                   densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
                 )}
               >
@@ -3227,7 +3227,7 @@ const ChatMessage = React.memo(function ChatMessage({
                       densityMode={densityMode}
                     />
                     <div className="mt-1.5 flex items-center gap-1.5 pl-1">
-                      <div className="text-[11px] leading-none text-black/28">{shortTime}</div>
+                      <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
                       {/* Per-message TurnCost chip — placed before the copy
                           button so the user sees billable usage right after
                           the timestamp, mirroring Steward's `turn-cost-bar`
@@ -3325,7 +3325,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
         ul: ({ children }) => (
           <ul
             className={cn(
-              'my-3 ml-6 list-disc marker:text-black/45',
+              'my-3 ml-6 list-disc marker:text-muted-foreground/75 text-foreground/86',
               densityMode === 'compact' ? 'space-y-1 text-[12px] leading-5.25' : 'space-y-1.25 text-[13px] leading-5.75'
             )}
           >
@@ -3335,7 +3335,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
         ol: ({ children }) => (
           <ol
             className={cn(
-              'my-3 ml-6 list-decimal marker:text-black/45',
+              'my-3 ml-6 list-decimal marker:text-muted-foreground/75 text-foreground/86',
               densityMode === 'compact' ? 'space-y-1 text-[12px] leading-5.25' : 'space-y-1.25 text-[13px] leading-5.75'
             )}
           >
@@ -3344,13 +3344,13 @@ const MarkdownContent = React.memo(function MarkdownContent({
         ),
         li: ({ children }) => <li className={densityMode === 'compact' ? 'leading-5.25' : 'leading-5.75'}>{children}</li>,
         blockquote: ({ children }) => (
-          <blockquote className={cn('mt-4 border-l-2 border-slate-300/90 pl-4 italic text-black/72', densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75')}>
+          <blockquote className={cn('mt-4 border-l-2 border-border pl-4 italic text-muted-foreground', densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75')}>
             {children}
           </blockquote>
         ),
         table: ({ children }) => (
           <div className={cn('my-3 overflow-hidden shadow-none ring-0', SURFACE_CARD_TOKENS.radius, SURFACE_CARD_TOKENS.border, SURFACE_CARD_TOKENS.background)}>
-            <table className={cn('w-full border-collapse text-black/75', densityMode === 'compact' ? 'text-[11.5px]' : 'text-[12px]')}>
+            <table className={cn('w-full border-collapse text-foreground/82', densityMode === 'compact' ? 'text-[11.5px]' : 'text-[12px]')}>
               {children}
             </table>
           </div>
@@ -3359,7 +3359,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
         tbody: ({ children }) => <tbody className="[&_tr:last-child_td]:border-b-0">{children}</tbody>,
         th: ({ children }) => (
           <th className={cn(
-            'border-b border-black/8 px-4 text-left font-medium tracking-tight text-black/70',
+            'border-b border-border/70 px-4 text-left font-medium tracking-tight text-foreground/84',
             densityMode === 'compact' ? 'py-1 text-[11px]' : 'py-1.75 text-[12px]'
           )}>
             {children}
@@ -3367,7 +3367,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
         ),
         td: ({ children }) => (
           <td className={cn(
-            'border-b border-black/7 px-4 align-top font-normal text-black/72',
+            'border-b border-border/60 px-4 align-top font-normal text-foreground/80',
             densityMode === 'compact' ? 'py-1 text-[11.5px] leading-4.5' : 'py-1.75 text-[12px] leading-5'
           )}>
             {children}
@@ -3396,7 +3396,7 @@ const MarkdownContent = React.memo(function MarkdownContent({
 
           return (
             <code
-              className="rounded-[3px] bg-muted px-1.5 py-0.5 font-mono text-[12px] font-normal text-muted-foreground"
+              className="rounded-[3px] bg-muted px-1.5 py-0.5 font-mono text-[12px] font-normal text-foreground/78"
               {...props}
             >
               {children}
@@ -3444,15 +3444,15 @@ function SkillsSlashReport({
 
   return (
     <div className={cn('my-2.5 space-y-3.5', densityMode === 'compact' ? 'text-[12px]' : 'text-[13px]')}>
-      <div className="flex items-center gap-2 text-black/78">
-        <div className="flex size-7 items-center justify-center rounded-[6px] bg-black/[0.035] text-black/42">
+      <div className="flex items-center gap-2 text-foreground/82">
+        <div className="flex size-7 items-center justify-center rounded-[6px] bg-muted text-muted-foreground">
           <Sparkles className="size-4" />
         </div>
         <div className="flex items-baseline gap-2">
           <span className="font-medium tracking-tight">Skills</span>
-          <span className="text-black/42">{report.total} total</span>
-          <span className="text-black/28">/</span>
-          <span className="text-black/42">{report.enabled} enabled</span>
+          <span className="text-muted-foreground">{report.total} total</span>
+          <span className="text-muted-foreground/60">/</span>
+          <span className="text-muted-foreground">{report.enabled} enabled</span>
         </div>
       </div>
 
@@ -3467,18 +3467,18 @@ function SkillsSlashReport({
               <div className="flex w-5 shrink-0 justify-center pt-1">
                 <span className={cn(
                   'size-2 rounded-full',
-                  isActive ? 'bg-emerald-500/80' : primary.enabled ? 'bg-amber-400/85' : 'bg-black/18'
+                  isActive ? 'bg-emerald-500/80' : primary.enabled ? 'bg-amber-400/85' : 'bg-muted-foreground/35'
                 )} />
               </div>
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex min-w-0 items-center gap-2">
-                  <div className="truncate font-medium tracking-tight text-black/78">{group.name}</div>
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-black/[0.03] px-2 py-0.5 text-[10.5px] text-black/42">
+                  <div className="truncate font-medium tracking-tight text-foreground/82">{group.name}</div>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10.5px] text-muted-foreground">
                     <SourceGlyph className="size-3" />
                     <span>{primary.sourceLabel}</span>
                   </span>
                   {group.variants.length > 1 ? (
-                    <span className="shrink-0 text-[10.5px] text-black/34">{group.variants.length} variants</span>
+                    <span className="shrink-0 text-[10.5px] text-muted-foreground">{group.variants.length} variants</span>
                   ) : null}
                 </div>
                 <div className="space-y-1">
@@ -3509,28 +3509,28 @@ function SkillMetaRow({
   const SourceGlyph = getSkillSourceGlyph(item.sourceKey)
 
   return (
-    <div className="flex min-w-0 items-start gap-2 text-[11px] text-black/38">
+    <div className="flex min-w-0 items-start gap-2 text-[11px] text-muted-foreground">
       {showSource ? (
-        <span className="inline-flex shrink-0 items-center gap-1 text-black/32">
+        <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
           <SourceGlyph className="size-3" />
           <span>{item.sourceLabel}</span>
         </span>
       ) : (
-        <span className={cn('mt-[4px] size-1.5 shrink-0 rounded-full', item.enabled ? 'bg-emerald-500/55' : 'bg-black/14')} />
+        <span className={cn('mt-[4px] size-1.5 shrink-0 rounded-full', item.enabled ? 'bg-emerald-500/55' : 'bg-muted-foreground/35')} />
       )}
       <div className="min-w-0 truncate">
         <span>{item.enabled ? 'enabled' : 'disabled'}</span>
-        <span className="px-1 text-black/18">·</span>
+        <span className="px-1 text-muted-foreground/55">·</span>
         <span>
-          <span className="text-black/30">status </span>
-          <span className="font-mono italic text-black/46">{item.status}</span>
+          <span className="text-muted-foreground">status </span>
+          <span className="font-mono italic text-foreground/72">{item.status}</span>
         </span>
         {item.shadowedBy ? (
           <>
-            <span className="px-1 text-black/18">·</span>
+            <span className="px-1 text-muted-foreground/55">·</span>
             <span>
-              <span className="text-black/30">shadowed by </span>
-              <span className="font-mono italic text-black/46">{item.shadowedBy}</span>
+              <span className="text-muted-foreground">shadowed by </span>
+              <span className="font-mono italic text-foreground/72">{item.shadowedBy}</span>
             </span>
           </>
         ) : null}
@@ -3669,7 +3669,7 @@ function CodeBlock({
     return (
       <div
         className={cn(
-          'my-2 text-black/76',
+          'my-2 text-foreground/82',
           densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
         )}
       >
@@ -3682,7 +3682,7 @@ function CodeBlock({
     return (
       <div
         className={cn(
-          'my-3 pl-4 text-black/72 italic',
+          'my-3 pl-4 text-muted-foreground italic',
           densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
         )}
       >
@@ -3720,7 +3720,7 @@ function CodeBlock({
         <button
           type="button"
           className={cn(
-            'inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] text-black/45 transition-all duration-150 hover:bg-black/[0.03] hover:text-black/68',
+            'inline-flex h-5 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-accent-foreground',
             animateCopy && 'scale-[1.03] bg-emerald-500/10 text-emerald-600'
           )}
           onClick={copyCode}
@@ -3732,7 +3732,7 @@ function CodeBlock({
       </div>
       <div className={cn(SURFACE_CARD_TOKENS.background, densityMode === 'compact' ? 'px-3.5 pb-2.5 pt-2' : 'px-4 pb-3 pt-2.5')}>
         <pre className={cn(
-          'm-0 overflow-x-auto whitespace-pre bg-transparent !bg-transparent font-mono text-black/80',
+          'm-0 overflow-x-auto whitespace-pre bg-transparent !bg-transparent font-mono text-foreground/86',
           densityMode === 'compact' ? 'text-[11.5px] leading-5.5' : 'text-[12px] leading-6'
         )}>
           {displayCode}
@@ -3931,7 +3931,7 @@ function MessageCopyButton({
       onClick={onClick}
       aria-label={copied ? '已复制' : '复制消息'}
       className={cn(
-        'h-4 w-4 shrink-0 rounded-full border-0 bg-transparent p-0 text-black/14 shadow-none transition-[opacity,color,background-color,box-shadow] duration-150 hover:bg-black/[0.016] hover:text-black/45',
+        'h-4 w-4 shrink-0 rounded-full border-0 bg-transparent p-0 text-muted-foreground/55 shadow-none transition-[opacity,color,background-color,box-shadow] duration-150 hover:bg-accent hover:text-accent-foreground',
         visible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
         copied && 'opacity-100 bg-emerald-500/8 text-emerald-600 shadow-[0_0_0_1px_rgba(16,185,129,0.1)]',
         side === 'left' ? 'order-first' : 'order-last'
@@ -3980,24 +3980,24 @@ function getAssistantStatusMeta(message: Message) {
           : 'info')
   if (kind === 'success') {
     return {
-      containerClass: 'border-emerald-200/80 bg-emerald-50/75 text-emerald-800/85',
+      containerClass: 'border-emerald-500/35 bg-emerald-500/12 text-emerald-500',
       dotClass: 'bg-emerald-500',
     }
   }
   if (kind === 'partial') {
     return {
-      containerClass: 'border-amber-200/80 bg-amber-50/80 text-amber-800/85',
+      containerClass: 'border-amber-500/35 bg-amber-500/12 text-amber-500',
       dotClass: 'bg-amber-500',
     }
   }
   if (kind === 'failed') {
     return {
-      containerClass: 'border-rose-200/80 bg-rose-50/80 text-rose-800/85',
+      containerClass: 'border-rose-500/35 bg-rose-500/12 text-rose-500',
       dotClass: 'bg-rose-500',
     }
   }
   return {
-    containerClass: 'border-sky-200/80 bg-sky-50/80 text-sky-800/85',
+    containerClass: 'border-sky-500/35 bg-sky-500/12 text-sky-500',
     dotClass: 'bg-sky-500',
   }
 }
@@ -4343,10 +4343,10 @@ function renderInlineToolSummary(line: string) {
 
         return (
           <React.Fragment key={`${segment}-${index}`}>
-            {separatorNeeded ? <span className="shrink-0 text-black/24">·</span> : null}
+            {separatorNeeded ? <span className="shrink-0 text-muted-foreground/45">·</span> : null}
             <span className="inline-flex min-w-0 items-center gap-1">
-              {label ? <span className="shrink-0 text-black/34">{label}</span> : null}
-              <span className="min-w-0 truncate rounded-[3px] bg-black/[0.04] px-1.5 py-[1px] font-mono italic text-black/48">
+              {label ? <span className="shrink-0 text-muted-foreground/70">{label}</span> : null}
+              <span className="min-w-0 truncate rounded-[3px] bg-muted px-1.5 py-[1px] font-mono italic text-foreground/70">
                 {value}
               </span>
             </span>
@@ -4486,14 +4486,14 @@ async function copyTextToClipboard(text: string) {
 
 function EmptyState({ sessionTitle, projectLabel }: { sessionTitle: string; projectLabel: string }) {
   return (
-    <div className="flex min-h-[55vh] flex-col items-center justify-center gap-6 rounded-[2rem] border border-dashed border-black/5 bg-white/60 px-8 py-16 text-center">
-      <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-black/5 text-black/60 shadow-inner">
+    <div className="flex min-h-[55vh] flex-col items-center justify-center gap-6 rounded-[2rem] border border-dashed border-border/70 bg-surface px-8 py-16 text-center">
+      <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-muted text-muted-foreground shadow-inner">
         <Sparkles className="h-8 w-8" />
       </div>
         <div className="max-w-xl space-y-3">
         <h2 className="text-[22px] font-semibold tracking-tight">{sessionTitle}</h2>
-        <p className="text-[13px] leading-6 text-black/50">
-          当前工作区是 <span className="text-black/80">{projectLabel}</span>。输入任务后，右侧会按照 Codex 的节奏显示变更摘要、思考过程和正文。
+        <p className="text-[13px] leading-6 text-muted-foreground">
+          当前工作区是 <span className="text-foreground/85">{projectLabel}</span>。输入任务后，右侧会按照 Codex 的节奏显示变更摘要、思考过程和正文。
         </p>
       </div>
     </div>
@@ -4535,30 +4535,30 @@ function RecoveryCard({
   const reasonLabel = summarizeDegradedReason(degradedReason)
 
   return (
-    <div className="relative w-full overflow-hidden rounded-[6px] border border-emerald-200/70 bg-emerald-50/55 px-3 py-2.5">
+    <div className="relative w-full overflow-hidden rounded-[6px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5">
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-emerald-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10">
-          <Check className="h-3.5 w-3.5 text-emerald-600" />
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+          <Check className="h-3.5 w-3.5 text-emerald-500" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-900/90">任务已部分完成</div>
-            <span className="rounded-full border border-emerald-300/70 bg-emerald-100/80 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-700/90">
+            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-500">任务已部分完成</div>
+            <span className="rounded-full border border-emerald-500/35 bg-emerald-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-500">
               {isRecovering ? '恢复中' : '可继续恢复'}
             </span>
           </div>
-          <div className="mt-0.5 text-[11.5px] leading-4.5 text-emerald-800/70">
+          <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">
             {isRecovering
               ? '正在基于已保留的恢复点继续补全未完成部分，不会重复已确认的副作用操作。'
               : '已保留本轮已确认的执行结果。继续后只补全未完成部分，不会重复已确认的副作用操作。'}
           </div>
           {reasonLabel ? (
-            <div className="mt-1 text-[11px] leading-4 text-emerald-700/75">
+            <div className="mt-1 text-[11px] leading-4 text-emerald-500/85">
               中断原因：{reasonLabel}
             </div>
           ) : null}
-          <div className="mt-1.25 break-words rounded-md bg-white/45 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-700/70">
+          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-500/85">
             {truncateText(error, 500)}
           </div>
           {resumeCursor && onResume ? (
@@ -4566,7 +4566,7 @@ function RecoveryCard({
               type="button"
               onClick={() => onResume(resumeCursor)}
               disabled={isRecovering}
-              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-100/90 px-2.5 py-1 text-[11px] font-medium text-emerald-800 transition-colors hover:bg-emerald-200/80 disabled:cursor-default disabled:opacity-60"
+              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/14 px-2.5 py-1 text-[11px] font-medium text-emerald-500 transition-colors hover:bg-emerald-500/22 disabled:cursor-default disabled:opacity-60"
             >
               <RotateCcw className="h-3 w-3" />
               {isRecovering ? '正在恢复未完成任务…' : '继续未完成任务'}
@@ -4599,30 +4599,30 @@ function ErrorCard({
   const { title, suggestion, isConnection, kindLabel } = classifyError(error, taskOutcome)
 
   return (
-    <div className="relative w-full overflow-hidden rounded-[6px] border border-rose-200/50 bg-rose-50/32 px-3 py-2.5">
+    <div className="relative w-full overflow-hidden rounded-[6px] border border-rose-500/40 bg-rose-500/10 px-3 py-2.5">
       <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-rose-400/90" />
       <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/8">
-          <AlertTriangle className="h-3.5 w-3.5 text-rose-500/92" />
+        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/14">
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-rose-800/90">{title}</div>
-            <span className="rounded-full border border-rose-300/70 bg-rose-100/70 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-700/90">
+            <div className="text-[12.5px] font-medium leading-4.5 text-rose-500">{title}</div>
+            <span className="rounded-full border border-rose-500/40 bg-rose-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-500">
               {kindLabel}
             </span>
           </div>
           {suggestion && (
-            <div className="mt-0.5 text-[11.5px] leading-4.5 text-rose-700/68">{suggestion}</div>
+            <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">{suggestion}</div>
           )}
-          <div className="mt-1.25 break-words rounded-md bg-white/32 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-600/72">
+          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-500/90">
             {truncateText(error, 500)}
           </div>
           {isConnection && onRetry && (
             <button
               type="button"
               onClick={onRetry}
-              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
             >
               <RotateCcw className="h-3 w-3" />
               重试
@@ -4632,7 +4632,7 @@ function ErrorCard({
             <button
               type="button"
               onClick={() => onResume(resumeCursor)}
-              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-100/68 px-2.5 py-1 text-[11px] font-medium text-rose-700 transition-colors hover:bg-rose-200/60"
+              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
             >
               继续未完成任务
             </button>
@@ -4809,15 +4809,15 @@ function ThinkingBlock({
 
   return (
     <div className="relative mb-3 pl-4">
-      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-black/14" />
+      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-border/70" />
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] font-light italic tracking-tight text-black/30 transition-colors hover:text-black/46"
+        className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] font-light italic tracking-tight text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-black/30" />
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/70" />
         <span>已完成思考</span>
-        <span className="text-black/26 not-italic"> {durationLabel}</span>
+        <span className="text-muted-foreground/70 not-italic"> {durationLabel}</span>
         <ChevronDown className={cn('ml-0.5 h-3 w-3 transition-transform', open && 'rotate-180')} />
       </button>
 
@@ -4827,8 +4827,8 @@ function ThinkingBlock({
           open ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0'
         )}
       >
-        <div className="ml-[10px] border-l border-black/8 pl-3 pt-1">
-          <div className="whitespace-pre-wrap px-1 text-[11.5px] font-light italic leading-6 text-black/44">
+        <div className="ml-[10px] border-l border-border/55 pl-3 pt-1">
+          <div className="whitespace-pre-wrap px-1 text-[11.5px] font-light italic leading-6 text-muted-foreground">
             {thinking}
           </div>
         </div>
@@ -4850,9 +4850,9 @@ function ThinkingSummaryNode({
 
   return (
     <div className="relative mb-3 pl-4">
-      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-black/14" />
-      <div className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] italic tracking-tight text-black/28">
-        <span className="h-1.5 w-1.5 rounded-full bg-black/28" />
+      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-border/70" />
+      <div className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] italic tracking-tight text-muted-foreground">
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/70" />
         <span className="truncate">{label}</span>
       </div>
     </div>
@@ -4908,7 +4908,7 @@ function MenuItemButton({
     <DropdownMenuItem
       className={cn(
         'h-8 rounded-[6px] px-2.5 text-[12.5px] font-medium',
-        active ? 'bg-black/[0.045] text-black/90' : 'text-black/82'
+        active ? 'bg-accent text-accent-foreground' : 'text-popover-foreground'
       )}
       onSelect={() => onClick?.()}
     >

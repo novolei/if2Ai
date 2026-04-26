@@ -24,12 +24,12 @@ interface SecurityConfirmStepProps {
 
 /** Risk disclosure items (1-7, informational only). */
 const RISK_ITEMS = [
-  'if2AI 默认以个人模式运行，所有 AI 请求都会使用你配置的账号。',
+  'If2Ai 默认以个人模式运行，所有 AI 请求都会使用你配置的账号。',
   '安装过程在 ~/.if2ai/ 下创建并修改配置文件。',
   '安装完成后会自动启动各服务进程（LocalServer / Gateway）。',
   '本应用会读取并存储你的 AI 凭据（API Key / OAuth Token）。',
   '通讯 Bot 配置需要 App ID、App Secret 等敏感权限。',
-  'if2AI 需要 Node.js 18+ 环境。',
+  'If2Ai 需要 Node.js 18+ 环境。',
   '首次安装可能需要额外权限，或等待后台服务初始化。',
 ];
 

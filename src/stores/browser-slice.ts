@@ -21,6 +21,22 @@ export interface BrowserEntry {
   url: string | null
   /** Base-64 JPEG thumbnail of the current viewport, if available. */
   thumbnail: string | null
+  /** Smart Browser backend label. */
+  backend: 'local_rust_cdp' | 'browser_use_mcp' | 'browser_use_cloud'
+  /** Current page title, if known. */
+  title: string | null
+  /** Whether the human has taken over the browser. */
+  takenOver: boolean
+  /** Most recent browser action, if projected. */
+  lastAction: string | null
+  /** Diagnostic counts projected from the backend. */
+  diagnostics: {
+    downloads: number
+    console: number
+    networkErrors: number
+  }
+  /** Browser-use/cloud escalation state. */
+  escalationState: 'none' | 'suggested' | 'approval_required' | 'approved' | 'active' | 'blocked'
 }
 
 /** Shape of the browser store exposed to components. */
@@ -58,6 +74,16 @@ export function setBrowserStatus(
     running: false,
     url: null,
     thumbnail: null,
+    backend: 'local_rust_cdp',
+    title: null,
+    takenOver: false,
+    lastAction: null,
+    diagnostics: {
+      downloads: 0,
+      console: 0,
+      networkErrors: 0,
+    },
+    escalationState: 'none',
   }
   _bySession = {
     ..._bySession,
@@ -86,6 +112,11 @@ function _subscribe(listener: () => void): () => void {
 
 function _getSnapshot(): Record<string, BrowserEntry> {
   return _bySession
+}
+
+/** Read the current browser snapshot without subscribing. */
+export function getBrowserSnapshot(): Readonly<Record<string, BrowserEntry>> {
+  return _getSnapshot()
 }
 
 /**

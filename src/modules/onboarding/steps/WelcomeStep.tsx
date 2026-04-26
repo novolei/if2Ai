@@ -28,7 +28,7 @@ const FEATURES = [
   {
     icon: <Terminal className="h-4 w-4" />,
     title: '无需命令行',
-    description: '无需命令行，把安装步骤折叠进清单补充，适合第一次接触 if2AI 的用户',
+    description: '无需命令行，把安装步骤折叠进清单补充，适合第一次接触 If2Ai 的用户',
   },
   {
     icon: <LayoutGrid className="h-4 w-4" />,
@@ -55,7 +55,7 @@ export function WelcomeStep({ onNext, onWindowDrag }: WelcomeStepProps) {
       rightPanel={
         <InfoPanel
           stepLabel="STEP 1: WELCOME"
-          title="让 if2AI 在几分钟内就绪。"
+          title="让 If2Ai 在几分钟内就绪。"
           bullets={[
             '每一步都有实时反馈，不让你猜',
             '可随时退出重来，不会丢失任何操作',
@@ -71,12 +71,12 @@ export function WelcomeStep({ onNext, onWindowDrag }: WelcomeStepProps) {
               约 3 分钟即可完成
             </span>
             {[
-              { num: 1, label: '欢迎向导', desc: '了解 if2AI 安装流程' },
+              { num: 1, label: '欢迎向导', desc: '了解 If2Ai 安装流程' },
               { num: 2, label: '系统预检', desc: '检查并安装 Embedded 模型' },
               { num: 3, label: '安全确认', desc: '了解所有安全注意事项' },
               { num: 4, label: '模型服务商', desc: '选择并验证 AI 模型来源' },
               { num: 5, label: '通讯渠道', desc: '接入社交/消息平台' },
-              { num: 6, label: '激活', desc: '唤醒 if2AI Agent 并完成配置' },
+              { num: 6, label: '激活', desc: '唤醒 If2Ai Agent 并完成配置' },
             ].map((s) => (
               <InfoCard key={s.num} className="flex items-start gap-2.5">
                 <div
@@ -116,7 +116,7 @@ export function WelcomeStep({ onNext, onWindowDrag }: WelcomeStepProps) {
           {currentStep}
         </div>
         <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
-          欢迎来到 if2AI
+          欢迎来到 If2Ai
         </h1>
       </div>
 

@@ -211,7 +211,7 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
     <div
       ref={containerRef}
       style={positioningStyle}
-      className={`pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-black/[0.08] bg-white/90 px-1.5 py-1.5 text-[10.5px] shadow-sm backdrop-blur-md transition-shadow ${
+      className={`pointer-events-auto absolute z-30 flex items-center gap-1 rounded-xl border border-border/70 bg-popover/92 px-1.5 py-1.5 text-[10.5px] text-popover-foreground shadow-sm backdrop-blur-md transition-shadow ${
         dragging ? 'shadow-md' : ''
       }`}
     >
@@ -224,8 +224,8 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
         onPointerCancel={onHandlePointerUp}
         title="拖动浮层"
         aria-label="拖动浮层"
-        className={`group/grip flex items-center justify-center rounded p-0.5 text-black/25 hover:text-black/55 ${
-          dragging ? 'cursor-grabbing text-black/55' : 'cursor-grab'
+        className={`group/grip flex items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground ${
+          dragging ? 'cursor-grabbing text-accent-foreground bg-accent' : 'cursor-grab'
         }`}
       >
         <GripVertical className="size-3" />
@@ -238,7 +238,7 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
           <span className="relative inline-flex size-2 rounded-full bg-jade" />
         </span>
       ) : (
-        <Volume2 className={`size-3 ${enabled ? 'text-jade' : 'text-black/30'}`} />
+        <Volume2 className={`size-3 ${enabled ? 'text-jade' : 'text-muted-foreground'}`} />
       )}
 
       {/* 状态文字 / Profile picker */}
@@ -258,7 +258,7 @@ export function AgentVoiceIndicator({ isPlaying, pending }: Props) {
         type="button"
         onClick={toggleEnabled}
         title={enabled ? '关闭 Agent 语音' : '开启 Agent 语音'}
-        className="ml-0.5 rounded p-0.5 text-black/35 hover:bg-black/5 hover:text-black/65"
+        className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       >
         {enabled ? <Volume2 className="size-3" /> : <VolumeX className="size-3" />}
       </button>

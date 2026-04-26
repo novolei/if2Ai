@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
 use crate::modules::api::ToolDefinition;
@@ -286,6 +286,13 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
     } = inputs;
+
+    // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
+    let run_id_for_ledger = run_event_logger.run_id().to_string();
+    let app_data_dir_for_ledger = app_handle_for_after_turn
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     tracing::info!(
         "[start_agent_stream] Spawned background task for stream_id: {}",
@@ -773,6 +780,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             has_successful_mutating_tool,
             sanitized_dropped_invalid_tool_use_inputs,
             sanitize_invalid_tool_use_samples,
+            run_id: run_id_for_ledger.clone(),
+            app_data_dir: app_data_dir_for_ledger.clone(),
         };
         let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
         accumulated_text = tool_result.accumulated_text;

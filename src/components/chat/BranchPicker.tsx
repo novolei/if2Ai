@@ -231,8 +231,8 @@ export function BranchPicker({
           className={cn(
             'flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
             noRepo
-              ? 'text-black/35 hover:bg-amber-50 hover:text-amber-700'
-              : 'text-black/40 hover:bg-black/[0.04] hover:text-black/70',
+              ? 'text-amber-600 hover:bg-amber-500/12 hover:text-amber-500'
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
             className,
           )}
           aria-label={noRepo ? '初始化 Git 仓库' : '切换 git 分支'}
@@ -259,7 +259,7 @@ export function BranchPicker({
         sideOffset={12}
         collisionPadding={16}
         className={cn(
-          'w-[260px] overflow-hidden rounded-2xl border border-black/[0.06] bg-white/95 p-0 text-[13px] backdrop-blur-2xl backdrop-saturate-150',
+          'w-[260px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 p-0 text-[13px] text-popover-foreground backdrop-blur-2xl backdrop-saturate-150',
           // 多层阴影模拟"浮起"：近距离柔光 + 中距离环境光 + 远距离落影 + 0.5px hairline
           'shadow-[0_2px_4px_rgba(0,0,0,0.04),0_8px_20px_rgba(0,0,0,0.08),0_24px_56px_rgba(0,0,0,0.16),0_0_0_0.5px_rgba(0,0,0,0.04)]',
           // Radix open/close 动画：略带弹性的 scale + 从上方滑入
@@ -282,7 +282,7 @@ export function BranchPicker({
               <button
                 type="button"
                 onClick={() => setPendingCheckout(null)}
-                className="rounded-md px-2.5 py-1 text-[11.5px] text-black/55 outline-none transition-colors hover:bg-black/[0.05] focus-visible:bg-black/[0.05]"
+                className="rounded-md px-2.5 py-1 text-[11.5px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
               >
                 返回
               </button>
@@ -299,21 +299,21 @@ export function BranchPicker({
 
         {/* Search */}
         <div className="flex items-center gap-2 px-3.5 pt-3 pb-2.5">
-          <Search className="h-3.5 w-3.5 shrink-0 text-black/30" />
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"
             autoFocus
             placeholder="搜索分支"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent text-[11.5px] leading-6 text-black/85 outline-none placeholder:text-black/35"
+            className="flex-1 bg-transparent text-[11.5px] leading-6 text-popover-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
 
         {/* List */}
         <div className="max-h-[280px] overflow-y-auto pb-1.5">
           {state.kind === 'loading' && (
-            <div className="flex items-center justify-center gap-2 py-7 text-[13px] text-black/40">
+            <div className="flex items-center justify-center gap-2 py-7 text-[13px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               <span>加载中…</span>
             </div>
@@ -325,11 +325,11 @@ export function BranchPicker({
           )}
           {state.kind === 'ready' && (
             <>
-              <div className="px-3.5 pb-1 pt-1 text-[11.5px] text-black/40">
+              <div className="px-3.5 pb-1 pt-1 text-[11.5px] text-muted-foreground">
                 分支
               </div>
               {filtered.length === 0 && (
-                <div className="px-3.5 py-5 text-center text-[13px] text-black/30">
+                <div className="px-3.5 py-5 text-center text-[13px] text-muted-foreground">
                   无匹配分支
                 </div>
               )}
@@ -348,35 +348,35 @@ export function BranchPicker({
                       // 同位置注释 —— 抑制 WebKit `:focus-visible` 默认蓝
                       // 描边被 PopoverContent overflow-hidden 切成两条横
                       // 线的渲染异常。
-                      'flex w-full items-start gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-black/[0.035] focus-visible:bg-black/[0.05]',
+                      'flex w-full items-start gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground',
                       isBusy && 'opacity-60',
                     )}
                   >
                     <GitBranch
                       className={cn(
                         'mt-[3px] h-[14px] w-[14px] shrink-0',
-                        isCurrent ? 'text-black/70' : 'text-black/45',
+                        isCurrent ? 'text-primary' : 'text-muted-foreground',
                       )}
                       strokeWidth={1.75}
                     />
                     <div className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] leading-6 text-black/82">
+                      <span className="block truncate text-[13px] leading-6 text-popover-foreground">
                         {b.name}
                       </span>
                       {isCurrent && state.uncommittedCount > 0 && (
-                        <div className="text-[11.5px] leading-5 text-black/40">
+                        <div className="text-[11.5px] leading-5 text-muted-foreground">
                           未提交的更改：{state.uncommittedCount} 个文件
                         </div>
                       )}
                     </div>
                     {isCurrent && !isBusy && (
                       <Check
-                        className="mt-[5px] h-[13px] w-[13px] shrink-0 text-black/65"
+                        className="mt-[5px] h-[13px] w-[13px] shrink-0 text-primary"
                         strokeWidth={2}
                       />
                     )}
                     {isBusy && (
-                      <Loader2 className="mt-[5px] h-3.5 w-3.5 shrink-0 animate-spin text-black/40" />
+                      <Loader2 className="mt-[5px] h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
                     )}
                   </button>
                 )
@@ -386,15 +386,15 @@ export function BranchPicker({
         </div>
 
         {/* Create new branch */}
-        <div className="border-t border-black/[0.06]">
+        <div className="border-t border-border/65">
           {!creating ? (
             <button
               type="button"
               onClick={() => setCreating(true)}
               disabled={state.kind !== 'ready'}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-[11.5px] leading-6 text-black/68 outline-none transition-colors hover:bg-black/[0.035] focus-visible:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-[11.5px] leading-6 text-popover-foreground/80 outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Plus className="h-3.5 w-3.5 text-black/45" strokeWidth={2} />
+              <Plus className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
               创建并检出新分支…
             </button>
           ) : (
@@ -414,13 +414,13 @@ export function BranchPicker({
                     setCreateName('')
                   }
                 }}
-                className="flex-1 rounded-lg border border-black/10 bg-white/70 px-2.5 py-1.5 text-[13px] outline-none focus:border-black/30"
+                className="flex-1 rounded-lg border border-border/70 bg-muted px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/60"
               />
               <button
                 type="button"
                 onClick={() => void handleCreate()}
                 disabled={!createName.trim() || busyBranch !== null}
-                className="rounded-lg bg-black/80 px-3 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 创建
               </button>

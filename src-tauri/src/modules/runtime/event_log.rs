@@ -241,6 +241,13 @@ impl RunEventLogger {
         self.sink.as_ref().map(|sink| sink.path.as_path())
     }
 
+    /// Current monotonic sequence number for this run (T-020).
+    /// Returns the last `seq` that was assigned (0 if no events have been logged yet).
+    #[must_use]
+    pub fn current_seq(&self) -> u64 {
+        self.seq.load(Ordering::SeqCst)
+    }
+
     fn make_entry(&self, event_type: impl Into<String>, payload: impl Serialize) -> RunLogEntry {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         let mut payload = serde_json::to_value(payload).unwrap_or_else(|error| {

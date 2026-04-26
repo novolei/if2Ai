@@ -299,17 +299,17 @@ export function MemoryBrowser({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#f6f7f8]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--app-main-bg,#f6f7f8)] text-foreground">
       {/* Header — draggable via onStartWindowDrag when running in main window */}
       <div
-        className="shrink-0 cursor-default select-none border-b border-black/5 bg-white/60 px-4 py-3"
+        className="shrink-0 cursor-default select-none border-b border-border/60 bg-card/60 px-4 py-3 backdrop-blur"
         onMouseDown={onStartWindowDrag}
       >
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-[15px] font-semibold">记忆浏览器</h2>
           <div className="flex items-center gap-3">
             {totalCount !== null && (
-              <span className="text-[12px] text-black/40">
+              <span className="text-[12px] text-muted-foreground">
                 {searchTotalCount !== null
                   ? `${searchTotalCount} / ${totalCount} 条匹配`
                   : `共 ${totalCount} 条记忆`}
@@ -336,10 +336,10 @@ export function MemoryBrowser({
       </div>
 
       {/* Search */}
-      <div className="shrink-0 border-b border-black/5 bg-white/40 px-4 py-2.5">
+      <div className="shrink-0 border-b border-border/60 bg-card/40 px-4 py-2.5 backdrop-blur">
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black/30" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
             <input
               type="text"
               placeholder="搜索记忆..."
@@ -348,7 +348,7 @@ export function MemoryBrowser({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSearch()
               }}
-              className="w-full rounded-md border border-black/10 bg-white/80 py-2 pl-9 pr-3 text-[13px] outline-none placeholder:text-black/30 focus:border-primary/30 focus:ring-1 focus:ring-primary/20"
+              className="w-full rounded-md border border-border/70 bg-card/80 py-2 pl-9 pr-3 text-[13px] outline-none placeholder:text-muted-foreground/55 focus:border-primary/40 focus:ring-1 focus:ring-primary/20"
             />
           </div>
           <Button
@@ -378,13 +378,13 @@ export function MemoryBrowser({
       </div>
 
       {/* Scope Segmented Control — three-tier visibility filter */}
-      <div className="shrink-0 border-b border-black/5 bg-white/40 px-4 py-2">
+      <div className="shrink-0 border-b border-border/60 bg-card/40 px-4 py-2 backdrop-blur">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-black/40">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             范围
           </span>
           <div
-            className="inline-flex overflow-hidden rounded-md border border-black/10 bg-white/70 text-[12px]"
+            className="inline-flex overflow-hidden rounded-md border border-border/70 bg-card/70 text-[12px]"
             role="tablist"
             aria-label="Memory scope filter"
           >
@@ -412,7 +412,7 @@ export function MemoryBrowser({
                     'px-3 py-1 transition-colors ' +
                     (isActive
                       ? 'bg-primary/15 text-primary font-medium'
-                      : 'text-black/60 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40')
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40')
                   }
                 >
                   {opt.label}
@@ -474,7 +474,7 @@ export function MemoryBrowser({
                 return (
                   <li
                     key={c.key}
-                    className="flex items-center gap-3 rounded-md border border-amber-200/60 bg-white/60 px-3 py-2"
+                    className="flex items-center gap-3 rounded-md border border-amber-500/30 bg-card/60 px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[12px] font-medium text-foreground/90">
@@ -519,17 +519,17 @@ export function MemoryBrowser({
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-[13px] text-black/40">
+          <div className="flex items-center justify-center py-12 text-[13px] text-muted-foreground">
             加载中...
           </div>
         ) : entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-[14px] text-black/50">
+            <p className="text-[14px] text-muted-foreground">
               {searchQuery.trim()
                 ? `未找到包含「${searchQuery.trim()}」的记忆`
                 : '暂无记忆条目'}
             </p>
-            <p className="mt-1 text-[12px] text-black/30">
+            <p className="mt-1 text-[12px] text-muted-foreground/70">
               {searchQuery.trim() && totalCount !== null
                 ? `当前范围共 ${totalCount} 条，匹配 0 条`
                 : '记忆会在对话过程中自动存储'}
@@ -570,12 +570,12 @@ export function MemoryBrowser({
                   })}
                 </div>
                 {totalPages > 1 ? (
-                  <div className="mt-3 flex items-center justify-between rounded-xl border border-black/[0.06] bg-black/[0.02] px-3 py-2 text-[11.5px]">
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-[11.5px]">
                     <span className="text-muted-foreground">
                       第 <strong className="font-semibold tabular-nums text-foreground/85">{safePageIndex + 1}</strong>
-                      <span className="mx-0.5 text-black/30">/</span>
+                      <span className="mx-0.5 text-muted-foreground/60">/</span>
                       <strong className="font-semibold tabular-nums text-foreground/85">{totalPages}</strong> 页
-                      <span className="ml-2 text-black/40">
+                      <span className="ml-2 text-muted-foreground">
                         共 {entries.length} 条 · 每页 {PAGE_SIZE}
                       </span>
                     </span>
@@ -584,7 +584,7 @@ export function MemoryBrowser({
                         type="button"
                         onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
                         disabled={safePageIndex === 0}
-                        className="rounded-md border border-black/[0.08] bg-white px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-md border border-border/70 bg-card px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         上一页
                       </button>
@@ -594,7 +594,7 @@ export function MemoryBrowser({
                           setPageIndex((i) => Math.min(totalPages - 1, i + 1))
                         }
                         disabled={safePageIndex >= totalPages - 1}
-                        className="rounded-md border border-black/[0.08] bg-white px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-black/[0.04] disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-md border border-border/70 bg-card px-2 py-1 text-[11px] font-medium text-foreground/75 transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         下一页
                       </button>

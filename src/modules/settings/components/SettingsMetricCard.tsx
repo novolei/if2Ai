@@ -13,14 +13,14 @@ export function SettingsMetricCard({ icon: Icon, label, value, detail, className
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-2xl border border-black/[0.07] bg-white px-5 py-4 transition-all',
+        'group relative overflow-hidden rounded-2xl border border-border/70 bg-card px-5 py-4 text-card-foreground transition-all',
         className,
       )}
-      style={{ boxShadow: '0 1px 8px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.03)' }}
+      style={{ boxShadow: 'var(--shadow-sm)' }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-black/30">{label}</div>
+          <div className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground/70">{label}</div>
           <div className="text-[26px] font-semibold leading-none tracking-tight tabular-nums">{value}</div>
         </div>
         <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-jade/10 text-jade transition-colors group-hover:bg-jade/15">

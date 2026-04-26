@@ -34,6 +34,12 @@ impl PermissionMode {
     }
 }
 
+/// Permission mode required before Smart Browser can use a cloud browser lane.
+#[must_use]
+pub const fn smart_browser_cloud_required_mode() -> PermissionMode {
+    PermissionMode::Prompt
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionRequest {
     pub tool_name: String,

@@ -25,11 +25,16 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tracing::info;
 
 use crate::modules::browser::events::emit_browser_status;
 use crate::modules::browser::session::WaitState;
 use crate::modules::browser::{BrowserError, BrowserRegistry, ScrollDir};
+use crate::modules::smart_browser::contract::SmartBrowserBackend;
+use crate::modules::smart_browser::runtime::{
+    execute_browser_use_mcp_action, resolve_backend_for_args, should_route_to_browser_use_mcp,
+};
 use crate::modules::tools::output::ToolOutput;
 use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler, ToolHandlerMultimodal};
 use crate::modules::viewer_registry::sync_viewer_url;
@@ -190,6 +195,11 @@ pub fn browser_tool_entry(registry: Arc<BrowserRegistry>) -> ToolEntry {
                              "tabs","switch_tab","close_tab","downloads","console","network"],
                     "description": "The browser operation to perform."
                 },
+                "backend": {
+                    "type": "string",
+                    "enum": ["local_rust_cdp", "browser_use_mcp", "browser_use_cloud"],
+                    "description": "Optional Smart Browser backend. Defaults to local_rust_cdp."
+                },
                 "tab_index": {
                     "type": "integer",
                     "description": "Tab index from action='tabs' (required for 'switch_tab' / 'close_tab')."
@@ -271,9 +281,25 @@ async fn execute_browser_action_multimodal(
     let action = args
         .get("action")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| ToolError::Handler("'action' field is required".into()))?;
+        .ok_or_else(|| ToolError::Handler("'action' field is required".into()))?
+        .to_string();
 
     if action == "screenshot" {
+        let backend = resolve_backend_for_args(
+            &args,
+            std::env::var("IF2AI_SMART_BROWSER_BACKEND").ok().as_deref(),
+        )
+        .map_err(|error| ToolError::Handler(error.to_string()))?;
+        if should_route_to_browser_use_mcp(backend) {
+            return execute_browser_action(registry, args, ctx)
+                .await
+                .map(ToolOutput::text);
+        }
+        if backend == SmartBrowserBackend::BrowserUseCloud {
+            return execute_browser_action(registry, args, ctx)
+                .await
+                .map(ToolOutput::text);
+        }
         return execute_screenshot_multimodal(registry, ctx).await;
     }
 
@@ -356,6 +382,11 @@ async fn execute_browser_action(
         .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::Handler("'action' field is required".into()))?;
+    let backend = resolve_backend_for_args(
+        &args,
+        std::env::var("IF2AI_SMART_BROWSER_BACKEND").ok().as_deref(),
+    )
+    .map_err(|error| ToolError::Handler(error.to_string()))?;
 
     // Extract session_id from the tool context.
     let session_id = ctx
@@ -374,6 +405,57 @@ async fn execute_browser_action(
             "User has taken over the browser; AI tools are paused. \
              Wait for the next user message before retrying."
                 .to_owned(),
+        ));
+    }
+
+    if should_route_to_browser_use_mcp(backend) {
+        let execution = execute_browser_use_mcp_action(&session_id, action, args.clone())
+            .await
+            .map_err(|error| ToolError::Handler(error.to_string()))?;
+        if let Some(app) = registry.app_handle().cloned() {
+            let event = crate::modules::browser::events::BrowserStatusEvent {
+                session_id: session_id.clone(),
+                running: true,
+                url: execution
+                    .event
+                    .observation
+                    .as_ref()
+                    .and_then(|observation| observation.url.clone())
+                    .or_else(|| registry.current_url(&session_id)),
+                thumbnail: execution
+                    .event
+                    .observation
+                    .as_ref()
+                    .and_then(|observation| observation.screenshot_base64.clone()),
+                backend: SmartBrowserBackend::BrowserUseMcp,
+                title: execution
+                    .event
+                    .observation
+                    .as_ref()
+                    .and_then(|observation| observation.title.clone()),
+                taken_over: registry.is_taken_over(&session_id),
+                last_action: Some(action.to_string()),
+                downloads_count: 0,
+                console_count: 0,
+                network_error_count: 0,
+                escalation_state: execution
+                    .event
+                    .observation
+                    .as_ref()
+                    .map(|observation| observation.escalation_state)
+                    .unwrap_or_default(),
+            };
+            if let Err(error) = app.emit("browser-status", &event) {
+                tracing::warn!(session_id, "failed to emit browser-use status: {error}");
+            }
+        }
+        return Ok(execution.output);
+    }
+
+    if backend == SmartBrowserBackend::BrowserUseCloud {
+        return Err(ToolError::Handler(
+            "browser_use_cloud requires explicit user approval from the Smart Browser cockpit before tool execution"
+                .to_string(),
         ));
     }
 

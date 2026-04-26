@@ -101,7 +101,7 @@ export function LearnedTraitsPanel() {
 
   if (traits.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-black/10 bg-black/[0.02] px-4 py-6 text-center text-[11.5px] text-muted-foreground">
+      <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center text-[11.5px] text-muted-foreground">
         <Sparkles className="mx-auto mb-2 h-4 w-4 text-violet-500/70" />
         <div>暂时没有累积的跨 session 特征。</div>
         <div className="mt-1 text-[10.5px] opacity-70">
@@ -119,7 +119,7 @@ export function LearnedTraitsPanel() {
         return (
           <div
             key={t.id}
-            className="group flex items-start gap-3 rounded-xl border border-black/[0.06] bg-white/60 px-3.5 py-3 transition-colors hover:bg-white/90"
+            className="group flex items-start gap-3 rounded-xl border border-border bg-card/70 px-3.5 py-3 transition-colors hover:bg-accent/45"
           >
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] font-medium leading-snug text-foreground/90">
@@ -142,7 +142,7 @@ export function LearnedTraitsPanel() {
                 ) : null}
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <div className="h-1 flex-1 overflow-hidden rounded-full bg-black/[0.05]">
+                <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
                   <div
                     className={cn(
                       "h-full rounded-full transition-all duration-300",
@@ -150,7 +150,7 @@ export function LearnedTraitsPanel() {
                         ? "bg-emerald-500/70"
                         : pct >= 40
                           ? "bg-amber-500/70"
-                          : "bg-black/30",
+                          : "bg-muted-foreground/45",
                     )}
                     style={{ width: `${pct}%` }}
                   />
@@ -165,7 +165,7 @@ export function LearnedTraitsPanel() {
               disabled={busy}
               onClick={() => void handleDisagree(t.id, t.trait_text)}
               className={cn(
-                "flex h-7 shrink-0 items-center gap-1 rounded-lg border border-black/[0.08] px-2.5 text-[11px] font-medium",
+                "flex h-7 shrink-0 items-center gap-1 rounded-lg border border-border px-2.5 text-[11px] font-medium",
                 "text-muted-foreground transition-colors",
                 "hover:border-red-300/60 hover:bg-red-50/60 hover:text-red-700",
                 "disabled:cursor-not-allowed disabled:opacity-40",

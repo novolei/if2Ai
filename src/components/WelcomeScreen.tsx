@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import appIconUrl from '@/assets/app-icon.png'
 import type { Project, ProjectMeta } from '@/lib/tauri'
-import { AgentOrb } from './AgentOrb'
 import type { ReactNode } from 'react'
 
 export interface WelcomeScreenProps {
@@ -29,7 +29,18 @@ export function WelcomeScreen({
       <div className="grid w-full max-w-6xl gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card className="border-border/70 bg-background/90 shadow-xl shadow-slate-900/5 backdrop-blur">
           <CardContent className="flex h-full flex-col items-center justify-center gap-8 p-8 text-center lg:p-12">
-            <AgentOrb status="idle" size="hero" />
+            <div className="relative">
+              <div className="absolute inset-[-36px] rounded-[42px] bg-[radial-gradient(circle_at_50%_50%,rgba(239,68,38,0.22),transparent_68%)] blur-2xl" />
+              <div className="relative size-[136px] overflow-hidden rounded-[32px] shadow-[0_1px_0_0.5px_rgba(255,255,255,0.68),0_0_0_0.5px_rgba(0,0,0,0.12),0_16px_36px_rgba(239,68,38,0.20),0_28px_64px_rgba(15,23,42,0.10)]">
+                <img
+                  src={appIconUrl}
+                  alt="If2Ai app icon"
+                  className="size-full object-cover"
+                  draggable={false}
+                />
+                <div className="pointer-events-none absolute inset-0 rounded-[32px] bg-[linear-gradient(145deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.05)_38%,transparent_62%)]" />
+              </div>
+            </div>
 
             <div className="max-w-xl space-y-4">
               <Badge variant="secondary" className="gap-2 rounded-full px-3 py-1.5">

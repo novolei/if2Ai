@@ -8,6 +8,7 @@ import {
   Info,
   Link2,
   Mic,
+  Plug,
   Radio,
   Search,
   Settings,
@@ -55,6 +56,12 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     description:
       "配置 AI 可用工具的运行参数（浏览器 profile / cookies、未来更多工具）。",
     icon: Globe,
+  },
+  {
+    id: "mcp-services",
+    label: "MCP 服务",
+    description: "管理 stdio / remote MCP 服务，作为 agentic tool runtime 的外部能力层。",
+    icon: Plug,
   },
   {
     id: "web-search",

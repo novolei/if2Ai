@@ -276,7 +276,7 @@ export function SidebarTop({
 
   return (
     <div
-      className="window-drag grid h-[60px] grid-cols-[minmax(0,1fr)_auto] items-center border-b border-black/[0.06] select-none"
+    className="window-drag grid h-[60px] grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border/55 select-none"
       onMouseDown={onStartWindowDrag}
     >
       {/* ── Agent identity badge (clickable when a session is active) ── */}
@@ -295,7 +295,7 @@ export function SidebarTop({
           className={cn(
             'window-no-drag group flex min-w-0 items-center gap-2.5 rounded-xl px-1 py-0.5 text-left transition-all',
             canSwitch
-              ? 'cursor-pointer hover:bg-black/[0.04] active:scale-[0.98]'
+              ? 'cursor-pointer hover:bg-accent/70 active:scale-[0.98]'
               : 'cursor-default',
           )}
           disabled={!canSwitch}
@@ -379,21 +379,21 @@ export function SidebarTop({
                 left: popoverPos.left,
                 width: POPOVER_WIDTH,
               }}
-              className="window-no-drag z-[60] overflow-hidden rounded-2xl border border-black/[0.08] bg-white/98 shadow-[0_18px_48px_rgba(15,23,42,0.18)] backdrop-blur-md"
+              className="window-no-drag z-[60] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-[0_18px_48px_rgba(15,23,42,0.24)] backdrop-blur-md"
             >
-              <div className="border-b border-black/[0.06] px-4 py-3">
+              <div className="border-b border-border/65 px-4 py-3">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-black/40">
+                  <div className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                     Switch Persona
                   </div>
-                  <span className="rounded-md bg-amber-50/80 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                  <span className="rounded-md bg-amber-500/12 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-amber-500">
                     Session only
                   </span>
                 </div>
                 <p className="mt-1 text-[11px] leading-[1.55] text-muted-foreground">
                   仅切换
                   {activeTitle ? (
-                    <span className="mx-0.5 rounded bg-black/[0.05] px-1 py-px text-[10.5px] text-foreground/75">
+                    <span className="mx-0.5 rounded bg-muted px-1 py-px text-[10.5px] text-foreground/75">
                       {activeTitle}
                     </span>
                   ) : (
@@ -418,7 +418,7 @@ export function SidebarTop({
                   }
                   fallbackBadge="AUTO"
                 />
-                <div className="my-1.5 mx-2 h-px bg-black/[0.05]" />
+                <div className="my-1.5 mx-2 h-px bg-border/55" />
                 {personaChoices.length === 0 ? (
                   <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">
                     当前 Soul 下暂无可选 Persona
@@ -466,8 +466,8 @@ function PopoverPersonaRow({
       className={cn(
         'group flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-all',
         active
-          ? 'bg-jade/[0.08]'
-          : 'hover:bg-black/[0.03]',
+          ? 'bg-primary/12'
+          : 'hover:bg-accent hover:text-accent-foreground',
       )}
     >
       {avatarSrc ? (
@@ -480,7 +480,7 @@ function PopoverPersonaRow({
           />
         </div>
       ) : (
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-full border border-dashed border-black/[0.12] bg-black/[0.025] text-[9.5px] font-semibold uppercase tracking-wider text-black/45">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-full border border-dashed border-border bg-muted text-[9.5px] font-semibold uppercase tracking-wider text-muted-foreground">
           {fallbackBadge ?? '·'}
         </div>
       )}

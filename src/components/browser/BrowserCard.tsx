@@ -17,12 +17,16 @@ import { useEffect, useState } from 'react'
 import { Expand, Globe, Hand, Pause, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { SmartBrowserCockpit } from '@/modules/smart-browser/SmartBrowserCockpit'
 import {
   closeBrowserSession,
+  approveSmartBrowserCloudEscalation,
+  denySmartBrowserCloudEscalation,
   listenToBrowserStatus,
   openBrowserViewerWindow,
   releaseBrowserTakeover,
   requestBrowserTakeover,
+  requestSmartBrowserCloudEscalation,
 } from '@/lib/tauri'
 import {
   useBrowserStore,
@@ -64,6 +68,7 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
   // a copy in the React tree so the button can flip without a round-trip.
   const [takenOver, setTakenOver] = useState(false)
   const [takeoverPending, setTakeoverPending] = useState(false)
+  const [escalationPending, setEscalationPending] = useState(false)
 
   // Subscribe to the global `"browser-status"` Tauri event.
   // A single listener per BrowserCard instance; cleaned up on unmount or
@@ -86,6 +91,16 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
           running: true,
           url: payload.url,
           thumbnail: payload.thumbnail,
+          backend: payload.backend ?? 'local_rust_cdp',
+          title: payload.title ?? null,
+          takenOver: payload.taken_over ?? false,
+          lastAction: payload.last_action ?? null,
+          diagnostics: {
+            downloads: payload.downloads_count ?? 0,
+            console: payload.console_count ?? 0,
+            networkErrors: payload.network_error_count ?? 0,
+          },
+          escalationState: payload.escalation_state ?? 'none',
         })
       } else {
         // Browser stopped — clear the entry so the card disappears.
@@ -111,10 +126,15 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
     }
   }, [sessionId])
 
+  useEffect(() => {
+    setTakenOver(entry?.takenOver ?? false)
+  }, [entry?.takenOver])
+
   // Nothing to show when the browser is not running.
   if (!entry?.running) return null
 
   const hostname = hostnameOf(entry.url)
+  const cockpitEntry = { ...entry, takenOver }
 
   const handleStop = (): void => {
     void (async () => {
@@ -157,6 +177,35 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
         })
       } finally {
         setTakeoverPending(false)
+      }
+    })()
+  }
+
+  const handleRequestCloudEscalation = (): void => {
+    if (escalationPending) return
+    setEscalationPending(true)
+    void (async () => {
+      const reason = '用户从 Smart Browser cockpit 请求云端浏览器'
+      try {
+        await requestSmartBrowserCloudEscalation(sessionId, reason)
+        const approved = window.confirm('是否批准将此浏览器会话升级到云端浏览器？')
+        if (approved) {
+          await approveSmartBrowserCloudEscalation(sessionId, reason)
+          toast.success('已批准云端浏览器', {
+            description: 'Smart Browser 已记录云端升级批准。',
+          })
+        } else {
+          await denySmartBrowserCloudEscalation(sessionId, reason)
+          toast.info('已保留本地浏览器', {
+            description: '云端升级需要你的明确批准。',
+          })
+        }
+      } catch (err: unknown) {
+        toast.error('云端浏览器申请失败', {
+          description: String(err),
+        })
+      } finally {
+        setEscalationPending(false)
       }
     })()
   }
@@ -273,6 +322,14 @@ export function BrowserCard({ sessionId }: BrowserCardProps) {
         >
           <Square className="h-3 w-3 fill-current" />
         </button>
+      </div>
+      <div className="border-t border-black/5 px-3 py-2">
+        <SmartBrowserCockpit
+          entry={cockpitEntry}
+          compact
+          escalationPending={escalationPending}
+          onRequestCloudEscalation={handleRequestCloudEscalation}
+        />
       </div>
     </div>
   )

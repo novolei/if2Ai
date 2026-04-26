@@ -290,6 +290,7 @@ pub mod gateway;
 pub mod git;
 pub mod harness;
 pub mod host_composition;
+pub mod jiaochang_audio;
 pub mod learning;
 pub mod memory;
 pub mod pinned;
@@ -333,9 +334,11 @@ pub use agent::{
 };
 #[allow(unused_imports)]
 pub use browser::{
-    clear_browser_profile, close_browser_session, get_browser_action_log, get_browser_sessions,
+    approve_smart_browser_cloud_escalation, clear_browser_profile, close_browser_session,
+    deny_smart_browser_cloud_escalation, get_browser_action_log, get_browser_sessions,
     get_browser_settings, get_chrome_status, list_browser_profiles, release_browser_takeover,
-    request_browser_status, request_browser_takeover, set_browser_settings, ChromeStatusPayload,
+    request_browser_status, request_browser_takeover, request_smart_browser_cloud_escalation,
+    set_browser_settings, ChromeStatusPayload,
 };
 #[allow(unused_imports)]
 pub use gateway::{get_gateway_health, get_gateway_url};
@@ -357,6 +360,12 @@ pub use harness::{
 };
 #[allow(unused_imports)]
 pub use host_composition::{compose_desktop_host_state, DesktopHostComposition};
+#[allow(unused_imports)]
+pub use jiaochang_audio::{
+    jiaochang_audio_plugin_cache_clear, jiaochang_audio_plugin_cache_info,
+    jiaochang_audio_plugin_list, jiaochang_audio_plugin_register,
+    jiaochang_audio_plugin_resolve_track_url,
+};
 #[allow(unused_imports)]
 pub use learning::{
     learning_activate_promoted_candidate, learning_apply_promotion_gate,
@@ -391,16 +400,20 @@ pub use project::{
 };
 #[allow(unused_imports)]
 pub use session::{
-    create_session, delete_session, drain_job_monitor_lines, get_session, list_project_sessions,
-    list_sessions, memory_session_set_enabled, rename_session, session_redo, session_undo,
-    session_undo_status, set_session_active_skill_ids, set_session_identity, set_session_pinned,
+    create_session, delete_session, drain_job_monitor_lines, generate_session_title, get_session,
+    list_project_sessions, list_sessions, memory_session_set_enabled, rename_session, session_redo,
+    session_undo, session_undo_status, set_session_active_skill_ids, set_session_identity,
+    set_session_pinned,
 };
 #[allow(unused_imports)]
 pub use settings::{
-    export_trajectories, get_identity_customization_pack, get_memory_config,
-    get_prompt_control_catalog, get_prompt_control_settings, set_identity_customization_pack,
-    set_memory_config, set_prompt_control_settings, IdentityCustomizationPackDto, MemoryConfig,
-    MemoryConfigInput, PromptControlCatalog, PromptControlSettings, PromptControlSettingsInput,
+    export_trajectories, get_identity_customization_pack, get_mcp_service_config,
+    get_memory_config, get_prompt_control_catalog, get_prompt_control_settings,
+    set_identity_customization_pack, set_mcp_service_config, set_memory_config,
+    set_prompt_control_settings, IdentityCustomizationPackDto, McpServiceConfig,
+    McpServiceConfigInput, McpServiceEntry, McpServiceEntryInput, McpServiceTransportSetting,
+    MemoryConfig, MemoryConfigInput, PromptControlCatalog, PromptControlSettings,
+    PromptControlSettingsInput,
 };
 #[allow(unused_imports)]
 pub use skills_hub::{

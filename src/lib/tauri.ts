@@ -147,6 +147,8 @@ export interface TokenUsage {
 export interface SessionMeta {
   id: string;
   title: string;
+  title_icon?: string | null;
+  title_pending?: boolean;
   created_at: string;
   updated_at: string;
   pinned: boolean;
@@ -592,6 +594,16 @@ export async function renameSession(
   return await invoke<SessionMeta>("rename_session", { id, title });
 }
 
+export async function generateSessionTitle(
+  id: string,
+  titleHint?: string | null,
+): Promise<SessionMeta> {
+  return await invoke<SessionMeta>("generate_session_title", {
+    id,
+    titleHint: titleHint ?? null,
+  });
+}
+
 export async function setSessionIdentity(
   id: string,
   identity: SessionIdentityInput,
@@ -697,6 +709,10 @@ export interface Session {
   id: string;
   project_id: string;
   title: string;
+  title_icon?: string | null;
+  title_pending?: boolean;
+  title_request_id?: string | null;
+  title_manually_renamed?: boolean;
   messages: ConversationMessage[];
   created_at: string;
   updated_at: string;
@@ -1387,6 +1403,45 @@ export interface IdentityCustomizationPack {
   custom_personas?: Record<string, CustomPersonaDefinition>;
 }
 
+export type McpServiceTransport =
+  | "stdio"
+  | "sse"
+  | "http"
+  | "ws"
+  | "sdk"
+  | "claudeai-proxy";
+
+export interface McpServiceEntry {
+  name: string;
+  transport: McpServiceTransport;
+  scope: "user" | "project" | "local" | string;
+  editable: boolean;
+  manager_supported: boolean;
+  command?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url?: string | null;
+  headers: Record<string, string>;
+  headers_helper?: string | null;
+  sdk_name?: string | null;
+  proxy_id?: string | null;
+}
+
+export interface McpServiceConfig {
+  user_settings_path: string;
+  restart_required: boolean;
+  servers: McpServiceEntry[];
+}
+
+export type McpServiceEntryInput = Omit<
+  McpServiceEntry,
+  "scope" | "editable" | "manager_supported"
+>;
+
+export interface McpServiceConfigInput {
+  servers: McpServiceEntryInput[];
+}
+
 /** Get the current memory configuration. */
 export async function getMemoryConfig(): Promise<MemoryConfig> {
   return invoke<MemoryConfig>("get_memory_config");
@@ -1421,6 +1476,18 @@ export async function setIdentityCustomizationPack(
   return invoke<IdentityCustomizationPack>("set_identity_customization_pack", {
     request: pack,
   });
+}
+
+/** Load effective MCP services from user/project/local claw settings. */
+export async function getMcpServiceConfig(): Promise<McpServiceConfig> {
+  return invoke<McpServiceConfig>("get_mcp_service_config");
+}
+
+/** Persist user-level MCP services to the claw settings file. */
+export async function setMcpServiceConfig(
+  request: McpServiceConfigInput,
+): Promise<McpServiceConfig> {
+  return invoke<McpServiceConfig>("set_mcp_service_config", { request });
 }
 
 /** Save prompt control settings to the dedicated prompt config directory. */
@@ -1695,6 +1762,14 @@ export interface BrowserStatusEvent {
   url: string | null;
   /** Base-64 JPEG thumbnail of the current viewport, or null when unavailable. */
   thumbnail: string | null;
+  backend?: "local_rust_cdp" | "browser_use_mcp" | "browser_use_cloud";
+  title?: string | null;
+  taken_over?: boolean;
+  last_action?: string | null;
+  downloads_count?: number;
+  console_count?: number;
+  network_error_count?: number;
+  escalation_state?: "none" | "suggested" | "approval_required" | "approved" | "active" | "blocked";
 }
 
 /** Snapshot of a single active browser session returned by `get_browser_sessions`. */
@@ -1828,6 +1903,42 @@ export async function releaseBrowserTakeover(
     sessionId,
     backToHeadless,
   });
+}
+
+export interface SmartBrowserCloudEscalationDecision {
+  backend: "browser_use_cloud";
+  state: "approval_required" | "approved" | "active" | "blocked";
+  reason: string;
+}
+
+export async function requestSmartBrowserCloudEscalation(
+  sessionId: string,
+  reason: string,
+): Promise<SmartBrowserCloudEscalationDecision> {
+  return invoke<SmartBrowserCloudEscalationDecision>(
+    "request_smart_browser_cloud_escalation",
+    { sessionId, reason },
+  );
+}
+
+export async function approveSmartBrowserCloudEscalation(
+  sessionId: string,
+  reason: string,
+): Promise<SmartBrowserCloudEscalationDecision> {
+  return invoke<SmartBrowserCloudEscalationDecision>(
+    "approve_smart_browser_cloud_escalation",
+    { sessionId, reason },
+  );
+}
+
+export async function denySmartBrowserCloudEscalation(
+  sessionId: string,
+  reason: string,
+): Promise<SmartBrowserCloudEscalationDecision> {
+  return invoke<SmartBrowserCloudEscalationDecision>(
+    "deny_smart_browser_cloud_escalation",
+    { sessionId, reason },
+  );
 }
 
 /**

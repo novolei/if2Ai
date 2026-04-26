@@ -1,1 +1,1 @@
-export type AppSection = 'chat' | 'skills' | 'automation' | 'memory'
+export type AppSection = 'chat' | 'skills' | 'automation' | 'memory' | 'jiaochang'

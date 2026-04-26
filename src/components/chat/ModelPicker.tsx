@@ -71,7 +71,7 @@ export function ModelPicker({
           type="button"
           disabled={disabled}
           className={cn(
-            'flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65',
+            'flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground',
             'disabled:cursor-not-allowed disabled:opacity-60',
             className,
           )}
@@ -87,7 +87,7 @@ export function ModelPicker({
         sideOffset={8}
         collisionPadding={16}
         className={cn(
-          'w-[300px] overflow-hidden rounded-2xl border border-black/[0.06] bg-white/95 p-0 text-[13px] backdrop-blur-2xl backdrop-saturate-150',
+          'w-[300px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 p-0 text-[13px] text-popover-foreground backdrop-blur-2xl backdrop-saturate-150',
           'shadow-[0_2px_4px_rgba(0,0,0,0.04),0_8px_20px_rgba(0,0,0,0.08),0_24px_56px_rgba(0,0,0,0.16),0_0_0_0.5px_rgba(0,0,0,0.04)]',
           'origin-[var(--radix-popover-content-transform-origin)] transition-all duration-200 ease-out',
           'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-bottom-1',
@@ -96,34 +96,34 @@ export function ModelPicker({
       >
         {/* Search */}
         <div className="flex items-center gap-2 px-3.5 pt-3 pb-2.5">
-          <Search className="h-3.5 w-3.5 shrink-0 text-black/30" />
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"
             autoFocus
             placeholder="搜索模型 / 服务商"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent text-[11.5px] leading-6 text-black/85 outline-none placeholder:text-black/35"
+            className="flex-1 bg-transparent text-[11.5px] leading-6 text-popover-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
 
         {/* List */}
         <div className="max-h-[320px] overflow-y-auto pb-1.5">
           {availableItems.length === 0 ? (
-            <div className="px-3.5 py-6 text-center text-[12px] text-black/35">
+            <div className="px-3.5 py-6 text-center text-[12px] text-muted-foreground">
               <Sparkles className="mx-auto mb-1.5 h-4 w-4 opacity-50" />
               <div>尚未配置任何模型</div>
-              <div className="mt-1 text-[10.5px] text-black/30">
+              <div className="mt-1 text-[10.5px] text-muted-foreground/75">
                 先到「设置 / 服务商」添加 API Key 并选择模型
               </div>
             </div>
           ) : (
             <>
-              <div className="px-3.5 pb-1 pt-1 text-[11.5px] text-black/40">
+              <div className="px-3.5 pb-1 pt-1 text-[11.5px] text-muted-foreground">
                 可用模型
               </div>
               {filtered.length === 0 && (
-                <div className="px-3.5 py-5 text-center text-[12px] text-black/30">
+                <div className="px-3.5 py-5 text-center text-[12px] text-muted-foreground">
                   无匹配模型
                 </div>
               )}
@@ -138,21 +138,21 @@ export function ModelPicker({
                       setOpen(false)
                     }}
                     className={cn(
-                      'flex w-full items-center gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-black/[0.035] focus-visible:bg-black/[0.05]',
+                      'flex w-full items-center gap-2.5 px-3.5 py-1.5 text-left outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground',
                     )}
                     title={item.label}
                   >
                     <span
                       className={cn(
                         'min-w-0 flex-1 truncate whitespace-nowrap text-[13px] leading-6',
-                        isCurrent ? 'text-black/85 font-medium' : 'text-black/72',
+                        isCurrent ? 'text-popover-foreground font-medium' : 'text-popover-foreground/78',
                       )}
                     >
                       {item.label}
                     </span>
                     {isCurrent && (
                       <Check
-                        className="h-[13px] w-[13px] shrink-0 text-black/65"
+                        className="h-[13px] w-[13px] shrink-0 text-primary"
                         strokeWidth={2}
                       />
                     )}

@@ -5,6 +5,8 @@ import {
   FolderOpen,
   GitBranch,
   Laptop,
+  Loader2,
+  MessageSquare,
   Mic,
   Plus,
   PlusCircle,
@@ -169,25 +171,25 @@ export function HomeScreen({
   const canSend = localInput.trim().length > 0 && !isLoading
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col items-center overflow-y-auto px-6 pb-8 pt-0">
+    <div className="relative flex h-full min-h-0 flex-col items-center overflow-y-auto px-6 pb-8 pt-0 text-foreground">
       {/* Vertical centering wrapper */}
       <div className="flex w-full max-w-[700px] flex-1 flex-col items-center justify-center gap-6 py-12">
 
         {/* ── Title ── */}
-        <h1 className="text-center text-[28px] font-[450] tracking-[-0.02em] text-black/88 md:text-[32px]">
+        <h1 className="text-center text-[28px] font-[450] tracking-[-0.02em] text-foreground/88 md:text-[32px]">
           今天想在{' '}
-          <span className="font-semibold text-black">{projectName}</span>
+          <span className="font-semibold text-foreground">{projectName}</span>
           里完成什么？
         </h1>
 
         {/* ── Composer card ── */}
         <div
-          className="w-full rounded-2xl border bg-white transition-all duration-200"
+          className="w-full rounded-2xl border border-border/70 bg-card text-card-foreground transition-all duration-200"
           style={{
-            borderColor: composerFocused ? 'rgba(0,0,0,0.13)' : 'rgba(0,0,0,0.08)',
-            boxShadow: composerFocused
-              ? '0 4px 6px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.09), 0 20px 48px rgba(0,0,0,0.06), 0 0 0 0.5px rgba(0,0,0,0.05)'
-              : '0 2px 16px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.04)',
+            borderColor: composerFocused
+              ? 'color-mix(in srgb, var(--primary) 36%, var(--border))'
+              : 'var(--border)',
+            boxShadow: composerFocused ? 'var(--shadow-lg)' : 'var(--shadow-md)',
             transform: composerFocused ? 'translateY(-1px)' : 'translateY(0)',
           }}
         >
@@ -201,19 +203,19 @@ export function HomeScreen({
               onFocus={() => setComposerFocused(true)}
               onBlur={() => setComposerFocused(false)}
               placeholder="向 AI 提问，@ 添加文件，/ 输入命令，$ 使用技能"
-              className="w-full resize-none bg-transparent text-[14px] text-black/88 placeholder:text-black/28 focus:outline-none"
+              className="w-full resize-none bg-transparent text-[14px] text-foreground/88 placeholder:text-muted-foreground/55 focus:outline-none"
               rows={2}
               style={{ minHeight: 52 }}
             />
           </div>
 
           {/* Action row */}
-          <div className="flex items-center justify-between border-t border-black/[0.05] px-3 py-2.5">
+          <div className="flex items-center justify-between border-t border-border/60 px-3 py-2.5">
             {/* Left: + | Permission */}
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 title="添加附件"
               >
                 <Plus className="h-[15px] w-[15px]" />
@@ -223,14 +225,14 @@ export function HomeScreen({
                 <button
                   type="button"
                   onClick={() => setPermissionDropdownOpen((v) => !v)}
-                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 >
                   <span className="text-[13px]">🤲</span>
                   {PERMISSION_LABELS[permissionMode]}
                   <ChevronDown className="h-3 w-3" />
                 </button>
                 {permissionDropdownOpen && (
-                  <div className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[140px] overflow-hidden rounded-xl border border-black/8 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.10)] py-1">
+                  <div className="absolute left-0 top-[calc(100%+4px)] z-50 min-w-[140px] overflow-hidden rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
                     {(['readOnly', 'workspaceWrite', 'dangerFullAccess'] as PermissionMode[]).map(
                       (mode) => (
                         <button
@@ -241,8 +243,8 @@ export function HomeScreen({
                             setPermissionDropdownOpen(false)
                           }}
                           className={cn(
-                            'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-black/[0.04]',
-                            permissionMode === mode ? 'font-semibold text-black/88' : 'text-black/55'
+                            'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
+                            permissionMode === mode ? 'font-semibold text-foreground' : 'text-muted-foreground'
                           )}
                         >
                           {PERMISSION_LABELS[mode]}
@@ -261,13 +263,13 @@ export function HomeScreen({
                 <button
                   type="button"
                   onClick={() => setModelDropdownOpen((v) => !v)}
-                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-black/45 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 >
                   {modelLabel}
                   <ChevronDown className="h-3 w-3" />
                 </button>
                 {modelDropdownOpen && availableModelItems.length > 0 && (
-                  <div className="absolute right-0 top-[calc(100%+4px)] z-50 max-h-[280px] min-w-[200px] overflow-y-auto rounded-xl border border-black/8 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.10)] py-1">
+                  <div className="absolute right-0 top-[calc(100%+4px)] z-50 max-h-[280px] min-w-[200px] overflow-y-auto rounded-xl border border-border/70 bg-popover py-1 text-popover-foreground shadow-token-lg">
                     {availableModelItems.map((item) => (
                       <button
                         key={item.value}
@@ -281,10 +283,10 @@ export function HomeScreen({
                           setModelDropdownOpen(false)
                         }}
                         className={cn(
-                          'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-black/[0.04]',
+                          'flex w-full items-center px-3 py-2 text-[12px] transition-colors hover:bg-accent hover:text-accent-foreground',
                           selectedModel === item.value
-                            ? 'font-semibold text-black/88'
-                            : 'text-black/55'
+                            ? 'font-semibold text-foreground'
+                            : 'text-muted-foreground'
                         )}
                       >
                         {item.label}
@@ -294,11 +296,11 @@ export function HomeScreen({
                 )}
               </div>
 
-              <div className="h-3.5 w-px bg-black/10" />
+              <div className="h-3.5 w-px bg-border" />
 
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/65"
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 title="语音输入"
               >
                 <Mic className="h-[14px] w-[14px]" />
@@ -312,8 +314,8 @@ export function HomeScreen({
                 className={cn(
                   'flex h-7 w-7 items-center justify-center rounded-full transition-all',
                   canSend
-                    ? 'bg-black text-white hover:bg-black/80 active:scale-95'
-                    : 'bg-black/10 text-black/30 cursor-not-allowed'
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/85 active:scale-95'
+                    : 'bg-muted text-muted-foreground/60 cursor-not-allowed'
                 )}
               >
                 <ArrowUp className="h-[14px] w-[14px]" />
@@ -335,34 +337,34 @@ export function HomeScreen({
               className={cn(
                 'group flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-all',
                 projectDropdownOpen
-                  ? 'border-black/20 bg-white text-black/80 shadow-sm'
-                  : 'border-black/[0.08] bg-black/[0.03] text-black/55 hover:border-black/14 hover:bg-black/[0.05]'
+                  ? 'border-primary/35 bg-card text-foreground shadow-sm'
+                  : 'border-border/70 bg-muted/30 text-muted-foreground hover:border-primary/30 hover:bg-accent hover:text-accent-foreground'
               )}
             >
-              <FolderOpen className={cn('h-[13px] w-[13px]', projectDropdownOpen ? 'text-black/70' : 'text-black/35')} />
+              <FolderOpen className={cn('h-[13px] w-[13px]', projectDropdownOpen ? 'text-foreground/70' : 'text-muted-foreground')} />
               <span>{projectName}</span>
               <ChevronDown className={cn('h-2.5 w-2.5 transition-transform', projectDropdownOpen && 'rotate-180')} />
             </button>
 
             {/* Project dropdown */}
             {projectDropdownOpen && (
-              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[280px] overflow-hidden rounded-2xl border border-black/[0.07] bg-white/96 shadow-[0_12px_40px_rgba(0,0,0,0.13),0_0_0_0.5px_rgba(0,0,0,0.05)] backdrop-blur-xl">
+              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[280px] overflow-hidden rounded-2xl border border-border/70 bg-popover/96 text-popover-foreground shadow-token-lg backdrop-blur-xl">
                 {/* Search */}
-                <div className="flex items-center gap-2 border-b border-black/[0.06] px-3.5 py-2.5">
-                  <Search className="h-3.5 w-3.5 shrink-0 text-black/25" />
+                <div className="flex items-center gap-2 border-b border-border/70 px-3.5 py-2.5">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <input
                     type="text"
                     value={projectSearch}
                     onChange={(e) => setProjectSearch(e.target.value)}
                     placeholder="搜索项目…"
-                    className="flex-1 bg-transparent text-[13px] text-black/80 placeholder:text-black/28 focus:outline-none"
+                    className="flex-1 bg-transparent text-[13px] text-foreground/80 placeholder:text-muted-foreground/55 focus:outline-none"
                     autoFocus
                   />
                   {projectSearch && (
                     <button
                       type="button"
                       onClick={() => setProjectSearch('')}
-                      className="flex size-4 items-center justify-center rounded-full bg-black/8 text-black/35 hover:text-black/60"
+                      className="flex size-4 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                     >
                       <X className="h-2.5 w-2.5" />
                     </button>
@@ -372,7 +374,7 @@ export function HomeScreen({
                 {/* Project list */}
                 <div className="max-h-[240px] overflow-y-auto py-1">
                   {filteredProjects.length === 0 ? (
-                    <div className="px-4 py-4 text-center text-[12px] text-black/30">无匹配项目</div>
+                    <div className="px-4 py-4 text-center text-[12px] text-muted-foreground">无匹配项目</div>
                   ) : (
                     filteredProjects.map((project) => (
                       <button
@@ -384,26 +386,26 @@ export function HomeScreen({
                           setProjectSearch('')
                         }}
                         className={cn(
-                          'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-black/[0.04]',
-                          selectedProjectId === project.id && 'bg-black/[0.03]'
+                          'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground',
+                          selectedProjectId === project.id && 'bg-accent text-accent-foreground'
                         )}
                       >
                         <FolderGit2
                           className={cn(
                             'h-4 w-4 shrink-0',
-                            selectedProjectId === project.id ? 'text-black/70' : 'text-black/35'
+                            selectedProjectId === project.id ? 'text-foreground/70' : 'text-muted-foreground'
                           )}
                         />
                         <div className="min-w-0 flex-1">
-                          <div className={cn('truncate text-[13px]', selectedProjectId === project.id ? 'font-semibold text-black/88' : 'text-black/70')}>
+                          <div className={cn('truncate text-[13px]', selectedProjectId === project.id ? 'font-semibold text-foreground' : 'text-foreground/70')}>
                             {project.name}
                           </div>
-                          <div className="truncate text-[11px] text-black/35">
+                          <div className="truncate text-[11px] text-muted-foreground">
                             {project.workdir.split('/').filter(Boolean).pop() ?? project.name}
                           </div>
                         </div>
                         {selectedProjectId === project.id && (
-                          <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-black/30" />
+                          <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
                         )}
                       </button>
                     ))
@@ -411,7 +413,7 @@ export function HomeScreen({
                 </div>
 
                 {/* Footer */}
-                <div className="border-t border-black/[0.06] py-1">
+                <div className="border-t border-border/70 py-1">
                   <button
                     type="button"
                     disabled={isPickingFolder}
@@ -424,10 +426,10 @@ export function HomeScreen({
                         setIsPickingFolder(false)
                       }
                     }}
-                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-black/[0.04] disabled:opacity-50"
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                   >
-                    <PlusCircle className="h-4 w-4 shrink-0 text-black/40" />
-                    <span className="text-[13px] text-black/65">
+                    <PlusCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="text-[13px] text-muted-foreground">
                       {isPickingFolder ? '选择文件夹中…' : '添加新项目'}
                     </span>
                   </button>
@@ -439,7 +441,7 @@ export function HomeScreen({
           {/* Workdir pill */}
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[12px] font-medium text-black/55 transition-colors hover:border-black/14 hover:bg-black/[0.05]"
+            className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-muted/30 px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-accent hover:text-accent-foreground"
           >
             <Laptop className="h-[13px] w-[13px]" />
             {workdirName}
@@ -449,7 +451,7 @@ export function HomeScreen({
           {/* Branch pill */}
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-black/[0.03] px-3 py-1.5 text-[12px] font-medium text-black/55 transition-colors hover:border-black/14 hover:bg-black/[0.05]"
+            className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-muted/30 px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-accent hover:text-accent-foreground"
           >
             <GitBranch className="h-[13px] w-[13px]" />
             <span className="max-w-[140px] truncate">{branchLabel}</span>
@@ -462,7 +464,7 @@ export function HomeScreen({
           <div className="w-full">
             {/* Section label */}
             <div className="mb-1 flex items-center justify-between px-1">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-black/22">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/55">
                 最近对话
               </span>
             </div>
@@ -476,20 +478,27 @@ export function HomeScreen({
                   onClick={() => onSelectSession(session.projectId, session.sessionId)}
                   className={cn(
                     'group flex w-full items-center gap-3 px-3 py-2.5 text-left transition-all',
-                    'rounded-xl hover:bg-black/[0.035] active:bg-black/[0.055]',
+                    'rounded-xl text-muted-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/80',
                     idx === 0 && 'mt-0'
                   )}
                 >
-                  {/* Subtle dot indicator */}
-                  <div className="size-[5px] shrink-0 rounded-full bg-black/[0.12] transition-colors group-hover:bg-primary/40" />
+                  <span className="flex size-5 shrink-0 items-center justify-center text-[14px] leading-none text-muted-foreground/70 transition-colors group-hover:text-accent-foreground">
+                    {session.titlePending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+                    ) : session.titleIcon ? (
+                      <span className="session-emoji" aria-hidden="true">{session.titleIcon}</span>
+                    ) : (
+                      <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    )}
+                  </span>
 
                   {/* Title */}
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-black/55 transition-colors group-hover:text-black/78">
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium transition-colors">
                     {session.title}
                   </span>
 
                   {/* Project badge */}
-                  <span className="shrink-0 rounded-full border border-black/[0.06] bg-black/[0.03] px-2 py-[2px] text-[10.5px] text-black/35 transition-colors group-hover:border-black/[0.09] group-hover:text-black/50">
+                  <span className="shrink-0 rounded-full border border-border/60 bg-muted/30 px-2 py-[2px] text-[10.5px] text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:bg-background/40 group-hover:text-accent-foreground">
                     {session.projectName}
                   </span>
                 </button>

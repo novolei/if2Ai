@@ -143,7 +143,7 @@ export function MessageVoiceButton({ text, className = '' }: Props) {
       onClick={() => void handlePlay()}
       disabled={btnState === 'loading'}
       title={title}
-      className={`flex items-center justify-center rounded-md p-0.5 text-black/35 transition-colors hover:bg-black/[0.05] hover:text-black/65 disabled:opacity-50 ${
+      className={`flex items-center justify-center rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50 ${
         btnState === 'playing' ? 'text-jade hover:text-jade/80' : ''
       } ${btnState === 'error' ? 'text-rose-500' : ''} ${className}`}
     >

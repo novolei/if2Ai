@@ -1,5 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/geist'
+import '@fontsource/noto-emoji/400.css'
+import '@fontsource/noto-color-emoji/400.css'
 import './styles/globals.css'
 import App from './App'
 import { SettingsApp } from './components/settings/SettingsApp'

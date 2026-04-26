@@ -117,14 +117,14 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
   // hover surface stays clean for the common case.
   const showDemote = Boolean(onDemote) && (entry.project_id !== null || entry.session_id === null)
   return (
-    <div className="group relative rounded-lg border border-black/5 bg-white/60 px-4 py-3 shadow-sm transition-shadow duration-150 hover:shadow-md">
+    <div className="group relative rounded-lg border border-border/70 bg-card/70 px-4 py-3 shadow-sm transition-[background-color,box-shadow] duration-150 hover:bg-accent/35 hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[12px] font-medium text-black/60">
+            <span className="truncate text-[12px] font-medium text-foreground/70">
               {entry.key}
             </span>
-            <span className="shrink-0 rounded-full bg-black/5 px-2 py-0.5 text-[10px] text-black/50">
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
               {entry.category}
             </span>
             <span
@@ -140,14 +140,14 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
           <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-foreground/80">
             {entry.content}
           </p>
-          <div className="mt-2 flex items-center gap-4 text-[11px] text-black/40">
+          <div className="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
             <span>{formatTime(entry.created_at)}</span>
             <span>访问 {entry.access_count} 次</span>
             <span className={cn('font-medium', getTrustScoreColor(entry.trust_score))}>
               {getTrustScoreLabel(entry.trust_score)} ({entry.trust_score.toFixed(2)})
             </span>
           </div>
-          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-black/5">
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div
               className="h-full rounded-full bg-primary/40 transition-all duration-300"
               style={{ width: `${Math.round(entry.importance * 100)}%` }}
@@ -166,8 +166,8 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
               className={cn(
                 'shrink-0 rounded p-1 transition-all duration-150 group-hover:opacity-100',
                 canDemote
-                  ? 'text-amber-500/70 opacity-0 hover:bg-amber-50 hover:text-amber-600'
-                  : 'cursor-not-allowed text-black/20 opacity-0',
+                  ? 'text-amber-500/70 opacity-0 hover:bg-amber-500/15 hover:text-amber-500'
+                  : 'cursor-not-allowed text-muted-foreground/30 opacity-0',
               )}
               disabled={!canDemote}
               onClick={() => onDemote?.(entry)}
@@ -183,7 +183,7 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
           )}
           <button
             type="button"
-            className="shrink-0 rounded p-1 text-black/30 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+            className="shrink-0 rounded p-1 text-muted-foreground/50 opacity-0 transition-all duration-150 hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100"
             onClick={() => onDelete(entry.key)}
             aria-label="删除记忆"
           >

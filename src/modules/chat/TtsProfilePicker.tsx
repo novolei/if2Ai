@@ -90,7 +90,7 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
         type="button"
         onClick={handleManage}
         className={cn(
-          'inline-flex items-center gap-1 rounded-lg border border-dashed border-black/[0.15] bg-white/70 px-2.5 py-1 text-[10.5px] text-muted-foreground hover:bg-white',
+          'inline-flex items-center gap-1 rounded-lg border border-dashed border-border/70 bg-muted px-2.5 py-1 text-[10.5px] text-muted-foreground hover:bg-accent hover:text-accent-foreground',
           className,
         )}
         title="管理 TTS Profiles"
@@ -106,7 +106,7 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex max-w-[180px] items-center gap-1 rounded-lg border border-black/[0.08] bg-white/85 px-2 py-1 text-[10.5px] hover:bg-white"
+        className="inline-flex max-w-[180px] items-center gap-1 rounded-lg border border-border/70 bg-muted px-2 py-1 text-[10.5px] text-popover-foreground hover:bg-accent hover:text-accent-foreground"
         title={`语音 Profile: ${active.name} · ${active.voice_id} · ${active.playback_rate.toFixed(2)}×`}
       >
         <span className="shrink-0 text-muted-foreground/60">语音:</span>
@@ -117,7 +117,7 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
         <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
       </button>
       {open ? (
-        <div className="absolute bottom-full left-0 z-40 mb-1 w-[260px] overflow-hidden rounded-xl border border-black/[0.08] bg-white shadow-lg">
+        <div className="absolute bottom-full left-0 z-40 mb-1 w-[260px] overflow-hidden rounded-xl border border-border/70 bg-popover/96 text-popover-foreground shadow-lg backdrop-blur-xl">
           <div className="max-h-[300px] overflow-y-auto py-1">
             {book.profiles.map((p) => {
               const isActive = p.id === active.id
@@ -129,7 +129,7 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
                   onClick={() => select(p)}
                   className={cn(
                     'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors',
-                    isActive ? 'bg-jade/[0.08]' : 'hover:bg-black/[0.03]',
+                    isActive ? 'bg-primary/12' : 'hover:bg-accent hover:text-accent-foreground',
                   )}
                 >
                   <div className="flex-1 min-w-0">
@@ -152,8 +152,8 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
                     className={cn(
                       'rounded px-1.5 py-px text-[9px] font-semibold uppercase',
                       p.is_builtin
-                        ? 'bg-amber-500/15 text-amber-700'
-                        : 'bg-violet-500/15 text-violet-700',
+                        ? 'bg-amber-500/15 text-amber-500'
+                        : 'bg-violet-500/15 text-violet-500',
                     )}
                   >
                     {p.is_builtin ? 'builtin' : 'user'}
@@ -165,7 +165,7 @@ export function TtsProfilePicker({ className = '', compact = false }: Props) {
           <button
             type="button"
             onClick={handleManage}
-            className="flex w-full items-center justify-center gap-1.5 border-t border-black/[0.06] bg-black/[0.02] px-3 py-2 text-[10.5px] text-muted-foreground hover:bg-black/[0.04]"
+            className="flex w-full items-center justify-center gap-1.5 border-t border-border/65 bg-muted/45 px-3 py-2 text-[10.5px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <SettingsIcon className="h-3 w-3" />
             管理 Profiles

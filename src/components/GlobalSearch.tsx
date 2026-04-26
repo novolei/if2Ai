@@ -5,6 +5,7 @@ import {
   Folder,
   FolderOpen,
   Hash,
+  Loader2,
   MessageSquare,
   Settings,
   SlidersHorizontal,
@@ -172,15 +173,20 @@ export function GlobalSearch({
                       value={s.id}
                       onSelect={() => handleSelectSession(s.projectId, s.id)}
                     >
-                      <MessageSquare
-                        className="size-3.5 shrink-0 text-muted-foreground/40"
-                        strokeWidth={1.5}
-                      />
+                      <span className="flex size-4 shrink-0 items-center justify-center text-[13px] leading-none text-muted-foreground/55">
+                        {s.title_pending ? (
+                          <Loader2 className="size-3.5 animate-spin" strokeWidth={1.8} />
+                        ) : s.title_icon ? (
+                          <span aria-hidden="true">{s.title_icon}</span>
+                        ) : (
+                          <MessageSquare className="size-3.5" strokeWidth={1.5} />
+                        )}
+                      </span>
                       <span className="min-w-0 flex-1 truncate text-foreground/75">
                         {s.title}
                       </span>
                       {/* Project badge */}
-                      <span className="flex shrink-0 items-center gap-1 rounded-md bg-black/[0.05] px-1.5 py-0.5 text-[10.5px] text-muted-foreground/50">
+                      <span className="flex shrink-0 items-center gap-1 rounded-md bg-muted/70 px-1.5 py-0.5 text-[10.5px] text-muted-foreground/50">
                         <Folder className="size-2.5" strokeWidth={1.5} />
                         <span className="max-w-[80px] truncate">{s.projectName}</span>
                       </span>
@@ -256,7 +262,7 @@ export function GlobalSearch({
                         </span>
                         {/* Session count chip */}
                         {sessionCount > 0 && (
-                          <span className="shrink-0 rounded-full bg-black/[0.05] px-2 py-0.5 text-[10.5px] text-muted-foreground/45">
+                          <span className="shrink-0 rounded-full bg-muted/70 px-2 py-0.5 text-[10.5px] text-muted-foreground/45">
                             {sessionCount} 个线程
                           </span>
                         )}

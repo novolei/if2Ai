@@ -44,6 +44,7 @@ use crate::modules::runtime::resume_cursor::build_resume_cursor;
 use crate::modules::runtime::session::{
     ContentBlock, ConversationMessage, Session as RuntimeSession,
 };
+use crate::modules::runtime::projection::{self, ProjectionCheckpoint};
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
 };
@@ -1002,6 +1003,24 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
                     session_id = %session_id,
                     error = %e,
                     "[supervisor] failed to persist completion"
+                );
+            }
+        }
+
+        // T-020: save projection checkpoint with latest seq.
+        // Preserve existing snapshot if the frontend already saved one.
+        {
+            let last_seq = run_event_logger.current_seq();
+            let existing = projection::load_checkpoint(&app_data_dir, &session_id).ok();
+            let snapshot = existing
+                .and_then(|r| if r.checkpoint_exists { Some(r.snapshot) } else { None })
+                .unwrap_or(serde_json::Value::Null);
+            let cp = ProjectionCheckpoint::new(session_id.clone(), last_seq, snapshot);
+            if let Err(e) = projection::save_checkpoint(&app_data_dir, &cp) {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "[projection] failed to save checkpoint after turn finalize"
                 );
             }
         }

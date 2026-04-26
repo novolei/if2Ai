@@ -19,7 +19,7 @@ const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
-  <div className="flex items-center gap-3 border-b border-black/[0.07] px-4 py-3.5" cmdk-input-wrapper="">
+  <div className="flex items-center gap-3 border-b border-border/70 px-4 py-3.5" cmdk-input-wrapper="">
     <Search className="size-4 shrink-0 text-muted-foreground/50" strokeWidth={1.5} />
     <CommandPrimitive.Input
       ref={ref}
@@ -78,7 +78,7 @@ const CommandSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <CommandPrimitive.Separator
     ref={ref}
-    className={cn('mx-2 my-1 h-px bg-black/[0.06]', className)}
+    className={cn('mx-2 my-1 h-px bg-border/70', className)}
     {...props}
   />
 ))
@@ -92,7 +92,7 @@ const CommandItem = React.forwardRef<
     ref={ref}
     className={cn(
       'relative flex cursor-pointer select-none items-center gap-2.5 rounded-lg px-2.5 py-2 text-[12.5px] text-foreground/65 outline-none transition-colors',
-      'aria-selected:bg-black/[0.05] aria-selected:text-foreground/85',
+      'aria-selected:bg-accent aria-selected:text-accent-foreground',
       'data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40',
       className
     )}
@@ -104,7 +104,7 @@ CommandItem.displayName = CommandPrimitive.Item.displayName
 const CommandShortcut = ({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) => (
   <span
     className={cn(
-      'ml-auto shrink-0 rounded-md bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] tracking-widest text-muted-foreground/50',
+      'ml-auto shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] tracking-widest text-muted-foreground/70',
       className
     )}
     {...props}

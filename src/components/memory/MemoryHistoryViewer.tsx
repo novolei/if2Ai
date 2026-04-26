@@ -49,7 +49,7 @@ function sourceBadge(source: string): { label: string; className: string } {
         className: "bg-violet-100 text-violet-700",
       };
     default:
-      return { label: source, className: "bg-black/[0.06] text-foreground/70" };
+      return { label: source, className: "bg-muted text-foreground/70" };
   }
 }
 
@@ -104,12 +104,12 @@ export function MemoryHistoryViewer({
       );
     }
     return (
-      <ol className="relative ml-1 flex flex-col gap-2 border-l border-black/[0.08] pl-3">
+      <ol className="relative ml-1 flex flex-col gap-2 border-l border-border pl-3">
         {history.map((h, idx) => {
           const badge = sourceBadge(h.source);
           return (
             <li key={`${h.valid_from}-${idx}`} className="relative">
-              <span className="absolute -left-[15px] top-1.5 h-2 w-2 rounded-full bg-black/15" />
+              <span className="absolute -left-[15px] top-1.5 h-2 w-2 rounded-full bg-muted-foreground/35" />
               <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
                 <span
                   className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`}
@@ -122,7 +122,7 @@ export function MemoryHistoryViewer({
                   曾自 {formatTime(h.valid_from)} 起生效
                 </span>
               </div>
-              <div className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-black/[0.05] bg-black/[0.02] px-2.5 py-1.5 text-[11.5px] leading-snug text-foreground/85">
+              <div className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/30 px-2.5 py-1.5 text-[11.5px] leading-snug text-foreground/85">
                 {h.content}
               </div>
             </li>
@@ -138,13 +138,13 @@ export function MemoryHistoryViewer({
 
   return (
     <details
-      className="group rounded-lg border border-black/[0.06] bg-black/[0.02]"
+      className="group rounded-lg border border-border bg-muted/25"
       onToggle={(e) => {
         const open = (e.currentTarget as HTMLDetailsElement).open;
         if (open && !loaded && !loading) void load();
       }}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[11.5px] font-medium text-foreground/80 transition-colors hover:bg-black/[0.04]">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[11.5px] font-medium text-foreground/80 transition-colors hover:bg-accent hover:text-accent-foreground">
         <History className="h-3.5 w-3.5 text-violet-600/80" />
         查看历史版本
         <span className="ml-auto text-[10.5px] text-muted-foreground group-open:hidden">
@@ -154,7 +154,7 @@ export function MemoryHistoryViewer({
           收起
         </span>
       </summary>
-      <div className="border-t border-black/[0.05] px-3 py-2.5">{body}</div>
+      <div className="border-t border-border px-3 py-2.5">{body}</div>
     </details>
   );
 }

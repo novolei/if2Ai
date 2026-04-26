@@ -919,3 +919,47 @@ fn manager_reports_unknown_qualified_tool_name() {
         cleanup_script(&script_path);
     });
 }
+
+#[test]
+fn manager_call_tool_discovering_builds_route_index_on_demand() {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let script_path = write_manager_mcp_server_script();
+        let root = script_path.parent().expect("script parent");
+        let log_path = root.join("alpha.log");
+        let tool_name = mcp_tool_name("alpha", "echo");
+        let servers = BTreeMap::from([(
+            "alpha".to_string(),
+            manager_server_config(&script_path, "alpha", &log_path),
+        )]);
+        let mut manager = McpServerManager::from_servers(&servers);
+
+        assert!(!manager.has_tool_route(&tool_name));
+        let response = manager
+            .call_tool_discovering(&tool_name, Some(json!({"text": "on-demand"})))
+            .await
+            .expect("call tool with automatic discovery");
+
+        assert!(manager.has_tool_route(&tool_name));
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .and_then(|result| result.structured_content.as_ref())
+                .and_then(|value| value.get("echoed")),
+            Some(&json!("on-demand"))
+        );
+
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(
+            log.lines().collect::<Vec<_>>(),
+            vec!["initialize", "tools/list", "tools/call"]
+        );
+
+        manager.shutdown().await.expect("shutdown");
+        cleanup_script(&script_path);
+    });
+}

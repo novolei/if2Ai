@@ -342,6 +342,27 @@ export function reduceRuntimeEvent(
           capturedAt: event.receivedAt,
         },
       };
+    case "smart_browser_projection":
+      return {
+        ...prev,
+        browsers: {
+          ...prev.browsers,
+          [event.smartBrowserSessionId]: {
+            sessionId: event.sessionId,
+            smartBrowserSessionId: event.smartBrowserSessionId,
+            backend: event.backend,
+            running: event.running,
+            url: event.url,
+            title: event.title,
+            thumbnail: event.thumbnail,
+            takenOver: event.takenOver,
+            lastAction: event.lastAction,
+            diagnostics: event.diagnostics,
+            escalationState: event.escalationState,
+            lastUpdatedAt: event.receivedAt,
+          },
+        },
+      };
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.

@@ -658,3 +658,64 @@ export interface MemoryProjection {
   lastTouchedAt?: string
   correlation: CorrelationIds
 }
+
+// ───────────────────────── Attempt ledger contract ──────────────────
+
+/** Tool attempt status discriminator (8 states).
+ * Mirrors `ToolAttemptStatus` in Rust. */
+export type ToolAttemptStatus =
+  | 'queued'
+  | 'authorizing'
+  | 'running'
+  | 'retrying'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked'
+
+/** Single tool invocation attempt record. */
+export interface ToolAttemptRecord {
+  sessionId: string
+  runId: string
+  toolCallId: string
+  attemptId: string
+  attemptNo: number
+  toolName: string
+  status: ToolAttemptStatus
+  failureKind: string | null
+  /** ISO-8601 / RFC3339 timestamp. */
+  occurredAt: string
+}
+
+/** Per-tool_call_id summary statistics. */
+export interface AttemptStats {
+  toolName: string
+  totalAttempts: number
+  succeeded: boolean
+  lastStatus: string
+  lastFailureKind: string | null
+}
+
+/** T-013 — full tool attempt ledger response. */
+export interface ToolAttemptLedgerResponse {
+  sessionId: string
+  attempts: ToolAttemptRecord[]
+  stats: Record<string, AttemptStats>
+}
+
+/** T-020 — projection checkpoint cold-start response from backend. */
+export interface ProjectionCheckpointResponse {
+  /** Serialized `RuntimeProjectionSnapshot` JSON. `null` when no
+   * checkpoint exists. */
+  snapshot: unknown
+  /** Last event log sequence number applied to this checkpoint.
+   * Used to request incremental events after cold-start. */
+  lastAppliedSeq: number
+  /** Whether a checkpoint file existed on disk. */
+  checkpointExists: boolean
+  /** Whether the snapshot was loaded from a checkpoint (true) or
+   * is an empty fallback (false). */
+  loadedFromCheckpoint: boolean
+  /** ISO-8601 / RFC3339 timestamp when the checkpoint was last updated. */
+  checkpointUpdatedAt: string | null
+}

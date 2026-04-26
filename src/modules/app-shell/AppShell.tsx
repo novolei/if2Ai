@@ -34,6 +34,11 @@ export interface AppShellNavbarProps {
   activeSection: AppSection
   onSelectSection: (section: AppSection) => void
   onOpenSettings: () => void
+  onRunUpdater?: () => void
+  updaterStatus?: 'idle' | 'available' | 'checking' | 'downloading' | 'downloaded' | 'installing' | 'latest' | 'error'
+  updaterLatestVersion?: string | null
+  updaterBannerVisible?: boolean
+  onDismissUpdaterBanner?: () => void
   appIconSrc: string
 }
 
@@ -87,6 +92,11 @@ export function AppShell({
           activeSection: navbar.activeSection,
           onSelectSection: navbar.onSelectSection,
           onOpenSettings: navbar.onOpenSettings,
+          onRunUpdater: navbar.onRunUpdater,
+          updaterStatus: navbar.updaterStatus,
+          updaterLatestVersion: navbar.updaterLatestVersion,
+          updaterBannerVisible: navbar.updaterBannerVisible,
+          onDismissUpdaterBanner: navbar.onDismissUpdaterBanner,
           onStartWindowDrag: onWindowDrag,
           appIconSrc: navbar.appIconSrc,
         }}

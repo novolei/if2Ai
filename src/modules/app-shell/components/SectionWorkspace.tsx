@@ -1,5 +1,6 @@
 import { Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { JiaochangPage } from '@/modules/jiaochang'
 import type { AppSection } from '../types'
 
 export function SectionWorkspace({
@@ -9,6 +10,10 @@ export function SectionWorkspace({
   section: Exclude<AppSection, 'chat'>
   onBackToChat: () => void
 }) {
+  if (section === 'jiaochang') {
+    return <JiaochangPage onBackToChat={onBackToChat} />
+  }
+
   const titles = {
     skills: '技能和应用',
     automation: '自动化',

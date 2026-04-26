@@ -34,6 +34,7 @@ import {
 import {
   createSession,
   deleteSession,
+  generateSessionTitle,
   getSession,
   renameSession,
   setSessionIdentity,
@@ -237,11 +238,12 @@ describe("api/sessions — wire contract", () => {
     ]);
   });
 
-  it("getSession, renameSession, deleteSession, setSessionPinned, setSessionIdentity each map to their command", async () => {
+  it("getSession, renameSession, generateSessionTitle, deleteSession, setSessionPinned, setSessionIdentity each map to their command", async () => {
     const { client, calls } = recordingClient({ get_session: { id: "s1" } });
     setApiClient(client);
     await getSession("s1");
     await renameSession("s1", "new-title");
+    await generateSessionTitle("s1", "new-title");
     await deleteSession("s1");
     await setSessionPinned("s1", true);
     await setSessionIdentity("s1", {
@@ -253,6 +255,7 @@ describe("api/sessions — wire contract", () => {
       [
         "get_session",
         "rename_session",
+        "generate_session_title",
         "delete_session",
         "set_session_pinned",
         "set_session_identity",

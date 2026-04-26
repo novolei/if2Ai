@@ -14,7 +14,9 @@ use crate::modules::identity::{
     read_identity_customization_pack, write_identity_customization_pack, CustomPersonaDefinition,
     IdentityCustomizationPack, IdentityRegistry, PersonaCustomization, SoulCustomization,
 };
-use crate::modules::runtime::config::{default_prompt_control_config_path, ConfigLoader};
+use crate::modules::runtime::config::{
+    default_prompt_control_config_path, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
+};
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
 /// Memory recall mode — selects between lexical-only and hybrid (vector +
@@ -228,6 +230,76 @@ pub struct IdentityCustomizationPackDto {
     pub custom_personas: BTreeMap<String, CustomPersonaDefinition>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpServiceTransportSetting {
+    Stdio,
+    Sse,
+    Http,
+    Ws,
+    Sdk,
+    ClaudeaiProxy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServiceEntry {
+    pub name: String,
+    pub transport: McpServiceTransportSetting,
+    pub scope: String,
+    pub editable: bool,
+    pub manager_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers_helper: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServiceConfig {
+    pub user_settings_path: String,
+    pub restart_required: bool,
+    pub servers: Vec<McpServiceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServiceEntryInput {
+    pub name: String,
+    pub transport: McpServiceTransportSetting,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers_helper: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServiceConfigInput {
+    pub servers: Vec<McpServiceEntryInput>,
+}
+
 fn default_prompt_diagnostics_enabled() -> bool {
     true
 }
@@ -389,6 +461,263 @@ fn count_trajectories() -> usize {
     }
 }
 
+fn mcp_user_settings_path() -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    ConfigLoader::default_for(cwd)
+        .config_home()
+        .join("settings.json")
+}
+
+fn scope_label(source: ConfigSource) -> &'static str {
+    match source {
+        ConfigSource::User => "user",
+        ConfigSource::Project => "project",
+        ConfigSource::Local => "local",
+    }
+}
+
+fn mcp_transport_label(transport: McpTransport) -> McpServiceTransportSetting {
+    match transport {
+        McpTransport::Stdio => McpServiceTransportSetting::Stdio,
+        McpTransport::Sse => McpServiceTransportSetting::Sse,
+        McpTransport::Http => McpServiceTransportSetting::Http,
+        McpTransport::Ws => McpServiceTransportSetting::Ws,
+        McpTransport::Sdk => McpServiceTransportSetting::Sdk,
+        McpTransport::ManagedProxy => McpServiceTransportSetting::ClaudeaiProxy,
+    }
+}
+
+fn mcp_entry_from_runtime(
+    name: &str,
+    scope: ConfigSource,
+    config: &McpServerConfig,
+) -> McpServiceEntry {
+    let transport = mcp_transport_label(config.transport());
+    let mut entry = McpServiceEntry {
+        name: name.to_string(),
+        transport,
+        scope: scope_label(scope).to_string(),
+        editable: scope == ConfigSource::User,
+        manager_supported: matches!(config, McpServerConfig::Stdio(_)),
+        command: None,
+        args: Vec::new(),
+        env: BTreeMap::new(),
+        url: None,
+        headers: BTreeMap::new(),
+        headers_helper: None,
+        sdk_name: None,
+        proxy_id: None,
+    };
+    match config {
+        McpServerConfig::Stdio(stdio) => {
+            entry.command = Some(stdio.command.clone());
+            entry.args.clone_from(&stdio.args);
+            entry.env.clone_from(&stdio.env);
+        }
+        McpServerConfig::Sse(remote) | McpServerConfig::Http(remote) => {
+            entry.url = Some(remote.url.clone());
+            entry.headers.clone_from(&remote.headers);
+            entry.headers_helper.clone_from(&remote.headers_helper);
+        }
+        McpServerConfig::Ws(ws) => {
+            entry.url = Some(ws.url.clone());
+            entry.headers.clone_from(&ws.headers);
+            entry.headers_helper.clone_from(&ws.headers_helper);
+        }
+        McpServerConfig::Sdk(sdk) => {
+            entry.sdk_name = Some(sdk.name.clone());
+        }
+        McpServerConfig::ManagedProxy(proxy) => {
+            entry.url = Some(proxy.url.clone());
+            entry.proxy_id = Some(proxy.id.clone());
+        }
+    }
+    entry
+}
+
+fn validate_mcp_service_entry(entry: &McpServiceEntryInput) -> Result<(), String> {
+    let name = entry.name.trim();
+    if name.is_empty() {
+        return Err("MCP server name cannot be empty".to_string());
+    }
+    if name.contains('.') || name.contains('/') || name.contains('\\') {
+        return Err(format!(
+            "MCP server name `{name}` cannot contain '.', '/' or '\\'"
+        ));
+    }
+    match entry.transport {
+        McpServiceTransportSetting::Stdio => {
+            if entry
+                .command
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!("MCP stdio server `{name}` requires command"));
+            }
+        }
+        McpServiceTransportSetting::Sse
+        | McpServiceTransportSetting::Http
+        | McpServiceTransportSetting::Ws
+        | McpServiceTransportSetting::ClaudeaiProxy => {
+            if entry
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!("MCP server `{name}` requires url"));
+            }
+            if entry.transport == McpServiceTransportSetting::ClaudeaiProxy
+                && entry
+                    .proxy_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+            {
+                return Err(format!("MCP proxy server `{name}` requires proxy_id"));
+            }
+        }
+        McpServiceTransportSetting::Sdk => {
+            if entry
+                .sdk_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(format!("MCP sdk server `{name}` requires sdk_name"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mcp_entry_to_json(entry: &McpServiceEntryInput) -> Result<Value, String> {
+    validate_mcp_service_entry(entry)?;
+    let mut object = Map::new();
+    match entry.transport {
+        McpServiceTransportSetting::Stdio => {
+            object.insert("type".to_string(), Value::String("stdio".to_string()));
+            object.insert(
+                "command".to_string(),
+                Value::String(entry.command.clone().unwrap_or_default().trim().to_string()),
+            );
+            if !entry.args.is_empty() {
+                object.insert(
+                    "args".to_string(),
+                    Value::Array(entry.args.iter().cloned().map(Value::String).collect()),
+                );
+            }
+            if !entry.env.is_empty() {
+                object.insert(
+                    "env".to_string(),
+                    serde_json::to_value(&entry.env).map_err(|e| e.to_string())?,
+                );
+            }
+        }
+        McpServiceTransportSetting::Sse
+        | McpServiceTransportSetting::Http
+        | McpServiceTransportSetting::Ws => {
+            let transport = match entry.transport {
+                McpServiceTransportSetting::Sse => "sse",
+                McpServiceTransportSetting::Http => "http",
+                McpServiceTransportSetting::Ws => "ws",
+                _ => unreachable!(),
+            };
+            object.insert("type".to_string(), Value::String(transport.to_string()));
+            object.insert(
+                "url".to_string(),
+                Value::String(entry.url.clone().unwrap_or_default().trim().to_string()),
+            );
+            if !entry.headers.is_empty() {
+                object.insert(
+                    "headers".to_string(),
+                    serde_json::to_value(&entry.headers).map_err(|e| e.to_string())?,
+                );
+            }
+            if let Some(helper) = entry
+                .headers_helper
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                object.insert(
+                    "headersHelper".to_string(),
+                    Value::String(helper.to_string()),
+                );
+            }
+        }
+        McpServiceTransportSetting::Sdk => {
+            object.insert("type".to_string(), Value::String("sdk".to_string()));
+            object.insert(
+                "name".to_string(),
+                Value::String(
+                    entry
+                        .sdk_name
+                        .clone()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                ),
+            );
+        }
+        McpServiceTransportSetting::ClaudeaiProxy => {
+            object.insert(
+                "type".to_string(),
+                Value::String("claudeai-proxy".to_string()),
+            );
+            object.insert(
+                "url".to_string(),
+                Value::String(entry.url.clone().unwrap_or_default().trim().to_string()),
+            );
+            object.insert(
+                "id".to_string(),
+                Value::String(
+                    entry
+                        .proxy_id
+                        .clone()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                ),
+            );
+        }
+    }
+    Ok(Value::Object(object))
+}
+
+fn write_user_mcp_services_file(request: &McpServiceConfigInput) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut servers = Map::new();
+    for entry in &request.servers {
+        let name = entry.name.trim().to_string();
+        if !seen.insert(name.clone()) {
+            return Err(format!("duplicate MCP server name: {name}"));
+        }
+        servers.insert(name, mcp_entry_to_json(entry)?);
+    }
+
+    let path = mcp_user_settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut root = match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str::<Value>(&raw).map_err(|e| e.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Object(Map::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let root_object = root
+        .as_object_mut()
+        .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
+    root_object.insert("mcpServers".to_string(), Value::Object(servers));
+    let json = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
 /// Get the current memory configuration.
 ///
 /// Resolves feature-flag values from the persisted config first, falling
@@ -503,6 +832,40 @@ pub fn set_memory_config(
         detected_os_timezone: crate::modules::runtime::logical_day::detect_os_timezone()
             .map(|tz| tz.name().to_string()),
     })
+}
+
+/// Read the effective MCP server configuration merged from user, project,
+/// and local claw settings.
+#[tauri::command]
+pub fn get_mcp_service_config() -> Result<McpServiceConfig, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config = ConfigLoader::default_for(cwd)
+        .load()
+        .map_err(|e| e.to_string())?;
+    let mut servers = config
+        .mcp()
+        .servers()
+        .iter()
+        .map(|(name, scoped)| mcp_entry_from_runtime(name, scoped.scope, &scoped.config))
+        .collect::<Vec<_>>();
+    servers.sort_by(|left, right| {
+        left.scope
+            .cmp(&right.scope)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+
+    Ok(McpServiceConfig {
+        user_settings_path: mcp_user_settings_path().display().to_string(),
+        restart_required: true,
+        servers,
+    })
+}
+
+/// Persist user-level MCP server configuration to `~/.claw/settings.json`.
+#[tauri::command]
+pub fn set_mcp_service_config(request: McpServiceConfigInput) -> Result<McpServiceConfig, String> {
+    write_user_mcp_services_file(&request)?;
+    get_mcp_service_config()
 }
 
 /// Read the effective prompt control settings, including defaults.

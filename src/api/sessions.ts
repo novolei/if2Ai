@@ -18,7 +18,11 @@ import type {
   SessionIdentityInput,
   SessionMeta,
 } from "@/lib/tauri";
-import type { SupervisorSnapshot } from "@/transport/contracts";
+import type {
+  ProjectionCheckpointResponse,
+  SupervisorSnapshot,
+  ToolAttemptLedgerResponse,
+} from "@/transport/contracts";
 
 export type {
   ConversationUndoStatus,
@@ -140,6 +144,17 @@ export async function renameSession(
   return getApiClient().call<SessionMeta>("rename_session", { id, title });
 }
 
+/** Generate and persist a compact session `icon + title` identity. */
+export async function generateSessionTitle(
+  id: string,
+  titleHint?: string | null,
+): Promise<SessionMeta> {
+  return getApiClient().call<SessionMeta>("generate_session_title", {
+    id,
+    titleHint: titleHint ?? null,
+  });
+}
+
 /** Delete a session by id. */
 export async function deleteSession(id: string): Promise<void> {
   return getApiClient().call<void>("delete_session", { id });
@@ -188,4 +203,42 @@ export async function setSessionIdentity(
     id,
     identity,
   });
+}
+
+/** T-020 — fetch the projection checkpoint for cold-start. */
+export async function getSessionProjectionCheckpoint(
+  sessionId: string,
+): Promise<ProjectionCheckpointResponse> {
+  return getApiClient().call<ProjectionCheckpointResponse>(
+    "get_session_projection_checkpoint",
+    { sessionId },
+  );
+}
+
+/** T-020 — save a projection checkpoint for fast cold-start. */
+export async function saveSessionProjectionCheckpoint(
+  sessionId: string,
+  snapshot: unknown,
+  lastAppliedSeq: number,
+): Promise<void> {
+  return getApiClient().call<void>("save_session_projection_checkpoint", {
+    sessionId,
+    snapshot,
+    lastAppliedSeq,
+  });
+}
+
+/** T-013 — query the tool attempt ledger for a session. */
+export async function getToolAttemptLedger(
+  sessionId: string,
+  options: { runId?: string; toolCallId?: string } = {},
+): Promise<ToolAttemptLedgerResponse> {
+  return getApiClient().call<ToolAttemptLedgerResponse>(
+    "get_tool_attempt_ledger",
+    {
+      sessionId,
+      runId: options.runId ?? null,
+      toolCallId: options.toolCallId ?? null,
+    },
+  );
 }

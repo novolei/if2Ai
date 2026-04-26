@@ -83,7 +83,7 @@ export function ActivationGate({ onCloseRequested }: ActivationGateProps) {
             never collapses. */}
         <img
           src={appIconUrl}
-          alt="if2AI"
+          alt="If2Ai"
           draggable={false}
           className="pointer-events-none absolute left-6 top-6 h-[80px] w-[80px] select-none rounded-2xl bg-white/60 object-cover shadow-md ring-1 ring-zinc-300/40"
           onError={(e) => {

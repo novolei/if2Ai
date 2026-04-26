@@ -11,6 +11,7 @@
 //! preserved.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
@@ -21,6 +22,7 @@ use crate::modules::application::tool_executor::ToolRegistryExecutor;
 use crate::modules::application::tool_heuristics::is_mutating_tool_success;
 use crate::modules::control_plane::AuditEmitter;
 use crate::modules::harness::{agent_loop_integration, AgentEvent, EventBus};
+use crate::modules::runtime::attempt_ledger::{self, ToolAttempt, ToolAttemptLedger};
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, summarize_tool_result_for_model,
 };
@@ -66,6 +68,8 @@ pub(super) struct ToolExecutionContext {
     pub has_successful_mutating_tool: bool,
     pub sanitized_dropped_invalid_tool_use_inputs: usize,
     pub sanitize_invalid_tool_use_samples: Vec<String>,
+    pub run_id: String,
+    pub app_data_dir: PathBuf,
 }
 
 /// Results produced by executing one batch of tool calls.
@@ -119,6 +123,8 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         mut has_successful_mutating_tool,
         mut sanitized_dropped_invalid_tool_use_inputs,
         mut sanitize_invalid_tool_use_samples,
+        run_id,
+        app_data_dir,
     } = ctx;
 
     let mut force_final_response_next = false;
@@ -162,6 +168,29 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
     for (tool_id, tool_name, input_json) in pending_tool_uses.into_iter() {
         let policy_trace_id = AuditEmitter::new_trace_id();
         let attempt_id = Uuid::new_v4().to_string();
+
+        // ── Attempt Ledger: determine attempt_no and record entry (MIG-022 / T-013) ──
+        let attempt_no = ToolAttemptLedger::next_attempt_no(&app_data_dir, &session_id, &tool_id)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "[attempt_ledger] failed to compute next attempt_no for {}: {}",
+                    tool_id,
+                    e
+                );
+                1
+            });
+        let mut attempt_entry = ToolAttempt::new(
+            session_id.clone(),
+            run_id.clone(),
+            tool_id.clone(),
+            attempt_id.clone(),
+            attempt_no,
+            tool_name.clone(),
+        );
+        if let Err(e) = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry) {
+            tracing::warn!("[attempt_ledger] failed to persist queued entry: {}", e);
+        }
+
         let correlation_ids = CorrelationIds {
             attempt_id: Some(attempt_id.clone()),
             ..Default::default()
@@ -235,6 +264,12 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         stream_emitter.emit_payload(running_payload.clone());
         super::stream_task::append_stream_event(&run_event_logger, &running_payload).await;
 
+        // ── Attempt Ledger: transition to running ──
+        attempt_entry.transition_running();
+        if let Err(e) = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry) {
+            tracing::warn!("[attempt_ledger] failed to persist running entry: {}", e);
+        }
+
         // Validate tool args before permission/execution.
         if let Some(validation_error) = tool_registry.validate(&tool_name, &tool_input) {
             invalid_tool_args_streak += 1;
@@ -288,6 +323,10 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             stream_emitter.emit_payload(terminal_tool_payload.clone());
             super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload)
                 .await;
+
+            // ── Attempt Ledger: transition to failed (invalid args) ──
+            attempt_entry.transition_failed("invalid_args".to_string(), 0);
+            let _ = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry);
 
             session_messages.push(InputMessage {
                 role: "assistant".to_string(),
@@ -491,6 +530,16 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         };
         stream_emitter.emit_payload(terminal_tool_payload.clone());
         super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload).await;
+
+        // ── Attempt Ledger: transition to terminal status ──
+        if denied_by_policy {
+            attempt_entry.transition_blocked();
+        } else if is_error {
+            attempt_entry.transition_failed("execution_error".to_string(), duration_ms);
+        } else {
+            attempt_entry.transition_completed(duration_ms);
+        }
+        let _ = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry);
 
         // Append tool_use + tool_result to session_messages.
         session_messages.push(InputMessage {

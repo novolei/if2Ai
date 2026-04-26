@@ -168,7 +168,7 @@ export function SttButton({ onTranscribe, disabled = false }: Props) {
             ? 'bg-rose-500/15 text-rose-600 hover:bg-rose-500/20'
             : recordState === 'error'
               ? 'text-rose-500'
-              : 'text-black/45 hover:bg-black/[0.04] hover:text-black/70'
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
         }`}
       >
         {recordState === 'processing' ? (

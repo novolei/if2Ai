@@ -16,6 +16,8 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Loader2,
+  MessageSquare,
   MoreHorizontal,
   PencilLine,
   Pin,
@@ -86,6 +88,8 @@ type RecentSession = {
   projectId: string;
   sessionId: string;
   title: string;
+  titleIcon?: string | null;
+  titlePending?: boolean;
   updatedAt: string;
   soulId?: string | null;
   personaId?: string | null;
@@ -175,6 +179,8 @@ export function ProjectRail({
           projectId: project.id,
           sessionId: session.id,
           title: session.title,
+          titleIcon: session.title_icon ?? null,
+          titlePending: Boolean(session.title_pending),
           updatedAt: session.updated_at,
           soulId: session.soul_id ?? null,
           personaId: session.persona_id ?? null,
@@ -279,7 +285,7 @@ export function ProjectRail({
 
       {/* ── Pinned sessions (only rendered when non-empty) ─── */}
       {pinnedSessions.length > 0 && (
-        <div className="shrink-0 border-t border-black/[0.06] px-3 pt-2 pb-1.5">
+        <div className="shrink-0 border-t border-border/60 px-3 pt-2 pb-1.5">
           {/* Section label — same style as "线程" below */}
           <div className="mb-1 flex items-center gap-1.5 px-1">
             <Pin
@@ -295,6 +301,8 @@ export function ProjectRail({
               <PinnedItem
                 key={item.sessionId}
                 title={item.title}
+                titleIcon={item.titleIcon}
+                titlePending={item.titlePending}
                 age={formatRelativeAge(item.updatedAt, nowMs)}
                 identityBadge={resolveIdentityBadge(item)}
                 isActive={activeSessionId === item.sessionId}
@@ -309,7 +317,7 @@ export function ProjectRail({
       )}
 
       {/* ── Threads section label + toolbar ─────────────────── */}
-      <div className="shrink-0 border-t border-black/[0.06] px-3 py-1.5">
+      <div className="shrink-0 border-t border-border/60 px-3 py-1.5">
         <div className="flex items-center justify-between">
           <div className="px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/35">
             线程
@@ -488,11 +496,15 @@ function PinnedItem({
   title,
   age,
   identityBadge,
+  titleIcon,
+  titlePending,
   isActive,
   onClick,
   onUnpin,
 }: {
   title: string;
+  titleIcon?: string | null;
+  titlePending?: boolean;
   age: string;
   identityBadge?: { label: string; tone: string } | null;
   isActive: boolean;
@@ -514,7 +526,7 @@ function PinnedItem({
         "group/pinned relative flex h-[26px] w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 text-[11.5px] transition-colors",
         isActive
           ? "bg-primary/10 text-primary font-medium"
-          : "text-foreground/45 hover:bg-black/[0.04] hover:text-foreground/65 font-normal",
+          : "text-foreground/45 hover:bg-accent hover:text-accent-foreground font-normal",
       )}
     >
       {/* Pin indicator — amber accent */}
@@ -525,6 +537,15 @@ function PinnedItem({
         )}
         strokeWidth={2}
       />
+      <span className="flex size-4 shrink-0 items-center justify-center text-[13px] leading-none">
+        {titlePending ? (
+          <Loader2 className="size-3 animate-spin" strokeWidth={1.8} />
+        ) : titleIcon ? (
+          <span className="session-emoji" aria-hidden="true">{titleIcon}</span>
+        ) : (
+          <MessageSquare className="size-3 text-current/55" strokeWidth={1.5} />
+        )}
+      </span>
 
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {identityBadge ? (
@@ -555,7 +576,7 @@ function PinnedItem({
           className={cn(
             "absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded",
             "opacity-0 transition-all duration-100 group-hover/pinned:opacity-100",
-            "text-muted-foreground/40 hover:bg-black/[0.06] hover:text-foreground/70",
+            "text-muted-foreground/40 hover:bg-accent hover:text-accent-foreground",
             "cursor-pointer",
           )}
         >
@@ -683,7 +704,7 @@ function ProjectGroup({
       {/* ── Project header ────────────────────────────────────────────── */}
       <div className="group/project relative select-none">
         {isEditing ? (
-          <div className="flex items-center gap-1.5 rounded-md bg-black/[0.04] px-2 py-[5px] pr-1.5">
+          <div className="flex items-center gap-1.5 rounded-md bg-muted px-2 py-[5px] pr-1.5">
             <ChevronDown
               className={cn(
                 "size-2.5 shrink-0 text-foreground/30 transition-transform",
@@ -727,8 +748,8 @@ function ProjectGroup({
             className={cn(
               "relative flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-[5px] text-left tracking-tight transition-colors",
               hasActiveSession
-                ? "text-foreground/70 hover:bg-black/[0.04]"
-                : "text-foreground/38 hover:bg-black/[0.03] hover:text-foreground/55",
+                ? "text-foreground/70 hover:bg-accent hover:text-accent-foreground"
+                : "text-foreground/38 hover:bg-accent hover:text-accent-foreground",
             )}
           >
             {/* Tiny chevron — strong contrast vs session row */}
@@ -823,7 +844,7 @@ function ProjectGroup({
       <div className={cn(!isExpanded && "hidden")}>
         {sessions.length === 0 ? (
           // Empty state: show "no sessions" + a prominent new-chat row
-          <div className="ml-[18px] border-l border-black/[0.06]">
+          <div className="ml-[18px] border-l border-border/60">
             <div className="pb-0.5 pl-3 pt-0.5 text-[10.5px] text-muted-foreground/25">
               无线程
             </div>
@@ -831,13 +852,15 @@ function ProjectGroup({
           </div>
         ) : (
           // ml positions the line under the folder icon; border-l draws the connector
-          <div className="ml-[18px] flex flex-col border-l border-black/[0.07] py-0.5">
+          <div className="ml-[18px] flex flex-col border-l border-border/60 py-0.5">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
                 projectId={project.id}
                 sessionId={session.id}
                 title={session.title}
+                titleIcon={session.title_icon ?? null}
+                titlePending={Boolean(session.title_pending)}
                 age={formatRelativeAge(session.updated_at, nowMs)}
                 identityBadge={resolveIdentityBadge({
                   soulId: session.soul_id ?? null,
@@ -865,6 +888,8 @@ function SessionRow({
   projectId,
   sessionId,
   title,
+  titleIcon,
+  titlePending,
   age,
   identityBadge,
   isPinned,
@@ -878,6 +903,8 @@ function SessionRow({
   projectId: string;
   sessionId: string;
   title: string;
+  titleIcon?: string | null;
+  titlePending?: boolean;
   age: string;
   identityBadge?: { label: string; tone: string } | null;
   isPinned: boolean;
@@ -923,7 +950,7 @@ function SessionRow({
 
   if (isEditing) {
     return (
-      <div className="flex h-[26px] items-center gap-1.5 rounded-sm bg-black/[0.05] pl-3 pr-1.5">
+      <div className="flex h-[26px] items-center gap-1.5 rounded-sm bg-muted pl-3 pr-1.5">
         <Input
           ref={inputRef}
           value={draftTitle}
@@ -957,19 +984,30 @@ function SessionRow({
         }
       }}
       className={cn(
-        // Simplified layout: no icon column — title + trailing age/menu only
-        "group/session relative flex h-[26px] w-full cursor-pointer items-center rounded-sm pl-3 pr-1 text-[11.5px] transition-colors",
+        "group/session relative flex h-7 w-full cursor-pointer items-center rounded-sm pl-3 pr-1 text-[11.5px] transition-colors",
         isActive
           ? "bg-primary/10 text-primary font-medium"
-          : "text-foreground/40 hover:bg-black/[0.04] hover:text-foreground/65 font-normal",
+          : "text-foreground/45 hover:bg-accent hover:text-accent-foreground font-normal",
       )}
     >
-      {/* Pinned dot — subtle indicator, no full icon column */}
-      {isPinned && (
-        <span className="mr-1.5 size-1 shrink-0 rounded-full bg-current opacity-50" />
-      )}
-
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span
+          className={cn(
+            "relative flex size-4 shrink-0 items-center justify-center text-[13px] leading-none",
+            isActive ? "text-primary" : "text-muted-foreground/65",
+          )}
+        >
+          {titlePending ? (
+            <Loader2 className="size-3 animate-spin" strokeWidth={1.8} />
+          ) : titleIcon ? (
+            <span className="session-emoji" aria-hidden="true">{titleIcon}</span>
+          ) : (
+            <MessageSquare className="size-3" strokeWidth={1.5} />
+          )}
+          {isPinned ? (
+            <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-amber-400 ring-1 ring-background" />
+          ) : null}
+        </span>
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {identityBadge ? (
           <span

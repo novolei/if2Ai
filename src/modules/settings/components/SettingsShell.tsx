@@ -49,7 +49,7 @@ export function SettingsShell({
         />
 
         {/* Content */}
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[#f5f6f7] px-6 py-5 lg:px-8 lg:py-6">
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[var(--surface)] px-6 py-5 lg:px-8 lg:py-6">
           {/* Page header — also acts as a drag zone on the right side of the window */}
           <div
             className="mb-5 flex cursor-default items-center gap-3 select-none"

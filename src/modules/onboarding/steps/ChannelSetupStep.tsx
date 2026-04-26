@@ -129,7 +129,7 @@ export function ChannelSetupStep({ onNext, onPrev, onWindowDrag }: ChannelSetupS
       rightPanel={
         <InfoPanel
           stepLabel="STEP 5: 通讯渠道"
-          title="把你常用的平台接入 if2AI。"
+          title="把你常用的平台接入 If2Ai。"
           bullets={[
             '支持 13 个消息平台',
             '配置后自动测试连接',

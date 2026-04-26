@@ -100,8 +100,12 @@
 :root {
   /* ── Typography ──────────────────────────────────────────────── */
   --fontSans: "Inter", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-emoji: "Noto Color Emoji", "Noto Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Twemoji", sans-serif;
   --fontSerif: "Songti SC", "Noto Serif SC", Georgia, serif;
   --fontMono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  --jiaochang-font-pixel: "ArkPixel", "Fusion Pixel 12px Proportional", "PixelMplus12", "Press Start 2P", "zpix", var(--fontMono);
+  --jiaochang-font-pixel-cjk: "ArkPixel", "Fusion Pixel 12px Proportional", "zpix", "PingFang SC", "Noto Sans CJK SC", var(--fontSans);
+  --jiaochang-font-body: var(--fontSans);
 
   /* font-size scale (px → rem @16px base) */
   --text-xs:   0.6875rem;   /* 11px */
@@ -378,13 +382,242 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   NAMED THEME OVERRIDES
+   `current` intentionally uses the existing :root production tokens.
+   Other themes override the same semantic variables and apply live via
+   <html data-theme="...">.
+   ══════════════════════════════════════════════════════════════════ */
+[data-theme="warm-paper"] {
+  color-scheme: light;
+
+  --background: #f8f5ed;
+  --foreground: #3b3d3f;
+  --card: #fcfaf5;
+  --card-foreground: #3b3d3f;
+  --popover: #fcfaf5;
+  --popover-foreground: #3b3d3f;
+  --primary: #537d96;
+  --primary-foreground: #fcfaf5;
+  --secondary: #f4f2ea;
+  --secondary-foreground: #6b6f73;
+  --muted: #f1ede3;
+  --muted-foreground: #8e9196;
+  --accent: #eef4f6;
+  --accent-foreground: #2b3a4e;
+  --border: rgb(83 125 150 / 0.22);
+  --input: rgb(83 125 150 / 0.18);
+  --ring: #537d96;
+
+  --jade: #537d96;
+  --jade-light: rgb(83 125 150 / 0.10);
+  --jade-dim: #456a80;
+  --teal: #537d96;
+  --teal-light: rgb(83 125 150 / 0.12);
+  --celadon: #7bae7f;
+  --celadon-light: rgb(123 174 127 / 0.13);
+  --mist: #f4f2ea;
+  --mist-dark: #e2ddd2;
+  --sand: #faf5e9;
+  --sand-warm: #f8f5ed;
+  --stone: #8e9196;
+  --ink: #3b3d3f;
+
+  --surface: #f8f5ed;
+  --surface-raised: #fcfaf5;
+  --surface-overlay: rgb(250 248 242 / 0.92);
+  --sidebar: #f4f2ea;
+  --sidebar-foreground: #6b6f73;
+  --sidebar-primary: #537d96;
+  --sidebar-primary-foreground: #fcfaf5;
+  --sidebar-accent: rgb(83 125 150 / 0.08);
+  --sidebar-accent-foreground: #2b3a4e;
+  --sidebar-border: rgb(83 125 150 / 0.18);
+  --sidebar-ring: #537d96;
+  --inspector: #fcfaf5;
+  --inspector-border: rgb(83 125 150 / 0.18);
+  --shadow-color: rgb(59 61 63 / 0.09);
+  --shadow-xs: 0 1px 4px 0 rgb(59 61 63 / 0.05);
+  --shadow-sm: 0 2px 8px 0 rgb(59 61 63 / 0.07);
+  --shadow-md: 0 4px 16px 0 rgb(59 61 63 / 0.09);
+  --shadow-lg: 0 10px 32px -4px rgb(59 61 63 / 0.12);
+  --shadow-ring: 0 0 0 3px rgb(83 125 150 / 0.22);
+  --bg-texture:
+    radial-gradient(circle at 20% 10%, rgb(59 61 63 / 0.028) 0 1px, transparent 1.4px),
+    radial-gradient(circle at 80% 70%, rgb(83 125 150 / 0.025) 0 1px, transparent 1.5px);
+  --app-shell-bg: #f8f5ed;
+  --app-main-bg: #f8f5ed;
+  --app-main-gradient-1: linear-gradient(135deg, rgb(248 245 237 / 0) 0%, rgb(252 250 245 / 0.22) 46%, rgb(252 250 245 / 0.70) 100%);
+  --app-main-gradient-2: radial-gradient(circle at 50% 8%, rgb(252 250 245 / 0.80) 0%, rgb(252 250 245 / 0.58) 18%, transparent 52%), radial-gradient(circle at 50% 100%, rgb(244 242 234 / 0.74) 0%, rgb(244 242 234 / 0.42) 34%, transparent 72%);
+  --app-main-gradient-3: radial-gradient(circle at 72% 78%, rgb(252 250 245 / 0.42), transparent 28%), radial-gradient(circle at 86% 90%, rgb(244 242 234 / 0.28), transparent 30%);
+  --app-rail-bg: rgb(244 242 234 / 0.72);
+  --chat-sidebar-bg: rgb(244 242 234 / 0.88);
+  --chat-sidebar-bg-soft: rgb(244 242 234 / 0.56);
+  --jiaochang-bg: #f8f5ed;
+  --jiaochang-header-bg: rgb(252 250 245 / 0.78);
+  --jiaochang-panel-bg: rgb(252 250 245 / 0.70);
+  --jiaochang-card-bg: #faf5e9;
+  --jiaochang-stage-bg: #d7e7d2;
+  --jiaochang-text: #3b3d3f;
+  --jiaochang-muted: #6b6f73;
+  --jiaochang-accent: #537d96;
+  --jiaochang-border: rgb(83 125 150 / 0.20);
+}
+
+[data-theme="qingye"] {
+  color-scheme: dark;
+
+  --background: #3b4a54;
+  --foreground: #c8d1d8;
+  --card: #445560;
+  --card-foreground: #c8d1d8;
+  --popover: #445560;
+  --popover-foreground: #c8d1d8;
+  --primary: #aa798d;
+  --primary-foreground: #20313a;
+  --secondary: #4b5a63;
+  --secondary-foreground: #c8d1d8;
+  --muted: #34424b;
+  --muted-foreground: #8a9ba8;
+  --accent: rgb(170 121 141 / 0.16);
+  --accent-foreground: #eab2a0;
+  --border: rgb(170 121 141 / 0.16);
+  --input: rgb(255 255 255 / 0.08);
+  --ring: #aa798d;
+
+  --jade: #aa798d;
+  --jade-light: rgb(170 121 141 / 0.12);
+  --jade-dim: #b78fa0;
+  --teal: #8a9ba8;
+  --teal-light: rgb(67 91 102 / 0.28);
+  --celadon: #8cc790;
+  --celadon-light: rgb(140 199 144 / 0.12);
+  --mist: #4b5a63;
+  --mist-dark: #34424b;
+  --sand: #4b5a63;
+  --sand-warm: #3b4a54;
+  --stone: #8a9ba8;
+  --ink: #c8d1d8;
+
+  --surface: #3b4a54;
+  --surface-raised: #445560;
+  --surface-overlay: rgb(59 74 84 / 0.92);
+  --sidebar: #34424b;
+  --sidebar-foreground: #8a9ba8;
+  --sidebar-primary: #aa798d;
+  --sidebar-primary-foreground: #20313a;
+  --sidebar-accent: rgb(170 121 141 / 0.10);
+  --sidebar-accent-foreground: #eab2a0;
+  --sidebar-border: rgb(170 121 141 / 0.14);
+  --sidebar-ring: #aa798d;
+  --inspector: #445560;
+  --inspector-border: rgb(170 121 141 / 0.14);
+  --shadow-color: rgb(0 0 0 / 0.36);
+  --shadow-xs: 0 1px 4px 0 rgb(0 0 0 / 0.22);
+  --shadow-sm: 0 2px 10px 0 rgb(0 0 0 / 0.30);
+  --shadow-md: 0 6px 20px 0 rgb(0 0 0 / 0.38);
+  --shadow-lg: 0 14px 42px -6px rgb(0 0 0 / 0.48);
+  --shadow-ring: 0 0 0 3px rgb(170 121 141 / 0.24);
+  --app-shell-bg: #34424b;
+  --app-main-bg: #3b4a54;
+  --app-main-gradient-1: linear-gradient(135deg, rgb(59 74 84 / 0) 0%, rgb(68 85 96 / 0.22) 48%, rgb(52 66 75 / 0.54) 100%);
+  --app-main-gradient-2: radial-gradient(circle at 50% 10%, rgb(68 85 96 / 0.44) 0%, rgb(68 85 96 / 0.22) 24%, transparent 58%), radial-gradient(circle at 50% 100%, rgb(52 66 75 / 0.60) 0%, rgb(52 66 75 / 0.38) 36%, transparent 74%);
+  --app-main-gradient-3: radial-gradient(circle at 72% 78%, rgb(170 121 141 / 0.12), transparent 30%), radial-gradient(circle at 86% 90%, rgb(234 178 160 / 0.08), transparent 32%);
+  --app-rail-bg: rgb(52 66 75 / 0.76);
+  --chat-sidebar-bg: rgb(52 66 75 / 0.94);
+  --chat-sidebar-bg-soft: rgb(52 66 75 / 0.72);
+  --jiaochang-bg: #3b4a54;
+  --jiaochang-header-bg: rgb(68 85 96 / 0.72);
+  --jiaochang-panel-bg: rgb(68 85 96 / 0.70);
+  --jiaochang-card-bg: #4b5a63;
+  --jiaochang-stage-bg: #34424b;
+  --jiaochang-text: #c8d1d8;
+  --jiaochang-muted: #8a9ba8;
+  --jiaochang-accent: #eab2a0;
+  --jiaochang-border: rgb(170 121 141 / 0.18);
+}
+
+[data-theme="black"] {
+  color-scheme: dark;
+
+  --background: #18191d;
+  --foreground: #dedee3;
+  --card: #24252b;
+  --card-foreground: #dedee3;
+  --popover: #25262c;
+  --popover-foreground: #dedee3;
+  --primary: #c19a3b;
+  --primary-foreground: #17181c;
+  --secondary: #2a2b31;
+  --secondary-foreground: #c9c9d0;
+  --muted: #25262c;
+  --muted-foreground: #8f9099;
+  --accent: #2f3037;
+  --accent-foreground: #dedee3;
+  --border: #34353d;
+  --input: #2d2e35;
+  --ring: #c19a3b;
+
+  --jade: #c19a3b;
+  --jade-light: #322e22;
+  --jade-dim: #a98635;
+  --teal: #7e98ae;
+  --teal-light: #252d35;
+  --celadon: #8fa18c;
+  --celadon-light: #273027;
+  --mist: #2a2b31;
+  --mist-dark: #202126;
+  --sand: #2e2b25;
+  --sand-warm: #24221f;
+  --stone: #8f9099;
+  --ink: #dedee3;
+
+  --surface: #1e1f24;
+  --surface-raised: #2a292f;
+  --surface-overlay: rgb(36 37 43 / 0.94);
+  --sidebar: #1e1f24;
+  --sidebar-foreground: #c9c9d0;
+  --sidebar-primary: #c19a3b;
+  --sidebar-primary-foreground: #17181c;
+  --sidebar-accent: #2f3037;
+  --sidebar-accent-foreground: #dedee3;
+  --sidebar-border: #34353d;
+  --sidebar-ring: #c19a3b;
+  --inspector: #1e1f24;
+  --inspector-border: #34353d;
+  --shadow-color: rgb(0 0 0 / 0.55);
+  --shadow-xs: 0 1px 4px 0 rgb(0 0 0 / 0.32);
+  --shadow-sm: 0 2px 10px 0 rgb(0 0 0 / 0.40);
+  --shadow-md: 0 6px 22px 0 rgb(0 0 0 / 0.48);
+  --shadow-lg: 0 16px 48px -8px rgb(0 0 0 / 0.62);
+  --shadow-ring: 0 0 0 3px rgb(193 154 59 / 0.24);
+  --app-shell-bg: #18191d;
+  --app-main-bg: #18191d;
+  --app-main-gradient-1: linear-gradient(135deg, rgb(24 25 29 / 0) 0%, rgb(36 37 43 / 0.28) 46%, rgb(24 25 29 / 0.64) 100%);
+  --app-main-gradient-2: radial-gradient(circle at 50% 8%, rgb(47 48 55 / 0.52) 0%, rgb(47 48 55 / 0.24) 20%, transparent 54%), radial-gradient(circle at 50% 100%, rgb(30 31 36 / 0.72) 0%, rgb(30 31 36 / 0.46) 34%, transparent 72%);
+  --app-main-gradient-3: radial-gradient(circle at 72% 78%, rgb(193 154 59 / 0.10), transparent 30%), radial-gradient(circle at 86% 90%, rgb(126 152 174 / 0.08), transparent 32%);
+  --app-rail-bg: rgb(30 31 36 / 0.82);
+  --chat-sidebar-bg: rgb(30 31 36 / 0.94);
+  --chat-sidebar-bg-soft: rgb(30 31 36 / 0.72);
+  --jiaochang-bg: #18191d;
+  --jiaochang-header-bg: rgb(36 37 43 / 0.76);
+  --jiaochang-panel-bg: rgb(36 37 43 / 0.72);
+  --jiaochang-card-bg: #2a2b31;
+  --jiaochang-stage-bg: #1e1f24;
+  --jiaochang-text: #dedee3;
+  --jiaochang-muted: #8f9099;
+  --jiaochang-accent: #c19a3b;
+  --jiaochang-border: #34353d;
+}
+
+/* ══════════════════════════════════════════════════════════════════
    BASE STYLES
    ══════════════════════════════════════════════════════════════════ */
 @layer base {
   html {
     height: 100%;
     color-scheme: light dark;
-    background: var(--background);
+    background-color: var(--background);
+    background-image: var(--bg-texture, none);
   }
 
   * {
@@ -396,7 +629,8 @@
   body {
     height: 100%;
     overflow: hidden;
-    background: var(--background);
+    background-color: var(--background);
+    background-image: var(--bg-texture, none);
     color: var(--foreground);
     font-family: var(--fontSans);
     font-size: var(--text-base);
@@ -411,6 +645,15 @@
 
   body.font-serif-mode {
     font-family: var(--fontSerif);
+  }
+
+  [data-theme="warm-paper"] body {
+    letter-spacing: 0;
+  }
+
+  [data-theme="qingye"] body,
+  [data-theme="black"] body {
+    letter-spacing: 0;
   }
 
   h1, h2, h3 {
@@ -584,6 +827,18 @@
   }
 }
 
+@keyframes if2ai-updater-arrow {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-3px);
+  }
+  70% {
+    transform: translateY(3px);
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════
    UTILITY CLASSES
    ══════════════════════════════════════════════════════════════════ */
@@ -603,6 +858,53 @@
   /* ── Fonts ─ */
   .font-serif { font-family: var(--fontSerif); }
   .font-sans  { font-family: var(--fontSans);  }
+  .font-jiaochang-pixel {
+    font-family: var(--jiaochang-font-pixel-cjk);
+    letter-spacing: 0;
+    font-synthesis-weight: none;
+  }
+  .font-jiaochang-body {
+    font-family: var(--jiaochang-font-body);
+  }
+  .session-emoji,
+  .title-emoji {
+    font-family: var(--font-emoji);
+    font-variant-emoji: emoji;
+  }
+
+  .hljs {
+    background: transparent !important;
+    color: hsl(var(--foreground) / 0.86) !important;
+  }
+  .hljs-comment,
+  .hljs-quote {
+    color: hsl(var(--muted-foreground) / 0.78) !important;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-subst {
+    color: hsl(var(--primary)) !important;
+  }
+  .hljs-string,
+  .hljs-title,
+  .hljs-name,
+  .hljs-type,
+  .hljs-attribute,
+  .hljs-symbol,
+  .hljs-bullet,
+  .hljs-addition,
+  .hljs-variable,
+  .hljs-template-tag,
+  .hljs-template-variable {
+    color: hsl(var(--accent-foreground)) !important;
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-built_in,
+  .hljs-builtin-name,
+  .hljs-meta {
+    color: hsl(var(--foreground) / 0.78) !important;
+  }
 
   /* ── Text scale ─ */
   .text-token-xs   { font-size: var(--text-xs);   }

@@ -13,13 +13,13 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { AgentOrb } from '@/components/AgentOrb'
 import { SettingsSurface } from '../components/SettingsSurface'
 import type { SettingsPageProps } from '../types'
 import { configResetOnboarding } from '@/lib/tauri'
 import { toast } from 'sonner'
 import { broadcastChange } from '@/lib/crossWindowSync'
 import { APP_VERSION_LABEL } from '@/lib/appVersion'
+import appIconUrl from '@/assets/app-icon.png'
 import {
   checkAppUpdater,
   downloadAndInstallAppUpdate,
@@ -254,7 +254,15 @@ export function AboutSettingsPage({}: SettingsPageProps) {
       <SettingsSurface className="px-6 py-6">
         <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <AgentOrb status="idle" size="hero" />
+            <div className="relative size-[72px] shrink-0 overflow-hidden rounded-[18px] shadow-[0_1px_0_0.5px_rgba(255,255,255,0.62),0_0_0_0.5px_rgba(0,0,0,0.12),0_10px_24px_rgba(239,68,38,0.18)]">
+              <img
+                src={appIconUrl}
+                alt="If2Ai app icon"
+                className="size-full object-cover"
+                draggable={false}
+              />
+              <div className="pointer-events-none absolute inset-0 rounded-[18px] bg-[linear-gradient(145deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.05)_38%,transparent_62%)]" />
+            </div>
             <div className="space-y-0.5">
               <div className="text-[19px] font-bold tracking-tight">If2Ai</div>
               <div className="text-[11.5px] text-muted-foreground">桌面 AI 智能体工作台</div>

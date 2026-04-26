@@ -1,5 +1,6 @@
 import { type MouseEvent as ReactMouseEvent, useEffect, useState } from 'react'
 import { WaveDotsAnimation } from './WaveDotsAnimation'
+import appLogoSrc from '@/assets/app-icon.png'
 
 type If2AiLoadingScreenProps = {
   projectName?: string
@@ -7,8 +8,7 @@ type If2AiLoadingScreenProps = {
   onWindowDrag?: (event: ReactMouseEvent<HTMLElement>) => void
 }
 
-const appLogoSrc = `${new URL('../../../src-tauri/icons/icon-512.png', import.meta.url).href}?v=20260414d`
-const APP_NAME = 'UClaw'
+const APP_NAME = 'If2Ai'
 
 export function If2AiLoadingScreen({
   projectName = APP_NAME,

@@ -26,12 +26,12 @@ import { useOnboarding } from './hooks/useOnboarding';
 
 /** Step title mapping for the left panel header. */
 const STEP_TITLES: Record<number, string> = {
-  1: 'Welcome to if2AI',
+  1: 'Welcome to If2Ai',
   2: 'Complete system check',
   3: 'Confirm security notes',
   4: 'Select your model provider',
   5: 'Connect your channels',
-  6: 'Activate if2AI Agent',
+  6: 'Activate If2Ai Agent',
 };
 
 /** Step label for the right panel. */
@@ -46,7 +46,7 @@ const STEP_LABELS: Record<number, string> = {
 
 /** Right panel titles. */
 const PANEL_TITLES: Record<number, string> = {
-  1: 'Get if2AI ready in minutes.',
+  1: 'Get If2Ai ready in minutes.',
   2: 'Check first, install after.',
   3: 'Rules first, then run.',
   4: 'Choose your model source.',
@@ -121,12 +121,12 @@ function StepPlaceholder({
           {step}
         </div>
         <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
-          {STEP_TITLES[step] ?? 'if2AI Onboarding'}
+          {STEP_TITLES[step] ?? 'If2Ai Onboarding'}
         </h1>
       </div>
       <div className="flex-1 flex flex-col items-center justify-center px-8">
         <p className="text-token-base text-muted-foreground mb-2">
-          Step {step}: {STEP_TITLES[step] ?? 'if2AI Onboarding'}
+          Step {step}: {STEP_TITLES[step] ?? 'If2Ai Onboarding'}
         </p>
         <p className="text-token-sm text-muted-foreground/60">
           Detailed step page coming soon...

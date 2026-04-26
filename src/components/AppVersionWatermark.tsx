@@ -39,7 +39,7 @@ export function AppVersionWatermark() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none fixed bottom-1.5 right-2.5 z-50 select-none font-mono text-[9.5px] font-medium tracking-wide text-black/25 mix-blend-multiply"
+      className="pointer-events-none fixed bottom-1.5 right-2.5 z-50 select-none font-mono text-[9.5px] font-medium tracking-wide text-muted-foreground/70"
       title={`If2Ai ${APP_VERSION_LABEL}${deviceIndicator ? ` (device ${deviceIndicator})` : ''}`}
     >
       {label}

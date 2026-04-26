@@ -64,7 +64,7 @@ export function BootShell({
         />
       ) : surface === 'splash' ? (
         <If2AiLoadingScreen
-          projectName="UClaw"
+          projectName="If2Ai"
           stageLabel="Initializing agent workspace"
           onWindowDrag={onWindowDrag}
         />

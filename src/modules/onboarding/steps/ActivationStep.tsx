@@ -114,7 +114,7 @@ export function ActivationStep({ onNext, onPrev, onWindowDrag }: ActivationStepP
       rightPanel={
         <InfoPanel
           stepLabel="STEP 6: 激活"
-          title="唤醒 if2AI Agent，并完成渠道配对。"
+          title="唤醒 If2Ai Agent，并完成渠道配对。"
           bullets={[
             '确认配置无误后一键唤醒',
             '多端连接已就绪',
@@ -164,14 +164,14 @@ export function ActivationStep({ onNext, onPrev, onWindowDrag }: ActivationStepP
           6
         </div>
         <h1 className="text-token-3xl font-bold text-foreground font-sans tracking-tight">
-          唤醒 if2AI Agent
+          唤醒 If2Ai Agent
         </h1>
       </div>
 
       {/* Left content area */}
       <div className="flex-1 overflow-y-auto px-8 pb-6">
         <p className="text-token-sm text-muted-foreground mb-5 leading-relaxed">
-          完成所有步骤的设置，现在点击唤醒，让 if2AI Agent 上线。
+          完成所有步骤的设置，现在点击唤醒，让 If2Ai Agent 上线。
         </p>
 
         {/* Configuration summary */}
@@ -211,7 +211,7 @@ export function ActivationStep({ onNext, onPrev, onWindowDrag }: ActivationStepP
             {isActivating ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                正在唤醒 if2AI Agent...
+                正在唤醒 If2Ai Agent...
               </>
             ) : showCeremony ? (
               <>
@@ -221,7 +221,7 @@ export function ActivationStep({ onNext, onPrev, onWindowDrag }: ActivationStepP
             ) : (
               <>
                 <Zap className="h-5 w-5" />
-                唤醒 if2AI Agent
+                唤醒 If2Ai Agent
               </>
             )}
           </button>
@@ -257,7 +257,7 @@ export function ActivationStep({ onNext, onPrev, onWindowDrag }: ActivationStepP
 
               {/* Title */}
               <span className="text-token-lg font-bold text-foreground">
-                if2AI Agent 已上线！
+                If2Ai Agent 已上线！
               </span>
 
               {/* AI response displayed directly on the modal */}

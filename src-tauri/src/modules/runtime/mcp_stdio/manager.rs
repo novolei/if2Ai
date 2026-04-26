@@ -271,6 +271,28 @@ impl McpServerManager {
         Ok(response)
     }
 
+    /// Call a tool, discovering MCP tools first when the route index is empty.
+    ///
+    /// This keeps higher-level runtimes from needing to remember an ordering
+    /// contract (`discover_tools` before `call_tool`) while still preserving
+    /// the explicit `call_tool` API for callers that want strict routing.
+    pub async fn call_tool_discovering(
+        &mut self,
+        qualified_tool_name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<JsonRpcResponse<McpToolCallResult>, McpServerManagerError> {
+        if !self.tool_index.contains_key(qualified_tool_name) {
+            self.discover_tools().await?;
+        }
+        self.call_tool(qualified_tool_name, arguments).await
+    }
+
+    /// Return true when the manager has a route for `qualified_tool_name`.
+    #[must_use]
+    pub fn has_tool_route(&self, qualified_tool_name: &str) -> bool {
+        self.tool_index.contains_key(qualified_tool_name)
+    }
+
     pub async fn shutdown(&mut self) -> Result<(), McpServerManagerError> {
         let server_names = self.servers.keys().cloned().collect::<Vec<_>>();
         for server_name in server_names {

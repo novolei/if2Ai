@@ -154,12 +154,12 @@ export function MemoryAggregateOverview({
     : 0
 
   return (
-    <div className="rounded-2xl border border-jade/15 bg-gradient-to-br from-jade/[0.05] via-white to-white px-5 py-5 dark:via-background dark:to-background">
+    <div className="rounded-2xl border border-primary/15 bg-card/70 px-5 py-5">
       <div className="mb-4 flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
             <Sparkles className="h-3.5 w-3.5 text-jade" />
-            <span className="text-[10.5px] font-semibold uppercase tracking-widest text-black/35">
+            <span className="text-[10.5px] font-semibold uppercase tracking-widest text-muted-foreground">
               AI 记得我什么
             </span>
           </div>
@@ -260,7 +260,7 @@ export function MemoryAggregateOverview({
       </div>
 
       {/* Footer hint — entries library counts */}
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-black/[0.06] pt-3 text-[11px] text-muted-foreground">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-[11px] text-muted-foreground">
         <span>
           记忆库共 <strong className="font-semibold text-foreground/75">{entriesLoading ? '…' : totalEntries}</strong> 条
         </span>
@@ -334,9 +334,9 @@ function OverviewCard({
       onClick={onClick}
       disabled={!interactive}
       className={cn(
-        'group rounded-xl border border-black/[0.06] bg-white px-3.5 py-3 text-left transition-all dark:bg-background',
+        'group rounded-xl border border-border bg-card/70 px-3.5 py-3 text-left transition-all',
         interactive
-          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-black/[0.12] hover:shadow-[0_4px_14px_rgba(15,23,42,0.06)]'
+          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-primary/30 hover:bg-accent/35 hover:shadow-[0_4px_14px_rgba(15,23,42,0.06)]'
           : 'cursor-default opacity-95',
       )}
     >
@@ -350,7 +350,7 @@ function OverviewCard({
           {icon}
         </div>
         {interactive ? (
-          <ArrowRight className="h-3 w-3 text-black/30 transition-colors group-hover:text-foreground/65" />
+          <ArrowRight className="h-3 w-3 text-muted-foreground transition-colors group-hover:text-foreground/65" />
         ) : null}
       </div>
       <div className="mt-2 flex items-baseline gap-1">
@@ -358,12 +358,12 @@ function OverviewCard({
           {value}
         </span>
         {unit ? (
-          <span className="text-[10.5px] font-medium text-black/40">{unit}</span>
+          <span className="text-[10.5px] font-medium text-muted-foreground">{unit}</span>
         ) : null}
       </div>
       <div className="mt-0.5 text-[12px] font-semibold text-foreground/85">
         {label}
-        <span className="ml-1.5 font-normal text-black/35">{subtitle}</span>
+        <span className="ml-1.5 font-normal text-muted-foreground">{subtitle}</span>
       </div>
       <div className="mt-1 line-clamp-2 text-[10.5px] leading-4 text-muted-foreground">
         {hint}

@@ -31,7 +31,7 @@ export function MemoryCategoryNav({
   onCategoryChange,
 }: MemoryCategoryNavProps) {
   return (
-    <nav className="flex gap-1 border-b border-black/5 px-4">
+    <nav className="flex gap-1 border-b border-border px-4">
       {CATEGORIES.map((cat) => (
         <button
           key={cat.value}
@@ -40,7 +40,7 @@ export function MemoryCategoryNav({
             'rounded-t-md px-3 py-2 text-[13px] font-medium transition-colors duration-150',
             activeCategory === cat.value
               ? 'border-b-2 border-primary bg-primary/5 text-primary'
-              : 'text-muted-foreground hover:bg-black/[0.03] hover:text-foreground',
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
           )}
           onClick={() => onCategoryChange(cat.value)}
         >

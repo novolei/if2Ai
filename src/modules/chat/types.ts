@@ -20,6 +20,8 @@ export interface RecentSession {
   projectId: string;
   projectName: string;
   title: string;
+  titleIcon?: string | null;
+  titlePending?: boolean;
   updatedAt: string;
 }
 
@@ -106,6 +108,8 @@ export interface Conversation {
   id: string;
   projectId: string;
   title: string;
+  titleIcon?: string | null;
+  titlePending?: boolean;
   messages: Message[];
   updatedAt: Date;
   /** P2-11 — running per-session totals (provider-billable). Hydrated from
