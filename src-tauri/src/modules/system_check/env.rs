@@ -10,7 +10,8 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use super::model_download::{
-    embedded_model_exists, get_download_progress, is_download_in_progress, MODEL_SIZE_MB,
+    embedded_model_exists, get_download_progress, is_download_in_progress, last_download_error,
+    MODEL_SIZE_MB,
 };
 use super::types::{CheckStatus, CpuInfo, EmbeddedModelStatus, GpuInfo, MemoryInfo, SystemReport};
 
@@ -189,6 +190,13 @@ pub async fn run_full_check() -> SystemReport {
             progress: Some(model_progress),
             size_mb: MODEL_SIZE_MB,
             status: CheckStatus::Running,
+        }
+    } else if let Some(reason) = last_download_error() {
+        EmbeddedModelStatus {
+            downloaded: false,
+            progress: Some(model_progress),
+            size_mb: MODEL_SIZE_MB,
+            status: CheckStatus::Fail { reason },
         }
     } else {
         EmbeddedModelStatus {

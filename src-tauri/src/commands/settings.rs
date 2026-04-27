@@ -3,9 +3,10 @@
 //! Provides configuration for the memory subsystem and prompt control plane.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use tauri::State;
 
 use crate::commands::AppState;
@@ -15,9 +16,19 @@ use crate::modules::identity::{
     IdentityCustomizationPack, IdentityRegistry, PersonaCustomization, SoulCustomization,
 };
 use crate::modules::runtime::config::{
-    default_prompt_control_config_path, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
+    default_mcp_settings_path, default_prompt_control_config_path, ConfigLoader, ConfigSource,
+    McpServerConfig, McpTransport,
 };
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
+use crate::modules::runtime::mcp_stdio::{
+    mcp_workbench_activity_entry, mcp_workbench_activity_snapshot, mcp_workbench_discovery_dto,
+    mcp_workbench_transport_label, mcp_workbench_unsupported_server_dtos,
+    record_mcp_workbench_activity, sanitize_mcp_workbench_value, summarize_mcp_counts,
+    McpServerManager, McpServerManagerError, McpWorkbenchActivityEntry, McpWorkbenchActivityStatus,
+    McpWorkbenchDiscoveryDto, McpWorkbenchGetPromptDto, McpWorkbenchPromptDto,
+    McpWorkbenchReadResourceDto, McpWorkbenchResourceDto, McpWorkbenchServerDto,
+    McpWorkbenchToolCallDto,
+};
 
 /// Memory recall mode — selects between lexical-only and hybrid (vector +
 /// FTS + episodic) retrieval pipelines.  Mirrors the Rust runtime
@@ -300,6 +311,39 @@ pub struct McpServiceConfigInput {
     pub servers: Vec<McpServiceEntryInput>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpWorkbenchErrorDto {
+    pub operation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpWorkbenchToolCallRequest {
+    pub qualified_tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpWorkbenchReadResourceRequest {
+    pub server_name: String,
+    pub uri: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpWorkbenchGetPromptRequest {
+    pub server_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Value>,
+}
+
 fn default_prompt_diagnostics_enabled() -> bool {
     true
 }
@@ -462,10 +506,7 @@ fn count_trajectories() -> usize {
 }
 
 fn mcp_user_settings_path() -> std::path::PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    ConfigLoader::default_for(cwd)
-        .config_home()
-        .join("settings.json")
+    default_mcp_settings_path()
 }
 
 fn scope_label(source: ConfigSource) -> &'static str {
@@ -533,6 +574,82 @@ fn mcp_entry_from_runtime(
         }
     }
     entry
+}
+
+fn mcp_workbench_error(
+    operation: &str,
+    server_id: Option<String>,
+    error: impl std::fmt::Display,
+) -> McpWorkbenchErrorDto {
+    McpWorkbenchErrorDto {
+        operation: operation.to_string(),
+        server_id,
+        message: error.to_string(),
+    }
+}
+
+fn mcp_workbench_duration_ms(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn mcp_workbench_load_config() -> Result<crate::modules::runtime::config::RuntimeConfig, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    ConfigLoader::default_for(cwd)
+        .load()
+        .map_err(|e| e.to_string())
+}
+
+fn mcp_workbench_manager() -> Result<McpServerManager, McpWorkbenchErrorDto> {
+    let config = mcp_workbench_load_config()
+        .map_err(|error| mcp_workbench_error("load_config", None, error))?;
+    Ok(McpServerManager::from_runtime_config(&config))
+}
+
+fn mcp_workbench_server_dto(
+    name: &str,
+    scope: ConfigSource,
+    config: &McpServerConfig,
+) -> McpWorkbenchServerDto {
+    let active = matches!(config, McpServerConfig::Stdio(_));
+    McpWorkbenchServerDto {
+        name: name.to_string(),
+        transport: mcp_workbench_transport_label(config.transport()),
+        scope: scope_label(scope).to_string(),
+        active,
+        reason: if active {
+            None
+        } else {
+            Some("Phase 1 MCP Workbench only supports stdio transports".to_string())
+        },
+    }
+}
+
+fn mcp_workbench_record_error(
+    operation: &str,
+    server_id: Option<String>,
+    target: Option<String>,
+    started_at: Instant,
+    params: Option<Value>,
+    error: &McpWorkbenchErrorDto,
+) {
+    record_mcp_workbench_activity(mcp_workbench_activity_entry(
+        server_id.unwrap_or_else(|| "all".to_string()),
+        operation,
+        target,
+        McpWorkbenchActivityStatus::Error,
+        mcp_workbench_duration_ms(started_at),
+        params,
+        None,
+        Some(error.message.clone()),
+    ));
+}
+
+fn mcp_workbench_manager_error(
+    operation: &str,
+    server_id: Option<String>,
+    error: McpServerManagerError,
+) -> McpWorkbenchErrorDto {
+    mcp_workbench_error(operation, server_id, error)
 }
 
 fn validate_mcp_service_entry(entry: &McpServiceEntryInput) -> Result<(), String> {
@@ -835,7 +952,7 @@ pub fn set_memory_config(
 }
 
 /// Read the effective MCP server configuration merged from user, project,
-/// and local claw settings.
+/// and local if2Ai settings.
 #[tauri::command]
 pub fn get_mcp_service_config() -> Result<McpServiceConfig, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -861,11 +978,366 @@ pub fn get_mcp_service_config() -> Result<McpServiceConfig, String> {
     })
 }
 
-/// Persist user-level MCP server configuration to `~/.claw/settings.json`.
+/// Persist user-level MCP server configuration to `~/.if2ai/mcp/settings.json`.
 #[tauri::command]
 pub fn set_mcp_service_config(request: McpServiceConfigInput) -> Result<McpServiceConfig, String> {
     write_user_mcp_services_file(&request)?;
     get_mcp_service_config()
+}
+
+#[tauri::command]
+pub fn mcp_workbench_list_servers() -> Result<Vec<McpWorkbenchServerDto>, McpWorkbenchErrorDto> {
+    let config = mcp_workbench_load_config()
+        .map_err(|error| mcp_workbench_error("list_servers", None, error))?;
+    let mut servers = config
+        .mcp()
+        .servers()
+        .iter()
+        .map(|(name, scoped)| mcp_workbench_server_dto(name, scoped.scope, &scoped.config))
+        .collect::<Vec<_>>();
+    servers.sort_by(|left, right| {
+        left.scope
+            .cmp(&right.scope)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(servers)
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_discover() -> Result<McpWorkbenchDiscoveryDto, McpWorkbenchErrorDto> {
+    let started_at = Instant::now();
+    let mut manager = mcp_workbench_manager()?;
+    let unsupported_servers = mcp_workbench_unsupported_server_dtos(manager.unsupported_servers());
+    let discovery = async {
+        let tools = manager.discover_tools().await?;
+        let resources = manager.list_resources().await?;
+        let prompts = manager.list_prompts().await?;
+        Ok::<_, McpServerManagerError>(mcp_workbench_discovery_dto(
+            tools,
+            resources,
+            prompts,
+            unsupported_servers,
+        ))
+    }
+    .await
+    .map_err(|error| mcp_workbench_manager_error("discover", None, error));
+
+    let _ = manager.shutdown().await;
+
+    match discovery {
+        Ok(discovery) => {
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                "all",
+                "discover",
+                None,
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                None,
+                Some(summarize_mcp_counts(
+                    discovery.tools.len(),
+                    discovery.resources.len(),
+                    discovery.prompts.len(),
+                )),
+                None,
+            ));
+            Ok(discovery)
+        }
+        Err(error) => {
+            mcp_workbench_record_error("discover", None, None, started_at, None, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_call_tool(
+    request: McpWorkbenchToolCallRequest,
+) -> Result<McpWorkbenchToolCallDto, McpWorkbenchErrorDto> {
+    let started_at = Instant::now();
+    let params = request.arguments.clone();
+    let mut manager = mcp_workbench_manager()?;
+    let result = manager
+        .call_tool_discovering(&request.qualified_tool_name, request.arguments)
+        .await
+        .map_err(|error| {
+            mcp_workbench_manager_error(
+                "call_tool",
+                Some(request.qualified_tool_name.clone()),
+                error,
+            )
+        });
+    let _ = manager.shutdown().await;
+
+    match result {
+        Ok(response) => {
+            if let Some(error) = response.error {
+                let dto = mcp_workbench_error(
+                    "call_tool",
+                    Some(request.qualified_tool_name.clone()),
+                    format!("JSON-RPC error {}: {}", error.code, error.message),
+                );
+                mcp_workbench_record_error(
+                    "call_tool",
+                    Some(request.qualified_tool_name.clone()),
+                    Some(request.qualified_tool_name),
+                    started_at,
+                    params,
+                    &dto,
+                );
+                return Err(dto);
+            }
+            let result = response.result.ok_or_else(|| {
+                mcp_workbench_error(
+                    "call_tool",
+                    Some(request.qualified_tool_name.clone()),
+                    "missing tool result payload",
+                )
+            })?;
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                request.qualified_tool_name.clone(),
+                "call_tool",
+                Some(request.qualified_tool_name.clone()),
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                params,
+                serde_json::to_value(&result)
+                    .ok()
+                    .map(|value| sanitize_mcp_workbench_value(&value)),
+                None,
+            ));
+            Ok(McpWorkbenchToolCallDto {
+                server_name: request.qualified_tool_name.clone(),
+                qualified_name: request.qualified_tool_name,
+                result,
+            })
+        }
+        Err(error) => {
+            mcp_workbench_record_error(
+                "call_tool",
+                Some(request.qualified_tool_name.clone()),
+                Some(request.qualified_tool_name),
+                started_at,
+                params,
+                &error,
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_list_resources(
+) -> Result<Vec<McpWorkbenchResourceDto>, McpWorkbenchErrorDto> {
+    let started_at = Instant::now();
+    let mut manager = mcp_workbench_manager()?;
+    let result = manager
+        .list_resources()
+        .await
+        .map_err(|error| mcp_workbench_manager_error("list_resources", None, error));
+    let _ = manager.shutdown().await;
+
+    match result {
+        Ok(resources) => {
+            let dto = mcp_workbench_discovery_dto(Vec::new(), resources, Vec::new(), Vec::new());
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                "all",
+                "list_resources",
+                None,
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                None,
+                Some(json!({ "resources": dto.resources.len() })),
+                None,
+            ));
+            Ok(dto.resources)
+        }
+        Err(error) => {
+            mcp_workbench_record_error("list_resources", None, None, started_at, None, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_read_resource(
+    request: McpWorkbenchReadResourceRequest,
+) -> Result<McpWorkbenchReadResourceDto, McpWorkbenchErrorDto> {
+    let started_at = Instant::now();
+    let params = Some(json!({ "uri": request.uri.clone() }));
+    let mut manager = mcp_workbench_manager()?;
+    let result = manager
+        .read_resource(&request.server_name, &request.uri)
+        .await
+        .map_err(|error| {
+            mcp_workbench_manager_error("read_resource", Some(request.server_name.clone()), error)
+        });
+    let _ = manager.shutdown().await;
+
+    match result {
+        Ok(response) => {
+            if let Some(error) = response.error {
+                let dto = mcp_workbench_error(
+                    "read_resource",
+                    Some(request.server_name.clone()),
+                    format!("JSON-RPC error {}: {}", error.code, error.message),
+                );
+                mcp_workbench_record_error(
+                    "read_resource",
+                    Some(request.server_name.clone()),
+                    Some(request.uri.clone()),
+                    started_at,
+                    params,
+                    &dto,
+                );
+                return Err(dto);
+            }
+            let result = response.result.ok_or_else(|| {
+                mcp_workbench_error(
+                    "read_resource",
+                    Some(request.server_name.clone()),
+                    "missing resource result payload",
+                )
+            })?;
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                request.server_name.clone(),
+                "read_resource",
+                Some(request.uri.clone()),
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                params,
+                serde_json::to_value(&result)
+                    .ok()
+                    .map(|value| sanitize_mcp_workbench_value(&value)),
+                None,
+            ));
+            Ok(McpWorkbenchReadResourceDto {
+                server_name: request.server_name,
+                uri: request.uri,
+                result,
+            })
+        }
+        Err(error) => {
+            mcp_workbench_record_error(
+                "read_resource",
+                Some(request.server_name.clone()),
+                Some(request.uri),
+                started_at,
+                params,
+                &error,
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_list_prompts() -> Result<Vec<McpWorkbenchPromptDto>, McpWorkbenchErrorDto>
+{
+    let started_at = Instant::now();
+    let mut manager = mcp_workbench_manager()?;
+    let result = manager
+        .list_prompts()
+        .await
+        .map_err(|error| mcp_workbench_manager_error("list_prompts", None, error));
+    let _ = manager.shutdown().await;
+
+    match result {
+        Ok(prompts) => {
+            let dto = mcp_workbench_discovery_dto(Vec::new(), Vec::new(), prompts, Vec::new());
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                "all",
+                "list_prompts",
+                None,
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                None,
+                Some(json!({ "prompts": dto.prompts.len() })),
+                None,
+            ));
+            Ok(dto.prompts)
+        }
+        Err(error) => {
+            mcp_workbench_record_error("list_prompts", None, None, started_at, None, &error);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_workbench_get_prompt(
+    request: McpWorkbenchGetPromptRequest,
+) -> Result<McpWorkbenchGetPromptDto, McpWorkbenchErrorDto> {
+    let started_at = Instant::now();
+    let params = request.arguments.clone();
+    let mut manager = mcp_workbench_manager()?;
+    let result = manager
+        .get_prompt(&request.server_name, &request.name, request.arguments)
+        .await
+        .map_err(|error| {
+            mcp_workbench_manager_error("get_prompt", Some(request.server_name.clone()), error)
+        });
+    let _ = manager.shutdown().await;
+
+    match result {
+        Ok(response) => {
+            if let Some(error) = response.error {
+                let dto = mcp_workbench_error(
+                    "get_prompt",
+                    Some(request.server_name.clone()),
+                    format!("JSON-RPC error {}: {}", error.code, error.message),
+                );
+                mcp_workbench_record_error(
+                    "get_prompt",
+                    Some(request.server_name.clone()),
+                    Some(request.name.clone()),
+                    started_at,
+                    params,
+                    &dto,
+                );
+                return Err(dto);
+            }
+            let result = response.result.ok_or_else(|| {
+                mcp_workbench_error(
+                    "get_prompt",
+                    Some(request.server_name.clone()),
+                    "missing prompt result payload",
+                )
+            })?;
+            record_mcp_workbench_activity(mcp_workbench_activity_entry(
+                request.server_name.clone(),
+                "get_prompt",
+                Some(request.name.clone()),
+                McpWorkbenchActivityStatus::Ok,
+                mcp_workbench_duration_ms(started_at),
+                params,
+                serde_json::to_value(&result)
+                    .ok()
+                    .map(|value| sanitize_mcp_workbench_value(&value)),
+                None,
+            ));
+            Ok(McpWorkbenchGetPromptDto {
+                server_name: request.server_name,
+                name: request.name,
+                result,
+            })
+        }
+        Err(error) => {
+            mcp_workbench_record_error(
+                "get_prompt",
+                Some(request.server_name.clone()),
+                Some(request.name),
+                started_at,
+                params,
+                &error,
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn mcp_workbench_activity() -> Vec<McpWorkbenchActivityEntry> {
+    mcp_workbench_activity_snapshot()
 }
 
 /// Read the effective prompt control settings, including defaults.

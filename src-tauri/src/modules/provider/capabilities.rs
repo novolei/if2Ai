@@ -98,6 +98,16 @@ pub fn resolve(
     user_override: Option<bool>,
     global_policy: GlobalThinkingPolicy,
 ) -> ModelCapability {
+    resolve_with_user_config(provider_id, model_id, user_override, global_policy, true)
+}
+
+fn resolve_with_user_config(
+    provider_id: &str,
+    model_id: &str,
+    user_override: Option<bool>,
+    global_policy: GlobalThinkingPolicy,
+    include_user_config: bool,
+) -> ModelCapability {
     if matches!(global_policy, GlobalThinkingPolicy::ForceOff) {
         let mut cap = ModelCapability::disabled();
         cap.source = CapabilitySource::GlobalPolicy;
@@ -119,7 +129,7 @@ pub fn resolve(
         return cap;
     }
 
-    if supports_thinking_from_models_json(provider_id, model_id) {
+    if include_user_config && supports_thinking_from_models_json(provider_id, model_id) {
         let mut cap = ModelCapability::disabled();
         cap.reasoning = true;
         cap.reasoning_required_in_tool_calls = true;
@@ -193,6 +203,15 @@ fn supports_thinking_from_models_json(provider_id: &str, model_id: &str) -> bool
 mod tests {
     use super::*;
 
+    fn resolve_without_user_config(
+        provider_id: &str,
+        model_id: &str,
+        user_override: Option<bool>,
+        global_policy: GlobalThinkingPolicy,
+    ) -> ModelCapability {
+        resolve_with_user_config(provider_id, model_id, user_override, global_policy, false)
+    }
+
     #[test]
     fn force_off_wins_over_dict() {
         let cap = resolve(
@@ -255,7 +274,7 @@ mod tests {
 
     #[test]
     fn dict_resolves_ollama_minimax_cloud_reasoning_required() {
-        let cap = resolve(
+        let cap = resolve_without_user_config(
             "ollama",
             "minimax-m2.7:cloud",
             None,

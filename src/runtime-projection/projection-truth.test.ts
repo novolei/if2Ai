@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 
+import type { StreamTokenPayload, ToolAttemptStatus } from "@/transport/contracts";
 import { translateAgentTokenPayload } from "./runtime-event-translator.ts";
 
 describe("runtime-projection truth (T-002 / MIG-003)", () => {
@@ -138,8 +139,8 @@ describe("runtime-projection truth (T-002 / MIG-003)", () => {
       event_type: "tool_call_update" as const,
       tool_call_id: "tc-99",
       tool_name: "bash",
-      tool_status: "running",
-    };
+      tool_status: "running" as ToolAttemptStatus,
+    } satisfies StreamTokenPayload;
 
     const event = translateAgentTokenPayload(payload);
     assert.ok(event, "tool_call_update must translate to a canonical event");

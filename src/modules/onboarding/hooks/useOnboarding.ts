@@ -145,6 +145,17 @@ export function useOnboarding(): UseOnboardingReturn {
     try {
       const report = await invoke<SystemReport>('system_check_run');
       setSystemReport(report);
+      if (report.embedded_model.status.status === 'Running') {
+        setIsDownloading(true);
+      }
+      if (report.embedded_model.downloaded || report.embedded_model.status.status === 'Pass') {
+        setDownloadProgress(100);
+        setIsDownloading(false);
+      }
+      if (report.embedded_model.status.status === 'Fail') {
+        setDownloadError(report.embedded_model.status.reason);
+        setIsDownloading(false);
+      }
     } catch (err) {
       console.error('[onboarding] System check failed:', err);
     } finally {
@@ -154,17 +165,19 @@ export function useOnboarding(): UseOnboardingReturn {
 
   const downloadEmbeddedModel = useCallback(async () => {
     setIsDownloading(true);
-    setDownloadProgress(0);
-    setDownloadedBytes(0);
     setDownloadError(null);
     try {
       await invoke('embedded_model_download');
-      setDownloadProgress(100);
-      setDownloadedBytes((current) => totalBytes > 0 ? totalBytes : current);
+      const progress = await invoke<number>('embedded_model_progress');
+      const percent = Math.max(0, Math.min(100, progress * 100));
+      setDownloadProgress(percent);
+      setDownloadedBytes((current) => {
+        if (totalBytes <= 0) return current;
+        return Math.max(current, Math.round((percent / 100) * totalBytes));
+      });
     } catch (err) {
       console.error('[onboarding] Model download failed:', err);
       setDownloadError(err instanceof Error ? err.message : String(err));
-    } finally {
       setIsDownloading(false);
     }
   }, [totalBytes]);
@@ -175,17 +188,32 @@ export function useOnboarding(): UseOnboardingReturn {
     let cancelled = false;
     const poll = async () => {
       try {
-        const progress = await invoke<number>('embedded_model_progress');
+        const [progress, report] = await Promise.all([
+          invoke<number>('embedded_model_progress'),
+          invoke<SystemReport>('system_check_run'),
+        ]);
         if (cancelled) return;
+        setSystemReport(report);
         const percent = Math.max(0, Math.min(100, progress * 100));
         setDownloadProgress(percent);
         setDownloadedBytes((current) => {
           if (totalBytes <= 0) return current;
           return Math.max(current, Math.round((percent / 100) * totalBytes));
         });
+        const modelStatus = report.embedded_model.status;
+        if (report.embedded_model.downloaded || modelStatus.status === 'Pass') {
+          setDownloadError(null);
+          setDownloadProgress(100);
+          setDownloadedBytes((current) => totalBytes > 0 ? totalBytes : current);
+          setIsDownloading(false);
+        } else if (modelStatus.status === 'Fail') {
+          setDownloadError(modelStatus.reason);
+          setIsDownloading(false);
+        } else if (modelStatus.status !== 'Running') {
+          setIsDownloading(false);
+        }
       } catch {
-        // The download command itself reports terminal errors; progress polling
-        // is best-effort and should not interrupt onboarding.
+        // Progress polling is best-effort and should not interrupt onboarding.
       }
     };
 

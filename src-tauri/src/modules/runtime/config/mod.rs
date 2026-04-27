@@ -36,7 +36,7 @@ use super::sandbox::SandboxConfig;
 use crate::modules::identity::IdentitySettings;
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 
-pub const CLAW_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
+pub const IF2AI_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigSource {
@@ -108,7 +108,7 @@ pub struct RuntimeConfig {
 }
 
 /// Agent runtime configuration containing workdir and execution settings.
-/// This is distinct from the claw-settings RuntimeConfig above.
+/// This is distinct from the if2Ai settings RuntimeConfig above.
 #[derive(Debug, Clone)]
 pub struct AgentRuntimeConfig {
     /// The allowed working directory for file operations.
@@ -235,30 +235,22 @@ impl ConfigLoader {
     /// Enumerate every config file path the loader will inspect, in precedence order.
     #[must_use]
     pub fn discover(&self) -> Vec<ConfigEntry> {
-        let user_legacy_path = self.config_home.parent().map_or_else(
-            || PathBuf::from(".claw.json"),
-            |parent| parent.join(".claw.json"),
-        );
         vec![
-            ConfigEntry {
-                source: ConfigSource::User,
-                path: user_legacy_path,
-            },
             ConfigEntry {
                 source: ConfigSource::User,
                 path: self.config_home.join("settings.json"),
             },
             ConfigEntry {
-                source: ConfigSource::Project,
-                path: self.cwd.join(".claw.json"),
+                source: ConfigSource::User,
+                path: mcp_settings_path_for_home(&self.config_home),
             },
             ConfigEntry {
                 source: ConfigSource::Project,
-                path: self.cwd.join(".claw").join("settings.json"),
+                path: self.cwd.join(".if2ai").join("settings.json"),
             },
             ConfigEntry {
                 source: ConfigSource::Local,
-                path: self.cwd.join(".claw").join("settings.local.json"),
+                path: self.cwd.join(".if2ai").join("settings.local.json"),
             },
         ]
     }
@@ -742,10 +734,21 @@ impl RuntimePluginConfig {
 /// Resolve the default user-level config home directory.
 #[must_use]
 pub fn default_config_home() -> PathBuf {
-    std::env::var_os("CLAW_CONFIG_HOME")
+    std::env::var_os("IF2AI_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claw")))
-        .unwrap_or_else(|| PathBuf::from(".claw"))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".if2ai")))
+        .unwrap_or_else(|| PathBuf::from(".if2ai"))
+}
+
+/// Resolve the dedicated MCP settings path under the if2Ai data root.
+#[must_use]
+pub fn default_mcp_settings_path() -> PathBuf {
+    mcp_settings_path_for_home(&default_config_home())
+}
+
+#[must_use]
+pub fn mcp_settings_path_for_home(config_home: &Path) -> PathBuf {
+    config_home.join("mcp").join("settings.json")
 }
 
 /// Resolve the dedicated prompt-control config path adjacent to the
@@ -756,12 +759,7 @@ pub fn default_prompt_control_config_path() -> PathBuf {
 }
 
 pub(crate) fn prompt_control_config_path_for_home(config_home: &Path) -> PathBuf {
-    config_home
-        .parent()
-        .unwrap_or(config_home)
-        .join(".if2ai")
-        .join("prompt")
-        .join("control-plane.json")
+    config_home.join("prompt").join("control-plane.json")
 }
 
 impl RuntimeHookConfig {

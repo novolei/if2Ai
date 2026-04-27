@@ -25,6 +25,16 @@ import type {
   ExecutionModeDecision,
   MemoryAfterTurnPayload,
   MemoryEventPayload,
+  McpWorkbenchActivityEntry,
+  McpWorkbenchDiscovery,
+  McpWorkbenchGetPromptRequest,
+  McpWorkbenchGetPromptResult,
+  McpWorkbenchPrompt,
+  McpWorkbenchReadResourceRequest,
+  McpWorkbenchReadResourceResult,
+  McpWorkbenchServer,
+  McpWorkbenchToolCallRequest,
+  McpWorkbenchToolCallResult,
   PermissionMode,
   PermissionRequestPayload,
   StreamTokenPayload,
@@ -50,6 +60,20 @@ export type {
   ExecutionModeDecision,
   MemoryContextItem,
   MemoryEventPayload,
+  McpWorkbenchActivityEntry,
+  McpWorkbenchActivityStatus,
+  McpWorkbenchDiscovery,
+  McpWorkbenchGetPromptRequest,
+  McpWorkbenchGetPromptResult,
+  McpWorkbenchPrompt,
+  McpWorkbenchPromptArgument,
+  McpWorkbenchReadResourceRequest,
+  McpWorkbenchReadResourceResult,
+  McpWorkbenchResource,
+  McpWorkbenchServer,
+  McpWorkbenchTool,
+  McpWorkbenchToolCallRequest,
+  McpWorkbenchToolCallResult,
   PermissionMode,
   PermissionRequestPayload,
   PromptDiagnosticsSummary,
@@ -1478,16 +1502,67 @@ export async function setIdentityCustomizationPack(
   });
 }
 
-/** Load effective MCP services from user/project/local claw settings. */
+/** Load effective MCP services from user/project/local if2Ai settings. */
 export async function getMcpServiceConfig(): Promise<McpServiceConfig> {
   return invoke<McpServiceConfig>("get_mcp_service_config");
 }
 
-/** Persist user-level MCP services to the claw settings file. */
+/** Persist user-level MCP services to the if2Ai MCP settings file. */
 export async function setMcpServiceConfig(
   request: McpServiceConfigInput,
 ): Promise<McpServiceConfig> {
   return invoke<McpServiceConfig>("set_mcp_service_config", { request });
+}
+
+export async function mcpWorkbenchListServers(): Promise<McpWorkbenchServer[]> {
+  return invoke<McpWorkbenchServer[]>("mcp_workbench_list_servers");
+}
+
+export async function mcpWorkbenchDiscover(): Promise<McpWorkbenchDiscovery> {
+  return invoke<McpWorkbenchDiscovery>("mcp_workbench_discover");
+}
+
+export async function mcpWorkbenchCallTool(
+  request: McpWorkbenchToolCallRequest,
+): Promise<McpWorkbenchToolCallResult> {
+  return invoke<McpWorkbenchToolCallResult>("mcp_workbench_call_tool", {
+    request,
+  });
+}
+
+export async function mcpWorkbenchListResources(): Promise<
+  McpWorkbenchDiscovery["resources"]
+> {
+  return invoke<McpWorkbenchDiscovery["resources"]>(
+    "mcp_workbench_list_resources",
+  );
+}
+
+export async function mcpWorkbenchReadResource(
+  request: McpWorkbenchReadResourceRequest,
+): Promise<McpWorkbenchReadResourceResult> {
+  return invoke<McpWorkbenchReadResourceResult>(
+    "mcp_workbench_read_resource",
+    { request },
+  );
+}
+
+export async function mcpWorkbenchListPrompts(): Promise<McpWorkbenchPrompt[]> {
+  return invoke<McpWorkbenchPrompt[]>("mcp_workbench_list_prompts");
+}
+
+export async function mcpWorkbenchGetPrompt(
+  request: McpWorkbenchGetPromptRequest,
+): Promise<McpWorkbenchGetPromptResult> {
+  return invoke<McpWorkbenchGetPromptResult>("mcp_workbench_get_prompt", {
+    request,
+  });
+}
+
+export async function mcpWorkbenchActivity(): Promise<
+  McpWorkbenchActivityEntry[]
+> {
+  return invoke<McpWorkbenchActivityEntry[]>("mcp_workbench_activity");
 }
 
 /** Save prompt control settings to the dedicated prompt config directory. */

@@ -18,10 +18,14 @@ use crate::modules::runtime::mcp::mcp_tool_name;
 use crate::modules::runtime::mcp_client::McpClientBootstrap;
 
 use super::{
-    spawn_mcp_stdio_process, JsonRpcId, JsonRpcRequest, JsonRpcResponse, McpInitializeClientInfo,
-    McpInitializeParams, McpInitializeResult, McpInitializeServerInfo, McpListToolsResult,
-    McpReadResourceParams, McpReadResourceResult, McpServerManager, McpServerManagerError,
-    McpStdioProcess, McpTool, McpToolCallParams,
+    clear_mcp_workbench_activity_for_tests, mcp_workbench_activity_entry,
+    mcp_workbench_activity_snapshot, mcp_workbench_discovery_dto,
+    mcp_workbench_unsupported_server_dtos, record_mcp_workbench_activity,
+    sanitize_mcp_workbench_value, spawn_mcp_stdio_process, summarize_mcp_counts, JsonRpcId,
+    JsonRpcRequest, JsonRpcResponse, McpInitializeClientInfo, McpInitializeParams,
+    McpInitializeResult, McpInitializeServerInfo, McpListToolsResult, McpReadResourceParams,
+    McpReadResourceResult, McpServerManager, McpServerManagerError, McpStdioProcess, McpTool,
+    McpToolCallParams, McpWorkbenchActivityStatus,
 };
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -134,7 +138,7 @@ fn write_mcp_server_script() -> PathBuf {
         "            'id': request['id'],",
         "            'result': {",
         "                'protocolVersion': request['params']['protocolVersion'],",
-        "                'capabilities': {'tools': {}, 'resources': {}},",
+        "                'capabilities': {'tools': {}, 'resources': {}, 'prompts': {}},",
         "                'serverInfo': {'name': 'fake-mcp', 'version': '0.2.0'}",
         "            }",
         "        })",
@@ -205,6 +209,30 @@ fn write_mcp_server_script() -> PathBuf {
         "                ]",
         "            }",
         "        })",
+        "    elif method == 'prompts/list':",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {",
+        "                'prompts': [",
+        "                    {",
+        "                        'name': 'summarize',",
+        "                        'description': 'Summarize input',",
+        "                        'arguments': [{'name': 'topic', 'required': True}]",
+        "                    }",
+        "                ]",
+        "            }",
+        "        })",
+        "    elif method == 'prompts/get':",
+        "        topic = (request['params'].get('arguments') or {}).get('topic', 'general')",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {",
+        "                'description': 'Summarize input',",
+        "                'messages': [{'role': 'user', 'content': {'type': 'text', 'text': f'summarize {topic}'}}]",
+        "            }",
+        "        })",
         "    else:",
         "        send_message({",
         "            'jsonrpc': '2.0',",
@@ -271,7 +299,7 @@ fn write_manager_mcp_server_script() -> PathBuf {
         "            'id': request['id'],",
         "            'result': {",
         "                'protocolVersion': request['params']['protocolVersion'],",
-        "                'capabilities': {'tools': {}},",
+        "                'capabilities': {'tools': {}, 'resources': {}, 'prompts': {}},",
         "                'serverInfo': {'name': LABEL, 'version': '1.0.0'}",
         "            }",
         "        })",
@@ -308,6 +336,31 @@ fn write_manager_mcp_server_script() -> PathBuf {
         "                },",
         "                'isError': False",
         "            }",
+        "        })",
+        "    elif method == 'resources/list':",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {'resources': [{'uri': f'file://{LABEL}/guide.txt', 'name': 'guide'}]}",
+        "        })",
+        "    elif method == 'resources/read':",
+        "        uri = request['params']['uri']",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {'contents': [{'uri': uri, 'mimeType': 'text/plain', 'text': f'{LABEL}:{uri}'}]}",
+        "        })",
+        "    elif method == 'prompts/list':",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {'prompts': [{'name': 'summarize', 'description': f'Summarize for {LABEL}'}]}",
+        "        })",
+        "    elif method == 'prompts/get':",
+        "        send_message({",
+        "            'jsonrpc': '2.0',",
+        "            'id': request['id'],",
+        "            'result': {'description': f'Summarize for {LABEL}', 'messages': [{'role': 'user', 'content': {'type': 'text', 'text': LABEL}}]}",
         "        })",
         "    else:",
         "        send_message({",
@@ -962,4 +1015,168 @@ fn manager_call_tool_discovering_builds_route_index_on_demand() {
         manager.shutdown().await.expect("shutdown");
         cleanup_script(&script_path);
     });
+}
+
+#[test]
+fn manager_lists_resources_and_reads_resource() {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let script_path = write_manager_mcp_server_script();
+        let root = script_path.parent().expect("script parent");
+        let log_path = root.join("alpha.log");
+        let servers = BTreeMap::from([(
+            "alpha".to_string(),
+            manager_server_config(&script_path, "alpha", &log_path),
+        )]);
+        let mut manager = McpServerManager::from_servers(&servers);
+
+        let resources = manager.list_resources().await.expect("list resources");
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].server_name, "alpha");
+        assert_eq!(resources[0].resource.uri, "file://alpha/guide.txt");
+
+        let read = manager
+            .read_resource("alpha", "file://alpha/guide.txt")
+            .await
+            .expect("read resource");
+        let result = read.result.expect("read result");
+        assert_eq!(result.contents.len(), 1);
+        assert_eq!(
+            result.contents[0].text.as_deref(),
+            Some("alpha:file://alpha/guide.txt")
+        );
+
+        manager.shutdown().await.expect("shutdown");
+        cleanup_script(&script_path);
+    });
+}
+
+#[test]
+fn manager_lists_and_gets_prompts() {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let script_path = write_manager_mcp_server_script();
+        let root = script_path.parent().expect("script parent");
+        let log_path = root.join("alpha.log");
+        let servers = BTreeMap::from([(
+            "alpha".to_string(),
+            manager_server_config(&script_path, "alpha", &log_path),
+        )]);
+        let mut manager = McpServerManager::from_servers(&servers);
+
+        let prompts = manager.list_prompts().await.expect("list prompts");
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(prompts[0].server_name, "alpha");
+        assert_eq!(prompts[0].prompt.name, "summarize");
+
+        let prompt = manager
+            .get_prompt("alpha", "summarize", None)
+            .await
+            .expect("get prompt");
+        let result = prompt.result.expect("prompt result");
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].role, "user");
+
+        manager.shutdown().await.expect("shutdown");
+        cleanup_script(&script_path);
+    });
+}
+
+#[test]
+fn mcp_workbench_discovers_capabilities() {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let script_path = write_manager_mcp_server_script();
+        let root = script_path.parent().expect("script parent");
+        let log_path = root.join("alpha.log");
+        let servers = BTreeMap::from([
+            (
+                "alpha".to_string(),
+                manager_server_config(&script_path, "alpha", &log_path),
+            ),
+            (
+                "http".to_string(),
+                ScopedMcpServerConfig {
+                    scope: ConfigSource::Local,
+                    config: McpServerConfig::Http(McpRemoteServerConfig {
+                        url: "https://example.test/mcp".to_string(),
+                        headers: BTreeMap::new(),
+                        headers_helper: None,
+                        oauth: None,
+                    }),
+                },
+            ),
+        ]);
+        let mut manager = McpServerManager::from_servers(&servers);
+        let unsupported = mcp_workbench_unsupported_server_dtos(manager.unsupported_servers());
+
+        let tools = manager.discover_tools().await.expect("discover tools");
+        let resources = manager.list_resources().await.expect("list resources");
+        let prompts = manager.list_prompts().await.expect("list prompts");
+        let dto = mcp_workbench_discovery_dto(tools, resources, prompts, unsupported);
+
+        assert_eq!(dto.tools.len(), 1);
+        assert_eq!(dto.tools[0].qualified_name, mcp_tool_name("alpha", "echo"));
+        assert_eq!(dto.resources[0].uri, "file://alpha/guide.txt");
+        assert_eq!(dto.prompts[0].name, "summarize");
+        assert_eq!(dto.unsupported_servers.len(), 1);
+        assert!(!dto.unsupported_servers[0].active);
+        assert_eq!(dto.unsupported_servers[0].transport, "http");
+
+        manager.shutdown().await.expect("shutdown");
+        cleanup_script(&script_path);
+    });
+}
+
+#[test]
+fn mcp_workbench_records_activity() {
+    clear_mcp_workbench_activity_for_tests();
+
+    let redacted = sanitize_mcp_workbench_value(&json!({
+        "token": "super-secret",
+        "nested": {"apiKey": "also-secret", "value": "visible"},
+    }));
+    assert_eq!(redacted["token"], json!("[redacted]"));
+    assert_eq!(redacted["nested"]["apiKey"], json!("[redacted]"));
+    assert_eq!(redacted["nested"]["value"], json!("visible"));
+
+    record_mcp_workbench_activity(mcp_workbench_activity_entry(
+        "alpha",
+        "call_tool",
+        Some("echo".to_string()),
+        McpWorkbenchActivityStatus::Ok,
+        12,
+        Some(json!({"token": "secret", "text": "hello"})),
+        Some(summarize_mcp_counts(1, 1, 1)),
+        None,
+    ));
+
+    let entries = mcp_workbench_activity_snapshot();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].server_id, "alpha");
+    assert_eq!(entries[0].operation, "call_tool");
+    assert_eq!(entries[0].status, McpWorkbenchActivityStatus::Ok);
+    assert_eq!(
+        entries[0]
+            .params
+            .as_ref()
+            .and_then(|params| params.get("token")),
+        Some(&json!("[redacted]"))
+    );
+    assert_eq!(
+        entries[0]
+            .result_summary
+            .as_ref()
+            .and_then(|summary| summary.get("tools")),
+        Some(&json!(1))
+    );
 }

@@ -69,6 +69,7 @@ use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, runtime_block_to_input_block, summarize_tool_result_for_model,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
 use crate::modules::runtime::resume_cursor::{
@@ -109,6 +110,60 @@ async fn append_stream_terminal_error(
             }),
         )
         .await;
+}
+
+async fn emit_terminal_final_run_report(
+    stream_emitter: &AgentStreamEmitter,
+    run_event_logger: &RunEventLogger,
+    stream_id: &str,
+    request_id: &str,
+    work_loop_decision: &WorkLoopDecision,
+    skill_resolution_plan: Option<&SkillResolutionPlan>,
+    terminal_status: &str,
+) {
+    let final_report = super::work_loop::build_final_run_report(
+        work_loop_decision,
+        "failed".to_string(),
+        terminal_status.to_string(),
+        request_id.to_string(),
+        0,
+        false,
+        false,
+        false,
+        None,
+        skill_resolution_plan,
+    );
+    let mut final_report_payload =
+        StreamTokenPayload::skeleton(stream_id.to_string(), "final_run_report");
+    final_report_payload.request_id = Some(request_id.to_string());
+    final_report_payload.task_outcome = Some("failed".to_string());
+    final_report_payload.degraded_reason = Some(terminal_status.to_string());
+    final_report_payload.resume_available = Some(false);
+    final_report_payload.tool_args = Some(
+        serde_json::to_value(final_report)
+            .unwrap_or_else(|error| serde_json::json!({ "serializationError": error.to_string() })),
+    );
+    stream_emitter.emit_payload(final_report_payload.clone());
+    let _ = run_event_logger
+        .append("final_run_report", final_report_payload)
+        .await;
+}
+
+fn fallback_work_loop_decision(
+    user_message: &str,
+    session_id: Option<String>,
+    project_id: Option<String>,
+    workdir: std::path::PathBuf,
+) -> WorkLoopDecision {
+    let intelligence = crate::modules::application::request_intelligence_service::classify(
+        crate::modules::application::request_intelligence_service::RequestIntelligenceInput {
+            user_message: user_message.to_string(),
+            session_id,
+            project_id,
+            workdir: Some(workdir),
+        },
+    );
+    super::work_loop::route_work_loop(&intelligence.decision, user_message)
 }
 
 // `MAX_REQUEST_*` budget constants now live with their consumers
@@ -225,6 +280,7 @@ impl TurnService {
                 return Err(message);
             }
         };
+        let stream_emitter = AgentStreamEmitter::new(window);
 
         // Restore the session
         let app_session = match self.deps.session_manager.restore_session(&session_id).await {
@@ -394,19 +450,35 @@ impl TurnService {
         {
             Ok(prepared) => prepared,
             Err(err) => {
-                let message = match err {
+                let (message, terminal_status) = match err {
                     TurnServiceError::Provider(msg) => {
                         tracing::error!(
                             "[start_agent_stream] Failed to create API client: {}",
                             msg
                         );
-                        msg
+                        (msg, "provider_prepare_failed")
                     }
                     TurnServiceError::Prompt(p) => {
                         tracing::error!("[start_agent_stream] Prompt planning failed: {}", p);
-                        p.to_string()
+                        (p.to_string(), "prompt_prepare_failed")
                     }
                 };
+                let fallback_work_loop = fallback_work_loop_decision(
+                    &normalized_user_message,
+                    Some(execution_context.session_id.clone()),
+                    stream_project_id_opt.clone(),
+                    execution_context.workdir.clone(),
+                );
+                emit_terminal_final_run_report(
+                    &stream_emitter,
+                    &run_event_logger,
+                    &stream_id,
+                    &run_id,
+                    &fallback_work_loop,
+                    None,
+                    terminal_status,
+                )
+                .await;
                 let _ = run_event_logger
                     .append(
                         "stream_error",
@@ -440,6 +512,34 @@ impl TurnService {
             tool_defs,
             &prepared_stream.active_skill_ids,
         );
+        let tool_defs = super::work_loop::enforce_tool_definitions_for_loop(
+            &prepared_stream.work_loop_decision,
+            tool_defs,
+        );
+
+        let execution_decision_value = serde_json::json!({
+            "executionModeDecision": prepared_stream.execution_mode_decision,
+            "workLoopDecision": prepared_stream.work_loop_decision,
+        });
+        let mut execution_decision_payload =
+            StreamTokenPayload::skeleton(stream_id.clone(), "execution_mode_decision");
+        execution_decision_payload.request_id = Some(run_id.clone());
+        execution_decision_payload.tool_args = Some(execution_decision_value);
+        stream_emitter.emit_payload(execution_decision_payload.clone());
+        let _ = run_event_logger
+            .append("execution_mode_decision", execution_decision_payload)
+            .await;
+
+        let skill_resolution_value = serde_json::to_value(&prepared_stream.skill_resolution_plan)
+            .unwrap_or_else(|error| serde_json::json!({ "serializationError": error.to_string() }));
+        let mut skill_resolution_payload =
+            StreamTokenPayload::skeleton(stream_id.clone(), "skill_resolution_snapshot");
+        skill_resolution_payload.request_id = Some(run_id.clone());
+        skill_resolution_payload.tool_args = Some(skill_resolution_value);
+        stream_emitter.emit_payload(skill_resolution_payload.clone());
+        let _ = run_event_logger
+            .append("skill_resolution_snapshot", skill_resolution_payload)
+            .await;
 
         // MIG-002-a — request intelligence now acts as a real route gate.
         // Short-circuit for SpecializedSurface mode.
@@ -455,6 +555,16 @@ impl TurnService {
                     "Request routed to specialized surface: {:?}",
                     prepared_stream.execution_mode_decision.route_hint
                 );
+                emit_terminal_final_run_report(
+                    &stream_emitter,
+                    &run_event_logger,
+                    &stream_id,
+                    &run_id,
+                    &prepared_stream.work_loop_decision,
+                    Some(&prepared_stream.skill_resolution_plan),
+                    "specialized_surface_routed",
+                )
+                .await;
                 append_stream_terminal_error(
                     &run_event_logger,
                     "execution_mode_gate",
@@ -596,12 +706,6 @@ impl TurnService {
             senders.insert(stream_id.clone(), cancel_tx);
         }
 
-        // Phase M1.5 — single boundary at which agent-loop runtime
-        // events leave the backend. Replaces the ~13 ad-hoc
-        // `window.emit("agent-token", ...)` call sites that used to be
-        // scattered through this spawned task.
-        let stream_emitter = AgentStreamEmitter::new(window);
-
         // MIG-001-d — closure body lives in
         // [`super::stream_task::run_stream_task`]; here we just
         // bundle every captured value into [`StreamTaskInputs`]
@@ -627,6 +731,8 @@ impl TurnService {
             provider_id_for_stream: provider_id,
             context_window_for_stream: context_window,
             routing_info_for_stream,
+            work_loop_decision_for_stream: prepared_stream.work_loop_decision,
+            skill_resolution_plan_for_stream: prepared_stream.skill_resolution_plan,
             execution_context_for_task,
             tool_registry_clone,
             session_manager,

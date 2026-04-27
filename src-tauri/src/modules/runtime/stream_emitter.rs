@@ -312,13 +312,16 @@ fn map_event_type_to_runtime(event_type: &str) -> Option<RuntimeEventType> {
         | "final_text_override"
         | "stream_complete"
         | "stream_error"
+        | "final_run_report"
         | "run_started" => Some(RuntimeEventType::Conversation),
         // Tool family
         "tool_call_update" => Some(RuntimeEventType::Tool),
         // Permission family (placeholder — M1.7 will add concrete events)
         "permission_request" | "permission_decision" => Some(RuntimeEventType::Permission),
         // Memory family
-        "memory_write_decision" | "memory_after_turn" => Some(RuntimeEventType::Memory),
+        "memory_write_decision" | "memory_after_turn" | "skill_resolution_snapshot" => {
+            Some(RuntimeEventType::Memory)
+        }
         // Activation family
         "activation_status_changed" => Some(RuntimeEventType::Activation),
         // Execution-mode family

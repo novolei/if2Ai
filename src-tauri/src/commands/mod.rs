@@ -363,8 +363,11 @@ pub use host_composition::{compose_desktop_host_state, DesktopHostComposition};
 #[allow(unused_imports)]
 pub use jiaochang_audio::{
     jiaochang_audio_plugin_cache_clear, jiaochang_audio_plugin_cache_info,
-    jiaochang_audio_plugin_list, jiaochang_audio_plugin_register,
-    jiaochang_audio_plugin_resolve_track_url,
+    jiaochang_audio_plugin_import_lx_ceru_js_file, jiaochang_audio_plugin_inspect_js_file,
+    jiaochang_audio_plugin_install_authorized_cn_template, jiaochang_audio_plugin_list,
+    jiaochang_audio_plugin_register, jiaochang_audio_plugin_remove,
+    jiaochang_audio_plugin_resolve_track_url, jiaochang_audio_plugin_search_tracks,
+    jiaochang_audio_plugin_set_enabled,
 };
 #[allow(unused_imports)]
 pub use learning::{
@@ -409,9 +412,13 @@ pub use session::{
 pub use settings::{
     export_trajectories, get_identity_customization_pack, get_mcp_service_config,
     get_memory_config, get_prompt_control_catalog, get_prompt_control_settings,
-    set_identity_customization_pack, set_mcp_service_config, set_memory_config,
-    set_prompt_control_settings, IdentityCustomizationPackDto, McpServiceConfig,
-    McpServiceConfigInput, McpServiceEntry, McpServiceEntryInput, McpServiceTransportSetting,
+    mcp_workbench_activity, mcp_workbench_call_tool, mcp_workbench_discover,
+    mcp_workbench_get_prompt, mcp_workbench_list_prompts, mcp_workbench_list_resources,
+    mcp_workbench_list_servers, mcp_workbench_read_resource, set_identity_customization_pack,
+    set_mcp_service_config, set_memory_config, set_prompt_control_settings,
+    IdentityCustomizationPackDto, McpServiceConfig, McpServiceConfigInput, McpServiceEntry,
+    McpServiceEntryInput, McpServiceTransportSetting, McpWorkbenchErrorDto,
+    McpWorkbenchGetPromptRequest, McpWorkbenchReadResourceRequest, McpWorkbenchToolCallRequest,
     MemoryConfig, MemoryConfigInput, PromptControlCatalog, PromptControlSettings,
     PromptControlSettingsInput,
 };

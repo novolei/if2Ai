@@ -28,6 +28,7 @@ import {
   type MemoryScopeArgs,
   type MemoryScopeKind,
 } from '@/api/memory'
+import { diagnoseMemoryScopeVisibility } from './memoryScopeDiagnostics'
 
 const PAGE_SIZE = 20
 
@@ -428,6 +429,11 @@ export function MemoryBrowser({
             </span>
           )}
         </div>
+        {scopeFilter === 'all' && (
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            全部是管理视图；agent 召回仍按当前会话、当前项目、全局范围执行。每条卡片会标出召回可见性。
+          </p>
+        )}
       </div>
 
       {/* Category Navigation */}
@@ -565,6 +571,10 @@ export function MemoryBrowser({
                         onDelete={handleDelete}
                         onDemote={handleDemote}
                         canDemote={canDemote}
+                        visibility={diagnoseMemoryScopeVisibility(entry, {
+                          activeProjectId,
+                          activeSessionId,
+                        })}
                       />
                     )
                   })}

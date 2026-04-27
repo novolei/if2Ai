@@ -230,7 +230,7 @@ mod tests {
         save_checkpoint(dir.path(), &cp1).unwrap();
 
         let loaded1 = load_checkpoint(dir.path(), session).unwrap();
-        let created_at = loaded1.checkpoint_updated_at.unwrap();
+        assert!(loaded1.checkpoint_updated_at.is_some());
 
         let cp2 = ProjectionCheckpoint::new(session.to_string(), 2, snapshot_b);
         save_checkpoint(dir.path(), &cp2).unwrap();

@@ -219,6 +219,13 @@ fn open_job_runner_with_fallback(memory_root: &Path) -> modules::memory::JobRunn
 fn create_memory_provider(
     scanner: Arc<modules::memory::security::ThreatScanner>,
 ) -> modules::memory::SharedMemoryProvider {
+    if !vector_memory_on_boot_enabled() {
+        tracing::info!(
+            "[memory] VectorMemoryProvider boot init disabled; using SQLite provider for fast window startup"
+        );
+        return create_sqlite_provider(scanner);
+    }
+
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -245,8 +252,9 @@ fn create_memory_provider(
         }
     }
 
+    let timeout = vector_memory_boot_timeout();
     let vector_result = runtime.block_on(async {
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        tokio::time::timeout(timeout, async {
             // MEM-MOD-PATH-FIX — single root via if2ai_data_root().
             let memory_root = modules::config::store::if2ai_data_root().join("memory");
             let db_path = memory_root.join("vector_db");
@@ -286,11 +294,27 @@ fn create_memory_provider(
         }
         Err(_) => {
             tracing::warn!(
-                "[memory] VectorMemoryProvider timed out after 30s, falling back to SQLite"
+                timeout_ms = timeout.as_millis(),
+                "[memory] VectorMemoryProvider timed out, falling back to SQLite"
             );
             create_sqlite_provider(scanner)
         }
     }
+}
+
+fn vector_memory_on_boot_enabled() -> bool {
+    std::env::var("IF2AI_VECTOR_MEMORY_ON_BOOT")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn vector_memory_boot_timeout() -> std::time::Duration {
+    std::env::var("IF2AI_VECTOR_MEMORY_BOOT_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or_else(|| std::time::Duration::from_secs(5))
 }
 
 async fn create_hybrid_provider() -> Result<modules::memory::SharedMemoryProvider, String> {

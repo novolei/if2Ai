@@ -5,9 +5,11 @@
 //! structural move; struct/enum fields and function bodies
 //! byte-identical).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
+use std::sync::{Mutex, OnceLock};
 
+use serde_json::json;
 use serde_json::Value as JsonValue;
 
 use super::super::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
@@ -15,9 +17,18 @@ use super::super::mcp::mcp_tool_name;
 use super::super::mcp_client::McpClientBootstrap;
 use super::rpc::{JsonRpcError, JsonRpcId, JsonRpcResponse};
 use super::types::{
-    ManagedMcpTool, McpListToolsParams, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
+    ManagedMcpPrompt, ManagedMcpResource, ManagedMcpTool, McpGetPromptParams, McpGetPromptResult,
+    McpListPromptsParams, McpListResourcesParams, McpListToolsParams, McpReadResourceParams,
+    McpReadResourceResult, McpToolCallParams, McpToolCallResult, McpWorkbenchActivityEntry,
+    McpWorkbenchActivityStatus, McpWorkbenchDiscoveryDto, McpWorkbenchPromptDto,
+    McpWorkbenchResourceDto, McpWorkbenchServerDto, McpWorkbenchToolDto, UnsupportedMcpServer,
 };
 use super::{default_initialize_params, spawn_mcp_stdio_process, McpStdioProcess};
+
+const WORKBENCH_ACTIVITY_LIMIT: usize = 200;
+const WORKBENCH_STRING_LIMIT: usize = 800;
+
+static WORKBENCH_ACTIVITY: OnceLock<Mutex<VecDeque<McpWorkbenchActivityEntry>>> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum McpServerManagerError {
@@ -107,6 +118,185 @@ impl ManagedMcpServer {
             process: None,
             initialized: false,
         }
+    }
+}
+
+#[must_use]
+pub fn sanitize_mcp_workbench_value(value: &JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(object) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, item) in object {
+                if is_secret_key(key) {
+                    sanitized.insert(key.clone(), JsonValue::String("[redacted]".to_string()));
+                } else {
+                    sanitized.insert(key.clone(), sanitize_mcp_workbench_value(item));
+                }
+            }
+            JsonValue::Object(sanitized)
+        }
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .iter()
+                .map(sanitize_mcp_workbench_value)
+                .collect::<Vec<_>>(),
+        ),
+        JsonValue::String(text) if text.len() > WORKBENCH_STRING_LIMIT => {
+            let mut truncated = text
+                .chars()
+                .take(WORKBENCH_STRING_LIMIT)
+                .collect::<String>();
+            truncated.push_str("...");
+            JsonValue::String(truncated)
+        }
+        other => other.clone(),
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    [
+        "authorization",
+        "api_key",
+        "apikey",
+        "auth",
+        "bearer",
+        "credential",
+        "key",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+pub fn record_mcp_workbench_activity(entry: McpWorkbenchActivityEntry) {
+    let activity = WORKBENCH_ACTIVITY.get_or_init(|| Mutex::new(VecDeque::new()));
+    if let Ok(mut entries) = activity.lock() {
+        entries.push_back(entry);
+        while entries.len() > WORKBENCH_ACTIVITY_LIMIT {
+            let _ = entries.pop_front();
+        }
+    }
+}
+
+#[must_use]
+pub fn mcp_workbench_activity_snapshot() -> Vec<McpWorkbenchActivityEntry> {
+    let activity = WORKBENCH_ACTIVITY.get_or_init(|| Mutex::new(VecDeque::new()));
+    activity
+        .lock()
+        .map(|entries| entries.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub fn clear_mcp_workbench_activity_for_tests() {
+    let activity = WORKBENCH_ACTIVITY.get_or_init(|| Mutex::new(VecDeque::new()));
+    if let Ok(mut entries) = activity.lock() {
+        entries.clear();
+    }
+}
+
+#[must_use]
+pub fn mcp_workbench_activity_entry(
+    server_id: impl Into<String>,
+    operation: impl Into<String>,
+    target: Option<String>,
+    status: McpWorkbenchActivityStatus,
+    duration_ms: u64,
+    params: Option<JsonValue>,
+    result_summary: Option<JsonValue>,
+    error: Option<String>,
+) -> McpWorkbenchActivityEntry {
+    McpWorkbenchActivityEntry {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        server_id: server_id.into(),
+        operation: operation.into(),
+        target,
+        status,
+        duration_ms,
+        params: params.as_ref().map(sanitize_mcp_workbench_value),
+        result_summary: result_summary.as_ref().map(sanitize_mcp_workbench_value),
+        error,
+    }
+}
+
+#[must_use]
+pub fn summarize_mcp_counts(tools: usize, resources: usize, prompts: usize) -> JsonValue {
+    json!({
+        "tools": tools,
+        "resources": resources,
+        "prompts": prompts,
+    })
+}
+
+#[must_use]
+pub fn mcp_workbench_transport_label(transport: McpTransport) -> String {
+    match transport {
+        McpTransport::Stdio => "stdio",
+        McpTransport::Sse => "sse",
+        McpTransport::Http => "http",
+        McpTransport::Ws => "ws",
+        McpTransport::Sdk => "sdk",
+        McpTransport::ManagedProxy => "claudeai-proxy",
+    }
+    .to_string()
+}
+
+#[must_use]
+pub fn mcp_workbench_unsupported_server_dtos(
+    unsupported: &[UnsupportedMcpServer],
+) -> Vec<McpWorkbenchServerDto> {
+    unsupported
+        .iter()
+        .map(|server| McpWorkbenchServerDto {
+            name: server.server_name.clone(),
+            transport: mcp_workbench_transport_label(server.transport),
+            scope: "effective".to_string(),
+            active: false,
+            reason: Some(server.reason.clone()),
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn mcp_workbench_discovery_dto(
+    tools: Vec<ManagedMcpTool>,
+    resources: Vec<ManagedMcpResource>,
+    prompts: Vec<ManagedMcpPrompt>,
+    unsupported_servers: Vec<McpWorkbenchServerDto>,
+) -> McpWorkbenchDiscoveryDto {
+    McpWorkbenchDiscoveryDto {
+        tools: tools
+            .into_iter()
+            .map(|tool| McpWorkbenchToolDto {
+                server_name: tool.server_name,
+                qualified_name: tool.qualified_name,
+                name: tool.raw_name,
+                description: tool.tool.description,
+                input_schema: tool.tool.input_schema,
+            })
+            .collect(),
+        resources: resources
+            .into_iter()
+            .map(|resource| McpWorkbenchResourceDto {
+                server_name: resource.server_name,
+                uri: resource.resource.uri,
+                name: resource.resource.name,
+                description: resource.resource.description,
+                mime_type: resource.resource.mime_type,
+            })
+            .collect(),
+        prompts: prompts
+            .into_iter()
+            .map(|prompt| McpWorkbenchPromptDto {
+                server_name: prompt.server_name,
+                name: prompt.prompt.name,
+                description: prompt.prompt.description,
+                arguments: prompt.prompt.arguments,
+            })
+            .collect(),
+        unsupported_servers,
     }
 }
 
@@ -264,6 +454,186 @@ impl McpServerManager {
                             name: route.raw_name,
                             arguments,
                             meta: None,
+                        },
+                    )
+                    .await?
+            };
+        Ok(response)
+    }
+
+    pub async fn list_resources(
+        &mut self,
+    ) -> Result<Vec<ManagedMcpResource>, McpServerManagerError> {
+        let server_names = self.servers.keys().cloned().collect::<Vec<_>>();
+        let mut discovered_resources = Vec::new();
+
+        for server_name in server_names {
+            self.ensure_server_ready(&server_name).await?;
+            let mut cursor = None;
+            loop {
+                let request_id = self.take_request_id();
+                let response = {
+                    let server = self.server_mut(&server_name)?;
+                    let process = server.process.as_mut().ok_or_else(|| {
+                        McpServerManagerError::InvalidResponse {
+                            server_name: server_name.clone(),
+                            method: "resources/list",
+                            details: "server process missing after initialization".to_string(),
+                        }
+                    })?;
+                    process
+                        .list_resources(
+                            request_id,
+                            Some(McpListResourcesParams {
+                                cursor: cursor.clone(),
+                            }),
+                        )
+                        .await?
+                };
+
+                if let Some(error) = response.error {
+                    return Err(McpServerManagerError::JsonRpc {
+                        server_name: server_name.clone(),
+                        method: "resources/list",
+                        error,
+                    });
+                }
+                let result =
+                    response
+                        .result
+                        .ok_or_else(|| McpServerManagerError::InvalidResponse {
+                            server_name: server_name.clone(),
+                            method: "resources/list",
+                            details: "missing result payload".to_string(),
+                        })?;
+                discovered_resources.extend(result.resources.into_iter().map(|resource| {
+                    ManagedMcpResource {
+                        server_name: server_name.clone(),
+                        resource,
+                    }
+                }));
+                match result.next_cursor {
+                    Some(next_cursor) => cursor = Some(next_cursor),
+                    None => break,
+                }
+            }
+        }
+
+        Ok(discovered_resources)
+    }
+
+    pub async fn read_resource(
+        &mut self,
+        server_name: &str,
+        uri: &str,
+    ) -> Result<JsonRpcResponse<McpReadResourceResult>, McpServerManagerError> {
+        self.ensure_server_ready(server_name).await?;
+        let request_id = self.take_request_id();
+        let response =
+            {
+                let server = self.server_mut(server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: server_name.to_string(),
+                        method: "resources/read",
+                        details: "server process missing after initialization".to_string(),
+                    }
+                })?;
+                process
+                    .read_resource(
+                        request_id,
+                        McpReadResourceParams {
+                            uri: uri.to_string(),
+                        },
+                    )
+                    .await?
+            };
+        Ok(response)
+    }
+
+    pub async fn list_prompts(&mut self) -> Result<Vec<ManagedMcpPrompt>, McpServerManagerError> {
+        let server_names = self.servers.keys().cloned().collect::<Vec<_>>();
+        let mut discovered_prompts = Vec::new();
+
+        for server_name in server_names {
+            self.ensure_server_ready(&server_name).await?;
+            let mut cursor = None;
+            loop {
+                let request_id = self.take_request_id();
+                let response = {
+                    let server = self.server_mut(&server_name)?;
+                    let process = server.process.as_mut().ok_or_else(|| {
+                        McpServerManagerError::InvalidResponse {
+                            server_name: server_name.clone(),
+                            method: "prompts/list",
+                            details: "server process missing after initialization".to_string(),
+                        }
+                    })?;
+                    process
+                        .list_prompts(
+                            request_id,
+                            Some(McpListPromptsParams {
+                                cursor: cursor.clone(),
+                            }),
+                        )
+                        .await?
+                };
+
+                if let Some(error) = response.error {
+                    return Err(McpServerManagerError::JsonRpc {
+                        server_name: server_name.clone(),
+                        method: "prompts/list",
+                        error,
+                    });
+                }
+                let result =
+                    response
+                        .result
+                        .ok_or_else(|| McpServerManagerError::InvalidResponse {
+                            server_name: server_name.clone(),
+                            method: "prompts/list",
+                            details: "missing result payload".to_string(),
+                        })?;
+                discovered_prompts.extend(result.prompts.into_iter().map(|prompt| {
+                    ManagedMcpPrompt {
+                        server_name: server_name.clone(),
+                        prompt,
+                    }
+                }));
+                match result.next_cursor {
+                    Some(next_cursor) => cursor = Some(next_cursor),
+                    None => break,
+                }
+            }
+        }
+
+        Ok(discovered_prompts)
+    }
+
+    pub async fn get_prompt(
+        &mut self,
+        server_name: &str,
+        name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<JsonRpcResponse<McpGetPromptResult>, McpServerManagerError> {
+        self.ensure_server_ready(server_name).await?;
+        let request_id = self.take_request_id();
+        let response =
+            {
+                let server = self.server_mut(server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: server_name.to_string(),
+                        method: "prompts/get",
+                        details: "server process missing after initialization".to_string(),
+                    }
+                })?;
+                process
+                    .get_prompt(
+                        request_id,
+                        McpGetPromptParams {
+                            name: name.to_string(),
+                            arguments,
                         },
                     )
                     .await?

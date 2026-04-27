@@ -10,7 +10,8 @@ import type {
   SessionMeta,
   SessionTotals,
 } from "@/lib/tauri";
-import type { RoutingInfo, TurnCost } from "@/runtime-projection/types";
+import type { FinalRunReport } from "@/transport/contracts";
+import type { RoutingInfo, ToolAttemptStatus, TurnCost } from "@/runtime-projection/types";
 import type { Dispatch, SetStateAction } from "react";
 import type { TodoItem } from "@/components/ui/TodoPanel";
 
@@ -41,7 +42,7 @@ export interface Message {
   toolArgs?: Record<string, unknown>;
   toolDurationMs?: number;
   isError?: boolean;
-  toolStatus?: "queued" | "running" | "completed" | "error";
+  toolStatus?: ToolAttemptStatus | "error";
   effectiveWorkdir?: string;
   policyDecision?: "allow" | "deny" | "prompt";
   /**
@@ -89,6 +90,11 @@ export interface Message {
    * model + complexity bucket).  Drives the routing chip below the message.
    */
   routing?: RoutingInfo;
+  /**
+   * AWL-004 — canonical final work-loop report projected from runtime events.
+   * Chat rendering must consume this object instead of inferring status from text.
+   */
+  finalRunReport?: FinalRunReport;
   /**
    * Prompt control-plane diagnostics summary for this assistant turn.
    * Carries lane / entry / reason metadata only, never raw prompt text.

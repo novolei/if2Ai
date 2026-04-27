@@ -102,3 +102,33 @@ export async function getPendingPermission(
     sessionId,
   })
 }
+
+/**
+ * Resume a failed or recoverable agent turn using a resume cursor.
+ *
+ * Calls the backend `resume_run` command which replays the context
+ * from the resume checkpoint and continues streaming from where the
+ * previous turn left off. Returns a new stream id for the resumed run.
+ *
+ * Relates to T-012 / MIG-021 recoverability — the `resumeCursor` is
+ * obtained from the `stream_complete` / `stream_error` event's
+ * `resume_cursor` field.
+ */
+export async function resumeRun(
+  sessionId: string,
+  resumeCursor: string,
+  permissionMode?: PermissionMode,
+  selectedModel?: string,
+): Promise<string> {
+  const [providerId, modelId] = selectedModel?.split('/') ?? []
+  const args: Record<string, unknown> = {
+    sessionId,
+    resumeCursor,
+    permissionMode,
+  }
+  if (providerId && modelId) {
+    args.providerId = providerId
+    args.modelId = modelId
+  }
+  return getApiClient().call<string>('resume_run', args)
+}

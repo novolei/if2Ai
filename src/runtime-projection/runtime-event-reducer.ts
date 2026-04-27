@@ -18,6 +18,7 @@
 //   `src/stores/*` until the M2.x preferences slice).
 
 import type {
+  AttemptTimelineProjection,
   CanonicalRuntimeEvent,
   RunProjection,
   RuntimeProjectionSnapshot,
@@ -81,6 +82,10 @@ export function reduceRuntimeEvent(
           policyDecision: event.policyDecision ?? existing?.policyDecision,
           evidenceId: event.evidenceId ?? existing?.evidenceId,
           requestId: event.requestId ?? existing?.requestId,
+          attemptId: event.attemptId ?? existing?.attemptId,
+          attemptNo: existing?.attemptNo,
+          failureKind: existing?.failureKind ?? null,
+          attemptHistory: existing?.attemptHistory ?? [],
           firstSeenAt: existing?.firstSeenAt ?? event.receivedAt,
           lastUpdatedAt: event.receivedAt,
         };
@@ -94,6 +99,30 @@ export function reduceRuntimeEvent(
         ...run,
         text: event.text,
       }));
+    case "skill_resolution_snapshot":
+      return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
+        ...run,
+        skillResolution: event.plan,
+      }));
+    case "final_run_report":
+      return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
+        ...run,
+        finalRunReport: event.report,
+        status:
+          event.report.taskOutcome === "failed"
+            ? "failed"
+            : run.status === "streaming"
+              ? "completed"
+              : run.status,
+        taskOutcome:
+          event.report.taskOutcome === "completed" ||
+          event.report.taskOutcome === "partial_success" ||
+          event.report.taskOutcome === "failed"
+            ? event.report.taskOutcome
+            : run.taskOutcome,
+        resumeAvailable: event.report.resumeAvailable,
+        resumeCursor: event.report.resumeCursor ?? run.resumeCursor,
+      }));
     case "stream_complete":
       return mergeRun(prev, event.runId, event.receivedAt, (run) => ({
         ...run,
@@ -102,6 +131,7 @@ export function reduceRuntimeEvent(
         degradedReason: event.degradedReason,
         resumeAvailable: event.resumeAvailable ?? false,
         resumeCursor: event.resumeCursor,
+        recoverability: event.recoverability,
         contextBudgetUsage: event.contextBudgetUsage,
         turnCost: event.turnCost ?? run.turnCost,
         routing: event.routing ?? run.routing,
@@ -128,6 +158,7 @@ export function reduceRuntimeEvent(
         degradedReason: event.degradedReason ?? event.reason,
         resumeAvailable: event.resumeAvailable ?? false,
         resumeCursor: event.resumeCursor,
+        recoverability: event.recoverability,
       }));
     case "permission_request":
       return {
@@ -250,9 +281,15 @@ export function reduceRuntimeEvent(
           capturedAt: event.receivedAt,
         },
       };
-    case "execution_mode_decision":
+    case "execution_mode_decision": {
+      const base = event.runId && event.workLoop
+        ? mergeRun(prev, event.runId, event.receivedAt, (run) => ({
+            ...run,
+            workLoop: event.workLoop,
+          }))
+        : prev;
       return {
-        ...prev,
+        ...base,
         executionMode: {
           runId: event.runId,
           executionMode: event.executionMode,
@@ -270,10 +307,12 @@ export function reduceRuntimeEvent(
           // `execution_mode_manual_override { override: null }`.
           manualOverride: prev.executionMode?.manualOverride ?? null,
           policyVersion: event.policyVersion,
+          workLoop: event.workLoop,
           capturedAt: event.receivedAt,
           lastUpdatedAt: event.receivedAt,
         },
       };
+    }
     case "projection_discard_session_runs": {
       const sid = event.sessionId;
       const runs = { ...prev.runs };
@@ -308,6 +347,7 @@ export function reduceRuntimeEvent(
             ambiguousEscalated: false,
             manualOverride: event.override,
             policyVersion: "",
+            workLoop: undefined,
             capturedAt: event.receivedAt,
             lastUpdatedAt: event.receivedAt,
           },
@@ -363,6 +403,48 @@ export function reduceRuntimeEvent(
           },
         },
       };
+    case "tool_attempt_timeline_snapshot": {
+      const timeline: AttemptTimelineProjection = {
+        sessionId: event.sessionId,
+        byToolCallId: {},
+        byAttemptId: {},
+        stats: event.stats,
+        lastFetchedAt: event.receivedAt,
+      };
+      for (const a of event.attempts) {
+        (timeline.byToolCallId[a.toolCallId] ??= []).push(a);
+        timeline.byAttemptId[a.attemptId] = a;
+      }
+      // Merge attempt history into existing tool-call projections
+      // so consumers can render per-tool-call attempt timelines
+      // without traversing the timeline index.
+      const nextRuns = { ...prev.runs };
+      for (const [runId, run] of Object.entries(nextRuns)) {
+        const updated = { ...run.toolCalls };
+        let touched = false;
+        for (const [tcId, tc] of Object.entries(updated)) {
+          const hist = timeline.byToolCallId[tcId] ?? [];
+          if (hist.length > 0) {
+            updated[tcId] = {
+              ...tc,
+              attemptHistory: hist,
+              attemptId: hist[hist.length - 1]?.attemptId,
+              attemptNo: hist[hist.length - 1]?.attemptNo,
+              failureKind: hist[hist.length - 1]?.failureKind,
+            };
+            touched = true;
+          }
+        }
+        if (touched) {
+          nextRuns[runId] = { ...run, toolCalls: updated };
+        }
+      }
+      return {
+        ...prev,
+        runs: nextRuns,
+        attemptTimeline: timeline,
+      };
+    }
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.

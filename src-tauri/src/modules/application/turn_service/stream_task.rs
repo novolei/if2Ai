@@ -68,6 +68,8 @@ use crate::modules::runtime::budget::{
     MAX_STREAM_RETRY_ON_TIMEOUT,
 };
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::agent_loop::PendingOperationMetadata;
+use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::PermissionPromptDecision;
@@ -90,6 +92,11 @@ use crate::modules::runtime::timeline_flush::{
 use crate::modules::session::Session as AppSession;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
+
+use super::agent_loop_delegate::{
+    AgentLoopDelegate, AgentLoopDelegateInput, AgentLoopDelegateOutput, AgentLoopTerminalState,
+    StreamingAgentLoopDelegate,
+};
 
 // MAX_REQUEST_* / MAX_STREAM_RETRY_ON_TIMEOUT moved to
 // `crate::modules::runtime::budget` so the canonical preflight /
@@ -163,6 +170,10 @@ pub(super) struct StreamTaskInputs {
     /// per-message routing chip.
     pub routing_info_for_stream:
         Option<crate::modules::runtime::stream_emitter::RoutingInfoPayload>,
+    /// Internal work-loop decision emitted for run visibility and final report.
+    pub work_loop_decision_for_stream: WorkLoopDecision,
+    /// Skill-resolution snapshot emitted for run visibility.
+    pub skill_resolution_plan_for_stream: SkillResolutionPlan,
     pub execution_context_for_task: SessionExecutionContext,
     pub tool_registry_clone: Arc<ToolRegistry>,
     pub session_manager: Arc<SessionManager>,
@@ -232,6 +243,21 @@ pub(super) async fn append_remembered_permission_events(
         .await;
 }
 
+fn apply_memory_recall_success_finalization_guard(
+    work_loop_decision: &WorkLoopDecision,
+    has_successful_tool: bool,
+    force_final_response_next: &mut bool,
+    finalization_reason: &mut Option<String>,
+) {
+    if super::work_loop::should_force_final_after_memory_recall(
+        work_loop_decision,
+        has_successful_tool,
+    ) {
+        *force_final_response_next = true;
+        *finalization_reason = Some("memory_recall_evidence_observed".to_string());
+    }
+}
+
 /// Run the spawned tool-loop body for one streaming chat turn.
 ///
 /// This function takes ownership of every captured value via
@@ -242,6 +268,15 @@ pub(super) async fn append_remembered_permission_events(
 /// change vs the previous inline closure is the destructuring at
 /// the top of the function and the location.
 pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
+    let delegate = StreamingAgentLoopDelegate::new();
+    let _ = delegate
+        .execute(AgentLoopDelegateInput {
+            stream_task_inputs: inputs,
+        })
+        .await;
+}
+
+pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopDelegateOutput {
     let StreamTaskInputs {
         stream_id_for_task,
         run_event_logger,
@@ -261,6 +296,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         provider_id_for_stream,
         context_window_for_stream,
         routing_info_for_stream,
+        work_loop_decision_for_stream,
+        skill_resolution_plan_for_stream,
         execution_context_for_task,
         tool_registry_clone,
         session_manager,
@@ -325,6 +362,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let mut completion_already_emitted = false;
     let mut has_successful_tool = false;
     let mut has_successful_mutating_tool = false;
+    let mut pending_operation_for_delegate: Option<PendingOperationMetadata> = None;
     let mut terminal_status: Option<&'static str>;
 
     // Phase 6E harness: emit TurnStarted at the top of the spawned task
@@ -723,6 +761,18 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
                     Some("repeated_tool_batch_no_progress") => {
                         Some("repeated_tool_batch_no_progress")
                     }
+                    Some("approval_required_for_mutation") => {
+                        Some("approval_required_for_mutation")
+                    }
+                    _ if super::work_loop::requires_memory_recall_evidence(
+                        &work_loop_decision_for_stream,
+                    ) && !has_successful_tool
+                        && super::work_loop::is_incomplete_memory_lookup_response(
+                            &accumulated_text,
+                        ) =>
+                    {
+                        Some("memory_recall_required_no_tool")
+                    }
                     _ => Some("model_stop_no_tools"),
                 };
             }
@@ -773,6 +823,7 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
             permission_overrides: permission_overrides.clone(),
             permission_policy: permission_policy.clone(),
             execution_context: execution_context_for_task.clone(),
+            work_loop_decision: work_loop_decision_for_stream.clone(),
             harness_bus: harness_event_bus_for_stream.clone(),
             mode,
             invalid_tool_args_streak,
@@ -792,6 +843,12 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
         force_final_response_next =
             force_final_response_next || tool_result.force_final_response_next;
+        apply_memory_recall_success_finalization_guard(
+            &work_loop_decision_for_stream,
+            tool_result.has_successful_tool,
+            &mut force_final_response_next,
+            &mut finalization_reason,
+        );
         if finalization_reason.is_none() {
             finalization_reason = tool_result.finalization_reason;
         }
@@ -799,6 +856,9 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         sanitized_dropped_invalid_tool_use_inputs =
             tool_result.sanitized_dropped_invalid_tool_use_inputs;
         sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
+        if pending_operation_for_delegate.is_none() {
+            pending_operation_for_delegate = tool_result.pending_operation;
+        }
         tool_executor = tool_result.tool_executor;
         // Continue outer loop → send next LLM request with tool results
         tracing::info!(
@@ -818,6 +878,22 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         Ok(t) => t,
         Err(e) => format!("{accumulated_text}\n\n[outbound lifecycle hook: {e}]"),
     };
+
+    let delegate_output =
+        StreamingAgentLoopDelegate::output_from_terminal_state(AgentLoopTerminalState {
+            work_loop_decision: work_loop_decision_for_stream.clone(),
+            skill_resolution_plan: skill_resolution_plan_for_stream.clone(),
+            stream_id: stream_id_for_task.clone(),
+            provider_request_id: provider_request_id.clone(),
+            stream_failed,
+            terminal_status,
+            last_stream_error_reason: last_stream_error_reason.clone(),
+            tool_loop_iterations: tool_loop_iter,
+            token_count,
+            has_successful_tool,
+            has_successful_mutating_tool,
+            pending_operation: pending_operation_for_delegate,
+        });
 
     super::stream_finalize::finalize_stream_task(super::stream_finalize::FinalizeStreamInputs {
         session_id,
@@ -859,6 +935,8 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         effective_provider_id: provider_id_for_stream.clone(),
         effective_context_window: context_window_for_stream,
         routing_info: routing_info_for_stream.clone(),
+        work_loop_decision: work_loop_decision_for_stream,
+        skill_resolution_plan: skill_resolution_plan_for_stream,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -882,14 +960,47 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         stream_project_id_for_after_turn,
     })
     .await;
+
+    delegate_output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::api::InputContentBlock;
+    use crate::modules::runtime::contracts::execution_mode::{
+        ComplexityLevel, ExecutionMode, ExecutionModeDecision, ReasonCode, RiskLevel,
+    };
     use crate::modules::runtime::event_log::{RunEventLogger, RunLogEntry};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn memory_intent_decision() -> WorkLoopDecision {
+        let decision = ExecutionModeDecision {
+            execution_mode: ExecutionMode::DirectExecute,
+            risk_level: RiskLevel::Low,
+            complexity_level: ComplexityLevel::Trivial,
+            complexity_score: 0.1,
+            reason_codes: vec![ReasonCode::new("test")],
+            route_hint: None,
+            requires_plan: false,
+            scenario_profile_hint: None,
+            classifier_policy_version: "test".to_string(),
+            classifier_matched_rule_ids: Vec::new(),
+            classifier_slot_summary: serde_json::json!({}),
+            classifier_ambiguous_escalated: false,
+            classifier_escalation_source: None,
+        };
+        super::super::work_loop::route_work_loop(&decision, "你记得关于我的什么事情")
+    }
+
+    fn tool_def(name: &str) -> ToolDefinition {
+        ToolDefinition {
+            name: name.to_string(),
+            description: None,
+            input_schema: serde_json::json!({ "type": "object" }),
+        }
+    }
 
     fn unique_temp_root(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -927,6 +1038,57 @@ mod tests {
         // renames or re-splits the helper, this fails at compile
         // time so callers update in lockstep.
         let _: fn(StreamTaskInputs) -> _ = run_stream_task;
+    }
+
+    #[test]
+    fn memory_recall_success_forces_next_preflight_without_tools() {
+        let routed = memory_intent_decision();
+        let mut force_final_response_next = false;
+        let mut finalization_reason = None;
+        apply_memory_recall_success_finalization_guard(
+            &routed,
+            true,
+            &mut force_final_response_next,
+            &mut finalization_reason,
+        );
+        assert!(force_final_response_next);
+        assert_eq!(
+            finalization_reason.as_deref(),
+            Some("memory_recall_evidence_observed")
+        );
+
+        let session_messages = vec![InputMessage::user_tool_result(
+            "memory_recall:1",
+            "[conversation] helen_husky: Ryan Liu 家有一只哈士奇叫 Helen",
+            false,
+        )];
+        let tool_defs = vec![tool_def("memory_recall"), tool_def("memory_export")];
+        let result = super::super::stream_preflight::build_iteration_request(
+            super::super::stream_preflight::PreflightContext {
+                session_messages: &session_messages,
+                tool_defs: &tool_defs,
+                system_prompt: "system",
+                model: "test-model",
+                context_window: 32_000,
+                force_final_response: force_final_response_next,
+                finalization_reason: finalization_reason.as_deref().unwrap_or(""),
+                tool_loop_iter: 1,
+                max_iterations: 10,
+                stream_id: "stream-memory",
+                session_id: "session-memory",
+            },
+        );
+        assert!(result.request.tools.is_none());
+        let has_loop_control = result.request.messages.iter().any(|message| {
+            message.content.iter().any(|block| match block {
+                InputContentBlock::Text { text } => {
+                    text.contains("[agent_loop_control]")
+                        && text.contains("memory_recall_evidence_observed")
+                }
+                _ => false,
+            })
+        });
+        assert!(has_loop_control);
     }
 
     #[tokio::test]

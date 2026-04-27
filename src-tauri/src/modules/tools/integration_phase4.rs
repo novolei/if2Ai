@@ -483,11 +483,11 @@ mod tests {
     async fn test_sandbox_strict_mode_blocks_bash_when_sandbox_disabled() {
         let root = unique_temp_dir("strict-sandbox-deny");
         let workdir = root.join("project");
-        tokio::fs::create_dir_all(workdir.join(".claw"))
+        tokio::fs::create_dir_all(workdir.join(".if2ai"))
             .await
             .expect("create config dir");
         tokio::fs::write(
-            workdir.join(".claw").join("settings.local.json"),
+            workdir.join(".if2ai").join("settings.local.json"),
             r#"{"sandbox":{"enabled":false}}"#,
         )
         .await

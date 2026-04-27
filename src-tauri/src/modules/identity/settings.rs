@@ -9,16 +9,11 @@ use serde_json::Value;
 /// full ConfigLoader pipeline (which is heavy per-turn).
 #[must_use]
 pub fn default_prompt_control_settings_path() -> PathBuf {
-    let config_home = std::env::var_os("CLAW_CONFIG_HOME")
+    let config_home = std::env::var_os("IF2AI_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claw")))
-        .unwrap_or_else(|| PathBuf::from(".claw"));
-    config_home
-        .parent()
-        .unwrap_or(&config_home)
-        .join(".if2ai")
-        .join("prompt")
-        .join("control-plane.json")
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".if2ai")))
+        .unwrap_or_else(|| PathBuf::from(".if2ai"));
+    config_home.join("prompt").join("control-plane.json")
 }
 
 /// Lightweight result of reading just the naming-related identity

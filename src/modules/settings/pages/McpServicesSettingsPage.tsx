@@ -19,6 +19,7 @@ import {
 } from "@/lib/tauri";
 import { SettingsSurface } from "../components/SettingsSurface";
 import { CompactInput } from "../components/CompactInput";
+import { McpWorkbenchPage } from "./McpWorkbenchPage";
 
 const TRANSPORTS: McpServiceTransport[] = [
   "stdio",
@@ -90,6 +91,7 @@ function compactSummary(entry: McpServiceEntry): string {
 }
 
 export function McpServicesSettingsPage() {
+  const [activePanel, setActivePanel] = useState<"services" | "workbench">("services");
   const [config, setConfig] = useState<McpServiceConfig | null>(null);
   const [draft, setDraft] = useState<McpServiceEntryInput>(emptyDraft);
   const [argsText, setArgsText] = useState("");
@@ -185,6 +187,30 @@ export function McpServicesSettingsPage() {
 
   return (
     <div className="space-y-4 p-5">
+      <div className="flex w-fit gap-1 rounded-lg bg-black/[0.035] p-1">
+        {[
+          ["services", "服务配置"],
+          ["workbench", "Workbench"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setActivePanel(key as "services" | "workbench")}
+            className={`h-8 rounded-md px-3 text-[12px] font-semibold ${
+              activePanel === key
+                ? "bg-white text-black/75 shadow-sm"
+                : "text-black/45 hover:text-black/65"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activePanel === "workbench" ? (
+        <McpWorkbenchPage />
+      ) : (
+        <>
       <SettingsSurface className="px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -195,7 +221,7 @@ export function McpServicesSettingsPage() {
               </h2>
             </div>
             <p className="mt-1 truncate text-[12px] text-black/45">
-              用户配置写入 {config?.user_settings_path ?? "~/.claw/settings.json"}
+              用户配置写入 {config?.user_settings_path ?? "~/.if2ai/mcp/settings.json"}
             </p>
           </div>
           <button
@@ -416,6 +442,8 @@ export function McpServicesSettingsPage() {
           </div>
         )}
       </SettingsSurface>
+        </>
+      )}
     </div>
   );
 }

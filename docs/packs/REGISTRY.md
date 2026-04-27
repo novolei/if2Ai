@@ -4,7 +4,7 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-26
+> 最后更新: 2026-04-27
 
 ---
 
@@ -12,6 +12,10 @@
 
 | Pack   | Type | Goal | Owner |
 | ------ | ---- | ---- | ----- |
+| [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md) | feature | Skill auto-load runtime | executor |
+| [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md) | feature | FinalRunReport UX | executor |
+| [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md) | feature | MCP Workbench IPC + UI | executor |
+| [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md) | feature | LoopDelegate extraction | executor |
 | [APP-UPDATER-002](./feature/app-updater/APP-UPDATER-002-release-ci-signed-artifact.md) | feature | Release CI + signed Tauri updater artifact | executor |
 | [APP-UPDATER-003](./feature/app-updater/APP-UPDATER-003-client-state-machine-ux.md) | feature | Client updater state machine + settings UX | executor |
 
@@ -19,6 +23,10 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md) | feature | WorkLoopRouter enforcement | 2026-04-27 |
+| [FEAT-JC-010](./feature/jiaochang/FEAT-JC-010-lx-ceru-real-resolve-worker.md) | feature | LX/Ceru real resolve worker | 2026-04-27 |
+| [FEAT-JC-009](./feature/jiaochang/FEAT-JC-009-lx-ceru-js-plugin-compatibility-sandbox.md) | feature | LX/Ceru JS plugin compatibility sandbox | 2026-04-26 |
+| [FEAT-JC-008](./feature/jiaochang/FEAT-JC-008-plugin-source-library-search.md) | feature | Plugin source library search | 2026-04-26 |
 | [FEAT-JC-007](./feature/jiaochang/FEAT-JC-007-plugin-source-settings-ui.md) | feature | Plugin source settings UI | 2026-04-26 |
 | [FEAT-JC-006](./feature/jiaochang/FEAT-JC-006-plugin-source-sandbox.md) | feature | Plugin source sandbox | 2026-04-26 |
 | [FEAT-JC-005](./feature/jiaochang/FEAT-JC-005-audio-player-foundation.md) | feature | Audio player foundation | 2026-04-26 |
@@ -162,6 +170,18 @@
 | 2 | P0 | [FEAT-SB-002](./feature/smart-browser/FEAT-SB-002-browser-runtime-projection.md) | done | 把 browser status 接入 runtime projection/timeline |
 | 3 | P1 | [FEAT-SB-003](./feature/smart-browser/FEAT-SB-003-browser-use-mcp-backend.md) | done | 通过 MCP stdio 接入 browser-use backend |
 | 4 | P2 | [FEAT-SB-004](./feature/smart-browser/FEAT-SB-004-agentic-browser-cloud-escalation.md) | done | 接入 agentic retry 与 cloud escalation approval |
+
+### Agent Work Loop Stabilization Pipeline
+
+基于 [AWL-002 WorkLoopRouter Enforcement](../design-docs/agent-work-loop/AWL-002-work-loop-router-enforcement.md)，把路由、skill resolution、工具循环、final report 和可见性收口为一条稳定工作循环。
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md) | done | WorkLoopRouter enforcement |
+| 2 | P0 | [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md) | active | Skill auto-load runtime |
+| 3 | P1 | [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md) | active | FinalRunReport UX |
+| 4 | P1 | [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md) | active | MCP Workbench IPC + UI |
+| 5 | P2 | [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md) | active | LoopDelegate extraction |
 
 ### Migration-Core Pipeline
 

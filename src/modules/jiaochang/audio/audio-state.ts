@@ -31,6 +31,7 @@ export interface JiaochangMusicTrack {
   pluginSource?: {
     pluginId: string
     source: string
+    musicInfo?: unknown
   }
 }
 

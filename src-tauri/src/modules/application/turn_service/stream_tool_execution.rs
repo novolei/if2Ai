@@ -26,6 +26,7 @@ use crate::modules::runtime::attempt_ledger::{self, ToolAttempt, ToolAttemptLedg
 use crate::modules::runtime::block_conversion::{
     parse_tool_input_json, summarize_tool_result_for_model,
 };
+use crate::modules::runtime::contracts::agent_loop::{PendingOperationMetadata, WorkLoopDecision};
 use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::permissions::{
@@ -61,6 +62,7 @@ pub(super) struct ToolExecutionContext {
         Arc<Mutex<HashMap<String, HashMap<String, PermissionPromptDecision>>>>,
     pub permission_policy: Arc<PermissionPolicy>,
     pub execution_context: crate::modules::control_plane::SessionExecutionContext,
+    pub work_loop_decision: WorkLoopDecision,
     pub harness_bus: Option<EventBus>,
     pub mode: PermissionMode,
     pub invalid_tool_args_streak: usize,
@@ -87,6 +89,8 @@ pub(super) struct ToolExecutionResult {
     pub sanitize_invalid_tool_use_samples: Vec<String>,
     /// Returned to the orchestrator for reuse in subsequent outer-loop iterations.
     pub tool_executor: ToolRegistryExecutor,
+    /// Pending operation preserved when the loop blocks on approval.
+    pub pending_operation: Option<PendingOperationMetadata>,
 }
 
 /// Execute one batch of pending tool calls within a streaming chat turn.
@@ -116,6 +120,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         permission_overrides,
         permission_policy,
         execution_context,
+        work_loop_decision,
         harness_bus,
         mode,
         mut invalid_tool_args_streak,
@@ -129,6 +134,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
 
     let mut force_final_response_next = false;
     let mut finalization_reason: Option<String> = None;
+    let mut pending_operation: Option<PendingOperationMetadata> = None;
     let mut accumulated_text = accumulated_text;
     let mut accumulated_thinking = accumulated_thinking;
 
@@ -268,6 +274,102 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         attempt_entry.transition_running();
         if let Err(e) = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry) {
             tracing::warn!("[attempt_ledger] failed to persist running entry: {}", e);
+        }
+
+        if let Some(block_reason) =
+            super::work_loop::mutation_block_reason(&work_loop_decision, &tool_name, &input_json)
+        {
+            tracing::warn!(
+                "[start_agent_stream] Work-loop policy blocked tool before execution: stream_id={}, session_id={}, tool_call_id={}, tool_name={}, reason={}",
+                stream_id,
+                session_id,
+                tool_id,
+                tool_name,
+                block_reason
+            );
+            let terminal_tool_payload = StreamTokenPayload {
+                stream_id: stream_id.clone(),
+                correlation: Some(correlation_ids.clone()),
+                text: None,
+                thinking: None,
+                event_type: "tool_call_update".to_string(),
+                tool_call_id: Some(tool_id.clone()),
+                tool_name: Some(tool_name.clone()),
+                tool_status: Some("error".to_string()),
+                tool_args: Some(tool_input.clone()),
+                tool_result: Some(block_reason.clone()),
+                tool_duration_ms: Some(0),
+                effective_workdir: Some(execution_context_for_policy.workdir.display().to_string()),
+                policy_decision: Some("needs_approval".to_string()),
+                evidence_id: Some(policy_trace_id.clone()),
+                request_id: Some(provider_request_id.clone()),
+                task_outcome: None,
+                degraded_reason: Some("approval_required_for_mutation".to_string()),
+                resume_available: None,
+                resume_cursor: None,
+                recoverability: None,
+                context_budget_usage: None,
+                memory_context: None,
+                prompt_diagnostics: None,
+                turn_cost: None,
+                routing_info: None,
+                session_totals: None,
+            };
+            stream_emitter.emit_payload(terminal_tool_payload.clone());
+            super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload)
+                .await;
+
+            attempt_entry.transition_blocked();
+            let _ = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry);
+
+            session_messages.push(InputMessage {
+                role: "assistant".to_string(),
+                content: vec![crate::modules::api::InputContentBlock::ToolUse {
+                    id: tool_id.clone(),
+                    name: tool_name.clone(),
+                    input: tool_input.clone(),
+                }],
+                thinking: None,
+            });
+            session_messages.push(InputMessage {
+                role: "user".to_string(),
+                content: vec![crate::modules::api::InputContentBlock::ToolResult {
+                    tool_use_id: tool_id.clone(),
+                    content: vec![crate::modules::api::ToolResultContentBlock::Text {
+                        text: summarize_tool_result_for_model(
+                            &tool_name,
+                            &tool_id,
+                            &block_reason,
+                            true,
+                        ),
+                    }],
+                    is_error: true,
+                }],
+                thinking: None,
+            });
+            timeline_session_messages.push(ConversationMessage::tool_use(
+                tool_id.clone(),
+                tool_name.clone(),
+                input_json.clone(),
+            ));
+            timeline_session_messages.push(ConversationMessage::tool_result(
+                tool_id.clone(),
+                tool_name.clone(),
+                block_reason.clone(),
+                true,
+            ));
+            if let Some(last_message) = timeline_session_messages.last_mut() {
+                last_message.request_id = Some(provider_request_id.clone());
+            }
+
+            force_final_response_next = true;
+            finalization_reason = Some("approval_required_for_mutation".to_string());
+            pending_operation = Some(PendingOperationMetadata {
+                tool_call_id: tool_id,
+                tool_name,
+                reason: block_reason,
+            });
+            continue;
         }
 
         // Validate tool args before permission/execution.
@@ -593,5 +695,6 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         sanitized_dropped_invalid_tool_use_inputs,
         sanitize_invalid_tool_use_samples,
         tool_executor,
+        pending_operation,
     }
 }

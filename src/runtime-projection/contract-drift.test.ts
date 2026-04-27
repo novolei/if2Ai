@@ -15,7 +15,8 @@
 //   src-tauri/src/modules/runtime/contracts/common.rs  (RuntimeEventType)
 //   src-tauri/src/modules/runtime/stream_emitter.rs    (payload_family map)
 
-import { describe, expect, test } from "vitest";
+import { strict as assert } from "node:assert";
+import { describe, test } from "node:test";
 
 // ── Mapping table: Rust backend event → TS translator coverage ──
 
@@ -50,6 +51,16 @@ const WIRE_EVENT_MAPPING: WireEventMapping[] = [
   {
     rustEventType: "conversation",
     payloadFamily: "final_text_override",
+    translatorFunction: "translateAgentTokenPayload",
+  },
+  {
+    rustEventType: "conversation",
+    payloadFamily: "skill_resolution_snapshot",
+    translatorFunction: "translateAgentTokenPayload",
+  },
+  {
+    rustEventType: "conversation",
+    payloadFamily: "final_run_report",
     translatorFunction: "translateAgentTokenPayload",
   },
   {
@@ -191,10 +202,10 @@ describe("contract drift guardrail — wire event coverage", () => {
     for (const mapping of WIRE_EVENT_MAPPING) {
       if (mapping.translatorFunction === null) {
         // Exempt — intentionally unmapped with documented reason
-        expect(
+        assert.ok(
           mapping.exemption,
           `unmapped event ${mapping.rustEventType}/${mapping.payloadFamily} must have an exemption reason`,
-        ).toBeTruthy();
+        );
         continue;
       }
 
@@ -251,7 +262,7 @@ describe("contract drift guardrail — wire event coverage", () => {
       seen.add(key);
     }
 
-    expect(duplicates).toEqual([]);
+    assert.deepEqual(duplicates, []);
   });
 
   test("all Rust RuntimeEventType families have coverage", () => {
@@ -277,7 +288,7 @@ describe("contract drift guardrail — wire event coverage", () => {
       (family) => !covered.has(family),
     );
 
-    expect(uncovered).toEqual([]);
+    assert.deepEqual(uncovered, []);
   });
 
   test("every exempt mapping documents a meaningful exemption", () => {
@@ -286,10 +297,10 @@ describe("contract drift guardrail — wire event coverage", () => {
     );
 
     for (const mapping of exemptions) {
-      expect(mapping.exemption).toBeTruthy();
-      expect(mapping.exemption!.length).toBeGreaterThan(20);
+      assert.ok(mapping.exemption);
+      assert.ok(mapping.exemption.length > 20);
       // Must start with "T-018 exemption:"
-      expect(mapping.exemption).toMatch(/^T-018 exemption:/);
+      assert.match(mapping.exemption, /^T-018 exemption:/);
     }
   });
 });

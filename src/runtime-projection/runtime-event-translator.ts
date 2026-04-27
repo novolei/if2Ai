@@ -16,29 +16,42 @@
 import type {
   ActivationSnapshot,
   ExecutionModeDecision,
+  FinalRunReport,
   MemoryAfterTurnPayload,
   MemoryEventPayload,
   MemoryWriteDecisionPayload,
   PermissionRequestPayload,
   StreamTokenPayload,
+  SkillResolutionPlan,
   SupervisorSnapshot,
+  ToolAttemptLedgerResponse,
 } from "@/transport/contracts";
 
 import type {
   ActivationSnapshotEvent,
   CanonicalRuntimeEvent,
   ExecutionModeDecisionEvent,
+  FinalRunReportEvent,
   MemoryAfterTurnEvent,
   MemoryLifecycleEvent,
   MemoryWriteDecisionEvent,
   PermissionRequestEvent,
+  SkillResolutionSnapshotEvent,
   SupervisorSnapshotEvent,
+  ToolAttemptTimelineEvent,
+  ToolAttemptTimestamp,
 } from "./types.ts";
 import { translatePromptDiagnosticsSummary } from "./types.ts";
 export { translateBrowserStatusPayload } from './browser-events.ts'
 
 function nowMs(): number {
   return Date.now();
+}
+
+function objectPayload(payload: StreamTokenPayload): Record<string, unknown> | null {
+  const value = payload.tool_args;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value;
 }
 
 /**
@@ -103,6 +116,37 @@ export function translateAgentTokenPayload(
         requestId: payload.request_id,
         receivedAt,
       };
+    case "execution_mode_decision": {
+      const value = objectPayload(payload);
+      const decision = value?.executionModeDecision as ExecutionModeDecision | undefined;
+      if (!decision) return null;
+      return translateExecutionModeDecision(
+        decision,
+        runId,
+        value?.workLoopDecision,
+        receivedAt,
+      );
+    }
+    case "skill_resolution_snapshot": {
+      const value = objectPayload(payload) as SkillResolutionPlan | null;
+      if (!value) return null;
+      return {
+        kind: "skill_resolution_snapshot",
+        runId,
+        plan: value,
+        receivedAt,
+      } satisfies SkillResolutionSnapshotEvent;
+    }
+    case "final_run_report": {
+      const value = objectPayload(payload) as FinalRunReport | null;
+      if (!value) return null;
+      return {
+        kind: "final_run_report",
+        runId,
+        report: value,
+        receivedAt,
+      } satisfies FinalRunReportEvent;
+    }
     case "stream_complete":
       return {
         kind: "stream_complete",
@@ -149,6 +193,7 @@ export function translateAgentTokenPayload(
               turns: payload.session_totals.turns,
             }
           : undefined,
+        recoverability: payload.recoverability,
         receivedAt,
       };
     case "stream_error":
@@ -164,6 +209,7 @@ export function translateAgentTokenPayload(
         resumeAvailable: payload.resume_available,
         resumeCursor: payload.resume_cursor,
         requestId: payload.request_id,
+        recoverability: payload.recoverability,
         receivedAt,
       };
     default: {
@@ -307,6 +353,8 @@ export function translateMemoryAfterTurn(
 export function translateExecutionModeDecision(
   payload: ExecutionModeDecision,
   runId?: string,
+  workLoop?: unknown,
+  receivedAt: number = nowMs(),
 ): ExecutionModeDecisionEvent {
   return {
     kind: "execution_mode_decision",
@@ -321,7 +369,11 @@ export function translateExecutionModeDecision(
     ambiguousEscalated: payload.classifierAmbiguousEscalated ?? false,
     escalationSource: payload.classifierEscalationSource,
     policyVersion: payload.classifierPolicyVersion,
-    receivedAt: nowMs(),
+    workLoop:
+      workLoop && typeof workLoop === "object"
+        ? (workLoop as ExecutionModeDecisionEvent["workLoop"])
+        : undefined,
+    receivedAt,
   };
 }
 
@@ -349,5 +401,37 @@ export function translateSupervisorSnapshot(
     disconnectGraceUntil: payload.disconnectGraceUntil ?? null,
     lastUpdatedAt: payload.lastUpdatedAt,
     receivedAt: nowMs(),
+  };
+}
+
+/**
+ * T-014 — translate a backend `ToolAttemptLedgerResponse` into the
+ * canonical `tool_attempt_timeline_snapshot` event.
+ */
+export function translateToolAttemptLedger(
+  payload: ToolAttemptLedgerResponse,
+): ToolAttemptTimelineEvent {
+  const receivedAt = nowMs();
+  const attempts: ToolAttemptTimestamp[] = payload.attempts.map(
+    (a): ToolAttemptTimestamp => ({
+      attemptId: a.attemptId,
+      attemptNo: a.attemptNo,
+      toolCallId: a.toolCallId,
+      runId: a.runId,
+      toolName: a.toolName,
+      status: a.status,
+      startedAt: new Date(a.occurredAt).getTime(),
+      endedAt: undefined,
+      durationMs: undefined,
+      policyDecision: undefined,
+      failureKind: a.failureKind,
+    }),
+  );
+  return {
+    kind: "tool_attempt_timeline_snapshot",
+    sessionId: payload.sessionId,
+    attempts,
+    stats: payload.stats,
+    receivedAt,
   };
 }

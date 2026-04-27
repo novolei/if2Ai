@@ -141,6 +141,7 @@ export function projectRunToChatMessages(
     promptDiagnostics: run.promptDiagnostics ?? placeholder?.promptDiagnostics,
     turnCost: run.turnCost ?? placeholder?.turnCost,
     routing: run.routing ?? placeholder?.routing,
+    finalRunReport: run.finalRunReport ?? placeholder?.finalRunReport,
     toolArgs: buildRunErrorToolArgs(run, placeholder),
     statusLabel:
       run.status === "streaming"
@@ -187,7 +188,11 @@ function projectToolCallToMessage(
   tool: ToolCallProjection,
 ): Message {
   const terminalRun = run.status !== "streaming";
-  const unfinished = tool.status === "queued" || tool.status === "running";
+  const unfinished =
+    tool.status === "queued" ||
+    tool.status === "authorizing" ||
+    tool.status === "running" ||
+    tool.status === "retrying";
   const status = terminalRun && unfinished ? "error" : tool.status;
   const memoryFields =
     tool.toolName === "memory_store"
@@ -210,7 +215,7 @@ function projectToolCallToMessage(
     toolArgs: tool.toolArgs,
     toolDurationMs: tool.toolDurationMs,
     toolStatus: status,
-    isError: status === "error",
+    isError: isToolFailureStatus(status),
     effectiveWorkdir: tool.effectiveWorkdir,
     policyDecision: memoryFields?.policyDecision ?? tool.policyDecision,
     memoryScope: memoryFields?.memoryScope,
@@ -227,10 +232,23 @@ function projectToolCallToMessage(
 function buildRunCompletionStatus(
   run: RunProjection,
 ): { label: string | undefined; kind: Message["statusKind"] | undefined } {
+  if (run.finalRunReport?.outcome === "needs_approval") {
+    return { label: "等待用户审批", kind: "partial" };
+  }
+  if (run.finalRunReport?.outcome === "exhausted_with_summary") {
+    return { label: "达到执行上限，可继续恢复", kind: "partial" };
+  }
+  if (
+    run.finalRunReport?.outcome === "failed_with_plan" ||
+    run.finalRunReport?.outcome === "needs_user_input"
+  ) {
+    return { label: "本轮未完成，已生成下一步方案", kind: "failed" };
+  }
+
   const tools = Object.values(run.toolCalls);
   const total = tools.length;
   const completed = tools.filter((tool) => tool.status === "completed").length;
-  const failed = tools.filter((tool) => tool.status === "error").length;
+  const failed = tools.filter((tool) => isToolFailureStatus(tool.status)).length;
 
   if (run.status === "failed" || run.taskOutcome === "failed") {
     return {
@@ -268,6 +286,15 @@ function buildRunCompletionStatus(
     label: `本轮执行完成：共完成 ${completed} 个步骤`,
     kind: "success",
   };
+}
+
+function isToolFailureStatus(status: ToolCallProjection["status"] | "error"): boolean {
+  return (
+    status === "failed" ||
+    status === "error" ||
+    status === "blocked" ||
+    status === "cancelled"
+  );
 }
 
 function byToolUpdate(left: ToolCallProjection, right: ToolCallProjection): number {

@@ -1,9 +1,9 @@
 use crate::modules::identity::resolve_identity;
 use crate::modules::identity::{IdentityRegistry, IdentitySettings, SessionIdentityOverride};
 use crate::modules::runtime::config::{
-    prompt_control_config_path_for_home, BoundaryEnforceMode, CompilerConfig, ConfigLoader,
-    ConfigSource, McpServerConfig, McpTransport, MemoryPolicyEnforceMode, MemoryRecallMode,
-    ResolvedPermissionMode, CLAW_SETTINGS_SCHEMA_NAME,
+    mcp_settings_path_for_home, prompt_control_config_path_for_home, BoundaryEnforceMode,
+    CompilerConfig, ConfigLoader, ConfigSource, McpServerConfig, McpTransport,
+    MemoryPolicyEnforceMode, MemoryRecallMode, ResolvedPermissionMode, IF2AI_SETTINGS_SCHEMA_NAME,
 };
 use crate::modules::runtime::contracts::execution_mode::ScenarioProfileHint;
 use crate::modules::runtime::json::JsonValue;
@@ -41,7 +41,7 @@ impl Drop for HomeGuard {
 fn rejects_non_object_settings_files() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
+    let home = root.join("home").join(".if2ai");
     fs::create_dir_all(&home).expect("home config dir");
     fs::create_dir_all(&cwd).expect("project dir");
     fs::write(home.join("settings.json"), "[]").expect("write bad settings");
@@ -57,35 +57,33 @@ fn rejects_non_object_settings_files() {
 }
 
 #[test]
-fn loads_and_merges_claw_code_config_files_by_precedence() {
+fn loads_and_merges_if2ai_config_files_by_precedence() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
+    let mcp_settings = mcp_settings_path_for_home(&home);
+    fs::create_dir_all(mcp_settings.parent().expect("mcp settings parent"))
+        .expect("mcp config dir");
 
     fs::write(
-        home.parent().expect("home parent").join(".claw.json"),
-        r#"{"model":"haiku","env":{"A":"1"},"mcpServers":{"home":{"command":"uvx","args":["home"]}}}"#,
+        &mcp_settings,
+        r#"{"mcpServers":{"home":{"command":"uvx","args":["home"]}}}"#,
     )
-    .expect("write user compat config");
+    .expect("write user mcp settings");
     fs::write(
         home.join("settings.json"),
         r#"{"model":"sonnet","env":{"A2":"1"},"hooks":{"PreToolUse":["base"]},"permissions":{"defaultMode":"plan"}}"#,
     )
     .expect("write user settings");
     fs::write(
-        cwd.join(".claw.json"),
-        r#"{"model":"project-compat","env":{"B":"2"}}"#,
-    )
-    .expect("write project compat config");
-    fs::write(
-        cwd.join(".claw").join("settings.json"),
-        r#"{"env":{"C":"3"},"hooks":{"PostToolUse":["project"]},"mcpServers":{"project":{"command":"uvx","args":["project"]}}}"#,
+        cwd.join(".if2ai").join("settings.json"),
+        r#"{"env":{"B":"2","C":"3"},"hooks":{"PostToolUse":["project"]},"mcpServers":{"project":{"command":"uvx","args":["project"]}}}"#,
     )
     .expect("write project settings");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{"model":"opus","permissionMode":"acceptEdits"}"#,
     )
     .expect("write local settings");
@@ -94,8 +92,8 @@ fn loads_and_merges_claw_code_config_files_by_precedence() {
         .load()
         .expect("config should load");
 
-    assert_eq!(CLAW_SETTINGS_SCHEMA_NAME, "SettingsSchema");
-    assert_eq!(loaded.loaded_entries().len(), 5);
+    assert_eq!(IF2AI_SETTINGS_SCHEMA_NAME, "SettingsSchema");
+    assert_eq!(loaded.loaded_entries().len(), 4);
     assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
     assert_eq!(
         loaded.get("model"),
@@ -112,7 +110,7 @@ fn loads_and_merges_claw_code_config_files_by_precedence() {
             .and_then(JsonValue::as_object)
             .expect("env object")
             .len(),
-        4
+        3
     );
     assert!(loaded
         .get("hooks")
@@ -136,12 +134,12 @@ fn loads_and_merges_claw_code_config_files_by_precedence() {
 fn parses_sandbox_config() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "sandbox": {
             "enabled": true,
@@ -174,12 +172,15 @@ fn parses_sandbox_config() {
 fn parses_typed_mcp_and_oauth_config() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
+    let mcp_settings = mcp_settings_path_for_home(&home);
+    fs::create_dir_all(mcp_settings.parent().expect("mcp settings parent"))
+        .expect("mcp config dir");
 
     fs::write(
-        home.join("settings.json"),
+        &mcp_settings,
         r#"{
           "mcpServers": {
             "stdio-server": {
@@ -199,7 +200,13 @@ fn parses_typed_mcp_and_oauth_config() {
                 "xaa": true
               }
             }
-          },
+          }
+        }"#,
+    )
+    .expect("write user mcp settings");
+    fs::write(
+        home.join("settings.json"),
+        r#"{
           "oauth": {
             "clientId": "runtime-client",
             "authorizeUrl": "https://console.test/oauth/authorize",
@@ -212,7 +219,7 @@ fn parses_typed_mcp_and_oauth_config() {
     )
     .expect("write user settings");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "mcpServers": {
             "remote-server": {
@@ -265,8 +272,8 @@ fn parses_typed_mcp_and_oauth_config() {
 fn config_reads_identity_defaults() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
@@ -321,8 +328,8 @@ fn session_override_wins_over_global_default() {
 fn parses_plugin_config_from_enabled_plugins() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
@@ -359,8 +366,8 @@ fn parses_plugin_config_from_enabled_plugins() {
 fn parses_plugin_config() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
@@ -411,11 +418,14 @@ fn parses_plugin_config() {
 fn rejects_invalid_mcp_server_shapes() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
+    let home = root.join("home").join(".if2ai");
     fs::create_dir_all(&home).expect("home config dir");
     fs::create_dir_all(&cwd).expect("project dir");
+    let mcp_settings = mcp_settings_path_for_home(&home);
+    fs::create_dir_all(mcp_settings.parent().expect("mcp settings parent"))
+        .expect("mcp config dir");
     fs::write(
-        home.join("settings.json"),
+        &mcp_settings,
         r#"{"mcpServers":{"broken":{"type":"http","url":123}}}"#,
     )
     .expect("write broken settings");
@@ -434,12 +444,12 @@ fn rejects_invalid_mcp_server_shapes() {
 fn parses_desktop_permission_mode_aliases() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{"permissionMode":"workspaceWrite"}"#,
     )
     .expect("write local settings");
@@ -459,12 +469,12 @@ fn parses_desktop_permission_mode_aliases() {
 fn parses_control_plane_release_flags() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "controlPlane": {
             "controlPlaneV2Enabled": false,
@@ -533,8 +543,8 @@ fn parses_control_plane_release_flags() {
 fn config_reads_prompt_control_defaults() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     let loaded = ConfigLoader::new(&cwd, &home)
@@ -551,8 +561,8 @@ fn config_reads_prompt_control_overrides_from_prompt_dir() {
     let root = temp_dir();
     let home_root = root.join("home");
     let cwd = root.join("project");
-    let home = home_root.join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = home_root.join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     let prompt_control_path = prompt_control_config_path_for_home(&home);
@@ -589,8 +599,8 @@ fn config_reads_prompt_control_overrides_from_prompt_dir() {
 fn parses_memory_feature_flags_with_defaults() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     let loaded = ConfigLoader::new(&cwd, &home)
@@ -612,12 +622,12 @@ fn parses_memory_feature_flags_with_defaults() {
 fn parses_memory_feature_flags_overrides() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
 
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "memory": {
             "controlPlaneV1Enabled": false,
@@ -646,11 +656,11 @@ fn parses_memory_feature_flags_overrides() {
 fn parses_logical_day_overrides_from_settings() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "memory": {
             "timezone": "Asia/Shanghai",
@@ -672,8 +682,8 @@ fn parses_logical_day_overrides_from_settings() {
 fn defaults_logical_day_cutoff_to_4_and_tz_to_none() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     let loaded = ConfigLoader::new(&cwd, &home)
         .load()
@@ -690,11 +700,11 @@ fn defaults_logical_day_cutoff_to_4_and_tz_to_none() {
 fn parses_memory_inject_overrides_from_settings_json() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "memory": {
             "injectToPrompt": false,
@@ -716,11 +726,11 @@ fn parses_memory_inject_overrides_from_settings_json() {
 fn rejects_invalid_memory_recall_mode_label() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{"memory":{"recallMode":"telepathy"}}"#,
     )
     .expect("write bad memory settings");
@@ -751,11 +761,11 @@ fn runtime_config_language_default_falls_back_to_os_or_en_us() {
 fn runtime_config_language_reads_top_level_key() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{"language":"zh-CN"}"#,
     )
     .expect("write language settings");
@@ -809,11 +819,11 @@ fn current_returns_default_when_unset_and_set_current_installs_value() {
 fn rejects_invalid_provider_transport_config() {
     let root = temp_dir();
     let cwd = root.join("project");
-    let home = root.join("home").join(".claw");
-    fs::create_dir_all(cwd.join(".claw")).expect("project config dir");
+    let home = root.join("home").join(".if2ai");
+    fs::create_dir_all(cwd.join(".if2ai")).expect("project config dir");
     fs::create_dir_all(&home).expect("home config dir");
     fs::write(
-        cwd.join(".claw").join("settings.local.json"),
+        cwd.join(".if2ai").join("settings.local.json"),
         r#"{
           "controlPlane": {
             "connect_timeout_ms": 0,

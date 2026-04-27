@@ -183,6 +183,8 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
   } = useOnboarding();
   const { bytesPerSec, eta } = useDownloadMetrics(downloadedBytes, totalBytes, isDownloading);
   const autoDownloadRequestedRef = useRef(false);
+  const [downloadWatchdogExpired, setDownloadWatchdogExpired] = useState(false);
+  const [autoDownloadAttempted, setAutoDownloadAttempted] = useState(false);
 
   // Auto-run system check on mount
   useEffect(() => {
@@ -198,6 +200,11 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
 
   // allPassed only depends on model download completion
   const allPassed = modelDone;
+  const canContinue = Boolean(report) && !isChecking;
+  const canDeferModelDownload =
+    !allPassed &&
+    !isChecking &&
+    (Boolean(downloadError) || modelStatus?.status === 'Fail' || downloadWatchdogExpired);
 
   // Auto-download once after the first report confirms the model is missing.
   // Stale backend progress used to report "Running" without an active task; the
@@ -213,9 +220,29 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
       modelStatus?.status === 'Pending'
     ) {
       autoDownloadRequestedRef.current = true;
+      setAutoDownloadAttempted(true);
       downloadEmbeddedModel();
     }
   }, [report, modelDownloaded, downloadError, isDownloading, modelStatus, downloadEmbeddedModel]);
+
+  // Product guardrail: model downloads depend on network/HuggingFace availability,
+  // so Step 2 must never become a dead end. After a short grace period, expose a
+  // clear "continue and download later" path while keeping the download running.
+  useEffect(() => {
+    if (allPassed) {
+      setDownloadWatchdogExpired(false);
+      return;
+    }
+    if (!autoDownloadAttempted && !isDownloading && modelStatus?.status !== 'Running') {
+      setDownloadWatchdogExpired(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setDownloadWatchdogExpired(true);
+    }, 30_000);
+    return () => window.clearTimeout(timer);
+  }, [allPassed, autoDownloadAttempted, isDownloading, modelStatus?.status]);
 
   // Refresh system report after download finishes → enables continue button
   const prevDownloadingRef = useRef(isDownloading);
@@ -285,6 +312,30 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
       : modelStatus?.status === 'Fail'
         ? modelStatus
         : { status: 'Pending' };
+  const modelStatusLabel =
+    modelRowStatus.status === 'Running'
+      ? '后台下载中'
+      : modelRowStatus.status === 'Pending'
+        ? '准备中'
+        : statusLabel(modelRowStatus);
+  const setupHeadline = allPassed
+    ? '系统就绪，继续 →'
+    : report
+      ? '环境已就绪，模型后台准备中'
+      : '正在检测环境…';
+  const setupHint = allPassed
+    ? '✓ 全部检测通过，可以进入下一步'
+    : downloadError
+      ? '下载遇到问题，可重试或稍后在设置 · 模型配置中继续'
+      : downloadWatchdogExpired
+        ? '下载比预期更久，可以先继续，模型会在后台/设置中继续准备'
+        : isChecking
+          ? '检测硬件环境中…'
+          : isDownloading || modelStatus?.status === 'Running'
+            ? `后台下载中 · ${bytesPerSec > 0 ? `${formatBytes(bytesPerSec)}/s` : '建立连接中'}`
+            : report
+              ? '环境检测完成，正在准备后台下载'
+              : '检测完成后会自动开始下载';
 
   return (
     <OnboardingLayout
@@ -295,7 +346,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
           bullets={[
             '先快速读取 CPU/GPU/内存',
             '随后自动准备 FastEmbed 向量模型',
-            '模型就绪后自动解锁下一步',
+            '网络慢时可先继续，稍后在设置里补下载',
           ]}
         >
           {/* Summary card — semi-transparent on orange bg, matching Step 4 style */}
@@ -328,7 +379,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                   )}
                 </div>
                 <span className="text-[13px] font-semibold" style={{ color: 'rgba(255,255,255,0.95)' }}>
-                  {allPassed ? '系统就绪，继续 →' : '系统检测中…'}
+                  {setupHeadline}
                 </span>
               </div>
 
@@ -360,7 +411,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                     )}
                   />
                   <span className="text-[12px]" style={{ color: 'rgba(255,255,255,0.9)' }}>
-                    模型: {statusLabel(modelRowStatus)}
+                    模型: {modelStatusLabel}
                   </span>
                 </div>
               </div>
@@ -391,15 +442,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
               {/* Footer hint */}
               <div className="px-4 py-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
                 <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                  {allPassed
-                    ? '✓ 全部检测通过，可以进入下一步'
-                    : downloadError
-                      ? '⚠ 下载遇到问题，请在左侧重试'
-                      : isChecking
-                        ? '检测硬件环境中…'
-                        : isDownloading || modelStatus?.status === 'Running'
-                        ? `下载中 · ${bytesPerSec > 0 ? `${formatBytes(bytesPerSec)}/s` : '建立连接中'}`
-                        : '检测完成后会自动开始下载'}
+                  {setupHint}
                 </span>
               </div>
             </div>
@@ -423,7 +466,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
       {/* Left content area */}
       <div className="flex-1 overflow-y-auto px-8 pb-6">
         <p className="text-token-sm text-muted-foreground mb-5 leading-relaxed">
-          If2Ai 会先确认设备信息，然后自动下载 FastEmbed 向量模型。这个模型用于本地记忆检索和语义召回，只需要准备一次。
+          If2Ai 会先确认设备信息，然后在后台准备 FastEmbed 向量模型。你可以继续完成 onboarding；模型准备好后，本地记忆检索会自动可用。
         </p>
 
         {/* ── Unified check card ── */}
@@ -434,7 +477,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
               自动准备流程
             </h2>
             <p className="mt-1 text-token-xs text-muted-foreground">
-              先检测环境，再下载模型；下载完成后「下一步」会自动可用。
+              环境检测不会阻塞继续使用；模型下载依赖网络，慢的时候会自动转入后台。
             </p>
           </div>
 
@@ -521,7 +564,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
               {/* Status badge + label */}
               <div className="flex items-center gap-2 shrink-0">
                 <span className={cn(STATUS_FONT_SIZE, statusTextClass(modelRowStatus))}>
-                  {statusLabel(modelRowStatus)}
+                  {modelStatusLabel}
                 </span>
                 <div
                   className={cn(
@@ -556,7 +599,7 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                       ? '模型已就绪 · 可继续下一步'
                       : totalBytes > 0
                         ? `${formatBytes(modelDownloadedBytes)} / ${formatBytes(modelTotalBytes)}`
-                        : `正在下载 · ${formatBytes(modelTotalBytes)} 总量`}
+                        : `后台准备中 · ${formatBytes(modelTotalBytes)} 总量`}
                   </span>
                   <span className={cn('text-token-xs tabular-nums font-medium', modelDownloaded && 'text-status-success')}>
                     {Math.round(modelPercent)}%
@@ -616,6 +659,17 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
                 </button>
               </div>
             )}
+
+            {downloadWatchdogExpired && !modelDownloaded && !downloadError && (
+              <div className="mt-3 rounded-lg border border-brand-orange/25 bg-brand-orange/10 px-3 py-2">
+                <p className="text-[11px] font-semibold text-brand-orange">
+                  下载时间比预期更久
+                </p>
+                <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                  这通常是 HuggingFace 网络较慢或首次连接建立中。你可以保持下载继续，也可以先进入下一步，之后在「设置 · 模型配置」继续下载。
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -625,9 +679,11 @@ export function SystemCheckStep({ onNext, onPrev, onWindowDrag }: SystemCheckSte
         currentStep={2}
         onNext={onNext}
         onPrev={onPrev}
-        canGoNext={allPassed}
+        canGoNext={canContinue}
         canGoPrev
-        nextLabel="预检完成 →"
+        nextLabel={allPassed ? '预检完成 →' : '继续，稍后下载 →'}
+        onSkip={canDeferModelDownload && !canContinue ? onNext : undefined}
+        skipLabel="稍后在设置·模型配置中下载 →"
       />
     </OnboardingLayout>
   );

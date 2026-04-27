@@ -46,6 +46,8 @@ use crate::modules::runtime::contracts::activation::{ActivationSnapshot, Activat
 
 use super::license_lifecycle_service::{snapshot_with_kind, LicenseLifecycleService};
 
+const DEBUG_ACTIVATION_BYPASS_ENV: &str = "IF2AI_DEV_BYPASS_ACTIVATION";
+
 /// Activation precondition checklist surfaced to the onboarding UI.
 ///
 /// Mirrors the legacy `commands::activation::ActivationChecklist`
@@ -105,21 +107,16 @@ impl ActivationService {
     /// [`ActivationSnapshot`] the frontend boot shell consumes via
     /// the new `activation_get_status` IPC command.
     ///
-    /// Honest mapping today (no remote license backend yet):
-    /// - `OnboardingState.onboarding_completed == true` →
-    ///   [`ActivationStatusKind::Activated`] +
-    ///   `allows_main_shell = true`.
-    /// - Anything else (including a missing state file →
-    ///   `OnboardingState::default()`) →
-    ///   [`ActivationStatusKind::NeedsActivation`] +
-    ///   `allows_main_shell = false`.
+    /// Honest mapping today:
+    /// - a valid cached license -> [`ActivationStatusKind::Activated`],
+    /// - an offline-grace license -> [`ActivationStatusKind::OfflineGrace`],
+    /// - missing, invalid, expired, or revoked license ->
+    ///   a blocking activation state.
     ///
-    /// `license` is always `None` because
-    /// [`LicenseLifecycleService`] is a placeholder and no remote
-    /// license API is wired. When the real backend lands, this
-    /// method returns the lifecycle snapshot directly without a
-    /// contract bump — the IPC + frontend projection seam stays the
-    /// same.
+    /// Debug builds may opt into a local developer bypass with
+    /// `IF2AI_DEV_BYPASS_ACTIVATION=1`. That bypass is intentionally
+    /// explicit and does not treat legacy onboarding completion as a
+    /// production activation source.
     pub async fn current_snapshot(&self) -> ActivationSnapshot {
         // License is the single source of truth for `allows_main_shell`.
         //
@@ -132,7 +129,8 @@ impl ActivationService {
         // invalid license as the canonical `NeedsActivation` instead —
         // the activation gate then renders for fresh installs *and* for
         // post-revoke transitions, with no special casing.
-        self.lifecycle.local_boot_restore().await
+        let snapshot = self.lifecycle.local_boot_restore().await;
+        apply_debug_activation_bypass(snapshot)
     }
 
     /// Compute the precondition checklist used by the onboarding
@@ -251,6 +249,47 @@ impl ActivationService {
     }
 }
 
+fn apply_debug_activation_bypass(snapshot: ActivationSnapshot) -> ActivationSnapshot {
+    apply_debug_activation_bypass_with(snapshot, debug_activation_bypass_enabled())
+}
+
+fn apply_debug_activation_bypass_with(
+    snapshot: ActivationSnapshot,
+    bypass_enabled: bool,
+) -> ActivationSnapshot {
+    if snapshot.allows_main_shell || !bypass_enabled {
+        return snapshot;
+    }
+
+    tracing::warn!(
+        target: "if2ai::activation",
+        "{DEBUG_ACTIVATION_BYPASS_ENV}=1 active in debug build; allowing main shell without a cached license"
+    );
+    let mut bypassed = snapshot_with_kind(ActivationStatusKind::Activated, None, None);
+    bypassed.status.message = Some(format!(
+        "Debug activation bypass active via {DEBUG_ACTIVATION_BYPASS_ENV}=1; no local license was loaded."
+    ));
+    bypassed
+}
+
+#[cfg(debug_assertions)]
+fn debug_activation_bypass_enabled() -> bool {
+    debug_activation_bypass_enabled_from(std::env::var(DEBUG_ACTIVATION_BYPASS_ENV).ok().as_deref())
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_activation_bypass_enabled() -> bool {
+    false
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn debug_activation_bypass_enabled_from(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +323,46 @@ mod tests {
         assert_eq!(v["success"], true);
         assert_eq!(v["session_id"], "sess");
         assert_eq!(v["ai_response"], "hello");
+    }
+
+    #[test]
+    fn debug_activation_bypass_parses_explicit_opt_in_values() {
+        assert!(debug_activation_bypass_enabled_from(Some("1")));
+        assert!(debug_activation_bypass_enabled_from(Some("true")));
+        assert!(debug_activation_bypass_enabled_from(Some("YES")));
+        assert!(debug_activation_bypass_enabled_from(Some(" on ")));
+        assert!(!debug_activation_bypass_enabled_from(None));
+        assert!(!debug_activation_bypass_enabled_from(Some("0")));
+        assert!(!debug_activation_bypass_enabled_from(Some("false")));
+    }
+
+    #[test]
+    fn debug_activation_bypass_leaves_allowed_snapshot_unchanged() {
+        let mut snapshot = snapshot_with_kind(ActivationStatusKind::Activated, None, None);
+        snapshot.status.message = Some("already activated".into());
+        let bypassed = apply_debug_activation_bypass_with(snapshot.clone(), true);
+        assert_eq!(bypassed.status.message, snapshot.status.message);
+        assert!(bypassed.allows_main_shell);
+    }
+
+    #[test]
+    fn debug_activation_bypass_turns_blocked_snapshot_into_diagnostic_activation() {
+        let snapshot = snapshot_with_kind(ActivationStatusKind::NeedsActivation, None, None);
+        let bypassed = apply_debug_activation_bypass_with(snapshot, true);
+        assert_eq!(bypassed.status.kind, ActivationStatusKind::Activated);
+        assert!(bypassed.allows_main_shell);
+        assert!(bypassed
+            .status
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains(DEBUG_ACTIVATION_BYPASS_ENV)));
+    }
+
+    #[test]
+    fn debug_activation_bypass_is_off_by_default() {
+        let snapshot = snapshot_with_kind(ActivationStatusKind::NeedsActivation, None, None);
+        let bypassed = apply_debug_activation_bypass_with(snapshot, false);
+        assert_eq!(bypassed.status.kind, ActivationStatusKind::NeedsActivation);
+        assert!(!bypassed.allows_main_shell);
     }
 }

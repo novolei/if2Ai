@@ -178,9 +178,10 @@ fn discover_with_git_includes_diff_snapshot_for_tracked_changes() {
 fn load_system_prompt_reads_claw_files_and_config() {
     let root = temp_dir();
     fs::create_dir_all(root.join(".claw")).expect("claw dir");
+    fs::create_dir_all(root.join(".if2ai")).expect("if2ai config dir");
     fs::write(root.join("CLAW.md"), "Project rules").expect("write instructions");
     fs::write(
-        root.join(".claw").join("settings.json"),
+        root.join(".if2ai").join("settings.json"),
         r#"{"permissionMode":"acceptEdits"}"#,
     )
     .expect("write settings");
@@ -188,9 +189,9 @@ fn load_system_prompt_reads_claw_files_and_config() {
     let _guard = env_lock();
     let previous = std::env::current_dir().expect("cwd");
     let original_home = std::env::var("HOME").ok();
-    let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+    let original_if2ai_home = std::env::var("IF2AI_CONFIG_HOME").ok();
     std::env::set_var("HOME", &root);
-    std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+    std::env::set_var("IF2AI_CONFIG_HOME", root.join("missing-home"));
     std::env::set_current_dir(&root).expect("change cwd");
     let prompt = super::load_system_prompt(&root, "2026-03-31", "linux", "6.8")
         .expect("system prompt should load")
@@ -205,10 +206,10 @@ fn load_system_prompt_reads_claw_files_and_config() {
     } else {
         std::env::remove_var("HOME");
     }
-    if let Some(value) = original_claw_home {
-        std::env::set_var("CLAW_CONFIG_HOME", value);
+    if let Some(value) = original_if2ai_home {
+        std::env::set_var("IF2AI_CONFIG_HOME", value);
     } else {
-        std::env::remove_var("CLAW_CONFIG_HOME");
+        std::env::remove_var("IF2AI_CONFIG_HOME");
     }
 
     assert!(prompt.contains("Project rules"));
@@ -220,9 +221,10 @@ fn load_system_prompt_reads_claw_files_and_config() {
 fn renders_claw_code_style_sections_with_project_context() {
     let root = temp_dir();
     fs::create_dir_all(root.join(".claw")).expect("claw dir");
+    fs::create_dir_all(root.join(".if2ai")).expect("if2ai config dir");
     fs::write(root.join("CLAW.md"), "Project rules").expect("write CLAW.md");
     fs::write(
-        root.join(".claw").join("settings.json"),
+        root.join(".if2ai").join("settings.json"),
         r#"{"permissionMode":"acceptEdits"}"#,
     )
     .expect("write settings");

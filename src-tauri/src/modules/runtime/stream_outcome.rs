@@ -90,6 +90,16 @@ impl TaskOutcomeResolver {
             );
         }
 
+        if conversation.terminal_status == "memory_recall_required_no_tool" {
+            return new_truth(
+                "failed",
+                Some("memory_recall_required_no_tool".to_string()),
+                true,
+                conversation.terminal_status,
+                execution.has_successful_mutating_tool,
+            );
+        }
+
         if conversation.terminal_status == "cancelled_by_user" {
             return new_truth(
                 "failed",
@@ -232,6 +242,33 @@ mod tests {
             Some(ResumeReason::MaxIterationsReached)
         );
         assert!(!outcome.recoverability.safe_to_retry_mutations);
+    }
+
+    #[test]
+    fn memory_recall_intent_no_tool_is_failed() {
+        let outcome = TaskOutcomeResolver::resolve(
+            ExecutionTruth {
+                has_successful_tool: false,
+                has_successful_mutating_tool: false,
+            },
+            &ConversationTruth {
+                stream_failed: false,
+                terminal_status: "memory_recall_required_no_tool",
+                last_stream_error_reason: None,
+            },
+        );
+        assert_eq!(outcome.task_outcome, "failed");
+        assert_eq!(
+            outcome.degraded_reason.as_deref(),
+            Some("memory_recall_required_no_tool")
+        );
+        assert!(outcome.resume_available);
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::ModelStopNoTools)
+        );
+        assert!(outcome.recoverability.safe_to_retry_mutations);
     }
 
     #[test]

@@ -34,6 +34,7 @@ import type { ChatWorkspaceProps } from "../types";
 import { HomeScreen } from "./HomeScreen";
 import { SidebarTop } from "./SidebarTop";
 import { BrowserCard } from "@/components/browser/BrowserCard";
+import { RunInspectorPanel } from "@/components/chat/RunInspectorPanel";
 import { useBrowserStore } from "@/stores/browser-slice";
 import { refreshPendingPermission } from "@/runtime-projection";
 
@@ -510,6 +511,7 @@ export function ChatWorkspace({
                 <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
                   {/* BrowserCard — floats over the chat area when AI browser is active */}
                   <BrowserCard sessionId={activeSessionId} />
+                  <RunInspectorPanel sessionId={activeSessionId} />
                   <div className="min-h-0 flex-1">
                     <ChatUI
                       sessionTitle={activeTitle}

@@ -31,6 +31,7 @@
 #![allow(unused_imports)]
 
 pub mod activation;
+pub mod agent_loop;
 pub mod common;
 pub mod execution_mode;
 pub mod memory;
@@ -39,6 +40,10 @@ pub mod prompt;
 pub use activation::{
     ActivationAction, ActivationActionKind, ActivationFailureReason, ActivationLicense,
     ActivationSnapshot, ActivationStatus, ActivationStatusKind,
+};
+pub use agent_loop::{
+    FinalRunReport, LoopOutcomeKind, SkillResolutionCandidate, SkillResolutionPlan,
+    WorkLoopDecision, WorkLoopKind,
 };
 pub use common::{
     CorrelationIds, RuntimeEventEnvelope, RuntimeEventPayloadFamily, RuntimeEventType,

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::modules::system_check::env::run_full_check;
 use crate::modules::system_check::model_download::{
-    download_embedded_model, get_download_progress, MODEL_NAME,
+    get_download_progress, start_embedded_model_download, MODEL_NAME,
 };
 use crate::modules::system_check::types::SystemReport;
 
@@ -28,10 +28,8 @@ pub async fn system_check_run() -> Result<SystemReport, String> {
 ///
 /// Progress can be tracked via `embedded_model_progress()`.
 #[tauri::command]
-pub async fn embedded_model_download(app: tauri::AppHandle) -> Result<(), String> {
-    download_embedded_model(Some(app))
-        .await
-        .map_err(|e| format!("Download failed: {e}"))
+pub fn embedded_model_download(app: tauri::AppHandle) -> Result<(), String> {
+    start_embedded_model_download(Some(app)).map_err(|e| format!("Download failed: {e}"))
 }
 
 /// Get the embedded model download progress.

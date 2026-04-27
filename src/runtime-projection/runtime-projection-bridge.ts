@@ -59,7 +59,7 @@ import {
   requestIntelligenceClassify,
   type RequestIntelligenceClassifyInput,
 } from '@/lib/tauri'
-import { getSessionProjectionCheckpoint, getSupervisorSnapshot } from '@/api/sessions'
+import { getSessionProjectionCheckpoint, getSupervisorSnapshot, getToolAttemptLedger } from '@/api/sessions'
 
 import {
   runtimeProjectionStore,
@@ -75,6 +75,7 @@ import {
   translateMemoryWriteDecision,
   translatePermissionRequestPayload,
   translateSupervisorSnapshot,
+  translateToolAttemptLedger,
 } from './runtime-event-translator'
 
 /** Cleanup handle returned by [`wireRuntimeProjectionListeners`]. */
@@ -195,6 +196,12 @@ export function wireRuntimeProjectionListeners(
   // state from scattered sources.  Failure leaves `snapshot.supervisor`
   // as `null`; consumers MUST treat `null` as "unknown".
   void refreshSupervisorSnapshot(store)
+
+  // T-014 — one-shot attempt timeline fetch on wire.  Reads the
+  // tool attempt ledger so the UI can render per-tool-call attempt
+  // history.  Failure leaves `snapshot.attemptTimeline` as `null`;
+  // consumers MUST treat `null` as "unknown".
+  void refreshAttemptTimeline(store)
 
   // Server-driven transitions: the Rust `lifecycle_manager` emits
   // `activation_status_changed` when its periodic `revoke_check`
@@ -327,6 +334,32 @@ export async function loadSessionProjectionCheckpoint(
     // eslint-disable-next-line no-console
     console.error(
       '[runtime-projection-bridge] get_session_projection_checkpoint failed',
+      err,
+    )
+  }
+}
+
+/**
+ * T-014 — one-shot attempt timeline fetch. Called on wire and on
+ * demand when the active session changes. Reads the tool attempt
+ * ledger from the backend and dispatches the translated
+ * `ToolAttemptTimelineEvent` into the projection store.
+ *
+ * Failure leaves `snapshot.attemptTimeline` as `null`. Accepts
+ * optional `runId` and `toolCallId` filters for targeted fetches.
+ */
+export async function refreshAttemptTimeline(
+  store: RuntimeProjectionStore = runtimeProjectionStore,
+  sessionId?: string,
+  options: { runId?: string; toolCallId?: string } = {},
+): Promise<void> {
+  try {
+    const payload = await getToolAttemptLedger(sessionId ?? '', options)
+    store.dispatch(translateToolAttemptLedger(payload))
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[runtime-projection-bridge] get_tool_attempt_ledger failed',
       err,
     )
   }

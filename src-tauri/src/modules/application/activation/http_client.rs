@@ -260,9 +260,13 @@ async fn sleep_with_jitter(base: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn from_env_uses_default_when_env_unset() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let prev = std::env::var(ACTIVATION_BASE_URL_ENV).ok();
         std::env::remove_var(ACTIVATION_BASE_URL_ENV);
         let client = ActivationHttpClient::from_env().expect("default base URL");
@@ -274,6 +278,7 @@ mod tests {
 
     #[test]
     fn from_env_respects_explicit_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let prev = std::env::var(ACTIVATION_BASE_URL_ENV).ok();
         std::env::set_var(ACTIVATION_BASE_URL_ENV, "https://example.test/api/");
         let client = ActivationHttpClient::from_env().expect("override");

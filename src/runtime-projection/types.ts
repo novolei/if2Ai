@@ -22,10 +22,18 @@ import type {
   MemoryWriteDecisionPayload,
   PromptDiagnosticsSummary as WirePromptDiagnosticsSummary,
   QualityGateResultPayload,
+  ResumeRecoverability,
+  AttemptStats,
+  FinalRunReport,
+  SkillResolutionPlan,
+  ToolAttemptStatus,
+  WorkLoopDecision,
 } from "@/transport/contracts";
 
-/** Tool-call lifecycle status, shared by every `stream_tool_call_update`. */
-export type ToolCallStatus = "queued" | "running" | "completed" | "error";
+/** Tool-call lifecycle status — accepts attempt-ledger states plus
+ *  the legacy stream `error` value still emitted by the backend. */
+export type ToolCallStatus = ToolAttemptStatus | "error";
+export type { ToolAttemptStatus };
 
 /** Coarse outcome carried on `stream_complete`. */
 export type TaskOutcome = "completed" | "partial_success" | "failed";
@@ -123,6 +131,8 @@ export type CanonicalRuntimeEvent =
   | StreamThinkingDeltaEvent
   | StreamToolCallUpdateEvent
   | StreamFinalTextOverrideEvent
+  | SkillResolutionSnapshotEvent
+  | FinalRunReportEvent
   | StreamCompleteEvent
   | StreamErrorEvent
   | PermissionRequestEvent
@@ -135,7 +145,8 @@ export type CanonicalRuntimeEvent =
   | ExecutionModeManualOverrideEvent
   | ProjectionDiscardSessionRunsEvent
   | SupervisorSnapshotEvent
-  | SmartBrowserProjectionEvent;
+  | SmartBrowserProjectionEvent
+  | ToolAttemptTimelineEvent;
 
 export interface StreamRunBoundEvent {
   kind: "stream_run_bound";
@@ -191,6 +202,20 @@ export interface StreamFinalTextOverrideEvent {
   receivedAt: number;
 }
 
+export interface SkillResolutionSnapshotEvent {
+  kind: "skill_resolution_snapshot";
+  runId: string;
+  plan: SkillResolutionPlan;
+  receivedAt: number;
+}
+
+export interface FinalRunReportEvent {
+  kind: "final_run_report";
+  runId: string;
+  report: FinalRunReport;
+  receivedAt: number;
+}
+
 export interface StreamCompleteEvent {
   kind: "stream_complete";
   runId: string;
@@ -208,6 +233,8 @@ export interface StreamCompleteEvent {
   routing?: RoutingInfo;
   /** P2-11 — running per-session totals after this turn. */
   sessionTotals?: SessionUsageTotals;
+  /** T-012 — structured recoverability payload from MIG-021. */
+  recoverability?: ResumeRecoverability;
   receivedAt: number;
 }
 
@@ -249,6 +276,8 @@ export interface StreamErrorEvent {
   resumeAvailable?: boolean;
   resumeCursor?: string;
   requestId?: string;
+  /** T-012 — structured recoverability payload from MIG-021. */
+  recoverability?: ResumeRecoverability;
   receivedAt: number;
 }
 
@@ -396,6 +425,7 @@ export interface ExecutionModeDecisionEvent {
   /** Optional escalation source when ambiguity handling fired. */
   escalationSource?: string;
   policyVersion: string;
+  workLoop?: WorkLoopDecision;
   receivedAt: number;
 }
 
@@ -515,6 +545,8 @@ export interface RunProjection {
   degradedReason?: string;
   resumeAvailable: boolean;
   resumeCursor?: string;
+  /** T-012 — structured recoverability (reason + safe-to-retry + budget). */
+  recoverability?: ResumeRecoverability;
   /** All tool-call updates indexed by `toolCallId`, last-write wins. */
   toolCalls: Record<string, ToolCallProjection>;
   /** Optional context-budget snapshot from `stream_complete`. */
@@ -523,6 +555,12 @@ export interface RunProjection {
   turnCost?: TurnCost;
   /** P1-8 — smart-routing decision for this run. */
   routing?: RoutingInfo;
+  /** Selected internal work loop for this run. */
+  workLoop?: WorkLoopDecision;
+  /** Skill resolver snapshot for this run. */
+  skillResolution?: SkillResolutionPlan;
+  /** Final report emitted when the run terminates. */
+  finalRunReport?: FinalRunReport;
   /** P2-11 — per-session running totals snapshot at end of this run. */
   sessionTotals?: SessionUsageTotals;
   /** Memory items recalled this run. */
@@ -544,10 +582,60 @@ export interface ToolCallProjection {
   policyDecision?: PolicyDecision;
   evidenceId?: string;
   requestId?: string;
+  /** Current attempt identifier from GAP-002 correlation (T-014). */
+  attemptId?: string;
+  /** Current attempt number in retry sequence (T-014). */
+  attemptNo?: number;
+  /** Failure classification for the current attempt (T-014). */
+  failureKind?: string | null;
+  /** Full attempt history in chronological order (T-014). */
+  attemptHistory: ToolAttemptTimestamp[];
   /** First-seen wall-clock time. */
   firstSeenAt: number;
   /** Last-write wall-clock time. */
   lastUpdatedAt: number;
+}
+
+/** T-014 — per-attempt projection snapshot. */
+export interface ToolAttemptTimestamp {
+  attemptId: string;
+  attemptNo: number;
+  toolCallId: string;
+  runId: string;
+  toolName: string;
+  status: ToolAttemptStatus;
+  /** Wall-clock timestamp (ms since epoch). */
+  startedAt: number;
+  /** Optional terminal timestamp. */
+  endedAt?: number;
+  /** Execution duration in ms. */
+  durationMs?: number;
+  /** Policy decision for this attempt. */
+  policyDecision?: string;
+  /** Failure classification. */
+  failureKind?: string | null;
+}
+
+/** T-014 — fetch-seam event carrying the full attempt ledger snapshot. */
+export interface ToolAttemptTimelineEvent {
+  kind: "tool_attempt_timeline_snapshot";
+  sessionId: string;
+  attempts: ToolAttemptTimestamp[];
+  stats: Record<string, AttemptStats>;
+  receivedAt: number;
+}
+
+/** T-014 — top-level attempt timeline projection. */
+export interface AttemptTimelineProjection {
+  sessionId: string;
+  /** Attempts indexed by tool_call_id. */
+  byToolCallId: Record<string, ToolAttemptTimestamp[]>;
+  /** Attempts indexed by attempt_id for dedup. */
+  byAttemptId: Record<string, ToolAttemptTimestamp>;
+  /** Per-tool_call_id statistics. */
+  stats: Record<string, AttemptStats>;
+  /** Wall-clock of last fetch. */
+  lastFetchedAt: number;
 }
 
 /** Snapshot of every pending permission prompt. */
@@ -655,6 +743,8 @@ export interface ExecutionModeProjection {
    * `executionMode` (the classifier judgment) is NEVER mutated. */
   manualOverride: ExecutionModeProjection["executionMode"] | null;
   policyVersion: string;
+  /** Agent-loop router decision paired with the classifier judgment. */
+  workLoop?: WorkLoopDecision;
   capturedAt: number;
   /** Phase M2 audit fix — alias of `capturedAt` retained for the
    * YAML m2.5 spec field name. Both refer to the wall-clock time
@@ -711,6 +801,8 @@ export interface RuntimeProjectionSnapshot {
   supervisor: SupervisorProjection | null;
   /** Smart Browser sessions indexed by `smartBrowserSessionId`. */
   browsers: Record<string, SmartBrowserProjection>;
+  /** T-014 — attempt timeline snapshot, `null` until fetched via bridge seam. */
+  attemptTimeline: AttemptTimelineProjection | null;
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -731,5 +823,6 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     executionMode: null,
     supervisor: null,
     browsers: {},
+    attemptTimeline: null,
   };
 }

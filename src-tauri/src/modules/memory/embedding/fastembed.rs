@@ -15,6 +15,8 @@ use std::sync::Mutex;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use thiserror::Error;
 
+use crate::modules::system_check::model_download::embedded_model_cache_dir;
+
 /// Error type for embedding operations
 #[derive(Debug, Error)]
 pub enum EmbeddingError {
@@ -52,6 +54,7 @@ impl FastEmbedProvider {
         );
         let model = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
+                .with_cache_dir(embedded_model_cache_dir())
                 .with_show_download_progress(false),
         )
         .map_err(|e| EmbeddingError::ModelError(e.to_string()))?;

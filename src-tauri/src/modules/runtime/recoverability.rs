@@ -137,7 +137,9 @@ pub fn classify_resume_reason(
         "repeated_tool_batch_no_progress" => Some(ResumeReason::RepeatedToolBatchNoProgress),
         "invalid_tool_args_repeated" => Some(ResumeReason::InvalidToolArgsRepeated),
         "failed_to_start_stream" => Some(ResumeReason::FailedToStartStream),
-        "model_stop_no_tools" => Some(ResumeReason::ModelStopNoTools),
+        "model_stop_no_tools" | "memory_recall_required_no_tool" => {
+            Some(ResumeReason::ModelStopNoTools)
+        }
         "stream_error" => {
             // Degraded reasons may carry richer information
             if let Some(reason) = degraded_reason {
@@ -178,7 +180,7 @@ mod tests {
         let r = ResumeRecoverability::resumable(ResumeReason::NetworkTimeout, true, 3);
         let json = serde_json::to_string(&r).unwrap();
         let back: ResumeRecoverability = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.available, true);
+        assert!(back.available);
         assert_eq!(back.reason, Some(ResumeReason::NetworkTimeout));
         assert!(back.safe_to_retry_mutations);
         assert_eq!(back.retry_budget_remaining, 3);

@@ -12,6 +12,7 @@
 import { ArrowDown, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MemoryHistoryViewer } from './MemoryHistoryViewer'
+import type { MemoryScopeDiagnostic } from './memoryScopeDiagnostics'
 
 export interface MemoryEntryDto {
   key: string
@@ -47,6 +48,7 @@ export interface MemoryCardProps {
    * without firing a "missing context" error toast on click.
    */
   canDemote?: boolean
+  visibility?: MemoryScopeDiagnostic
 }
 
 function formatTime(isoString: string): string {
@@ -110,7 +112,26 @@ function getScopeChip(entry: { session_id: string | null; project_id: string | n
   }
 }
 
-export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardProps) {
+function getVisibilityChipClass(tone: MemoryScopeDiagnostic['tone']): string {
+  switch (tone) {
+    case 'success':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    case 'info':
+      return 'bg-sky-50 text-sky-700 border-sky-200'
+    case 'warning':
+      return 'bg-amber-50 text-amber-700 border-amber-200'
+    case 'muted':
+      return 'bg-zinc-50 text-zinc-500 border-zinc-200'
+  }
+}
+
+export function MemoryCard({
+  entry,
+  onDelete,
+  onDemote,
+  canDemote,
+  visibility,
+}: MemoryCardProps) {
   const scope = getScopeChip(entry)
   // Global → project → session: only entries currently above session may
   // be demoted.  We hide the action entirely on session-tier rows so the
@@ -136,6 +157,17 @@ export function MemoryCard({ entry, onDelete, onDemote, canDemote }: MemoryCardP
             >
               {scope.label}
             </span>
+            {visibility ? (
+              <span
+                title={visibility.title}
+                className={cn(
+                  'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                  getVisibilityChipClass(visibility.tone),
+                )}
+              >
+                {visibility.label}
+              </span>
+            ) : null}
           </div>
           <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-foreground/80">
             {entry.content}

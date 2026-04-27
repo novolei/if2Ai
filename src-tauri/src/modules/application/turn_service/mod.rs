@@ -78,6 +78,7 @@ use crate::modules::runtime::config::ConfigLoader;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
+mod agent_loop_delegate;
 mod run;
 mod stream;
 mod stream_event_loop;
@@ -85,6 +86,7 @@ mod stream_finalize;
 mod stream_preflight;
 mod stream_task;
 mod stream_tool_execution;
+mod work_loop;
 
 #[cfg(test)]
 mod tests;
@@ -92,6 +94,7 @@ mod tests;
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
 
+use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
 
 use super::memory_coordinator::{MemoryCoordinator, PrepareContextInput};
@@ -252,6 +255,10 @@ pub struct PreparedChatInputs {
     /// explainer chip; M4 governance will consume it as a gate
     /// input.
     pub execution_mode_decision: ExecutionModeDecision,
+    /// Internal work-loop route selected from the classifier decision.
+    pub work_loop_decision: WorkLoopDecision,
+    /// Deterministic skill-resolution plan for this turn.
+    pub skill_resolution_plan: SkillResolutionPlan,
     /// FEAT-PCP-001 — explainable prompt control-plane decision for
     /// this turn.
     pub prompt_assembly_decision: PromptAssemblyDecision,
@@ -366,6 +373,18 @@ impl TurnService {
         let memory_items = prepared_context.memory_items;
 
         let registered_tool_names = self.deps.tool_registry.tool_names();
+        let work_loop_decision =
+            work_loop::route_work_loop(&intelligence.decision, &request.user_message);
+        let mut skill_resolution_plan = work_loop::resolve_skill_plan(
+            &request.workdir,
+            &request.user_message,
+            &request.active_skill_ids,
+            &registered_tool_names,
+        );
+        let skill_prompt_contribution = work_loop::auto_load_trusted_skill_context(
+            &request.workdir,
+            &mut skill_resolution_plan,
+        );
         let runtime_config = ConfigLoader::default_for(&request.workdir)
             .load()
             .unwrap_or_else(|error| {
@@ -481,6 +500,19 @@ impl TurnService {
                 None => Vec::new(),
             };
 
+        let mut external_contributions = coordinated_prompt
+            .coordinated_inputs
+            .external_contributions
+            .clone();
+        if let Some(contribution) =
+            work_loop::memory_recall_prompt_contribution(&work_loop_decision)
+        {
+            external_contributions.push(contribution);
+        }
+        if let Some(contribution) = skill_prompt_contribution {
+            external_contributions.push(contribution);
+        }
+
         let planner_request = build_prompt_plan_request_from_coordinator(
             request
                 .session_id
@@ -499,11 +531,7 @@ impl TurnService {
             coordinated_prompt.coordinated_inputs.clone(),
             learned_traits,
         );
-        let mut prompt = build_prompt_plan(
-            planner_request,
-            coordinated_prompt.coordinated_inputs.external_contributions,
-        )
-        .await?;
+        let mut prompt = build_prompt_plan(planner_request, external_contributions).await?;
 
         // Inject a tiny "runtime model" hint so the LLM answers
         // "你是什么模型 / what model are you" with the actual provider +
@@ -541,12 +569,75 @@ impl TurnService {
             prompt.text = prompt.plan.join_into_text();
         }
 
+        if !skill_resolution_plan.candidates.is_empty()
+            || !skill_resolution_plan.active_skill_ids.is_empty()
+            || skill_resolution_plan.should_load_find_skills
+        {
+            use super::prompt_planner::{PromptBlock, PromptBlockKind, PromptBlockSource};
+            let candidates = skill_resolution_plan
+                .candidates
+                .iter()
+                .map(|candidate| {
+                    let blocked = candidate
+                        .blocked_reason
+                        .as_deref()
+                        .map(|reason| format!(" blocked_reason={reason}"))
+                        .unwrap_or_default();
+                    let warning = candidate
+                        .load_warning
+                        .as_deref()
+                        .map(|warning| format!(" load_warning={warning}"))
+                        .unwrap_or_default();
+                    format!(
+                        "- {} [{}]: {} loaded={} auto_load_allowed={}{}{}",
+                        candidate.name,
+                        candidate.source,
+                        candidate.reason,
+                        candidate.loaded,
+                        candidate.auto_load_allowed,
+                        blocked,
+                        warning
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let active = if skill_resolution_plan.active_skill_ids.is_empty() {
+                "none".to_string()
+            } else {
+                skill_resolution_plan.active_skill_ids.join(", ")
+            };
+            let body = format!(
+                "[skill_resolution]\nactive_skill_ids: {active}\nremote_install_policy: {}\nauto_discovery_tools: {}\nloaded_skills: {}\nblocked_skills: {}\nload_warnings: {}\n{}\nUse skill_view only for approved local/builtin/reviewed skills. Do not install remote skills without user approval.",
+                skill_resolution_plan.remote_install_policy,
+                skill_resolution_plan.auto_discovery_tools.join(", "),
+                skill_resolution_plan.loaded_skill_names.join(", "),
+                skill_resolution_plan.blocked_skill_names.join(", "),
+                skill_resolution_plan.load_warnings.join(" | "),
+                candidates
+            );
+            prompt.plan.blocks.push(PromptBlock {
+                id: "skill_resolution_plan".into(),
+                kind: PromptBlockKind::Skill,
+                title: "Skill Resolution Plan".into(),
+                content: body,
+                source: PromptBlockSource {
+                    subsystem: "skills".into(),
+                    reference: Some("turn_service.work_loop".into()),
+                },
+                priority: 88,
+                is_sensitive: false,
+            });
+            prompt.text = prompt.plan.join_into_text();
+        }
+
         Ok(PreparedChatInputs {
             provider,
             prompt,
             memory_items,
             memory_injection,
             execution_mode_decision: intelligence.decision,
+            work_loop_decision,
+            skill_resolution_plan,
             prompt_assembly_decision: coordinated_prompt.decision,
             prompt_diagnostics_enabled: runtime_config.control_plane().prompt_diagnostics_enabled(),
             active_skill_ids: coordinated_prompt

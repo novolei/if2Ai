@@ -21,10 +21,9 @@ use crate::modules::runtime::conversation::{
 use crate::modules::runtime::pending_permission::PendingPermissionRecord;
 #[cfg(test)]
 use crate::modules::runtime::permissions::PermissionMode;
-use crate::modules::runtime::resume_cursor::{build_resume_cursor, parse_resume_cursor};
+use crate::modules::runtime::resume_cursor::parse_resume_cursor;
 #[cfg(test)]
 use crate::modules::runtime::session::ContentBlock;
-use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::session::MessageRole;
 
 /// Phase M1.1 / MIG-001-a — construct a per-call [`TurnService`]

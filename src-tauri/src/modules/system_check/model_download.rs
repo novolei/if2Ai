@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
@@ -31,6 +32,39 @@ pub static DOWNLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// Global cancellation flag for model downloads.
 pub static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 
+static DOWNLOAD_LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// Start the embedded model download in the background.
+///
+/// This command path is used by onboarding and settings. It must return quickly
+/// so the UI can keep progressing while FastEmbed performs the network download
+/// and ONNX initialization on a blocking worker thread.
+///
+/// # Errors
+///
+/// Returns an error if the download task cannot be started.
+pub fn start_embedded_model_download(app: Option<tauri::AppHandle>) -> Result<(), DownloadError> {
+    if embedded_model_exists() {
+        DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
+        clear_last_download_error();
+        emit_progress_if_possible(app.as_ref(), MODEL_SIZE_BYTES, MODEL_SIZE_BYTES);
+        return Ok(());
+    }
+
+    if DOWNLOAD_IN_PROGRESS.swap(true, Ordering::Relaxed) {
+        return Ok(());
+    }
+
+    let dest_dir = prepare_download_state();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = run_download_after_claim(app, dest_dir).await {
+            set_last_download_error(error.to_string());
+        }
+    });
+
+    Ok(())
+}
+
 /// Download the embedded multilingual-e5-small model via fastembed.
 ///
 /// fastembed handles the HTTP download, caching, and extraction internally.
@@ -41,15 +75,34 @@ pub static DOWNLOAD_CANCELLED: AtomicBool = AtomicBool::new(false);
 /// Returns an error if the download fails (network error, disk full, etc.)
 /// or if the download is cancelled.
 pub async fn download_embedded_model(app: Option<tauri::AppHandle>) -> Result<(), DownloadError> {
+    if embedded_model_exists() {
+        DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
+        clear_last_download_error();
+        emit_progress_if_possible(app.as_ref(), MODEL_SIZE_BYTES, MODEL_SIZE_BYTES);
+        return Ok(());
+    }
+
     if DOWNLOAD_IN_PROGRESS.swap(true, Ordering::Relaxed) {
         return Ok(());
     }
 
+    let dest_dir = prepare_download_state();
+    run_download_after_claim(app, dest_dir).await
+}
+
+fn prepare_download_state() -> PathBuf {
     DOWNLOAD_CANCELLED.store(false, Ordering::Relaxed);
-    let dest_dir = embedded_model_dir();
+    clear_last_download_error();
+    let dest_dir = embedded_model_cache_dir();
     DOWNLOAD_PROGRESS.store(0, Ordering::Relaxed);
     update_progress_from_cache_size(&dest_dir);
+    dest_dir
+}
 
+async fn run_download_after_claim(
+    app: Option<tauri::AppHandle>,
+    dest_dir: PathBuf,
+) -> Result<(), DownloadError> {
     let monitor_dir = dest_dir.clone();
     let monitor_app = app.clone();
     let monitor = tokio::spawn(async move {
@@ -72,7 +125,7 @@ pub async fn download_embedded_model(app: Option<tauri::AppHandle>) -> Result<()
         // Report completion
         DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
 
-        Ok(())
+        Ok::<(), DownloadError>(())
     })
     .await
     .map_err(|e| DownloadError::Io("spawn_blocking failed".to_string(), e.into()));
@@ -80,8 +133,20 @@ pub async fn download_embedded_model(app: Option<tauri::AppHandle>) -> Result<()
     DOWNLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
     monitor.abort();
 
-    result??;
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            set_last_download_error(error.to_string());
+            return Err(error);
+        }
+        Err(error) => {
+            set_last_download_error(error.to_string());
+            return Err(error);
+        }
+    }
+
     DOWNLOAD_PROGRESS.store(PROGRESS_SCALE, Ordering::Relaxed);
+    clear_last_download_error();
     emit_progress_if_possible(app.as_ref(), MODEL_SIZE_BYTES, MODEL_SIZE_BYTES);
 
     Ok(())
@@ -97,11 +162,32 @@ pub fn reset_progress() {
     DOWNLOAD_PROGRESS.store(0, Ordering::Relaxed);
     DOWNLOAD_CANCELLED.store(false, Ordering::Relaxed);
     DOWNLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
+    clear_last_download_error();
 }
 
 /// Returns whether a model download is actively running.
 pub fn is_download_in_progress() -> bool {
     DOWNLOAD_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
+/// Return the last terminal download error, if any.
+pub fn last_download_error() -> Option<String> {
+    DOWNLOAD_LAST_ERROR
+        .lock()
+        .map(|error| error.clone())
+        .unwrap_or(None)
+}
+
+fn set_last_download_error(message: String) {
+    if let Ok(mut error) = DOWNLOAD_LAST_ERROR.lock() {
+        *error = Some(message);
+    }
+}
+
+fn clear_last_download_error() {
+    if let Ok(mut error) = DOWNLOAD_LAST_ERROR.lock() {
+        *error = None;
+    }
 }
 
 /// Returns the embedded model cache directory path.
@@ -114,6 +200,24 @@ pub(crate) fn embedded_model_dir() -> PathBuf {
         .join("fastembed")
 }
 
+/// Return the FastEmbed cache directory the app should use at runtime.
+///
+/// New installs use the stable If2Ai-owned cache directory. Existing dev/user
+/// machines may already have a complete FastEmbed cache under `.fastembed_cache`
+/// because older memory code used fastembed's process-working-directory default;
+/// in that case, reuse it instead of forcing a duplicate 487 MB download.
+pub(crate) fn embedded_model_cache_dir() -> PathBuf {
+    let canonical = embedded_model_dir();
+    if embedded_model_exists_in(&canonical) {
+        return canonical;
+    }
+
+    legacy_fastembed_cache_dirs()
+        .into_iter()
+        .find(|dir| embedded_model_exists_in(dir))
+        .unwrap_or(canonical)
+}
+
 /// Check if the embedded model has been downloaded and cached.
 ///
 /// fastembed creates a directory with the model hash name
@@ -121,6 +225,21 @@ pub(crate) fn embedded_model_dir() -> PathBuf {
 /// inside the cache dir. We check if the cache dir itself has any content.
 pub fn embedded_model_exists() -> bool {
     embedded_model_exists_in(&embedded_model_dir())
+        || legacy_fastembed_cache_dirs()
+            .iter()
+            .any(|dir| embedded_model_exists_in(dir))
+}
+
+fn legacy_fastembed_cache_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join(".fastembed_cache"));
+        dirs.push(cwd.join("src-tauri").join(".fastembed_cache"));
+        if let Some(parent) = cwd.parent() {
+            dirs.push(parent.join(".fastembed_cache"));
+        }
+    }
+    dirs
 }
 
 fn embedded_model_exists_in(dir: &Path) -> bool {
@@ -307,6 +426,15 @@ mod tests {
         DOWNLOAD_IN_PROGRESS.store(true, Ordering::Relaxed);
         reset_progress();
         assert!(!is_download_in_progress());
+    }
+
+    #[test]
+    fn test_reset_progress_clears_last_error() {
+        let _guard = test_lock();
+        set_last_download_error("network failed".to_string());
+        assert!(last_download_error().is_some());
+        reset_progress();
+        assert!(last_download_error().is_none());
     }
 
     #[test]

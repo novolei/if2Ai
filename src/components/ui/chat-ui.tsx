@@ -66,6 +66,7 @@ import { ModelPicker } from "@/components/chat/ModelPicker"
 import { SlashResultCard } from "@/components/chat/SlashResultCard"
 import { ContextBar } from "@/components/chat/ContextBar"
 import { VirtualMessageList } from "@/components/chat/VirtualMessageList"
+import type { FinalRunReport } from "@/transport/contracts"
 
 /**
  * Threshold above which the chat transcript switches from straight
@@ -101,7 +102,7 @@ interface Message {
   toolArgs?: Record<string, unknown>
   toolDurationMs?: number
   isError?: boolean
-  toolStatus?: 'queued' | 'running' | 'completed' | 'error'
+  toolStatus?: import("@/transport/contracts").ToolAttemptStatus | "error"
   effectiveWorkdir?: string
   policyDecision?: 'allow' | 'deny' | 'prompt'
   memoryScope?: 'global' | 'project' | 'session'
@@ -121,6 +122,8 @@ interface Message {
   turnCost?: import("@/runtime-projection/types").TurnCost
   /** P1-8 — smart-routing decision summary. */
   routing?: import("@/runtime-projection/types").RoutingInfo
+  /** AWL-004 — canonical final work-loop report from runtime projection. */
+  finalRunReport?: FinalRunReport
 }
 
 interface ChatUIProps {
@@ -2629,7 +2632,8 @@ function ToolCallMessage({
   }
   const status = normalizeToolStatus(message)
   const display = buildToolCallDisplay(message, defaultWorkdir, status)
-  const title = status === 'error' ? `执行失败：${display.title}` : display.title
+  const isFailed = isToolFailureStatus(status)
+  const title = isFailed ? `执行失败：${display.title}` : display.title
   const hasDetails = display.details.length > 0
   const ToolGlyph = getToolCallGlyph(message.toolName, message.toolArgs)
 
@@ -2643,7 +2647,8 @@ function ToolCallMessage({
   // 时，展开后用 WriteToolDiffCard 渲染（图里那张绿色行号 +/- 卡片）。
   // 真实的 `previous_content` 由 backend 在结构化 JSON 结果里下发；
   // 解析失败 / 旧内容超出 64KiB 上限被裁掉时，回落为"全新增"渲染。
-  // status === 'error' 时跳过整张卡片，避免把失败请求的 content 当作
+  // Failure states skip the diff preview to avoid presenting a rejected write
+  // request as already applied.
   // "已写入"来展示。
   const writeArgs = (message.toolArgs ?? {}) as Record<string, unknown>
   const writePath = typeof writeArgs.path === 'string' ? writeArgs.path : ''
@@ -2664,7 +2669,7 @@ function ToolCallMessage({
   const showWriteDiff =
     typeof message.toolName === 'string' &&
     message.toolName.includes('file_write') &&
-    status !== 'error' &&
+    status === 'completed' &&
     Boolean(writePath) &&
     typeof writeArgs.content === 'string'
 
@@ -2673,22 +2678,22 @@ function ToolCallMessage({
       <div
         className={cn(
           'group relative my-0.5 pl-4',
-          status === 'error' && 'text-rose-600'
+          isFailed && 'text-rose-600'
         )}
         onPointerEnter={() => setIsHovered(true)}
         onPointerLeave={() => setIsHovered(false)}
       >
-        <div className={cn('absolute bottom-0 left-[5px] top-0 w-px bg-border/40', status === 'error' && 'bg-rose-200/80')} />
+        <div className={cn('absolute bottom-0 left-[5px] top-0 w-px bg-border/40', isFailed && 'bg-rose-200/80')} />
 
         <div className="flex items-start gap-1.5">
-          <div className={cn('mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30', status === 'error' && 'bg-rose-400')} />
+          <div className={cn('mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30', isFailed && 'bg-rose-400')} />
 
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
             className={cn(
               'group flex min-w-0 flex-1 items-center gap-2 rounded-none px-0 py-[2px] text-left transition-colors duration-150',
-              status === 'error' ? 'hover:text-rose-600/90' : 'hover:text-foreground/70'
+              isFailed ? 'hover:text-rose-600/90' : 'hover:text-foreground/70'
             )}
             aria-label={expanded ? '折叠工具调用' : '展开工具调用'}
           >
@@ -2697,7 +2702,7 @@ function ToolCallMessage({
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className={cn('flex items-center gap-1.5 text-[13px] leading-5 tracking-[-0.01em]', status === 'error' ? 'text-rose-600/86' : 'text-muted-foreground/50')}>
+              <div className={cn('flex items-center gap-1.5 text-[13px] leading-5 tracking-[-0.01em]', isFailed ? 'text-rose-600/86' : 'text-muted-foreground/50')}>
                 <span className="truncate">{title}</span>
                 <ToolStatusGlyph status={status} />
               </div>
@@ -2808,7 +2813,7 @@ function ToolCallMessage({
                   </div>
                 ))}
               </div>
-            ) : status === 'error' ? (
+            ) : isFailed ? (
               <div className="text-[11.5px] leading-5 text-rose-500/72">执行失败</div>
             ) : null}
           </div>
@@ -3259,6 +3264,12 @@ const ChatMessage = React.memo(function ChatMessage({
               </div>
             </>
           )}
+          {message.finalRunReport ? (
+            <FinalRunReportCard
+              report={message.finalRunReport}
+              onResume={onResumeFromCursor}
+            />
+          ) : null}
         </div>
       )}
     </div>
@@ -3962,11 +3973,21 @@ function formatShortTime(date: Date) {
   }).format(date)
 }
 
-function normalizeToolStatus(message: Message): 'queued' | 'running' | 'completed' | 'error' {
+type ChatToolStatus = import("@/transport/contracts").ToolAttemptStatus | "error"
+
+function normalizeToolStatus(message: Message): ChatToolStatus {
   if (message.toolStatus) return message.toolStatus
   if (message.isError) return 'error'
   if (message.content.trim()) return 'completed'
   return 'running'
+}
+
+function isToolPendingStatus(status: ChatToolStatus): boolean {
+  return status === 'queued' || status === 'authorizing' || status === 'running' || status === 'retrying'
+}
+
+function isToolFailureStatus(status: ChatToolStatus): boolean {
+  return status === 'failed' || status === 'error' || status === 'blocked' || status === 'cancelled'
 }
 
 function getAssistantStatusMeta(message: Message) {
@@ -4005,9 +4026,9 @@ function getAssistantStatusMeta(message: Message) {
 function ToolStatusGlyph({
   status,
 }: {
-  status: 'queued' | 'running' | 'completed' | 'error'
+  status: ChatToolStatus
 }) {
-  if (status === 'queued' || status === 'running') {
+  if (isToolPendingStatus(status)) {
     return (
       <span className="relative flex h-3 w-3 shrink-0 items-center justify-center opacity-80">
         <span className="absolute inset-0 rounded-full bg-sky-400/10 animate-ping" />
@@ -4076,7 +4097,7 @@ type ToolDisplay = {
 function buildToolCallDisplay(
   message: Message,
   defaultWorkdir?: string,
-  status: 'queued' | 'running' | 'completed' | 'error' = 'completed'
+  status: ChatToolStatus = 'completed'
 ): ToolDisplay {
   const toolName = (message.toolName ?? 'unknown_tool').trim()
   const args = message.toolArgs ?? {}
@@ -4145,7 +4166,7 @@ function buildDiagnosticCopyText(message: Message): string | null {
 
 function pickToolHeadline(
   toolName: string,
-  status: 'queued' | 'running' | 'completed' | 'error',
+  status: ChatToolStatus,
   args: Record<string, unknown>,
   command: string | null,
   path: string | null,
@@ -4192,8 +4213,11 @@ function pickToolHeadline(
   }
 
   if (toolName.includes('file_write')) {
-    if (status === 'queued' || status === 'running') {
+    if (isToolPendingStatus(status)) {
       return path ? `正在写入 ${shortenMiddle(path, 28)}` : '正在写入文件'
+    }
+    if (isToolFailureStatus(status)) {
+      return path ? `写入失败 ${shortenMiddle(path, 28)}` : '写入失败'
     }
     return path ? `已写入 ${shortenMiddle(path, 28)}` : '已写入文件'
   }
@@ -4517,6 +4541,189 @@ function LoadingIndicator() {
       />
     </div>
   )
+}
+
+function FinalRunReportCard({
+  report,
+  onResume,
+}: {
+  report: FinalRunReport
+  onResume?: (resumeCursor: string) => void
+}) {
+  const meta = finalReportMeta(report)
+  const nextStep = report.userNextSteps[0]
+  const evidenceCount = Number(report.hasSuccessfulTool) + Number(report.hasSuccessfulMutatingTool)
+
+  return (
+    <div className={cn('w-full overflow-hidden rounded-[6px] border px-3 py-2.5', meta.containerClass)}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full', meta.iconClass)}>
+          {meta.kind === 'done' ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : meta.kind === 'approval' ? (
+            <Lock className="h-3.5 w-3.5" />
+          ) : meta.kind === 'exhausted' ? (
+            <Clock3 className="h-3.5 w-3.5" />
+          ) : (
+            <AlertTriangle className="h-3.5 w-3.5" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={cn('text-[12.5px] font-semibold leading-4.5', meta.titleClass)}>
+              {meta.title}
+            </span>
+            <span className="rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
+              {humanizeRuntimeValue(report.loopKind)}
+            </span>
+            <span className="rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
+              {humanizeRuntimeValue(report.terminalStatus)}
+            </span>
+          </div>
+          {nextStep ? (
+            <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/70">
+              {nextStep}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <FinalReportList title="完成" items={report.completedItems} />
+      <FinalReportList title="阻断" items={report.failedItems} tone="danger" />
+      <FinalReportChips title="Loaded skills" items={report.loadedSkills} tone="success" />
+      <FinalReportChips title="Blocked skills" items={report.blockedSkills} tone="danger" />
+      <FinalReportList title="Skill warnings" items={report.skillWarnings} tone="warning" />
+
+      {(report.resumeAvailable || evidenceCount > 0) ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          {evidenceCount > 0 ? (
+            <span>{evidenceCount} tool evidence marker{evidenceCount > 1 ? 's' : ''}</span>
+          ) : null}
+          {report.resumeAvailable ? (
+            <span>Resume available</span>
+          ) : null}
+          {report.resumeCursor && onResume ? (
+            <button
+              type="button"
+              onClick={() => onResume(report.resumeCursor as string)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-background/55 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-background/80"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Continue
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function FinalReportList({
+  title,
+  items,
+  tone = 'neutral',
+}: {
+  title: string
+  items: string[]
+  tone?: 'neutral' | 'danger' | 'warning'
+}) {
+  const visible = items.filter((item) => item.trim().length > 0)
+  if (visible.length === 0) return null
+  return (
+    <div className="mt-2">
+      <div className={cn('text-[11px] font-medium leading-4', tone === 'danger' ? 'text-rose-500' : tone === 'warning' ? 'text-amber-500' : 'text-muted-foreground')}>
+        {title}
+      </div>
+      <ul className="mt-1 space-y-1">
+        {visible.slice(0, 3).map((item, index) => (
+          <li key={`${title}-${index}`} className="break-words text-[11.5px] leading-4.5 text-foreground/74">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function FinalReportChips({
+  title,
+  items,
+  tone,
+}: {
+  title: string
+  items: string[]
+  tone: 'success' | 'danger'
+}) {
+  const visible = items.filter((item) => item.trim().length > 0)
+  if (visible.length === 0) return null
+  return (
+    <div className="mt-2">
+      <div className="text-[11px] font-medium leading-4 text-muted-foreground">{title}</div>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {visible.slice(0, 6).map((item) => (
+          <span
+            key={`${title}-${item}`}
+            className={cn(
+              'max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10.5px] leading-4',
+              tone === 'success'
+                ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-500'
+                : 'border-rose-500/35 bg-rose-500/10 text-rose-500',
+            )}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function finalReportMeta(report: FinalRunReport): {
+  kind: 'done' | 'approval' | 'exhausted' | 'failed'
+  title: string
+  containerClass: string
+  iconClass: string
+  titleClass: string
+} {
+  if (report.outcome === 'completed') {
+    return {
+      kind: 'done',
+      title: 'Run completed',
+      containerClass: 'border-emerald-500/35 bg-emerald-500/8',
+      iconClass: 'bg-emerald-500/14 text-emerald-500',
+      titleClass: 'text-emerald-500',
+    }
+  }
+  if (report.outcome === 'needs_approval') {
+    return {
+      kind: 'approval',
+      title: 'Waiting for approval',
+      containerClass: 'border-amber-500/35 bg-amber-500/10',
+      iconClass: 'bg-amber-500/14 text-amber-500',
+      titleClass: 'text-amber-500',
+    }
+  }
+  if (report.outcome === 'exhausted_with_summary') {
+    return {
+      kind: 'exhausted',
+      title: 'Stopped after limits',
+      containerClass: 'border-sky-500/35 bg-sky-500/10',
+      iconClass: 'bg-sky-500/14 text-sky-500',
+      titleClass: 'text-sky-500',
+    }
+  }
+  return {
+    kind: 'failed',
+    title: 'Could not finish',
+    containerClass: 'border-rose-500/35 bg-rose-500/10',
+    iconClass: 'bg-rose-500/14 text-rose-500',
+    titleClass: 'text-rose-500',
+  }
+}
+
+function humanizeRuntimeValue(value: string | undefined): string {
+  if (!value) return 'pending'
+  return value.replace(/_/g, ' ')
 }
 
 function RecoveryCard({

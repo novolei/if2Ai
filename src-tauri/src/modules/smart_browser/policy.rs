@@ -65,11 +65,7 @@ pub fn evaluate_sensitive_action(
     if risks.is_empty() {
         return SmartBrowserPolicyDecision::Allow;
     }
-    if risks
-        .iter()
-        .any(|risk| *risk == SmartBrowserRisk::CookieProfileSync)
-        && !user_approved
-    {
+    if risks.contains(&SmartBrowserRisk::CookieProfileSync) && !user_approved {
         return SmartBrowserPolicyDecision::RequiresApproval {
             reason: "cookie/profile sync requires explicit user approval".to_string(),
         };

@@ -426,16 +426,14 @@ export function ModelSettingsPage() {
     setVectorDownloadError(null)
     try {
       await invoke('embedded_model_download')
-      setVectorDownloadProgress(100)
       await loadVectorStatus()
-      toast.success('向量化模型下载完成', {
-        description: '本地记忆检索和语义召回现在可以使用 FastEmbed。',
+      toast.success('已开始后台下载', {
+        description: '可以离开此页面，下载进度会继续更新。',
       })
     } catch (err) {
       const message = String(err)
       setVectorDownloadError(message)
       toast.error('向量化模型下载失败', { description: message })
-    } finally {
       setDownloadingVectorModel(false)
     }
   }

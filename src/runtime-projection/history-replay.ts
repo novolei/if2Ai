@@ -154,8 +154,8 @@ function toolEvent(
     toolCallId,
     toolName,
     status:
-      toolStatusField(entry.payload, "tool_status") ??
-      statusFromEventType(entry.event_type),
+      (toolStatusField(entry.payload, "tool_status") ??
+        statusFromEventType(entry.event_type)) as ToolCallStatus,
     toolArgs: objectField(entry.payload, "tool_args"),
     toolResult: stringField(entry.payload, "tool_result"),
     toolDurationMs: numberField(entry.payload, "tool_duration_ms"),
@@ -167,10 +167,10 @@ function toolEvent(
   };
 }
 
-function statusFromEventType(eventType: string): ToolCallStatus {
+function statusFromEventType(eventType: string): ToolCallStatus | "error" {
   if (eventType === "tool_call_queued") return "queued";
   if (eventType === "tool_call_running") return "running";
-  if (eventType === "tool_call_failed") return "error";
+  if (eventType === "tool_call_failed") return "failed";
   return "completed";
 }
 
@@ -233,11 +233,12 @@ function policyDecisionField(
 function toolStatusField(
   payload: Record<string, unknown>,
   key: string,
-): ToolCallStatus | undefined {
+): ToolCallStatus | "error" | undefined {
   const value = stringField(payload, key);
   return value === "queued" ||
     value === "running" ||
     value === "completed" ||
+    value === "failed" ||
     value === "error"
     ? value
     : undefined;

@@ -38,7 +38,7 @@ export interface MemoryWriteCardProps {
   /** Memory scope this write targets. */
   scope?: MemoryScope
   /** Tool status at the time of rendering. */
-  toolStatus?: 'queued' | 'running' | 'completed' | 'error'
+  toolStatus?: import("@/transport/contracts").ToolAttemptStatus | "error"
   /** Whether the write is currently in-progress. */
   isStreaming?: boolean
   /** Additional CSS class names. */

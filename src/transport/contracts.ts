@@ -206,6 +206,20 @@ export type ExecutionMode =
   | 'plan_then_confirm'
   | 'specialized_surface'
 
+export type WorkLoopKind =
+  | 'direct_answer'
+  | 'direct_execute'
+  | 'plan_then_confirm'
+  | 'autonomous_work'
+  | 'specialized_surface'
+
+export type LoopOutcomeKind =
+  | 'completed'
+  | 'needs_approval'
+  | 'needs_user_input'
+  | 'failed_with_plan'
+  | 'exhausted_with_summary'
+
 /** Coarse risk taxonomy. Closed: frontends rely on these three
  * buckets for explainable chips. */
 export type RiskLevel = 'low' | 'medium' | 'high'
@@ -258,6 +272,56 @@ export interface ExecutionModeDecision {
   classifierSlotSummary: unknown
   classifierAmbiguousEscalated: boolean
   classifierEscalationSource?: string
+}
+
+export interface WorkLoopDecision {
+  loopKind: WorkLoopKind
+  reasonCodes: string[]
+  requiresConfirmation: boolean
+  routeHint?: string
+}
+
+export interface SkillResolutionCandidate {
+  skillId?: string
+  name: string
+  source: string
+  reason: string
+  score: number
+  trustedSource: boolean
+  autoLoadAllowed: boolean
+  loaded: boolean
+  blockedReason?: string
+  loadWarning?: string
+}
+
+export interface SkillResolutionPlan {
+  activeSkillIds: string[]
+  candidates: SkillResolutionCandidate[]
+  autoDiscoveryTools: string[]
+  shouldLoadFindSkills: boolean
+  remoteInstallPolicy: string
+  loadedSkillNames: string[]
+  blockedSkillNames: string[]
+  loadWarnings: string[]
+}
+
+export interface FinalRunReport {
+  loopKind: WorkLoopKind
+  outcome: LoopOutcomeKind
+  taskOutcome: 'completed' | 'partial_success' | 'failed' | string
+  terminalStatus: string
+  requestId: string
+  toolLoopIterations: number
+  hasSuccessfulTool: boolean
+  hasSuccessfulMutatingTool: boolean
+  resumeAvailable: boolean
+  resumeCursor?: string
+  completedItems: string[]
+  failedItems: string[]
+  userNextSteps: string[]
+  loadedSkills: string[]
+  blockedSkills: string[]
+  skillWarnings: string[]
 }
 
 // ───────────────────────── Memory contract ─────────────────────────
@@ -464,11 +528,14 @@ export interface StreamTokenPayload {
     | 'thinking_start'
     | 'tool_call_update'
     | 'final_text_override'
+    | 'execution_mode_decision'
+    | 'skill_resolution_snapshot'
+    | 'final_run_report'
     | 'stream_complete'
     | 'stream_error'
   tool_call_id?: string
   tool_name?: string
-  tool_status?: 'queued' | 'running' | 'completed' | 'error'
+  tool_status?: ToolAttemptStatus | 'error'
   tool_args?: Record<string, unknown>
   tool_result?: string
   tool_duration_ms?: number
@@ -486,6 +553,33 @@ export interface StreamTokenPayload {
   turn_cost?: TurnCost
   routing_info?: RoutingInfo
   session_totals?: SessionUsageTotals
+  /** Structured recoverability payload (MIG-021 / T-012).
+   *  Populated on `stream_complete` / `stream_error`. */
+  recoverability?: ResumeRecoverability
+}
+
+// ───────────────────────── Resume recoverability contract ──────────
+
+/** Typed resume reason (mirrors Rust `ResumeReason`, snake_case wire).
+ *  T-012 — frontend uses these to render typed resume CTAs. */
+export type ResumeReason =
+  | 'network_timeout'
+  | 'stream_error'
+  | 'max_iterations_reached'
+  | 'repeated_tool_batch_no_progress'
+  | 'invalid_tool_args_repeated'
+  | 'provider_rejected'
+  | 'read_only_success_before_failure'
+  | 'model_stop_no_tools'
+  | 'failed_to_start_stream'
+
+/** Structured recoverability payload (mirrors Rust `ResumeRecoverability`,
+ *  camelCase wire via serde `rename_all = "camelCase"`). */
+export interface ResumeRecoverability {
+  available: boolean
+  reason?: ResumeReason
+  safe_to_retry_mutations: boolean
+  retry_budget_remaining: number
 }
 
 /** Permission prompt event emitted on the `permission-request` channel. */
@@ -718,4 +812,98 @@ export interface ProjectionCheckpointResponse {
   loadedFromCheckpoint: boolean
   /** ISO-8601 / RFC3339 timestamp when the checkpoint was last updated. */
   checkpointUpdatedAt: string | null
+}
+
+// ───────────────────────── MCP Workbench contract ──────────────────
+
+export type McpWorkbenchActivityStatus = 'ok' | 'error'
+
+export interface McpWorkbenchServer {
+  name: string
+  transport: string
+  scope: string
+  active: boolean
+  reason?: string | null
+}
+
+export interface McpWorkbenchTool {
+  serverName: string
+  qualifiedName: string
+  name: string
+  description?: string | null
+  inputSchema?: unknown
+}
+
+export interface McpWorkbenchResource {
+  serverName: string
+  uri: string
+  name?: string | null
+  description?: string | null
+  mimeType?: string | null
+}
+
+export interface McpWorkbenchPromptArgument {
+  name: string
+  description?: string | null
+  required: boolean
+}
+
+export interface McpWorkbenchPrompt {
+  serverName: string
+  name: string
+  description?: string | null
+  arguments: McpWorkbenchPromptArgument[]
+}
+
+export interface McpWorkbenchDiscovery {
+  tools: McpWorkbenchTool[]
+  resources: McpWorkbenchResource[]
+  prompts: McpWorkbenchPrompt[]
+  unsupportedServers: McpWorkbenchServer[]
+}
+
+export interface McpWorkbenchToolCallRequest {
+  qualifiedToolName: string
+  arguments?: unknown
+}
+
+export interface McpWorkbenchReadResourceRequest {
+  serverName: string
+  uri: string
+}
+
+export interface McpWorkbenchGetPromptRequest {
+  serverName: string
+  name: string
+  arguments?: unknown
+}
+
+export interface McpWorkbenchToolCallResult {
+  serverName: string
+  qualifiedName: string
+  result: unknown
+}
+
+export interface McpWorkbenchReadResourceResult {
+  serverName: string
+  uri: string
+  result: unknown
+}
+
+export interface McpWorkbenchGetPromptResult {
+  serverName: string
+  name: string
+  result: unknown
+}
+
+export interface McpWorkbenchActivityEntry {
+  timestamp: string
+  serverId: string
+  operation: string
+  target?: string | null
+  status: McpWorkbenchActivityStatus
+  durationMs: number
+  params?: unknown
+  resultSummary?: unknown
+  error?: string | null
 }

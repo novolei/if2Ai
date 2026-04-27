@@ -5,16 +5,25 @@ mod rpc;
 mod types;
 
 #[allow(unused_imports)]
-pub use manager::{McpServerManager, McpServerManagerError};
+pub use manager::{
+    clear_mcp_workbench_activity_for_tests, mcp_workbench_activity_entry,
+    mcp_workbench_activity_snapshot, mcp_workbench_discovery_dto, mcp_workbench_transport_label,
+    mcp_workbench_unsupported_server_dtos, record_mcp_workbench_activity,
+    sanitize_mcp_workbench_value, summarize_mcp_counts, McpServerManager, McpServerManagerError,
+};
 #[allow(unused_imports)]
 pub use rpc::{JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse};
 #[allow(unused_imports)]
 pub use types::{
-    ManagedMcpTool, McpInitializeClientInfo, McpInitializeParams, McpInitializeResult,
-    McpInitializeServerInfo, McpListResourcesParams, McpListResourcesResult, McpListToolsParams,
-    McpListToolsResult, McpReadResourceParams, McpReadResourceResult, McpResource,
-    McpResourceContents, McpTool, McpToolCallContent, McpToolCallParams, McpToolCallResult,
-    UnsupportedMcpServer,
+    ManagedMcpPrompt, ManagedMcpResource, ManagedMcpTool, McpGetPromptParams, McpGetPromptResult,
+    McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpInitializeServerInfo,
+    McpListPromptsParams, McpListPromptsResult, McpListResourcesParams, McpListResourcesResult,
+    McpListToolsParams, McpListToolsResult, McpPrompt, McpPromptArgument, McpPromptMessage,
+    McpReadResourceParams, McpReadResourceResult, McpResource, McpResourceContents, McpTool,
+    McpToolCallContent, McpToolCallParams, McpToolCallResult, McpWorkbenchActivityEntry,
+    McpWorkbenchActivityStatus, McpWorkbenchDiscoveryDto, McpWorkbenchGetPromptDto,
+    McpWorkbenchPromptDto, McpWorkbenchReadResourceDto, McpWorkbenchResourceDto,
+    McpWorkbenchServerDto, McpWorkbenchToolCallDto, McpWorkbenchToolDto, UnsupportedMcpServer,
 };
 
 use std::collections::BTreeMap;
@@ -210,6 +219,22 @@ impl McpStdioProcess {
         params: McpReadResourceParams,
     ) -> io::Result<JsonRpcResponse<McpReadResourceResult>> {
         self.request(id, "resources/read", Some(params)).await
+    }
+
+    pub async fn list_prompts(
+        &mut self,
+        id: JsonRpcId,
+        params: Option<McpListPromptsParams>,
+    ) -> io::Result<JsonRpcResponse<McpListPromptsResult>> {
+        self.request(id, "prompts/list", params).await
+    }
+
+    pub async fn get_prompt(
+        &mut self,
+        id: JsonRpcId,
+        params: McpGetPromptParams,
+    ) -> io::Result<JsonRpcResponse<McpGetPromptResult>> {
+        self.request(id, "prompts/get", Some(params)).await
     }
 
     pub async fn terminate(&mut self) -> io::Result<()> {

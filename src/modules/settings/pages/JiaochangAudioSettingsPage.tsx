@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, CheckCircle2, Eraser, ListMusic, Plug, RefreshCw, Save, ShieldCheck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { AlertCircle, CheckCircle2, Eraser, Fingerprint, ListMusic, Plug, RefreshCw, Save, ScanSearch, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -7,16 +7,23 @@ import { Button } from '@/components/ui/button'
 import {
   clearJiaochangAudioPluginCache,
   getJiaochangAudioPluginCacheInfo,
+  importJiaochangAudioLxCeruJsFile,
+  inspectJiaochangAudioPluginJsFile,
+  installAuthorizedChineseMusicSourceTemplate,
   listJiaochangAudioPluginSources,
   registerJiaochangAudioPluginSource,
+  removeJiaochangAudioPluginSource,
+  setJiaochangAudioPluginSourceEnabled,
   subscribeJiaochangAudioPluginEvents,
   type JiaochangAudioPluginCacheInfo,
+  type JiaochangAudioPluginInspection,
   type JiaochangAudioPluginManifest,
   type JiaochangAudioPluginRuntimeEvent,
 } from '@/modules/jiaochang/audio/plugin-source-adapter'
 import {
   DEFAULT_JIACHANG_PLUGIN_MANIFEST_DRAFT,
   draftToPluginManifest,
+  getPluginTrustAssessment,
   pluginManifestToDraft,
   validatePluginManifestDraft,
   type JiaochangPluginManifestDraft,
@@ -32,6 +39,8 @@ export function JiaochangAudioSettingsPage() {
   const [plugins, setPlugins] = useState<JiaochangAudioPluginManifest[]>([])
   const [cacheInfo, setCacheInfo] = useState<JiaochangAudioPluginCacheInfo>({ entries: 0 })
   const [events, setEvents] = useState<JiaochangAudioPluginRuntimeEvent[]>([])
+  const [inspectionPath, setInspectionPath] = useState('/Users/ryanliu/Downloads/music/sixyin-music-source-v1.0.7.js')
+  const [inspection, setInspection] = useState<JiaochangAudioPluginInspection | null>(null)
   const [loading, setLoading] = useState(false)
   const validationError = useMemo(() => validatePluginManifestDraft(draft), [draft])
 
@@ -118,6 +127,58 @@ export function JiaochangAudioSettingsPage() {
     }
   }
 
+  const handleInstallTemplate = async () => {
+    try {
+      const registered = await installAuthorizedChineseMusicSourceTemplate()
+      toast.success('五源授权模板已安装', { description: registered.plugin_id })
+      await refresh()
+    } catch (error) {
+      toast.error('五源授权模板安装失败', { description: String(error) })
+    }
+  }
+
+  const handleInspectJsPlugin = async () => {
+    try {
+      const result = await inspectJiaochangAudioPluginJsFile(inspectionPath)
+      setInspection(result)
+      toast.success('LX/Ceru 插件静态检查完成', { description: result.file_name })
+    } catch (error) {
+      toast.error('LX/Ceru 插件检查失败', { description: String(error) })
+    }
+  }
+
+  const handleImportJsPlugin = async () => {
+    try {
+      const registered = await importJiaochangAudioLxCeruJsFile(inspectionPath)
+      toast.success('LX/Ceru 插件已注册到隔离 worker', { description: registered.plugin_id })
+      await refresh()
+    } catch (error) {
+      toast.error('LX/Ceru 插件注册失败', { description: String(error) })
+    }
+  }
+
+  const togglePluginEnabled = async (plugin: JiaochangAudioPluginManifest) => {
+    try {
+      const updated = await setJiaochangAudioPluginSourceEnabled(plugin.plugin_id, !plugin.enabled)
+      toast.success(updated.enabled ? '插件音源已启用' : '插件音源已停用', { description: updated.plugin_id })
+      await refresh()
+    } catch (error) {
+      toast.error('插件音源状态更新失败', { description: String(error) })
+    }
+  }
+
+  const removePlugin = async (plugin: JiaochangAudioPluginManifest) => {
+    if (!window.confirm(`删除音源「${plugin.name}」？此操作会同时清理该音源的服务端缓存。`)) return
+    try {
+      await removeJiaochangAudioPluginSource(plugin.plugin_id)
+      toast.success('插件音源已删除', { description: plugin.plugin_id })
+      if (draft.pluginId === plugin.plugin_id) setDraft(DEFAULT_JIACHANG_PLUGIN_MANIFEST_DRAFT)
+      await refresh()
+    } catch (error) {
+      toast.error('插件音源删除失败', { description: String(error) })
+    }
+  }
+
   return (
     <div className="grid gap-4">
       <SettingsSurface className="p-4">
@@ -156,6 +217,18 @@ export function JiaochangAudioSettingsPage() {
             value={draft.version}
             onChange={(event) => updateDraft('version', event.currentTarget.value)}
           />
+          <CompactInput
+            label="source_url"
+            placeholder="https://example.test/plugin/manifest.json"
+            value={draft.sourceUrl}
+            onChange={(event) => updateDraft('sourceUrl', event.currentTarget.value)}
+          />
+          <CompactInput
+            label="signature"
+            placeholder="sha256:..."
+            value={draft.signature}
+            onChange={(event) => updateDraft('signature', event.currentTarget.value)}
+          />
           <label className="flex items-end gap-2 rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-[12px]">
             <input
               type="checkbox"
@@ -187,6 +260,12 @@ export function JiaochangAudioSettingsPage() {
           />
         </div>
 
+        <div className="mt-3 grid gap-2 rounded-xl border border-jade/15 bg-jade/[0.035] p-3 text-[12px] text-muted-foreground md:grid-cols-3">
+          <PermissionHint icon={<ShieldCheck className="h-4 w-4" />} title="Renderer 隔离" body="前端只提交 metadata，插件解析在 Rust worker 内完成。" />
+          <PermissionHint icon={<ListMusic className="h-4 w-4" />} title="网络权限" body="只允许 resolver_template 解析到 allowed_hosts。" />
+          <PermissionHint icon={<Fingerprint className="h-4 w-4" />} title="签名/来源" body="source_url 与 signature 用于人工确认来源可信度。" />
+        </div>
+
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
             {validationError ? (
@@ -208,6 +287,71 @@ export function JiaochangAudioSettingsPage() {
         </div>
       </SettingsSurface>
 
+      <SettingsSurface className="p-4">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[13px] font-semibold">
+              <ScanSearch className="h-4 w-4 text-jade" />
+              LX / Ceru 兼容导入
+            </div>
+            <p className="mt-1 max-w-2xl text-[12px] leading-5 text-muted-foreground">
+              静态检查后可注册到 Rust-side 隔离 worker：JS 插件不会在 renderer 执行。混淆、动态代码、DOM shim 会被标为风险。
+            </p>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={() => void handleInstallTemplate()}>
+            <ShieldCheck />
+            安装五源授权模板
+          </Button>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <CompactInput
+            label="local_js_plugin_path"
+            placeholder="/Users/ryanliu/Downloads/V260418/第三批次/xinghai-music-source2.3.0.js"
+            value={inspectionPath}
+            onChange={(event) => setInspectionPath(event.currentTarget.value)}
+          />
+          <Button type="button" size="sm" className="self-end" onClick={() => void handleInspectJsPlugin()}>
+            <ScanSearch />
+            静态检查
+          </Button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => setInspectionPath('/Users/ryanliu/Downloads/music/sixyin-music-source-v1.0.7.js')}>
+            六音路径
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setInspectionPath('/Users/ryanliu/Downloads/V260418/第三批次/xinghai-music-source2.3.0.js')}>
+            星海路径
+          </Button>
+          <Button type="button" size="sm" onClick={() => void handleImportJsPlugin()}>
+            <Plug />
+            注册到隔离 worker
+          </Button>
+        </div>
+        {inspection ? (
+          <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 p-3 text-[12px]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">{inspection.name ?? inspection.file_name}</span>
+              <span className="rounded-md bg-background px-1.5 py-0.5 font-mono text-[10.5px]">{inspection.detected_kind}</span>
+              {inspection.version ? <span className="text-muted-foreground">{inspection.version}</span> : null}
+            </div>
+            <div className="mt-1 truncate font-mono text-[10.5px] text-muted-foreground">sha256:{inspection.sha256}</div>
+            <div className="mt-2 text-muted-foreground">{inspection.recommendation}</div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {inspection.risk_flags.map((flag) => (
+                <span key={flag} className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] text-amber-700">
+                  {flag}
+                </span>
+              ))}
+              {inspection.supported_hosts.map((host) => (
+                <span key={host} className="rounded-md bg-background px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+                  {host}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </SettingsSurface>
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <SettingsSurface className="p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -222,20 +366,35 @@ export function JiaochangAudioSettingsPage() {
               <div className="rounded-xl border border-dashed border-border/80 px-3 py-6 text-center text-[12px] text-muted-foreground">
                 暂无插件音源。注册 manifest 后会显示在这里。
               </div>
-            ) : plugins.map((plugin) => (
-              <button
+            ) : plugins.map((plugin) => {
+              const trust = getPluginTrustAssessment(plugin)
+              return (
+              <div
                 key={plugin.plugin_id}
-                type="button"
-                className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-left transition hover:bg-muted/35"
+                className="cursor-pointer rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-left transition hover:bg-muted/35"
                 onClick={() => setDraft(pluginManifestToDraft(plugin))}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') setDraft(pluginManifestToDraft(plugin))
+                }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="truncate text-[13px] font-semibold">{plugin.name}</div>
-                  <span className={plugin.enabled ? 'text-[11px] text-jade' : 'text-[11px] text-muted-foreground'}>
-                    {plugin.enabled ? 'enabled' : 'disabled'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={trust.level === 'signed' ? 'text-[11px] text-jade' : trust.level === 'scoped' ? 'text-[11px] text-amber-600' : 'text-[11px] text-status-error'}>
+                      {trust.label}
+                    </span>
+                    <span className={plugin.enabled ? 'text-[11px] text-jade' : 'text-[11px] text-muted-foreground'}>
+                      {plugin.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{plugin.plugin_id}</div>
+                <div className="mt-1 flex items-center gap-1 text-[10.5px] text-muted-foreground">
+                  {trust.level === 'unverified' ? <ShieldAlert className="h-3 w-3 text-status-error" /> : <ShieldCheck className="h-3 w-3 text-jade" />}
+                  <span className="truncate">{trust.description}</span>
+                </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {plugin.allowed_hosts.map((host) => (
                     <span key={host} className="rounded-md bg-background px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
@@ -243,8 +402,42 @@ export function JiaochangAudioSettingsPage() {
                     </span>
                   ))}
                 </div>
-              </button>
-            ))}
+                <div className="mt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void togglePluginEnabled(plugin)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.stopPropagation()
+                      void togglePluginEnabled(plugin)
+                    }}
+                    className="rounded-lg border border-border/70 bg-background px-2 py-1 text-[11px] font-semibold text-foreground/75"
+                  >
+                    {plugin.enabled ? '停用' : '启用'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void removePlugin(plugin)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.stopPropagation()
+                      void removePlugin(plugin)
+                    }}
+                    className="inline-flex items-center gap-1 rounded-lg border border-status-error/25 bg-status-error-bg px-2 py-1 text-[11px] font-semibold text-status-error"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    删除
+                  </button>
+                </div>
+              </div>
+              )
+            })}
           </div>
         </SettingsSurface>
 
@@ -293,6 +486,18 @@ export function JiaochangAudioSettingsPage() {
           ))}
         </div>
       </SettingsSurface>
+    </div>
+  )
+}
+
+function PermissionHint({ body, icon, title }: { body: string; icon: ReactNode; title: string }) {
+  return (
+    <div className="flex gap-2">
+      <span className="mt-0.5 text-jade">{icon}</span>
+      <span>
+        <span className="block font-semibold text-foreground/80">{title}</span>
+        <span className="leading-5">{body}</span>
+      </span>
     </div>
   )
 }

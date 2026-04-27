@@ -80,13 +80,31 @@ impl LicenseStore for FileLicenseStore {
     async fn load(&self) -> Result<Option<StoredLicense>, LicenseStoreError> {
         let path = self.path();
         if !path.exists() {
+            tracing::info!(
+                target: "if2ai::activation",
+                "license_store cache missing at {}",
+                path.display()
+            );
             return Ok(None);
         }
         let bytes = tokio::fs::read(&path)
             .await
             .map_err(|e| LicenseStoreError::Io(e, path.display().to_string()))?;
-        let license: StoredLicense = serde_json::from_slice(&bytes)
-            .map_err(|e| LicenseStoreError::Deserialize(e.to_string()))?;
+        let license: StoredLicense = serde_json::from_slice(&bytes).map_err(|e| {
+            tracing::warn!(
+                target: "if2ai::activation",
+                "license_store failed to deserialize cache at {}: {}",
+                path.display(),
+                e
+            );
+            LicenseStoreError::Deserialize(e.to_string())
+        })?;
+        tracing::info!(
+            target: "if2ai::activation",
+            "license_store loaded cache at {} license_id={}",
+            path.display(),
+            license.license_id
+        );
         Ok(Some(license))
     }
 
@@ -113,17 +131,33 @@ impl LicenseStore for FileLicenseStore {
         tokio::fs::rename(&tmp, &path)
             .await
             .map_err(|e| LicenseStoreError::Io(e, path.display().to_string()))?;
+        tracing::info!(
+            target: "if2ai::activation",
+            "license_store saved cache at {} license_id={}",
+            path.display(),
+            license.license_id
+        );
         Ok(())
     }
 
     async fn clear(&self) -> Result<(), LicenseStoreError> {
         let path = self.path();
         if !path.exists() {
+            tracing::info!(
+                target: "if2ai::activation",
+                "license_store clear skipped; cache missing at {}",
+                path.display()
+            );
             return Ok(());
         }
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| LicenseStoreError::Io(e, path.display().to_string()))?;
+        tracing::info!(
+            target: "if2ai::activation",
+            "license_store cleared cache at {}",
+            path.display()
+        );
         Ok(())
     }
 }

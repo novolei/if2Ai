@@ -38,6 +38,7 @@ use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryTicker, PinnedStore, SharedMemoryProvider};
 use crate::modules::runtime::budget::MAX_REQUEST_TOKEN_BUDGET_ESTIMATE;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::projection::{self, ProjectionCheckpoint};
@@ -119,6 +120,10 @@ pub(super) struct FinalizeStreamInputs {
     pub effective_context_window: u64,
     /// P1-8: routing decision summary already attached to TurnContext.
     pub routing_info: Option<crate::modules::runtime::stream_emitter::RoutingInfoPayload>,
+    /// Internal work-loop decision for the final report.
+    pub work_loop_decision: WorkLoopDecision,
+    /// Skill-resolution snapshot for the final report/event log.
+    pub skill_resolution_plan: SkillResolutionPlan,
 
     // ── service handles ──
     pub stream_emitter: AgentStreamEmitter,
@@ -198,6 +203,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         effective_provider_id,
         effective_context_window,
         routing_info,
+        work_loop_decision,
+        skill_resolution_plan,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -256,6 +263,46 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             request_id: Some(provider_request_id.clone()),
             task_outcome: None,
             degraded_reason: None,
+            resume_available: None,
+            resume_cursor: None,
+            recoverability: None,
+            context_budget_usage: None,
+            memory_context: None,
+            prompt_diagnostics: None,
+            turn_cost: None,
+            routing_info: None,
+            session_totals: None,
+        };
+        stream_emitter.emit_payload(override_payload.clone());
+        let _ = run_event_logger
+            .append("final_text_override", override_payload)
+            .await;
+    }
+
+    if terminal_status == Some("memory_recall_required_no_tool") {
+        let guarded = "我没有完成记忆查询：本轮模型只说要查看记忆，但没有成功调用 memory_recall 或 memory_export。请重试这条消息；系统会把它作为需要记忆证据的请求处理。".to_string();
+        tracing::warn!(
+            "[start_agent_stream] Rewriting incomplete memory lookup filler to guarded message"
+        );
+        accumulated_text = guarded.clone();
+        let override_payload = StreamTokenPayload {
+            stream_id: stream_id_for_task.clone(),
+            correlation: None,
+            text: Some(guarded),
+            thinking: None,
+            event_type: "final_text_override".to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_status: None,
+            tool_args: None,
+            tool_result: None,
+            tool_duration_ms: None,
+            effective_workdir: None,
+            policy_decision: None,
+            evidence_id: None,
+            request_id: Some(provider_request_id.clone()),
+            task_outcome: None,
+            degraded_reason: Some("memory_recall_required_no_tool".to_string()),
             resume_available: None,
             resume_cursor: None,
             recoverability: None,
@@ -342,6 +389,46 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         resume_cursor: resume_cursor.clone(),
         request_id: provider_request_id.clone(),
     };
+
+    let final_run_report = super::work_loop::build_final_run_report(
+        &work_loop_decision,
+        user_visible_truth.task_outcome.to_string(),
+        terminal_status.unwrap_or("unknown").to_string(),
+        provider_request_id.clone(),
+        tool_loop_iter,
+        has_successful_tool,
+        has_successful_mutating_tool,
+        user_visible_truth.resume_available,
+        resume_cursor.clone(),
+        Some(&skill_resolution_plan),
+    );
+    let final_report_value = serde_json::to_value(&final_run_report)
+        .unwrap_or_else(|error| serde_json::json!({ "serializationError": error.to_string() }));
+    let mut final_report_payload =
+        StreamTokenPayload::skeleton(stream_id_for_task.clone(), "final_run_report");
+    final_report_payload.request_id = Some(provider_request_id.clone());
+    final_report_payload.task_outcome = Some(user_visible_truth.task_outcome.to_string());
+    final_report_payload.degraded_reason = degraded_reason.clone();
+    final_report_payload.resume_available = Some(user_visible_truth.resume_available);
+    final_report_payload.resume_cursor = resume_cursor.clone();
+    final_report_payload.tool_args = Some(final_report_value);
+    stream_emitter.emit_payload(final_report_payload.clone());
+    let _ = run_event_logger
+        .append("final_run_report", final_report_payload)
+        .await;
+
+    let skill_resolution_value = serde_json::to_value(&skill_resolution_plan)
+        .unwrap_or_else(|error| serde_json::json!({ "serializationError": error.to_string() }));
+    let _ = run_event_logger
+        .append(
+            "skill_resolution_snapshot",
+            serde_json::json!({
+                "stream_id": stream_id_for_task.clone(),
+                "request_id": provider_request_id.clone(),
+                "skill_resolution": skill_resolution_value,
+            }),
+        )
+        .await;
 
     session_manager.push_conversation_undo_checkpoint(&session_id, &app_session_clone);
 
