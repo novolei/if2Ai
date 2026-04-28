@@ -247,6 +247,10 @@ mod awl_003_skill_auto_load_tests {
                 loaded: false,
                 blocked_reason: None,
                 load_warning: None,
+                when_to_use: None,
+                allowed_tools: Vec::new(),
+                model_hint: None,
+                activation_evidence: vec!["remote proposal matched request".to_string()],
             }],
             auto_discovery_tools: Vec::new(),
             should_load_find_skills: false,
@@ -323,6 +327,7 @@ mod awl_003_skill_auto_load_tests {
             false,
             None,
             Some(&plan),
+            Vec::new(),
         );
 
         assert_eq!(report.loaded_skills, vec!["rust-helper".to_string()]);

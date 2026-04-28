@@ -58,6 +58,7 @@ pub(super) struct StreamEventLoopContext {
     pub execution_context: crate::modules::control_plane::SessionExecutionContext,
     pub has_successful_tool: bool,
     pub has_successful_mutating_tool: bool,
+    pub provider_id: String,
     pub model: String,
     pub stream_event_retry_count: usize,
 }
@@ -109,6 +110,7 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
         execution_context,
         has_successful_tool,
         has_successful_mutating_tool,
+        provider_id,
         model: _model,
         mut stream_event_retry_count,
     } = ctx;
@@ -138,6 +140,22 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
         };
         match next_event {
             Ok(Some(event)) => match event {
+                ApiStreamEvent::ProviderRawChunkDiagnostic(diagnostic) => {
+                    let _ = run_event_logger
+                        .append(
+                            "provider_raw_chunk_ledger",
+                            serde_json::json!({
+                                "stream_id": stream_id.clone(),
+                                "session_id": session_id.clone(),
+                                "provider_id": provider_id.clone(),
+                                "model": _model.clone(),
+                                "request_id": provider_request_id.clone(),
+                                "sanitized": true,
+                                "diagnostic": diagnostic,
+                            }),
+                        )
+                        .await;
+                }
                 ApiStreamEvent::ContentBlockDelta(delta_event) => match delta_event.delta {
                     crate::modules::api::ContentBlockDelta::TextDelta { text } => {
                         accumulated_text.push_str(&text);

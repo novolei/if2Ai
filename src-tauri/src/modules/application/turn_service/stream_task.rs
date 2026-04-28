@@ -149,6 +149,9 @@ pub(super) struct StreamTaskInputs {
     pub baseline_message_count_stream: usize,
     pub messages_for_stream: Vec<InputMessage>,
     pub tool_defs_for_stream: Vec<ToolDefinition>,
+    pub tool_pool_names_for_stream: Vec<String>,
+    pub tool_pool_schema_hash_for_stream: String,
+    pub tool_pool_policy_for_stream: String,
     pub system_prompt_for_stream: String,
     pub provider_client_for_stream: crate::modules::api::ProviderClient,
     /// Optional OpenAI-compatible failover when `IF2AI_FAILOVER_BASE_URL` is set.
@@ -258,6 +261,32 @@ fn apply_memory_recall_success_finalization_guard(
     }
 }
 
+fn should_retry_tool_required_no_tool(
+    work_loop_decision: &WorkLoopDecision,
+    has_successful_mutating_tool: bool,
+    retry_count: usize,
+    force_final_response: bool,
+    available_tool_count: usize,
+) -> bool {
+    super::work_loop::requires_tool_execution_evidence(work_loop_decision)
+        && !has_successful_mutating_tool
+        && retry_count == 0
+        && !force_final_response
+        && available_tool_count > 0
+}
+
+fn should_retry_announced_tool_intent_no_tool(
+    accumulated_text: &str,
+    retry_count: usize,
+    force_final_response: bool,
+    available_tool_count: usize,
+) -> bool {
+    retry_count == 0
+        && !force_final_response
+        && available_tool_count > 0
+        && super::work_loop::assistant_signals_tool_intent(accumulated_text)
+}
+
 /// Run the spawned tool-loop body for one streaming chat turn.
 ///
 /// This function takes ownership of every captured value via
@@ -288,6 +317,9 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         baseline_message_count_stream,
         messages_for_stream,
         tool_defs_for_stream,
+        tool_pool_names_for_stream,
+        tool_pool_schema_hash_for_stream,
+        tool_pool_policy_for_stream,
         system_prompt_for_stream,
         provider_client_for_stream,
         failover_provider_client,
@@ -387,6 +419,13 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     let mut preflight_trimmed_chars_total = 0usize;
     let mut stream_start_retry_count = 0usize;
     let mut stream_event_retry_count = 0usize;
+    let mut tool_required_no_tool_retry_count = 0usize;
+    let mut tool_intent_nudge_retry_count = 0usize;
+    let mut diagnostic_warnings: Vec<String> = Vec::new();
+    let mut provider_textual_tool_markup_seen = false;
+    let mut force_tool_choice_next =
+        super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
+            && !tool_defs_for_stream.is_empty();
     let mut stream_circuit = crate::modules::provider::resilience::StreamCircuitState::default();
     let stream_resilience_cfg =
         crate::modules::provider::resilience::LlmResilienceConfig::from_env();
@@ -475,6 +514,10 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         }
         tool_loop_iter += 1;
         let force_final_response = force_final_response_next || tool_loop_iter >= max_iterations;
+        let force_tool_choice = force_tool_choice_next
+            || (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
+                && !has_successful_mutating_tool);
+        force_tool_choice_next = false;
         let current_finalization_reason = if force_final_response {
             finalization_reason
                 .clone()
@@ -502,6 +545,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 context_window: context_window_for_stream,
                 force_final_response,
                 finalization_reason: &current_finalization_reason,
+                force_tool_choice,
                 tool_loop_iter,
                 max_iterations,
                 stream_id: &stream_id_for_task,
@@ -509,6 +553,45 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             },
         );
         let iter_api_request = preflight_result.request;
+        let request_tool_count = iter_api_request.tools.as_ref().map_or(0, Vec::len);
+        let request_tool_names = iter_api_request
+            .tools
+            .as_ref()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .take(48)
+                    .map(|tool| tool.name.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let request_tool_choice = iter_api_request
+            .tool_choice
+            .as_ref()
+            .map(|choice| format!("{choice:?}"))
+            .unwrap_or_else(|| "none".to_string());
+        let _ = run_event_logger
+            .append(
+                "provider_tool_call_diagnostics",
+                serde_json::json!({
+                    "stream_id": stream_id_for_task.clone(),
+                    "session_id": session_id.clone(),
+                    "iteration": tool_loop_iter,
+                    "tool_count": request_tool_count,
+                    "tool_names": request_tool_names,
+                    "canonical_tool_names": tool_pool_names_for_stream.clone(),
+                    "tool_schema_hash": tool_pool_schema_hash_for_stream.clone(),
+                    "tool_pool_policy": tool_pool_policy_for_stream.clone(),
+                    "tool_choice": request_tool_choice,
+                    "force_final_response": force_final_response,
+                    "force_tool_choice": force_tool_choice,
+                    "requires_tool_execution_evidence": super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream),
+                    "has_successful_tool": has_successful_tool,
+                    "has_successful_mutating_tool": has_successful_mutating_tool,
+                    "reason_codes": work_loop_decision_for_stream.reason_codes.clone(),
+                }),
+            )
+            .await;
         session_messages = preflight_result.session_messages;
         preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
         preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
@@ -725,6 +808,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             execution_context: execution_context_for_policy.clone(),
             has_successful_tool,
             has_successful_mutating_tool,
+            provider_id: provider_id_for_stream.clone(),
             model: model_for_stream.clone(),
             stream_event_retry_count,
         };
@@ -755,6 +839,89 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
                 accumulated_text.len()
             );
+            if let Some(markup_family) =
+                super::work_loop::detect_textual_tool_call_markup(&accumulated_text)
+            {
+                provider_textual_tool_markup_seen = true;
+                let warning = format!(
+                    "provider emitted {markup_family} text instead of structured tool_calls"
+                );
+                if !diagnostic_warnings.iter().any(|value| value == &warning) {
+                    diagnostic_warnings.push(warning.clone());
+                }
+                let _ = run_event_logger
+                    .append(
+                        "provider_tool_call_compat_warning",
+                        serde_json::json!({
+                            "stream_id": stream_id_for_task.clone(),
+                            "session_id": session_id.clone(),
+                            "provider_id": provider_id_for_stream.clone(),
+                            "model": model_for_stream.clone(),
+                            "markup_family": markup_family,
+                            "text_len": accumulated_text.len(),
+                            "recovery_action": "nudge_with_required_tool_choice",
+                            "sanitized": true,
+                        }),
+                    )
+                    .await;
+            }
+            if should_retry_tool_required_no_tool(
+                &work_loop_decision_for_stream,
+                has_successful_mutating_tool,
+                tool_required_no_tool_retry_count,
+                force_final_response,
+                tool_defs_for_stream.len(),
+            ) {
+                tool_required_no_tool_retry_count += 1;
+                tracing::warn!(
+                    "[start_agent_stream] tool-required task produced no mutating tool call; retrying once with tool-required loop control. stream_id={}, session_id={}",
+                    stream_id_for_task,
+                    session_id
+                );
+                let payload = serde_json::json!({
+                    "reason": "tool_required_no_tool",
+                    "retry_count": tool_required_no_tool_retry_count,
+                    "available_tool_count": tool_defs_for_stream.len(),
+                });
+                let _ = run_event_logger
+                    .append("tool_required_no_tool_retry", payload)
+                    .await;
+                accumulated_text.clear();
+                accumulated_thinking.clear();
+                session_messages.push(InputMessage::user_text(
+                    "[agent_loop_control] The previous assistant response did not call tools, but this user request requires concrete file/tool execution before completion. Call the available tools now to inspect, create or edit the artifact, and verify it. Use complete JSON arguments for every tool call. Do not answer only with prose. If tool execution is impossible, explain the blockage in the final report.",
+                ));
+                force_tool_choice_next = true;
+                continue;
+            }
+            if should_retry_announced_tool_intent_no_tool(
+                &accumulated_text,
+                tool_intent_nudge_retry_count,
+                force_final_response,
+                tool_defs_for_stream.len(),
+            ) {
+                tool_intent_nudge_retry_count += 1;
+                tracing::warn!(
+                    "[start_agent_stream] assistant announced tool intent without tool call; nudging once. stream_id={}, session_id={}",
+                    stream_id_for_task,
+                    session_id
+                );
+                let payload = serde_json::json!({
+                    "reason": "announced_tool_intent_no_tool",
+                    "retry_count": tool_intent_nudge_retry_count,
+                    "available_tool_count": tool_defs_for_stream.len(),
+                });
+                let _ = run_event_logger
+                    .append("tool_intent_nudge_retry", payload)
+                    .await;
+                accumulated_text.clear();
+                accumulated_thinking.clear();
+                session_messages.push(InputMessage::user_text(
+                    super::work_loop::tool_intent_nudge_message(),
+                ));
+                force_tool_choice_next = true;
+                continue;
+            }
             if terminal_status.is_none() {
                 terminal_status = match finalization_reason.as_deref() {
                     Some("invalid_tool_args_repeated") => Some("invalid_tool_args_repeated"),
@@ -772,6 +939,26 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                         ) =>
                     {
                         Some("memory_recall_required_no_tool")
+                    }
+                    _ if super::work_loop::requires_tool_execution_evidence(
+                        &work_loop_decision_for_stream,
+                    ) && !has_successful_mutating_tool =>
+                    {
+                        if provider_textual_tool_markup_seen {
+                            Some("provider_textual_tool_call_markup")
+                        } else {
+                            Some("tool_required_no_tool")
+                        }
+                    }
+                    _ if super::work_loop::assistant_claims_tool_execution_without_tool(
+                        &accumulated_text,
+                    ) && !has_successful_mutating_tool =>
+                    {
+                        if provider_textual_tool_markup_seen {
+                            Some("provider_textual_tool_call_markup")
+                        } else {
+                            Some("tool_required_no_tool")
+                        }
                     }
                     _ => Some("model_stop_no_tools"),
                 };
@@ -937,6 +1124,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         routing_info: routing_info_for_stream.clone(),
         work_loop_decision: work_loop_decision_for_stream,
         skill_resolution_plan: skill_resolution_plan_for_stream,
+        diagnostic_warnings,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -1072,6 +1260,7 @@ mod tests {
                 context_window: 32_000,
                 force_final_response: force_final_response_next,
                 finalization_reason: finalization_reason.as_deref().unwrap_or(""),
+                force_tool_choice: false,
                 tool_loop_iter: 1,
                 max_iterations: 10,
                 stream_id: "stream-memory",
@@ -1089,6 +1278,108 @@ mod tests {
             })
         });
         assert!(has_loop_control);
+    }
+
+    #[test]
+    fn tool_required_no_tool_gets_one_retry_before_terminal_failure() {
+        let routed = crate::modules::application::turn_service::work_loop::route_work_loop(
+            &crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision {
+                execution_mode:
+                    crate::modules::runtime::contracts::execution_mode::ExecutionMode::DirectExecute,
+                risk_level: crate::modules::runtime::contracts::execution_mode::RiskLevel::Low,
+                complexity_level:
+                    crate::modules::runtime::contracts::execution_mode::ComplexityLevel::Trivial,
+                complexity_score: 0.1,
+                reason_codes: vec![],
+                route_hint: None,
+                requires_plan: false,
+                scenario_profile_hint: None,
+                classifier_policy_version: "test".to_string(),
+                classifier_matched_rule_ids: Vec::new(),
+                classifier_slot_summary: serde_json::json!({}),
+                classifier_ambiguous_escalated: false,
+                classifier_escalation_source: None,
+            },
+            "帮我创建一个泡泡龙网页游戏 需要有声效 界面美观大方",
+        );
+
+        assert!(should_retry_tool_required_no_tool(
+            &routed, false, 0, false, 3
+        ));
+        assert!(!should_retry_tool_required_no_tool(
+            &routed, false, 1, false, 3
+        ));
+        assert!(!should_retry_tool_required_no_tool(
+            &routed, true, 0, false, 3
+        ));
+        assert!(!should_retry_tool_required_no_tool(
+            &routed, false, 0, true, 3
+        ));
+        assert!(!should_retry_tool_required_no_tool(
+            &routed, false, 0, false, 0
+        ));
+    }
+
+    #[test]
+    fn announced_tool_intent_gets_one_nudge_retry() {
+        assert!(should_retry_announced_tool_intent_no_tool(
+            "我来用 bash 直接写入文件。",
+            0,
+            false,
+            4
+        ));
+        assert!(!should_retry_announced_tool_intent_no_tool(
+            "我来用 bash 直接写入文件。",
+            1,
+            false,
+            4
+        ));
+        assert!(!should_retry_announced_tool_intent_no_tool(
+            "我来用 bash 直接写入文件。",
+            0,
+            true,
+            4
+        ));
+        assert!(!should_retry_announced_tool_intent_no_tool(
+            "我来用 bash 直接写入文件。",
+            0,
+            false,
+            0
+        ));
+        assert!(!should_retry_announced_tool_intent_no_tool(
+            "我可以解释一下这个概念。",
+            0,
+            false,
+            4
+        ));
+    }
+
+    #[test]
+    fn preflight_sets_required_tool_choice_when_forced() {
+        let session_messages = vec![InputMessage::user_text("创建一个网页游戏")];
+        let tool_defs = vec![tool_def("file_write"), tool_def("REPL")];
+        let result = super::super::stream_preflight::build_iteration_request(
+            super::super::stream_preflight::PreflightContext {
+                session_messages: &session_messages,
+                tool_defs: &tool_defs,
+                system_prompt: "system",
+                model: "test-model",
+                context_window: 32_000,
+                force_final_response: false,
+                finalization_reason: "",
+                force_tool_choice: true,
+                tool_loop_iter: 1,
+                max_iterations: 10,
+                stream_id: "stream-tool-required",
+                session_id: "session-tool-required",
+            },
+        );
+
+        assert_eq!(
+            result.request.tool_choice,
+            Some(crate::modules::api::ToolChoice::Any)
+        );
+        assert_eq!(result.request.tools.as_ref().map(Vec::len), Some(2));
     }
 
     #[tokio::test]

@@ -427,8 +427,8 @@ function App() {
   const [input, setInput] = useState("");
   // Phase M2.6 — opt-in classifier preview. Watches the active
   // chat draft and dispatches the deterministic
-  // `ExecutionModeDecision` into the projection store. The
-  // <ExecutionModePill /> below renders the resulting judgment.
+  // `ExecutionModeDecision` into the projection store. Developer
+  // telemetry renders the resulting judgment.
   // Honest scope: pure preview, the agent loop is NOT auto-routed.
   useExecutionModePreview(input, { sessionId: activeSessionId ?? undefined });
   // MIG-014 — sessionLoading lives in the chat store. Wrapper
@@ -1533,14 +1533,15 @@ function App() {
       if (
         (e.metaKey || e.ctrlKey) &&
         e.shiftKey &&
-        (e.key === "D" || e.key === "d")
+        (e.code === "KeyD" || e.key.toLowerCase() === "d")
       ) {
         e.preventDefault();
+        e.stopPropagation();
         setIsTelemetryDrawerOpen((prev) => !prev);
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, []);
 
   const loadProjects = async (): Promise<ProjectMeta[]> => {

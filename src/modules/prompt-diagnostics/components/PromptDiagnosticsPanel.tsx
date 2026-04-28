@@ -32,13 +32,46 @@ function formatTimestamp(value: number | null | undefined): string {
   }
 }
 
-function shortenTraceId(traceId: string): string {
-  if (traceId.length <= 18) return traceId;
-  return `${traceId.slice(0, 10)}…${traceId.slice(-6)}`;
+function stringValue(value: unknown, fallback = "unknown"): string {
+  return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
-function humanizeLane(lane: string): string {
-  return lane
+function arrayValue<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function shortenTraceId(traceId: unknown): string {
+  const id = stringValue(traceId);
+  if (id.length <= 18) return id;
+  return `${id.slice(0, 10)}…${id.slice(-6)}`;
+}
+
+function safeLaneSummaries(summary: PromptDiagnosticsSummary) {
+  return arrayValue<PromptDiagnosticsSummary["lane_summaries"][number]>(summary.lane_summaries);
+}
+
+function safeActivatedEntries(summary: PromptDiagnosticsSummary) {
+  return arrayValue<PromptDiagnosticsSummary["activated_entries"][number]>(summary.activated_entries);
+}
+
+function safeSuppressedEntries(summary: PromptDiagnosticsSummary) {
+  return arrayValue<PromptDiagnosticsSummary["suppressed_entries"][number]>(summary.suppressed_entries);
+}
+
+function safeActivationReasons(summary: PromptDiagnosticsSummary) {
+  return arrayValue<PromptDiagnosticsSummary["activation_reasons"][number]>(summary.activation_reasons);
+}
+
+function safeActivationReasonCodes(summary: PromptDiagnosticsSummary) {
+  return arrayValue<string>(summary.activation_reason_codes);
+}
+
+function humanizeLane(lane: unknown): string {
+  return stringValue(lane, "unknown")
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
@@ -64,41 +97,43 @@ function laneRowTone(status: LaneStatus, selected: boolean): string {
   return "border-black/[0.06] bg-black/[0.018] hover:bg-black/[0.028]";
 }
 
-function reasonTone(reason: string): string {
-  if (reason.includes("custom_identity_pack")) {
+function reasonTone(reason: unknown): string {
+  const value = stringValue(reason, "");
+  if (value.includes("custom_identity_pack")) {
     return "border-orange-200/70 bg-orange-50 text-orange-800";
   }
-  if (reason.includes("persona") || reason.includes("identity")) {
+  if (value.includes("persona") || value.includes("identity")) {
     return "border-amber-200/70 bg-amber-50 text-amber-800";
   }
-  if (reason.includes("tool")) {
+  if (value.includes("tool")) {
     return "border-sky-200/70 bg-sky-50 text-sky-800";
   }
-  if (reason.includes("memory")) {
+  if (value.includes("memory")) {
     return "border-emerald-200/70 bg-emerald-50 text-emerald-800";
   }
   if (
-    reason.includes("scenario") ||
-    reason.includes("planning") ||
-    reason.includes("review")
+    value.includes("scenario") ||
+    value.includes("planning") ||
+    value.includes("review")
   ) {
     return "border-blue-200/70 bg-blue-50 text-blue-800";
   }
   return "border-black/[0.07] bg-black/[0.03] text-foreground/75";
 }
 
-function sourceTone(source: string): string {
-  if (source.includes("custom_identity_pack"))
+function sourceTone(source: unknown): string {
+  const value = stringValue(source, "");
+  if (value.includes("custom_identity_pack"))
     return "border-orange-200/70 bg-orange-50 text-orange-800";
-  if (source.includes("request_intelligence"))
+  if (value.includes("request_intelligence"))
     return "border-blue-200/70 bg-blue-50 text-blue-800";
-  if (source.includes("tool_registry"))
+  if (value.includes("tool_registry"))
     return "border-sky-200/70 bg-sky-50 text-sky-800";
-  if (source.includes("memory"))
+  if (value.includes("memory"))
     return "border-emerald-200/70 bg-emerald-50 text-emerald-800";
-  if (source.includes("identity"))
+  if (value.includes("identity"))
     return "border-amber-200/70 bg-amber-50 text-amber-800";
-  if (source.includes("execution_mode"))
+  if (value.includes("execution_mode"))
     return "border-violet-200/70 bg-violet-50 text-violet-800";
   return "border-black/[0.07] bg-black/[0.03] text-foreground/75";
 }
@@ -157,7 +192,9 @@ function SummarySentence(props: {
   summary: PromptDiagnosticsSummary;
   selectedLane: string | null;
 }) {
-  const activeNames = props.summary.lane_summaries
+  const laneSummaries = safeLaneSummaries(props.summary);
+  const reasonCodes = safeActivationReasonCodes(props.summary);
+  const activeNames = laneSummaries
     .filter((lane) => lane.status === "active")
     .map((lane) => humanizeLane(lane.lane));
 
@@ -176,7 +213,7 @@ function SummarySentence(props: {
       <span>{activeText}</span>{" "}
       <span className="text-muted-foreground">
         本轮共组装 {props.summary.block_count} 个 blocks，记录了{" "}
-        {props.summary.activation_reason_codes.length} 个 activation reasons。
+        {reasonCodes.length} 个 activation reasons。
       </span>
     </div>
   );
@@ -252,15 +289,17 @@ function LaneTable(props: {
   selectedLane: string | null;
   onSelectLane: (lane: string | null) => void;
 }) {
+  const lanes = arrayValue<PromptDiagnosticsSummary["lane_summaries"][number]>(props.lanes);
   return (
     <div className="space-y-2">
-      {props.lanes.map((lane) => {
+      {lanes.map((lane, index) => {
         const isSelected = props.selectedLane === lane.lane;
+        const laneName = stringValue(lane.lane);
         return (
           <button
-            key={lane.lane}
+            key={`${laneName}-${index}`}
             type="button"
-            onClick={() => props.onSelectLane(isSelected ? null : lane.lane)}
+            onClick={() => props.onSelectLane(isSelected ? null : laneName)}
             className={cn(
               "flex w-full items-center justify-between gap-3 rounded-[16px] border px-3.5 py-3 text-left transition-all",
               laneRowTone(lane.status, isSelected),
@@ -275,11 +314,11 @@ function LaneTable(props: {
                   )}
                 />
                 <span className="text-[13px] font-medium tracking-tight text-foreground/90">
-                  {humanizeLane(lane.lane)}
+                  {humanizeLane(laneName)}
                 </span>
               </div>
               <div className="mt-1 pl-4 text-[11.5px] text-muted-foreground">
-                {lane.entry_count} entries selected
+                {numberValue(lane.entry_count)} entries selected
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -310,22 +349,27 @@ function renderBody(
   selectedLane: string | null,
   onSelectLane: (lane: string | null) => void,
 ) {
+  const activatedEntries = safeActivatedEntries(summary);
+  const suppressedEntries = safeSuppressedEntries(summary);
+  const activationReasons = safeActivationReasons(summary);
+  const reasonCodes = safeActivationReasonCodes(summary);
+  const laneSummaries = safeLaneSummaries(summary);
   const filteredActivated =
     selectedLane === null
-      ? summary.activated_entries
-      : summary.activated_entries.filter(
+      ? activatedEntries
+      : activatedEntries.filter(
           (entry) => entry.lane === selectedLane,
         );
   const filteredSuppressed =
     selectedLane === null
-      ? summary.suppressed_entries
-      : summary.suppressed_entries.filter(
+      ? suppressedEntries
+      : suppressedEntries.filter(
           (entry) => entry.lane === selectedLane,
         );
   const filteredReasons =
     selectedLane === null
-      ? summary.activation_reasons
-      : summary.activation_reasons.filter(
+      ? activationReasons
+      : activationReasons.filter(
           (reason) => reason.lane === selectedLane,
         );
 
@@ -344,17 +388,17 @@ function renderBody(
         />
         <MetricTile
           label="blocks"
-          value={summary.block_count}
+          value={numberValue(summary.block_count)}
           compact={compact}
         />
         <MetricTile
           label="active lanes"
-          value={summary.active_lane_count}
+          value={numberValue(summary.active_lane_count)}
           compact={compact}
         />
         <MetricTile
           label="reasons"
-          value={summary.activation_reason_codes.length}
+          value={reasonCodes.length}
           compact={compact}
         />
       </div>
@@ -372,7 +416,7 @@ function renderBody(
         <section className="rounded-[22px] border border-black/[0.06] bg-white px-4 py-4 shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
           <SectionTitle icon={Layers3} label="Lane Summary" />
           <LaneTable
-            lanes={summary.lane_summaries}
+            lanes={laneSummaries}
             selectedLane={selectedLane}
             onSelectLane={onSelectLane}
           />
@@ -387,9 +431,9 @@ function renderBody(
               </div>
             ) : (
               <div className="space-y-2">
-                {filteredReasons.map((reason) => (
+                {filteredReasons.map((reason, index) => (
                   <div
-                    key={`${reason.entry_id}-${reason.reason_code}`}
+                    key={`${stringValue(reason.entry_id)}-${stringValue(reason.reason_code)}-${index}`}
                     className="rounded-2xl border border-black/[0.06] bg-black/[0.02] px-3 py-2.5"
                   >
                     <div className="flex flex-wrap items-center gap-2">
@@ -399,14 +443,14 @@ function renderBody(
                           reasonTone(reason.reason_code),
                         )}
                       >
-                        {reason.reason_code}
+                        {stringValue(reason.reason_code)}
                       </span>
                       <span className="text-[10.5px] text-muted-foreground">
-                        {reason.entry_id}
+                        {stringValue(reason.entry_id)}
                       </span>
                     </div>
                     <div className="mt-1.5 text-[11.5px] leading-5 text-foreground/78">
-                      {reason.detail}
+                      {stringValue(reason.detail, "No detail recorded.")}
                     </div>
                   </div>
                 ))}
@@ -420,21 +464,21 @@ function renderBody(
               <EntryList
                 title="Activated"
                 count={filteredActivated.length}
-                entries={filteredActivated.map((entry) => ({
-                  id: entry.entry_id,
-                  meta: `lane: ${entry.lane}`,
-                  badge: entry.source,
-                }))}
+	                entries={filteredActivated.map((entry) => ({
+	                  id: stringValue(entry.entry_id),
+	                  meta: `lane: ${stringValue(entry.lane)}`,
+	                  badge: stringValue(entry.source),
+	                }))}
                 tone="active"
               />
               <EntryList
                 title="Suppressed"
                 count={filteredSuppressed.length}
-                entries={filteredSuppressed.map((entry) => ({
-                  id: entry.entry_id,
-                  meta: `lane: ${entry.lane}`,
-                  badge: entry.reason_code,
-                }))}
+	                entries={filteredSuppressed.map((entry) => ({
+	                  id: stringValue(entry.entry_id),
+	                  meta: `lane: ${stringValue(entry.lane)}`,
+	                  badge: stringValue(entry.reason_code),
+	                }))}
                 tone="suppressed"
               />
             </div>

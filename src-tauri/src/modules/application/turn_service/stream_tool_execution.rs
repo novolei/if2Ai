@@ -42,6 +42,39 @@ use super::stream_task::append_remembered_permission_events;
 
 const INVALID_TOOL_ARGS_LIMIT: usize = 2;
 
+fn tool_schema_json(tool_registry: &ToolRegistry, tool_name: &str) -> String {
+    tool_registry
+        .get(tool_name)
+        .and_then(|entry| serde_json::to_string_pretty(&entry.input_schema).ok())
+        .unwrap_or_else(|| "{\"type\":\"object\"}".to_string())
+}
+
+fn tool_argument_example(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "REPL" => Some(r#"{"language":"shell","code":"printf 'hello\n'"}"#),
+        "bash" => Some(r#"{"command":"pwd"}"#),
+        "file_write" | "write_file" => {
+            Some(r#"{"path":"index.html","content":"<!doctype html>\n<html></html>"}"#)
+        }
+        "file_read" | "read_file" => Some(r#"{"path":"index.html"}"#),
+        _ => None,
+    }
+}
+
+fn invalid_tool_args_repair_instruction(
+    tool_registry: &ToolRegistry,
+    tool_name: &str,
+    validation_error: &str,
+) -> String {
+    let schema = tool_schema_json(tool_registry, tool_name);
+    let example = tool_argument_example(tool_name)
+        .map(|value| format!("\nMinimal valid example for `{tool_name}`:\n```json\n{value}\n```"))
+        .unwrap_or_default();
+    format!(
+        "[tool_argument_repair]\nThe previous `{tool_name}` tool call was rejected before execution: {validation_error}.\nCall `{tool_name}` again only with a complete JSON object matching this exact schema:\n```json\n{schema}\n```{example}\nDo not call the tool with `{{}}` or omit required fields. If this tool is not appropriate, choose another available tool with complete arguments."
+    )
+}
+
 /// All context needed to execute one batch of pending tool calls.
 pub(super) struct ToolExecutionContext {
     pub pending_tool_uses: Vec<(String, String, String)>,
@@ -391,9 +424,15 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             );
 
             crate::modules::runtime::self_repair::record_tool_outcome(&tool_name, false);
+            let schema = tool_schema_json(&tool_registry, &tool_name);
+            let example = tool_argument_example(&tool_name)
+                .map(|value| format!(" Example: {value}."))
+                .unwrap_or_default();
             let invalid_result = format!(
-                "invalid tool arguments: {validation_error}. The tool `{tool_name}` was not executed. Re-issue the tool call with a complete JSON object matching its schema."
+                "invalid tool arguments: {validation_error}. The tool `{tool_name}` was not executed. Re-issue the tool call with a complete JSON object matching this schema: {schema}.{example}"
             );
+            let repair_instruction =
+                invalid_tool_args_repair_instruction(&tool_registry, &tool_name, &validation_error);
             let terminal_tool_payload = StreamTokenPayload {
                 stream_id: stream_id.clone(),
                 correlation: Some(correlation_ids.clone()),
@@ -455,6 +494,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 }],
                 thinking: None,
             });
+            session_messages.push(InputMessage::user_text(repair_instruction));
             timeline_session_messages.push(ConversationMessage::tool_use(
                 tool_id.clone(),
                 tool_name.clone(),
@@ -696,5 +736,49 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         sanitize_invalid_tool_use_samples,
         tool_executor,
         pending_operation,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_tool_args_repair_instruction_includes_repl_schema_and_example() {
+        let registry = ToolRegistry::default();
+        registry
+            .register(crate::modules::tools::builtin::repl::repl_tool_entry())
+            .expect("register REPL");
+
+        let instruction = invalid_tool_args_repair_instruction(
+            &registry,
+            "REPL",
+            "missing required parameter: code",
+        );
+
+        assert!(instruction.contains("[tool_argument_repair]"));
+        assert!(instruction.contains("\"required\": ["));
+        assert!(instruction.contains("\"code\""));
+        assert!(instruction.contains("\"language\""));
+        assert!(instruction.contains(r#""language":"shell""#));
+        assert!(instruction.contains("Do not call the tool with `{}`"));
+    }
+
+    #[test]
+    fn invalid_tool_args_repair_instruction_includes_file_write_example() {
+        let registry = ToolRegistry::default();
+        registry
+            .register(crate::modules::tools::builtin::file_write::entry())
+            .expect("register file_write");
+
+        let instruction = invalid_tool_args_repair_instruction(
+            &registry,
+            "file_write",
+            "missing required parameter: content",
+        );
+
+        assert!(instruction.contains("\"path\""));
+        assert!(instruction.contains("\"content\""));
+        assert!(instruction.contains("index.html"));
     }
 }

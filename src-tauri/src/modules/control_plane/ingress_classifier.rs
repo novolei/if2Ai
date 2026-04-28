@@ -45,6 +45,7 @@ pub const CLASSIFIER_POLICY_VERSION: &str = "ingress-classifier@m1.6-skeleton";
 pub mod rule_ids {
     pub const HIGH_RISK_MUTATION: &str = "high_risk_mutation_verb_detected";
     pub const PLANNING_VERB: &str = "planning_verb_detected";
+    pub const ARTIFACT_CREATION_REQUEST: &str = "artifact_creation_request";
     pub const MULTI_STEP_HINT: &str = "multi_step_hint_detected";
     pub const SHORT_DIRECT_REQUEST: &str = "short_direct_request";
     pub const SPECIALIZED_SURFACE_HINT: &str = "specialized_surface_hint";
@@ -87,13 +88,15 @@ pub struct IngressClassifierOutput {
 /// 3. **Specialized-surface hints** (`browser / search the web /
 ///    open the page`) → [`ExecutionMode::SpecializedSurface`] with
 ///    a [`RouteHint`] of `"browser"` (kept loose in the skeleton).
-/// 4. **Multi-step hints** (`first ... then ... finally`,
+/// 4. **Artifact creation / implementation requests** (`create`, `build`,
+///    `实现`, `网页`, `游戏`, etc.) → [`ExecutionMode::AutoPlanExecute`].
+/// 5. **Multi-step hints** (`first ... then ... finally`,
 ///    numbered lists, `&&`, semicolons in shell commands) →
 ///    [`ExecutionMode::AutoPlanExecute`].
-/// 5. **Short single-step request** (≤ 80 chars, no multi-step
+/// 6. **Short single-step request** (≤ 80 chars, no multi-step
 ///    keywords) → [`ExecutionMode::DirectExecute`] +
 ///    [`ComplexityLevel::Trivial`].
-/// 6. **Default fallback** → [`ExecutionMode::AutoPlanExecute`] +
+/// 7. **Default fallback** → [`ExecutionMode::AutoPlanExecute`] +
 ///    [`RiskLevel::Medium`] + [`ComplexityLevel::Moderate`].
 #[must_use]
 pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierOutput {
@@ -172,6 +175,17 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
             0.4_f32,
             false,
         )
+    } else if looks_like_artifact_creation_request(msg, &lower) {
+        matched_rule_ids.push(rule_ids::ARTIFACT_CREATION_REQUEST.into());
+        reason_codes.push(ReasonCode::new("artifact_creation_request"));
+        scenario_hint = Some(ScenarioProfileHint::Coding);
+        (
+            ExecutionMode::AutoPlanExecute,
+            RiskLevel::Medium,
+            ComplexityLevel::Moderate,
+            0.65_f32,
+            false,
+        )
     } else if contains_any(
         &lower,
         &[
@@ -248,6 +262,92 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
 }
 
+fn looks_like_artifact_creation_request(original: &str, lower: &str) -> bool {
+    let completion_action = contains_any(
+        lower,
+        &[
+            "完整网页",
+            "完整网站",
+            "完整页面",
+            "完整游戏",
+            "完整应用",
+            "完整版",
+            "完整的网页",
+            "完整的页面",
+            "完整的游戏",
+            "完整网页版",
+        ],
+    );
+    let action = completion_action
+        || contains_any(
+            lower,
+            &[
+                "create",
+                "build",
+                "make",
+                "implement",
+                "write",
+                "complete",
+                "finish",
+                "finalize",
+                "generate",
+                "develop",
+                "scaffold",
+                "创建",
+                "新建",
+                "生成",
+                "实现",
+                "完成",
+                "完善",
+                "补完",
+                "写完",
+                "做完",
+                "收尾",
+                "开发",
+                "搭建",
+                "做一个",
+                "写一个",
+                "帮我做",
+                "帮我创建",
+                "帮我写",
+            ],
+        );
+    let artifact = contains_any(
+        lower,
+        &[
+            "web app",
+            "website",
+            "webpage",
+            "page",
+            "game",
+            "app",
+            "component",
+            "demo",
+            "html",
+            "css",
+            "javascript",
+            "typescript",
+            "网页",
+            "网站",
+            "页面",
+            "游戏",
+            "应用",
+            "组件",
+            "界面",
+            "声效",
+            "音效",
+        ],
+    ) || original.contains("网页")
+        || original.contains("网站")
+        || original.contains("页面")
+        || original.contains("游戏")
+        || original.contains("界面")
+        || original.contains("声效")
+        || original.contains("音效");
+
+    action && artifact
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +397,40 @@ mod tests {
             ExecutionMode::SpecializedSurface
         );
         assert!(out.decision.route_hint.is_some());
+    }
+
+    #[test]
+    fn chinese_web_game_creation_routes_to_auto_plan_execute() {
+        let out = classify("帮我创建一个泡泡龙网页游戏 需要有声效 界面美观大方");
+        assert_eq!(out.decision.execution_mode, ExecutionMode::AutoPlanExecute);
+        assert_eq!(out.decision.complexity_level, ComplexityLevel::Moderate);
+        assert!(out
+            .decision
+            .classifier_matched_rule_ids
+            .iter()
+            .any(|rule| rule == rule_ids::ARTIFACT_CREATION_REQUEST));
+    }
+
+    #[test]
+    fn chinese_web_game_completion_routes_to_auto_plan_execute() {
+        let out = classify("继续完成这个网页游戏");
+        assert_eq!(out.decision.execution_mode, ExecutionMode::AutoPlanExecute);
+        assert!(out
+            .decision
+            .classifier_matched_rule_ids
+            .iter()
+            .any(|rule| rule == rule_ids::ARTIFACT_CREATION_REQUEST));
+    }
+
+    #[test]
+    fn chinese_complete_web_artifact_preempts_short_direct_request() {
+        let out = classify("我还是希望完整网页版的泡泡龙 不使用python");
+        assert_eq!(out.decision.execution_mode, ExecutionMode::AutoPlanExecute);
+        assert!(!out
+            .decision
+            .classifier_matched_rule_ids
+            .iter()
+            .any(|rule| rule == rule_ids::SHORT_DIRECT_REQUEST));
     }
 
     #[test]

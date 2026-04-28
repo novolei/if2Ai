@@ -97,6 +97,18 @@ pub struct SkillResolutionCandidate {
     /// Non-fatal warning captured while trying to load the skill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_warning: Option<String>,
+    /// Optional `whenToUse`/`when_to_use` frontmatter guidance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when_to_use: Option<String>,
+    /// Optional tool allow-list declared by skill frontmatter.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    /// Optional model hint declared by skill frontmatter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_hint: Option<String>,
+    /// Evidence explaining why this skill was considered for the run.
+    #[serde(default)]
+    pub activation_evidence: Vec<String>,
 }
 
 /// Per-turn skill-resolution snapshot.
@@ -170,4 +182,7 @@ pub struct FinalRunReport {
     /// Skill-loader warnings captured during preparation.
     #[serde(default)]
     pub skill_warnings: Vec<String>,
+    /// Provider/tool compatibility diagnostics captured during the run.
+    #[serde(default)]
+    pub diagnostic_warnings: Vec<String>,
 }

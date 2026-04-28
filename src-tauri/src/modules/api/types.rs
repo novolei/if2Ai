@@ -275,6 +275,20 @@ pub struct ContentBlockStopEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageStopEvent {}
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRawChunkDiagnosticEvent {
+    pub byte_len: usize,
+    pub parsed_frame_count: usize,
+    pub has_text_delta: bool,
+    pub has_reasoning_delta: bool,
+    pub tool_delta_count: usize,
+    pub tool_name_delta_count: usize,
+    pub tool_argument_delta_count: usize,
+    pub empty_tool_argument_delta_count: usize,
+    pub finish_reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamEvent {
@@ -284,4 +298,5 @@ pub enum StreamEvent {
     ContentBlockDelta(ContentBlockDeltaEvent),
     ContentBlockStop(ContentBlockStopEvent),
     MessageStop(MessageStopEvent),
+    ProviderRawChunkDiagnostic(ProviderRawChunkDiagnosticEvent),
 }

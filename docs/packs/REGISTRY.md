@@ -23,6 +23,12 @@
 
 | Pack                                                               | Type     | Goal                                                                                                                  | Done       |
 | ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md) | feature | Continuation context + tool evidence invariants | 2026-04-28 |
+| [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md) | feature | Provider tool-call compatibility diagnostics | 2026-04-28 |
+| [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md) | feature | Tool intent nudge + completion evidence invariant | 2026-04-28 |
+| [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md) | feature | Unified tool pool + schema contract | 2026-04-28 |
+| [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md) | feature | Continuation transcript truth | 2026-04-28 |
+| [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md) | feature | Skill frontmatter runtime metadata | 2026-04-28 |
 | [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md) | feature | WorkLoopRouter enforcement | 2026-04-27 |
 | [FEAT-JC-010](./feature/jiaochang/FEAT-JC-010-lx-ceru-real-resolve-worker.md) | feature | LX/Ceru real resolve worker | 2026-04-27 |
 | [FEAT-JC-009](./feature/jiaochang/FEAT-JC-009-lx-ceru-js-plugin-compatibility-sandbox.md) | feature | LX/Ceru JS plugin compatibility sandbox | 2026-04-26 |
@@ -182,6 +188,27 @@
 | 3 | P1 | [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md) | active | FinalRunReport UX |
 | 4 | P1 | [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md) | active | MCP Workbench IPC + UI |
 | 5 | P2 | [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md) | active | LoopDelegate extraction |
+| 6 | P0 | [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md) | done | Continuation context + tool evidence invariants |
+| 7 | P0 | [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md) | done | Tool intent nudge + completion evidence invariant |
+| 8 | P0 | [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md) | done | Continuation transcript truth |
+
+### Provider Compatibility Pipeline
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md) | done | Provider tool-call compatibility diagnostics |
+
+### Tooling Contract Pipeline
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md) | done | Unified tool pool + schema contract |
+
+### Skills Runtime Pipeline
+
+| 顺序 | 优先级 | Pack | 状态 | Goal |
+| ---- | ------ | ---- | ---- | ---- |
+| 1 | P0 | [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md) | done | Skill frontmatter runtime metadata |
 
 ### Migration-Core Pipeline
 

@@ -7,7 +7,7 @@
 //!
 //! Lifted out of `stream_task.rs` per GAP-005.
 
-use crate::modules::api::{InputMessage, MessageRequest, ToolDefinition};
+use crate::modules::api::{InputMessage, MessageRequest, ToolChoice, ToolDefinition};
 use crate::modules::application::prompt_planner::{
     extend_sample_ids, sanitize_messages_for_provider, ContextGovernor,
 };
@@ -24,6 +24,7 @@ pub(super) struct PreflightContext<'a> {
     pub context_window: u64,
     pub force_final_response: bool,
     pub finalization_reason: &'a str,
+    pub force_tool_choice: bool,
     pub tool_loop_iter: usize,
     pub max_iterations: usize,
     pub stream_id: &'a str,
@@ -64,6 +65,7 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         context_window,
         force_final_response,
         finalization_reason,
+        force_tool_choice,
         tool_loop_iter,
         max_iterations,
         stream_id,
@@ -196,6 +198,14 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         session_messages.clone()
     };
 
+    let tool_choice = if force_final_response || tool_defs.is_empty() {
+        None
+    } else if force_tool_choice {
+        Some(ToolChoice::Any)
+    } else {
+        None
+    };
+
     let request = MessageRequest {
         model: model.to_string(),
         max_tokens: 4096,
@@ -210,7 +220,7 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         } else {
             Some(tool_defs.to_vec())
         },
-        tool_choice: None,
+        tool_choice,
         stream: true,
     };
 

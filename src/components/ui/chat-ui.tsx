@@ -4545,18 +4545,15 @@ function LoadingIndicator() {
 
 function FinalRunReportCard({
   report,
-  onResume,
 }: {
   report: FinalRunReport
   onResume?: (resumeCursor: string) => void
 }) {
   const meta = finalReportMeta(report)
-  const nextStep = report.userNextSteps[0]
-  const evidenceCount = Number(report.hasSuccessfulTool) + Number(report.hasSuccessfulMutatingTool)
 
   return (
-    <div className={cn('w-full overflow-hidden rounded-[6px] border px-3 py-2.5', meta.containerClass)}>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={cn('w-full overflow-hidden rounded-[6px] border px-3 py-2', meta.containerClass)}>
+      <div className="flex items-center gap-2">
         <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full', meta.iconClass)}>
           {meta.kind === 'done' ? (
             <Check className="h-3.5 w-3.5" />
@@ -4568,111 +4565,17 @@ function FinalRunReportCard({
             <AlertTriangle className="h-3.5 w-3.5" />
           )}
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className={cn('text-[12.5px] font-semibold leading-4.5', meta.titleClass)}>
-              {meta.title}
-            </span>
-            <span className="rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
-              {humanizeRuntimeValue(report.loopKind)}
-            </span>
-            <span className="rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
-              {humanizeRuntimeValue(report.terminalStatus)}
-            </span>
-          </div>
-          {nextStep ? (
-            <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/70">
-              {nextStep}
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <FinalReportList title="完成" items={report.completedItems} />
-      <FinalReportList title="阻断" items={report.failedItems} tone="danger" />
-      <FinalReportChips title="Loaded skills" items={report.loadedSkills} tone="success" />
-      <FinalReportChips title="Blocked skills" items={report.blockedSkills} tone="danger" />
-      <FinalReportList title="Skill warnings" items={report.skillWarnings} tone="warning" />
-
-      {(report.resumeAvailable || evidenceCount > 0) ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-          {evidenceCount > 0 ? (
-            <span>{evidenceCount} tool evidence marker{evidenceCount > 1 ? 's' : ''}</span>
-          ) : null}
-          {report.resumeAvailable ? (
-            <span>Resume available</span>
-          ) : null}
-          {report.resumeCursor && onResume ? (
-            <button
-              type="button"
-              onClick={() => onResume(report.resumeCursor as string)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-background/55 px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-background/80"
-            >
-              <RotateCcw className="h-3 w-3" />
-              Continue
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function FinalReportList({
-  title,
-  items,
-  tone = 'neutral',
-}: {
-  title: string
-  items: string[]
-  tone?: 'neutral' | 'danger' | 'warning'
-}) {
-  const visible = items.filter((item) => item.trim().length > 0)
-  if (visible.length === 0) return null
-  return (
-    <div className="mt-2">
-      <div className={cn('text-[11px] font-medium leading-4', tone === 'danger' ? 'text-rose-500' : tone === 'warning' ? 'text-amber-500' : 'text-muted-foreground')}>
-        {title}
-      </div>
-      <ul className="mt-1 space-y-1">
-        {visible.slice(0, 3).map((item, index) => (
-          <li key={`${title}-${index}`} className="break-words text-[11.5px] leading-4.5 text-foreground/74">
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function FinalReportChips({
-  title,
-  items,
-  tone,
-}: {
-  title: string
-  items: string[]
-  tone: 'success' | 'danger'
-}) {
-  const visible = items.filter((item) => item.trim().length > 0)
-  if (visible.length === 0) return null
-  return (
-    <div className="mt-2">
-      <div className="text-[11px] font-medium leading-4 text-muted-foreground">{title}</div>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {visible.slice(0, 6).map((item) => (
-          <span
-            key={`${title}-${item}`}
-            className={cn(
-              'max-w-full truncate rounded-md border px-1.5 py-0.5 text-[10.5px] leading-4',
-              tone === 'success'
-                ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-500'
-                : 'border-rose-500/35 bg-rose-500/10 text-rose-500',
-            )}
-          >
-            {item}
+        <div className="min-w-0 flex-1 truncate">
+          <span className={cn('text-[12.5px] font-semibold leading-4.5', meta.titleClass)}>
+            {meta.title}
           </span>
-        ))}
+          <span className="ml-2 text-[11.5px] leading-4.5 text-muted-foreground">
+            Details are available in Developer telemetry.
+          </span>
+        </div>
+        <span className="shrink-0 rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
+          {humanizeRuntimeValue(report.loopKind)}
+        </span>
       </div>
     </div>
   )

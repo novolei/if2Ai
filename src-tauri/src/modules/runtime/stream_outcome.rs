@@ -90,10 +90,15 @@ impl TaskOutcomeResolver {
             );
         }
 
-        if conversation.terminal_status == "memory_recall_required_no_tool" {
+        if matches!(
+            conversation.terminal_status,
+            "memory_recall_required_no_tool"
+                | "tool_required_no_tool"
+                | "provider_textual_tool_call_markup"
+        ) {
             return new_truth(
                 "failed",
-                Some("memory_recall_required_no_tool".to_string()),
+                Some(conversation.terminal_status.to_string()),
                 true,
                 conversation.terminal_status,
                 execution.has_successful_mutating_tool,
@@ -161,6 +166,7 @@ fn is_resumable_terminal_status(status: &str) -> bool {
         "stream_error"
             | "failed_to_start_stream"
             | "model_stop_no_tools"
+            | "provider_textual_tool_call_markup"
             | "repeated_tool_batch_no_progress"
             | "invalid_tool_args_repeated"
     )
@@ -261,6 +267,33 @@ mod tests {
         assert_eq!(
             outcome.degraded_reason.as_deref(),
             Some("memory_recall_required_no_tool")
+        );
+        assert!(outcome.resume_available);
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::ModelStopNoTools)
+        );
+        assert!(outcome.recoverability.safe_to_retry_mutations);
+    }
+
+    #[test]
+    fn tool_required_no_tool_is_failed_and_resumable() {
+        let outcome = TaskOutcomeResolver::resolve(
+            ExecutionTruth {
+                has_successful_tool: false,
+                has_successful_mutating_tool: false,
+            },
+            &ConversationTruth {
+                stream_failed: false,
+                terminal_status: "tool_required_no_tool",
+                last_stream_error_reason: None,
+            },
+        );
+        assert_eq!(outcome.task_outcome, "failed");
+        assert_eq!(
+            outcome.degraded_reason.as_deref(),
+            Some("tool_required_no_tool")
         );
         assert!(outcome.resume_available);
         assert!(outcome.recoverability.available);

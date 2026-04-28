@@ -137,9 +137,10 @@ pub fn classify_resume_reason(
         "repeated_tool_batch_no_progress" => Some(ResumeReason::RepeatedToolBatchNoProgress),
         "invalid_tool_args_repeated" => Some(ResumeReason::InvalidToolArgsRepeated),
         "failed_to_start_stream" => Some(ResumeReason::FailedToStartStream),
-        "model_stop_no_tools" | "memory_recall_required_no_tool" => {
-            Some(ResumeReason::ModelStopNoTools)
-        }
+        "model_stop_no_tools"
+        | "memory_recall_required_no_tool"
+        | "tool_required_no_tool"
+        | "provider_textual_tool_call_markup" => Some(ResumeReason::ModelStopNoTools),
         "stream_error" => {
             // Degraded reasons may carry richer information
             if let Some(reason) = degraded_reason {
@@ -246,6 +247,14 @@ mod tests {
     fn classify_model_stop_no_tools() {
         assert_eq!(
             classify_resume_reason("model_stop_no_tools", None),
+            Some(ResumeReason::ModelStopNoTools)
+        );
+    }
+
+    #[test]
+    fn classify_tool_required_no_tool() {
+        assert_eq!(
+            classify_resume_reason("tool_required_no_tool", None),
             Some(ResumeReason::ModelStopNoTools)
         );
     }

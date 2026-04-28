@@ -132,6 +132,7 @@ async fn emit_terminal_final_run_report(
         false,
         None,
         skill_resolution_plan,
+        Vec::new(),
     );
     let mut final_report_payload =
         StreamTokenPayload::skeleton(stream_id.to_string(), "final_run_report");
@@ -508,14 +509,12 @@ impl TurnService {
                 })
             })
             .collect();
-        let tool_defs = crate::modules::skills::attenuation::attenuate_tool_definitions(
+        let tool_pool = super::work_loop::build_canonical_tool_pool(
             tool_defs,
             &prepared_stream.active_skill_ids,
-        );
-        let tool_defs = super::work_loop::enforce_tool_definitions_for_loop(
             &prepared_stream.work_loop_decision,
-            tool_defs,
         );
+        let tool_defs = tool_pool.definitions.clone();
 
         let execution_decision_value = serde_json::json!({
             "executionModeDecision": prepared_stream.execution_mode_decision,
@@ -655,6 +654,9 @@ impl TurnService {
             });
         let messages_for_stream = all_messages.clone();
         let tool_defs_for_stream = tool_defs.clone();
+        let tool_pool_names_for_stream = tool_pool.tool_names.clone();
+        let tool_pool_schema_hash_for_stream = tool_pool.schema_hash.clone();
+        let tool_pool_policy_for_stream = tool_pool.policy.clone();
         let system_prompt_for_stream = system_prompt_with_memory;
         let permission_mode_for_stream = permission_mode.clone();
         let execution_context_for_task = execution_context.clone();
@@ -723,6 +725,9 @@ impl TurnService {
             baseline_message_count_stream,
             messages_for_stream,
             tool_defs_for_stream,
+            tool_pool_names_for_stream,
+            tool_pool_schema_hash_for_stream,
+            tool_pool_policy_for_stream,
             system_prompt_for_stream,
             provider_client_for_stream,
             failover_provider_client,

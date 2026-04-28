@@ -124,6 +124,8 @@ pub(super) struct FinalizeStreamInputs {
     pub work_loop_decision: WorkLoopDecision,
     /// Skill-resolution snapshot for the final report/event log.
     pub skill_resolution_plan: SkillResolutionPlan,
+    /// Provider/tool compatibility diagnostics collected during the loop.
+    pub diagnostic_warnings: Vec<String>,
 
     // ── service handles ──
     pub stream_emitter: AgentStreamEmitter,
@@ -205,6 +207,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         routing_info,
         work_loop_decision,
         skill_resolution_plan,
+        diagnostic_warnings,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -401,6 +404,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         user_visible_truth.resume_available,
         resume_cursor.clone(),
         Some(&skill_resolution_plan),
+        diagnostic_warnings,
     );
     let final_report_value = serde_json::to_value(&final_run_report)
         .unwrap_or_else(|error| serde_json::json!({ "serializationError": error.to_string() }));

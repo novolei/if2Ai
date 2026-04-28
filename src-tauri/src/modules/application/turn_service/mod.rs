@@ -60,7 +60,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::modules::harness::HarnessState;
 use crate::modules::identity::{
@@ -345,6 +345,51 @@ impl TurnService {
                 intelligence.decision.complexity_score
             ),
         );
+        let restored_session_for_prepare = if let Some(session_id) = request.session_id.as_deref() {
+            self.deps
+                .session_manager
+                .restore_session(session_id)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(
+                        caller = request.caller,
+                        session_id,
+                        "[turn_service] failed to restore session for route context: {}",
+                        error
+                    );
+                    error
+                })
+                .ok()
+        } else {
+            None
+        };
+        let mut work_loop_route_context = restored_session_for_prepare
+            .as_ref()
+            .map(|session| work_loop::route_context_from_messages(&session.messages))
+            .unwrap_or_default();
+        if let (Some(session_id), Some(app_handle)) =
+            (request.session_id.as_deref(), self.deps.app_handle.as_ref())
+        {
+            if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                match crate::modules::runtime::history::read_session_history_event_page(
+                    &app_data_dir,
+                    session_id,
+                    Some(500),
+                    None,
+                ) {
+                    Ok(page) => work_loop::augment_route_context_from_run_log(
+                        &mut work_loop_route_context,
+                        &page.entries,
+                    ),
+                    Err(error) => tracing::debug!(
+                        caller = request.caller,
+                        session_id,
+                        "[turn_service] durable route context replay unavailable: {}",
+                        error
+                    ),
+                }
+            }
+        }
 
         let provider = resolve_chat_runtime_provider(&request.workdir)
             .await
@@ -373,8 +418,11 @@ impl TurnService {
         let memory_items = prepared_context.memory_items;
 
         let registered_tool_names = self.deps.tool_registry.tool_names();
-        let work_loop_decision =
-            work_loop::route_work_loop(&intelligence.decision, &request.user_message);
+        let work_loop_decision = work_loop::route_work_loop_with_context(
+            &intelligence.decision,
+            &request.user_message,
+            &work_loop_route_context,
+        );
         let mut skill_resolution_plan = work_loop::resolve_skill_plan(
             &request.workdir,
             &request.user_message,
@@ -396,20 +444,15 @@ impl TurnService {
                 );
                 crate::modules::runtime::config::RuntimeConfig::empty()
             });
-        let session_identity_override = if let Some(session_id) = request.session_id.as_deref() {
-            self.deps
-                .session_manager
-                .restore_session(session_id)
-                .await
-                .ok()
-                .and_then(|session| {
-                    (session.soul_id.is_some() || session.persona_id.is_some()).then_some(
-                        SessionIdentityOverride {
-                            soul_id: session.soul_id,
-                            persona_id: session.persona_id,
-                        },
-                    )
-                })
+        let session_identity_override = if request.session_id.is_some() {
+            restored_session_for_prepare.as_ref().and_then(|session| {
+                (session.soul_id.is_some() || session.persona_id.is_some()).then_some(
+                    SessionIdentityOverride {
+                        soul_id: session.soul_id.clone(),
+                        persona_id: session.persona_id.clone(),
+                    },
+                )
+            })
         } else {
             None
         };
@@ -507,6 +550,17 @@ impl TurnService {
         if let Some(contribution) =
             work_loop::memory_recall_prompt_contribution(&work_loop_decision)
         {
+            external_contributions.push(contribution);
+        }
+        if let Some(contribution) =
+            work_loop::tool_required_prompt_contribution(&work_loop_decision)
+        {
+            external_contributions.push(contribution);
+        }
+        if let Some(contribution) = work_loop::continuation_context_prompt_contribution(
+            &work_loop_decision,
+            &work_loop_route_context,
+        ) {
             external_contributions.push(contribution);
         }
         if let Some(contribution) = skill_prompt_contribution {

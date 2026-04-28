@@ -10,8 +10,9 @@ use crate::modules::api::error::ApiError;
 use crate::modules::api::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,
-    MessageResponse, MessageStartEvent, MessageStopEvent, OutputContentBlock, StreamEvent,
-    ToolChoice, ToolDefinition, ToolResultContentBlock, Usage,
+    MessageResponse, MessageStartEvent, MessageStopEvent, OutputContentBlock,
+    ProviderRawChunkDiagnosticEvent, StreamEvent, ToolChoice, ToolDefinition,
+    ToolResultContentBlock, Usage,
 };
 
 use super::{Provider, ProviderFuture};
@@ -282,7 +283,12 @@ impl MessageStream {
 
             match self.response.chunk().await? {
                 Some(chunk) => {
-                    for parsed in self.parser.push(&chunk)? {
+                    let parsed = self.parser.push(&chunk)?;
+                    self.pending
+                        .push_back(StreamEvent::ProviderRawChunkDiagnostic(
+                            provider_raw_chunk_diagnostic(chunk.len(), &parsed),
+                        ));
+                    for parsed in parsed {
                         self.pending.extend(self.state.ingest_chunk(parsed)?);
                     }
                 }
@@ -315,6 +321,71 @@ impl OpenAiSseParser {
         }
 
         Ok(events)
+    }
+}
+
+fn provider_raw_chunk_diagnostic(
+    byte_len: usize,
+    parsed: &[ChatCompletionChunk],
+) -> ProviderRawChunkDiagnosticEvent {
+    let mut has_text_delta = false;
+    let mut has_reasoning_delta = false;
+    let mut tool_delta_count = 0usize;
+    let mut tool_name_delta_count = 0usize;
+    let mut tool_argument_delta_count = 0usize;
+    let mut empty_tool_argument_delta_count = 0usize;
+    let mut finish_reasons = Vec::new();
+
+    for chunk in parsed {
+        for choice in &chunk.choices {
+            if choice
+                .delta
+                .content
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            {
+                has_text_delta = true;
+            }
+            if choice
+                .delta
+                .reasoning_content
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            {
+                has_reasoning_delta = true;
+            }
+            if let Some(reason) = choice.finish_reason.as_ref() {
+                finish_reasons.push(reason.clone());
+            }
+            for tool_call in &choice.delta.tool_calls {
+                tool_delta_count += 1;
+                if tool_call
+                    .function
+                    .name
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    tool_name_delta_count += 1;
+                }
+                match tool_call.function.arguments.as_deref() {
+                    Some("") => empty_tool_argument_delta_count += 1,
+                    Some(_) => tool_argument_delta_count += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+
+    ProviderRawChunkDiagnosticEvent {
+        byte_len,
+        parsed_frame_count: parsed.len(),
+        has_text_delta,
+        has_reasoning_delta,
+        tool_delta_count,
+        tool_name_delta_count,
+        tool_argument_delta_count,
+        empty_tool_argument_delta_count,
+        finish_reasons,
     }
 }
 

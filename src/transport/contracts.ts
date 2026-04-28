@@ -292,6 +292,10 @@ export interface SkillResolutionCandidate {
   loaded: boolean
   blockedReason?: string
   loadWarning?: string
+  whenToUse?: string
+  allowedTools: string[]
+  modelHint?: string
+  activationEvidence: string[]
 }
 
 export interface SkillResolutionPlan {
@@ -322,6 +326,7 @@ export interface FinalRunReport {
   loadedSkills: string[]
   blockedSkills: string[]
   skillWarnings: string[]
+  diagnosticWarnings: string[]
 }
 
 // ───────────────────────── Memory contract ─────────────────────────
@@ -571,6 +576,7 @@ export type ResumeReason =
   | 'provider_rejected'
   | 'read_only_success_before_failure'
   | 'model_stop_no_tools'
+  | 'provider_textual_tool_call_markup'
   | 'failed_to_start_stream'
 
 /** Structured recoverability payload (mirrors Rust `ResumeRecoverability`,

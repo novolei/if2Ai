@@ -3,8 +3,6 @@
 // Owns the chrome that wraps the post-boot main surface:
 //
 //   - `<AppVersionWatermark/>`   bottom-right version label.
-//   - `<ExecutionModePill/>`     fixed top-right runtime-projection
-//                                consumer (M2.6 visible surface).
 //   - `<GlobalNavbar/>`          left rail.
 //   - `<main>` background gradients + scroll container.
 //
@@ -16,10 +14,8 @@
 //   - This is a **container**, not a router.  `activeSection`
 //     decision logic stays in `App.tsx`; the shell only forwards
 //     the section + section-handler props into `<GlobalNavbar/>`.
-//   - The shell mounts `ExecutionModePill` directly because the
-//     pill is a self-gating projection consumer — it renders
-//     nothing until `snapshot.executionMode` exists.  The shell
-//     does NOT recompute the decision.
+//   - Developer-only runtime decisions are rendered from the
+//     TelemetryDrawer so they do not overlap chat title bars.
 //   - There is no specialized-surface routing.  When that lands
 //     it should consume the same projection store (`snapshot
 //     .executionMode.routeHint`) and either short-circuit
@@ -29,7 +25,6 @@
 import type { ReactNode } from 'react'
 
 import { AppVersionWatermark } from '@/components/AppVersionWatermark'
-import { ExecutionModePill } from '@/modules/execution-mode/ExecutionModePill'
 import { GlobalNavbar } from '@/modules/app-shell/components/GlobalNavbar'
 import type { AppSection } from '@/modules/app-shell/types'
 
@@ -61,12 +56,6 @@ export function MainShell({ navbar, children }: MainShellProps) {
       style={{ gridTemplateColumns: '76px minmax(0, 1fr)' }}
     >
       <AppVersionWatermark />
-      {/* Phase M2.6 — minimal execution-mode visible surface.
-          Self-gating projection consumer; renders nothing until
-          `snapshot.executionMode != null`. */}
-      <div className="pointer-events-none fixed right-4 top-3 z-40">
-        <ExecutionModePill className="pointer-events-auto" />
-      </div>
       <GlobalNavbar
         activeSection={navbar.activeSection}
         onSelectSection={navbar.onSelectSection}

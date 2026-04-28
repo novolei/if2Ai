@@ -104,6 +104,7 @@ impl StreamingAgentLoopDelegate {
             user_visible_truth.resume_available,
             resume_cursor,
             Some(&state.skill_resolution_plan),
+            Vec::new(),
         );
 
         AgentLoopDelegateOutput {

@@ -8,6 +8,7 @@ import type { FinalRunReport } from "@/transport/contracts";
 interface RunInspectorPanelProps {
   sessionId: string | null;
   className?: string;
+  variant?: "floating" | "embedded";
 }
 
 function label(value: string | undefined): string {
@@ -17,13 +18,14 @@ function label(value: string | undefined): string {
 export function RunInspectorPanel({
   sessionId,
   className,
+  variant = "floating",
 }: RunInspectorPanelProps) {
   const snapshot = useRuntimeProjection();
   const state = useMemo(() => {
     if (!sessionId) return null;
-    const runs = Object.values(snapshot.runs)
+    const runs = Object.values(snapshot.runs ?? {})
       .filter((candidate) => candidate.sessionId === sessionId)
-      .sort((left, right) => right.lastUpdatedAt - left.lastUpdatedAt);
+      .sort((left, right) => (right.lastUpdatedAt ?? 0) - (left.lastUpdatedAt ?? 0));
     const run = runs[0] ?? null;
     return run ? { run, approval: snapshot.approvals[sessionId] } : null;
   }, [sessionId, snapshot]);
@@ -31,7 +33,7 @@ export function RunInspectorPanel({
   if (!state) return null;
 
   const { run, approval } = state;
-  const tools = Object.values(run.toolCalls);
+  const tools = Object.values(run.toolCalls ?? {});
   const completedTools = tools.filter((tool) => tool.status === "completed").length;
   const failedTools = tools.filter(
     (tool) =>
@@ -41,32 +43,45 @@ export function RunInspectorPanel({
       tool.status === "cancelled",
   ).length;
   const report = run.finalRunReport;
+  const workLoopReasons = safeStringList(run.workLoop?.reasonCodes);
+  const toolDefinitionPolicy = toolDefinitionsVisibleLabel(run.workLoop?.loopKind);
+  const reportFailedItems = safeStringList(report?.failedItems);
+  const reportLoadedSkills = safeStringList(report?.loadedSkills);
+  const reportBlockedSkills = safeStringList(report?.blockedSkills);
+  const reportSkillWarnings = safeStringList(report?.skillWarnings);
+  const reportDiagnosticWarnings = safeStringList(report?.diagnosticWarnings);
+  const reportCompletedItems = safeStringList(report?.completedItems);
+  const reportNextSteps = safeStringList(report?.userNextSteps);
   const approvalTool = approval
     ? tools.find((tool) => tool.toolName === approval.toolName && tool.status !== "completed")
       ?? tools.find((tool) => tool.toolName === approval.toolName)
     : undefined;
   const approvalRisk =
-    report?.failedItems[0] ??
+    reportFailedItems[0] ??
     report?.terminalStatus ??
     approval?.message;
   const loadedSkills =
-    report?.loadedSkills.length
-      ? report.loadedSkills
-      : run.skillResolution?.loadedSkillNames ?? [];
+    reportLoadedSkills.length > 0
+      ? reportLoadedSkills
+      : safeStringList(run.skillResolution?.loadedSkillNames);
   const blockedSkills =
-    report?.blockedSkills.length
-      ? report.blockedSkills
-      : run.skillResolution?.blockedSkillNames ?? [];
+    reportBlockedSkills.length > 0
+      ? reportBlockedSkills
+      : safeStringList(run.skillResolution?.blockedSkillNames);
   const candidateSkills =
-    run.skillResolution?.candidates
+    (Array.isArray(run.skillResolution?.candidates) ? run.skillResolution.candidates : [])
       .filter((skill) => !loadedSkills.includes(skill.name) && !blockedSkills.includes(skill.name))
-      .map((skill) => skill.name) ?? [];
+      .map((skill) => skill.name);
   const outcomeMeta = report ? reportMeta(report) : null;
 
+  const Container = variant === "embedded" ? "section" : "aside";
+
   return (
-    <aside
+    <Container
       className={cn(
-        "pointer-events-auto absolute right-4 top-4 z-30 hidden w-[320px] rounded-lg border border-border/70 bg-background/92 p-3 shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl xl:block",
+        "pointer-events-auto rounded-lg border border-border/70 bg-background/92 p-3 text-foreground shadow-[0_18px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl dark:shadow-[0_18px_50px_rgba(0,0,0,0.24)]",
+        variant === "floating" && "absolute right-4 top-4 z-30 hidden w-[320px] xl:block",
+        variant === "embedded" && "w-full shadow-sm",
         className,
       )}
       aria-label="Run inspector"
@@ -101,6 +116,11 @@ export function RunInspectorPanel({
           <div className="mt-1 font-medium text-foreground">
             {completedTools} ok · {failedTools} failed
           </div>
+          {toolDefinitionPolicy ? (
+            <div className="mt-0.5 truncate text-[10.5px] text-muted-foreground">
+              {toolDefinitionPolicy}
+            </div>
+          ) : null}
         </div>
         <div className="rounded-md bg-muted/60 px-2.5 py-2">
           <div className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -150,7 +170,12 @@ export function RunInspectorPanel({
       <SkillChips title="Loaded skills" skills={loadedSkills} tone="loaded" />
       <SkillChips title="Blocked skills" skills={blockedSkills} tone="blocked" />
       <SkillChips title="Candidate skills" skills={candidateSkills} tone="candidate" />
-      <ReportSection title="Skill warnings" items={report?.skillWarnings ?? run.skillResolution?.loadWarnings ?? []} tone="warning" />
+      <ReportSection title="Route reasons" items={workLoopReasons} tone="next" />
+      <ReportSection
+        title="Skill warnings"
+        items={reportSkillWarnings.length > 0 ? reportSkillWarnings : safeStringList(run.skillResolution?.loadWarnings)}
+        tone="warning"
+      />
 
       {report ? (
         <div className={cn("mt-2 rounded-md border px-2.5 py-2", outcomeMeta?.containerClass)}>
@@ -162,13 +187,27 @@ export function RunInspectorPanel({
             <span className="truncate">Task: {label(report.taskOutcome)}</span>
             <span className="truncate">Resume: {report.resumeAvailable ? "yes" : "no"}</span>
           </div>
-          <ReportSection title="Completed" items={report.completedItems} />
-          <ReportSection title="Failed / blocked" items={report.failedItems} tone="danger" />
-          <ReportSection title="Next steps" items={report.userNextSteps} tone="next" />
+          <ReportSection title="Completed" items={reportCompletedItems} />
+          <ReportSection title="Failed / blocked" items={reportFailedItems} tone="danger" />
+          <ReportSection title="Diagnostics" items={reportDiagnosticWarnings} tone="warning" />
+          <ReportSection title="Next steps" items={reportNextSteps} tone="next" />
         </div>
       ) : null}
-    </aside>
+    </Container>
   );
+}
+
+function safeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function toolDefinitionsVisibleLabel(loopKind: string | undefined): string | null {
+  if (!loopKind) return null;
+  if (loopKind === "direct_answer" || loopKind === "specialized_surface") {
+    return "definitions hidden";
+  }
+  return "definitions visible";
 }
 
 function SkillChips({

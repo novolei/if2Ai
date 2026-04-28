@@ -25,6 +25,7 @@ function report(overrides: Partial<FinalRunReport> = {}): FinalRunReport {
     loadedSkills: ["rust-helper"],
     blockedSkills: [],
     skillWarnings: [],
+    diagnosticWarnings: [],
     ...overrides,
   };
 }
@@ -43,6 +44,52 @@ function finalReportEvent(runId: string, finalReport: FinalRunReport) {
 }
 
 describe("final run report projection", () => {
+  it("stores continuation work-loop policy for Run Inspector live validation", () => {
+    const payload = {
+      stream_id: "run-continuation",
+      correlation: { runId: "run-continuation", sessionId: "session-1" },
+      event_type: "execution_mode_decision",
+      tool_args: {
+        executionModeDecision: {
+          executionMode: "direct_execute",
+          riskLevel: "low",
+          complexityLevel: "trivial",
+          complexityScore: 0.1,
+          reasonCodes: ["short_direct_request"],
+          requiresPlan: false,
+          classifierPolicyVersion: "test",
+          classifierMatchedRuleIds: ["short_direct_request"],
+          classifierSlotSummary: {},
+          classifierAmbiguousEscalated: false,
+        },
+        workLoopDecision: {
+          loopKind: "autonomous_work",
+          reasonCodes: [
+            "short_direct_request",
+            "continuation_intent",
+            "tool_required_work_intent",
+            "inherited_tool_required_work_intent",
+          ],
+          requiresConfirmation: false,
+        },
+      },
+    } satisfies StreamTokenPayload;
+    const event = translateAgentTokenPayload(payload);
+    assert.ok(event);
+    const snapshot = reduceRuntimeEventBatch(emptyProjectionSnapshot(), [
+      {
+        kind: "stream_run_bound",
+        runId: "run-continuation",
+        sessionId: "session-1",
+        receivedAt: 1,
+      },
+      event,
+    ]);
+
+    assert.equal(snapshot.runs["run-continuation"]?.workLoop?.loopKind, "autonomous_work");
+    assert.ok(snapshot.runs["run-continuation"]?.workLoop?.reasonCodes.includes("tool_required_work_intent"));
+  });
+
   it("stores loaded and blocked skill evidence from the canonical final report", () => {
     const snapshot = reduceRuntimeEventBatch(emptyProjectionSnapshot(), [
       {
