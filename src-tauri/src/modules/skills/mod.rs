@@ -36,6 +36,30 @@ pub fn escape_skill_content(raw: &str) -> String {
         .replace("<skill ", "<\\skill ")
 }
 
+/// Escape skill body content to prevent prompt injection via fake Markdown
+/// `## Skill:` (or other-level) section headers that would be parsed as a
+/// new, higher-trust skill section by the LLM.
+///
+/// Strategy: prepend a backslash to any line that starts with `#` characters
+/// followed by ` Skill:`. This neutralizes the heading without being lossy
+/// (the original text remains visible, just escaped).
+///
+/// Apply this at every site where untrusted skill body text is interpolated
+/// into the prompt's Markdown skill-section wrapper.
+pub fn escape_markdown_skill_section(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for line in raw.split_inclusive('\n') {
+        let trimmed_start = line.trim_start_matches('#');
+        if trimmed_start.len() < line.len() && trimmed_start.trim_start().starts_with("Skill:") {
+            out.push('\\');
+            out.push_str(line);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod escape_tests {
     use super::*;
@@ -54,5 +78,24 @@ mod escape_tests {
         assert!(!out.contains("</skill>"));
         assert!(out.contains("中文"));
         assert!(out.contains("測試"));
+    }
+}
+
+#[cfg(test)]
+mod escape_markdown_tests {
+    use super::*;
+
+    #[test]
+    fn last_line_without_newline_handled() {
+        let raw = "## Skill: foo";
+        let out = escape_markdown_skill_section(raw);
+        assert_eq!(out, "\\## Skill: foo");
+    }
+
+    #[test]
+    fn mid_line_skill_passes_through() {
+        let raw = "see ## Skill: foo here";
+        let out = escape_markdown_skill_section(raw);
+        assert_eq!(out, raw);
     }
 }

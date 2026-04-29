@@ -421,7 +421,11 @@ impl SkillCommands {
                 let content = fs::read_to_string(&info.skill_md_path)
                     .map_err(|e| CommandError::ReadError(e.to_string()))?;
 
-                preloaded_parts.push(format!("## Skill: {}\n\n{}", info.name, content));
+                preloaded_parts.push(format!(
+                    "## Skill: {}\n\n{}",
+                    info.name,
+                    super::escape_markdown_skill_section(&content)
+                ));
 
                 for sf in &info.supporting_files {
                     all_supporting_files.push(info.skill_dir.join(sf).display().to_string());

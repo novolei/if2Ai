@@ -531,7 +531,7 @@ pub(super) fn auto_load_trusted_skill_context(
             candidate.name,
             candidate.source,
             metadata_block,
-            content
+            crate::modules::skills::escape_markdown_skill_section(&content)
         );
         if let Some(warning) = env_warning {
             section.push_str("\n\n");
