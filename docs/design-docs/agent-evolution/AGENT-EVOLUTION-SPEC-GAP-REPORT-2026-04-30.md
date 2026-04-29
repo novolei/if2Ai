@@ -238,5 +238,34 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 
 ### 11.4 Iteration 6 候选
 
-1. **WU-002 provider probe**（`ProviderManager.liveness_probe()`，注册进 daemon extras）
+1. ~~**WU-002 provider probe**~~ → **✅ 已完成 — Iteration 6**
 2. **DW-001 scanner 真实 inputs**（需决定 candidate set 来源）
+
+---
+
+## 12. Iteration 6 增量（2026-04-30，commit `06bf2fd`）
+
+**WU-002 provider probe**：`ProviderApiKeyProbe` 真化，daemon 现在每 60 s 轮询 LLM 凭据是否配置。
+
+### 12.1 已落地
+
+| 站点 | 旧状态 | 新状态 |
+| ---- | ------ | ------ |
+| `daemon/mod.rs` `make_provider_api_key_probe()` | 不存在 | ✅ **新增** — env-var-only, sync, ≤ µs |
+| `setup.rs` extras vec | `vec![browser_probe]` | ✅ `vec![browser_probe, provider_probe]` |
+
+### 12.2 证据
+
+- `cargo check` PASS（exit 0）
+- `provider_api_key_probe_healthy_when_env_var_set` + `provider_api_key_probe_degraded_when_no_env_vars`: **2/2 PASS**
+- 真实行为：无任何 provider 凭据时 daemon 发 `DaemonHealth degraded` envelope（reason 包含 env var 名单）
+
+### 12.3 仍剩 `landed-stub`
+
+| Pack | 站点 | 占位 | 替换路径 |
+| ---- | ---- | ---- | -------- |
+| **DW-001** | `setup.rs` scanner | `MockUtilityLlm::empty()` + `ConstEmbedder` + `&[], &[]` | 需真实 failure 聚合源 |
+
+### 12.4 Iteration 7 候选
+
+1. **DW-001 scanner 真实 inputs** — 调查 `run_scanner_once` 参数语义，确定 `candidates/tool_failures` 来源

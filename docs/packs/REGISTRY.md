@@ -377,7 +377,7 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 | 顺序 | Pack                                                                                      | 状态      | Goal                                                                      | 依赖         |
 | ---- | ----------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------- | ------------ |
 | 1    | [WU-001](./feature/agent-evolution-wireup/WU-001-evolution-emitter-infrastructure.md)     | **done**  | Evolution emitter 基础设施（`evolution_emitter.rs` + `App.tsx` listener） | FEAT-INT-001 |
-| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | **done**³ | Daemon 探针注册（SH-002/003 browser liveness；provider + MCP 延后）       | WU-001       |
+| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | **done**⁵ | Daemon 探针注册（SH-002/003 browser liveness + provider API-key probe）   | WU-001       |
 | 3    | [WU-003](./feature/agent-evolution-wireup/WU-003-stream-finalize-sedimentation-hooks.md)  | **done**  | Stream finalize 沉淀钩子（SE-001/002/004 + DK-002/003）                   | WU-001       |
 | 4    | [WU-004](./feature/agent-evolution-wireup/WU-004-stream-preflight-injection.md)           | active¹   | Stream preflight 注入（TE-002/003 + DK-002 checkpoint）                   | WU-001       |
 | 5    | [WU-005](./feature/agent-evolution-wireup/WU-005-self-edit-background-scanner.md)         | active¹   | Self-edit 后台扫描器（AE-001/002/003 周期性扫描）                         | WU-001       |
@@ -389,6 +389,7 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 > ² `WU-007` audit 待 iteration 5 重审（alias 表存在但 broker 调用站未详查）。
 > ³ Iter-4 (commit `04b4a46`)：browser liveness probe 真化（`StubBrowserProbe` → `BrowserRegistryProbe` 接入真正被 spawn 的 daemon registry）；provider + MCP 探针仍是 `Vec::new()` 占位，留待下一阶段。
 > ⁴ Iter-5 (commit `ba830b5`)：`KnowledgeStore` singleton 真化（`global_knowledge_store()` OnceLock，DK contributor upsert 进共享实例，DK lookup 从同一实例读取）。
+> ⁵ Iter-6 (commit `06bf2fd`)：provider API-key probe 真化（`make_provider_api_key_probe()` 注册进 daemon extras；env-var-only；2/2 tests PASS）。WU-002 全部 landed-stub 清零。
 
 > **依赖关系**：WU-001 → {WU-002, WU-003, WU-004, WU-005, WU-006, WU-008} 可并行；WU-007 独立（不依赖 WU-001）。  
 > **推荐执行顺序**：WU-001 → WU-007（独立可同步推进）→ WU-002 → WU-006 → WU-004 → WU-003 → WU-005 → WU-008。
