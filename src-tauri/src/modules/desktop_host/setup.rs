@@ -277,7 +277,7 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
             let outcome_fut = std::panic::AssertUnwindSafe(run_scanner_once(
                 &reports_refs,
                 &[],
-                llm,
+                llm.clone(),
                 embedder.as_ref(),
                 current_stage,
                 tick.failure_rate,
