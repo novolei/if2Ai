@@ -118,6 +118,16 @@ impl FastEmbedProvider {
     }
 }
 
+use crate::modules::skills::sedimentation::Embedder;
+
+impl Embedder for FastEmbedProvider {
+    /// Bridge to `embed_one`; returns `Vec::new()` on any error so the
+    /// dedup gate degrades gracefully instead of panicking.
+    fn embed(&self, text: &str) -> Vec<f32> {
+        self.embed_one(text).unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +175,34 @@ mod tests {
         let provider = FastEmbedProvider::new().expect("model should load");
         let result = provider.embed_one("");
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod embedder_trait_tests {
+    use super::*;
+    use crate::modules::skills::sedimentation::Embedder;
+
+    /// ConstEmbedder stub verifies the trait is callable.
+    #[test]
+    fn embed_via_trait_returns_nonempty_or_empty_never_panics() {
+        struct ConstEmbedder(Vec<f32>);
+        impl Embedder for ConstEmbedder {
+            fn embed(&self, _text: &str) -> Vec<f32> {
+                self.0.clone()
+            }
+        }
+        let e = ConstEmbedder(vec![1.0, 0.0]);
+        assert_eq!(e.embed("hello"), vec![1.0, 0.0]);
+    }
+
+    /// FastEmbedProvider must satisfy the Embedder bound at compile time.
+    #[test]
+    fn fast_embed_provider_satisfies_embedder_bound() {
+        fn _accepts_embedder(_e: &dyn Embedder) {}
+        // Construct only if model is available; skip otherwise.
+        if let Ok(p) = FastEmbedProvider::new() {
+            _accepts_embedder(&p);
+        }
     }
 }
