@@ -79,6 +79,7 @@ use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
 mod agent_loop_delegate;
+pub mod agentic_loop;
 pub mod dk_lookup_hook;
 pub mod finalize_hooks;
 pub mod hook_registry;
