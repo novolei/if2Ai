@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use if2ai_backend::modules::application::turn_service::hook_registry::{
-    FailurePolicy, HookEntry, HookRegistry, TestHookCtx, TurnHookSimple,
+    FailurePolicy, HookCallCtx, HookEntry, HookRegistry, TurnHookSimple,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,7 +8,7 @@ use std::time::Duration;
 struct FailingHook;
 #[async_trait]
 impl TurnHookSimple for FailingHook {
-    async fn call(&self, _ctx: &TestHookCtx) -> Result<(), String> {
+    async fn call(&self, _ctx: &HookCallCtx<'_>) -> Result<(), String> {
         Err("boom".into())
     }
     fn name(&self) -> &str {
@@ -20,7 +20,7 @@ struct RecordingHook {
 }
 #[async_trait]
 impl TurnHookSimple for RecordingHook {
-    async fn call(&self, _ctx: &TestHookCtx) -> Result<(), String> {
+    async fn call(&self, _ctx: &HookCallCtx<'_>) -> Result<(), String> {
         *self.ran.lock().unwrap() = true;
         Ok(())
     }
@@ -45,7 +45,7 @@ async fn fail_open_continues_chain() {
         timeout: Duration::from_secs(1),
         on_failure: FailurePolicy::FailOpen,
     });
-    let r = reg.run_all(&TestHookCtx::default()).await;
+    let r = reg.run_all(&HookCallCtx::default()).await;
     assert!(r.is_ok(), "fail-open chain returns Ok overall");
     assert!(*ran.lock().unwrap(), "subsequent hook ran");
 }
@@ -55,7 +55,7 @@ async fn fail_open_timeout_continues_chain() {
     struct SlowHook;
     #[async_trait]
     impl TurnHookSimple for SlowHook {
-        async fn call(&self, _: &TestHookCtx) -> Result<(), String> {
+        async fn call(&self, _: &HookCallCtx<'_>) -> Result<(), String> {
             tokio::time::sleep(Duration::from_secs(60)).await;
             Ok(())
         }
@@ -77,7 +77,7 @@ async fn fail_open_timeout_continues_chain() {
         timeout: Duration::from_secs(1),
         on_failure: FailurePolicy::FailOpen,
     });
-    let r = reg.run_all(&TestHookCtx::default()).await;
+    let r = reg.run_all(&HookCallCtx::default()).await;
     assert!(r.is_ok());
     assert!(*ran.lock().unwrap());
 }

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use if2ai_backend::modules::application::turn_service::hook_registry::{
-    FailurePolicy, HookEntry, HookRegistry, TestHookCtx, TurnHookSimple,
+    FailurePolicy, HookCallCtx, HookEntry, HookRegistry, TurnHookSimple,
 };
 
 struct RecordingHook {
@@ -15,7 +15,7 @@ struct RecordingHook {
 
 #[async_trait]
 impl TurnHookSimple for RecordingHook {
-    async fn call(&self, _ctx: &TestHookCtx) -> Result<(), String> {
+    async fn call(&self, _ctx: &HookCallCtx<'_>) -> Result<(), String> {
         self.log.lock().unwrap().push(self.name);
         Ok(())
     }
@@ -56,6 +56,6 @@ async fn higher_priority_runs_first() {
         on_failure: FailurePolicy::FailOpen,
     });
 
-    reg.run_all(&TestHookCtx::default()).await.unwrap();
+    reg.run_all(&HookCallCtx::default()).await.unwrap();
     assert_eq!(*log.lock().unwrap(), vec!["high", "mid", "low"]);
 }
