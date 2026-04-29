@@ -322,6 +322,49 @@ pub fn evolution_probe_set(
     out
 }
 
+/// WU-002 iter-6 — build a provider API-key liveness probe.
+///
+/// Checks that at least one LLM provider credential is present in the
+/// environment (env-var-only: no disk I/O so the probe stays well inside
+/// the HealthCheck "≤ a few µs, never block" contract).
+///
+/// Covered vars (extend as new providers are wired):
+/// - `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` — Claw / Claude
+/// - `XAI_API_KEY` — Grok / xAI
+///
+/// Returns `Healthy` when any var is non-empty, `Degraded` otherwise.
+/// No recovery action — the daemon cannot auto-provision API keys.
+#[must_use]
+pub fn make_provider_api_key_probe() -> Arc<dyn HealthCheck> {
+    struct ProviderApiKeyProbe;
+    impl HealthCheck for ProviderApiKeyProbe {
+        fn name(&self) -> &str {
+            "provider_api_key"
+        }
+        fn check(&self) -> HealthStatus {
+            const AUTH_VARS: &[&str] = &[
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "XAI_API_KEY",
+            ];
+            let any_set = AUTH_VARS
+                .iter()
+                .any(|var| std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false));
+            if any_set {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Degraded {
+                    reason: format!(
+                        "no LLM provider credential found in env (checked: {})",
+                        AUTH_VARS.join(", ")
+                    ),
+                }
+            }
+        }
+    }
+    Arc::new(ProviderApiKeyProbe)
+}
+
 /// WU-002 — append every probe into `registry`. Cheap idempotent
 /// helper; safe to call after [`default_registry`] for the WU-002
 /// 3-probe registration step.
@@ -601,5 +644,51 @@ mod tests {
         streaks.lock().unwrap().insert("bash".to_string(), 99);
         assert_eq!(off.check(), HealthStatus::Healthy);
         assert!(off.recovery().is_none());
+    }
+
+    /// `make_provider_api_key_probe` — verify env-driven Healthy / Degraded
+    /// transitions without touching real credentials.
+    #[test]
+    fn provider_api_key_probe_healthy_when_env_var_set() {
+        let probe = make_provider_api_key_probe();
+        assert_eq!(probe.name(), "provider_api_key");
+
+        // Temporarily set a known auth var to a non-empty value.
+        let prev = std::env::var("ANTHROPIC_API_KEY").ok();
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-dummy");
+        let status = probe.check();
+        match prev {
+            Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
+        assert_eq!(status, HealthStatus::Healthy);
+        assert!(probe.recovery().is_none());
+    }
+
+    #[test]
+    fn provider_api_key_probe_degraded_when_no_env_vars() {
+        let probe = make_provider_api_key_probe();
+
+        // Stash and clear all three auth vars.
+        let vars = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "XAI_API_KEY"];
+        let saved: Vec<_> = vars.iter().map(|v| std::env::var(v).ok()).collect();
+        for var in &vars {
+            std::env::remove_var(var);
+        }
+
+        let status = probe.check();
+
+        // Restore original values.
+        for (var, original) in vars.iter().zip(saved) {
+            match original {
+                Some(v) => std::env::set_var(var, v),
+                None => std::env::remove_var(var),
+            }
+        }
+
+        assert!(
+            matches!(status, HealthStatus::Degraded { .. }),
+            "expected Degraded when no provider credentials are set, got {status:?}"
+        );
     }
 }

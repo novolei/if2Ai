@@ -52,6 +52,10 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
 /// the SH-001 baseline polls. Prior wire-up registered an
 /// always-Healthy `StubBrowserProbe` into a parallel registry that
 /// nobody spawned — a textbook `landed-stub`.
+///
+/// Truth-loop iter-6 (WU-002 provider probe) — also adds
+/// `ProviderApiKeyProbe` to the extras vec so the daemon reports
+/// `Degraded` whenever all known LLM provider credentials are absent.
 fn spawn_self_healing_daemon_with_browser_probe(
     ticker: Arc<MemoryTicker>,
     browser_registry: Arc<BrowserRegistry>,
@@ -109,7 +113,9 @@ fn spawn_self_healing_daemon_with_browser_probe(
     let browser_probe: Arc<dyn HealthCheck> = Arc::new(BrowserRegistryProbe {
         registry: browser_registry,
     });
-    spawn_self_healing_daemon_with_extras(ticker, vec![browser_probe]);
+    // WU-002 iter-6: provider API-key probe (env-var-only, cheap, sync).
+    let provider_probe = crate::modules::runtime::daemon::make_provider_api_key_probe();
+    spawn_self_healing_daemon_with_extras(ticker, vec![browser_probe, provider_probe]);
 }
 
 fn start_activation_lifecycle(app: &App) {
