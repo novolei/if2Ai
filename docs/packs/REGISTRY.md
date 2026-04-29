@@ -385,7 +385,7 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 | 7    | [WU-007](./feature/agent-evolution-wireup/WU-007-tool-alias-redirect.md)                  | active² | Tool alias 重定向（BR-003 resolve_alias → broker）                        | FEAT-BR-003  |
 | 8    | [WU-008](./feature/agent-evolution-wireup/WU-008-domain-knowledge-lookup.md)              | active¹ | Domain knowledge lookup（DK-001 → PromptContribution）                    | WU-001       |
 
-> ¹ `landed-stub` per [gap report 2026-04-30](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md): helper + emit + call-site 已交付，但生产依赖（`UtilityLlm` / `ProviderManager` / `KnowledgeStore`）仍是 `MockX::empty` / `StubX` 占位。Iteration 3 的 `WU-009-deep-utility-handle-threading` Pack 收口。
+> ¹ `landed-stub` per [gap report 2026-04-30](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md): helper + emit + call-site 已交付，但生产依赖（`ProviderManager` / `KnowledgeStore`）仍是 `MockX` / `StubX` 占位。Iter-3 (commit `652b69b`) 已为 `UtilityLlm` 路径完成真化（DW-002 + WU-003 sedimentation/DK 现走 `ChatProviderUtilityLlm`）；剩余 `landed-stub` 见 gap report §9.3。
 > ² `WU-007` audit 待 iteration 4 重审（alias 表存在但 broker 调用站未在 iter-1 详查）。
 
 > **依赖关系**：WU-001 → {WU-002, WU-003, WU-004, WU-005, WU-006, WU-008} 可并行；WU-007 独立（不依赖 WU-001）。  
@@ -398,7 +398,7 @@ WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所�
 | 顺序 | Pack                                                                                            | 状态   | Goal                                                           | 依赖              |
 | ---- | ----------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------- | ----------------- |
 | 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)                   | active¹ | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005    |
-| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md)            | active¹ | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004    |
+| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md)            | **done** | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004    |
 | 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md)            | **done** | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003    |
 | 4    | [DW-004](./feature/agent-evolution-wireup/DW-004-work-loop-dk-lookup.md)                       | active¹ | work_loop::resolve_skill_plan 内调 lookup_for_skill_resolution | WU-001, WU-008    |
 | 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)               | **done** | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006    |

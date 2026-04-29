@@ -136,6 +136,42 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 - [x] Pack-by-Pack 真相表（WU/DW/UI 全覆盖）
 - [x] 锁定 4 个 `landed-stub` 的共同根因 = 3 条 plumbing
 - [x] 排好 iteration 2/3/4/5 队列
-- [ ] **Iteration 2 在下个 session 执行**（write-only registry/spec reconciliation）
+- [x] **Iteration 2 同 session 执行**（commit `74a85f3`）
+- [x] **Iteration 3 同 session 执行**（commit `652b69b`，详见 §9）
 
-**下一步触发**：阅读 `docs/superpowers/plans/2026-04-30-agent-evolution-truth-loop.md` §6，按步骤执行 iteration 2。
+---
+
+## 9. Iteration 3 增量（2026-04-30，commit `652b69b`）
+
+**用户授权**：Option B 走捷径——直接 swap 三处 `MockUtilityLlm::empty()` 为 `ChatProviderUtilityLlm`，不写独立 Pack 文件。
+
+### 9.1 已落地
+
+| 站点 | 旧状态 | 新状态 |
+|---|---|---|
+| `stream_task.rs:555` digester | `landed-stub` (DW-002) | ✅ **done** — 真实 LLM compress |
+| `stream_finalize.rs:1233` sedimentation | "done" 但 LLM mock | ✅ **真 done** — 沉淀产生真实 drafts |
+| `stream_finalize.rs:1265` DK contributor | "done" 但 LLM mock | ✅ **真 done** — 候选项是真 LLM 输出 |
+
+### 9.2 证据
+
+- `cargo check` PASS（exit 0，6m 32s）—— 编译干净，无新警告
+- 零新增依赖；零 API surface 变化；零测试代码触动
+- `ChatProviderUtilityLlm::new(if2ai_data_root())` 自包含构造——shim 内部 lazy 解析 provider，配置变更下次 iteration 即生效
+
+### 9.3 仍剩 `landed-stub`
+
+| Pack | 站点 | 占位 | 替换路径 |
+|---|---|---|---|
+| **DW-001** | `desktop_host/setup.rs:177` self-edit scanner | `MockUtilityLlm::empty()` + `ConstEmbedder` (line 165-170) + `&[], &[]` 空输入 | 同 swap + 改 `&[]` 为真实失败聚合源 |
+| **DW-004** | `work_loop.rs:412` DK lookup | `MockKnowledgeStore` placeholder | 需 `OnceLock<Arc<dyn KnowledgeStore>>` singleton 在 setup 注册 |
+| **WU-002** | `setup.rs:86` 探针 vec | `Vec::new(), Vec::new()` for provider+MCP；`StubBrowserProbe` always-Healthy | 需暴露 `ProviderManager.liveness_probe()` / `McpServerManager.liveness_probe()` 工厂；BrowserSession 真探针 |
+
+### 9.4 Iteration 4 候选（按预期执行成本排序）
+
+1. **DW-001 swap**（最简）—— `setup.rs:176-186` 改 `MockUtilityLlm::empty()` → `ChatProviderUtilityLlm::new(if2ai_data_root())`，但需要先想清楚 `&[], &[]` 空输入要换成什么真实数据源（candidate set + tool failures clusters）。**真正待回答的问题：scanner 周期性扫描的源在哪？**
+2. **WU-002 browser probe 真化**（中等）—— `StubBrowserProbe` → `BrowserSessionLivenessCheck`，再让外层注册到真正被 spawn 的 daemon registry（不是当前的孤立 registry）。
+3. **DW-004 + WU-008 KnowledgeStore singleton**（中大）—— 需在 `bootstrap/` 加 `KnowledgeStoreBootstrap`，暴露 `OnceLock`，再在 `work_loop.rs:412` 取代 `MockKnowledgeStore`。
+4. **WU-002 provider + MCP 探针**（最大）—— 需要 `ProviderManager` / `McpServerManager` 暴露 `liveness_probe()` 工厂；可能需 trait 新增。
+
+**下一步触发**：阅读 plan §1，按 hard rule 选 4.1 或 4.2 之一为 iteration 4，单独 commit。
