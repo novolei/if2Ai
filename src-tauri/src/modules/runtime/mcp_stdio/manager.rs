@@ -348,6 +348,14 @@ impl McpServerManager {
         &self.unsupported_servers
     }
 
+    /// Iter-9 — names of every managed (Stdio) server. Cheap clone of
+    /// the inner BTreeMap keys; used by the MCP health refresher to
+    /// learn the dynamic name set without exposing `&self.servers`.
+    #[must_use]
+    pub fn server_names(&self) -> Vec<String> {
+        self.servers.keys().cloned().collect()
+    }
+
     /// FEAT-SH-002 — liveness query for the daemon's MCP health check.
     ///
     /// Returns `true` iff the named server has been initialized AND its

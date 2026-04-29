@@ -120,6 +120,19 @@ impl McpHealthSnapshot {
         self.samples.read().ok()?.get(server_name).cloned()
     }
 
+    /// Iter-9 — snapshot the entire `(name, sample)` map. Returned
+    /// `Vec` is a one-shot copy of `Arc` clones; the caller can
+    /// iterate without holding the inner `RwLock`. Empty vec when
+    /// the lock is poisoned (favours availability over loud
+    /// failure since this is a health-observability path).
+    #[must_use]
+    pub fn entries(&self) -> Vec<(String, Arc<LivenessSample>)> {
+        match self.samples.read() {
+            Ok(g) => g.iter().map(|(k, v)| (k.clone(), Arc::clone(v))).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Test-only / introspection — number of distinct servers tracked.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -252,6 +265,94 @@ pub fn config_presence_status(initialised: bool) -> HealthStatus {
     }
 }
 
+/// Truth-loop iter-9 — aggregate liveness probe over **every**
+/// user-configured stdio MCP server in the snapshot, EXCLUDING
+/// `browser-use` (which has its own dedicated probe via
+/// [`make_browser_use_liveness_probe`]).
+///
+/// Worst-status wins:
+///
+/// - any sample `Failed`     → `Failed { reason: "<first dead> ..." }`
+///   + `RestartMcpServer { server_name: <first dead> }`
+/// - any sample stale (≥ stale window) → `Degraded`
+/// - everything else (or empty / never-refreshed) → `Healthy`
+///
+/// Why aggregate instead of one probe per server? The user can edit
+/// `settings.json` at runtime and `reload_user_mcp_manager_from_disk`
+/// will rebuild the singleton; static per-server registration would
+/// drift. One probe + dynamic snapshot iteration covers every server
+/// the refresher has ever observed.
+#[must_use]
+pub fn make_user_mcp_aggregate_liveness_probe(
+    snapshot: Arc<McpHealthSnapshot>,
+) -> Arc<dyn HealthCheck> {
+    use crate::modules::smart_browser::browser_use_mcp::BROWSER_USE_MCP_SERVER_NAME;
+
+    struct AggregateProbe {
+        snapshot: Arc<McpHealthSnapshot>,
+    }
+
+    impl AggregateProbe {
+        /// Pure helper — extracts the aggregation logic so tests can
+        /// pass synthetic samples without going through the global
+        /// snapshot.
+        fn classify(&self, now_ms: i64) -> (HealthStatus, Option<String>) {
+            let stale_after_ms =
+                i64::try_from(self.snapshot.stale_after().as_millis()).unwrap_or(i64::MAX);
+            let mut worst: HealthStatus = HealthStatus::Healthy;
+            let mut first_dead: Option<String> = None;
+            let mut stale_seen = false;
+            for (name, sample) in self.snapshot.entries() {
+                if name == BROWSER_USE_MCP_SERVER_NAME {
+                    continue;
+                }
+                let (alive, last_ms) = sample.snapshot();
+                if last_ms == 0 {
+                    continue;
+                }
+                let age_ms = now_ms.saturating_sub(last_ms);
+                if age_ms > stale_after_ms {
+                    stale_seen = true;
+                    continue;
+                }
+                if !alive && first_dead.is_none() {
+                    first_dead = Some(name.clone());
+                }
+            }
+            if let Some(dead) = first_dead.clone() {
+                worst = HealthStatus::Failed {
+                    reason: format!("user MCP server '{dead}' process not alive (aggregate probe)"),
+                };
+            } else if stale_seen {
+                worst = HealthStatus::Degraded {
+                    reason: "one or more user MCP server liveness samples stale".to_string(),
+                };
+            }
+            (worst, first_dead)
+        }
+    }
+
+    impl HealthCheck for AggregateProbe {
+        fn name(&self) -> &str {
+            "mcp_user_servers_aggregate"
+        }
+
+        fn check(&self) -> HealthStatus {
+            let now = unix_ms_now();
+            self.classify(now).0
+        }
+
+        fn recovery(&self) -> Option<RecoveryAction> {
+            let now = unix_ms_now();
+            self.classify(now)
+                .1
+                .map(|server_name| RecoveryAction::RestartMcpServer { server_name })
+        }
+    }
+
+    Arc::new(AggregateProbe { snapshot })
+}
+
 /// Truth-loop iter-8 — config-presence probe.
 ///
 /// `Healthy` once `runtime::config::set_current` has installed a real
@@ -356,6 +457,65 @@ mod tests {
             }
             other => panic!("expected Degraded, got {other:?}"),
         }
+    }
+
+    /// Iter-9 — aggregate probe must skip `browser-use` (its own
+    /// dedicated probe owns that name) AND must promote to Failed +
+    /// recommend RestartMcpServer when any user server is dead.
+    #[test]
+    fn aggregate_user_probe_skips_browser_use() {
+        use crate::modules::smart_browser::browser_use_mcp::BROWSER_USE_MCP_SERVER_NAME;
+
+        let snap = fresh_snapshot();
+        // Browser-use dead: aggregate must IGNORE it.
+        snap.record(BROWSER_USE_MCP_SERVER_NAME, false);
+        // User server alive: aggregate must report Healthy overall.
+        snap.record("user-fs", true);
+
+        let probe = make_user_mcp_aggregate_liveness_probe(snap);
+        assert_eq!(probe.check(), HealthStatus::Healthy);
+        assert!(probe.recovery().is_none());
+    }
+
+    #[test]
+    fn aggregate_user_probe_worst_wins_failed() {
+        let snap = fresh_snapshot();
+        snap.record("alpha", true);
+        snap.record("bravo", false);
+        snap.record("charlie", true);
+
+        let probe = make_user_mcp_aggregate_liveness_probe(snap);
+        match probe.check() {
+            HealthStatus::Failed { reason } => {
+                assert!(reason.contains("bravo"), "got: {reason}");
+                assert!(reason.contains("not alive"), "got: {reason}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        match probe.recovery() {
+            Some(RecoveryAction::RestartMcpServer { server_name }) => {
+                assert_eq!(server_name, "bravo");
+            }
+            other => panic!("expected RestartMcpServer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregate_user_probe_stale_yields_degraded() {
+        // Tiny stale window so we can assert without long sleeps.
+        let snap = Arc::new(McpHealthSnapshot::new(Duration::from_millis(1)));
+        snap.record("alpha", true);
+        std::thread::sleep(Duration::from_millis(10));
+
+        let probe = make_user_mcp_aggregate_liveness_probe(snap);
+        match probe.check() {
+            HealthStatus::Degraded { reason } => {
+                assert!(reason.contains("stale"), "got: {reason}");
+            }
+            other => panic!("expected Degraded, got {other:?}"),
+        }
+        // Stale ≠ failed, so no recovery triggered.
+        assert!(probe.recovery().is_none());
     }
 
     #[test]

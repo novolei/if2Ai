@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod mcp_client;
 pub mod mcp_health;
 pub mod mcp_stdio;
+pub mod mcp_workbench;
 pub mod oauth;
 pub mod pending_permission;
 pub mod permissions;

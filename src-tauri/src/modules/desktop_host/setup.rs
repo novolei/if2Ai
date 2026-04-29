@@ -40,6 +40,7 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     register_evolution_probes_for_app(app);
     install_persistent_knowledge_store();
     spawn_mcp_health_refresher();
+    spawn_user_mcp_health_refresher();
     resolve_bundled_skills(app);
     install_system_tray(app)?;
     install_main_window_policy(app);
@@ -261,6 +262,65 @@ fn spawn_mcp_health_refresher() {
     } else {
         tracing::warn!(
             "[mcp_health] no current Tokio runtime at refresher spawn site; skipping background task"
+        );
+    }
+}
+
+/// Truth-loop iter-9 — analogue of [`spawn_mcp_health_refresher`]
+/// for the user-MCP singleton (`runtime::mcp_workbench`). Polls the
+/// dynamic server-name set learned from the manager itself, so a
+/// settings reload (which swaps the inner `McpServerManager`) is
+/// picked up automatically on the next tick.
+///
+/// Same kill switch (`IF2AI_DISABLE_MCP_HEALTH=1`) and same 100ms
+/// lock timeout as the browser-use refresher; if a workbench
+/// command is mid-call, we skip this tick.
+fn spawn_user_mcp_health_refresher() {
+    use crate::modules::runtime::mcp_health::global_mcp_health;
+    use crate::modules::runtime::mcp_workbench::global_user_mcp_manager;
+    use std::time::Duration;
+
+    if std::env::var("IF2AI_DISABLE_MCP_HEALTH")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    const INTERVAL: Duration = Duration::from_secs(30);
+    const LOCK_TIMEOUT: Duration = Duration::from_millis(100);
+    let snapshot = global_mcp_health();
+
+    let task = async move {
+        let mut ticker = tokio::time::interval(INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let arc = global_user_mcp_manager();
+            let lock_result = tokio::time::timeout(LOCK_TIMEOUT, arc.lock()).await;
+            let mut guard = match lock_result {
+                Ok(g) => g,
+                Err(_) => {
+                    tracing::debug!(
+                        "[mcp_health] skip user-mcp tick: workbench manager held > {}ms",
+                        LOCK_TIMEOUT.as_millis()
+                    );
+                    continue;
+                }
+            };
+            let names = guard.server_names();
+            for name in names {
+                let alive = guard.is_server_process_alive(&name);
+                snapshot.record(&name, alive);
+            }
+        }
+    };
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::spawn(task);
+    } else {
+        tracing::warn!(
+            "[mcp_health] no current Tokio runtime at user-mcp refresher spawn site; skipping background task"
         );
     }
 }
@@ -490,6 +550,19 @@ fn install_system_tray(app: &App) -> tauri::Result<()> {
                     }
                 }
                 HostTrayAction::Quit => {
+                    // iter-9 — best-effort graceful teardown of any
+                    // user-MCP stdio children spawned through the
+                    // process-wide singleton. 2s budget so a stuck
+                    // child cannot hold up the Quit path; orphan
+                    // children would otherwise be reaped by the OS
+                    // when `app.exit` ends the parent.
+                    let _ = tauri::async_runtime::block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            crate::modules::runtime::mcp_workbench::shutdown_user_mcp_manager(),
+                        )
+                        .await
+                    });
                     cleanup_processes();
                     app.exit(0);
                 }

@@ -599,6 +599,25 @@ fn mcp_workbench_load_config() -> Result<crate::modules::runtime::config::Runtim
         .map_err(|e| e.to_string())
 }
 
+/// Truth-loop iter-9 — DEPRECATED: use
+/// [`crate::modules::runtime::mcp_workbench::global_user_mcp_manager`]
+/// instead.  This per-call factory was the source of three problems
+/// the global singleton solves:
+///
+/// 1. Each call respawned every stdio MCP child (slow + lost daemon
+///    visibility into liveness).
+/// 2. Each call ended with `manager.shutdown().await`, killing the
+///    children before the next call could reuse them.
+/// 3. The self-healing daemon could never observe MCP child health
+///    because no MCP process lived long enough to be polled.
+///
+/// Kept for one release cycle so any out-of-tree caller surfaces a
+/// clear deprecation warning instead of a hard breakage.
+#[deprecated(
+    since = "0.13.0",
+    note = "iter-9: use runtime::mcp_workbench::global_user_mcp_manager() — owns lifecycle, dedups browser-use, lets the daemon observe liveness"
+)]
+#[allow(dead_code)]
 fn mcp_workbench_manager() -> Result<McpServerManager, McpWorkbenchErrorDto> {
     let config = mcp_workbench_load_config()
         .map_err(|error| mcp_workbench_error("load_config", None, error))?;
@@ -982,6 +1001,23 @@ pub fn get_mcp_service_config() -> Result<McpServiceConfig, String> {
 #[tauri::command]
 pub fn set_mcp_service_config(request: McpServiceConfigInput) -> Result<McpServiceConfig, String> {
     write_user_mcp_services_file(&request)?;
+    // iter-9 — settings just changed on disk; rebuild the
+    // process-wide user-MCP manager so the next workbench command
+    // picks up the new server map (matching the pre-iter-9
+    // "fresh per call" behaviour, but driven by an explicit
+    // reload signal instead of repeated disk reads).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    tauri::async_runtime::spawn(async move {
+        match crate::modules::runtime::mcp_workbench::reload_user_mcp_manager_from_disk(&cwd).await
+        {
+            Ok(n) => {
+                tracing::info!("[mcp-workbench] iter-9 reload: now managing {n} user MCP server(s)")
+            }
+            Err(e) => {
+                tracing::warn!("[mcp-workbench] iter-9 reload after settings write failed: {e}")
+            }
+        }
+    });
     get_mcp_service_config()
 }
 
@@ -1006,7 +1042,11 @@ pub fn mcp_workbench_list_servers() -> Result<Vec<McpWorkbenchServerDto>, McpWor
 #[tauri::command]
 pub async fn mcp_workbench_discover() -> Result<McpWorkbenchDiscoveryDto, McpWorkbenchErrorDto> {
     let started_at = Instant::now();
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: process-wide singleton; lifecycle owned by
+    // `runtime::mcp_workbench`. NO per-call `shutdown()` — children
+    // stay alive across calls so the daemon can observe them.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let unsupported_servers = mcp_workbench_unsupported_server_dtos(manager.unsupported_servers());
     let discovery = async {
         let tools = manager.discover_tools().await?;
@@ -1021,8 +1061,6 @@ pub async fn mcp_workbench_discover() -> Result<McpWorkbenchDiscoveryDto, McpWor
     }
     .await
     .map_err(|error| mcp_workbench_manager_error("discover", None, error));
-
-    let _ = manager.shutdown().await;
 
     match discovery {
         Ok(discovery) => {
@@ -1055,7 +1093,9 @@ pub async fn mcp_workbench_call_tool(
 ) -> Result<McpWorkbenchToolCallDto, McpWorkbenchErrorDto> {
     let started_at = Instant::now();
     let params = request.arguments.clone();
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: see `mcp_workbench_discover` for the singleton rationale.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let result = manager
         .call_tool_discovering(&request.qualified_tool_name, request.arguments)
         .await
@@ -1066,7 +1106,6 @@ pub async fn mcp_workbench_call_tool(
                 error,
             )
         });
-    let _ = manager.shutdown().await;
 
     match result {
         Ok(response) => {
@@ -1129,12 +1168,13 @@ pub async fn mcp_workbench_call_tool(
 pub async fn mcp_workbench_list_resources(
 ) -> Result<Vec<McpWorkbenchResourceDto>, McpWorkbenchErrorDto> {
     let started_at = Instant::now();
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: see `mcp_workbench_discover` for the singleton rationale.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let result = manager
         .list_resources()
         .await
         .map_err(|error| mcp_workbench_manager_error("list_resources", None, error));
-    let _ = manager.shutdown().await;
 
     match result {
         Ok(resources) => {
@@ -1164,14 +1204,15 @@ pub async fn mcp_workbench_read_resource(
 ) -> Result<McpWorkbenchReadResourceDto, McpWorkbenchErrorDto> {
     let started_at = Instant::now();
     let params = Some(json!({ "uri": request.uri.clone() }));
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: see `mcp_workbench_discover` for the singleton rationale.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let result = manager
         .read_resource(&request.server_name, &request.uri)
         .await
         .map_err(|error| {
             mcp_workbench_manager_error("read_resource", Some(request.server_name.clone()), error)
         });
-    let _ = manager.shutdown().await;
 
     match result {
         Ok(response) => {
@@ -1234,12 +1275,13 @@ pub async fn mcp_workbench_read_resource(
 pub async fn mcp_workbench_list_prompts() -> Result<Vec<McpWorkbenchPromptDto>, McpWorkbenchErrorDto>
 {
     let started_at = Instant::now();
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: see `mcp_workbench_discover` for the singleton rationale.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let result = manager
         .list_prompts()
         .await
         .map_err(|error| mcp_workbench_manager_error("list_prompts", None, error));
-    let _ = manager.shutdown().await;
 
     match result {
         Ok(prompts) => {
@@ -1269,14 +1311,15 @@ pub async fn mcp_workbench_get_prompt(
 ) -> Result<McpWorkbenchGetPromptDto, McpWorkbenchErrorDto> {
     let started_at = Instant::now();
     let params = request.arguments.clone();
-    let mut manager = mcp_workbench_manager()?;
+    // iter-9: see `mcp_workbench_discover` for the singleton rationale.
+    let manager_arc = crate::modules::runtime::mcp_workbench::global_user_mcp_manager();
+    let mut manager = manager_arc.lock().await;
     let result = manager
         .get_prompt(&request.server_name, &request.name, request.arguments)
         .await
         .map_err(|error| {
             mcp_workbench_manager_error("get_prompt", Some(request.server_name.clone()), error)
         });
-    let _ = manager.shutdown().await;
 
     match result {
         Ok(response) => {
