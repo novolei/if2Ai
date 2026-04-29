@@ -391,6 +391,13 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 ### 1.3 2026-04-28 全栈代码重新扫描：实现现状对照
 
+> ⚠️ **2026-04-30 校准注**：本节快照早于 commit `aa2deed`（"land complete 41-pack rollout"）。
+> 当前真值参见 [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md)
+> 与 [`docs/superpowers/plans/2026-04-30-agent-evolution-truth-loop.md`](../../docs/superpowers/plans/2026-04-30-agent-evolution-truth-loop.md)。
+> 本节下方的「❌ 待实现」/「🟡 部分」标记仅作为历史；模块 A/B/D/G/J/L 的算法/类型/调用站均已落地，
+> 余下断层是 4 个 `landed-stub`（DW-001/DW-002/DW-004/WU-002）等待 iteration 3 的
+> `WU-009-deep-utility-handle-threading` Pack 串入真实 `UtilityLlm` / `ProviderManager` / `KnowledgeStore` handle。
+
 > 用户对 codebase 做了大量代码更新后，进行全栈重新扫描。以下对照每个 spec 模块的**设计目标 vs 实际代码实现**。
 
 #### 后端扫描摘要（~149K LOC Rust，227 个 .rs 文件）
@@ -1699,6 +1706,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Part 6: P0~P2 差距点 → 模块 → Pack 完整追溯矩阵
 
 > 确保 Part 1 中识别的每一个差距点都在 Part 2 和 Part 3 中被完整覆盖，且贯通 Part 0 的十二大设计原则。
+>
+> ⚠️ **2026-04-30 校准注**：下表 ✅ = "Pack 落地 + 算法存在"。**实际生产路径深度**以
+> [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md) §3 为准。
+> 其中差距 **#1 / #5 / #7（域知识）** 对应的 4 个 wire-up Pack（DW-001/DW-002/DW-004/WU-002）当前为
+> `landed-stub`（call-site 已接通，但 LLM/Provider/Store/Probe 是占位）。完成 iteration 3 的
+> `WU-009-deep-utility-handle-threading` 后这 4 个状态格才能从 ✅ 升级为真生产闭环。
 
 | # | 差距点 | 优先级 | Harness 原则 | 覆盖模块 | 实施 Pack(s) | 状态 |
 |---|--------|--------|------------|----------|-------------|------|

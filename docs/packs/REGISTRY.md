@@ -4,7 +4,7 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-29
+> 最后更新: 2026-04-30 (Truth Loop iter-2 — WU/DW/UI 状态对齐到 [gap report 2026-04-30](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md))
 
 ---
 
@@ -376,14 +376,17 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 
 | 顺序 | Pack                                                                                      | 状态   | Goal                                                                      | 依赖         |
 | ---- | ----------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- | ------------ |
-| 1    | [WU-001](./feature/agent-evolution-wireup/WU-001-evolution-emitter-infrastructure.md)     | active | Evolution emitter 基础设施（`evolution_emitter.rs` + `App.tsx` listener） | FEAT-INT-001 |
-| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | active | Daemon 探针注册（SH-002/003 provider + MCP + browser liveness）           | WU-001       |
-| 3    | [WU-003](./feature/agent-evolution-wireup/WU-003-stream-finalize-sedimentation-hooks.md)  | active | Stream finalize 沉淀钩子（SE-001/002/004 + DK-002/003）                   | WU-001       |
-| 4    | [WU-004](./feature/agent-evolution-wireup/WU-004-stream-preflight-injection.md)           | active | Stream preflight 注入（TE-002/003 + DK-002 checkpoint）                   | WU-001       |
-| 5    | [WU-005](./feature/agent-evolution-wireup/WU-005-self-edit-background-scanner.md)         | active | Self-edit 后台扫描器（AE-001/002/003 周期性扫描）                         | WU-001       |
-| 6    | [WU-006](./feature/agent-evolution-wireup/WU-006-browser-simplify-coordinate-strategy.md) | active | Browser 工具简化 + 坐标策略（BR-001/002）                                 | WU-001       |
-| 7    | [WU-007](./feature/agent-evolution-wireup/WU-007-tool-alias-redirect.md)                  | active | Tool alias 重定向（BR-003 resolve_alias → broker）                        | FEAT-BR-003  |
-| 8    | [WU-008](./feature/agent-evolution-wireup/WU-008-domain-knowledge-lookup.md)              | active | Domain knowledge lookup（DK-001 → PromptContribution）                    | WU-001       |
+| 1    | [WU-001](./feature/agent-evolution-wireup/WU-001-evolution-emitter-infrastructure.md)     | **done** | Evolution emitter 基础设施（`evolution_emitter.rs` + `App.tsx` listener） | FEAT-INT-001 |
+| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | active¹ | Daemon 探针注册（SH-002/003 provider + MCP + browser liveness）           | WU-001       |
+| 3    | [WU-003](./feature/agent-evolution-wireup/WU-003-stream-finalize-sedimentation-hooks.md)  | **done** | Stream finalize 沉淀钩子（SE-001/002/004 + DK-002/003）                   | WU-001       |
+| 4    | [WU-004](./feature/agent-evolution-wireup/WU-004-stream-preflight-injection.md)           | active¹ | Stream preflight 注入（TE-002/003 + DK-002 checkpoint）                   | WU-001       |
+| 5    | [WU-005](./feature/agent-evolution-wireup/WU-005-self-edit-background-scanner.md)         | active¹ | Self-edit 后台扫描器（AE-001/002/003 周期性扫描）                         | WU-001       |
+| 6    | [WU-006](./feature/agent-evolution-wireup/WU-006-browser-simplify-coordinate-strategy.md) | **done** | Browser 工具简化 + 坐标策略（BR-001/002）                                 | WU-001       |
+| 7    | [WU-007](./feature/agent-evolution-wireup/WU-007-tool-alias-redirect.md)                  | active² | Tool alias 重定向（BR-003 resolve_alias → broker）                        | FEAT-BR-003  |
+| 8    | [WU-008](./feature/agent-evolution-wireup/WU-008-domain-knowledge-lookup.md)              | active¹ | Domain knowledge lookup（DK-001 → PromptContribution）                    | WU-001       |
+
+> ¹ `landed-stub` per [gap report 2026-04-30](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md): helper + emit + call-site 已交付，但生产依赖（`UtilityLlm` / `ProviderManager` / `KnowledgeStore`）仍是 `MockX::empty` / `StubX` 占位。Iteration 3 的 `WU-009-deep-utility-handle-threading` Pack 收口。
+> ² `WU-007` audit 待 iteration 4 重审（alias 表存在但 broker 调用站未在 iter-1 详查）。
 
 > **依赖关系**：WU-001 → {WU-002, WU-003, WU-004, WU-005, WU-006, WU-008} 可并行；WU-007 独立（不依赖 WU-001）。  
 > **推荐执行顺序**：WU-001 → WU-007（独立可同步推进）→ WU-002 → WU-006 → WU-004 → WU-003 → WU-005 → WU-008。
@@ -394,11 +397,13 @@ WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所�
 
 | 顺序 | Pack                                                                                            | 状态   | Goal                                                           | 依赖              |
 | ---- | ----------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------- | ----------------- |
-| 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)                   | active | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005    |
-| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md)            | active | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004    |
-| 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md)            | active | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003    |
-| 4    | [DW-004](./feature/agent-evolution-wireup/DW-004-work-loop-dk-lookup.md)                       | active | work_loop::resolve_skill_plan 内调 lookup_for_skill_resolution | WU-001, WU-008    |
-| 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)               | active | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006    |
+| 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)                   | active¹ | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005    |
+| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md)            | active¹ | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004    |
+| 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md)            | **done** | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003    |
+| 4    | [DW-004](./feature/agent-evolution-wireup/DW-004-work-loop-dk-lookup.md)                       | active¹ | work_loop::resolve_skill_plan 内调 lookup_for_skill_resolution | WU-001, WU-008    |
+| 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)               | **done** | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006    |
+
+> ¹ 同上 `landed-stub` 标注（gap report 2026-04-30）。
 
 > **推荐执行顺序**：DW-003 → DW-002（stream hot path 顺序）→ DW-004 → DW-001 → DW-005（可并行）。
 
@@ -408,12 +413,12 @@ WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所�
 
 | 顺序 | Pack                                                                                               | 状态   | Goal                                                                  | 依赖                   |
 | ---- | -------------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------- | ---------------------- |
-| 1    | [UI-001](./feature/agent-evolution-frontend/UI-001-evolution-dev-drawer.md)                       | active | EvolutionDevDrawer 容器 + TelemetryDrawer 挂载（6-Tab 骨架）          | FEAT-INT-001           |
-| 2    | [UI-002](./feature/agent-evolution-frontend/UI-002-daemon-health-dashboard.md)                    | active | DaemonHealthDashboard（daemon_health 表格）                           | UI-001, FEAT-INT-001   |
-| 3    | [UI-003](./feature/agent-evolution-frontend/UI-003-compression-history-table.md)                  | active | CompressionHistoryTable + ContextBar 摘要行                           | UI-001, FEAT-INT-001   |
-| 4    | [UI-004](./feature/agent-evolution-frontend/UI-004-skill-sedimentation-timeline.md)               | active | SkillSedimentationTimeline（skill_sedimented 时间轴 + chip）          | UI-001, FEAT-INT-001   |
-| 5    | [UI-005](./feature/agent-evolution-frontend/UI-005-self-edit-proposal-and-verdict.md)             | active | SelfEditPanel（2-Tab：ProposalList + VerdictList）                    | UI-001, FEAT-INT-001   |
-| 6    | [UI-006](./feature/agent-evolution-frontend/UI-006-browser-dk-checkpoint-composite.md)            | active | EvolutionMiscPanel（Browser + DK + Checkpoint + ContentSimplified 4合1）| UI-001, FEAT-INT-001 |
+| 1    | [UI-001](./feature/agent-evolution-frontend/UI-001-evolution-dev-drawer.md)                       | **done** | EvolutionDevDrawer 容器 + TelemetryDrawer 挂载（6-Tab 骨架）          | FEAT-INT-001           |
+| 2    | [UI-002](./feature/agent-evolution-frontend/UI-002-daemon-health-dashboard.md)                    | **done** | DaemonHealthDashboard（daemon_health 表格）                           | UI-001, FEAT-INT-001   |
+| 3    | [UI-003](./feature/agent-evolution-frontend/UI-003-compression-history-table.md)                  | **done** | CompressionHistoryTable + ContextBar 摘要行                           | UI-001, FEAT-INT-001   |
+| 4    | [UI-004](./feature/agent-evolution-frontend/UI-004-skill-sedimentation-timeline.md)               | **done** | SkillSedimentationTimeline（skill_sedimented 时间轴 + chip）          | UI-001, FEAT-INT-001   |
+| 5    | [UI-005](./feature/agent-evolution-frontend/UI-005-self-edit-proposal-and-verdict.md)             | **done** | SelfEditPanel（2-Tab：ProposalList + VerdictList）                    | UI-001, FEAT-INT-001   |
+| 6    | [UI-006](./feature/agent-evolution-frontend/UI-006-browser-dk-checkpoint-composite.md)            | **done** | EvolutionMiscPanel（Browser + DK + Checkpoint + ContentSimplified 4合1）| UI-001, FEAT-INT-001 |
 
 > **推荐执行顺序**：UI-001 → {UI-002, UI-003, UI-004, UI-005, UI-006} 可并行。
 
@@ -445,7 +450,7 @@ WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所�
 
 | 文件                                                            |  LOC |
 | --------------------------------------------------------------- | ---: |
-| `src-tauri/src/modules/application/turn_service/stream_task.rs` | 1249 |
+| `src-tauri/src/modules/application/turn_service/stream_task.rs` | 1510 |
 | `src-tauri/src/modules/browser/session.rs`                      | 1408 |
 | `src-tauri/src/modules/memory/audit.rs`                         | 1094 |
 | `src-tauri/src/modules/api/providers/claw_provider.rs`          | 1223 |
