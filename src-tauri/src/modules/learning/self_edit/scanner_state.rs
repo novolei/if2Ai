@@ -24,6 +24,17 @@ pub struct ScannerTickInput {
 
 /// Load the `max_reports` most recent reports from `store` and derive
 /// rolling-window stats.  Returns all-zero on missing / unreadable store.
+///
+/// # Failure Rate
+///
+/// Only `TaskOutcome::Failed` increments `failure_rate`.
+/// `PartialSuccess` and `Incomplete` are treated as non-failures for
+/// promotion purposes: partial success is acceptable regression, and
+/// incomplete turns are ambiguous (cancelled, interrupted).
+///
+/// NOTE: Internally calls `store.list()` then `store.load()` per entry, so
+/// each report incurs 2× disk reads. A `list_full()` store API would halve
+/// I/O; deferred for now.
 pub async fn load_scanner_tick_input(
     store: &HarnessReportStore,
     max_reports: usize,
@@ -126,6 +137,25 @@ mod tests {
         }
         let input = load_scanner_tick_input(&store, 20).await;
         assert_eq!(input.sample_size, 3);
+        assert!((input.failure_rate - 1.0_f32 / 3.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn partial_success_and_incomplete_are_not_counted_as_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = HarnessReportStore::new(tmp.path());
+        for (id, outcome) in [
+            ("r1", TaskOutcome::PartialSuccess),
+            ("r2", TaskOutcome::Incomplete),
+            ("r3", TaskOutcome::Failed),
+        ] {
+            let mut r = HarnessRunReport::new_empty(id, chrono::Utc::now());
+            r.task.outcome = outcome;
+            store.save(&r).await.unwrap();
+        }
+        let input = load_scanner_tick_input(&store, 20).await;
+        assert_eq!(input.sample_size, 3);
+        // Only r3 (Failed) counts; r1 (PartialSuccess) and r2 (Incomplete) do not.
         assert!((input.failure_rate - 1.0_f32 / 3.0).abs() < 0.01);
     }
 
