@@ -49,3 +49,6 @@ harness/__pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
+
+# Superpowers worktrees
+.worktrees/
