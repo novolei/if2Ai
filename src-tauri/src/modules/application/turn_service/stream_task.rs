@@ -547,13 +547,19 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
 
         // DW-002 — call the WU-004 digester before preflight so that
         // long histories get LLM-summarized into a tighter token
-        // footprint. Placeholder LLM (`MockUtilityLlm::empty`) means
-        // the digester returns identity in production until a deeper
-        // wiring Pack plumbs `ChatProviderUtilityLlm` through here.
+        // footprint. **Truth-loop iter-3 (2026-04-30)**: swapped the
+        // `MockUtilityLlm::empty` placeholder for `ChatProviderUtilityLlm`
+        // so the digester actually compresses against the user's
+        // configured chat provider. `if2ai_data_root()` is the same
+        // process-wide workdir `bootstrap/memory.rs` uses; the shim
+        // lazily resolves the provider per call so config edits take
+        // effect on the next iteration without restart.
         // Failure-isolated: any error → `digested_messages = None`.
         let digested_owned: Option<Vec<crate::modules::api::InputMessage>> = {
             let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-                std::sync::Arc::new(crate::modules::memory::MockUtilityLlm::empty());
+                std::sync::Arc::new(crate::modules::memory::ChatProviderUtilityLlm::new(
+                    crate::modules::config::store::if2ai_data_root(),
+                ));
             super::preflight_hooks::digest_messages_for_preflight(&session_messages, llm).await
         };
         if let Some(ref kept) = digested_owned {

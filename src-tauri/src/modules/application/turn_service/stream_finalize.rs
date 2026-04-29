@@ -1174,16 +1174,14 @@ struct EvolutionFinalizeArgs {
 /// it never bubbles back into the turn's main flow (which has
 /// already returned by the time these run).
 ///
-/// Production note: the LLM handle used for sedimentation +
-/// domain-knowledge contributor is a `MockUtilityLlm::empty()`
-/// placeholder (yields no drafts / no candidates) until a future
-/// wire-up Pack plumbs `ChatProviderUtilityLlm` through. The
-/// spawn pipeline + emit path are nevertheless exercised every
-/// turn, so the contract surface (events on the wire, store ring
-/// buffers populated for any caller that DOES wire an LLM) is
-/// already validated end-to-end.
+/// **Truth-loop iter-3 (2026-04-30)**: sedimentation + domain-knowledge
+/// contributor now run against the real `ChatProviderUtilityLlm`
+/// (same shim `bootstrap/memory.rs` binds for rolling summary /
+/// reflection). Drafts and knowledge candidates are real LLM output;
+/// the spawn pipeline + emit path remain failure-isolated so
+/// provider downtime degrades gracefully to "no drafts this turn".
 fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
-    use crate::modules::memory::MockUtilityLlm;
+    use crate::modules::memory::ChatProviderUtilityLlm;
     use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
     use crate::modules::runtime::evolution_emitter::emit_evolution_event;
 
@@ -1224,14 +1222,16 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
         );
     }
 
-    // (1) Sedimentation pipeline — spawn with placeholder LLM.
+    // (1) Sedimentation pipeline — real chat-provider LLM (iter-3).
     {
         let session_id = session_id.clone();
         let history = history.clone();
         let app_handle = app_handle.clone();
         tokio::spawn(async move {
             let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
-                Arc::new(MockUtilityLlm::empty());
+                Arc::new(ChatProviderUtilityLlm::new(
+                    crate::modules::config::store::if2ai_data_root(),
+                ));
             let drafts =
                 super::finalize_hooks::run_sedimentation_pipeline(&history, llm).await;
             for draft in drafts {
@@ -1256,14 +1256,16 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
         });
     }
 
-    // (3) Domain-knowledge contributor — spawn with placeholder LLM.
+    // (3) Domain-knowledge contributor — real chat-provider LLM (iter-3).
     {
         let session_id = session_id.clone();
         let history = history.clone();
         let app_handle = app_handle.clone();
         tokio::spawn(async move {
             let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
-                Arc::new(MockUtilityLlm::empty());
+                Arc::new(ChatProviderUtilityLlm::new(
+                    crate::modules::config::store::if2ai_data_root(),
+                ));
             let candidates =
                 super::finalize_hooks::run_domain_knowledge_contributor(&history, llm).await;
             for entry in candidates {
