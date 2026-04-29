@@ -239,8 +239,7 @@ mod tests {
 
     #[test]
     fn mini_index_respects_token_budget() {
-        let big_payload =
-            serde_json::Value::String("x".repeat(50_000));
+        let big_payload = serde_json::Value::String("x".repeat(50_000));
         let messages: Vec<InputMessage> = (0..30)
             .map(|i| {
                 assistant_tool_use(

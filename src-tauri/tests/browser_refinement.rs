@@ -44,10 +44,7 @@ fn test_filter_script_style_removed() {
         "<script> tag must be filtered, got: {}",
         out.html
     );
-    assert!(
-        !out.html.contains("<style"),
-        "<style> tag must be filtered"
-    );
+    assert!(!out.html.contains("<style"), "<style> tag must be filtered");
     assert!(!out.html.contains("alert("));
 }
 
@@ -55,7 +52,11 @@ fn test_filter_script_style_removed() {
 fn test_preserve_main_and_form() {
     let cfg = SimplifierConfig::default();
     let out = simplify_html(SAMPLE_HTML, &cfg);
-    assert!(out.html.contains("<main"), "main must be preserved: {}", out.html);
+    assert!(
+        out.html.contains("<main"),
+        "main must be preserved: {}",
+        out.html
+    );
     assert!(out.html.contains("<form"), "form must be preserved");
     assert!(out.html.contains("<input"), "input must be preserved");
     assert!(
@@ -68,7 +69,9 @@ fn test_preserve_main_and_form() {
 fn test_35k_hard_limit() {
     let mut huge = String::from("<html><body><main>");
     for i in 0..5000 {
-        huge.push_str(&format!("<p>paragraph number {i} with some real text content</p>"));
+        huge.push_str(&format!(
+            "<p>paragraph number {i} with some real text content</p>"
+        ));
     }
     huge.push_str("</main></body></html>");
     let cfg = SimplifierConfig::default();
@@ -134,11 +137,7 @@ fn screenshot_with_button() -> ScreenshotAnalysis {
 #[test]
 fn test_coordinate_click_preferred_with_screenshot() {
     let screenshot = screenshot_with_button();
-    let decision = decide_interaction(
-        "submit button",
-        Some(&screenshot),
-        &["#submit".to_string()],
-    );
+    let decision = decide_interaction("submit button", Some(&screenshot), &["#submit".to_string()]);
     match decision.strategy {
         InteractionStrategy::CoordinateClick { x, y, .. } => {
             assert!((x - 140.0).abs() < 1e-6);
@@ -150,11 +149,7 @@ fn test_coordinate_click_preferred_with_screenshot() {
 
 #[test]
 fn test_css_selector_fallback_no_screenshot() {
-    let decision = decide_interaction(
-        "submit button",
-        None,
-        &["#submit".to_string()],
-    );
+    let decision = decide_interaction("submit button", None, &["#submit".to_string()]);
     match decision.strategy {
         InteractionStrategy::CssSelector { selector, .. } => {
             assert_eq!(selector, "#submit");
@@ -166,11 +161,7 @@ fn test_css_selector_fallback_no_screenshot() {
 #[test]
 fn test_fallback_chain_order() {
     let screenshot = screenshot_with_button();
-    let decision = decide_interaction(
-        "submit button",
-        Some(&screenshot),
-        &["#submit".to_string()],
-    );
+    let decision = decide_interaction("submit button", Some(&screenshot), &["#submit".to_string()]);
     assert_eq!(decision.fallback_chain.len(), 3);
     assert!(matches!(
         decision.fallback_chain[0],

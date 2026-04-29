@@ -1228,12 +1228,10 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
         let history = history.clone();
         let app_handle = app_handle.clone();
         tokio::spawn(async move {
-            let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
-                Arc::new(ChatProviderUtilityLlm::new(
-                    crate::modules::config::store::if2ai_data_root(),
-                ));
-            let drafts =
-                super::finalize_hooks::run_sedimentation_pipeline(&history, llm).await;
+            let llm: Arc<dyn crate::modules::memory::UtilityLlm> = Arc::new(
+                ChatProviderUtilityLlm::new(crate::modules::config::store::if2ai_data_root()),
+            );
+            let drafts = super::finalize_hooks::run_sedimentation_pipeline(&history, llm).await;
             for draft in drafts {
                 let payload = serde_json::json!({
                     "name": draft.name,
@@ -1262,14 +1260,12 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
         let history = history.clone();
         let app_handle = app_handle.clone();
         tokio::spawn(async move {
-            let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
-                Arc::new(ChatProviderUtilityLlm::new(
-                    crate::modules::config::store::if2ai_data_root(),
-                ));
+            let llm: Arc<dyn crate::modules::memory::UtilityLlm> = Arc::new(
+                ChatProviderUtilityLlm::new(crate::modules::config::store::if2ai_data_root()),
+            );
             let candidates =
                 super::finalize_hooks::run_domain_knowledge_contributor(&history, llm).await;
-            let dk_store =
-                crate::modules::skills::domain_knowledge::global_knowledge_store();
+            let dk_store = crate::modules::skills::domain_knowledge::global_knowledge_store();
             for entry in candidates {
                 // DW-004/WU-008: persist into the process-wide store so the DK
                 // lookup hook in work_loop sees it on the very next turn.

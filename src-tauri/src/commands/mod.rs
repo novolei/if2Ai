@@ -105,10 +105,13 @@ pub struct AppState {
     /// calls through this `Arc<dyn UtilityLlm>` so the memory modules
     /// stay decoupled from `crate::modules::api::providers::*`.
     ///
-    /// `allow(dead_code)`: first consumer lands in 8A.7
-    /// (`RollingSummarizer`); held here from 8A.5 so subsequent slices
-    /// only need to read `state.utility_llm`.
-    #[allow(dead_code)]
+    /// As of truth-loop iter-7 (DW-002 plumbing), this handle is also
+    /// threaded through `TurnServiceDeps` → `StreamTaskInputs` so the
+    /// preflight digester reuses one shared `Arc<dyn UtilityLlm>`
+    /// instead of constructing a new `ChatProviderUtilityLlm` per
+    /// outer-loop iteration. The `#[allow(dead_code)]` was removed in
+    /// the same change because the field now has live consumers in
+    /// both the memory subsystems and the streaming turn pipeline.
     pub utility_llm: Arc<dyn UtilityLlm>,
 
     /// Phase 8A.5 — session-summary store backed by SQLite + JSON

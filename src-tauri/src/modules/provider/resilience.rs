@@ -111,6 +111,12 @@ impl StreamCircuitState {
     fn record_success(&mut self) {
         self.consecutive_failures = 0;
         self.open_until = None;
+        // Module C (truth-loop iter-7) — mirror the success into the
+        // process-wide `ProviderCircuitState` singleton so the
+        // self-healing daemon's `ProviderCircuitProbe` sees a real
+        // recovery signal. No-op until something else has consulted
+        // `global_provider_circuit()` (lazy init).
+        crate::modules::api::resilience::global_provider_circuit().record_success();
     }
 
     fn record_failure(&mut self, cfg: &LlmResilienceConfig) {
@@ -122,6 +128,12 @@ impl StreamCircuitState {
             self.open_until = Some(Instant::now() + cfg.circuit_recovery);
             self.consecutive_failures = 0;
         }
+        // Module C (truth-loop iter-7) — see `record_success`. We
+        // mirror EVERY failure (independent of `circuit_enabled`'s
+        // local recovery branch) so the daemon-side probe can still
+        // surface `Degraded` even when the per-stream breaker is
+        // configured off.
+        crate::modules::api::resilience::global_provider_circuit().record_failure();
     }
 }
 

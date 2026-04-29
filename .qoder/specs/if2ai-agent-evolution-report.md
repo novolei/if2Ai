@@ -251,15 +251,15 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 ### 0.3 设计哲学的融合：If2Ai = Browser-Harness × GenericAgent
 
-| 维度 | Browser-Harness | GenericAgent | If2Ai 理想状态 |
-|------|----------------|-------------|---------------|
-| **底座** | CDP 直连 + daemon 自愈 | L0-L4 分层记忆 + 自动 skill 沉淀 | SmartBrowser 3 后端 + Daemon 自愈 (Module C) |
-| **自由** | Agent 编辑 helpers.py | Agent 遵循 SOP | Agent 在宪法边界内自编辑 (Module D+E) |
-| **知识** | 领域技能 Markdown (静态) | 自动 skill 卡片 (动态) | 域知识 + 自动沉淀 + 向量搜索 (Module B+G+I) |
-| **上下文** | ~5K tokens (极简) | <30K tokens (分层注入) | ~30K tokens 目标 (Module A+H) |
-| **交互** | 坐标优先 + 截图驱动 | 无浏览器 | 坐标优先降级链 + HTML 简化 (Module J+L) |
-| **可靠性** | 进程级自愈 | 3-strike 升级 | Daemon 自愈 + 分级升级 (Module C+AE-003) |
-| **记忆** | deque(500) 事件缓冲 | 5 层记忆 (L0-L4) | 4 层预算 + 宪法 + checkpoint + 验证门 (Module D+H+K) |
+| 维度       | Browser-Harness          | GenericAgent                     | If2Ai 理想状态                                       |
+| ---------- | ------------------------ | -------------------------------- | ---------------------------------------------------- |
+| **底座**   | CDP 直连 + daemon 自愈   | L0-L4 分层记忆 + 自动 skill 沉淀 | SmartBrowser 3 后端 + Daemon 自愈 (Module C)         |
+| **自由**   | Agent 编辑 helpers.py    | Agent 遵循 SOP                   | Agent 在宪法边界内自编辑 (Module D+E)                |
+| **知识**   | 领域技能 Markdown (静态) | 自动 skill 卡片 (动态)           | 域知识 + 自动沉淀 + 向量搜索 (Module B+G+I)          |
+| **上下文** | ~5K tokens (极简)        | <30K tokens (分层注入)           | ~30K tokens 目标 (Module A+H)                        |
+| **交互**   | 坐标优先 + 截图驱动      | 无浏览器                         | 坐标优先降级链 + HTML 简化 (Module J+L)              |
+| **可靠性** | 进程级自愈               | 3-strike 升级                    | Daemon 自愈 + 分级升级 (Module C+AE-003)             |
+| **记忆**   | deque(500) 事件缓冲      | 5 层记忆 (L0-L4)                 | 4 层预算 + 宪法 + checkpoint + 验证门 (Module D+H+K) |
 
 ### 0.4 对 If2Ai 架构实施的指导意义
 
@@ -275,85 +275,85 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 ### 1.1 项目概览
 
-| 维度 | Browser-Harness | GenericAgent | If2Ai |
-|------|----------------|-------------|-------|
-| **规模** | ~1,300 行 Python | ~3,600 行 Python | 数万行 Rust + TypeScript |
-| **架构哲学** | 极简零框架，CDP 直连 | 极简自进化，分层记忆 | 完整应用框架，投影驱动 |
-| **核心卖点** | Agent 可编辑代码自修复 | 每次任务自动沉淀 Skill | 事件溯源 + 投影驱动桌面 UX |
-| **依赖** | 3 个 (cdp-use, fetch-use, websockets) | 极少 (requests, streamlit) | Tauri 2 + Rust 生态 |
-| **目标用户** | 高级开发者/Agent 构建者 | 个人用户/多端接入 | 桌面 Agent 用户 |
+| 维度         | Browser-Harness                       | GenericAgent               | If2Ai                      |
+| ------------ | ------------------------------------- | -------------------------- | -------------------------- |
+| **规模**     | ~1,300 行 Python                      | ~3,600 行 Python           | 数万行 Rust + TypeScript   |
+| **架构哲学** | 极简零框架，CDP 直连                  | 极简自进化，分层记忆       | 完整应用框架，投影驱动     |
+| **核心卖点** | Agent 可编辑代码自修复                | 每次任务自动沉淀 Skill     | 事件溯源 + 投影驱动桌面 UX |
+| **依赖**     | 3 个 (cdp-use, fetch-use, websockets) | 极少 (requests, streamlit) | Tauri 2 + Rust 生态        |
+| **目标用户** | 高级开发者/Agent 构建者               | 个人用户/多端接入          | 桌面 Agent 用户            |
 
 ### 1.2 八维深度对比矩阵
 
 #### 维度 1: Self-Healing & 容错
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **进程级恢复** | Daemon 模式自动重启；PID 锁；心跳探针 | 3-strike 升级到人工 | `self_repair.rs` 仅有 memory-ticker stuck-flag 修复 + broken-tool streak 检测(阈值4)，无进程级 daemon 恢复 | **P0 - 关键差距** |
-| **会话/状态恢复** | Stale session 自动检测重建；Chrome 崩溃→自动重启+恢复标签页 | 每成功一步保存 working checkpoint；重启从最后 checkpoint 恢复 | `resume_cursor` + `CompactionResult` 存在，可中途恢复流，但无崩溃后自动重启 | **P1 - 高** |
-| **Provider 韧性** | 最小化（daemon 重启重试） | 3 次分级重试+模型降级 | `resilience.rs` 有熔断器(5 次失败→30s 冷却)、指数退避、SHA256 缓存、主→备用链路由 | **已覆盖 (If2Ai 领先)** |
-| **工具失败处理** | Agent 编辑 helpers.py 自修复 | 3 次重试→模型降级→ask_user | `record_tool_outcome` 追踪 streak；`REPEATED_TOOL_BATCH_LIMIT=3` 触发终结。无自编辑能力 | **P1 - 高** |
-| **预算/成本守卫** | 无 | Token 预算检查 | `cost_guard.rs` 每日/每小时/每会话限制 | **已覆盖** |
+| 能力              | Browser-Harness                                             | GenericAgent                                                  | If2Ai 现状                                                                                                 | 差距评级                |
+| ----------------- | ----------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------- |
+| **进程级恢复**    | Daemon 模式自动重启；PID 锁；心跳探针                       | 3-strike 升级到人工                                           | `self_repair.rs` 仅有 memory-ticker stuck-flag 修复 + broken-tool streak 检测(阈值4)，无进程级 daemon 恢复 | **P0 - 关键差距**       |
+| **会话/状态恢复** | Stale session 自动检测重建；Chrome 崩溃→自动重启+恢复标签页 | 每成功一步保存 working checkpoint；重启从最后 checkpoint 恢复 | `resume_cursor` + `CompactionResult` 存在，可中途恢复流，但无崩溃后自动重启                                | **P1 - 高**             |
+| **Provider 韧性** | 最小化（daemon 重启重试）                                   | 3 次分级重试+模型降级                                         | `resilience.rs` 有熔断器(5 次失败→30s 冷却)、指数退避、SHA256 缓存、主→备用链路由                          | **已覆盖 (If2Ai 领先)** |
+| **工具失败处理**  | Agent 编辑 helpers.py 自修复                                | 3 次重试→模型降级→ask_user                                    | `record_tool_outcome` 追踪 streak；`REPEATED_TOOL_BATCH_LIMIT=3` 触发终结。无自编辑能力                    | **P1 - 高**             |
+| **预算/成本守卫** | 无                                                          | Token 预算检查                                                | `cost_guard.rs` 每日/每小时/每会话限制                                                                     | **已覆盖**              |
 
 **结论**：If2Ai 有最佳的 Provider 韧性，但关键缺少 *进程 daemon* 和 *agent 自编辑修复* 模式。
 
 #### 维度 2: Self-Evolution & Skill 沉淀
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **任务后自动创建 Skill** | 手动写 skill | 每次任务自动生成 skill 卡片 (步骤+触发条件)，存入 `skills/` | 无自动 skill 创建。Skill 系统仅支持 *发现+管理*(`skills/manager/`, `skills/hub/`)，不支持生成 | **P0 - 关键差距** |
-| **策略注册表** | 无 | 无 | 完整的 `strategy_registry.rs`: Draft→Candidate→Compared→Recommended→Active→RolledBack 生命周期 | **If2Ai 领先** |
-| **反射循环** | 无 | 定期 working-memory 清理 + L4 归档 | `reflection_loop.rs` 每 N turn 运行 LLM 反射；`learned_traits.rs` 蒸馏跨会话反复出现的观察 | **If2Ai 领先** |
-| **Skill 语义搜索** | Markdown 关键词扫描 | 105K+ 预训练技能卡 + 向量相似度搜索 | `skill_find`/`skill_search`/`skill_view` 工具存在。`work_loop.rs` 做关键词 token 匹配评分。无向量/嵌入检索 | **P1 - 高** |
-| **轨迹捕获** | 无 | 仅任务日志 | `trajectory.rs`: ShareGPT JSONL 导出, `TrajectoryCompressor`, `trajectory_score.rs` 多轴评分 | **If2Ai 领先** |
+| 能力                     | Browser-Harness     | GenericAgent                                                | If2Ai 现状                                                                                                 | 差距评级          |
+| ------------------------ | ------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------- |
+| **任务后自动创建 Skill** | 手动写 skill        | 每次任务自动生成 skill 卡片 (步骤+触发条件)，存入 `skills/` | 无自动 skill 创建。Skill 系统仅支持 *发现+管理*(`skills/manager/`, `skills/hub/`)，不支持生成              | **P0 - 关键差距** |
+| **策略注册表**           | 无                  | 无                                                          | 完整的 `strategy_registry.rs`: Draft→Candidate→Compared→Recommended→Active→RolledBack 生命周期             | **If2Ai 领先**    |
+| **反射循环**             | 无                  | 定期 working-memory 清理 + L4 归档                          | `reflection_loop.rs` 每 N turn 运行 LLM 反射；`learned_traits.rs` 蒸馏跨会话反复出现的观察                 | **If2Ai 领先**    |
+| **Skill 语义搜索**       | Markdown 关键词扫描 | 105K+ 预训练技能卡 + 向量相似度搜索                         | `skill_find`/`skill_search`/`skill_view` 工具存在。`work_loop.rs` 做关键词 token 匹配评分。无向量/嵌入检索 | **P1 - 高**       |
+| **轨迹捕获**             | 无                  | 仅任务日志                                                  | `trajectory.rs`: ShareGPT JSONL 导出, `TrajectoryCompressor`, `trajectory_score.rs` 多轴评分               | **If2Ai 领先**    |
 
 **结论**：If2Ai 有最成熟的 *策略治理*（注册表+推广门+轮次），但完全缺少 *生成侧*——将成功任务自动转化为可复用 skill 卡片。这是 GenericAgent 的杀手级特性。
 
 #### 维度 3: Token 效率
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **典型上下文窗口使用** | ~5K (最小化上下文) | <30K (同类的 1/10) | ~120K (`MAX_REQUEST_CHAR_BUDGET=120_000`) | **P0 - 关键差距** |
-| **消息修剪** | Daemon deque(500) 自动封顶 | 消息压缩+修剪管线；分层记忆注入替换原始历史 | `compact.rs` 在 token 阈值做会话压缩；`stream_preflight.rs` 裁剪到 `MAX_REQUEST_MESSAGE_COUNT=180`。但无消息级压缩——完整消息直到被逐出 | **P0 - 关键差距** |
-| **分层注入** | 3 层记忆 | L0(宪法)→L1(迷你索引)→L2(事实)→L3(SOP)→L4(归档)——每 turn 仅注入 ~30 行 L1 | 4 槽预算 (System 10%/Episodic 20%/Semantic 30%/Working 40%，总 4K tokens)。但 working memory 就有 8 turns@1600 tokens，实际请求组装器绕过了预算限制直接用原始消息历史 | **P1 - 高** |
-| **工具结果压缩** | 仅坐标（极小输出） | 工具输出截断+压缩后才加入历史 | `summarize_tool_result_for_model` 存在但截断很粗糙（基于字符数）；无 LLM 辅助结果摘要 | **P1 - 中** |
+| 能力                   | Browser-Harness            | GenericAgent                                                              | If2Ai 现状                                                                                                                                                            | 差距评级          |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **典型上下文窗口使用** | ~5K (最小化上下文)         | <30K (同类的 1/10)                                                        | ~120K (`MAX_REQUEST_CHAR_BUDGET=120_000`)                                                                                                                             | **P0 - 关键差距** |
+| **消息修剪**           | Daemon deque(500) 自动封顶 | 消息压缩+修剪管线；分层记忆注入替换原始历史                               | `compact.rs` 在 token 阈值做会话压缩；`stream_preflight.rs` 裁剪到 `MAX_REQUEST_MESSAGE_COUNT=180`。但无消息级压缩——完整消息直到被逐出                                | **P0 - 关键差距** |
+| **分层注入**           | 3 层记忆                   | L0(宪法)→L1(迷你索引)→L2(事实)→L3(SOP)→L4(归档)——每 turn 仅注入 ~30 行 L1 | 4 槽预算 (System 10%/Episodic 20%/Semantic 30%/Working 40%，总 4K tokens)。但 working memory 就有 8 turns@1600 tokens，实际请求组装器绕过了预算限制直接用原始消息历史 | **P1 - 高**       |
+| **工具结果压缩**       | 仅坐标（极小输出）         | 工具输出截断+压缩后才加入历史                                             | `summarize_tool_result_for_model` 存在但截断很粗糙（基于字符数）；无 LLM 辅助结果摘要                                                                                 | **P1 - 中**       |
 
 **结论**：最大差距。If2Ai 每次请求发送的 token 比必要的多 4-7 倍。GenericAgent 的 L1 "迷你索引 ≤30 行"模式和 Browser-Harness 的最小上下文哲学代表了范式转换。现有 `ContextBudget` 基础设施是正确的抽象——它需要被接入为实际请求组装的 *硬约束*，而不仅是建议。
 
 #### 维度 4: 浏览器自动化
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **后端选项** | CDP 直连（零框架） | Chrome CDP + Extension bridge（保留登录态） | 3 后端: `LocalRustCdp`/`BrowserUseMcp`/`BrowserUseCloud` + 策略驱动升级 | **If2Ai 领先（广度）** |
-| **坐标优先交互** | 坐标点击→标签引用→CSS 选择器（降级链） | 无 | `SmartBrowserCommandKind` 有 Click/TypeText/Scroll 但无坐标优先策略。依赖 browser-use MCP 的元素选择 | **P2 - 中** |
-| **自修复会话** | Stale 标签→自动关闭+重建；Chrome 权限对话→自动引导 | 无 | 无浏览器会话健康监控或自动恢复。`cold_state.rs` 存在但是被动的 | **P1 - 高** |
-| **风险门控** | 无（信任 agent） | 无 | `SmartBrowserRisk` 枚举 + `evaluate_sensitive_action` + `evaluate_cloud_escalation` 策略门 | **If2Ai 领先** |
+| 能力             | Browser-Harness                                    | GenericAgent                                | If2Ai 现状                                                                                           | 差距评级               |
+| ---------------- | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------- |
+| **后端选项**     | CDP 直连（零框架）                                 | Chrome CDP + Extension bridge（保留登录态） | 3 后端: `LocalRustCdp`/`BrowserUseMcp`/`BrowserUseCloud` + 策略驱动升级                              | **If2Ai 领先（广度）** |
+| **坐标优先交互** | 坐标点击→标签引用→CSS 选择器（降级链）             | 无                                          | `SmartBrowserCommandKind` 有 Click/TypeText/Scroll 但无坐标优先策略。依赖 browser-use MCP 的元素选择 | **P2 - 中**            |
+| **自修复会话**   | Stale 标签→自动关闭+重建；Chrome 权限对话→自动引导 | 无                                          | 无浏览器会话健康监控或自动恢复。`cold_state.rs` 存在但是被动的                                       | **P1 - 高**            |
+| **风险门控**     | 无（信任 agent）                                   | 无                                          | `SmartBrowserRisk` 枚举 + `evaluate_sensitive_action` + `evaluate_cloud_escalation` 策略门           | **If2Ai 领先**         |
 
 #### 维度 5: 记忆系统
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **层级深度** | 3 (进程/daemon/文件) | 5 (L0-L4) | 4 槽 (System/Episodic/Semantic/Working) + pinned + learned_traits + reflection + conversation_recall_vector + HRR | **If2Ai 领先（丰富度）** |
-| **宪法层 (L0)** | 无 | 不可变 L0 规则始终注入 | 无"宪法级"记忆层。System prompt 有 identity + scenario 但没有在 prompt 重写时幸存的不可变规则 | **P1 - 高** |
-| **No-exec-no-memory** | 无 | 仅经验证的执行结果进入记忆 | `memory_store` 工具根据 agent 请求写入，不验证执行 | **P2 - 中** |
-| **衰减/驱逐** | Deque 封顶 | 阈值后归档 | Weibull 重要度衰减 (`apply_importance_decay`), 信任评分反馈, 优先级槽驱逐 | **If2Ai 领先** |
-| **语义检索** | 关键词 | 向量相似度 | `VectorMemoryProvider` (FastEmbed + LanceDB) + `conversation_recall_vector.rs` | **If2Ai 领先** |
+| 能力                  | Browser-Harness      | GenericAgent               | If2Ai 现状                                                                                                        | 差距评级                 |
+| --------------------- | -------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| **层级深度**          | 3 (进程/daemon/文件) | 5 (L0-L4)                  | 4 槽 (System/Episodic/Semantic/Working) + pinned + learned_traits + reflection + conversation_recall_vector + HRR | **If2Ai 领先（丰富度）** |
+| **宪法层 (L0)**       | 无                   | 不可变 L0 规则始终注入     | 无"宪法级"记忆层。System prompt 有 identity + scenario 但没有在 prompt 重写时幸存的不可变规则                     | **P1 - 高**              |
+| **No-exec-no-memory** | 无                   | 仅经验证的执行结果进入记忆 | `memory_store` 工具根据 agent 请求写入，不验证执行                                                                | **P2 - 中**              |
+| **衰减/驱逐**         | Deque 封顶           | 阈值后归档                 | Weibull 重要度衰减 (`apply_importance_decay`), 信任评分反馈, 优先级槽驱逐                                         | **If2Ai 领先**           |
+| **语义检索**          | 关键词               | 向量相似度                 | `VectorMemoryProvider` (FastEmbed + LanceDB) + `conversation_recall_vector.rs`                                    | **If2Ai 领先**           |
 
 #### 维度 6: 工具系统
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **工具数量** | 24 个交互原语 | 9 个原子工具 | 40+ 内置 + MCP 可扩展 | **If2Ai 领先（广度）** |
-| **原子性** | 高（纯原语） | 极高（9 个正交工具） | 中等——许多专用变体 (6 记忆工具, 5 cron 工具, 7 skill 工具) | **P2 - 中** |
-| **动态工具注册** | Agent 编辑 `helpers.py`→下次自动加载 | 固定集 | `ToolRegistry` 运行时注册 + MCP stdio/SSE 扩展。但无 agent 自创工具 | **P1 - 高** |
+| 能力             | Browser-Harness                      | GenericAgent         | If2Ai 现状                                                          | 差距评级               |
+| ---------------- | ------------------------------------ | -------------------- | ------------------------------------------------------------------- | ---------------------- |
+| **工具数量**     | 24 个交互原语                        | 9 个原子工具         | 40+ 内置 + MCP 可扩展                                               | **If2Ai 领先（广度）** |
+| **原子性**       | 高（纯原语）                         | 极高（9 个正交工具） | 中等——许多专用变体 (6 记忆工具, 5 cron 工具, 7 skill 工具)          | **P2 - 中**            |
+| **动态工具注册** | Agent 编辑 `helpers.py`→下次自动加载 | 固定集               | `ToolRegistry` 运行时注册 + MCP stdio/SSE 扩展。但无 agent 自创工具 | **P1 - 高**            |
 
 #### 维度 7: Agent 自主性
 
-| 能力 | Browser-Harness | GenericAgent | If2Ai 现状 | 差距评级 |
-|------|----------------|-------------|-----------|---------|
-| **任务规划** | 隐式（skill 引导） | SOP 驱动（L3 记忆提供逐步配方） | `WorkLoopKind` 分类: DirectAnswer/DirectExecute/PlanThenConfirm/AutonomousWork/SpecializedSurface | **基本持平** |
-| **失败升级** | Daemon 重启 | 3 次→模型降级→ask_user | `REPEATED_TOOL_BATCH_LIMIT=3`→强制终结；`max_iterations_reached`→带 resume cursor 结束 | **基本持平** |
-| **域知识编码** | 73 个 Markdown 域技能 + 19 个交互原语 | 105K+ 预训练技能卡 | Skills 模块有 guard (60+ 威胁模式), hub (多源市场), sync。但 skill *内容* 是外部/用户管理的，不是 agent 创作的 | **P1 - 高** |
+| 能力           | Browser-Harness                       | GenericAgent                    | If2Ai 现状                                                                                                     | 差距评级     |
+| -------------- | ------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------ |
+| **任务规划**   | 隐式（skill 引导）                    | SOP 驱动（L3 记忆提供逐步配方） | `WorkLoopKind` 分类: DirectAnswer/DirectExecute/PlanThenConfirm/AutonomousWork/SpecializedSurface              | **基本持平** |
+| **失败升级**   | Daemon 重启                           | 3 次→模型降级→ask_user          | `REPEATED_TOOL_BATCH_LIMIT=3`→强制终结；`max_iterations_reached`→带 resume cursor 结束                         | **基本持平** |
+| **域知识编码** | 73 个 Markdown 域技能 + 19 个交互原语 | 105K+ 预训练技能卡              | Skills 模块有 guard (60+ 威胁模式), hub (多源市场), sync。但 skill *内容* 是外部/用户管理的，不是 agent 创作的 | **P1 - 高**  |
 
 ### 1.3 关键发现总结
 
@@ -369,23 +369,23 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 **If2Ai 的关键差距（需要追加）**：
 
-| 优先级 | 差距 | 参考源 | 对应 Harness 原则 | 影响 |
-|--------|------|--------|-----------------|------|
-| **P0** | Token 效率: 120K→30K | GenericAgent L0-L4 分层注入 + 消息压缩 | #8 最小上下文哲学 | 成本降低 4-7x，幻觉减少，成功率提升 |
-| **P0** | Skill 自动沉淀 | GenericAgent 任务后自动生成 skill 卡片 | #7 技能即文件 / #11 贡献回写 | Agent 能力随使用持续增长 |
-| **P0** | Self-Healing Daemon | Browser-Harness daemon 模式 | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕 | 进程级自动恢复，真正的无人值守 |
-| **P1** | Constitutional Memory (L0) | GenericAgent 不可变行为宪法 | #12 完整自由（有护栏的自由） | Agent 行为一致性的基石 |
-| **P1** | Agent 自编辑工具能力 | Browser-Harness Agent 编辑 helpers.py | #2 Agent 自编辑 Harness / #12 完整自由 | 工具失败时自修复而非放弃 |
-| **P1** | 浏览器会话自修复 | Browser-Harness stale session 自动恢复 | #4 自愈闭环 / #6 连接用户浏览器 | 浏览器崩溃自动恢复 |
-| **P1** | Skill 向量语义搜索 | GenericAgent 105K+ 技能卡 + 向量搜索 | #7 技能即文件（检索升级） | Skill 匹配从关键词升级到语义 |
-| **P1** | 域知识编码+Agent 创作 Skill 内容 | Both: BH 73 域技能 + GA 105K 技能卡 | #7 技能即文件 / #11 贡献回写 | Agent 不仅管理 Skill 还能创作域知识 |
-| **P1** | 动态工具自创注册 | Browser-Harness Agent 编辑 helpers.py | #2 Agent 自编辑 Harness | Agent 发现缺失能力时可自创工具 |
-| **P1** | Working Checkpoint 短期记忆注入 | GenericAgent update_working_checkpoint | #8 最小上下文哲学（关键信息防丢失） | 每轮 <200 tokens 关键信息始终在场 |
-| **P1** | 分层注入替代原始历史 | GenericAgent L0-L4 分层注入 | #8 最小上下文哲学 / #10 无管理层（不泄露复杂度） | 预算槽作为硬约束而非建议 |
-| **P2** | 执行验证记忆写入 | GenericAgent No-Exec-No-Memory | #9 幂等宽恕（只写入确定性的结果） | 防止幻觉数据污染记忆 |
-| **P2** | 坐标优先浏览器交互 | Browser-Harness coordinate-first | #5 坐标优先交互 | 穿透 iframe/shadow DOM |
-| **P2** | 浏览器内容 HTML 简化 | GenericAgent simphtml.py | #1 极简零框架 / #8 最小上下文 | 网页 token 减少 90%+，浏览器任务成本骤降 |
-| **P2** | 工具原子性整合 | GenericAgent 9 原子工具哲学 | #10 无管理层（工具层极简化） | 减少工具选择困惑，提升决策质量 |
+| 优先级 | 差距                             | 参考源                                 | 对应 Harness 原则                                | 影响                                     |
+| ------ | -------------------------------- | -------------------------------------- | ------------------------------------------------ | ---------------------------------------- |
+| **P0** | Token 效率: 120K→30K             | GenericAgent L0-L4 分层注入 + 消息压缩 | #8 最小上下文哲学                                | 成本降低 4-7x，幻觉减少，成功率提升      |
+| **P0** | Skill 自动沉淀                   | GenericAgent 任务后自动生成 skill 卡片 | #7 技能即文件 / #11 贡献回写                     | Agent 能力随使用持续增长                 |
+| **P0** | Self-Healing Daemon              | Browser-Harness daemon 模式            | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕        | 进程级自动恢复，真正的无人值守           |
+| **P1** | Constitutional Memory (L0)       | GenericAgent 不可变行为宪法            | #12 完整自由（有护栏的自由）                     | Agent 行为一致性的基石                   |
+| **P1** | Agent 自编辑工具能力             | Browser-Harness Agent 编辑 helpers.py  | #2 Agent 自编辑 Harness / #12 完整自由           | 工具失败时自修复而非放弃                 |
+| **P1** | 浏览器会话自修复                 | Browser-Harness stale session 自动恢复 | #4 自愈闭环 / #6 连接用户浏览器                  | 浏览器崩溃自动恢复                       |
+| **P1** | Skill 向量语义搜索               | GenericAgent 105K+ 技能卡 + 向量搜索   | #7 技能即文件（检索升级）                        | Skill 匹配从关键词升级到语义             |
+| **P1** | 域知识编码+Agent 创作 Skill 内容 | Both: BH 73 域技能 + GA 105K 技能卡    | #7 技能即文件 / #11 贡献回写                     | Agent 不仅管理 Skill 还能创作域知识      |
+| **P1** | 动态工具自创注册                 | Browser-Harness Agent 编辑 helpers.py  | #2 Agent 自编辑 Harness                          | Agent 发现缺失能力时可自创工具           |
+| **P1** | Working Checkpoint 短期记忆注入  | GenericAgent update_working_checkpoint | #8 最小上下文哲学（关键信息防丢失）              | 每轮 <200 tokens 关键信息始终在场        |
+| **P1** | 分层注入替代原始历史             | GenericAgent L0-L4 分层注入            | #8 最小上下文哲学 / #10 无管理层（不泄露复杂度） | 预算槽作为硬约束而非建议                 |
+| **P2** | 执行验证记忆写入                 | GenericAgent No-Exec-No-Memory         | #9 幂等宽恕（只写入确定性的结果）                | 防止幻觉数据污染记忆                     |
+| **P2** | 坐标优先浏览器交互               | Browser-Harness coordinate-first       | #5 坐标优先交互                                  | 穿透 iframe/shadow DOM                   |
+| **P2** | 浏览器内容 HTML 简化             | GenericAgent simphtml.py               | #1 极简零框架 / #8 最小上下文                    | 网页 token 减少 90%+，浏览器任务成本骤降 |
+| **P2** | 工具原子性整合                   | GenericAgent 9 原子工具哲学            | #10 无管理层（工具层极简化）                     | 减少工具选择困惑，提升决策质量           |
 
 ---
 
@@ -399,54 +399,56 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 > `WU-009-deep-utility-handle-threading` Pack 串入真实 `UtilityLlm` / `ProviderManager` / `KnowledgeStore` handle。
 
 > 用户对 codebase 做了大量代码更新后，进行全栈重新扫描。以下对照每个 spec 模块的**设计目标 vs 实际代码实现**。
+>
+> **真值优先级**：本表为 2026-04-30 二次校准；若与上方历史段落冲突，以本表及 [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md) §3 为准。术语 **`landed-stub`**：调用站 + 类型/算法骨架已落地，但生产依赖（真实 `UtilityLlm`、`ProviderManager`/`McpServerManager` 探针、`KnowledgeStore` 等）仍为占位——对 Exit Gate 计为 **not-done**。
 
-#### 后端扫描摘要（~149K LOC Rust，227 个 .rs 文件）
+#### 后端扫描摘要（`src-tauri/src/modules` 下约 495 个 `.rs` 文件量级；LOC 未每次重算）
 
-| 模块 | Spec 设计 | 实际代码 | 实现状态 |
-|------|----------|---------|---------|
-| A (上下文压缩) | `context_compression.rs` + tier budget | `stream_preflight.rs` 存在，但无 tier 系统 | ❌ 待实现 |
-| B (Skill 沉淀) | `sedimentation.rs` + `deduplication.rs` | `stream_finalize.rs`(1121 LOC) 就绪，但无 sedimentation 引擎 | ❌ 待实现 |
-| C (自愈 Daemon) | `daemon/mod.rs` + health_checks | `self_repair.rs` 存在(仅 memory stuck+broken-tool streak)，无 daemon 框架 | 🟡 部分 |
-| D (宪法记忆) | `constitution.rs` | 不存在 | ❌ 待实现 |
-| E (Agent 自编辑) | `self_edit.rs` | `attempt_ledger.rs`(579 LOC)+`agent_loop_delegate.rs`(235 LOC)+`learning/`(18 files) 提供失败追踪/策略/反思基础 | 🟡 部分 |
-| F (浏览器会话自愈) | `session_health.rs` | `smart_browser/`(7 files, ~1K LOC) 3-backend 架构已就绪，但无 session_health | 🟡 部分 |
-| G (域知识仓库) | `domain_knowledge.rs` | 不存在 | ❌ 待实现 |
-| H (工作检查点) | `working_checkpoint.rs` | `projection.rs`(241 LOC)+`recoverability.rs`(292 LOC, 9种 ResumeReason) 提供 checkpoint 持久化+恢复基础 | 🟡 部分 |
-| I (向量搜索) | `vector_search.rs` | `memory/embedding/`(FastEmbed+LanceDB) 基础设施已就绪 | 🟡 部分 |
-| J (坐标优先策略) | `coordinate_strategy.rs` | 不存在 | ❌ 待实现 |
-| K (验证门) | `verification_gate.rs` | `memory_quality_gate.rs`+`memory_write_policy.rs` 存在 | 🟡 部分 |
-| L (HTML 简化器) | `content_simplifier.rs` | 不存在 | ❌ 待实现 |
+| 模块               | 代码锚点（实际布局）                                                                                                                                                   | 实现状态                                                                                                                                                                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A (上下文压缩)     | `runtime/context_compression/`（`mod.rs`、`digester.rs`、`mini_index.rs`）+ `stream_preflight.rs` / `preflight_hooks.rs` / `budget.rs`                                 | 🟢 **算法与主路径已落地**；⚠️ **DW-002 `landed-stub`**：`stream_task` 生产 digester 仍接 `MockUtilityLlm`，真实消息摘要为 identity，直至 `UtilityLlm` handle 下传                                                                                         |
+| B (Skill 沉淀)     | `skills/sedimentation/` + `stream_finalize.rs` 内 `run_sedimentation_pipeline`                                                                                         | 🟢 **done**（WU-003）；设计稿中的单文件 `sedimentation.rs` 已演化为子目录模块                                                                                                                                                                            |
+| C (自愈 Daemon)    | `runtime/daemon/{mod,health_check,recovery}.rs` + `self_repair.rs` 兼容层 + `evolution_emitter.rs`；`desktop_host/setup.rs` 内 `spawn_self_healing_daemon_with_extras` | 🟡 **daemon 常驻路径已真化（iter-4/6）**：`BrowserRegistryProbe` + `ProviderApiKeyProbe` 与 SH-001 baseline **同 registry** 轮询；⚠️ **仍剩 stub 线程**：MCP 活性探针、`ProviderManager` 深度 liveness 等见 `setup.rs` 注释与 GAP §9.3 / iteration 7 候选 |
+| D (宪法记忆)       | `skills/guard/constitution.rs` + `prompt_planner` Constitution block                                                                                                   | 🟢 **guard/宪法与注入路径已落地**（非附录中的 `runtime/constitution.rs` 单文件）                                                                                                                                                                         |
+| E (Agent 自编辑)   | `learning/`、`stream_tool_execution.rs`、self-edit scanner helper；`setup.rs` spawn                                                                                    | 🟡 **helper + tick 已落地**；⚠️ **DW-001 `landed-stub`**：`ConstEmbedder` + `MockUtilityLlm`，扫描输入为空，无真实提案                                                                                                                                    |
+| F (浏览器会话自愈) | `smart_browser/runtime.rs` + `browser/session.rs` 等 3-backend                                                                                                         | 🟡 **会话与运行时就绪**；daemon 内浏览器真探针仍为 `StubBrowserProbe`（GAP §4）                                                                                                                                                                          |
+| G (域知识仓库)     | `skills/domain_knowledge/` + `stream_finalize.rs` `run_domain_knowledge_contributor`                                                                                   | 🟢 **finalize 钩子 done**；⚠️ **DW-004 `landed-stub`**：`work_loop`  advisory 仍 `MockKnowledgeStore`                                                                                                                                                     |
+| H (工作检查点)     | `runtime/working_checkpoint.rs` + `projection.rs` / `recoverability.rs`                                                                                                | 🟢 **持久化与恢复基础已落地**                                                                                                                                                                                                                            |
+| I (向量搜索)       | `skills/vector_index.rs` + `memory/embedding/`                                                                                                                         | 🟡 **索引与嵌入基础设施就绪**；与 work_loop 的语义检索深度以代码为准                                                                                                                                                                                     |
+| J (坐标优先策略)   | `smart_browser/runtime.rs` `decide_browser_click_strategy`                                                                                                             | 🟢 **done**（WU-006 / DW-005）                                                                                                                                                                                                                           |
+| K (验证门)         | `memory_quality_gate.rs`、`memory_write_policy.rs` 等                                                                                                                  | 🟡 **策略分散落地**；独立 `memory/verification_gate.rs` 与否以仓库为准                                                                                                                                                                                   |
+| L (HTML 简化器)    | `smart_browser/runtime.rs` `simplify_browser_result_text` / `adaptive_simplify`                                                                                        | 🟢 **done**（WU-006）                                                                                                                                                                                                                                    |
 
 **🆕 新发现的已实现能力（spec 未覆盖）**：
 
-| 能力 | 代码位置 | LOC | 说明 |
-|------|---------|-----|------|
-| **Jiaochang Audio 插件沙箱** | `jiaochang_audio/mod.rs` | 1,596 | Node.js VM isolate 运行游戏/模拟插件，含音频管理 |
-| **MCP Workbench & 工具发现** | `mcp_stdio/manager.rs` | 765 | MCP server 生命周期管理、tool discovery、workbench activity 记录 |
-| **Control Plane（控制面）** | `control_plane/` (8 files) | ~1,500 | ingress_classifier、tool_execution_broker、audit、boundary_resolver |
-| **Learning 策略引擎** | `learning/` (18 files) | ~3,000 | strategy_registry、reflection、trajectory_score、self_model、failure_clustering |
-| **会话标题生成** | `session/manager.rs` | 617+ | emoji 推断 + LLM 驱动的会话标题生成 |
-| **Git 集成** | `git/` (17 files) | ~2,000 | branch/commit/PR/issue/worktree + slash commands |
-| **Agent Loop 委托** | `agent_loop_delegate.rs` | 235 | work loop 决策可委托给策略引擎 |
-| **Execution Mode Preview** | `control_plane/ingress_classifier.rs` | ~400 | M2.6 执行模式分类器 |
+| 能力                         | 代码位置                              | LOC    | 说明                                                                            |
+| ---------------------------- | ------------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| **Jiaochang Audio 插件沙箱** | `jiaochang_audio/mod.rs`              | 1,596  | Node.js VM isolate 运行游戏/模拟插件，含音频管理                                |
+| **MCP Workbench & 工具发现** | `mcp_stdio/manager.rs`                | 765    | MCP server 生命周期管理、tool discovery、workbench activity 记录                |
+| **Control Plane（控制面）**  | `control_plane/` (8 files)            | ~1,500 | ingress_classifier、tool_execution_broker、audit、boundary_resolver             |
+| **Learning 策略引擎**        | `learning/` (18 files)                | ~3,000 | strategy_registry、reflection、trajectory_score、self_model、failure_clustering |
+| **会话标题生成**             | `session/manager.rs`                  | 617+   | emoji 推断 + LLM 驱动的会话标题生成                                             |
+| **Git 集成**                 | `git/` (17 files)                     | ~2,000 | branch/commit/PR/issue/worktree + slash commands                                |
+| **Agent Loop 委托**          | `agent_loop_delegate.rs`              | 235    | work loop 决策可委托给策略引擎                                                  |
+| **Execution Mode Preview**   | `control_plane/ingress_classifier.rs` | ~400   | M2.6 执行模式分类器                                                             |
 
 #### 前端扫描摘要（298 个 TS/TSX 文件）
 
-| 维度 | Spec 设计 | 实际代码 | 差异 |
-|------|----------|---------|------|
-| **Store 数量** | 3 (bootstrap/chat/session) | 7 (bootstrap/chat/session/conversation-slice/runtime-projection/browser-slice) | 多 4 个 |
-| **API Facades** | 未详述 | 11 个 domain-scoped modules | 完整架构 |
-| **Runtime Projection** | 提及，未量化 | 45 files, ~3000 LOC | 比预期更复杂 |
-| **Jiaochang 前端** | 未覆盖 | 60 files (游戏可视化+音频+i18n) | 全新模块 |
-| **Voice 组件** | 未覆盖 | AgentVoiceIndicator, SttButton, TtsProfilePicker | 已实现 |
-| **Spec 设计"新"组件** | 24 个 planned | 0 个已实现, 但部分有基线(ExecutionModePill, SmartBrowserCockpit 已存在) | 基线更成熟 |
+| 维度                   | Spec 设计                  | 实际代码                                                                       | 差异         |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------------ | ------------ |
+| **Store 数量**         | 3 (bootstrap/chat/session) | 7 (bootstrap/chat/session/conversation-slice/runtime-projection/browser-slice) | 多 4 个      |
+| **API Facades**        | 未详述                     | 11 个 domain-scoped modules                                                    | 完整架构     |
+| **Runtime Projection** | 提及，未量化               | 45 files, ~3000 LOC                                                            | 比预期更复杂 |
+| **Jiaochang 前端**     | 未覆盖                     | 60 files (游戏可视化+音频+i18n)                                                | 全新模块     |
+| **Voice 组件**         | 未覆盖                     | AgentVoiceIndicator, SttButton, TtsProfilePicker                               | 已实现       |
+| **Spec 设计"新"组件**  | 24 个 planned              | 0 个已实现, 但部分有基线(ExecutionModePill, SmartBrowserCockpit 已存在)        | 基线更成熟   |
 
-#### 关键结论
+#### 关键结论（2026-04-30）
 
-1. **后端基础远超预期**：recoverability、attempt_ledger、projection、agent_loop 委托、control_plane、learning、smart_browser 3-backend 等 spec 设计模块的"基础设施层"已就绪
-2. **spec 12 个模块中 0 个完全实现，7 个部分实现，5 个完全待建**：大量"粘合层"代码需要编写（如 sedimentation、domain_knowledge、coordinate_strategy）
-3. **存在 6 个 spec 未覆盖的新能力**：需要添加 Module M (Jiaochang Audio) 和 Module N (MCP Workbench & Control Plane) 到 spec
-4. **前端 298 个文件远超 spec 描述的 31 个前端变更**：spec Part 7 需要从"全部新建"调整为"在现有基础上增强"
+1. **后端 A/B/D/G/H/J/L 的算法与主路径已落地**，目录布局与设计附录中的「单文件新建」不完全一致（多为子目录模块）；**C/E/F/I/K** 仍有 **partial** 或 **`landed-stub`** 依赖线程，集中修复 Pack 建议名 **`WU-009-deep-utility-handle-threading`**（见 GAP 报告 §4）。
+2. **不再成立（历史）**：「12 模块中 5 个完全待建」——请以本表与 GAP §3 替换该判断。
+3. **仍存在 6 个 spec 未覆盖的新能力**（M/N 等）：Module M、N 章节保留。
+4. **前端**：`src/components/chat/evolution/` 已落地 6 个 Dev Drawer 子组件并消费 `evolutionEventStore`（GAP §3.3）；Part 7 中「6 类 UI 全缺」的表述已过时，见 §7.1 更新段。
 
 ---
 
@@ -458,30 +460,30 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 >
 > **设计哲学**：每个模块的设计都根植于 Part 0 中提炼的 Browser-Harness 十二大设计原则。下表展示原则到模块的映射关系：
 
-| Harness 原则 | 主要承载模块 | 承载方式 |
-|-------------|------------|---------|
-| #1 极简零框架 | Module L (HTML 简化器, 200K→35K) | 不做过度抽象，直接简化原始 HTML |
-| #2 Agent 自编辑 Harness | Module E (Self-Edit Engine) | Agent 可在运行时修改工具实现 |
-| #3 进程即状态 | Module C (Daemon) | PID 锁 + 状态机 + 事件驱动恢复 |
-| #4 自愈闭环 | Module C (Daemon) + Module F (Browser Session) | 幂等的健康检测 + 透明恢复 |
-| #5 坐标优先交互 | Module J (Coordinate-First Strategy) | 降级链: 坐标→标签→CSS 选择器 |
-| #6 连接用户浏览器 | Module F (Browser Session Health) | 会话健康检测 + 自动 re-attach |
-| #7 技能即文件 | Module B (Sedimentation) + Module G (Domain Knowledge) | Agent 自动生成 skill/domain 文件 |
-| #8 最小上下文哲学 | Module A (Context Compression) + Module H (Working Checkpoint) | 120K→30K + <200 token key_info |
-| #9 幂等宽恕 | Module C (Daemon Recovery) | 所有恢复操作都是幂等的 |
-| #10 无管理层 | Module A (Tier Budget) | 管理层不泄露到 agent 上下文 |
-| #11 贡献回写 | Module B + G + K (Verification Gate) | Agent 默认沉淀发现，经验证后写入 |
-| #12 完整自由 | Module D (Constitution) + Module E (Self-Edit) | 宪法定义边界，边界内完全自由 |
+| Harness 原则            | 主要承载模块                                                   | 承载方式                         |
+| ----------------------- | -------------------------------------------------------------- | -------------------------------- |
+| #1 极简零框架           | Module L (HTML 简化器, 200K→35K)                               | 不做过度抽象，直接简化原始 HTML  |
+| #2 Agent 自编辑 Harness | Module E (Self-Edit Engine)                                    | Agent 可在运行时修改工具实现     |
+| #3 进程即状态           | Module C (Daemon)                                              | PID 锁 + 状态机 + 事件驱动恢复   |
+| #4 自愈闭环             | Module C (Daemon) + Module F (Browser Session)                 | 幂等的健康检测 + 透明恢复        |
+| #5 坐标优先交互         | Module J (Coordinate-First Strategy)                           | 降级链: 坐标→标签→CSS 选择器     |
+| #6 连接用户浏览器       | Module F (Browser Session Health)                              | 会话健康检测 + 自动 re-attach    |
+| #7 技能即文件           | Module B (Sedimentation) + Module G (Domain Knowledge)         | Agent 自动生成 skill/domain 文件 |
+| #8 最小上下文哲学       | Module A (Context Compression) + Module H (Working Checkpoint) | 120K→30K + <200 token key_info   |
+| #9 幂等宽恕             | Module C (Daemon Recovery)                                     | 所有恢复操作都是幂等的           |
+| #10 无管理层            | Module A (Tier Budget)                                         | 管理层不泄露到 agent 上下文      |
+| #11 贡献回写            | Module B + G + K (Verification Gate)                           | Agent 默认沉淀发现，经验证后写入 |
+| #12 完整自由            | Module D (Constitution) + Module E (Self-Edit)                 | 宪法定义边界，边界内完全自由     |
 
-### Module A: 上下文压缩管线 (Context Compression Pipeline) — P0 🔴 待实现
+### Module A: 上下文压缩管线 (Context Compression Pipeline) — P0 🟢 已落地（⚠️ DW-002 `landed-stub`）
 
-**实际代码现状**: `stream_preflight.rs` 存在并负责构建迭代请求，`budget.rs` 有 `ContextBudget` 结构，但无 tier 层级预算分配、无消息压缩、无 mini-index。当前仅做基于字符数的裁剪。
+**实际代码现状（2026-04-30）**: `runtime/context_compression/` 提供 `ContextTier`、`TierBudgetAllocation`、`compress_for_request`、`MessageDigester`、`build_mini_index` 等；`stream_preflight` / `preflight_hooks` 已接线。**生产路径缺口**：`stream_task` 侧 digester 仍使用占位 `UtilityLlm`（身份变换），真压缩待 **`WU-009-deep-utility-handle-threading`**。下方设计稿中的单文件路径 `context_compression.rs` 已演化为目录模块，类型以仓库为准。
 
 **定位**：将 If2Ai 从"全量发送"转变为"最小可行上下文"架构。目标：将平均请求从 ~120K chars 压缩到 ~30K chars，不丢失任务连贯性。
 
 **Harness 原则锚定**：#8 最小上下文哲学 + #10 无管理层。关键洞察：Agent 应该**信任 harness 而非阅读 harness**——harness 的复杂度不应泄露到 agent 的执行路径上。
 
-**核心数据结构** (`src-tauri/src/modules/runtime/context_compression.rs`):
+**核心数据结构**（实现位于 `src-tauri/src/modules/runtime/context_compression/`，下列片段为设计参考）:
 
 ```rust
 /// 上下文层级（对应 GenericAgent L0-L4 模式）
@@ -551,19 +553,19 @@ pub fn build_mini_index(
 - 压缩失败时降级到当前裁剪逻辑（非致命降级）
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/runtime/context_compression.rs`
+- **已建**: `src-tauri/src/modules/runtime/context_compression/`（`mod.rs` 等）
 - **修改**: `src-tauri/src/modules/application/turn_service/stream_preflight.rs` (接入压缩器)
 - **修改**: `src-tauri/src/modules/runtime/budget.rs` (添加层级预算常量 + `ContextTier` 枚举)
 
 ---
 
-### Module B: Skill 沉淀引擎 (Skill Sedimentation Engine) — P0 🔴 待实现
+### Module B: Skill 沉淀引擎 (Skill Sedimentation Engine) — P0 🟢 已落地
 
-**实际代码现状**: `stream_finalize.rs`(1121 LOC) 已就绪（40-field FinalizeStreamInputs + TaskOutcomeResolver），`skills/` 目录结构完善（manager/guard/hub/snapshot），但 `sedimentation.rs` 和 `deduplication.rs` 不存在。skill 沉淀的钩子点和数据输入已完备，仅需编写沉淀逻辑。
+**实际代码现状（2026-04-30）**: `skills/sedimentation/`（含 `dedup.rs`）+ `stream_finalize.rs` 内 `run_sedimentation_pipeline` 已在生产 finalize 路径调用（WU-003）。设计稿中的顶层 `sedimentation.rs` / `deduplication.rs` 已演化为子目录布局。
 
 **定位**：每次成功的自主工作循环完成后，自动将任务执行蒸馏为可复用的 skill 卡片。这是 GenericAgent "No Execution, No Memory" 原则应用于 skill 创建。
 
-**核心数据结构** (`src-tauri/src/modules/skills/sedimentation.rs`):
+**核心数据结构**（实现见 `skills/sedimentation/`；下列片段为设计参考）:
 
 ```rust
 /// 沉淀触发器——捕获 skill 生成的条件
@@ -649,16 +651,15 @@ pub async fn persist_skill(skill: &SedimentedSkill) -> Result<String>;
 - 可选地输入 `strategy_registry.rs` 作为 `StrategySource::Reflection` 候选
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/skills/sedimentation.rs`
-- **新建**: `src-tauri/src/modules/skills/deduplication.rs`
+- **已建**: `src-tauri/src/modules/skills/sedimentation/`（含去重逻辑）
 - **修改**: `src-tauri/src/modules/application/turn_service/stream_finalize.rs` (添加沉淀钩子，约在第 662 行 `dispatch_after_turn` 后)
 - **修改**: `src-tauri/src/modules/skills/mod.rs` (注册新子模块)
 
 ---
 
-### Module C: Self-Healing Daemon (自修复守护进程) — P0 🟡 部分已实现
+### Module C: Self-Healing Daemon (自修复守护进程) — P0 🟡 框架已落地（⚠️ 残余 stub 见 GAP §9.3）
 
-**实际代码现状**: `self_repair.rs` 存在(仅 memory ticker stuck-flag + broken-tool streak 检测)，`recoverability.rs`(292 LOC) 实现了 ResumeReason（9 种恢复原因）+ ResumeRecoverability，但无 daemon 框架（无健康检查注册表/状态机/恢复编排器），无 provider 心跳、无 MCP 进程活性检查。需要重构 `self_repair.rs` 为通用 daemon 框架。
+**实际代码现状（2026-04-30）**: `desktop_host/setup.rs` 在 **truth-loop iter-4+** 已改为 `spawn_self_healing_daemon_with_extras`：同 registry 内运行 **`BrowserRegistryProbe`**（替代孤立 `StubBrowserProbe`）与 **`ProviderApiKeyProbe`**（iter-6，凭据 env 扫描）。**仍待迭代**：MCP 进程探针、`ProviderManager` 工厂式 liveness 等——以 `setup.rs:136-138` 注释与最新 GAP 报告为准，勿复用 rollout 前「仅 legacy 两检查」叙述。
 
 **定位**：一个轻量级 supervisor 层，监控 agent 健康并自动从崩溃、卡死、降级状态恢复。
 
@@ -740,18 +741,18 @@ pub fn attempt_recovery(
 - 前端 projection 通过现有 `runtime-projection-bridge.ts` 接收 daemon 健康状态
 
 **关键修改文件**:
-- **重构**: `src-tauri/src/modules/runtime/self_repair.rs` → `src-tauri/src/modules/runtime/daemon/mod.rs` + `health_check.rs` + `recovery.rs`
-- **修改**: `src-tauri/src/bootstrap/` (接入 daemon 启动)
+- **已建**: `src-tauri/src/modules/runtime/daemon/mod.rs` + `health_check.rs` + `recovery.rs`（`self_repair.rs` 保留为兼容层）
+- **待深化**: `src-tauri/src/modules/desktop_host/setup.rs` 将完整 probe registry 接为默认常驻路径（WU-002 / WU-009）
 
 ---
 
-### Module D: Constitutional Memory Tier (宪法级记忆层) — P1 🔴 待实现
+### Module D: Constitutional Memory Tier (宪法级记忆层) — P1 🟢 已落地
 
-**实际代码现状**: `constitution.rs` 不存在。`prompt_planner/` 有 prompt block 系统（block.rs + build_request.rs）可作为注入载体，但无宪法规则定义/加载/优先级机制。
+**实际代码现状（2026-04-30）**: 宪法与结构约束位于 `skills/guard/constitution.rs`（及 guard 子模块），`prompt_planner` 已承载 Constitution block。设计附录中的 `runtime/constitution.rs` **未采用**；以 **`skills/guard/`** 为真源。
 
 **定位**：一组不可变的、始终注入的行为约束，不能被 LLM、会话上下文或工具输出覆盖。Agent 的"宪法"。
 
-**核心数据结构** (`src-tauri/src/modules/runtime/constitution.rs`):
+**核心数据结构**（设计参考；实现以 `skills/guard/constitution.rs` 及 prompt 块为准）:
 
 ```rust
 /// 宪法规则
@@ -793,15 +794,15 @@ pub struct ConstitutionManifest {
 - `PromptCoordinator` 获得新输入: `constitutional_rules: Vec<String>`
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/runtime/constitution.rs`
+- **已建**: `src-tauri/src/modules/skills/guard/constitution.rs`（及 `prompt_planner` Constitution kind）
 - **修改**: `src-tauri/src/modules/application/prompt_planner/` (添加 Constitution block kind)
 - **修改**: `src-tauri/src/modules/application/turn_service/mod.rs` (加载+注入宪法)
 
 ---
 
-### Module E: Agent 自编辑能力 (Agent Self-Edit) — P1 🟡 部分已实现
+### Module E: Agent 自编辑能力 (Agent Self-Edit) — P1 🟡 已部分落地（⚠️ DW-001 `landed-stub`）
 
-**实际代码现状**: `attempt_ledger.rs`(579 LOC) 已实现 ToolAttempt（8 种状态, attempt_no 单调计数），`agent_loop_delegate.rs`(235 LOC) 支持 work loop 决策委托给策略引擎，`learning/`(18 files) 含 `failure_clustering.rs`(失败模式聚类) + `failure_taxonomy.rs`(失败分类) + `strategy_registry.rs`(策略注册)。但 `self_edit.rs` 不存在——失败分析后的"生成修复提案→批准→执行"闭环缺失。
+**实际代码现状（2026-04-30）**: `attempt_ledger`、`agent_loop_delegate`、`learning/` 与 self-edit **scanner helper** 已存在；`setup.rs` 间歇 spawn scanner。**生产缺口**：`ConstEmbedder` + `MockUtilityLlm` 导致扫描无真实输入/提案（DW-001）。单文件 `runtime/self_edit.rs` 与否以仓库实际模块拆分为准。
 
 **定位**：当工具持续失败时，允许 agent 检查失败模式并提出修复方案——参数调整、包装脚本、或（对于用户创作的工具）实际代码编辑。
 
@@ -856,7 +857,7 @@ pub enum SelfEditTarget {
 
 ### Module F: 浏览器会话自修复 (Browser Session Self-Healing) — P1 🟡 部分已实现
 
-**实际代码现状**: `smart_browser/` 模块已完整实现 3-backend 架构（`local_adapter.rs` LocalRustCdp + `browser_use_mcp.rs` BrowserUseMcp + `cloud.rs` BrowserUseCloud），含 `contract.rs`(trait 定义)、`runtime.rs`(运行时管理)、`policy.rs`(策略选择)。`browser/session.rs` 存在。但 `session_health.rs`（健康检测+自动恢复）和 `coordinate_strategy.rs` 不存在。
+**实际代码现状（2026-04-30）**: `smart_browser/session_health.rs`（`BrowserHealthStatus` 等）+ `runtime.rs` 3-backend 与 **坐标 / 简化** 策略已增强（与 J、L 联动）。`desktop_host/setup.rs` 内 **`BrowserRegistryProbe`** 将注册表心跳接入 daemon（iter-4）。
 
 **定位**：将 Smart Browser 从被动的后端选择器升级为主动的会话管理器，检测并恢复浏览器故障。
 
@@ -901,13 +902,15 @@ pub enum BrowserRecoveryAction {
 - 云升级通过现有 `evaluate_cloud_escalation` 策略
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/smart_browser/session_health.rs`
+- **已建**: `src-tauri/src/modules/smart_browser/session_health.rs`
 - **修改**: `src-tauri/src/modules/smart_browser/runtime.rs` (接入健康监控)
 - **修改**: `src-tauri/src/modules/browser/session.rs` (添加心跳+崩溃检测)
 
 ---
 
-### Module G: Domain Knowledge Repository (域知识仓库) — P1 🔴 待实现
+### Module G: Domain Knowledge Repository (域知识仓库) — P1 🟢 钩子已落地（⚠️ DW-004 `landed-stub`）
+
+**实际代码现状（2026-04-30）**: `skills/domain_knowledge/` + `stream_finalize.rs` 内 `run_domain_knowledge_contributor` 已在生产路径。**生产缺口**：`work_loop` advisory 仍使用 `MockKnowledgeStore`，直至进程级 `KnowledgeStore` 单例下传（GAP §4）。
 
 **定位**：参考 Browser-Harness 的 73+ domain-skills + 19 interaction-skills，以及 GenericAgent 的 105K+ 技能卡体系，构建 Agent 可读写的结构化域知识库。Agent 不仅使用现有 Skill，还能在执行过程中创作和贡献域知识。
 
@@ -915,7 +918,7 @@ pub enum BrowserRecoveryAction {
 - Browser-Harness 模式：Markdown 文件编码 URL 模式、选择器库、JS 代码片段、已知陷阱
 - GenericAgent 模式：L3 任务级 SOP（`*_sop.md`）编码前置条件、坑点、执行步骤
 
-**核心数据结构** (`src-tauri/src/modules/skills/domain_knowledge.rs`):
+**核心数据结构**（实现见 `skills/domain_knowledge/`；下列为设计参考）:
 
 ```rust
 /// 域知识类别（对应 Browser-Harness 的 domain-skills + interaction-skills）
@@ -1004,15 +1007,15 @@ pub async fn prune_stale_entries(
 - 前端提供域知识浏览和编辑 UI
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/skills/domain_knowledge.rs`
+- **已建**: `src-tauri/src/modules/skills/domain_knowledge/`（及 finalize 钩子）
 - **修改**: `src-tauri/src/modules/application/turn_service/work_loop.rs` (注入域知识到 prompt)
 - **修改**: `src-tauri/src/modules/skills/mod.rs` (注册新子模块)
 
 ---
 
-### Module H: Working Checkpoint System (工作检查点系统) — P1 🟡 部分已实现
+### Module H: Working Checkpoint System (工作检查点系统) — P1 🟢 核心已落地
 
-**实际代码现状**: `projection.rs`(241 LOC) 已实现 checkpoint 持久化，`recoverability.rs`(292 LOC) 已实现 ResumeReason（9 种恢复原因）+ ResumeRecoverability。但 `working_checkpoint.rs` 不存在——缺少 key_info 自动提取、<200 token 注入、任务级生命周期管理。
+**实际代码现状（2026-04-30）**: `runtime/working_checkpoint.rs` 与 `projection.rs` / `recoverability.rs` 协同；finalize / preflight 钩子见 WU-003、WU-004 注释。若仍有 `dead_code` 或未启用分支，以仓库与 GAP 报告为准迭代。
 
 **定位**：参考 GenericAgent 的 `update_working_checkpoint` 工具，实现每轮 <200 tokens 的关键信息短期记忆注入机制。确保关键约束、文件路径、失败原因、进度始终在上下文中——即使历史消息被压缩或驱逐。
 
@@ -1084,7 +1087,7 @@ pub async fn update_checkpoint(
 - 可选：暴露 `update_working_checkpoint` 内置工具让 agent 显式写入
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/runtime/working_checkpoint.rs`
+- **已建**: `src-tauri/src/modules/runtime/working_checkpoint.rs`
 - **修改**: `src-tauri/src/modules/application/turn_service/stream_preflight.rs` (注入检查点)
 - **修改**: `src-tauri/src/modules/application/turn_service/stream_finalize.rs` (提取并更新检查点)
 
@@ -1092,7 +1095,7 @@ pub async fn update_checkpoint(
 
 ### Module I: Skill Vector Semantic Search (Skill 向量语义搜索) — P1 🟡 部分已实现
 
-**实际代码现状**: `memory/embedding/` 已就绪（FastEmbedProvider + LanceDB 实例），`memory/providers/` 有 vector_provider。但 `skills/vector_search.rs` 不存在——关键词匹配尚未升级为向量搜索。
+**实际代码现状（2026-04-30）**: `memory/embedding/` 与 `skills/vector_index.rs` 等已承载索引与嵌入；`work_loop` 侧是否 **完全** 替换关键词路径请对照当前 `score_candidate_skills` 实现。设计稿中的 `skills/vector_search.rs` 单文件可能已合并为 `vector_index` 布局。
 
 **定位**：将现有的关键词 token 匹配升级为嵌入向量相似度搜索，复用 If2Ai 已有的 FastEmbed + LanceDB 基础设施。参考 GenericAgent 的 105K+ 技能卡语义检索能力。
 
@@ -1157,16 +1160,16 @@ pub async fn rebuild_index(
 - 域知识 (Module G) 也纳入索引
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/skills/vector_search.rs`
+- **已建/合并**: `src-tauri/src/modules/skills/vector_index.rs`（及关联模块）
 - **修改**: `src-tauri/src/modules/application/turn_service/work_loop.rs` (替换关键词评分为向量搜索)
-- **修改**: `src-tauri/src/modules/skills/sedimentation.rs` (新 skill 自动索引)
+- **修改**: `src-tauri/src/modules/skills/sedimentation/`（新 skill 自动索引）
 - **修改**: `src-tauri/src/modules/skills/mod.rs` (注册新子模块)
 
 ---
 
-### Module J: Coordinate-First Browser Strategy (坐标优先浏览器策略) — P2 🔴 待实现
+### Module J: Coordinate-First Browser Strategy (坐标优先浏览器策略) — P2 🟢 已落地
 
-**实际代码现状**: `smart_browser/` 模块的 3-backend 架构已就绪，但 `coordinate_strategy.rs` 不存在。`local_adapter.rs`(136 LOC) 使用 Rust CDP 直连提供了坐标优先的实现基础。
+**实际代码现状（2026-04-30）**: `smart_browser/runtime.rs` 中 `decide_browser_click_strategy` 已在浏览器工具路径真实派发（WU-006 / DW-005）。独立 `coordinate_strategy.rs` 单文件与否以仓库为准（逻辑可能在 `runtime` 内联）。
 
 **定位**：参考 Browser-Harness 的截图优先+坐标点击优先策略，为 Smart Browser 添加新的交互模式降级链：坐标点击 → 标签引用 → CSS 选择器。坐标点击可穿透 iframe/shadow DOM/cross-origin，是最可靠的交互方式。
 
@@ -1256,7 +1259,7 @@ pub async fn verify_click_effect(
 - 截图分析可选集成 vision model（利用已有的 multimodal provider）
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/smart_browser/coordinate_strategy.rs`
+- **已建/内联**: 坐标策略逻辑（见 `smart_browser/runtime.rs`）
 - **修改**: `src-tauri/src/modules/smart_browser/runtime.rs` (接入坐标优先策略)
 
 ---
@@ -1336,9 +1339,9 @@ pub fn detect_volatile_content(content: &str) -> Vec<String>;
 
 ---
 
-### Module L: Browser Content Simplifier (浏览器内容简化器) — P2 🔴 待实现
+### Module L: Browser Content Simplifier (浏览器内容简化器) — P2 🟢 已落地
 
-**实际代码现状**: `smart_browser/runtime.rs`(237 LOC) 已有 web_scan 等浏览器操作，但 `content_simplifier.rs` 不存在。无 HTML 简化/过滤/压缩逻辑。
+**实际代码现状（2026-04-30）**: `smart_browser/runtime.rs` 中 `simplify_browser_result_text` / `adaptive_simplify` 已在浏览器工具结果路径调用（WU-006）。独立 `content_simplifier.rs` 单文件与否以仓库为准。
 
 **定位**：参考 GenericAgent 的 `simphtml.py`（800 行 HTML 简化器），实现浏览器页面内容的智能简化，将 200K 字符的原始 HTML 压缩到 15K~35K，大幅降低浏览器任务的 token 消耗。
 
@@ -1422,7 +1425,7 @@ pub fn adaptive_simplify(
 - 与 Module A (上下文压缩管线) 协同：简化后的 HTML 进入工具结果压缩管线
 
 **关键修改文件**:
-- **新建**: `src-tauri/src/modules/smart_browser/content_simplifier.rs`
+- **已建/内联**: HTML 简化逻辑（见 `smart_browser/runtime.rs` 与相关 helper）
 - **修改**: `src-tauri/src/modules/smart_browser/runtime.rs` (web_scan 返回简化内容)
 - **修改**: `src-tauri/src/modules/tools/builtin/browser_tool.rs` (接入简化器)
 
@@ -1500,72 +1503,72 @@ pub fn adaptive_simplify(
 
 最高 ROI 阶段。将 token 消耗降低 4x 解锁更快迭代、更低成本、更好连贯性。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-TE-001` | 上下文层级预算硬约束 | 在 `stream_preflight.rs` 中接入 `ContextBudget` 作为硬约束；向 `budget.rs` 添加 tier 枚举 | 无 |
-| `FEAT-TE-002` | 消息级压缩 | 添加 `CompressedMessage` 类型 + `MessageDigester`（使用 `UtilityLlm`）；集成到会话历史的 preflight 之前 | FEAT-TE-001 |
-| `FEAT-TE-003` | 迷你索引构建器 (L1 模式) | 构建 ≤30 行的会话索引，作为 priority-95 prompt block 注入；替换原始 working-memory dump | FEAT-TE-001 |
-| `FEAT-TE-004` | 工具结果摘要化 | 增强 `summarize_tool_result_for_model`：对 >500 tokens 的结果使用 LLM 辅助压缩 | FEAT-TE-001 |
+| Pack ID       | 名称                     | 范围                                                                                                    | 依赖        |
+| ------------- | ------------------------ | ------------------------------------------------------------------------------------------------------- | ----------- |
+| `FEAT-TE-001` | 上下文层级预算硬约束     | 在 `stream_preflight.rs` 中接入 `ContextBudget` 作为硬约束；向 `budget.rs` 添加 tier 枚举               | 无          |
+| `FEAT-TE-002` | 消息级压缩               | 添加 `CompressedMessage` 类型 + `MessageDigester`（使用 `UtilityLlm`）；集成到会话历史的 preflight 之前 | FEAT-TE-001 |
+| `FEAT-TE-003` | 迷你索引构建器 (L1 模式) | 构建 ≤30 行的会话索引，作为 priority-95 prompt block 注入；替换原始 working-memory dump                 | FEAT-TE-001 |
+| `FEAT-TE-004` | 工具结果摘要化           | 增强 `summarize_tool_result_for_model`：对 >500 tokens 的结果使用 LLM 辅助压缩                          | FEAT-TE-001 |
 
 ### Phase 2: 自我进化核心 (4 Packs)
 
 将每次成功任务转化为可复用知识。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-SE-001` | Skill 沉淀引擎 | 新建 `skills/sedimentation.rs`；在 `stream_finalize.rs` 成功完成时挂钩 | 无 |
-| `FEAT-SE-002` | Skill 去重+合并 | 新建 `skills/deduplication.rs`；关键词 + 可选嵌入匹配现有 skills | FEAT-SE-001 |
-| `FEAT-SE-003` | 宪法级记忆层 | 新建 `runtime/constitution.rs`；YAML 驱动的不可变规则注入，priority 99 | 无 |
+| Pack ID       | 名称               | 范围                                                                                         | 依赖        |
+| ------------- | ------------------ | -------------------------------------------------------------------------------------------- | ----------- |
+| `FEAT-SE-001` | Skill 沉淀引擎     | 新建 `skills/sedimentation.rs`；在 `stream_finalize.rs` 成功完成时挂钩                       | 无          |
+| `FEAT-SE-002` | Skill 去重+合并    | 新建 `skills/deduplication.rs`；关键词 + 可选嵌入匹配现有 skills                             | FEAT-SE-001 |
+| `FEAT-SE-003` | 宪法级记忆层       | 新建 `runtime/constitution.rs`；YAML 驱动的不可变规则注入，priority 99                       | 无          |
 | `FEAT-SE-004` | Skill 向量语义搜索 | 升级 `work_loop.rs` skill 评分：从关键词 token 匹配到嵌入相似度，复用现有 FastEmbed 基础设施 | FEAT-SE-001 |
 
 ### Phase 3: Self-Healing 基础设施 (3 Packs)
 
 从反应式看门狗升级为主动 daemon。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-SH-001` | Self-Healing Daemon 框架 | 重构 `self_repair.rs` → `runtime/daemon/`：健康检查注册表 + 状态机 + 恢复编排器 | 无 |
-| `FEAT-SH-002` | Provider + MCP 活性检查 | 注册 provider 心跳 + MCP stdio 进程活性为 daemon 健康检查 | FEAT-SH-001 |
-| `FEAT-SH-003` | 浏览器会话自修复 | 新建 `smart_browser/session_health.rs`；注册为 daemon 检查；自动恢复 stale CDP 会话 | FEAT-SH-001 |
+| Pack ID       | 名称                     | 范围                                                                                | 依赖        |
+| ------------- | ------------------------ | ----------------------------------------------------------------------------------- | ----------- |
+| `FEAT-SH-001` | Self-Healing Daemon 框架 | 重构 `self_repair.rs` → `runtime/daemon/`：健康检查注册表 + 状态机 + 恢复编排器     | 无          |
+| `FEAT-SH-002` | Provider + MCP 活性检查  | 注册 provider 心跳 + MCP stdio 进程活性为 daemon 健康检查                           | FEAT-SH-001 |
+| `FEAT-SH-003` | 浏览器会话自修复         | 新建 `smart_browser/session_health.rs`；注册为 daemon 检查；自动恢复 stale CDP 会话 | FEAT-SH-001 |
 
 ### Phase 4: Agent 自编辑 & 自主性升级 (3 Packs)
 
 弥合工具级自修复和 agent 自主性的差距。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
+| Pack ID       | 名称                    | 范围                                                                      | 依赖        |
+| ------------- | ----------------------- | ------------------------------------------------------------------------- | ----------- |
 | `FEAT-AE-001` | 工具失败分析+自编辑提案 | 新建 `runtime/self_edit.rs`；在 `stream_tool_execution.rs` 终结触发前接入 | FEAT-SH-001 |
-| `FEAT-AE-002` | 执行验证记忆写入 | 向 `memory_store` 工具添加验证门：仅在工具执行成功时持久化 | 无 |
-| `FEAT-AE-003` | 分级失败升级 | 3 次尝试→参数调整→模型降级→用户升级链，在 work loop 中实现 | FEAT-AE-001 |
+| `FEAT-AE-002` | 执行验证记忆写入        | 向 `memory_store` 工具添加验证门：仅在工具执行成功时持久化                | 无          |
+| `FEAT-AE-003` | 分级失败升级            | 3 次尝试→参数调整→模型降级→用户升级链，在 work loop 中实现                | FEAT-AE-001 |
 
 ### Phase 5: 集成 & 强化 (2 Packs)
 
 将所有新能力与现有投影驱动前端打通。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-INT-001` | 前端投影扩展 | 扩展 `runtime-event-reducer.ts` + `runtime-event-translator.ts`：daemon 健康、沉淀 skill、宪法违规、自编辑提案、域知识贡献、工作检查点 | 所有 Phase 1-4, 6 |
-| `FEAT-INT-002` | 端到端 harness 验证 | 新 harness suite：压缩上下文→成功任务→skill 沉淀→daemon 健康→浏览器恢复→域知识→checkpoint | 所有 Phase 1-6 |
+| Pack ID        | 名称                | 范围                                                                                                                                   | 依赖              |
+| -------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `FEAT-INT-001` | 前端投影扩展        | 扩展 `runtime-event-reducer.ts` + `runtime-event-translator.ts`：daemon 健康、沉淀 skill、宪法违规、自编辑提案、域知识贡献、工作检查点 | 所有 Phase 1-4, 6 |
+| `FEAT-INT-002` | 端到端 harness 验证 | 新 harness suite：压缩上下文→成功任务→skill 沉淀→daemon 健康→浏览器恢复→域知识→checkpoint                                              | 所有 Phase 1-6    |
 
 ### Phase 6: 域知识 & 工作检查点 (3 Packs)
 
 赋予 Agent 结构化域知识创作能力（Browser-Harness 73 域技能 + GenericAgent 105K 技能卡融合设计）和关键信息始终在场的短期记忆机制（GenericAgent working checkpoint 模式）。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-DK-001` | 域知识仓库 | 新建 `skills/domain_knowledge.rs`；实现 `DomainKnowledgeKind` 三类知识（WebsiteDomain / InteractionPrimitive / TaskSOP）；存储在 `~/.if2ai/domain-knowledge/`；提供 `lookup_domain_knowledge` 检索接口 | 无 |
-| `FEAT-DK-002` | 工作检查点系统 | 新建 `runtime/working_checkpoint.rs`；`stream_finalize.rs` 中自动提取 `<key_info>` 标签；`stream_preflight.rs` 中注入 checkpoint（<200 tokens）；内存级存储（任务生命周期） | FEAT-TE-001 |
-| `FEAT-DK-003` | 域知识自动贡献 | 在 `stream_finalize.rs` 的 sedimentation 钩子中，除 skill 卡片外，同时提取网站域知识（selector/gotcha）和任务 SOP；集成 Module K 执行验证门确保只写入经验证的知识 | FEAT-DK-001, FEAT-SE-001, FEAT-AE-002 |
+| Pack ID       | 名称           | 范围                                                                                                                                                                                                   | 依赖                                  |
+| ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `FEAT-DK-001` | 域知识仓库     | 新建 `skills/domain_knowledge.rs`；实现 `DomainKnowledgeKind` 三类知识（WebsiteDomain / InteractionPrimitive / TaskSOP）；存储在 `~/.if2ai/domain-knowledge/`；提供 `lookup_domain_knowledge` 检索接口 | 无                                    |
+| `FEAT-DK-002` | 工作检查点系统 | 新建 `runtime/working_checkpoint.rs`；`stream_finalize.rs` 中自动提取 `<key_info>` 标签；`stream_preflight.rs` 中注入 checkpoint（<200 tokens）；内存级存储（任务生命周期）                            | FEAT-TE-001                           |
+| `FEAT-DK-003` | 域知识自动贡献 | 在 `stream_finalize.rs` 的 sedimentation 钩子中，除 skill 卡片外，同时提取网站域知识（selector/gotcha）和任务 SOP；集成 Module K 执行验证门确保只写入经验证的知识                                      | FEAT-DK-001, FEAT-SE-001, FEAT-AE-002 |
 
 ### Phase 7: 浏览器 & 工具精炼 (3 Packs)
 
 浏览器交互能力从 DOM 选择器升级为坐标优先降级链（Browser-Harness 核心策略），HTML 内容从原始 200K 压缩到 15-35K（GenericAgent simphtml 策略），工具集从 40+ 整合为正交原语。
 
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
-| `FEAT-BR-001` | 浏览器内容简化器 | 新建 `smart_browser/content_simplifier.rs`；实现 `simplify_html`（过滤 script/style/nav，保留 main/form/input，35K 硬限制）+ `adaptive_simplify`（动态预算）；在 `smart_browser/runtime.rs` 的 web_scan 中替换原始 HTML 返回 | FEAT-TE-001 |
-| `FEAT-BR-002` | 坐标优先浏览器策略 | 新建 `smart_browser/coordinate_strategy.rs`；实现坐标点击→标签引用→CSS 选择器降级链；集成 `Input.dispatchMouseEvent` CDP 命令；截图验证点击效果 | FEAT-SH-003 |
-| `FEAT-BR-003` | 工具原子性整合 | 审计并整合现有 40+ 工具：将 6 记忆工具合并为 `memory_read`/`memory_write`/`memory_search`；将 5 cron 工具合并为 `schedule_manage`；将 7 skill 工具合并为 `skill_find`/`skill_use`；保留 alias 兼容 | 无 |
+| Pack ID       | 名称               | 范围                                                                                                                                                                                                                         | 依赖        |
+| ------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `FEAT-BR-001` | 浏览器内容简化器   | 新建 `smart_browser/content_simplifier.rs`；实现 `simplify_html`（过滤 script/style/nav，保留 main/form/input，35K 硬限制）+ `adaptive_simplify`（动态预算）；在 `smart_browser/runtime.rs` 的 web_scan 中替换原始 HTML 返回 | FEAT-TE-001 |
+| `FEAT-BR-002` | 坐标优先浏览器策略 | 新建 `smart_browser/coordinate_strategy.rs`；实现坐标点击→标签引用→CSS 选择器降级链；集成 `Input.dispatchMouseEvent` CDP 命令；截图验证点击效果                                                                              | FEAT-SH-003 |
+| `FEAT-BR-003` | 工具原子性整合     | 审计并整合现有 40+ 工具：将 6 记忆工具合并为 `memory_read`/`memory_write`/`memory_search`；将 5 cron 工具合并为 `schedule_manage`；将 7 skill 工具合并为 `skill_find`/`skill_use`；保留 alias 兼容                           | 无          |
 
 ---
 
@@ -1709,119 +1712,117 @@ cargo test --manifest-path src-tauri/Cargo.toml
 >
 > ⚠️ **2026-04-30 校准注**：下表 ✅ = "Pack 落地 + 算法存在"。**实际生产路径深度**以
 > [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md) §3 为准。
-> 其中差距 **#1 / #5 / #7（域知识）** 对应的 4 个 wire-up Pack（DW-001/DW-002/DW-004/WU-002）当前为
-> `landed-stub`（call-site 已接通，但 LLM/Provider/Store/Probe 是占位）。完成 iteration 3 的
-> `WU-009-deep-utility-handle-threading` 后这 4 个状态格才能从 ✅ 升级为真生产闭环。
+> **#1 / #5 / #8** 仍对应 **`landed-stub`** Pack：**DW-001**（自编辑扫描）、**DW-002**（preflight digester）、**DW-004**（DK advisory store）。**#3（Self-Healing）** 在 truth-loop iter-4/6 后已为 **browser + provider API-key 真探针**；**MCP / 更深 Provider liveness** 等仍属后续迭代（见 GAP §9.3）。**WU-009-deep-utility-handle-threading** 仍负责把 **`UtilityLlm`** 与 **进程级 `KnowledgeStore`** 串到 DW-001/002/004 的生产路径。
 
-| # | 差距点 | 优先级 | Harness 原则 | 覆盖模块 | 实施 Pack(s) | 状态 |
-|---|--------|--------|------------|----------|-------------|------|
-| 1 | Token 效率: 120K→30K | P0 | #8 最小上下文 / #10 无管理层 | Module A | FEAT-TE-001~004 | ✅ |
-| 2 | Skill 自动沉淀 | P0 | #7 技能即文件 / #11 贡献回写 | Module B | FEAT-SE-001, 002 | ✅ |
-| 3 | Self-Healing Daemon | P0 | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕 | Module C | FEAT-SH-001, 002 | ✅ |
-| 4 | Constitutional Memory (L0) | P1 | #12 完整自由（边界） | Module D | FEAT-SE-003 | ✅ |
-| 5 | Agent 自编辑工具能力 | P1 | #2 Agent 自编辑 Harness / #12 完整自由 | Module E | FEAT-AE-001 | ✅ |
-| 6 | 浏览器会话自修复 | P1 | #4 自愈闭环 / #6 连接用户浏览器 | Module F | FEAT-SH-003 | ✅ |
-| 7 | Skill 向量语义搜索 | P1 | #7 技能即文件（检索升级） | Module I | FEAT-SE-004 | ✅ |
-| 8 | 域知识编码+Agent 创作 | P1 | #7 技能即文件 / #11 贡献回写 | Module G | FEAT-DK-001, 003 | ✅ |
-| 9 | 动态工具自创注册 | P1 | #2 Agent 自编辑 Harness | Module E + B | FEAT-AE-001 + SE-001 | ✅ |
-| 10 | Working Checkpoint 短期注入 | P1 | #8 最小上下文（关键信息防丢失） | Module H | FEAT-DK-002 | ✅ |
-| 11 | 分层注入替代原始历史 | P1 | #8 最小上下文 / #10 无管理层 | Module A + D | FEAT-TE-001, 003 + SE-003 | ✅ |
-| 12 | 执行验证记忆写入 | P2 | #9 幂等宽恕（只记录确定结果） | Module K | FEAT-AE-002 | ✅ |
-| 13 | 坐标优先浏览器交互 | P2 | #5 坐标优先交互 | Module J | FEAT-BR-002 | ✅ |
-| 14 | 浏览器内容 HTML 简化 | P2 | #1 极简零框架 / #8 最小上下文 | Module L | FEAT-BR-001 | ✅ |
-| 15 | 工具原子性整合 | P2 | #10 无管理层（工具极简） | 跨模块 | FEAT-BR-003 | ✅ |
+| #   | 差距点                      | 优先级 | Harness 原则                              | 覆盖模块     | 实施 Pack(s)              | 状态                                                                                                                                                 |
+| --- | --------------------------- | ------ | ----------------------------------------- | ------------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Token 效率: 120K→30K        | P0     | #8 最小上下文 / #10 无管理层              | Module A     | FEAT-TE-001~004           | ⚠️ **`landed-stub`**（DW-002：`UtilityLlm` 占位 → 生产 digester 恒等）                                                                                |
+| 2   | Skill 自动沉淀              | P0     | #7 技能即文件 / #11 贡献回写              | Module B     | FEAT-SE-001, 002          | ✅                                                                                                                                                    |
+| 3   | Self-Healing Daemon         | P0     | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕 | Module C     | FEAT-SH-001, 002          | 🟡 **partial**（daemon：`BrowserRegistryProbe` + `ProviderApiKeyProbe` 已进 `spawn_self_healing_daemon_with_extras`；**MCP 等**仍 stub，见 GAP §9.3） |
+| 4   | Constitutional Memory (L0)  | P1     | #12 完整自由（边界）                      | Module D     | FEAT-SE-003               | ✅                                                                                                                                                    |
+| 5   | Agent 自编辑工具能力        | P1     | #2 Agent 自编辑 Harness / #12 完整自由    | Module E     | FEAT-AE-001               | ⚠️ **`landed-stub`**（DW-001：`MockUtilityLlm` / 空扫描输入）                                                                                         |
+| 6   | 浏览器会话自修复            | P1     | #4 自愈闭环 / #6 连接用户浏览器           | Module F     | FEAT-SH-003               | ✅                                                                                                                                                    |
+| 7   | Skill 向量语义搜索          | P1     | #7 技能即文件（检索升级）                 | Module I     | FEAT-SE-004               | ✅                                                                                                                                                    |
+| 8   | 域知识编码+Agent 创作       | P1     | #7 技能即文件 / #11 贡献回写              | Module G     | FEAT-DK-001, 003          | ⚠️ **`landed-stub`**（DW-004：`MockKnowledgeStore` advisory）                                                                                         |
+| 9   | 动态工具自创注册            | P1     | #2 Agent 自编辑 Harness                   | Module E + B | FEAT-AE-001 + SE-001      | ✅                                                                                                                                                    |
+| 10  | Working Checkpoint 短期注入 | P1     | #8 最小上下文（关键信息防丢失）           | Module H     | FEAT-DK-002               | ✅                                                                                                                                                    |
+| 11  | 分层注入替代原始历史        | P1     | #8 最小上下文 / #10 无管理层              | Module A + D | FEAT-TE-001, 003 + SE-003 | ✅                                                                                                                                                    |
+| 12  | 执行验证记忆写入            | P2     | #9 幂等宽恕（只记录确定结果）             | Module K     | FEAT-AE-002               | ✅                                                                                                                                                    |
+| 13  | 坐标优先浏览器交互          | P2     | #5 坐标优先交互                           | Module J     | FEAT-BR-002               | ✅                                                                                                                                                    |
+| 14  | 浏览器内容 HTML 简化        | P2     | #1 极简零框架 / #8 最小上下文             | Module L     | FEAT-BR-001               | ✅                                                                                                                                                    |
+| 15  | 工具原子性整合              | P2     | #10 无管理层（工具极简）                  | 跨模块       | FEAT-BR-003               | ✅                                                                                                                                                    |
 
 **覆盖统计**: 15/15 差距点 → 14 模块 (12 后端 + 2 新发现) → 22 后端 Packs + 2 新发现 Pack → 31 前端文件 (20 新建 + 11 修改) + 61 已实现文件, 12 原则完整覆盖, 前后端全栈追溯完毕。
 
-**代码实现进度 (2026-04)**: 14 模块中 🟢2 个已完整实现(M/N), 🟡7 个部分已实现(C/E/F/H/I/K/ControlPlane), 🔴5 个待实现(A/B/D/G/J/L)。
+**代码实现进度 (2026-04-30 真值)**: 14 模块中 🟢 **完整/产品级闭环** 主要为 **M、N**；**A、B、D、G、H、J、L** 为 **算法 + 主路径已落地**（其中 **#1、#5、#7（域知识）** 关联的 **DW-001 / DW-002 / DW-004 / WU-002** 为 **`landed-stub`**，见表头校准注）；**C、E、F、I、K** 为 **🟡 partial** 或含 stub。**请勿再使用**「🔴5 个待实现 (A/B/D/G/J/L)」——该句为 rollout 前快照，已构成二次误真。
 
 ### Principle → Module 正向索引
 
-| 原则 | 差距# | 承载模块 | 实施 Pack |
-|------|-------|----------|----------|
-| #1 极简零框架 | #14 | L (HTML 简化器) | FEAT-BR-001 |
-| #2 Agent 自编辑 Harness | #5, #9 | E (Self-Edit) | FEAT-AE-001 |
-| #3 进程即状态 | #3 | C (Daemon) | FEAT-SH-001 |
-| #4 自愈闭环 | #3, #6 | C + F (Browser Session) | FEAT-SH-001~003 |
-| #5 坐标优先交互 | #13 | J (Coordinate Strategy) | FEAT-BR-002 |
-| #6 连接用户浏览器 | #6 | F (Session Health) | FEAT-SH-003 |
-| #7 技能即文件 | #2, #7, #8 | B + G + I | FEAT-SE-001, 002, 004; FEAT-DK-001, 003 |
-| #8 最小上下文哲学 | #1, #10, #11, #14 | A + H + L | FEAT-TE-001~004; FEAT-DK-002; FEAT-BR-001 |
-| #9 幂等宽恕 | #3, #12 | C + K (Verification Gate) | FEAT-SH-001; FEAT-AE-002 |
-| #10 无管理层 | #1, #11, #15 | A (Tier Budget) + 跨模块 | FEAT-TE-001, 003; FEAT-BR-003 |
-| #11 贡献回写 | #2, #8 | B + G | FEAT-SE-001, 002; FEAT-DK-001, 003 |
-| #12 完整自由 | #4, #5 | D (Constitution) + E (Self-Edit) | FEAT-SE-003; FEAT-AE-001 |
+| 原则                    | 差距#             | 承载模块                         | 实施 Pack                                 |
+| ----------------------- | ----------------- | -------------------------------- | ----------------------------------------- |
+| #1 极简零框架           | #14               | L (HTML 简化器)                  | FEAT-BR-001                               |
+| #2 Agent 自编辑 Harness | #5, #9            | E (Self-Edit)                    | FEAT-AE-001                               |
+| #3 进程即状态           | #3                | C (Daemon)                       | FEAT-SH-001                               |
+| #4 自愈闭环             | #3, #6            | C + F (Browser Session)          | FEAT-SH-001~003                           |
+| #5 坐标优先交互         | #13               | J (Coordinate Strategy)          | FEAT-BR-002                               |
+| #6 连接用户浏览器       | #6                | F (Session Health)               | FEAT-SH-003                               |
+| #7 技能即文件           | #2, #7, #8        | B + G + I                        | FEAT-SE-001, 002, 004; FEAT-DK-001, 003   |
+| #8 最小上下文哲学       | #1, #10, #11, #14 | A + H + L                        | FEAT-TE-001~004; FEAT-DK-002; FEAT-BR-001 |
+| #9 幂等宽恕             | #3, #12           | C + K (Verification Gate)        | FEAT-SH-001; FEAT-AE-002                  |
+| #10 无管理层            | #1, #11, #15      | A (Tier Budget) + 跨模块         | FEAT-TE-001, 003; FEAT-BR-003             |
+| #11 贡献回写            | #2, #8            | B + G                            | FEAT-SE-001, 002; FEAT-DK-001, 003        |
+| #12 完整自由            | #4, #5            | D (Constitution) + E (Self-Edit) | FEAT-SE-003; FEAT-AE-001                  |
 
 ### Pack → Module → Phase 反向索引
 
-| Phase | Pack ID | 名称 | 关联模块 | 关联差距# |
-|-------|---------|------|----------|----------|
-| 1 | FEAT-TE-001 | 上下文层级预算硬约束 | A | #1, #11 |
-| 1 | FEAT-TE-002 | 消息级压缩 | A | #1 |
-| 1 | FEAT-TE-003 | 迷你索引构建器 | A | #1, #11 |
-| 1 | FEAT-TE-004 | 工具结果摘要化 | A | #1 |
-| 2 | FEAT-SE-001 | Skill 沉淀引擎 | B | #2, #9 |
-| 2 | FEAT-SE-002 | Skill 去重+合并 | B | #2 |
-| 2 | FEAT-SE-003 | 宪法级记忆层 | D | #4, #11 |
-| 2 | FEAT-SE-004 | Skill 向量语义搜索 | I | #7 |
-| 3 | FEAT-SH-001 | Self-Healing Daemon 框架 | C | #3 |
-| 3 | FEAT-SH-002 | Provider + MCP 活性检查 | C | #3 |
-| 3 | FEAT-SH-003 | 浏览器会话自修复 | F | #6 |
-| 4 | FEAT-AE-001 | 工具失败分析+自编辑提案 | E | #5, #9 |
-| 4 | FEAT-AE-002 | 执行验证记忆写入 | K | #12 |
-| 4 | FEAT-AE-003 | 分级失败升级 | E | #5 |
-| 5 | FEAT-INT-001 | 前端投影扩展 | 全部 | 集成 |
-| 5 | FEAT-INT-002 | 端到端 harness 验证 | 全部 | 集成 |
-| 6 | FEAT-DK-001 | 域知识仓库 | G | #8 |
-| 6 | FEAT-DK-002 | 工作检查点系统 | H | #10 |
-| 6 | FEAT-DK-003 | 域知识自动贡献 | G + K | #8, #12 |
-| 7 | FEAT-BR-001 | 浏览器内容简化器 | L | #14 |
-| 7 | FEAT-BR-002 | 坐标优先浏览器策略 | J | #13 |
-| 7 | FEAT-BR-003 | 工具原子性整合 | 跨模块 | #15 |
-| 🆕 | FEAT-IA-001 | Jiaochang Audio 文档化 | M | 新发现 |
-| 🆕 | FEAT-MW-001 | MCP Workbench 文档化 | N | 新发现 |
+| Phase | Pack ID      | 名称                     | 关联模块 | 关联差距# |
+| ----- | ------------ | ------------------------ | -------- | --------- |
+| 1     | FEAT-TE-001  | 上下文层级预算硬约束     | A        | #1, #11   |
+| 1     | FEAT-TE-002  | 消息级压缩               | A        | #1        |
+| 1     | FEAT-TE-003  | 迷你索引构建器           | A        | #1, #11   |
+| 1     | FEAT-TE-004  | 工具结果摘要化           | A        | #1        |
+| 2     | FEAT-SE-001  | Skill 沉淀引擎           | B        | #2, #9    |
+| 2     | FEAT-SE-002  | Skill 去重+合并          | B        | #2        |
+| 2     | FEAT-SE-003  | 宪法级记忆层             | D        | #4, #11   |
+| 2     | FEAT-SE-004  | Skill 向量语义搜索       | I        | #7        |
+| 3     | FEAT-SH-001  | Self-Healing Daemon 框架 | C        | #3        |
+| 3     | FEAT-SH-002  | Provider + MCP 活性检查  | C        | #3        |
+| 3     | FEAT-SH-003  | 浏览器会话自修复         | F        | #6        |
+| 4     | FEAT-AE-001  | 工具失败分析+自编辑提案  | E        | #5, #9    |
+| 4     | FEAT-AE-002  | 执行验证记忆写入         | K        | #12       |
+| 4     | FEAT-AE-003  | 分级失败升级             | E        | #5        |
+| 5     | FEAT-INT-001 | 前端投影扩展             | 全部     | 集成      |
+| 5     | FEAT-INT-002 | 端到端 harness 验证      | 全部     | 集成      |
+| 6     | FEAT-DK-001  | 域知识仓库               | G        | #8        |
+| 6     | FEAT-DK-002  | 工作检查点系统           | H        | #10       |
+| 6     | FEAT-DK-003  | 域知识自动贡献           | G + K    | #8, #12   |
+| 7     | FEAT-BR-001  | 浏览器内容简化器         | L        | #14       |
+| 7     | FEAT-BR-002  | 坐标优先浏览器策略       | J        | #13       |
+| 7     | FEAT-BR-003  | 工具原子性整合           | 跨模块   | #15       |
+| 🆕     | FEAT-IA-001  | Jiaochang Audio 文档化   | M        | 新发现    |
+| 🆕     | FEAT-MW-001  | MCP Workbench 文档化     | N        | 新发现    |
 
 ---
 
 ## 附录: 关键文件参考
 
-### 新建文件 (15 个)
-| 文件路径 | 模块 |
-|----------|------|
-| `src-tauri/src/modules/runtime/context_compression.rs` | Module A |
-| `src-tauri/src/modules/skills/sedimentation.rs` | Module B |
-| `src-tauri/src/modules/skills/deduplication.rs` | Module B |
-| `src-tauri/src/modules/runtime/daemon/mod.rs` | Module C |
-| `src-tauri/src/modules/runtime/daemon/health_check.rs` | Module C |
-| `src-tauri/src/modules/runtime/daemon/recovery.rs` | Module C |
-| `src-tauri/src/modules/runtime/constitution.rs` | Module D |
-| `src-tauri/src/modules/runtime/self_edit.rs` | Module E |
-| `src-tauri/src/modules/smart_browser/session_health.rs` | Module F |
-| `src-tauri/src/modules/skills/domain_knowledge.rs` | Module G |
-| `src-tauri/src/modules/runtime/working_checkpoint.rs` | Module H |
-| `src-tauri/src/modules/skills/vector_search.rs` | Module I |
-| `src-tauri/src/modules/smart_browser/coordinate_strategy.rs` | Module J |
-| `src-tauri/src/modules/memory/verification_gate.rs` | Module K |
-| `src-tauri/src/modules/smart_browser/content_simplifier.rs` | Module L |
+### 新建文件（规划名 → 2026-04-30 实际落点）
+
+> 下列为 rollout 后的**真路径**；括号内为原规划单文件命名。
+
+| 实际路径（或内联位置）                                                                        | 模块     |
+| --------------------------------------------------------------------------------------------- | -------- |
+| `src-tauri/src/modules/runtime/context_compression/`（原 `context_compression.rs`）           | Module A |
+| `src-tauri/src/modules/skills/sedimentation/`（原 `sedimentation.rs` + `deduplication.rs`）   | Module B |
+| `src-tauri/src/modules/runtime/daemon/mod.rs`、`health_check.rs`、`recovery.rs`               | Module C |
+| `src-tauri/src/modules/skills/guard/constitution.rs`（非 `runtime/constitution.rs`）          | Module D |
+| `learning/`、`stream_tool_execution`、self-edit scanner（`runtime/self_edit.rs` 或等价拆分）  | Module E |
+| `src-tauri/src/modules/smart_browser/session_health.rs` + `runtime.rs` + `browser/session.rs` | Module F |
+| `src-tauri/src/modules/skills/domain_knowledge/`（原 `domain_knowledge.rs`）                  | Module G |
+| `src-tauri/src/modules/runtime/working_checkpoint.rs`                                         | Module H |
+| `src-tauri/src/modules/skills/vector_index.rs` 等（原 `vector_search.rs`）                    | Module I |
+| `smart_browser/runtime.rs` 内坐标策略（原 `coordinate_strategy.rs`）                          | Module J |
+| `memory_quality_gate.rs` / `memory_write_policy.rs` 等（原 `verification_gate.rs`）           | Module K |
+| `smart_browser/runtime.rs` 内简化管线（原 `content_simplifier.rs`）                           | Module L |
 
 ### 需修改的现有文件 (核心)
-| 文件路径 | 修改内容 | 关联模块 |
-|----------|----------|----------|
-| `src-tauri/src/modules/application/turn_service/stream_preflight.rs` | 接入上下文压缩器 + checkpoint 注入 | A, H |
-| `src-tauri/src/modules/application/turn_service/stream_finalize.rs` | Skill 沉淀钩子 + 域知识提取 + checkpoint 提取 | B, G, H |
-| `src-tauri/src/modules/application/turn_service/stream_tool_execution.rs` | 终结前自编辑尝试 + 分级升级 | E |
-| `src-tauri/src/modules/application/turn_service/work_loop.rs` | 向量搜索替换关键词匹配 + 域知识注入 | G, I |
-| `src-tauri/src/modules/runtime/budget.rs` | 层级预算常量 + tier 配置 | A |
-| `src-tauri/src/modules/runtime/self_repair.rs` | 重构为 daemon 框架入口 | C |
-| `src-tauri/src/modules/skills/mod.rs` | 注册 sedimentation/deduplication/domain_knowledge/vector_search | B, G, I |
-| `src-tauri/src/modules/memory/mod.rs` | 注册 verification_gate | K |
-| `src-tauri/src/modules/application/prompt_planner/` | Constitution block kind | D |
-| `src-tauri/src/modules/smart_browser/runtime.rs` | 健康监控 + 坐标策略 + 内容简化 | F, J, L |
-| `src-tauri/src/modules/browser/session.rs` | 心跳 + 崩溃检测 | F |
-| `src-tauri/src/modules/tools/builtin/` (memory_store) | 接入执行验证门 | K |
-| `src-tauri/src/modules/tools/builtin/browser_tool.rs` | 接入 HTML 简化器 | L |
-| `src/runtime-projection/runtime-event-reducer.ts` | 新事件: daemon_health, sedimented, checkpoint 等 | 全部 |
-| `src/runtime-projection/runtime-event-translator.ts` | 新事件翻译 | 全部 |
+| 文件路径                                                                  | 修改内容                                                        | 关联模块 |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------- | -------- |
+| `src-tauri/src/modules/application/turn_service/stream_preflight.rs`      | 接入上下文压缩器 + checkpoint 注入                              | A, H     |
+| `src-tauri/src/modules/application/turn_service/stream_finalize.rs`       | Skill 沉淀钩子 + 域知识提取 + checkpoint 提取                   | B, G, H  |
+| `src-tauri/src/modules/application/turn_service/stream_tool_execution.rs` | 终结前自编辑尝试 + 分级升级                                     | E        |
+| `src-tauri/src/modules/application/turn_service/work_loop.rs`             | 向量搜索替换关键词匹配 + 域知识注入                             | G, I     |
+| `src-tauri/src/modules/runtime/budget.rs`                                 | 层级预算常量 + tier 配置                                        | A        |
+| `src-tauri/src/modules/runtime/self_repair.rs`                            | 重构为 daemon 框架入口                                          | C        |
+| `src-tauri/src/modules/skills/mod.rs`                                     | 注册 sedimentation/deduplication/domain_knowledge/vector_search | B, G, I  |
+| `src-tauri/src/modules/memory/mod.rs`                                     | 注册 verification_gate                                          | K        |
+| `src-tauri/src/modules/application/prompt_planner/`                       | Constitution block kind                                         | D        |
+| `src-tauri/src/modules/smart_browser/runtime.rs`                          | 健康监控 + 坐标策略 + 内容简化                                  | F, J, L  |
+| `src-tauri/src/modules/browser/session.rs`                                | 心跳 + 崩溃检测                                                 | F        |
+| `src-tauri/src/modules/tools/builtin/` (memory_store)                     | 接入执行验证门                                                  | K        |
+| `src-tauri/src/modules/tools/builtin/browser_tool.rs`                     | 接入 HTML 简化器                                                | L        |
+| `src/runtime-projection/runtime-event-reducer.ts`                         | 新事件: daemon_health, sedimented, checkpoint 等                | 全部     |
+| `src/runtime-projection/runtime-event-translator.ts`                      | 新事件翻译                                                      | 全部     |
 
 ---
 
@@ -1850,15 +1851,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - **Git 模块**：api.ts (branch detection, repo status)，已实现
 - **Memory Debug / Prompt Diagnostics**：调试页面，已实现
 
-**前端差距 (2026-04 更新)**: 当前前端缺少以下 6 类可视化能力：
-1. Daemon 健康状态实时仪表盘 (Module C) — ❌ 不存在
-2. Agent 自编辑提案 UI (Module E) — ❌ 不存在
-3. 域知识创作和浏览界面 (Module G) — ❌ 不存在
-4. 工作检查点实时视图 (Module H) — ❌ 不存在
-5. 浏览器 coord-first 交互预览 (Module J) — ❌ 不存在
-6. HTML 简化前后对比视图 (Module L) — ❌ 不存在
+**前端差距 (2026-04-30 真值)**: `src/components/chat/evolution/` 已落地 **EvolutionDevDrawer** 及 **6 个子面板**（`DaemonHealthDashboard`、`CompressionHistoryTable`、`SkillSedimentationTimeline`、`SelfEditPanel`、`EvolutionMiscPanel` 等），`App.tsx` 订阅 `runtime_event` 并调用 **`evolutionEventStore.applyEnvelope`**（详见 GAP 报告 §3.3）。因此下列历史表述 **不再成立**：「6 类可视化全不存在」。**仍可能存在的差距**：生产事件密度不足、部分面板仍为 dev 级、与 **landed-stub** 后端状态对不齐时的空数据体验——归 **iteration 3（WU-009）** 与后续 UX 打磨。
 
-**关键结论**: 前端基础远超 spec 原始假设（298 files vs 31 planned changes）。spec Part 7 从"全部新建"调整为"在成熟基线上升级 24 个组件"。
+**关键结论**: 前端基础远超 spec 原始假设（298 files vs 31 planned changes）。spec Part 7 从"全部新建"调整为"在成熟基线上升级"；Evolution 抽屉已提供 **首版可观测性**，后续迭代聚焦数据真实性与交互深度。
 
 ### 7.2 新增投影事件类型
 
@@ -1928,11 +1923,11 @@ interface RuntimeProjectionState {
 
 **新增强**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `CompressionEventToast` | `useCompressionToasts.ts` (new hook) | 压缩完成后 sonner toast: "上下文已压缩: 120K → 28K (节省 76%)" |
-| `TierBreakdownTooltip` | `ContextBar.tsx` 增强 | 悬停各段时显示 tier 明细: Constitution(200) / MiniIndex(500) / ActiveFacts(1000) / TaskSOP(2000) / RecentHistory(剩余) |
-| `CompressionHistoryDrawer` | `src/components/chat/CompressionHistoryDrawer.tsx` (new) | 按时间线展示压缩记录: before/after token 数 + 压缩率 + 触发原因 |
+| 组件                       | 位置                                                     | 功能                                                                                                                   |
+| -------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `CompressionEventToast`    | `useCompressionToasts.ts` (new hook)                     | 压缩完成后 sonner toast: "上下文已压缩: 120K → 28K (节省 76%)"                                                         |
+| `TierBreakdownTooltip`     | `ContextBar.tsx` 增强                                    | 悬停各段时显示 tier 明细: Constitution(200) / MiniIndex(500) / ActiveFacts(1000) / TaskSOP(2000) / RecentHistory(剩余) |
+| `CompressionHistoryDrawer` | `src/components/chat/CompressionHistoryDrawer.tsx` (new) | 按时间线展示压缩记录: before/after token 数 + 压缩率 + 触发原因                                                        |
 
 **数据流**:
 ```
@@ -1951,11 +1946,11 @@ backend compress_for_request()
 
 **新增强**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `SkillSedimentationTimeline` | `src/components/skills/SkillSedimentationTimeline.tsx` (new) | 时间线视图：每个成功任务→生成的 skill 卡片，带触发条件和置信度评分 |
-| `SedimentedSkillCard` | `src/components/skills/SedimentedSkillCard.tsx` (new) | 新沉淀 skill 的卡片：步骤列表 + 前置条件 + 避免坑点 + "review/approve/reject" CTA |
-| `SkillDedupComparison` | `src/components/skills/SkillDedupComparison.tsx` (new) | 并排比较：新沉淀 skill vs 已有相似 skill，高亮差异，一键合并 |
+| 组件                         | 位置                                                         | 功能                                                                              |
+| ---------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `SkillSedimentationTimeline` | `src/components/skills/SkillSedimentationTimeline.tsx` (new) | 时间线视图：每个成功任务→生成的 skill 卡片，带触发条件和置信度评分                |
+| `SedimentedSkillCard`        | `src/components/skills/SedimentedSkillCard.tsx` (new)        | 新沉淀 skill 的卡片：步骤列表 + 前置条件 + 避免坑点 + "review/approve/reject" CTA |
+| `SkillDedupComparison`       | `src/components/skills/SkillDedupComparison.tsx` (new)       | 并排比较：新沉淀 skill vs 已有相似 skill，高亮差异，一键合并                      |
 
 **数据流**:
 ```
@@ -1972,12 +1967,12 @@ backend sedimentation engine (post stream_finalize)
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
+| 组件                    | 位置                                                    | 功能                                                           |
+| ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
 | `DaemonHealthDashboard` | `src/components/daemon/DaemonHealthDashboard.tsx` (new) | 4 象限仪表盘: Provider活性 / MCP进程 / 浏览器会话 / 记忆Ticker |
-| `DaemonStatusIndicator` | `src/components/daemon/DaemonStatusIndicator.tsx` (new) | 全局导航栏小指示器: 🟢运行中 / 🟡降级 / 🔴宕机 / 🔵恢复中 |
-| `RecoveryActionLog` | `src/components/daemon/RecoveryActionLog.tsx` (new) | 最近恢复操作日志: 时间戳 + 触发原因 + 恢复动作 + 结果 |
-| `HealthCheckDetail` | `src/components/daemon/HealthCheckDetail.tsx` (new) | 单个健康检查的详情: 上次心跳 / 失败次数 / 恢复策略 / 手动触发 |
+| `DaemonStatusIndicator` | `src/components/daemon/DaemonStatusIndicator.tsx` (new) | 全局导航栏小指示器: 🟢运行中 / 🟡降级 / 🔴宕机 / 🔵恢复中          |
+| `RecoveryActionLog`     | `src/components/daemon/RecoveryActionLog.tsx` (new)     | 最近恢复操作日志: 时间戳 + 触发原因 + 恢复动作 + 结果          |
+| `HealthCheckDetail`     | `src/components/daemon/HealthCheckDetail.tsx` (new)     | 单个健康检查的详情: 上次心跳 / 失败次数 / 恢复策略 / 手动触发  |
 
 **UI 布局**:
 ```
@@ -2014,11 +2009,11 @@ backend daemon heartbeat loop
 
 **新增强**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `ConstitutionViewer` | `src/components/memory/ConstitutionViewer.tsx` (new) | 只读宪法层展示：按类别分组(操作安全/隐私/准确性/效率)，每条的优先级和来源 |
-| `ConstitutionViolationAlert` | `src/components/chat/ConstitutionViolationAlert.tsx` (new) | 宪法违规时在消息流中插入红色警报卡: "Agent 试图 写入未经验证的数据 — 操作已被阻止 (宪法规则 #12)" |
-| `ConstitutionYamlEditor` | `src/modules/settings/pages/ConstitutionSettingsPage.tsx` (new) | 设置中的宪法编辑页面：YAML 编辑器 + 语法校验 + 预览注入效果 |
+| 组件                         | 位置                                                            | 功能                                                                                              |
+| ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ConstitutionViewer`         | `src/components/memory/ConstitutionViewer.tsx` (new)            | 只读宪法层展示：按类别分组(操作安全/隐私/准确性/效率)，每条的优先级和来源                         |
+| `ConstitutionViolationAlert` | `src/components/chat/ConstitutionViolationAlert.tsx` (new)      | 宪法违规时在消息流中插入红色警报卡: "Agent 试图 写入未经验证的数据 — 操作已被阻止 (宪法规则 #12)" |
+| `ConstitutionYamlEditor`     | `src/modules/settings/pages/ConstitutionSettingsPage.tsx` (new) | 设置中的宪法编辑页面：YAML 编辑器 + 语法校验 + 预览注入效果                                       |
 
 **数据流**:
 ```
@@ -2034,11 +2029,11 @@ backend constitution injection (preflight)
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `SelfEditProposalCard` | `src/components/chat/SelfEditProposalCard.tsx` (new) | 自编辑提案卡片：失败模式 + 建议修改 + diff preview + approve/reject 按钮 |
-| `ToolFailureAnalysis` | `src/components/tools/ToolFailureAnalysis.tsx` (new) | 工具失败分析视图：失败次数 + 错误签名 + 建议修复方案 |
-| `SelfEditHistoryPanel` | `src/components/tools/SelfEditHistoryPanel.tsx` (new) | 自编辑历史：应用的修改 + 效果（改善/恶化）+ 回滚按钮 |
+| 组件                   | 位置                                                  | 功能                                                                     |
+| ---------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| `SelfEditProposalCard` | `src/components/chat/SelfEditProposalCard.tsx` (new)  | 自编辑提案卡片：失败模式 + 建议修改 + diff preview + approve/reject 按钮 |
+| `ToolFailureAnalysis`  | `src/components/tools/ToolFailureAnalysis.tsx` (new)  | 工具失败分析视图：失败次数 + 错误签名 + 建议修复方案                     |
+| `SelfEditHistoryPanel` | `src/components/tools/SelfEditHistoryPanel.tsx` (new) | 自编辑历史：应用的修改 + 效果（改善/恶化）+ 回滚按钮                     |
 
 **UI 布局**:
 ```
@@ -2071,10 +2066,10 @@ backend self_edit engine detects failure pattern
 
 **新增强**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `BrowserSessionHealthBar` | `src/components/browser/BrowserSessionHealthBar.tsx` (new) | 浏览器卡片旁的小健康条: CDP 连接状态 + 上次心跳 + 会话年龄 |
-| `BrowserRecoveryToast` | `useBrowserRecoveryToast.ts` (new hook) | 恢复操作 toast: "浏览器 CDP 会话过期 → 自动重建 (耗时 1.2s)" |
+| 组件                      | 位置                                                       | 功能                                                         |
+| ------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| `BrowserSessionHealthBar` | `src/components/browser/BrowserSessionHealthBar.tsx` (new) | 浏览器卡片旁的小健康条: CDP 连接状态 + 上次心跳 + 会话年龄   |
+| `BrowserRecoveryToast`    | `useBrowserRecoveryToast.ts` (new hook)                    | 恢复操作 toast: "浏览器 CDP 会话过期 → 自动重建 (耗时 1.2s)" |
 
 **集成点**: 在现有的 `BrowserCard.tsx` 中添加健康指示器。在 Daemon 仪表盘中集成浏览器健康检查详情。
 
@@ -2084,12 +2079,12 @@ backend self_edit engine detects failure pattern
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `DomainKnowledgeBrowser` | `src/components/skills/DomainKnowledgeBrowser.tsx` (new) | 按域名/任务类型浏览域知识：网站域知识(selector/gotcha) + 交互原语 + 任务SOP |
-| `DomainKnowledgeCard` | `src/components/skills/DomainKnowledgeCard.tsx` (new) | 单条域知识卡片：内容摘要 + 作者(Agent/User/Imported) + 置信度 + 最后验证时间 |
-| `DomainKnowledgeContributionDialog` | `src/components/skills/DomainKnowledgeContributionDialog.tsx` (new) | Agent 提议贡献域知识时的确认对话框：内容预览 + 证据引用 + 确认/拒绝 |
-| `SelectorStabilityIndicator` | `src/components/skills/SelectorStabilityIndicator.tsx` (new) | 选择器稳定性标记: 绿色(稳定)/黄色(脆弱)/灰色(未测试) + 最后验证时间 |
+| 组件                                | 位置                                                                | 功能                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `DomainKnowledgeBrowser`            | `src/components/skills/DomainKnowledgeBrowser.tsx` (new)            | 按域名/任务类型浏览域知识：网站域知识(selector/gotcha) + 交互原语 + 任务SOP  |
+| `DomainKnowledgeCard`               | `src/components/skills/DomainKnowledgeCard.tsx` (new)               | 单条域知识卡片：内容摘要 + 作者(Agent/User/Imported) + 置信度 + 最后验证时间 |
+| `DomainKnowledgeContributionDialog` | `src/components/skills/DomainKnowledgeContributionDialog.tsx` (new) | Agent 提议贡献域知识时的确认对话框：内容预览 + 证据引用 + 确认/拒绝          |
+| `SelectorStabilityIndicator`        | `src/components/skills/SelectorStabilityIndicator.tsx` (new)        | 选择器稳定性标记: 绿色(稳定)/黄色(脆弱)/灰色(未测试) + 最后验证时间          |
 
 **UI 布局**:
 ```
@@ -2127,11 +2122,11 @@ backend domain_knowledge contribution (post stream_finalize)
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `WorkingCheckpointBar` | `src/components/chat/WorkingCheckpointBar.tsx` (new) | ContextBar 下方的小条: 当前 checkpoint 关键信息 (<200 tokens) |
-| `CheckpointHistoryPanel` | `src/components/chat/CheckpointHistoryPanel.tsx` (new) | 检查点历史时间线: 每轮 checkpoint 内容 + 关联 SOP + 更新时间 |
-| `CheckpointInjectIndicator` | `ContextBar.tsx` 增强 | 当 checkpoint 被注入到请求时，显示小标记 "(+cp 187 tokens)" |
+| 组件                        | 位置                                                   | 功能                                                          |
+| --------------------------- | ------------------------------------------------------ | ------------------------------------------------------------- |
+| `WorkingCheckpointBar`      | `src/components/chat/WorkingCheckpointBar.tsx` (new)   | ContextBar 下方的小条: 当前 checkpoint 关键信息 (<200 tokens) |
+| `CheckpointHistoryPanel`    | `src/components/chat/CheckpointHistoryPanel.tsx` (new) | 检查点历史时间线: 每轮 checkpoint 内容 + 关联 SOP + 更新时间  |
+| `CheckpointInjectIndicator` | `ContextBar.tsx` 增强                                  | 当 checkpoint 被注入到请求时，显示小标记 "(+cp 187 tokens)"   |
 
 **UI 布局**:
 ```
@@ -2159,10 +2154,10 @@ backend checkpoint injection (preflight)
 
 **新增强**: 在现有的 `SkillsHubView.tsx` 搜索结果中增加嵌入相似度评分和匹配原因。
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `VectorSearchScore` | `SkillsHubView.tsx` 增强 | 搜索结果卡片新增: 向量相似度分数 + 匹配原因 (e.g. "匹配关键词: 文件上传, DOM操作") |
-| `SkillSearchResultCard` | `src/components/skills/SkillSearchResultCard.tsx` (new) | 增强版搜索结果卡片：综合评分(向量相似度 × 质量评分) + 匹配片段高亮 + 使用频次 |
+| 组件                    | 位置                                                    | 功能                                                                               |
+| ----------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `VectorSearchScore`     | `SkillsHubView.tsx` 增强                                | 搜索结果卡片新增: 向量相似度分数 + 匹配原因 (e.g. "匹配关键词: 文件上传, DOM操作") |
+| `SkillSearchResultCard` | `src/components/skills/SkillSearchResultCard.tsx` (new) | 增强版搜索结果卡片：综合评分(向量相似度 × 质量评分) + 匹配片段高亮 + 使用频次      |
 
 **数据流**: 现有的 `skill_search` 工具已能返回结果，前端增加评分展示和处理即可。
 
@@ -2172,11 +2167,11 @@ backend checkpoint injection (preflight)
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `CoordinateClickOverlay` | `src/components/browser/CoordinateClickOverlay.tsx` (new) | 浏览器截图上叠加点击坐标标记：红圈 + 十字线 + 坐标值 |
+| 组件                       | 位置                                                        | 功能                                                           |
+| -------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------- |
+| `CoordinateClickOverlay`   | `src/components/browser/CoordinateClickOverlay.tsx` (new)   | 浏览器截图上叠加点击坐标标记：红圈 + 十字线 + 坐标值           |
 | `InteractionStrategyChain` | `src/components/browser/InteractionStrategyChain.tsx` (new) | 展示降级链: 坐标点击 → 标签引用 → CSS 选择器，当前使用策略高亮 |
-| `ClickVerificationPreview` | `src/components/browser/ClickVerificationPreview.tsx` (new) | 点击前后截图对比：左 before / 右 after，差异区域高亮 |
+| `ClickVerificationPreview` | `src/components/browser/ClickVerificationPreview.tsx` (new) | 点击前后截图对比：左 before / 右 after，差异区域高亮           |
 
 **UI 布局**:
 ```
@@ -2204,11 +2199,11 @@ backend checkpoint injection (preflight)
 
 **新增强**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
-| `VerificationGateStatus` | `MemoryWriteCard.tsx` 增强 | 写入请求显示验证结果: ✓ 已验证(证据: tool_call_abc) / ✗ 已拒绝(原因: 无工具证据) / ⚡ 豁免(宪法规则) |
-| `VolatileContentWarning` | `MemoryWriteCard.tsx` 增强 | 检测到易变内容时高亮警告: "内容包含时间戳/会话ID - 拒绝存储" |
-| `VerificationAuditLog` | `src/components/memory/VerificationAuditLog.tsx` (new) | 验证历史日志: 所有写入请求的验证结果 + 拒绝原因统计 |
+| 组件                     | 位置                                                   | 功能                                                                                                |
+| ------------------------ | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `VerificationGateStatus` | `MemoryWriteCard.tsx` 增强                             | 写入请求显示验证结果: ✓ 已验证(证据: tool_call_abc) / ✗ 已拒绝(原因: 无工具证据) / ⚡ 豁免(宪法规则) |
+| `VolatileContentWarning` | `MemoryWriteCard.tsx` 增强                             | 检测到易变内容时高亮警告: "内容包含时间戳/会话ID - 拒绝存储"                                        |
+| `VerificationAuditLog`   | `src/components/memory/VerificationAuditLog.tsx` (new) | 验证历史日志: 所有写入请求的验证结果 + 拒绝原因统计                                                 |
 
 **数据流**:
 ```
@@ -2224,11 +2219,11 @@ backend verification gate decision
 
 **新增组件**:
 
-| 组件 | 位置 | 功能 |
-|------|------|------|
+| 组件                     | 位置                                                      | 功能                                                        |
+| ------------------------ | --------------------------------------------------------- | ----------------------------------------------------------- |
 | `SimplificationDiffView` | `src/components/browser/SimplificationDiffView.tsx` (new) | 并排比较: 原始 HTML 200K vs 简化后 25K，差异字符数 + 压缩率 |
-| `KeyElementsList` | `src/components/browser/KeyElementsList.tsx` (new) | 提取的关键交互元素列表: tag, id, name, type, text, href |
-| `TokenSavingsBadge` | `ToolCallMessage.tsx` 增强 | web_scan 工具结果中显示"Token 节省: 93% (200K→14K)"徽章 |
+| `KeyElementsList`        | `src/components/browser/KeyElementsList.tsx` (new)        | 提取的关键交互元素列表: tag, id, name, type, text, href     |
+| `TokenSavingsBadge`      | `ToolCallMessage.tsx` 增强                                | web_scan 工具结果中显示"Token 节省: 93% (200K→14K)"徽章     |
 
 **UI 布局**:
 ```
@@ -2261,70 +2256,70 @@ backend simplifier (web_scan tool)
 
 ### 7.4 前端新增文件清单 (24 个)
 
-| 文件路径 | 对应模块 | 类型 |
-|----------|----------|------|
-| `src/components/chat/CompressionHistoryDrawer.tsx` | A | 新组件 |
-| `src/components/chat/useCompressionToasts.ts` | A | 新 hook |
-| `src/components/skills/SkillSedimentationTimeline.tsx` | B | 新组件 |
-| `src/components/skills/SedimentedSkillCard.tsx` | B | 新组件 |
-| `src/components/skills/SkillDedupComparison.tsx` | B | 新组件 |
-| `src/components/daemon/DaemonHealthDashboard.tsx` | C | 新组件 |
-| `src/components/daemon/DaemonStatusIndicator.tsx` | C | 新组件 |
-| `src/components/daemon/RecoveryActionLog.tsx` | C | 新组件 |
-| `src/components/daemon/HealthCheckDetail.tsx` | C | 新组件 |
-| `src/components/memory/ConstitutionViewer.tsx` | D | 新组件 |
-| `src/components/chat/ConstitutionViolationAlert.tsx` | D | 新组件 |
-| `src/modules/settings/pages/ConstitutionSettingsPage.tsx` | D | 新页面 |
-| `src/components/chat/SelfEditProposalCard.tsx` | E | 新组件 |
-| `src/components/tools/ToolFailureAnalysis.tsx` | E | 新组件 |
-| `src/components/tools/SelfEditHistoryPanel.tsx` | E | 新组件 |
-| `src/components/browser/BrowserSessionHealthBar.tsx` | F | 新组件 |
-| `src/components/browser/useBrowserRecoveryToast.ts` | F | 新 hook |
-| `src/components/skills/DomainKnowledgeBrowser.tsx` | G | 新组件 |
-| `src/components/skills/DomainKnowledgeCard.tsx` | G | 新组件 |
-| `src/components/skills/DomainKnowledgeContributionDialog.tsx` | G | 新组件 |
-| `src/components/skills/SelectorStabilityIndicator.tsx` | G | 新组件 |
-| `src/components/chat/WorkingCheckpointBar.tsx` | H | 新组件 |
-| `src/components/chat/CheckpointHistoryPanel.tsx` | H | 新组件 |
-| `src/components/skills/SkillSearchResultCard.tsx` | I | 新组件 |
-| `src/components/browser/CoordinateClickOverlay.tsx` | J | 新组件 |
-| `src/components/browser/InteractionStrategyChain.tsx` | J | 新组件 |
-| `src/components/browser/ClickVerificationPreview.tsx` | J | 新组件 |
-| `src/components/memory/VerificationAuditLog.tsx` | K | 新组件 |
-| `src/components/browser/SimplificationDiffView.tsx` | L | 新组件 |
-| `src/components/browser/KeyElementsList.tsx` | L | 新组件 |
-| `src/lib/toolDisplay.ts` | E/J/L | 新工具库(从 chat-ui.tsx 提取) |
+| 文件路径                                                      | 对应模块 | 类型                          |
+| ------------------------------------------------------------- | -------- | ----------------------------- |
+| `src/components/chat/CompressionHistoryDrawer.tsx`            | A        | 新组件                        |
+| `src/components/chat/useCompressionToasts.ts`                 | A        | 新 hook                       |
+| `src/components/skills/SkillSedimentationTimeline.tsx`        | B        | 新组件                        |
+| `src/components/skills/SedimentedSkillCard.tsx`               | B        | 新组件                        |
+| `src/components/skills/SkillDedupComparison.tsx`              | B        | 新组件                        |
+| `src/components/daemon/DaemonHealthDashboard.tsx`             | C        | 新组件                        |
+| `src/components/daemon/DaemonStatusIndicator.tsx`             | C        | 新组件                        |
+| `src/components/daemon/RecoveryActionLog.tsx`                 | C        | 新组件                        |
+| `src/components/daemon/HealthCheckDetail.tsx`                 | C        | 新组件                        |
+| `src/components/memory/ConstitutionViewer.tsx`                | D        | 新组件                        |
+| `src/components/chat/ConstitutionViolationAlert.tsx`          | D        | 新组件                        |
+| `src/modules/settings/pages/ConstitutionSettingsPage.tsx`     | D        | 新页面                        |
+| `src/components/chat/SelfEditProposalCard.tsx`                | E        | 新组件                        |
+| `src/components/tools/ToolFailureAnalysis.tsx`                | E        | 新组件                        |
+| `src/components/tools/SelfEditHistoryPanel.tsx`               | E        | 新组件                        |
+| `src/components/browser/BrowserSessionHealthBar.tsx`          | F        | 新组件                        |
+| `src/components/browser/useBrowserRecoveryToast.ts`           | F        | 新 hook                       |
+| `src/components/skills/DomainKnowledgeBrowser.tsx`            | G        | 新组件                        |
+| `src/components/skills/DomainKnowledgeCard.tsx`               | G        | 新组件                        |
+| `src/components/skills/DomainKnowledgeContributionDialog.tsx` | G        | 新组件                        |
+| `src/components/skills/SelectorStabilityIndicator.tsx`        | G        | 新组件                        |
+| `src/components/chat/WorkingCheckpointBar.tsx`                | H        | 新组件                        |
+| `src/components/chat/CheckpointHistoryPanel.tsx`              | H        | 新组件                        |
+| `src/components/skills/SkillSearchResultCard.tsx`             | I        | 新组件                        |
+| `src/components/browser/CoordinateClickOverlay.tsx`           | J        | 新组件                        |
+| `src/components/browser/InteractionStrategyChain.tsx`         | J        | 新组件                        |
+| `src/components/browser/ClickVerificationPreview.tsx`         | J        | 新组件                        |
+| `src/components/memory/VerificationAuditLog.tsx`              | K        | 新组件                        |
+| `src/components/browser/SimplificationDiffView.tsx`           | L        | 新组件                        |
+| `src/components/browser/KeyElementsList.tsx`                  | L        | 新组件                        |
+| `src/lib/toolDisplay.ts`                                      | E/J/L    | 新工具库(从 chat-ui.tsx 提取) |
 
 ### 7.5 前端修改文件清单 (11 个)
 
-| 文件路径 | 修改内容 | 关联模块 |
-|----------|----------|----------|
-| `src/transport/contracts.ts` | 新增 7 种 `RuntimeEventType` | 全部 |
-| `src/runtime-projection/types.ts` | 新增 `daemon`, `skills`, `domainKnowledge`, `workingCheckpoint`, `verification` 字段 | 全部 |
-| `src/runtime-projection/runtime-event-translator.ts` | 新增 7 个 translator 函数 | 全部 |
-| `src/runtime-projection/runtime-event-reducer.ts` | 新增 7 个 case handler | 全部 |
-| `src/runtime-projection/runtime-projection-bridge.ts` | 新增 7 个 listen() 订阅 | 全部 |
-| `src/components/chat/ContextBar.tsx` | Tier 明细 tooltip + Checkpoint 注入指示 + 会话累计增强 | A, H |
-| `src/components/chat/ToolCallMessage.tsx` / `chat-ui.tsx` | Token 节省徽章 + 验证门状态显示 | K, L |
-| `src/components/memory/MemoryWriteCard.tsx` | 验证门状态 + 易变内容警告 | K |
-| `src/components/browser/BrowserCard.tsx` | 集成 `BrowserSessionHealthBar` | F |
-| `src/modules/skills/SkillsHubView.tsx` | 向量搜索评分展示 | I |
-| `src/modules/app-shell/components/GlobalNavbar.tsx` | 集成 `DaemonStatusIndicator` | C |
+| 文件路径                                                  | 修改内容                                                                             | 关联模块 |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------ | -------- |
+| `src/transport/contracts.ts`                              | 新增 7 种 `RuntimeEventType`                                                         | 全部     |
+| `src/runtime-projection/types.ts`                         | 新增 `daemon`, `skills`, `domainKnowledge`, `workingCheckpoint`, `verification` 字段 | 全部     |
+| `src/runtime-projection/runtime-event-translator.ts`      | 新增 7 个 translator 函数                                                            | 全部     |
+| `src/runtime-projection/runtime-event-reducer.ts`         | 新增 7 个 case handler                                                               | 全部     |
+| `src/runtime-projection/runtime-projection-bridge.ts`     | 新增 7 个 listen() 订阅                                                              | 全部     |
+| `src/components/chat/ContextBar.tsx`                      | Tier 明细 tooltip + Checkpoint 注入指示 + 会话累计增强                               | A, H     |
+| `src/components/chat/ToolCallMessage.tsx` / `chat-ui.tsx` | Token 节省徽章 + 验证门状态显示                                                      | K, L     |
+| `src/components/memory/MemoryWriteCard.tsx`               | 验证门状态 + 易变内容警告                                                            | K        |
+| `src/components/browser/BrowserCard.tsx`                  | 集成 `BrowserSessionHealthBar`                                                       | F        |
+| `src/modules/skills/SkillsHubView.tsx`                    | 向量搜索评分展示                                                                     | I        |
+| `src/modules/app-shell/components/GlobalNavbar.tsx`       | 集成 `DaemonStatusIndicator`                                                         | C        |
 
 ### 7.6 前端实施优先级 (2026-04 更新)
 
 与 Part 3 后端路线图对齐，但考虑现有前端基线更成熟：
 
-| 后端 Phase | 前端对应工作 | 当前前端基线 | Pack 关联 |
-|-----------|------------|------------|----------|
-| Phase 1 (Token 效率) | `CompressionHistoryDrawer` + ContextBar 增强 | ContextBar 已存在（5-segment 可视化） | FEAT-INT-001 |
-| Phase 2 (自我进化) | `SkillSedimentationTimeline` + `ConstitutionViewer` | SkillsHubView 已存在, MemoryBrowser 已存在 | FEAT-INT-001 |
+| 后端 Phase             | 前端对应工作                                                                  | 当前前端基线                                         | Pack 关联    |
+| ---------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------- | ------------ |
+| Phase 1 (Token 效率)   | `CompressionHistoryDrawer` + ContextBar 增强                                  | ContextBar 已存在（5-segment 可视化）                | FEAT-INT-001 |
+| Phase 2 (自我进化)     | `SkillSedimentationTimeline` + `ConstitutionViewer`                           | SkillsHubView 已存在, MemoryBrowser 已存在           | FEAT-INT-001 |
 | Phase 3 (Self-Healing) | `DaemonHealthDashboard` + `DaemonStatusIndicator` + `BrowserSessionHealthBar` | SmartBrowserCockpit 已存在, RunInspectorPanel 已存在 | FEAT-INT-001 |
-| Phase 4 (自编辑) | `SelfEditProposalCard` + `VerificationAuditLog` | — | FEAT-INT-001 |
-| Phase 6 (域知识) | `DomainKnowledgeBrowser` + `WorkingCheckpointBar` | — | FEAT-INT-001 |
-| Phase 7 (浏览器精炼) | `CoordinateClickOverlay` + `SimplificationDiffView` | BrowserViewerPage 已存在 | FEAT-INT-001 |
-| 🆕 Jiaochang | ✅ 已完整实现 (60 files) | Jiaochang frontend 已完成 | — |
-| 🆕 MCP Workbench | ✅ 已完整实现 | McpWorkbench settings page 已完成 | — |
+| Phase 4 (自编辑)       | `SelfEditProposalCard` + `VerificationAuditLog`                               | —                                                    | FEAT-INT-001 |
+| Phase 6 (域知识)       | `DomainKnowledgeBrowser` + `WorkingCheckpointBar`                             | —                                                    | FEAT-INT-001 |
+| Phase 7 (浏览器精炼)   | `CoordinateClickOverlay` + `SimplificationDiffView`                           | BrowserViewerPage 已存在                             | FEAT-INT-001 |
+| 🆕 Jiaochang            | ✅ 已完整实现 (60 files)                                                       | Jiaochang frontend 已完成                            | —            |
+| 🆕 MCP Workbench        | ✅ 已完整实现                                                                  | McpWorkbench settings page 已完成                    | —            |
 
 **核心原则**: 所有前端增强整合在 `FEAT-INT-001` (前端投影扩展) 一张 Pack 中，与后端各 Phase 同步交付。前端采用 **渐进增强**策略——每个后端 Phase 完成后扩展对应的投影管道和 UI，不阻塞后端开发。新发现的已实现模块 (Jiaochang, MCP Workbench, Control Plane) 标记为 ✅ 已完成，无需新增前端工作。
 
@@ -2332,29 +2327,29 @@ backend simplifier (web_scan tool)
 
 ## Part 8: 全栈追溯矩阵 (后端→前端, 含实现状态)
 
-| 后端 Module | 实现状态 | 后端 Pack | 前端主组件 | 前端修改文件 | 前端新增文件 |
-|------------|---------|----------|-----------|------------|------------|
-| A (上下文压缩) | 🔴 待实现 | FEAT-TE-001~004 | CompressionHistoryDrawer, ContextBar增强 | `ContextBar.tsx` | `CompressionHistoryDrawer.tsx`, `useCompressionToasts.ts` |
-| B (技能沉淀) | 🔴 待实现 | FEAT-SE-001,002 | SkillSedimentationTimeline, SedimentedSkillCard, SkillDedupComparison | — | 3 files |
-| C (自愈Daemon) | 🟡 部分 | FEAT-SH-001,002 | DaemonHealthDashboard, DaemonStatusIndicator, RecoveryActionLog, HealthCheckDetail | `GlobalNavbar.tsx` | 4 files |
-| D (宪法层) | 🔴 待实现 | FEAT-SE-003 | ConstitutionViewer, ConstitutionViolationAlert | — | `ConstitutionViewer.tsx`, `ConstitutionViolationAlert.tsx`, `ConstitutionSettingsPage.tsx` |
-| E (自编辑) | 🟡 部分 | FEAT-AE-001,003 | SelfEditProposalCard, ToolFailureAnalysis, SelfEditHistoryPanel | — | 3 files |
-| F (浏览器会话) | 🟡 部分 | FEAT-SH-003 | BrowserSessionHealthBar, useBrowserRecoveryToast | `BrowserCard.tsx` | 2 files |
-| G (域知识) | 🔴 待实现 | FEAT-DK-001,003 | DomainKnowledgeBrowser, DomainKnowledgeCard, DomainKnowledgeContributionDialog, SelectorStabilityIndicator | — | 4 files |
-| H (工作检查点) | 🟡 部分 | FEAT-DK-002 | WorkingCheckpointBar, CheckpointHistoryPanel | `ContextBar.tsx` | 2 files |
-| I (向量搜索) | 🟡 部分 | FEAT-SE-004 | SkillSearchResultCard | `SkillsHubView.tsx` | 1 file |
-| J (坐标优先) | 🔴 待实现 | FEAT-BR-002 | CoordinateClickOverlay, InteractionStrategyChain, ClickVerificationPreview | — | 3 files |
-| K (验证门) | 🟡 部分 | FEAT-AE-002 | VerificationAuditLog, MemoryWriteCard增强 | `MemoryWriteCard.tsx`, `ToolCallMessage.tsx` | 1 file |
-| L (HTML简化) | 🔴 待实现 | FEAT-BR-001 | SimplificationDiffView, KeyElementsList | `ToolCallMessage.tsx` | 2 files |
-| **M (Jiaochang)** | 🟢 已实现 | — | JiaochangMusicPlayer, PixelStage, StrategyPanel | — | 60 files (已存在, 无需新建) |
-| **N (MCP Workbench)** | 🟢 已实现 | — | McpWorkbenchPage, ExecutionModePill | — | ~10 files (已存在, 无需新建) |
+| 后端 Module           | 实现状态 | 后端 Pack       | 前端主组件                                                                                                 | 前端修改文件                                 | 前端新增文件                                                                               |
+| --------------------- | -------- | --------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A (上下文压缩)        | 🔴 待实现 | FEAT-TE-001~004 | CompressionHistoryDrawer, ContextBar增强                                                                   | `ContextBar.tsx`                             | `CompressionHistoryDrawer.tsx`, `useCompressionToasts.ts`                                  |
+| B (技能沉淀)          | 🔴 待实现 | FEAT-SE-001,002 | SkillSedimentationTimeline, SedimentedSkillCard, SkillDedupComparison                                      | —                                            | 3 files                                                                                    |
+| C (自愈Daemon)        | 🟡 部分   | FEAT-SH-001,002 | DaemonHealthDashboard, DaemonStatusIndicator, RecoveryActionLog, HealthCheckDetail                         | `GlobalNavbar.tsx`                           | 4 files                                                                                    |
+| D (宪法层)            | 🔴 待实现 | FEAT-SE-003     | ConstitutionViewer, ConstitutionViolationAlert                                                             | —                                            | `ConstitutionViewer.tsx`, `ConstitutionViolationAlert.tsx`, `ConstitutionSettingsPage.tsx` |
+| E (自编辑)            | 🟡 部分   | FEAT-AE-001,003 | SelfEditProposalCard, ToolFailureAnalysis, SelfEditHistoryPanel                                            | —                                            | 3 files                                                                                    |
+| F (浏览器会话)        | 🟡 部分   | FEAT-SH-003     | BrowserSessionHealthBar, useBrowserRecoveryToast                                                           | `BrowserCard.tsx`                            | 2 files                                                                                    |
+| G (域知识)            | 🔴 待实现 | FEAT-DK-001,003 | DomainKnowledgeBrowser, DomainKnowledgeCard, DomainKnowledgeContributionDialog, SelectorStabilityIndicator | —                                            | 4 files                                                                                    |
+| H (工作检查点)        | 🟡 部分   | FEAT-DK-002     | WorkingCheckpointBar, CheckpointHistoryPanel                                                               | `ContextBar.tsx`                             | 2 files                                                                                    |
+| I (向量搜索)          | 🟡 部分   | FEAT-SE-004     | SkillSearchResultCard                                                                                      | `SkillsHubView.tsx`                          | 1 file                                                                                     |
+| J (坐标优先)          | 🔴 待实现 | FEAT-BR-002     | CoordinateClickOverlay, InteractionStrategyChain, ClickVerificationPreview                                 | —                                            | 3 files                                                                                    |
+| K (验证门)            | 🟡 部分   | FEAT-AE-002     | VerificationAuditLog, MemoryWriteCard增强                                                                  | `MemoryWriteCard.tsx`, `ToolCallMessage.tsx` | 1 file                                                                                     |
+| L (HTML简化)          | 🔴 待实现 | FEAT-BR-001     | SimplificationDiffView, KeyElementsList                                                                    | `ToolCallMessage.tsx`                        | 2 files                                                                                    |
+| **M (Jiaochang)**     | 🟢 已实现 | —               | JiaochangMusicPlayer, PixelStage, StrategyPanel                                                            | —                                            | 60 files (已存在, 无需新建)                                                                |
+| **N (MCP Workbench)** | 🟢 已实现 | —               | McpWorkbenchPage, ExecutionModePill                                                                        | —                                            | ~10 files (已存在, 无需新建)                                                               |
 
 **全栈统计 (2026-04 更新)**: 14 模块 → 22 实现 Packs + 2 新发现模块 → 31 前端新建文件 + 61 已实现前端文件
 
 **实现进度**: 🟢 2/14 已完整实现 | 🟡 7/14 部分实现 | 🔴 5/14 待实现
 
 **新增 Pack 建议** (新发现模块):
-| Pack ID | 名称 | 范围 | 依赖 |
-|---------|------|------|------|
+| Pack ID       | 名称                   | 范围                                                     | 依赖            |
+| ------------- | ---------------------- | -------------------------------------------------------- | --------------- |
 | `FEAT-IA-001` | Jiaochang Audio 文档化 | 为 `jiaochang_audio/mod.rs`(1,596 LOC) 补充架构文档+spec | 无 (代码已实现) |
-| `FEAT-MW-001` | MCP Workbench 文档化 | 为 `mcp_stdio/` + `control_plane/` 补充架构文档+spec | 无 (代码已实现) |
+| `FEAT-MW-001` | MCP Workbench 文档化   | 为 `mcp_stdio/` + `control_plane/` 补充架构文档+spec     | 无 (代码已实现) |

@@ -16,7 +16,7 @@
 //! `std::sync` + the existing daemon traits.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::modules::runtime::daemon::{HealthCheck, HealthStatus, RecoveryAction};
 
@@ -63,6 +63,108 @@ impl ProviderCircuitState {
     pub fn is_tripped(&self) -> bool {
         self.consecutive_failures() >= PROVIDER_CIRCUIT_BREAKER_THRESHOLD
     }
+}
+
+// ---------------------------------------------------------------------------
+// Module C (truth-loop iter-7) — process-wide ProviderCircuitState singleton.
+// ---------------------------------------------------------------------------
+//
+// `provider/resilience.rs::StreamCircuitState` is per-stream and not
+// observable from outside the streaming task. Aggregating its
+// success/failure signals into one process-wide
+// [`ProviderCircuitState`] gives the self-healing daemon a real
+// failure source to poll: previously the only provider-side health
+// signal was the env-var-only [`make_provider_api_key_probe`].
+//
+// The singleton is a no-op until `provider/resilience.rs` calls
+// [`global_provider_circuit`] to record its outcomes, so adding the
+// OnceLock is a strictly additive change.
+
+static GLOBAL_PROVIDER_CIRCUIT: OnceLock<Arc<ProviderCircuitState>> = OnceLock::new();
+
+/// Process-wide [`ProviderCircuitState`] used by the self-healing
+/// daemon's chat-provider liveness probe.
+///
+/// Lazily initialised on first access; cheap to clone. Anyone who
+/// observes a provider success / failure (today: `StreamCircuitState`
+/// in `provider/resilience.rs`) SHOULD mirror the call here so the
+/// daemon's [`make_provider_circuit_probe`] sees the streak.
+#[must_use]
+pub fn global_provider_circuit() -> Arc<ProviderCircuitState> {
+    Arc::clone(GLOBAL_PROVIDER_CIRCUIT.get_or_init(|| Arc::new(ProviderCircuitState::new())))
+}
+
+/// HealthCheck wrapper that reads an existing [`ProviderCircuitState`]
+/// streak directly — does NOT call any ping closure. Useful when the
+/// real success/failure signal already comes from the stream pipeline
+/// (`provider/resilience.rs`) and a periodic active probe would only
+/// double-count or reset the streak unintentionally.
+///
+/// Status table:
+///
+/// | streak           | status                                      |
+/// |------------------|---------------------------------------------|
+/// | 0                | `Healthy`                                   |
+/// | 1..=THRESHOLD-1  | `Degraded`                                  |
+/// | >= THRESHOLD     | `Failed` (recovery: `DegradeGracefully`)    |
+pub struct ProviderCircuitProbe {
+    name: String,
+    state: Arc<ProviderCircuitState>,
+}
+
+impl ProviderCircuitProbe {
+    #[must_use]
+    pub fn new(name: impl Into<String>, state: Arc<ProviderCircuitState>) -> Self {
+        Self {
+            name: name.into(),
+            state,
+        }
+    }
+}
+
+impl HealthCheck for ProviderCircuitProbe {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn check(&self) -> HealthStatus {
+        let streak = self.state.consecutive_failures();
+        if streak == 0 {
+            HealthStatus::Healthy
+        } else if streak >= PROVIDER_CIRCUIT_BREAKER_THRESHOLD {
+            HealthStatus::Failed {
+                reason: format!(
+                    "provider {} consecutive failure streak={streak} ≥ threshold {}",
+                    self.name, PROVIDER_CIRCUIT_BREAKER_THRESHOLD
+                ),
+            }
+        } else {
+            HealthStatus::Degraded {
+                reason: format!("provider {} consecutive failure streak={streak}", self.name),
+            }
+        }
+    }
+
+    fn recovery(&self) -> Option<RecoveryAction> {
+        if self.state.is_tripped() {
+            Some(RecoveryAction::DegradeGracefully {
+                provider_name: self.name.clone(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Factory for [`ProviderCircuitProbe`] — mirrors the
+/// [`provider_heartbeat_check_fn`] shape so call sites in
+/// `desktop_host/setup.rs` compose the same way.
+#[must_use]
+pub fn make_provider_circuit_probe(
+    name: impl Into<String>,
+    state: Arc<ProviderCircuitState>,
+) -> Arc<dyn HealthCheck> {
+    Arc::new(ProviderCircuitProbe::new(name, state))
 }
 
 type PingFn = Box<dyn Fn() -> bool + Send + Sync>;
@@ -172,5 +274,47 @@ mod tests {
         s.record_success();
         assert_eq!(s.consecutive_failures(), 0);
         assert!(!s.is_tripped());
+    }
+
+    /// Module C (truth-loop iter-7) — the streak-reading probe must
+    /// promote `Degraded` → `Failed` once the threshold is hit and
+    /// recommend `DegradeGracefully` for the daemon to act on. Run
+    /// against an isolated `ProviderCircuitState` (NOT the global
+    /// singleton) so parallel tests can't race on shared streak
+    /// state.
+    #[test]
+    fn provider_circuit_probe_promotes_to_failed_at_threshold() {
+        let state = Arc::new(ProviderCircuitState::new());
+        let probe = ProviderCircuitProbe::new("chat", state.clone());
+
+        assert_eq!(probe.check(), HealthStatus::Healthy);
+        assert!(probe.recovery().is_none());
+
+        state.record_failure();
+        match probe.check() {
+            HealthStatus::Degraded { reason } => {
+                assert!(reason.contains("streak=1"), "got: {reason}");
+            }
+            other => panic!("expected Degraded, got {other:?}"),
+        }
+        assert!(probe.recovery().is_none());
+
+        state.record_failure();
+        state.record_failure();
+        match probe.check() {
+            HealthStatus::Failed { reason } => {
+                assert!(reason.contains("≥ threshold"), "got: {reason}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        match probe.recovery() {
+            Some(RecoveryAction::DegradeGracefully { provider_name }) => {
+                assert_eq!(provider_name, "chat");
+            }
+            other => panic!("expected DegradeGracefully, got {other:?}"),
+        }
+
+        state.record_success();
+        assert_eq!(probe.check(), HealthStatus::Healthy);
     }
 }

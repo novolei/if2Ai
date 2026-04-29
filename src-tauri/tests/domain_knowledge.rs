@@ -63,7 +63,9 @@ async fn upsert_then_lookup_returns_entry() {
 #[tokio::test]
 async fn kind_filter_excludes_other_kinds() {
     let store = MockKnowledgeStore::new();
-    store.upsert(website_entry("github.com", "rate limit hits at 60/h")).await;
+    store
+        .upsert(website_entry("github.com", "rate limit hits at 60/h"))
+        .await;
     store.upsert(sop_entry("file_batch_rename")).await;
 
     let websites = lookup_domain_knowledge("", Some("website_domain"), &store).await;
@@ -85,7 +87,9 @@ async fn empty_store_returns_empty() {
 #[tokio::test]
 async fn lookup_increments_access_count() {
     let store = MockKnowledgeStore::new();
-    store.upsert(website_entry("example.com", "redirects on www")).await;
+    store
+        .upsert(website_entry("example.com", "redirects on www"))
+        .await;
 
     let first = lookup_domain_knowledge("example", None, &store).await;
     assert_eq!(first[0].access_count, 1);
@@ -100,11 +104,11 @@ async fn lookup_increments_access_count() {
 // ---------------------------------------------------------------------------
 
 use if2ai_backend::modules::api::{InputContentBlock, InputMessage};
+use if2ai_backend::modules::runtime::budget::estimate_tokens;
 use if2ai_backend::modules::runtime::working_checkpoint::{
     extract_checkpoint, inject_checkpoint, CheckpointInjectionConfig, InjectionPosition,
     WorkingCheckpoint, DEFAULT_CHECKPOINT_MAX_TOKENS,
 };
-use if2ai_backend::modules::runtime::budget::estimate_tokens;
 
 fn checkpoint_with(key_info: &str) -> WorkingCheckpoint {
     WorkingCheckpoint {
@@ -251,7 +255,11 @@ impl UtilityLlm for FailingDkLlm {
 async fn llm_error_degrades_gracefully() {
     let history = vec![InputMessage::user_text("anything")];
     let out = extract_domain_knowledge_candidates(&history, &FailingDkLlm).await;
-    assert!(out.is_empty(), "LLM Err must yield empty, got {}", out.len());
+    assert!(
+        out.is_empty(),
+        "LLM Err must yield empty, got {}",
+        out.len()
+    );
 }
 
 #[test]

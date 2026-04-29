@@ -288,9 +288,7 @@ fn render_message_for_summarization(msg: &InputMessage) -> String {
                 for tr in content {
                     match tr {
                         ToolResultContentBlock::Text { text } => buf.push_str(text),
-                        ToolResultContentBlock::Json { value } => {
-                            buf.push_str(&value.to_string())
-                        }
+                        ToolResultContentBlock::Json { value } => buf.push_str(&value.to_string()),
                         ToolResultContentBlock::Image { .. } => buf.push_str("[image]"),
                     }
                     buf.push('\n');

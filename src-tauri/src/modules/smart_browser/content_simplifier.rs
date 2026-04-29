@@ -185,10 +185,7 @@ pub fn adaptive_simplify(raw_html: &str, available_tokens: usize) -> SimplifiedC
     if content.token_estimate > available_tokens && available_tokens > 0 {
         // Defensive second pass — char/token ratio drift on tag-heavy
         // pages can push us over budget. Trim further until safe.
-        let trimmed = truncate_to_chars(
-            &content.html,
-            available_tokens.saturating_mul(3).max(64),
-        );
+        let trimmed = truncate_to_chars(&content.html, available_tokens.saturating_mul(3).max(64));
         let token_estimate = estimate_tokens(&trimmed);
         let simplified_chars = trimmed.chars().count();
         content = SimplifiedContent {

@@ -126,6 +126,7 @@ async fn make_service() -> (TurnService, PathBuf) {
         app_handle: None,
         learned_traits: None,
         rolling_summarizer: make_rolling_summarizer(),
+        utility_llm: Arc::new(if2ai_backend::modules::memory::MockUtilityLlm::empty()),
     };
 
     (TurnService::new(deps), root)

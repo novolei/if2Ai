@@ -57,7 +57,15 @@ impl DaemonState {
         let any_degraded = statuses
             .iter()
             .any(|s| matches!(s, HealthStatus::Degraded { .. }));
-        let all_healthy = statuses.iter().all(|s| matches!(s, HealthStatus::Healthy));
+        // truth-loop iter-7 — guard against the vacuous-truth case
+        // (`Iterator::all` on an empty slice returns `true`), which
+        // previously promoted an empty-statuses tick from any state
+        // straight to `Healthy` and contradicted the
+        // `daemon_state_transitions` "Empty: preserves current"
+        // contract (the fall-through `current` at the end of this
+        // function).
+        let all_healthy =
+            !statuses.is_empty() && statuses.iter().all(|s| matches!(s, HealthStatus::Healthy));
 
         // First decide what the recovery layer says.
         let recovery_failed = recovery_outcomes
@@ -342,11 +350,8 @@ pub fn make_provider_api_key_probe() -> Arc<dyn HealthCheck> {
             "provider_api_key"
         }
         fn check(&self) -> HealthStatus {
-            const AUTH_VARS: &[&str] = &[
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN",
-                "XAI_API_KEY",
-            ];
+            const AUTH_VARS: &[&str] =
+                &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "XAI_API_KEY"];
             let any_set = AUTH_VARS
                 .iter()
                 .any(|var| std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false));

@@ -79,13 +79,13 @@ use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
 mod agent_loop_delegate;
+pub mod dk_lookup_hook;
+pub mod finalize_hooks;
+pub mod preflight_hooks;
 mod run;
 mod stream;
 mod stream_event_loop;
 mod stream_finalize;
-pub mod dk_lookup_hook;
-pub mod finalize_hooks;
-pub mod preflight_hooks;
 mod stream_preflight;
 mod stream_task;
 mod stream_tool_execution;
@@ -170,6 +170,15 @@ pub struct TurnServiceDeps {
     /// through `AppState` (which is unavailable from inside the modules
     /// crate-half).
     pub rolling_summarizer: Arc<crate::modules::memory::summary::RollingSummarizer>,
+    /// DW-002 (truth-loop iter-7) — process-wide utility LLM shim
+    /// (`ChatProviderUtilityLlm` in production, `MockUtilityLlm` in
+    /// tests).  The streaming turn forwards this into `StreamTaskInputs`
+    /// so `stream_task::run_stream_task_body` can reuse one shared
+    /// `Arc<dyn UtilityLlm>` for the WU-004 preflight digester instead
+    /// of allocating a fresh wrapper per outer-loop iteration. Tests
+    /// that build `TurnServiceDeps` by hand can pass
+    /// `Arc::new(crate::modules::memory::MockUtilityLlm::empty())`.
+    pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
 }
 
 impl TurnServiceDeps {

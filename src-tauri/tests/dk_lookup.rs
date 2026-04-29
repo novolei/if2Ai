@@ -5,9 +5,7 @@ use if2ai_backend::modules::application::turn_service::dk_lookup_hook::{
     lookup_for_skill_resolution, DISABLE_DK_LOOKUP_ENV, DK_CONTRIBUTION_SOURCE,
 };
 use if2ai_backend::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
-use if2ai_backend::modules::runtime::evolution_emitter::{
-    emit_evolution_event, DISABLE_EMIT_ENV,
-};
+use if2ai_backend::modules::runtime::evolution_emitter::{emit_evolution_event, DISABLE_EMIT_ENV};
 use if2ai_backend::modules::skills::domain_knowledge::{
     mock::MockKnowledgeStore, DomainKnowledgeEntry, DomainKnowledgeKind, KnowledgeAuthor,
     KnowledgeStore, SOPStep, SelectorEntry, SelectorStability,

@@ -255,6 +255,10 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
 
     let stage_state = Arc::new(Mutex::new(ScannerStageState::default()));
     let store = HarnessReportStore::with_default_root();
+    let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
+        std::sync::Arc::new(ChatProviderUtilityLlm::new(
+            crate::modules::config::store::if2ai_data_root(),
+        ));
 
     let task = async move {
         let mut ticker = tokio::time::interval(DEFAULT_SCANNER_INTERVAL);
@@ -269,11 +273,6 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
                 .lock()
                 .map(|g| g.stage)
                 .unwrap_or(PromotionStage::Shadow);
-
-            let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-                std::sync::Arc::new(ChatProviderUtilityLlm::new(
-                    crate::modules::config::store::if2ai_data_root(),
-                ));
 
             let outcome_fut = std::panic::AssertUnwindSafe(run_scanner_once(
                 &reports_refs,
@@ -341,14 +340,7 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
         }
     };
 
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(task);
-        }
-        Err(_) => {
-            tracing::warn!("[setup] DW-001 no tokio runtime for scanner; skipped");
-        }
-    }
+    tauri::async_runtime::spawn(task);
 }
 
 fn register_browser_app_handle(app: &App) {

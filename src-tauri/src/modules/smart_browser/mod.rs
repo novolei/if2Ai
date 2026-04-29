@@ -7,10 +7,10 @@
 pub mod agentic;
 pub mod browser_use_mcp;
 pub mod cloud;
-pub mod contract;
-pub mod local_adapter;
 pub mod content_simplifier;
+pub mod contract;
 pub mod coordinate_strategy;
+pub mod local_adapter;
 pub mod policy;
 pub mod runtime;
 pub mod session_health;

@@ -23,7 +23,9 @@
 pub mod dedup;
 
 #[allow(unused_imports)]
-pub use dedup::{dedup_drafts, cosine_similarity, DedupedSkill, Embedder, DEDUP_SIMILARITY_THRESHOLD};
+pub use dedup::{
+    cosine_similarity, dedup_drafts, DedupedSkill, Embedder, DEDUP_SIMILARITY_THRESHOLD,
+};
 
 use crate::modules::api::{InputContentBlock, InputMessage};
 use crate::modules::memory::UtilityLlm;
@@ -132,8 +134,8 @@ pub async fn extract_skill_drafts(
         };
 
         let body = ensure_frontmatter(&body, &pattern.tools);
-        let (name, description) = parse_frontmatter(&body)
-            .unwrap_or_else(|| default_metadata_for(&pattern.tools));
+        let (name, description) =
+            parse_frontmatter(&body).unwrap_or_else(|| default_metadata_for(&pattern.tools));
         if name.is_empty() || description.is_empty() {
             tracing::debug!("[sedimentation] empty name/description after parse; skipping");
             continue;
@@ -180,9 +182,10 @@ fn find_repeated_patterns(seq: &[(usize, String)]) -> Vec<RepeatedPattern> {
         let mut i = 0;
         while i + pat_len <= names.len() {
             let pattern = &names[i..i + pat_len];
-            if seen_starts.iter().any(|&s| {
-                s + pat_len <= names.len() && &names[s..s + pat_len] == pattern
-            }) {
+            if seen_starts
+                .iter()
+                .any(|&s| s + pat_len <= names.len() && &names[s..s + pat_len] == pattern)
+            {
                 i += 1;
                 continue;
             }
@@ -234,9 +237,7 @@ fn ensure_frontmatter(body: &str, tools: &[String]) -> String {
     let fallback = default_metadata_for(tools);
     format!(
         "---\nname: {}\ndescription: {}\n---\n{}",
-        fallback.0,
-        fallback.1,
-        trimmed
+        fallback.0, fallback.1, trimmed
     )
 }
 

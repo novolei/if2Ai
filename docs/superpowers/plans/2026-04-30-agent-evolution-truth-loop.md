@@ -76,14 +76,14 @@ This loop introduces one observational sub-state used **only inside gap reports*
 
 These thoughts mean STOP and re-read the rules above:
 
-| Thought | Reality |
-|---|---|
-| "Helper exists in module → done" | Modules ≠ production. Re-grep call sites. |
-| "Pack file says done, registry says done → done" | Both can be wrong. Code is truth. |
-| "Test calls the helper → wired" | Tests don't ship to users. Production paths only. |
-| "Comment says TODO but it works → ship" | Honest stub is a deferred bug. Mark `landed-stub`. |
-| "Let me batch fixes A and B" | One iteration = one fix. Always. |
-| "Spec is authoritative because user wrote it" | Spec is a *description*; code is the *thing*. Patch spec to match code. |
+| Thought                                          | Reality                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------- |
+| "Helper exists in module → done"                 | Modules ≠ production. Re-grep call sites.                               |
+| "Pack file says done, registry says done → done" | Both can be wrong. Code is truth.                                       |
+| "Test calls the helper → wired"                  | Tests don't ship to users. Production paths only.                       |
+| "Comment says TODO but it works → ship"          | Honest stub is a deferred bug. Mark `landed-stub`.                      |
+| "Let me batch fixes A and B"                     | One iteration = one fix. Always.                                        |
+| "Spec is authoritative because user wrote it"    | Spec is a *description*; code is the *thing*. Patch spec to match code. |
 
 ---
 

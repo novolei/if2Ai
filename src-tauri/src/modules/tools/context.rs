@@ -92,13 +92,7 @@ impl ToolContext {
         workdir: PathBuf,
         permission_mode: crate::modules::runtime::permissions::PermissionMode,
     ) -> Self {
-        Self::new_with_scope_evidence(
-            session_id,
-            project_id,
-            workdir,
-            permission_mode,
-            None,
-        )
+        Self::new_with_scope_evidence(session_id, project_id, workdir, permission_mode, None)
     }
 
     /// Like [`Self::new_with_scope`] but forwards per-turn tool success

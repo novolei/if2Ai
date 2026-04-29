@@ -203,6 +203,15 @@ pub(super) struct StreamTaskInputs {
     pub stream_session_id_for_after_turn: String,
     pub stream_project_id_for_after_turn: Option<String>,
     pub harness_bus_for_after_turn: Option<EventBus>,
+    /// DW-002 (truth-loop iter-7) — shared utility LLM reused by the
+    /// preflight digester at each outer-loop iteration.  Plumbed from
+    /// `TurnServiceDeps::utility_llm` (which in production is the same
+    /// `ChatProviderUtilityLlm` instance bootstrapped in
+    /// `bootstrap/memory.rs`).  Removing this field would force the
+    /// digester to allocate a fresh provider shim per iteration —
+    /// behaviourally equivalent today but masks ownership and makes
+    /// future per-turn `workdir` overrides harder.
+    pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
 }
 
 pub(super) async fn append_stream_event(
@@ -354,6 +363,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
+        utility_llm,
     } = inputs;
 
     // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
@@ -547,21 +557,22 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
 
         // DW-002 — call the WU-004 digester before preflight so that
         // long histories get LLM-summarized into a tighter token
-        // footprint. **Truth-loop iter-3 (2026-04-30)**: swapped the
-        // `MockUtilityLlm::empty` placeholder for `ChatProviderUtilityLlm`
-        // so the digester actually compresses against the user's
-        // configured chat provider. `if2ai_data_root()` is the same
-        // process-wide workdir `bootstrap/memory.rs` uses; the shim
-        // lazily resolves the provider per call so config edits take
-        // effect on the next iteration without restart.
+        // footprint. **Truth-loop iter-7 (2026-04-30)**: replaced the
+        // per-iteration `Arc::new(ChatProviderUtilityLlm::new(...))`
+        // with `utility_llm.clone()`, threaded from
+        // `TurnServiceDeps::utility_llm` — the same shared shim
+        // `bootstrap/memory.rs` constructs once at startup.  Avoids
+        // re-allocating a provider wrapper every outer loop and
+        // proves the `AppState::utility_llm` field has a live
+        // streaming-turn consumer (the `#[allow(dead_code)]` was
+        // dropped in the same commit).
         // Failure-isolated: any error → `digested_messages = None`.
-        let digested_owned: Option<Vec<crate::modules::api::InputMessage>> = {
-            let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-                std::sync::Arc::new(crate::modules::memory::ChatProviderUtilityLlm::new(
-                    crate::modules::config::store::if2ai_data_root(),
-                ));
-            super::preflight_hooks::digest_messages_for_preflight(&session_messages, llm).await
-        };
+        let digested_owned: Option<Vec<crate::modules::api::InputMessage>> =
+            super::preflight_hooks::digest_messages_for_preflight(
+                &session_messages,
+                utility_llm.clone(),
+            )
+            .await;
         if let Some(ref kept) = digested_owned {
             let payload = serde_json::json!({
                 "keptTokens": kept.len(),

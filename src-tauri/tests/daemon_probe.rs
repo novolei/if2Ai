@@ -16,9 +16,7 @@ use if2ai_backend::modules::runtime::daemon::{
     evolution_probe_set, register_extra_probes, HealthCheck, HealthCheckRegistry, HealthStatus,
     DISABLE_EVOLUTION_PROBES_ENV,
 };
-use if2ai_backend::modules::runtime::evolution_emitter::{
-    emit_evolution_event, DISABLE_EMIT_ENV,
-};
+use if2ai_backend::modules::runtime::evolution_emitter::{emit_evolution_event, DISABLE_EMIT_ENV};
 
 struct StubProbe {
     label: &'static str,

@@ -68,11 +68,7 @@ fn daemon_state_transitions() {
         DaemonState::Degraded
     );
     assert_eq!(
-        DaemonState::transition(
-            DaemonState::Healthy,
-            &failed,
-            &[RecoveryOutcome::Repaired]
-        ),
+        DaemonState::transition(DaemonState::Healthy, &failed, &[RecoveryOutcome::Repaired]),
         DaemonState::Recovering
     );
     assert_eq!(
@@ -230,11 +226,9 @@ fn provider_heartbeat_returns_health_status() {
     let healthy_for_closure = healthy.clone();
     let state = Arc::new(ProviderCircuitState::new());
 
-    let probe = provider_heartbeat_check_fn(
-        "claw_anthropic",
-        state.clone(),
-        move || healthy_for_closure.load(AtomicOrdering::SeqCst),
-    );
+    let probe = provider_heartbeat_check_fn("claw_anthropic", state.clone(), move || {
+        healthy_for_closure.load(AtomicOrdering::SeqCst)
+    });
 
     assert_eq!(probe.check(), HealthStatus::Healthy);
     assert_eq!(state.consecutive_failures(), 0);
@@ -270,7 +264,9 @@ fn provider_liveness_three_strike() {
     assert_eq!(state.consecutive_failures(), 3);
     assert!(state.consecutive_failures() >= PROVIDER_CIRCUIT_BREAKER_THRESHOLD);
 
-    let recovery = probe.recovery().expect("tripped circuit must yield recovery");
+    let recovery = probe
+        .recovery()
+        .expect("tripped circuit must yield recovery");
     assert_eq!(recovery.name(), "degrade_gracefully");
     assert_eq!(recovery.attempt(), RecoveryOutcome::Repaired);
 }
@@ -339,7 +335,12 @@ use if2ai_backend::modules::smart_browser::session_health::{
 };
 use std::time::{Duration as StdDuration, Instant};
 
-fn obs(now: Instant, last: Option<Instant>, crashed: bool, fails: u32) -> BrowserSessionObservation {
+fn obs(
+    now: Instant,
+    last: Option<Instant>,
+    crashed: bool,
+    fails: u32,
+) -> BrowserSessionObservation {
     BrowserSessionObservation {
         now,
         last_heartbeat: last,
@@ -385,7 +386,10 @@ fn stale_session_detected() {
     let observation = obs(now, Some(stale_at), false, 0);
     let status = check_session_health(&observation);
     assert!(
-        matches!(status, HealthStatus::Degraded { .. } | HealthStatus::Failed { .. }),
+        matches!(
+            status,
+            HealthStatus::Degraded { .. } | HealthStatus::Failed { .. }
+        ),
         "stale heartbeat must yield non-Healthy, got {status:?}"
     );
 }
@@ -498,12 +502,18 @@ fn runtime_event_type_serializes_to_snake_case() {
         (RuntimeEventType::DaemonHealth, "daemon_health"),
         (RuntimeEventType::SkillSedimented, "skill_sedimented"),
         (RuntimeEventType::CompressionEvent, "compression_event"),
-        (RuntimeEventType::ConstitutionViolation, "constitution_violation"),
+        (
+            RuntimeEventType::ConstitutionViolation,
+            "constitution_violation",
+        ),
         (RuntimeEventType::SelfEditProposal, "self_edit_proposal"),
         (RuntimeEventType::BrowserHealth, "browser_health"),
         (RuntimeEventType::DomainKnowledge, "domain_knowledge"),
         (RuntimeEventType::CheckpointUpdated, "checkpoint_updated"),
-        (RuntimeEventType::VerificationDecision, "verification_decision"),
+        (
+            RuntimeEventType::VerificationDecision,
+            "verification_decision",
+        ),
         (RuntimeEventType::ContentSimplified, "content_simplified"),
     ];
     for (variant, expected) in cases {
@@ -566,7 +576,11 @@ fn runtime_event_type_count_matches_frontend() {
     for v in all {
         assert!(seen.insert(v), "duplicate variant {v:?}");
     }
-    assert_eq!(seen.len(), 18, "RuntimeEventType must have exactly 18 variants");
+    assert_eq!(
+        seen.len(),
+        18,
+        "RuntimeEventType must have exactly 18 variants"
+    );
 }
 
 #[test]

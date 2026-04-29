@@ -11,12 +11,9 @@ use if2ai_backend::modules::application::turn_service::preflight_hooks::{
 };
 use if2ai_backend::modules::memory::{MemoryError, MockUtilityLlm, UtilityLlm};
 use if2ai_backend::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
-use if2ai_backend::modules::runtime::evolution_emitter::{
-    emit_evolution_event, DISABLE_EMIT_ENV,
-};
+use if2ai_backend::modules::runtime::evolution_emitter::{emit_evolution_event, DISABLE_EMIT_ENV};
 use if2ai_backend::modules::runtime::working_checkpoint::{
-    CheckpointInjectionConfig, InjectionPosition, WorkingCheckpoint,
-    DEFAULT_CHECKPOINT_MAX_TOKENS,
+    CheckpointInjectionConfig, InjectionPosition, WorkingCheckpoint, DEFAULT_CHECKPOINT_MAX_TOKENS,
 };
 
 const SUMMARY_BODY: &str = "compact summary alpha";
@@ -136,7 +133,10 @@ fn mini_index_block_pushed_to_plan() {
         history.push(assistant_tool_use(&format!("tool_{i}")));
     }
     let block = maybe_render_mini_index_block(&history);
-    assert!(block.is_some(), "non-trivial history must yield a mini index");
+    assert!(
+        block.is_some(),
+        "non-trivial history must yield a mini index"
+    );
     let b = block.unwrap();
     assert_eq!(b.priority, 95);
     assert!(!b.content.trim().is_empty());

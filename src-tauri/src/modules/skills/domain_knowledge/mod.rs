@@ -17,6 +17,9 @@
 #![allow(dead_code)]
 
 pub mod contributor;
+pub mod file_store;
+
+pub use file_store::FileBackedKnowledgeStore;
 
 #[allow(unused_imports)]
 pub use contributor::{
@@ -105,7 +108,10 @@ impl DomainKnowledgeKind {
     pub fn search_text(&self) -> String {
         match self {
             DomainKnowledgeKind::WebsiteDomain {
-                domain, url_patterns, selectors, gotchas,
+                domain,
+                url_patterns,
+                selectors,
+                gotchas,
             } => {
                 let mut s = domain.clone();
                 s.push(' ');
@@ -197,11 +203,7 @@ impl DomainKnowledgeEntry {
 #[async_trait]
 pub trait KnowledgeStore: Send + Sync {
     async fn upsert(&self, entry: DomainKnowledgeEntry);
-    async fn lookup(
-        &self,
-        query: &str,
-        kind_filter: Option<&str>,
-    ) -> Vec<DomainKnowledgeEntry>;
+    async fn lookup(&self, query: &str, kind_filter: Option<&str>) -> Vec<DomainKnowledgeEntry>;
 }
 
 /// Top-level lookup helper. Returned vec is empty for unknown
@@ -234,10 +236,23 @@ static GLOBAL_KNOWLEDGE_STORE: OnceLock<Arc<dyn KnowledgeStore>> = OnceLock::new
 /// by calling `GLOBAL_KNOWLEDGE_STORE.set(...)` **before** the first
 /// `global_knowledge_store()` call (typically in `setup.rs`).
 pub fn global_knowledge_store() -> Arc<dyn KnowledgeStore> {
-    Arc::clone(
-        GLOBAL_KNOWLEDGE_STORE
-            .get_or_init(|| Arc::new(mock::MockKnowledgeStore::new())),
-    )
+    Arc::clone(GLOBAL_KNOWLEDGE_STORE.get_or_init(|| Arc::new(mock::MockKnowledgeStore::new())))
+}
+
+/// DW-004 (truth-loop iter-7) — install a custom backing store
+/// **before** any caller invokes [`global_knowledge_store`]. Returns
+/// `Err(())` if the singleton has already been initialised (either by
+/// a prior install call or by lazy init via `global_knowledge_store`),
+/// in which case the existing store remains in effect.
+///
+/// `desktop_host/setup.rs` calls this with a
+/// [`FileBackedKnowledgeStore`] during native-host attach so DK
+/// contributions persist across restarts; tests can install their
+/// own mock for isolation.
+pub fn install_global_knowledge_store(
+    store: Arc<dyn KnowledgeStore>,
+) -> Result<(), Arc<dyn KnowledgeStore>> {
+    GLOBAL_KNOWLEDGE_STORE.set(store)
 }
 
 // ---------------------------------------------------------------------------

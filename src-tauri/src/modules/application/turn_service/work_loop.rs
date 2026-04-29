@@ -178,17 +178,16 @@ pub(super) fn augment_route_context_from_run_log(
                         .map(ToString::to_string);
                 }
             }
-            "run_started" | "user_message"
-                if context.event_log_unfinished_goal.is_none() => {
-                    context.event_log_unfinished_goal = entry
-                        .payload
-                        .get("message_preview")
-                        .or_else(|| entry.payload.get("user_message"))
-                        .or_else(|| entry.payload.get("content"))
-                        .and_then(|value| value.as_str())
-                        .map(ToString::to_string)
-                        .filter(|message| is_tool_required_work_intent(message));
-                }
+            "run_started" | "user_message" if context.event_log_unfinished_goal.is_none() => {
+                context.event_log_unfinished_goal = entry
+                    .payload
+                    .get("message_preview")
+                    .or_else(|| entry.payload.get("user_message"))
+                    .or_else(|| entry.payload.get("content"))
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string)
+                    .filter(|message| is_tool_required_work_intent(message));
+            }
             "tool_required_no_tool_retry" => {
                 context.last_degraded_reason = Some("tool_required_no_tool".to_string());
                 context.last_resume_available = Some(true);

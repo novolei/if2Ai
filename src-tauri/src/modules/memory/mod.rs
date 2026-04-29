@@ -31,8 +31,8 @@ pub mod retrieval;
 pub mod scope;
 pub mod security;
 pub mod summary;
-pub mod verification_gate;
 pub mod ticker;
+pub mod verification_gate;
 pub mod working_memory;
 
 // JobRunner module — `JobRunner` itself is consumed by scheduler /

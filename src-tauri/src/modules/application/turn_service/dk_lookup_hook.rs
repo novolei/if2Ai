@@ -41,10 +41,7 @@ pub async fn lookup_for_skill_resolution(
         return Vec::new();
     }
     let entries = store.lookup(query, None).await;
-    entries
-        .into_iter()
-        .map(entry_to_contribution)
-        .collect()
+    entries.into_iter().map(entry_to_contribution).collect()
 }
 
 fn entry_to_contribution(entry: DomainKnowledgeEntry) -> PromptContribution {

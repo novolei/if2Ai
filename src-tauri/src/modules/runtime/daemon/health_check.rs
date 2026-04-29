@@ -155,13 +155,7 @@ mod tests {
     #[test]
     fn health_status_needs_recovery_classification() {
         assert!(!HealthStatus::Healthy.needs_recovery());
-        assert!(HealthStatus::Degraded {
-            reason: "x".into()
-        }
-        .needs_recovery());
-        assert!(HealthStatus::Failed {
-            reason: "x".into()
-        }
-        .needs_recovery());
+        assert!(HealthStatus::Degraded { reason: "x".into() }.needs_recovery());
+        assert!(HealthStatus::Failed { reason: "x".into() }.needs_recovery());
     }
 }

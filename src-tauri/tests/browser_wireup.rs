@@ -2,9 +2,7 @@
 //! BR-002 coordinate strategy at the runtime dispatch layer.
 
 use if2ai_backend::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
-use if2ai_backend::modules::runtime::evolution_emitter::{
-    emit_evolution_event, DISABLE_EMIT_ENV,
-};
+use if2ai_backend::modules::runtime::evolution_emitter::{emit_evolution_event, DISABLE_EMIT_ENV};
 use if2ai_backend::modules::smart_browser::coordinate_strategy::{
     IdentifiedElement, InteractionStrategy, ScreenshotAnalysis,
 };
@@ -13,14 +11,18 @@ use if2ai_backend::modules::smart_browser::runtime::{
     DISABLE_BROWSER_SIMPLIFY_ENV,
 };
 
-const HTML_FIXTURE: &str = "<html><body><main><h1>Title</h1><p>content</p><script>alert(1)</script></main></body></html>";
+const HTML_FIXTURE: &str =
+    "<html><body><main><h1>Title</h1><p>content</p><script>alert(1)</script></main></body></html>";
 
 #[test]
 fn html_result_is_simplified() {
     let prev = std::env::var(DISABLE_BROWSER_SIMPLIFY_ENV).ok();
     std::env::remove_var(DISABLE_BROWSER_SIMPLIFY_ENV);
     let out = simplify_browser_result_text(HTML_FIXTURE, BROWSER_SIMPLIFY_DEFAULT_TOKENS);
-    assert!(!out.contains("<script"), "script tag must be filtered, got: {out}");
+    assert!(
+        !out.contains("<script"),
+        "script tag must be filtered, got: {out}"
+    );
     assert!(out.contains("<main") || out.contains("Title"));
     if let Some(v) = prev {
         std::env::set_var(DISABLE_BROWSER_SIMPLIFY_ENV, v);
@@ -57,11 +59,8 @@ fn click_calls_decide_interaction() {
         }],
         scroll_position: (0, 0),
     };
-    let decision = decide_browser_click_strategy(
-        "submit button",
-        Some(&screenshot),
-        &["#submit".to_string()],
-    );
+    let decision =
+        decide_browser_click_strategy("submit button", Some(&screenshot), &["#submit".to_string()]);
     match decision.strategy {
         InteractionStrategy::CoordinateClick { x, y, .. } => {
             assert!((x - 140.0).abs() < 1e-6);

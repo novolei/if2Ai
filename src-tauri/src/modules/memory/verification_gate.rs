@@ -28,9 +28,7 @@ pub fn tool_evidence_gate_message(evidence: Option<&Arc<AtomicU32>>) -> Option<&
     if !strict_tool_evidence_required() {
         return None;
     }
-    let Some(arc) = evidence else {
-        return None;
-    };
+    let arc = evidence?;
     if arc.load(Ordering::Relaxed) > 0 {
         return None;
     }
