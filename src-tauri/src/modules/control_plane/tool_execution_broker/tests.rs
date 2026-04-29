@@ -15,12 +15,12 @@ mod mig_002_b_tests {
     /// when permission is insufficient.
     #[test]
     fn prepare_step_denies_insufficient_permission() {
-        let ctx = SessionExecutionContext {
-            session_id: "test".to_string(),
-            project_id: String::new(),
-            workdir: PathBuf::from("/tmp/test"),
-            permission_mode: PermissionMode::ReadOnly,
-        };
+        let ctx = SessionExecutionContext::new(
+            "test".to_string(),
+            String::new(),
+            PathBuf::from("/tmp/test"),
+            PermissionMode::ReadOnly,
+        );
         let policy = Arc::new(
             PermissionPolicy::new(PermissionMode::ReadOnly)
                 .with_tool_requirement("bash", PermissionMode::DangerFullAccess),
@@ -39,12 +39,12 @@ mod mig_002_b_tests {
     /// when permission is sufficient.
     #[test]
     fn prepare_step_grants_sufficient_permission() {
-        let ctx = SessionExecutionContext {
-            session_id: "test".to_string(),
-            project_id: String::new(),
-            workdir: PathBuf::from("/tmp/test"),
-            permission_mode: PermissionMode::DangerFullAccess,
-        };
+        let ctx = SessionExecutionContext::new(
+            "test".to_string(),
+            String::new(),
+            PathBuf::from("/tmp/test"),
+            PermissionMode::DangerFullAccess,
+        );
         let policy = Arc::new(PermissionPolicy::new(PermissionMode::DangerFullAccess));
         let output = prepare_step_execution(PrepareStepExecutionInput {
             tool_name: "read_file",

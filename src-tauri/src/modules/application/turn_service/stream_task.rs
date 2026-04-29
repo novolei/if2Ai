@@ -442,12 +442,15 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     // would lose any per-tool requirements set on the
     // original policy).
     let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
-    let execution_context = SessionExecutionContext::new(
-        execution_context_for_task.session_id.clone(),
-        execution_context_for_task.project_id.clone(),
-        execution_context_for_task.workdir.clone(),
-        mode,
-    );
+    // Preserve `tool_success_evidence` Arc from the parent stream so broker
+    // bumps + per-iteration resets apply to the same counter (FEAT-AE-002).
+    let execution_context = SessionExecutionContext {
+        session_id: execution_context_for_task.session_id.clone(),
+        project_id: execution_context_for_task.project_id.clone(),
+        workdir: execution_context_for_task.workdir.clone(),
+        permission_mode: mode,
+        tool_success_evidence: execution_context_for_task.tool_success_evidence.clone(),
+    };
     let execution_context_for_policy = execution_context.clone();
     log_context_fingerprint("start_agent_stream_task", &execution_context);
     let mut tool_executor =
@@ -516,6 +519,10 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             break;
         }
         tool_loop_iter += 1;
+        tool_executor
+            .execution_context
+            .tool_success_evidence
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         let force_final_response = force_final_response_next || tool_loop_iter >= max_iterations;
         let force_tool_choice = force_tool_choice_next
             || (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)

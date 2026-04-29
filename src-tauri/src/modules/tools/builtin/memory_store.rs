@@ -268,6 +268,20 @@ pub fn entry(memory: SharedMemoryProvider, utility_llm: Option<Arc<dyn UtilityLl
                     })
                     .unwrap_or(MemoryCategory::Conversation);
 
+                // FEAT-AE-002 — optional strict gate: require at least one successful
+                // non-memory tool earlier in this stream iteration when env is set.
+                let tool_evidence = context
+                    .lock()
+                    .ok()
+                    .and_then(|ctx| ctx.tool_success_evidence.clone());
+                if let Some(msg) =
+                    crate::modules::memory::verification_gate::tool_evidence_gate_message(
+                        tool_evidence.as_ref(),
+                    )
+                {
+                    return Err(ToolError::Handler(msg.to_string()));
+                }
+
                 // Resolve scope from the tool execution context.  When a session_id
                 // is present, the entry is tagged so recall_scoped() can filter by session.
                 let scope = context
@@ -545,7 +559,8 @@ mod tests {
     use super::*;
     use crate::modules::memory::InMemoryMemoryProvider;
     use crate::modules::tools::context::ToolContext;
-    use std::sync::Mutex;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::{Arc, Mutex};
 
     fn test_memory() -> SharedMemoryProvider {
         Arc::new(InMemoryMemoryProvider::new())
@@ -563,6 +578,68 @@ mod tests {
         assert_eq!(entry.name, "memory_store");
         assert_eq!(entry.toolset, "memory");
         assert!(!entry.disabled);
+    }
+
+    #[tokio::test]
+    async fn ae002_strict_gate_rejects_without_prior_tool_success() {
+        let _guard = TestEnforceGuard::set(PolicyEnforceMode::Shadow);
+        std::env::set_var(
+            crate::modules::memory::verification_gate::STRICT_MEMORY_TOOL_EVIDENCE_ENV,
+            "1",
+        );
+        let entry = entry(test_memory(), None);
+        let evidence = Arc::new(AtomicU32::new(0));
+        let ctx = Arc::new(Mutex::new(ToolContext::new_with_scope_evidence(
+            None,
+            None,
+            std::path::PathBuf::from("."),
+            crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            Some(evidence),
+        )));
+        let err = (entry.handler)(
+            json!({"key": "gate", "content": "x", "category": "conversation"}),
+            ctx,
+        )
+        .await
+        .expect_err("strict gate must reject");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("FEAT-AE-002") || msg.contains("memory_store blocked"),
+            "unexpected error: {msg}"
+        );
+        std::env::remove_var(
+            crate::modules::memory::verification_gate::STRICT_MEMORY_TOOL_EVIDENCE_ENV,
+        );
+    }
+
+    #[tokio::test]
+    async fn ae002_strict_gate_allows_when_evidence_positive() {
+        let _guard = TestEnforceGuard::set(PolicyEnforceMode::Shadow);
+        std::env::set_var(
+            crate::modules::memory::verification_gate::STRICT_MEMORY_TOOL_EVIDENCE_ENV,
+            "1",
+        );
+        let memory = test_memory();
+        let entry = entry(memory.clone(), None);
+        let evidence = Arc::new(AtomicU32::new(1));
+        let ctx = Arc::new(Mutex::new(ToolContext::new_with_scope_evidence(
+            None,
+            None,
+            std::path::PathBuf::from("."),
+            crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            Some(evidence),
+        )));
+        let result = (entry.handler)(
+            json!({"key": "gate2", "content": "y", "category": "daily"}),
+            ctx,
+        )
+        .await
+        .expect("gate allows when counter > 0");
+        let parsed: serde_json::Value = serde_json::from_str(&result).expect("json");
+        assert_eq!(parsed["status"], "stored");
+        std::env::remove_var(
+            crate::modules::memory::verification_gate::STRICT_MEMORY_TOOL_EVIDENCE_ENV,
+        );
     }
 
     #[tokio::test]

@@ -24,6 +24,7 @@ fn registry() -> ToolRegistry {
         project_id: None,
         workdir: PathBuf::from("."),
         permission_mode: PermissionMode::DangerFullAccess,
+        tool_success_evidence: None,
     };
     ToolRegistry::new(Arc::new(Mutex::new(ctx)))
 }
@@ -192,6 +193,7 @@ async fn legacy_dispatch_string_collapses_image_to_placeholder() {
                 project_id: None,
                 workdir: PathBuf::from("."),
                 permission_mode: PermissionMode::DangerFullAccess,
+                tool_success_evidence: None,
             })),
         )
         .await

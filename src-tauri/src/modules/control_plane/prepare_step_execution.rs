@@ -268,12 +268,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn ctx(workdir: &str, mode: PermissionMode) -> SessionExecutionContext {
-        SessionExecutionContext {
-            session_id: "s".into(),
-            project_id: String::new(),
-            workdir: PathBuf::from(workdir),
-            permission_mode: mode,
-        }
+        SessionExecutionContext::new("s".into(), String::new(), PathBuf::from(workdir), mode)
     }
 
     #[test]

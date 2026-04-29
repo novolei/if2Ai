@@ -146,6 +146,10 @@ impl ToolRegistryExecutor {
             );
             ToolError::new(e.to_string())
         })?;
+        if !switches.control_plane_v2_enabled {
+            self.execution_context
+                .record_successful_tool_for_memory_gate(tool_name);
+        }
         crate::modules::observability::emit(
             "tool.execute.ok",
             &format!("tool={tool_name} trace={trace_id} bytes={}", result.len()),

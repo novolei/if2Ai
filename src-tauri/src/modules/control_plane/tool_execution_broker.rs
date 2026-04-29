@@ -173,11 +173,12 @@ impl ToolExecutionBroker {
         } else {
             Some(context.project_id.clone())
         };
-        Arc::new(Mutex::new(ToolContext::new_with_scope(
+        Arc::new(Mutex::new(ToolContext::new_with_scope_evidence(
             session_id,
             project_id,
             context.workdir.clone(),
             context.permission_mode,
+            Some(context.tool_success_evidence.clone()),
         )))
     }
 
@@ -353,6 +354,9 @@ impl ToolExecutionBroker {
                 }
             }
         };
+        if result.is_ok() {
+            context.record_successful_tool_for_memory_gate(tool_name);
+        }
         if result.is_ok() && tool_name == "skill" {
             mark_skill_loaded_for_request(request_id);
         }

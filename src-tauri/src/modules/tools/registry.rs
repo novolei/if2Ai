@@ -590,6 +590,7 @@ impl Default for ToolRegistry {
             project_id: None,
             workdir: std::path::PathBuf::from("."),
             permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            tool_success_evidence: None,
         }));
         Self::new(default_context)
     }

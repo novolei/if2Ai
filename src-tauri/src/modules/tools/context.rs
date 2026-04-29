@@ -3,6 +3,7 @@
 //! Provides ToolContext for passing workdir and permission information to tools.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
@@ -26,6 +27,8 @@ pub struct ToolContext {
     pub workdir: PathBuf,
     /// The permission mode controlling what operations are allowed.
     pub permission_mode: crate::modules::runtime::permissions::PermissionMode,
+    /// When set, `memory_store` may consult this counter for FEAT-AE-002.
+    pub tool_success_evidence: Option<Arc<AtomicU32>>,
 }
 
 /// Shared tool context using Arc<Mutex> for thread-safe access.
@@ -57,6 +60,7 @@ impl ToolContext {
             project_id: None,
             workdir,
             permission_mode,
+            tool_success_evidence: None,
         }
     }
 
@@ -72,6 +76,7 @@ impl ToolContext {
             project_id: None,
             workdir,
             permission_mode,
+            tool_success_evidence: None,
         }
     }
 
@@ -87,11 +92,31 @@ impl ToolContext {
         workdir: PathBuf,
         permission_mode: crate::modules::runtime::permissions::PermissionMode,
     ) -> Self {
+        Self::new_with_scope_evidence(
+            session_id,
+            project_id,
+            workdir,
+            permission_mode,
+            None,
+        )
+    }
+
+    /// Like [`Self::new_with_scope`] but forwards per-turn tool success
+    /// evidence for `memory_store` (FEAT-AE-002).
+    #[must_use]
+    pub fn new_with_scope_evidence(
+        session_id: Option<String>,
+        project_id: Option<String>,
+        workdir: PathBuf,
+        permission_mode: crate::modules::runtime::permissions::PermissionMode,
+        tool_success_evidence: Option<Arc<AtomicU32>>,
+    ) -> Self {
         Self {
             session_id,
             project_id,
             workdir,
             permission_mode,
+            tool_success_evidence,
         }
     }
 
@@ -103,6 +128,7 @@ impl ToolContext {
             project_id: None,
             workdir,
             permission_mode: crate::modules::runtime::permissions::PermissionMode::DangerFullAccess,
+            tool_success_evidence: None,
         }
     }
 }

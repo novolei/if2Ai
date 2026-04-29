@@ -1,6 +1,7 @@
 //! Session context resolver for control-plane execution.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
 use crate::modules::projects::ProjectManager;
@@ -18,6 +19,10 @@ pub struct SessionExecutionContext {
     pub workdir: PathBuf,
     /// Effective permission mode for this execution.
     pub permission_mode: PermissionMode,
+    /// Successful non-memory tool completions this outer stream iteration.
+    /// Reset at each `stream_task` loop step; bumped by
+    /// [`crate::modules::control_plane::ToolExecutionBroker`] (FEAT-AE-002).
+    pub tool_success_evidence: Arc<AtomicU32>,
 }
 
 impl SessionExecutionContext {
@@ -34,6 +39,7 @@ impl SessionExecutionContext {
             project_id,
             workdir,
             permission_mode,
+            tool_success_evidence: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -45,7 +51,21 @@ impl SessionExecutionContext {
             project_id: String::new(),
             workdir,
             permission_mode,
+            tool_success_evidence: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// Count a successful tool toward FEAT-AE-002 `memory_store` evidence.
+    /// Skips memory-family tools so `memory_store` cannot self-bootstrap.
+    pub fn record_successful_tool_for_memory_gate(&self, tool_name: &str) {
+        if tool_name == "pin_memory"
+            || tool_name == "unpin_memory"
+            || tool_name.starts_with("memory_")
+        {
+            return;
+        }
+        self.tool_success_evidence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
