@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+pub mod attenuation;
 pub mod builtin;
 pub mod context;
 pub mod integration_phase4;
@@ -198,4 +199,9 @@ pub fn register_builtin_tools(
     }
 
     crate::modules::scheduler::spawn_scheduler_self_repair_watchdog(scheduler);
+
+    // Steward-aligned: after all builtins are registered, lock the
+    // protected-name guard so dynamic (MCP / WASM / external) tools can
+    // never shadow security-critical builtin names.
+    registry.lock_protected_names();
 }
