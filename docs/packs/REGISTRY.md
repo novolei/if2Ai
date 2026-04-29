@@ -4,79 +4,85 @@
 >
 > 由 `./scripts/pack scan` 维护文件 LOC；`Status` 列由人/agent 在每个 pack done 后更新。
 >
-> 最后更新: 2026-04-27
+> 最后更新: 2026-04-29
 
 ---
 
 ## Active
 
-| Pack   | Type | Goal | Owner |
-| ------ | ---- | ---- | ----- |
-| [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md) | feature | Skill auto-load runtime | executor |
-| [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md) | feature | FinalRunReport UX | executor |
-| [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md) | feature | MCP Workbench IPC + UI | executor |
-| [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md) | feature | LoopDelegate extraction | executor |
-| [APP-UPDATER-002](./feature/app-updater/APP-UPDATER-002-release-ci-signed-artifact.md) | feature | Release CI + signed Tauri updater artifact | executor |
-| [APP-UPDATER-003](./feature/app-updater/APP-UPDATER-003-client-state-machine-ux.md) | feature | Client updater state machine + settings UX | executor |
+| Pack                                                                                   | Type    | Goal                                                                                                  | Owner    |
+| -------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- | -------- |
+| [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md)                | feature | Skill auto-load runtime                                                                               | executor |
+| [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md)                    | feature | FinalRunReport UX                                                                                     | executor |
+| [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md)                     | feature | MCP Workbench IPC + UI                                                                                | executor |
+| [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md)               | feature | LoopDelegate extraction                                                                               | executor |
+| [APP-UPDATER-002](./feature/app-updater/APP-UPDATER-002-release-ci-signed-artifact.md) | feature | Release CI + signed Tauri updater artifact                                                            | executor |
+| [APP-UPDATER-003](./feature/app-updater/APP-UPDATER-003-client-state-machine-ux.md)    | feature | Client updater state machine + settings UX                                                            | executor |
+| [FEAT-EVO-000](./feature/agent-evolution/FEAT-EVO-000-evolution-phase0-prep.md)        | feature | Evolution Phase 0 准备（根依赖：sedimentation stub + skill resolution + 10 个 RuntimeEventType 占位） | executor |
+| [FEAT-TE-001](./feature/agent-evolution/FEAT-TE-001-tier-budget-hard-constraint.md)    | feature | 上下文层级预算硬约束（ContextBudget → 5 tier 硬约束；120K→30K 目标）                                  | executor |
+| [FEAT-TE-002](./feature/agent-evolution/FEAT-TE-002-message-llm-compression.md)        | feature | 消息级 LLM 压缩（MessageDigester + CompressedMessage；>500 tokens 触发摘要）                          | executor |
+| [FEAT-TE-003](./feature/agent-evolution/FEAT-TE-003-mini-index-builder.md)             | feature | 迷你索引构建器 L1（≤30 行会话索引，priority-95 PromptBlock）                                          | executor |
+| [FEAT-TE-004](./feature/agent-evolution/FEAT-TE-004-tool-result-summarization.md)      | feature | 工具结果摘要化（>500 tokens LLM 摘要；降级保留字符截断）                                              | executor |
 
 ## Recently Done
 
-| Pack                                                               | Type     | Goal                                                                                                                  | Done       |
-| ------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
-| [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md) | feature | Continuation context + tool evidence invariants | 2026-04-28 |
-| [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md) | feature | Provider tool-call compatibility diagnostics | 2026-04-28 |
-| [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md) | feature | Tool intent nudge + completion evidence invariant | 2026-04-28 |
-| [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md) | feature | Unified tool pool + schema contract | 2026-04-28 |
-| [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md) | feature | Continuation transcript truth | 2026-04-28 |
-| [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md) | feature | Skill frontmatter runtime metadata | 2026-04-28 |
-| [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md) | feature | WorkLoopRouter enforcement | 2026-04-27 |
-| [FEAT-JC-010](./feature/jiaochang/FEAT-JC-010-lx-ceru-real-resolve-worker.md) | feature | LX/Ceru real resolve worker | 2026-04-27 |
-| [FEAT-JC-009](./feature/jiaochang/FEAT-JC-009-lx-ceru-js-plugin-compatibility-sandbox.md) | feature | LX/Ceru JS plugin compatibility sandbox | 2026-04-26 |
-| [FEAT-JC-008](./feature/jiaochang/FEAT-JC-008-plugin-source-library-search.md) | feature | Plugin source library search | 2026-04-26 |
-| [FEAT-JC-007](./feature/jiaochang/FEAT-JC-007-plugin-source-settings-ui.md) | feature | Plugin source settings UI | 2026-04-26 |
-| [FEAT-JC-006](./feature/jiaochang/FEAT-JC-006-plugin-source-sandbox.md) | feature | Plugin source sandbox | 2026-04-26 |
-| [FEAT-JC-005](./feature/jiaochang/FEAT-JC-005-audio-player-foundation.md) | feature | Audio player foundation | 2026-04-26 |
-| [FEAT-JC-004](./feature/jiaochang/FEAT-JC-004-path-replay-runtime-anchors.md) | feature | Path replay + runtime anchors | 2026-04-26 |
-| [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md) | feature | FR-008 pixel asset seed | 2026-04-25 |
-| [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md) | feature | Runtime cockpit adapter + i18n + strategy | 2026-04-25 |
-| [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md) | feature | Jiaochang shell + fixture cockpit | 2026-04-25 |
-| [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature | Updater transport + release manifest + settings state machine + CI release gates | 2026-04-25 |
-| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | feature | Prompt control panel + diagnostics projection | 2026-04-22 |
-| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | feature | Utility / coordinator prompt lanes | 2026-04-22 |
-| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | feature | Tool prompt catalog + conditional injection | 2026-04-22 |
-| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | feature | Scenario / task-focus prompt catalog | 2026-04-22 |
-| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | feature | Prompt coordinator + assembly decision foundation | 2026-04-22 |
-| [FEAT-ID-005](./feature/identity-foundation/FEAT-ID-005-memory-identity-tagging-and-observability.md) | feature | Memory identity tagging + observability | 2026-04-22 |
-| [FEAT-ID-004](./feature/identity-foundation/FEAT-ID-004-settings-and-session-identity-ui.md) | feature | Settings + session identity UI | 2026-04-22 |
-| [FEAT-ID-003](./feature/identity-foundation/FEAT-ID-003-session-persistence-and-identity-commands.md) | feature | Session persistence + identity commands | 2026-04-22 |
-| [FEAT-ID-002](./feature/identity-foundation/FEAT-ID-002-prompt-planner-soul-persona-blocks.md) | feature | Prompt planner Soul / Persona blocks | 2026-04-22 |
-| [FEAT-ID-001](./feature/identity-foundation/FEAT-ID-001-identity-domain-and-resolution.md) | feature | Identity domain model + resolver | 2026-04-22 |
-| [MIG-007](./feature/prompt-planner-alignment/MIG-007-prompt-planner-modularization.md) | feature  | 将 prompt_planner/mod.rs 拆分为 block/diagnostics/build_request/planner 子模块，提升可维护性                              | 2026-04-22 |
-| [MIG-006](./feature/prompt-planner-alignment/MIG-006-prompt-contribution-mechanism.md) | feature  | 实现 PromptContribution 机制 + PromptBuildMode + strict validation，让子系统独立贡献 prompt blocks                      | 2026-04-22 |
-| [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md) | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                  | 2026-04-22 |
-| [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md) | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                      | 2026-04-22 |
-| [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md) | feature  | 让主聊天链走 gateway conversations/streaming surface (App.tsx 已完成 cutover)                                          | 2026-04-22 |
-| [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md) | feature  | 把 execution mode 与 step preflight 从 advisory 升级成真实 product gate (4 sub-packs: a/b/c/d)                          | 2026-04-22 |
-| [GFR-T1-D-1](./refactor/GFR-T1-D-1-sqlite-provider-split.md)       | refactor | sqlite_provider 单刀目录化 + tests + scope + provider_impl 抽出；mod.rs 1579 → 268 LOC (-83%); T1-D 收尾              | 2026-04-21 |
-| [GFR-T1-C-3](./refactor/GFR-T1-C-3-mcp-stdio-manager.md)           | refactor | Extract McpServerManager cluster from mcp_stdio; mod.rs 621 → 270 LOC; T1-C 收尾                                      | 2026-04-21 |
-| [GFR-T1-C-2](./refactor/GFR-T1-C-2-mcp-stdio-types.md)             | refactor | Extract 16 MCP protocol DTOs from mcp_stdio; mod.rs 763 → 621 LOC                                                     | 2026-04-21 |
-| [GFR-T1-C-1](./refactor/GFR-T1-C-1-mcp-stdio-tests-and-rpc.md)     | refactor | mcp_stdio 目录化 + tests (916 LOC) + JSON-RPC framing 抽出；mod.rs 1725 → 763 LOC                                     | 2026-04-21 |
-| [GFR-T1-B-5](./refactor/GFR-T1-B-5-extract-config-parsers.md)      | refactor | Extract 7 settings parsers + IO helper from `runtime/config/mod.rs`; mod.rs now 711 LOC (< 800 hard limit, T1-B 收尾) | 2026-04-21 |
-| [GFR-T1-B-2](./refactor/GFR-T1-B-2-extract-config-schema.md)       | refactor | Extract schema simple types (4 types + 5 parsers) from `runtime/config/mod.rs`                                        | 2026-04-21 |
-| [GFR-T1-B-tests](./refactor/GFR-T1-B-tests-extract.md)             | refactor | Extract `#[cfg(test)] mod tests` block (757 LOC) into sibling `runtime/config/tests.rs`                               | 2026-04-21 |
-| [GFR-T1-B-4](./refactor/GFR-T1-B-4-extract-config-memory.md)       | refactor | Extract memory cluster (4 types + 4 impls + 4 parsers + 1 helper) from `runtime/config/mod.rs`                        | 2026-04-21 |
-| [GFR-T1-B-3](./refactor/GFR-T1-B-3-extract-config-mcp.md)          | refactor | Extract MCP cluster (9 types + 3 impls + 4 parsers) from `runtime/config/mod.rs`                                      | 2026-04-21 |
-| [GFR-T1-B-1](./refactor/GFR-T1-B-1-extract-config-json-helpers.md) | refactor | Extract 14 JSON parse helpers from `runtime/config.rs` (also git mv to config/mod.rs); start of T1-B 5-slice arc      | 2026-04-21 |
-| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)          | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                     | 2026-04-21 |
-| [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)      | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                  | 2026-04-21 |
-| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)          | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`              | 2026-04-21 |
-| [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md)     | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                    | 2026-04-21 |
-| [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)           | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                      | 2026-04-21 |
-| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)           | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                  | 2026-04-21 |
-| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)         | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                                | 2026-04-21 |
-| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md)        | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                           | 2026-04-21 |
-| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)         | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs`   | 2026-04-21 |
-| [GFR-003](./refactor/GFR-003-extract-permission-service.md)        | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred)                                        | 2026-04-21 |
+| Pack                                                                                                       | Type     | Goal                                                                                                                  | Done       |
+| ---------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------- |
+| [AWL-012](./feature/agent-work-loop/AWL-012-todo-ledger-enforcement-tool-step-evidence.md)                 | feature  | Todo ledger enforcement + tool-step evidence                                                                          | 2026-04-29 |
+| [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md)              | feature  | Continuation context + tool evidence invariants                                                                       | 2026-04-28 |
+| [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md)                    | feature  | Provider tool-call compatibility diagnostics                                                                          | 2026-04-28 |
+| [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md)            | feature  | Tool intent nudge + completion evidence invariant                                                                     | 2026-04-28 |
+| [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md)                                | feature  | Unified tool pool + schema contract                                                                                   | 2026-04-28 |
+| [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md)                              | feature  | Continuation transcript truth                                                                                         | 2026-04-28 |
+| [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md)                        | feature  | Skill frontmatter runtime metadata                                                                                    | 2026-04-28 |
+| [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md)                               | feature  | WorkLoopRouter enforcement                                                                                            | 2026-04-27 |
+| [FEAT-JC-010](./feature/jiaochang/FEAT-JC-010-lx-ceru-real-resolve-worker.md)                              | feature  | LX/Ceru real resolve worker                                                                                           | 2026-04-27 |
+| [FEAT-JC-009](./feature/jiaochang/FEAT-JC-009-lx-ceru-js-plugin-compatibility-sandbox.md)                  | feature  | LX/Ceru JS plugin compatibility sandbox                                                                               | 2026-04-26 |
+| [FEAT-JC-008](./feature/jiaochang/FEAT-JC-008-plugin-source-library-search.md)                             | feature  | Plugin source library search                                                                                          | 2026-04-26 |
+| [FEAT-JC-007](./feature/jiaochang/FEAT-JC-007-plugin-source-settings-ui.md)                                | feature  | Plugin source settings UI                                                                                             | 2026-04-26 |
+| [FEAT-JC-006](./feature/jiaochang/FEAT-JC-006-plugin-source-sandbox.md)                                    | feature  | Plugin source sandbox                                                                                                 | 2026-04-26 |
+| [FEAT-JC-005](./feature/jiaochang/FEAT-JC-005-audio-player-foundation.md)                                  | feature  | Audio player foundation                                                                                               | 2026-04-26 |
+| [FEAT-JC-004](./feature/jiaochang/FEAT-JC-004-path-replay-runtime-anchors.md)                              | feature  | Path replay + runtime anchors                                                                                         | 2026-04-26 |
+| [FEAT-JC-003](./feature/jiaochang/FEAT-JC-003-fr008-pixel-assets.md)                                       | feature  | FR-008 pixel asset seed                                                                                               | 2026-04-25 |
+| [FEAT-JC-002](./feature/jiaochang/FEAT-JC-002-runtime-cockpit-i18n-strategy.md)                            | feature  | Runtime cockpit adapter + i18n + strategy                                                                             | 2026-04-25 |
+| [FEAT-JC-001](./feature/jiaochang/FEAT-JC-001-jiaochang-shell.md)                                          | feature  | Jiaochang shell + fixture cockpit                                                                                     | 2026-04-25 |
+| [APP-UPDATER-001](./feature/app-updater/APP-UPDATER-001-updater-transport-release-manifest-settings-ci.md) | feature  | Updater transport + release manifest + settings state machine + CI release gates                                      | 2026-04-25 |
+| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md)        | feature  | Prompt control panel + diagnostics projection                                                                         | 2026-04-22 |
+| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md)        | feature  | Utility / coordinator prompt lanes                                                                                    | 2026-04-22 |
+| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md)           | feature  | Tool prompt catalog + conditional injection                                                                           | 2026-04-22 |
+| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md)             | feature  | Scenario / task-focus prompt catalog                                                                                  | 2026-04-22 |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md)               | feature  | Prompt coordinator + assembly decision foundation                                                                     | 2026-04-22 |
+| [FEAT-ID-005](./feature/identity-foundation/FEAT-ID-005-memory-identity-tagging-and-observability.md)      | feature  | Memory identity tagging + observability                                                                               | 2026-04-22 |
+| [FEAT-ID-004](./feature/identity-foundation/FEAT-ID-004-settings-and-session-identity-ui.md)               | feature  | Settings + session identity UI                                                                                        | 2026-04-22 |
+| [FEAT-ID-003](./feature/identity-foundation/FEAT-ID-003-session-persistence-and-identity-commands.md)      | feature  | Session persistence + identity commands                                                                               | 2026-04-22 |
+| [FEAT-ID-002](./feature/identity-foundation/FEAT-ID-002-prompt-planner-soul-persona-blocks.md)             | feature  | Prompt planner Soul / Persona blocks                                                                                  | 2026-04-22 |
+| [FEAT-ID-001](./feature/identity-foundation/FEAT-ID-001-identity-domain-and-resolution.md)                 | feature  | Identity domain model + resolver                                                                                      | 2026-04-22 |
+| [MIG-007](./feature/prompt-planner-alignment/MIG-007-prompt-planner-modularization.md)                     | feature  | 将 prompt_planner/mod.rs 拆分为 block/diagnostics/build_request/planner 子模块，提升可维护性                          | 2026-04-22 |
+| [MIG-006](./feature/prompt-planner-alignment/MIG-006-prompt-contribution-mechanism.md)                     | feature  | 实现 PromptContribution 机制 + PromptBuildMode + strict validation，让子系统独立贡献 prompt blocks                    | 2026-04-22 |
+| [MIG-005](./feature/prompt-planner-alignment/MIG-005-prompt-block-structure-alignment.md)                  | feature  | PromptBlock 数据结构对齐 UClaw (source + priority + is_sensitive + validation_issues)                                 | 2026-04-22 |
+| [MIG-004](./feature/migration-core/MIG-004-prompt-planning-traceability.md)                                | feature  | 把 prompt planner 升级成 traceable contract (trace_id + block_hash + diagnostics)                                     | 2026-04-22 |
+| [MIG-015](./feature/migration-core/MIG-015-gateway-conversations-and-streaming-surface.md)                 | feature  | 让主聊天链走 gateway conversations/streaming surface (App.tsx 已完成 cutover)                                         | 2026-04-22 |
+| [MIG-002](./feature/migration-core/MIG-002-execution-mode-routing-and-policy-enforcement.md)               | feature  | 把 execution mode 与 step preflight 从 advisory 升级成真实 product gate (4 sub-packs: a/b/c/d)                        | 2026-04-22 |
+| [GFR-T1-D-1](./refactor/GFR-T1-D-1-sqlite-provider-split.md)                                               | refactor | sqlite_provider 单刀目录化 + tests + scope + provider_impl 抽出；mod.rs 1579 → 268 LOC (-83%); T1-D 收尾              | 2026-04-21 |
+| [GFR-T1-C-3](./refactor/GFR-T1-C-3-mcp-stdio-manager.md)                                                   | refactor | Extract McpServerManager cluster from mcp_stdio; mod.rs 621 → 270 LOC; T1-C 收尾                                      | 2026-04-21 |
+| [GFR-T1-C-2](./refactor/GFR-T1-C-2-mcp-stdio-types.md)                                                     | refactor | Extract 16 MCP protocol DTOs from mcp_stdio; mod.rs 763 → 621 LOC                                                     | 2026-04-21 |
+| [GFR-T1-C-1](./refactor/GFR-T1-C-1-mcp-stdio-tests-and-rpc.md)                                             | refactor | mcp_stdio 目录化 + tests (916 LOC) + JSON-RPC framing 抽出；mod.rs 1725 → 763 LOC                                     | 2026-04-21 |
+| [GFR-T1-B-5](./refactor/GFR-T1-B-5-extract-config-parsers.md)                                              | refactor | Extract 7 settings parsers + IO helper from `runtime/config/mod.rs`; mod.rs now 711 LOC (< 800 hard limit, T1-B 收尾) | 2026-04-21 |
+| [GFR-T1-B-2](./refactor/GFR-T1-B-2-extract-config-schema.md)                                               | refactor | Extract schema simple types (4 types + 5 parsers) from `runtime/config/mod.rs`                                        | 2026-04-21 |
+| [GFR-T1-B-tests](./refactor/GFR-T1-B-tests-extract.md)                                                     | refactor | Extract `#[cfg(test)] mod tests` block (757 LOC) into sibling `runtime/config/tests.rs`                               | 2026-04-21 |
+| [GFR-T1-B-4](./refactor/GFR-T1-B-4-extract-config-memory.md)                                               | refactor | Extract memory cluster (4 types + 4 impls + 4 parsers + 1 helper) from `runtime/config/mod.rs`                        | 2026-04-21 |
+| [GFR-T1-B-3](./refactor/GFR-T1-B-3-extract-config-mcp.md)                                                  | refactor | Extract MCP cluster (9 types + 3 impls + 4 parsers) from `runtime/config/mod.rs`                                      | 2026-04-21 |
+| [GFR-T1-B-1](./refactor/GFR-T1-B-1-extract-config-json-helpers.md)                                         | refactor | Extract 14 JSON parse helpers from `runtime/config.rs` (also git mv to config/mod.rs); start of T1-B 5-slice arc      | 2026-04-21 |
+| [GFR-005e](./refactor/GFR-005e-extract-session-bridge.md)                                                  | refactor | Extract session-bridge helpers (app_session_to_runtime + log_context_fingerprint) from `agent.rs`                     | 2026-04-21 |
+| [GFR-005d](./refactor/GFR-005d-extract-permission-helpers.md)                                              | refactor | Move parse_permission_mode + build_permission_policy into existing application/permission_service.rs                  | 2026-04-21 |
+| [GFR-005c](./refactor/GFR-005c-extract-timeline-flush.md)                                                  | refactor | Extract timeline-flush cluster (PersistedTurnOutcome + flush_assistant_timeline_segment) from `agent.rs`              | 2026-04-21 |
+| [GFR-005b](./refactor/GFR-005b-extract-stream-error-reason.md)                                             | refactor | Extract stream-error-reason classification (2 fns) from `agent.rs`                                                    | 2026-04-21 |
+| [GFR-005a](./refactor/GFR-005a-extract-resume-cursor.md)                                                   | refactor | Extract resume-cursor cluster (1 struct + 5 fns) from `agent.rs`                                                      | 2026-04-21 |
+| [GFR-001](./refactor/GFR-001-extract-real-api-client.md)                                                   | refactor | Extract `RealApiClient` + `block_conversion` cluster from `agent.rs`                                                  | 2026-04-21 |
+| [GFR-002a](./refactor/GFR-002a-extract-prompt-sanitize.md)                                                 | refactor | Extract sanitize cluster (`SanitizationStats` + 3 fns) from `agent.rs`                                                | 2026-04-21 |
+| [GFR-002c](./refactor/GFR-002c-extract-prompt-preflight.md)                                                | refactor | Extract preflight estimators (4 fns: char/token count + summarize/truncate) from `agent.rs`                           | 2026-04-21 |
+| [GFR-002b](./refactor/GFR-002b-extract-prompt-governor.md)                                                 | refactor | Extract governor cluster (RequestPreflightStats + ContextGovernor + apply_request_preflight_limits) from `agent.rs`   | 2026-04-21 |
+| [GFR-003](./refactor/GFR-003-extract-permission-service.md)                                                | refactor | Extract `TauriPermissionPrompter` from `agent.rs` (AppState refactor deferred)                                        | 2026-04-21 |
 
 ---
 
@@ -137,12 +143,12 @@
 
 基于 [prompt-planner-gap-analysis.md](../staff-remediation/prompt-planner-gap-analysis.md) 的 UClaw 对齐路线图。
 
-| Pack    | 状态    | Phase | Goal                                                                                  | Depends On |
-| ------- | ------- | ----- | ------------------------------------------------------------------------------------- | ---------- |
-| MIG-005 | done    | P0    | PromptBlock 数据结构对齐（source + priority + is_sensitive + validation_issues）      | MIG-004    |
-| MIG-006 | done    | P1    | PromptContribution 机制 + PromptBuildMode + strict validation                         | MIG-005    |
-| MIG-007 | done    | P2    | 模块化重构（拆分为 block.rs / diagnostics.rs / build_request.rs / planner.rs）       | MIG-006    |
-| MIG-008 | done    | P2    | Coding mode 专用增强（continuation block + compaction policy + workspace augment）    | MIG-007    |
+| Pack    | 状态 | Phase | Goal                                                                               | Depends On |
+| ------- | ---- | ----- | ---------------------------------------------------------------------------------- | ---------- |
+| MIG-005 | done | P0    | PromptBlock 数据结构对齐（source + priority + is_sensitive + validation_issues）   | MIG-004    |
+| MIG-006 | done | P1    | PromptContribution 机制 + PromptBuildMode + strict validation                      | MIG-005    |
+| MIG-007 | done | P2    | 模块化重构（拆分为 block.rs / diagnostics.rs / build_request.rs / planner.rs）     | MIG-006    |
+| MIG-008 | done | P2    | Coding mode 专用增强（continuation block + compaction policy + workspace augment） | MIG-007    |
 
 ---
 
@@ -170,45 +176,46 @@
 
 基于 [Smart Browser Architecture](../design-docs/smart-browser-architecture.md)，把现有 Rust CDP 浏览器、runtime projection、browser-use MCP、cloud escalation 收口成一个产品级浏览器能力面。
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [FEAT-SB-001](./feature/smart-browser/FEAT-SB-001-smart-browser-contract.md) | done | 建立 Smart Browser backend/command/observation/event contract |
-| 2 | P0 | [FEAT-SB-002](./feature/smart-browser/FEAT-SB-002-browser-runtime-projection.md) | done | 把 browser status 接入 runtime projection/timeline |
-| 3 | P1 | [FEAT-SB-003](./feature/smart-browser/FEAT-SB-003-browser-use-mcp-backend.md) | done | 通过 MCP stdio 接入 browser-use backend |
-| 4 | P2 | [FEAT-SB-004](./feature/smart-browser/FEAT-SB-004-agentic-browser-cloud-escalation.md) | done | 接入 agentic retry 与 cloud escalation approval |
+| 顺序 | 优先级 | Pack                                                                                   | 状态 | Goal                                                          |
+| ---- | ------ | -------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------- |
+| 1    | P0     | [FEAT-SB-001](./feature/smart-browser/FEAT-SB-001-smart-browser-contract.md)           | done | 建立 Smart Browser backend/command/observation/event contract |
+| 2    | P0     | [FEAT-SB-002](./feature/smart-browser/FEAT-SB-002-browser-runtime-projection.md)       | done | 把 browser status 接入 runtime projection/timeline            |
+| 3    | P1     | [FEAT-SB-003](./feature/smart-browser/FEAT-SB-003-browser-use-mcp-backend.md)          | done | 通过 MCP stdio 接入 browser-use backend                       |
+| 4    | P2     | [FEAT-SB-004](./feature/smart-browser/FEAT-SB-004-agentic-browser-cloud-escalation.md) | done | 接入 agentic retry 与 cloud escalation approval               |
 
 ### Agent Work Loop Stabilization Pipeline
 
 基于 [AWL-002 WorkLoopRouter Enforcement](../design-docs/agent-work-loop/AWL-002-work-loop-router-enforcement.md)，把路由、skill resolution、工具循环、final report 和可见性收口为一条稳定工作循环。
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md) | done | WorkLoopRouter enforcement |
-| 2 | P0 | [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md) | active | Skill auto-load runtime |
-| 3 | P1 | [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md) | active | FinalRunReport UX |
-| 4 | P1 | [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md) | active | MCP Workbench IPC + UI |
-| 5 | P2 | [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md) | active | LoopDelegate extraction |
-| 6 | P0 | [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md) | done | Continuation context + tool evidence invariants |
-| 7 | P0 | [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md) | done | Tool intent nudge + completion evidence invariant |
-| 8 | P0 | [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md) | done | Continuation transcript truth |
+| 顺序 | 优先级 | Pack                                                                                            | 状态   | Goal                                              |
+| ---- | ------ | ----------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------- |
+| 1    | P0     | [AWL-002](./feature/agent-work-loop/AWL-002-work-loop-router-enforcement.md)                    | done   | WorkLoopRouter enforcement                        |
+| 2    | P0     | [AWL-003](./feature/agent-work-loop/AWL-003-skill-auto-load-runtime.md)                         | active | Skill auto-load runtime                           |
+| 3    | P1     | [AWL-004](./feature/agent-work-loop/AWL-004-final-run-report-ux.md)                             | active | FinalRunReport UX                                 |
+| 4    | P1     | [MCP-002](./feature/mcp-workbench/MCP-002-mcp-workbench-ipc-ui.md)                              | active | MCP Workbench IPC + UI                            |
+| 5    | P2     | [AWL-005](./feature/agent-work-loop/AWL-005-loop-delegate-extraction.md)                        | active | LoopDelegate extraction                           |
+| 6    | P0     | [AWL-010](./feature/agent-work-loop/AWL-010-continuation-context-tool-evidence-invariants.md)   | done   | Continuation context + tool evidence invariants   |
+| 7    | P0     | [AWL-011](./feature/agent-work-loop/AWL-011-tool-intent-nudge-completion-evidence-invariant.md) | done   | Tool intent nudge + completion evidence invariant |
+| 8    | P0     | [CTX-001](./feature/agent-work-loop/CTX-001-continuation-transcript-truth.md)                   | done   | Continuation transcript truth                     |
+| 9    | P0     | [AWL-012](./feature/agent-work-loop/AWL-012-todo-ledger-enforcement-tool-step-evidence.md)      | done   | Todo ledger enforcement + tool-step evidence      |
 
 ### Provider Compatibility Pipeline
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md) | done | Provider tool-call compatibility diagnostics |
+| 顺序 | 优先级 | Pack                                                                                    | 状态 | Goal                                         |
+| ---- | ------ | --------------------------------------------------------------------------------------- | ---- | -------------------------------------------- |
+| 1    | P0     | [PROV-001](./feature/provider/PROV-001-provider-tool-call-compatibility-diagnostics.md) | done | Provider tool-call compatibility diagnostics |
 
 ### Tooling Contract Pipeline
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md) | done | Unified tool pool + schema contract |
+| 顺序 | 优先级 | Pack                                                                        | 状态 | Goal                                |
+| ---- | ------ | --------------------------------------------------------------------------- | ---- | ----------------------------------- |
+| 1    | P0     | [TOOL-001](./feature/tooling/TOOL-001-unified-tool-pool-schema-contract.md) | done | Unified tool pool + schema contract |
 
 ### Skills Runtime Pipeline
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md) | done | Skill frontmatter runtime metadata |
+| 顺序 | 优先级 | Pack                                                                                | 状态 | Goal                               |
+| ---- | ------ | ----------------------------------------------------------------------------------- | ---- | ---------------------------------- |
+| 1    | P0     | [SKILL-004](./feature/skills/SKILL-004-skill-frontmatter-whentouse-allowedtools.md) | done | Skill frontmatter runtime metadata |
 
 ### Migration-Core Pipeline
 
@@ -277,52 +284,138 @@
 
 ### Migration-Core Code Audit 2026-04-23
 
-| Pack | Code-aligned status | Evidence | Remaining Gap |
-| ---- | ------------------- | -------- | ------------- |
-| MIG-011 | done | `desktop_host::{builder,setup}` exists; `tray_action_resolution_only_accepts_native_host_ids` passes | skip unless host boundary regresses |
-| MIG-003 | done | translator supports correlation.runId precedence; bridge is sole ingestion entry; V2 Single Truth gate PASS | T-003 (Chat Cutover) needed to retire compatibility raw-stream listeners |
-| MIG-006 | partial | `AppShell`, `ContentRouter`, `bootstrapStore`, `sessionStore` exist | no complete shell truth store; activation/session/run/composer still split |
-| MIG-007 | done | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor`; T-010 adds UUID attempt_id generation + populates StreamTokenPayload.correlation | — |
-| MIG-008 | partial | `HarnessRunReport`, graders, compare, suite report exist | not yet derived from canonical event log / run report |
-| MIG-009 | partial | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
-| MIG-016 | done | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass | skip; hardening belongs to GAP-002 / GAP-008 |
-| MIG-017 | done (T-003) | chat UI reads projection-only; raw listener is transport-only; conversation-slice holds only user messages; `projectConversationMessagesFromRuns` contract documented | T-005 covers remaining raw listener retirement for permission/approvals |
-| MIG-018 | done | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass | session.json fallback now traced via `fallback_reason` field (GAP-001 done) |
-| MIG-019 | done | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass | skip; multi-viewer/team policy belongs to TEAM/GAP work |
-| MIG-020 | done | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests + T-007 frontend projection pipeline | — |
-| MIG-021 | done | `recoverability.rs` with ResumeReason (9 variants), ResumeRecoverability, classify_resume_reason, safe_to_retry_mutations; integrated into TaskOutcomeResolver and StreamTokenPayload; recoverability populated on stream_complete/stream_error; resume_run Tauri command; 14 recoverability + 4 stream_outcome tests pass | — |
-| MIG-022 | done | T-013: full attempt ledger (8 states) + attempt_no counter + file persistence + `get_tool_attempt_ledger` Tauri cmd + stream_tool_execution integration + 8 tests; TS types in contracts.ts + `getToolAttemptLedger` facade | — |
-| MIG-023 | partial | harness reports exist | reports still aggregate harness event bus/traces, not event-log-derived canonical report |
+| Pack    | Code-aligned status | Evidence                                                                                                                                                                                                                                                                                                                   | Remaining Gap                                                                                |
+| ------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| MIG-011 | done                | `desktop_host::{builder,setup}` exists; `tray_action_resolution_only_accepts_native_host_ids` passes                                                                                                                                                                                                                       | skip unless host boundary regresses                                                          |
+| MIG-003 | done                | translator supports correlation.runId precedence; bridge is sole ingestion entry; V2 Single Truth gate PASS                                                                                                                                                                                                                | T-003 (Chat Cutover) needed to retire compatibility raw-stream listeners                     |
+| MIG-006 | partial             | `AppShell`, `ContentRouter`, `bootstrapStore`, `sessionStore` exist                                                                                                                                                                                                                                                        | no complete shell truth store; activation/session/run/composer still split                   |
+| MIG-007 | done                | `ToolExecutionBroker` + `prepare_step_execution` enforced from `ToolRegistryExecutor`; T-010 adds UUID attempt_id generation + populates StreamTokenPayload.correlation                                                                                                                                                    | —                                                                                            |
+| MIG-008 | partial             | `HarnessRunReport`, graders, compare, suite report exist                                                                                                                                                                                                                                                                   | not yet derived from canonical event log / run report                                        |
+| MIG-009 | partial             | activation contracts, `LicenseLifecycleService`, `activation_get_status` projection seam exist                                                                                                                                                                                                                             | request/redeem/refresh/revoke/deactivate IPC and remote lifecycle still skeleton/placeholder |
+| MIG-016 | done                | `runtime/event_log.rs`, run_id wiring, seq tests, terminal event tests pass                                                                                                                                                                                                                                                | skip; hardening belongs to GAP-002 / GAP-008                                                 |
+| MIG-017 | done (T-003)        | chat UI reads projection-only; raw listener is transport-only; conversation-slice holds only user messages; `projectConversationMessagesFromRuns` contract documented                                                                                                                                                      | T-005 covers remaining raw listener retirement for permission/approvals                      |
+| MIG-018 | done                | `runtime/history.rs`, `get_session_history_page`, history replay TS tests pass                                                                                                                                                                                                                                             | session.json fallback now traced via `fallback_reason` field (GAP-001 done)                  |
+| MIG-019 | done                | `pending_permission.rs`, `get_pending_permission`, recovery projection tests pass                                                                                                                                                                                                                                          | skip; multi-viewer/team policy belongs to TEAM/GAP work                                      |
+| MIG-020 | done                | supervisor.rs with SupervisorSnapshot + 5 lifecycle hooks + state machine + persistence + get_supervisor_snapshot API + 5 tests + T-007 frontend projection pipeline                                                                                                                                                       | —                                                                                            |
+| MIG-021 | done                | `recoverability.rs` with ResumeReason (9 variants), ResumeRecoverability, classify_resume_reason, safe_to_retry_mutations; integrated into TaskOutcomeResolver and StreamTokenPayload; recoverability populated on stream_complete/stream_error; resume_run Tauri command; 14 recoverability + 4 stream_outcome tests pass | —                                                                                            |
+| MIG-022 | done                | T-013: full attempt ledger (8 states) + attempt_no counter + file persistence + `get_tool_attempt_ledger` Tauri cmd + stream_tool_execution integration + 8 tests; TS types in contracts.ts + `getToolAttemptLedger` facade                                                                                                | —                                                                                            |
+| MIG-023 | partial             | harness reports exist                                                                                                                                                                                                                                                                                                      | reports still aggregate harness event bus/traces, not event-log-derived canonical report     |
 
 ### Architecture Gap Pipeline
 
 来自 [ARCHITECTURE.md](../../ARCHITECTURE.md) §7，用于清理 vNext 主线之外的二次真相、边界漂移与 god-file 风险。详见 [architecture-gaps/README.md](./feature/architecture-gaps/README.md)。
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md) | **done** | 拆分 `session.json` 混合事实源 |
-| 2 | P0 | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md) | **done** | 统一 runtime envelope / stream payload / run log contract |
-| 3 | P0 | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | **done** | 前端 runtime UI 收敛到 projection-first |
-| 4 | P1 | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md) | **done** | 瘦身 command boundary 与 AppState 聚合 |
-| 5 | P1 | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md) | **done** | 拆分 `stream_task.rs` god-file 职责 |
-| 6 | P1 | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | **done** | 统一 memory UI 读模型 |
-| 7 | P2 | [GAP-007](./feature/architecture-gaps/GAP-007-harness-event-log-truth-cutover.md) | draft | harness/report 改读 canonical event log |
-| 8 | P2 | [GAP-008](./feature/architecture-gaps/GAP-008-contract-drift-guardrails.md) | draft | 建立前后端 contract drift guardrails |
+| 顺序 | 优先级 | Pack                                                                               | 状态     | Goal                                                      |
+| ---- | ------ | ---------------------------------------------------------------------------------- | -------- | --------------------------------------------------------- |
+| 1    | P0     | [GAP-001](./feature/architecture-gaps/GAP-001-session-json-fact-split.md)          | **done** | 拆分 `session.json` 混合事实源                            |
+| 2    | P0     | [GAP-002](./feature/architecture-gaps/GAP-002-runtime-contract-unification.md)     | **done** | 统一 runtime envelope / stream payload / run log contract |
+| 3    | P0     | [GAP-003](./feature/architecture-gaps/GAP-003-frontend-projection-single-truth.md) | **done** | 前端 runtime UI 收敛到 projection-first                   |
+| 4    | P1     | [GAP-004](./feature/architecture-gaps/GAP-004-command-boundary-thinning.md)        | **done** | 瘦身 command boundary 与 AppState 聚合                    |
+| 5    | P1     | [GAP-005](./feature/architecture-gaps/GAP-005-stream-task-decomposition.md)        | **done** | 拆分 `stream_task.rs` god-file 职责                       |
+| 6    | P1     | [GAP-006](./feature/architecture-gaps/GAP-006-memory-ui-read-model-unification.md) | **done** | 统一 memory UI 读模型                                     |
+| 7    | P2     | [GAP-007](./feature/architecture-gaps/GAP-007-harness-event-log-truth-cutover.md)  | draft    | harness/report 改读 canonical event log                   |
+| 8    | P2     | [GAP-008](./feature/architecture-gaps/GAP-008-contract-drift-guardrails.md)        | draft    | 建立前后端 contract drift guardrails                      |
 
 ### Agents Teams Pipeline
 
 Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件：MIG-016、MIG-017、MIG-019、MIG-020、MIG-022、MIG-023 至少完成对应基础能力。详见 [agents-teams/README.md](./feature/agents-teams/README.md)。
 
-| 顺序 | 优先级 | Pack | 状态 | Goal |
-| ---- | ------ | ---- | ---- | ---- |
-| 1 | P0 | [TEAM-001](./feature/agents-teams/TEAM-001-team-domain-contracts.md) | draft | Team bounded context 与核心 contracts |
-| 2 | P0 | [TEAM-002](./feature/agents-teams/TEAM-002-team-api-and-projection-skeleton.md) | draft | Team API facade 与 projection skeleton |
-| 3 | P1 | [TEAM-003](./feature/agents-teams/TEAM-003-team-supervisor-mvp.md) | draft | TeamSupervisor planner/executor/reviewer MVP |
-| 4 | P1 | [TEAM-004](./feature/agents-teams/TEAM-004-team-aware-runtime-correlation.md) | draft | team-aware runtime correlation 与 replay |
-| 5 | P1 | [TEAM-005](./feature/agents-teams/TEAM-005-team-workspace-ui.md) | draft | TeamWorkspace 一级 UI |
-| 6 | P2 | [TEAM-006](./feature/agents-teams/TEAM-006-team-memory-and-permission-policy.md) | draft | team memory scope 与 permission policy |
-| 7 | P2 | [TEAM-007](./feature/agents-teams/TEAM-007-team-tool-ledger-and-review-gates.md) | draft | team tool ledger 与 review gates |
-| 8 | P3 | [TEAM-008](./feature/agents-teams/TEAM-008-team-run-report-and-harness.md) | draft | team run report 与 harness |
+| 顺序 | 优先级 | Pack                                                                             | 状态  | Goal                                         |
+| ---- | ------ | -------------------------------------------------------------------------------- | ----- | -------------------------------------------- |
+| 1    | P0     | [TEAM-001](./feature/agents-teams/TEAM-001-team-domain-contracts.md)             | draft | Team bounded context 与核心 contracts        |
+| 2    | P0     | [TEAM-002](./feature/agents-teams/TEAM-002-team-api-and-projection-skeleton.md)  | draft | Team API facade 与 projection skeleton       |
+| 3    | P1     | [TEAM-003](./feature/agents-teams/TEAM-003-team-supervisor-mvp.md)               | draft | TeamSupervisor planner/executor/reviewer MVP |
+| 4    | P1     | [TEAM-004](./feature/agents-teams/TEAM-004-team-aware-runtime-correlation.md)    | draft | team-aware runtime correlation 与 replay     |
+| 5    | P1     | [TEAM-005](./feature/agents-teams/TEAM-005-team-workspace-ui.md)                 | draft | TeamWorkspace 一级 UI                        |
+| 6    | P2     | [TEAM-006](./feature/agents-teams/TEAM-006-team-memory-and-permission-policy.md) | draft | team memory scope 与 permission policy       |
+| 7    | P2     | [TEAM-007](./feature/agents-teams/TEAM-007-team-tool-ledger-and-review-gates.md) | draft | team tool ledger 与 review gates             |
+| 8    | P3     | [TEAM-008](./feature/agents-teams/TEAM-008-team-run-report-and-harness.md)       | draft | team run report 与 harness                   |
+
+### Agent Evolution Pipeline
+
+基于 [.qoder/specs/if2ai-agent-evolution-report.md](../../.qoder/specs/if2ai-agent-evolution-report.md)，把 If2Ai 从"全量发送 + 人工管理 skill"升级为 Self-Healing + Self-Evolution + Token-Efficient Agent。
+
+**前置**: FEAT-EVO-000 是全部子 Pack 的根依赖，必须先 done。
+
+| 顺序 | Phase    | Pack                                                                                         | 状态         | Goal                                                                        | 依赖                                  |
+| ---- | -------- | -------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------- | ------------------------------------- |
+| 0    | P0 准备  | [FEAT-EVO-000](./feature/agent-evolution/FEAT-EVO-000-evolution-phase0-prep.md)              | **done**     | sedimentation stub + skill resolution 可见性 + 10 个 RuntimeEventType 占位  | —                                     |
+| 1    | Phase 1  | [FEAT-TE-001](./feature/agent-evolution/FEAT-TE-001-tier-budget-hard-constraint.md)          | **done**     | 上下文层级预算硬约束（ContextTier + TierBudgetAllocation）                  | FEAT-EVO-000                          |
+| 2    | Phase 1  | [FEAT-TE-002](./feature/agent-evolution/FEAT-TE-002-message-llm-compression.md)              | **done**     | 消息级 LLM 压缩（MessageDigester）                                          | FEAT-TE-001                           |
+| 3    | Phase 1  | [FEAT-TE-003](./feature/agent-evolution/FEAT-TE-003-mini-index-builder.md)                   | **done**     | 迷你索引构建器 L1（≤30 行 / priority-95）                                   | FEAT-TE-001                           |
+| 4    | Phase 1  | [FEAT-TE-004](./feature/agent-evolution/FEAT-TE-004-tool-result-summarization.md)            | deferred     | 工具结果摘要化（与 TE-002 形式重复，推迟到未来 Pack）                       | FEAT-TE-001                           |
+| 5    | Phase 2  | [FEAT-SE-001](./feature/agent-evolution/FEAT-SE-001-skill-sedimentation-pipeline.md)         | **done**     | Skill 沉淀引擎（SedimentationPipeline + SkillDraft；替换 EVO-000 stub）     | FEAT-EVO-000                          |
+| 6    | Phase 2  | [FEAT-SE-002](./feature/agent-evolution/FEAT-SE-002-skill-dedup.md)                          | **done**     | Skill 去重+合并（Embedder trait + dedup_drafts；cosine ≥ 0.85 折叠）        | FEAT-SE-001                           |
+| 7    | Phase 2  | [FEAT-SE-003](./feature/agent-evolution/FEAT-SE-003-constitution-layer.md)                   | **done**     | 宪法层（8 条硬规则 + ConstitutionRule + evaluate_constitution）             | FEAT-SE-001                           |
+| 8    | Phase 2  | [FEAT-SE-004](./feature/agent-evolution/FEAT-SE-004-skill-vector-search.md)                  | **done**     | Skill 向量检索（VectorStore trait + index_skill + search_skills）           | FEAT-SE-001, FEAT-SE-002              |
+| 9    | Phase 3  | [FEAT-SH-001](./feature/agent-evolution/FEAT-SH-001-self-healing-daemon-framework.md)        | **done**     | Self-Healing Daemon 框架（runtime/daemon/ + 状态机 + 两项迁移检查）         | FEAT-EVO-000                          |
+| 10   | Phase 3  | [FEAT-SH-002](./feature/agent-evolution/FEAT-SH-002-provider-mcp-liveness-checks.md)         | **done**     | Provider + MCP 活性检查                                                     | FEAT-SH-001                           |
+| 11   | Phase 3  | [FEAT-SH-003](./feature/agent-evolution/FEAT-SH-003-browser-session-self-healing.md)         | **done**     | 浏览器会话自修复（session_health.rs + daemon 注册）                         | FEAT-SH-001                           |
+| 12   | Phase 4  | [FEAT-AE-001](./feature/agent-evolution/FEAT-AE-001-self-edit-proposal-generator.md)         | **done**     | 失败分析→自编辑提案（generate_proposals；ClusteredFailureSet + UtilityLlm） | FEAT-SH-001, FEAT-SE-001              |
+| 13   | Phase 4  | [FEAT-AE-002](./feature/agent-evolution/FEAT-AE-002-self-edit-verification-gate.md)          | **done**     | 自编辑验证门（4 维 gate：malformed / constitution / dedup / frequency）     | FEAT-AE-001, FEAT-SE-002, FEAT-SE-003 |
+| 14   | Phase 4  | [FEAT-AE-003](./feature/agent-evolution/FEAT-AE-003-self-edit-promotion-state-machine.md)    | **done**     | 分级升级状态机（Shadow→Canary1/10Pct→Production；failure_rate 阈值控制）    | FEAT-AE-001                           |
+| 15   | Phase 5  | [FEAT-INT-001](./feature/agent-evolution/FEAT-INT-001-frontend-projection-enum-alignment.md) | **done**     | 前端投影扩展（后端 enum 18 变体 + reducer/translator/store 骨架）           | 全部 Phase 1-4, 6, 7                  |
+| 16   | Phase 5  | [FEAT-INT-002](./feature/agent-evolution/FEAT-INT-002-evolution-e2e-harness.md)              | **done**     | 端到端 evolution harness（5 条跨 Pack 集成测试）                            | 全部 Phase 1-4, 6, 7 + INT-001        |
+| 17   | Phase 6  | [FEAT-DK-001](./feature/agent-evolution/FEAT-DK-001-domain-knowledge-store.md)               | **done**     | 域知识仓库（skills/domain_knowledge.rs）                                    | —                                     |
+| 18   | Phase 6  | [FEAT-DK-002](./feature/agent-evolution/FEAT-DK-002-working-checkpoint-system.md)            | **done**     | 工作检查点系统（runtime/working_checkpoint.rs）                             | FEAT-TE-001                           |
+| 19   | Phase 6  | [FEAT-DK-003](./feature/agent-evolution/FEAT-DK-003-domain-knowledge-contributor.md)         | **done**     | 域知识自动贡献（contributor.rs + verify_knowledge_safety）                  | FEAT-DK-001, FEAT-SE-003              |
+| 20   | Phase 7  | [FEAT-BR-001](./feature/agent-evolution/FEAT-BR-001-browser-content-simplifier.md)           | **done**     | 浏览器内容简化器（35K 硬限制 + adaptive_simplify）                          | FEAT-TE-001                           |
+| 21   | Phase 7  | [FEAT-BR-002](./feature/agent-evolution/FEAT-BR-002-coordinate-first-browser-strategy.md)    | **done**     | 坐标优先浏览器策略（CoordinateClick → LabelReference → CssSelector 降级链） | FEAT-SH-003                           |
+| 22   | Phase 7  | [FEAT-BR-003](./feature/agent-evolution/FEAT-BR-003-tool-atomicity-consolidation.md)         | **done**     | 工具原子性整合 alias 表（18 旧名 → 6 原子工具；draft-only）                 | —                                     |
+| 23   | 前端增强 | FEAT-EVO-FE-001                                                                              | pending stub | 上下文压缩状态面板（CompressionHistoryDrawer + ContextBar 增强）            | FEAT-TE-001                           |
+
+> **状态总览**（更新于 Agent Evolution 全计划交付）：
+> - **22 个 Pack 全部 done**（序号 0-3, 5-22）— 101 个 spec 测试全绿，0 clippy 警告，0 IPC/事件契约破坏
+> - **FEAT-TE-004 deferred**（序号 4）— 形式与 TE-002 重复，推迟到未来摘要类专属 Pack
+> - **FEAT-EVO-FE-001 及后续前端增强**（序号 23+）— 仍为 pending stub，待 wire-up Pack 触发后再启动；此前 FEAT-INT-001 已交付 reducer/translator/store 骨架，UI 组件接入留给前端 Pack
+> - **下一步**：wire-up Pack（把 22 个 draft-only 能力接入实际 emitter / 生产路径）
+
+### Agent Evolution Wire-up Pipeline
+
+把 22 个 draft-only / pure-function 能力接入生产路径 + Tauri emitter + 前端 store。**WU-001 必须最先完成**（其他 7 个 Pack 全依赖其 `emit_evolution_event` 辅助函数）。
+
+| 顺序 | Pack                                                                                      | 状态   | Goal                                                                      | 依赖         |
+| ---- | ----------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- | ------------ |
+| 1    | [WU-001](./feature/agent-evolution-wireup/WU-001-evolution-emitter-infrastructure.md)     | active | Evolution emitter 基础设施（`evolution_emitter.rs` + `App.tsx` listener） | FEAT-INT-001 |
+| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | active | Daemon 探针注册（SH-002/003 provider + MCP + browser liveness）           | WU-001       |
+| 3    | [WU-003](./feature/agent-evolution-wireup/WU-003-stream-finalize-sedimentation-hooks.md)  | active | Stream finalize 沉淀钩子（SE-001/002/004 + DK-002/003）                   | WU-001       |
+| 4    | [WU-004](./feature/agent-evolution-wireup/WU-004-stream-preflight-injection.md)           | active | Stream preflight 注入（TE-002/003 + DK-002 checkpoint）                   | WU-001       |
+| 5    | [WU-005](./feature/agent-evolution-wireup/WU-005-self-edit-background-scanner.md)         | active | Self-edit 后台扫描器（AE-001/002/003 周期性扫描）                         | WU-001       |
+| 6    | [WU-006](./feature/agent-evolution-wireup/WU-006-browser-simplify-coordinate-strategy.md) | active | Browser 工具简化 + 坐标策略（BR-001/002）                                 | WU-001       |
+| 7    | [WU-007](./feature/agent-evolution-wireup/WU-007-tool-alias-redirect.md)                  | active | Tool alias 重定向（BR-003 resolve_alias → broker）                        | FEAT-BR-003  |
+| 8    | [WU-008](./feature/agent-evolution-wireup/WU-008-domain-knowledge-lookup.md)              | active | Domain knowledge lookup（DK-001 → PromptContribution）                    | WU-001       |
+
+> **依赖关系**：WU-001 → {WU-002, WU-003, WU-004, WU-005, WU-006, WU-008} 可并行；WU-007 独立（不依赖 WU-001）。  
+> **推荐执行顺序**：WU-001 → WU-007（独立可同步推进）→ WU-002 → WU-006 → WU-004 → WU-003 → WU-005 → WU-008。
+
+### Agent Evolution Deeper-Wiring Pipeline（DW-）
+
+WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所有 DW Pack 并行可执行**（互相无序依赖）。
+
+| 顺序 | Pack                                                                                            | 状态   | Goal                                                           | 依赖              |
+| ---- | ----------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------- | ----------------- |
+| 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)                   | active | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005    |
+| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md)            | active | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004    |
+| 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md)            | active | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003    |
+| 4    | [DW-004](./feature/agent-evolution-wireup/DW-004-work-loop-dk-lookup.md)                       | active | work_loop::resolve_skill_plan 内调 lookup_for_skill_resolution | WU-001, WU-008    |
+| 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)               | active | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006    |
+
+> **推荐执行顺序**：DW-003 → DW-002（stream hot path 顺序）→ DW-004 → DW-001 → DW-005（可并行）。
+
+### Agent Evolution Frontend UI Pipeline（UI-）
+
+消费 `evolutionEventStore` 渲染 evolution 可观测性 UI。**UI-001 为容器，必须先完成**；UI-002~006 可并行。
+
+| 顺序 | Pack                                                                                               | 状态   | Goal                                                                  | 依赖                   |
+| ---- | -------------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------- | ---------------------- |
+| 1    | [UI-001](./feature/agent-evolution-frontend/UI-001-evolution-dev-drawer.md)                       | active | EvolutionDevDrawer 容器 + TelemetryDrawer 挂载（6-Tab 骨架）          | FEAT-INT-001           |
+| 2    | [UI-002](./feature/agent-evolution-frontend/UI-002-daemon-health-dashboard.md)                    | active | DaemonHealthDashboard（daemon_health 表格）                           | UI-001, FEAT-INT-001   |
+| 3    | [UI-003](./feature/agent-evolution-frontend/UI-003-compression-history-table.md)                  | active | CompressionHistoryTable + ContextBar 摘要行                           | UI-001, FEAT-INT-001   |
+| 4    | [UI-004](./feature/agent-evolution-frontend/UI-004-skill-sedimentation-timeline.md)               | active | SkillSedimentationTimeline（skill_sedimented 时间轴 + chip）          | UI-001, FEAT-INT-001   |
+| 5    | [UI-005](./feature/agent-evolution-frontend/UI-005-self-edit-proposal-and-verdict.md)             | active | SelfEditPanel（2-Tab：ProposalList + VerdictList）                    | UI-001, FEAT-INT-001   |
+| 6    | [UI-006](./feature/agent-evolution-frontend/UI-006-browser-dk-checkpoint-composite.md)            | active | EvolutionMiscPanel（Browser + DK + Checkpoint + ContentSimplified 4合1）| UI-001, FEAT-INT-001 |
+
+> **推荐执行顺序**：UI-001 → {UI-002, UI-003, UI-004, UI-005, UI-006} 可并行。
 
 ### Bug / Perf / Dep
 
@@ -332,13 +425,13 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 
 ### Prompt Control Plane Pipeline
 
-| Pack | 状态 | Goal |
-| ---- | ---- | ---- |
-| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md) | **done** | Prompt coordinator + assembly decision foundation |
-| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md) | **done** | Scenario / task-focus prompt catalog |
-| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md) | **done** | Tool prompt catalog + conditional injection |
-| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | **done** | Utility / coordinator prompt lanes |
-| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | **done** | Prompt control panel + diagnostics projection |
+| Pack                                                                                                | 状态     | Goal                                              |
+| --------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------- |
+| [FEAT-PCP-001](./feature/prompt-control-plane/FEAT-PCP-001-prompt-coordinator-foundation.md)        | **done** | Prompt coordinator + assembly decision foundation |
+| [FEAT-PCP-002](./feature/prompt-control-plane/FEAT-PCP-002-scenario-and-task-focus-catalog.md)      | **done** | Scenario / task-focus prompt catalog              |
+| [FEAT-PCP-003](./feature/prompt-control-plane/FEAT-PCP-003-tool-prompt-catalog-and-injection.md)    | **done** | Tool prompt catalog + conditional injection       |
+| [FEAT-PCP-004](./feature/prompt-control-plane/FEAT-PCP-004-utility-and-coordinator-prompt-lanes.md) | **done** | Utility / coordinator prompt lanes                |
+| [FEAT-PCP-005](./feature/prompt-control-plane/FEAT-PCP-005-prompt-control-panel-and-diagnostics.md) | **done** | Prompt control panel + diagnostics projection     |
 
 > 新 Pack 用 `./scripts/pack init <PACK-ID> --type feature --slug <slug> --files <a> [<b>...]` 生成。
 > `migration-core` 是当前优先级最高的 feature pipeline；老 `CPD-001` 保留作历史 pack，不再作为默认 active 入口。

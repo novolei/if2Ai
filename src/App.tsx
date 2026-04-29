@@ -82,7 +82,7 @@ import {
 // render / boot orchestrator.
 import { AppShell } from "@/modules/app-shell/AppShell";
 import { runBootSequence } from "@/boot/boot-orchestrator";
-import { bootstrapStore, useBootstrapSelector } from "@/state";
+import { bootstrapStore, evolutionEventStore, useBootstrapSelector } from "@/state";
 // MIG-014 — chat + session stores own per-session runtime
 // state. App.tsx no longer holds the canonical truth; the
 // `setX` wrappers below diff against the store snapshot and
@@ -250,10 +250,25 @@ function App() {
     void listen("if2ai://models-changed", onModelsChanged).then((unlisten) => {
       unlistenModelsChanged = unlisten;
     });
+    // WU-001 — subscribe to the Agent Evolution `runtime_event`
+    // channel and pipe every envelope through the typed translator
+    // into `evolutionEventStore`. Failures are swallowed so a
+    // listener glitch never breaks boot.
+    let unlistenEvolution: (() => void) | null = null;
+    void listen<unknown>("runtime_event", (event) => {
+      try {
+        evolutionEventStore.applyEnvelope(event.payload);
+      } catch (err) {
+        console.warn("[evolution_emitter] applyEnvelope failed", err);
+      }
+    }).then((unlisten) => {
+      unlistenEvolution = unlisten;
+    });
     return () => {
       signal.cancelled = true;
       window.removeEventListener("if2ai:models-changed", onModelsChanged);
       unlistenModelsChanged?.();
+      unlistenEvolution?.();
     };
   }, []);
 

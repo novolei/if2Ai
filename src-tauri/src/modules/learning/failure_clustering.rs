@@ -116,7 +116,7 @@ pub fn cluster_failures(reports: &[&HarnessRunReport]) -> ClusteredFailureSet {
         .into_iter()
         .map(|(category, sigs_map)| {
             let mut signatures: Vec<FailureSignature> = sigs_map.into_values().collect();
-            signatures.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+            signatures.sort_by_key(|s| std::cmp::Reverse(s.occurrences));
             let total_failures = signatures.iter().map(|s| s.occurrences).sum();
             let max_severity = signatures
                 .iter()

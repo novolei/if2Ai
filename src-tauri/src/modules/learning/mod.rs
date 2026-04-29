@@ -18,6 +18,7 @@ pub mod promotion_gate;
 pub mod reflection;
 pub mod reflection_generator;
 pub mod reflection_note;
+pub mod self_edit;
 pub mod self_model;
 pub mod strategy_registry;
 pub mod strategy_registry_service;

@@ -170,11 +170,9 @@ impl AggregateMetrics {
     /// completed.
     #[must_use]
     pub fn avg_turn_duration_ms(&self) -> u64 {
-        if self.turns_completed == 0 {
-            0
-        } else {
-            self.total_turn_duration_ms / self.turns_completed
-        }
+        self.total_turn_duration_ms
+            .checked_div(self.turns_completed)
+            .unwrap_or(0)
     }
 
     /// Turn success rate (0.0–1.0); `1.0` when no turns completed

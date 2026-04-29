@@ -829,7 +829,7 @@ pub(super) fn build_chat_completion_request_for_provider(
             Value::Array(tools.iter().map(openai_tool_definition).collect::<Vec<_>>());
     }
     if let Some(tool_choice) = &request.tool_choice {
-        payload["tool_choice"] = openai_tool_choice(tool_choice);
+        payload["tool_choice"] = openai_tool_choice_for_capability(tool_choice, &cap);
     }
 
     // P-MULTI-API — top-level reasoning fields by quirk.
@@ -987,6 +987,16 @@ fn openai_tool_choice(tool_choice: &ToolChoice) -> Value {
             "function": { "name": name },
         }),
     }
+}
+
+fn openai_tool_choice_for_capability(
+    tool_choice: &ToolChoice,
+    cap: &crate::modules::provider::capabilities::ModelCapability,
+) -> Value {
+    if matches!(tool_choice, ToolChoice::Any) && cap.reasoning {
+        return Value::String("auto".to_string());
+    }
+    openai_tool_choice(tool_choice)
 }
 
 fn normalize_response(
@@ -1362,6 +1372,28 @@ mod tests {
             }),
             json!({"type": "function", "function": {"name": "weather"}})
         );
+    }
+
+    #[test]
+    fn kimi_reasoning_downgrades_required_tool_choice_to_auto() {
+        let payload = build_chat_completion_request_for_provider(
+            &MessageRequest {
+                model: "kimi-k2.6".to_string(),
+                max_tokens: 64,
+                messages: vec![InputMessage::user_text("继续完成网页游戏")],
+                system: None,
+                tools: Some(vec![ToolDefinition {
+                    name: "bash".to_string(),
+                    description: Some("Run a shell command".to_string()),
+                    input_schema: json!({"type": "object"}),
+                }]),
+                tool_choice: Some(ToolChoice::Any),
+                stream: true,
+            },
+            "moonshot",
+        );
+
+        assert_eq!(payload["tool_choice"], json!("auto"));
     }
 
     #[test]

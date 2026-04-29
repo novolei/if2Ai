@@ -144,6 +144,7 @@ pub fn generate_audio_frames(
     let mut prev_tokens_per_channel: Vec<Vec<u32>> = vec![Vec::new(); proto.n_vq];
     let mut prev_set_per_channel: Vec<HashSet<u32>> = vec![HashSet::new(); proto.n_vq];
 
+    #[allow(clippy::explicit_counter_loop)]
     for step_index in 0..max_new_frames {
         let frame_result = match path {
             SamplePath::Greedy => sample_via_greedy(

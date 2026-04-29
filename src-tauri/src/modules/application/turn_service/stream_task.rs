@@ -424,7 +424,10 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     let mut diagnostic_warnings: Vec<String> = Vec::new();
     let mut provider_textual_tool_markup_seen = false;
     let mut force_tool_choice_next =
-        super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
+        (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
+            || super::work_loop::requires_single_shell_command_evidence(
+                &work_loop_decision_for_stream,
+            ))
             && !tool_defs_for_stream.is_empty();
     let mut stream_circuit = crate::modules::provider::resilience::StreamCircuitState::default();
     let stream_resilience_cfg =
@@ -535,10 +538,43 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             current_finalization_reason
         );
 
+        // DW-002 — call the WU-004 digester before preflight so that
+        // long histories get LLM-summarized into a tighter token
+        // footprint. Placeholder LLM (`MockUtilityLlm::empty`) means
+        // the digester returns identity in production until a deeper
+        // wiring Pack plumbs `ChatProviderUtilityLlm` through here.
+        // Failure-isolated: any error → `digested_messages = None`.
+        let digested_owned: Option<Vec<crate::modules::api::InputMessage>> = {
+            let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
+                std::sync::Arc::new(crate::modules::memory::MockUtilityLlm::empty());
+            super::preflight_hooks::digest_messages_for_preflight(&session_messages, llm).await
+        };
+        if let Some(ref kept) = digested_owned {
+            let payload = serde_json::json!({
+                "keptTokens": kept.len(),
+                "dropped": session_messages.len().saturating_sub(kept.len()),
+                "passthrough": kept.len() == session_messages.len(),
+                "tier": "recent_messages",
+            });
+            let _ = crate::modules::runtime::evolution_emitter::emit_evolution_event(
+                None,
+                crate::modules::runtime::contracts::common::RuntimeEventType::CompressionEvent,
+                "message_digest",
+                crate::modules::runtime::contracts::common::CorrelationIds {
+                    session_id: Some(session_id.clone()),
+                    stream_id: Some(stream_id_for_task.clone()),
+                    ..Default::default()
+                },
+                &payload,
+                None,
+            );
+        }
+
         // Build the iteration request via the extracted preflight module (GAP-005).
         let preflight_result = super::stream_preflight::build_iteration_request(
             super::stream_preflight::PreflightContext {
                 session_messages: &session_messages,
+                digested_messages: digested_owned.as_deref(),
                 tool_defs: &tool_defs_for_stream,
                 system_prompt: &system_prompt_for_stream,
                 model: &model_for_stream,
@@ -833,12 +869,52 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             continue;
         }
 
-        // If no tool calls, exit the outer loop
+        // Some providers stream textual pseudo tool calls instead of
+        // structured tool-call deltas. Convert supported formats before
+        // falling back to nudge/finalization.
         if pending_tool_uses.is_empty() {
             tracing::info!(
                 "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
                 accumulated_text.len()
             );
+            if !force_final_response {
+                let textual_tool_calls =
+                    super::work_loop::extract_textual_tool_calls(&accumulated_text);
+                if !textual_tool_calls.is_empty() {
+                    provider_textual_tool_markup_seen = true;
+                    let markup_family =
+                        super::work_loop::detect_textual_tool_call_markup(&accumulated_text)
+                            .unwrap_or_else(|| "textual_tool_calls".to_string());
+                    let warning = format!(
+                        "provider emitted {markup_family} text instead of structured tool_calls; converted to canonical tool calls"
+                    );
+                    if !diagnostic_warnings.iter().any(|value| value == &warning) {
+                        diagnostic_warnings.push(warning);
+                    }
+                    let converted_count = textual_tool_calls.len();
+                    let _ = run_event_logger
+                        .append(
+                            "provider_tool_call_compat_warning",
+                            serde_json::json!({
+                                "stream_id": stream_id_for_task.clone(),
+                                "session_id": session_id.clone(),
+                                "provider_id": provider_id_for_stream.clone(),
+                                "model": model_for_stream.clone(),
+                                "markup_family": markup_family,
+                                "text_len": accumulated_text.len(),
+                                "converted_tool_call_count": converted_count,
+                                "recovery_action": "execute_as_structured_tool_calls",
+                                "sanitized": true,
+                            }),
+                        )
+                        .await;
+                    pending_tool_uses = textual_tool_calls;
+                    accumulated_text.clear();
+                    accumulated_thinking.clear();
+                }
+            }
+        }
+        if pending_tool_uses.is_empty() {
             if let Some(markup_family) =
                 super::work_loop::detect_textual_tool_call_markup(&accumulated_text)
             {
@@ -960,6 +1036,9 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                             Some("tool_required_no_tool")
                         }
                     }
+                    _ if super::work_loop::detect_repetitive_model_output(&accumulated_text) => {
+                        Some("repetitive_model_output")
+                    }
                     _ => Some("model_stop_no_tools"),
                 };
             }
@@ -1021,6 +1100,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             run_id: run_id_for_ledger.clone(),
             app_data_dir: app_data_dir_for_ledger.clone(),
         };
+        let had_successful_mutating_tool_before = has_successful_mutating_tool;
         let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
         accumulated_text = tool_result.accumulated_text;
         accumulated_thinking = tool_result.accumulated_thinking;
@@ -1028,6 +1108,14 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         timeline_session_messages = tool_result.timeline_session_messages;
         has_successful_tool = tool_result.has_successful_tool;
         has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
+        if !had_successful_mutating_tool_before
+            && has_successful_mutating_tool
+            && super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
+        {
+            if let Some(message) = super::todo_ledger::post_mutation_update_message(&session_id) {
+                session_messages.push(InputMessage::user_text(message));
+            }
+        }
         force_final_response_next =
             force_final_response_next || tool_result.force_final_response_next;
         apply_memory_recall_success_finalization_guard(
@@ -1036,6 +1124,12 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             &mut force_final_response_next,
             &mut finalization_reason,
         );
+        if super::work_loop::requires_single_shell_command_evidence(&work_loop_decision_for_stream)
+            && tool_result.has_successful_tool
+        {
+            force_final_response_next = true;
+            finalization_reason = Some("single_shell_command_executed".to_string());
+        }
         if finalization_reason.is_none() {
             finalization_reason = tool_result.finalization_reason;
         }
@@ -1254,6 +1348,7 @@ mod tests {
         let result = super::super::stream_preflight::build_iteration_request(
             super::super::stream_preflight::PreflightContext {
                 session_messages: &session_messages,
+                digested_messages: None,
                 tool_defs: &tool_defs,
                 system_prompt: "system",
                 model: "test-model",
@@ -1361,6 +1456,7 @@ mod tests {
         let result = super::super::stream_preflight::build_iteration_request(
             super::super::stream_preflight::PreflightContext {
                 session_messages: &session_messages,
+                digested_messages: None,
                 tool_defs: &tool_defs,
                 system_prompt: "system",
                 model: "test-model",

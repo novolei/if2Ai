@@ -6,6 +6,7 @@ pub mod api_type;
 mod client;
 mod error;
 pub mod providers;
+pub mod resilience;
 mod sse;
 mod types;
 

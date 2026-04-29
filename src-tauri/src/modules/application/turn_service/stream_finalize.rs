@@ -207,7 +207,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         routing_info,
         work_loop_decision,
         skill_resolution_plan,
-        diagnostic_warnings,
+        mut diagnostic_warnings,
         stream_emitter,
         run_event_logger,
         session_manager,
@@ -239,10 +239,12 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
     // not in `has_successful_mutating_tool` of this resume), and the
     // accumulated_text typically carries the assistant's prior "已写入 …"
     // wrap-up text that we want to preserve.
-    if !is_resume_turn
-        && contains_unverified_file_claim(&accumulated_text)
-        && !has_successful_mutating_tool
-    {
+    if should_rewrite_unverified_completion(
+        &work_loop_decision,
+        is_resume_turn,
+        &accumulated_text,
+        has_successful_mutating_tool,
+    ) {
         let guarded = "未执行工具，无法确认完成。".to_string();
         tracing::warn!(
             "[start_agent_stream] Rewriting unverified completion claim to guarded message"
@@ -320,6 +322,26 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         let _ = run_event_logger
             .append("final_text_override", override_payload)
             .await;
+    }
+
+    let todo_snapshot = super::todo_ledger::load_snapshot(&session_id);
+    let (guarded_terminal_status, todo_warning) =
+        super::todo_ledger::terminal_status_with_todo_ledger(
+            &work_loop_decision,
+            terminal_status,
+            todo_snapshot.as_ref(),
+        );
+    if guarded_terminal_status != terminal_status {
+        tracing::warn!(
+            session_id,
+            stream_id = stream_id_for_task,
+            status = ?guarded_terminal_status,
+            "[start_agent_stream] Todo ledger still has unfinished work at finalization"
+        );
+        terminal_status = guarded_terminal_status;
+    }
+    if let Some(warning) = todo_warning {
+        diagnostic_warnings.push(warning);
     }
 
     let user_visible_truth = TaskOutcomeResolver::resolve(
@@ -1121,5 +1143,202 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
                 );
             }
         }
+    }
+
+    // DW-003 — fire-and-forget evolution finalize hooks. Three
+    // independent pipelines (sedimentation / checkpoint extract /
+    // domain-knowledge contributor). All failure-isolated; the
+    // turn's main flow already returned by the time these spawn.
+    spawn_evolution_finalize_hooks(EvolutionFinalizeArgs {
+        session_id: session_id.clone(),
+        history: session_messages.clone(),
+        accumulated_text: accumulated_text.clone(),
+        app_handle: app_handle_for_after_turn.clone(),
+    });
+}
+
+// ---------------------------------------------------------------------------
+// DW-003 — Evolution finalize spawn helper
+// ---------------------------------------------------------------------------
+
+struct EvolutionFinalizeArgs {
+    session_id: String,
+    history: Vec<InputMessage>,
+    accumulated_text: String,
+    app_handle: AppHandle,
+}
+
+/// Spawn the three WU-003 finalize pipelines as fire-and-forget
+/// tokio tasks. Each pipeline is independently failure-isolated:
+/// any panic / error inside the spawned task only logs at warn —
+/// it never bubbles back into the turn's main flow (which has
+/// already returned by the time these run).
+///
+/// Production note: the LLM handle used for sedimentation +
+/// domain-knowledge contributor is a `MockUtilityLlm::empty()`
+/// placeholder (yields no drafts / no candidates) until a future
+/// wire-up Pack plumbs `ChatProviderUtilityLlm` through. The
+/// spawn pipeline + emit path are nevertheless exercised every
+/// turn, so the contract surface (events on the wire, store ring
+/// buffers populated for any caller that DOES wire an LLM) is
+/// already validated end-to-end.
+fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
+    use crate::modules::memory::MockUtilityLlm;
+    use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+    use crate::modules::runtime::evolution_emitter::emit_evolution_event;
+
+    let EvolutionFinalizeArgs {
+        session_id,
+        history,
+        accumulated_text,
+        app_handle,
+    } = args;
+
+    // (2) Sync checkpoint extraction — always runs (no LLM, no I/O).
+    let extraction = super::finalize_hooks::extract_turn_checkpoint(&accumulated_text);
+    if extraction.key_info.is_some() || extraction.should_clear {
+        let payload = serde_json::json!({
+            "sessionId": session_id,
+            "action": if extraction.should_clear { "cleared" } else { "extracted" },
+            "keyInfoTokens": extraction
+                .key_info
+                .as_deref()
+                .map(crate::modules::runtime::budget::estimate_tokens)
+                .unwrap_or(0),
+            "relatedSop": extraction.related_sop,
+        });
+        let _ = emit_evolution_event(
+            Some(&app_handle),
+            RuntimeEventType::CheckpointUpdated,
+            if extraction.should_clear {
+                "cleared"
+            } else {
+                "extracted"
+            },
+            CorrelationIds {
+                session_id: Some(session_id.clone()),
+                ..Default::default()
+            },
+            &payload,
+            None,
+        );
+    }
+
+    // (1) Sedimentation pipeline — spawn with placeholder LLM.
+    {
+        let session_id = session_id.clone();
+        let history = history.clone();
+        let app_handle = app_handle.clone();
+        tokio::spawn(async move {
+            let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
+                Arc::new(MockUtilityLlm::empty());
+            let drafts =
+                super::finalize_hooks::run_sedimentation_pipeline(&history, llm).await;
+            for draft in drafts {
+                let payload = serde_json::json!({
+                    "name": draft.name,
+                    "description": draft.description,
+                    "toolSequence": draft.tool_sequence,
+                    "sourceTurns": draft.source_turns,
+                });
+                let _ = emit_evolution_event(
+                    Some(&app_handle),
+                    RuntimeEventType::SkillSedimented,
+                    "draft",
+                    CorrelationIds {
+                        session_id: Some(session_id.clone()),
+                        ..Default::default()
+                    },
+                    &payload,
+                    None,
+                );
+            }
+        });
+    }
+
+    // (3) Domain-knowledge contributor — spawn with placeholder LLM.
+    {
+        let session_id = session_id.clone();
+        let history = history.clone();
+        let app_handle = app_handle.clone();
+        tokio::spawn(async move {
+            let llm: Arc<dyn crate::modules::memory::UtilityLlm> =
+                Arc::new(MockUtilityLlm::empty());
+            let candidates =
+                super::finalize_hooks::run_domain_knowledge_contributor(&history, llm).await;
+            for entry in candidates {
+                let payload = serde_json::json!({
+                    "entryId": entry.id,
+                    "kind": entry.kind.label(),
+                    "source": "contribution",
+                    "accessCount": entry.access_count,
+                });
+                let _ = emit_evolution_event(
+                    Some(&app_handle),
+                    RuntimeEventType::DomainKnowledge,
+                    "contribution",
+                    CorrelationIds {
+                        session_id: Some(session_id.clone()),
+                        ..Default::default()
+                    },
+                    &payload,
+                    None,
+                );
+            }
+        });
+    }
+}
+
+fn should_rewrite_unverified_completion(
+    work_loop_decision: &WorkLoopDecision,
+    is_resume_turn: bool,
+    accumulated_text: &str,
+    has_successful_mutating_tool: bool,
+) -> bool {
+    !is_resume_turn
+        && super::work_loop::requires_tool_execution_evidence(work_loop_decision)
+        && contains_unverified_file_claim(accumulated_text)
+        && !has_successful_mutating_tool
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::runtime::contracts::agent_loop::{WorkLoopDecision, WorkLoopKind};
+
+    fn decision(reason_codes: Vec<&str>) -> WorkLoopDecision {
+        WorkLoopDecision {
+            loop_kind: WorkLoopKind::DirectExecute,
+            reason_codes: reason_codes
+                .into_iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            requires_confirmation: false,
+            route_hint: None,
+        }
+    }
+
+    #[test]
+    fn read_only_shell_summary_does_not_trigger_mutation_guard() {
+        let work_loop = decision(vec!["simple_shell_command_intent"]);
+
+        assert!(!should_rewrite_unverified_completion(
+            &work_loop,
+            false,
+            "README.md was successfully deleted earlier.",
+            false,
+        ));
+    }
+
+    #[test]
+    fn tool_required_completion_claim_requires_mutating_evidence() {
+        let work_loop = decision(vec!["tool_required_work_intent"]);
+
+        assert!(should_rewrite_unverified_completion(
+            &work_loop,
+            false,
+            "已创建 r.md。",
+            false,
+        ));
     }
 }

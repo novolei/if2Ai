@@ -130,6 +130,23 @@ pub const MAX_REQUEST_CHAR_BUDGET: usize = 120_000;
 /// always honour.
 pub const MAX_REQUEST_TOKEN_BUDGET_ESTIMATE: usize = 30_000;
 
+// ── 5-tier hard budget defaults (FEAT-TE-001) ──────────────────
+// Per-tier token caps consumed by
+// [`crate::modules::runtime::context_compression::TierBudgetAllocation`].
+// Sum is intentionally near `MAX_REQUEST_TOKEN_BUDGET_ESTIMATE` so the
+// new tier-aware preflight does not loosen the existing global ceiling.
+
+/// Frozen identity / constitution / tool guides budget. Module A tier 1.
+pub const TIER_SYSTEM_TOKENS: usize = 4_000;
+/// LLM-digested history tier (populated by FEAT-TE-002). Module A tier 2.
+pub const TIER_COMPRESSED_HISTORY_TOKENS: usize = 6_000;
+/// `<key_info>` working checkpoint tier (FEAT-DK-002). Module A tier 3.
+pub const TIER_WORKING_CHECKPOINT_TOKENS: usize = 2_000;
+/// Uncompressed recent messages tier. Module A tier 4.
+pub const TIER_RECENT_MESSAGES_TOKENS: usize = 12_000;
+/// Current-turn tool-result buffer tier. Module A tier 5.
+pub const TIER_TOOL_BUFFER_TOKENS: usize = 6_000;
+
 /// Maximum number of times the streaming task will retry a
 /// `provider.stream(...)` call after a network-timeout class
 /// error before giving up and surfacing the failure to the

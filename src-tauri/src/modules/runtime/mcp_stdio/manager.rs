@@ -348,6 +348,30 @@ impl McpServerManager {
         &self.unsupported_servers
     }
 
+    /// FEAT-SH-002 — liveness query for the daemon's MCP health check.
+    ///
+    /// Returns `true` iff the named server has been initialized AND its
+    /// stdio child process has not exited. Returns `false` for unknown
+    /// server names, never-initialized servers, and dead/exited
+    /// processes.
+    ///
+    /// "Read-only" per Pack contract (I6 spirit): may reap a zombie
+    /// child as OS-level housekeeping, but never signals/kills the
+    /// process and never mutates MCP protocol state (initialized
+    /// flag, request id counter, tool routes, server bootstrap). The
+    /// `&mut self` is required only because [`tokio::process::Child::
+    /// try_wait`] borrows mutably; semantically this is a query.
+    #[must_use]
+    pub fn is_server_process_alive(&mut self, server_name: &str) -> bool {
+        let Some(server) = self.servers.get_mut(server_name) else {
+            return false;
+        };
+        let Some(process) = server.process.as_mut() else {
+            return false;
+        };
+        process.is_child_alive()
+    }
+
     pub async fn discover_tools(&mut self) -> Result<Vec<ManagedMcpTool>, McpServerManagerError> {
         let server_names = self.servers.keys().cloned().collect::<Vec<_>>();
         let mut discovered_tools = Vec::new();

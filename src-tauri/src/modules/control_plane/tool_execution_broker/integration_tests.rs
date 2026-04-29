@@ -12,7 +12,7 @@ mod mig_002_d_integration_tests {
     use crate::modules::runtime::permissions::PermissionMode;
     use crate::modules::tools::builtin::{bash_tool_entry, file_read_tool_entry, file_write_entry};
     use crate::modules::tools::context::{SharedToolContext, ToolContext};
-    use crate::modules::tools::registry::ToolRegistry;
+    use crate::modules::tools::registry::{ToolEntry, ToolHandler, ToolRegistry};
 
     fn create_test_registry() -> (Arc<ToolRegistry>, ToolExecutionBroker) {
         let context: SharedToolContext = Arc::new(std::sync::Mutex::new(
@@ -26,8 +26,35 @@ mod mig_002_d_integration_tests {
             .register(file_write_entry())
             .expect("register file_write");
         registry.register(bash_tool_entry()).expect("register bash");
+        registry
+            .register(test_todo_write_entry())
+            .expect("register TodoWrite");
         let broker = ToolExecutionBroker::new(registry.clone());
         (registry, broker)
+    }
+
+    fn test_todo_write_entry() -> ToolEntry {
+        let handler: ToolHandler =
+            Arc::new(|_args, _context| Box::pin(async move { Ok("{\"ok\":true}".to_string()) }));
+        ToolEntry {
+            name: "TodoWrite".to_string(),
+            toolset: "utility".to_string(),
+            description: "Test TodoWrite".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "todos": { "type": "array" }
+                },
+                "required": ["todos"]
+            }),
+            max_result_size: Some(1024),
+            max_text_bytes: None,
+            max_image_bytes: None,
+            timeout_secs: Some(5),
+            disabled: false,
+            handler,
+            multimodal_handler: None,
+        }
     }
 
     /// MIG-002-d: Verify Granted outcome allows tool execution
@@ -102,6 +129,38 @@ mod mig_002_d_integration_tests {
         assert!(
             error_text.contains("below required") || error_text.contains("denied"),
             "Error should mention permission denial"
+        );
+
+        tokio::fs::remove_dir_all(root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn workspace_write_allows_todo_write_through_broker_preflight() {
+        let root = std::env::temp_dir().join("mig-002-d-todo-write");
+        tokio::fs::create_dir_all(&root).await.ok();
+
+        let (_registry, broker) = create_test_registry();
+        let context = SessionExecutionContext::new(
+            "test-session".to_string(),
+            "test-project".to_string(),
+            root.clone(),
+            PermissionMode::WorkspaceWrite,
+        );
+
+        let result = broker
+            .execute_with_trace(
+                &context,
+                "TodoWrite",
+                json!({"todos": [{"content": "Plan", "status": "in_progress"}]}),
+                "trace-todo-write",
+                None,
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "TodoWrite should be allowed in workspace-write mode, got: {:?}",
+            result.err()
         );
 
         tokio::fs::remove_dir_all(root).await.ok();

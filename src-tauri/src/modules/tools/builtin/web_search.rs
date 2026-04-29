@@ -187,12 +187,11 @@ fn format_ddg_response(resp: &DdgResponse, max_results: usize) -> String {
             break;
         }
         match related {
-            DdgRelated::Item { text, first_url } if !text.is_empty() => {
-                if !first_url.contains("duckduckgo.com/c/") {
+            DdgRelated::Item { text, first_url } if !text.is_empty()
+                && !first_url.contains("duckduckgo.com/c/") => {
                     lines.push(format!("- {} ({})", text, first_url));
                     result_count += 1;
                 }
-            }
             DdgRelated::Category { topics } => {
                 for t in topics {
                     if result_count >= max_results {

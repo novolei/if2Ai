@@ -8,6 +8,7 @@
 //! - The current URL cache
 
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -259,6 +260,70 @@ pub struct ActionLogEntry {
     pub url: Option<String>,
 }
 
+/// FEAT-SH-003 — heartbeat + crash bookkeeping for one browser session.
+///
+/// Held as a sub-component of [`BrowserSession`] so the daemon's
+/// `BrowserSessionLivenessCheck` can query liveness without touching
+/// the heavy chromiumoxide types and so unit tests can construct one
+/// without launching Chrome.
+#[derive(Debug, Default, Clone)]
+pub struct SessionHeartbeat {
+    inner: Arc<Mutex<HeartbeatInner>>,
+}
+
+#[derive(Debug, Default)]
+struct HeartbeatInner {
+    /// `Some` when the session has had at least one observed
+    /// heartbeat (set on construction); `None` only for sessions that
+    /// were never touched (e.g. failed to launch).
+    last_at: Option<Instant>,
+    /// Sticky crash flag: once set, never clears for the lifetime of
+    /// this `SessionHeartbeat` instance. Recovery must rebuild the
+    /// session, which means a fresh `SessionHeartbeat`.
+    crashed: bool,
+}
+
+impl SessionHeartbeat {
+    /// Construct a heartbeat already considered alive (current time).
+    #[must_use]
+    pub fn fresh() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HeartbeatInner {
+                last_at: Some(Instant::now()),
+                crashed: false,
+            })),
+        }
+    }
+
+    /// Refresh the heartbeat to "now". Call from any successful CDP
+    /// interaction to mark the session as live.
+    pub fn touch(&self) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.last_at = Some(Instant::now());
+        }
+    }
+
+    /// Mark the session as crashed (sticky).
+    pub fn mark_crashed(&self) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.crashed = true;
+        }
+    }
+
+    /// Read-only liveness query. Returns the most recent heartbeat
+    /// time, or `None` if the session has never observed one.
+    #[must_use]
+    pub fn last_heartbeat_at(&self) -> Option<Instant> {
+        self.inner.lock().ok().and_then(|g| g.last_at)
+    }
+
+    /// Read-only crash query.
+    #[must_use]
+    pub fn is_crashed(&self) -> bool {
+        self.inner.lock().map(|g| g.crashed).unwrap_or(true)
+    }
+}
+
 /// A single browser session bound to one chat session identifier.
 pub struct BrowserSession {
     /// Identifier matching the parent chat session.
@@ -305,6 +370,10 @@ pub struct BrowserSession {
     /// Background task that fans Console + Network responses into the
     /// ledgers above.
     _console_network_watcher: Option<JoinHandle<()>>,
+    /// FEAT-SH-003 — heartbeat + crash bookkeeping. Cheap clone
+    /// (Arc<Mutex<...>>) so the daemon's BrowserSessionLivenessCheck
+    /// can hold its own handle without coupling to `BrowserSession`.
+    pub heartbeat: SessionHeartbeat,
 }
 
 impl BrowserSession {
@@ -493,7 +562,17 @@ impl BrowserSession {
             console_events,
             network_errors,
             _console_network_watcher: console_network_watcher,
+            heartbeat: SessionHeartbeat::fresh(),
         })
+    }
+
+    /// FEAT-SH-003 — read-only heartbeat query for the daemon's
+    /// browser-session liveness check. Returns the most recent
+    /// `Instant::now()` recorded by an interaction; `None` for
+    /// sessions whose heartbeat was never touched.
+    #[must_use]
+    pub fn last_heartbeat_at(&self) -> Option<Instant> {
+        self.heartbeat.last_heartbeat_at()
     }
 
     /// Test-only convenience constructor that uses

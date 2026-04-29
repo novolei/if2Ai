@@ -79,7 +79,9 @@ impl TaskOutcomeResolver {
 
         if matches!(
             conversation.terminal_status,
-            "repeated_tool_batch_no_progress" | "invalid_tool_args_repeated"
+            "repeated_tool_batch_no_progress"
+                | "invalid_tool_args_repeated"
+                | "repetitive_model_output"
         ) {
             return new_truth(
                 "partial_success",
@@ -94,6 +96,7 @@ impl TaskOutcomeResolver {
             conversation.terminal_status,
             "memory_recall_required_no_tool"
                 | "tool_required_no_tool"
+                | "todo_ledger_incomplete"
                 | "provider_textual_tool_call_markup"
         ) {
             return new_truth(
@@ -167,6 +170,8 @@ fn is_resumable_terminal_status(status: &str) -> bool {
             | "failed_to_start_stream"
             | "model_stop_no_tools"
             | "provider_textual_tool_call_markup"
+            | "todo_ledger_incomplete"
+            | "repetitive_model_output"
             | "repeated_tool_batch_no_progress"
             | "invalid_tool_args_repeated"
     )
@@ -302,6 +307,33 @@ mod tests {
             Some(ResumeReason::ModelStopNoTools)
         );
         assert!(outcome.recoverability.safe_to_retry_mutations);
+    }
+
+    #[test]
+    fn todo_ledger_incomplete_is_failed_and_resumable() {
+        let outcome = TaskOutcomeResolver::resolve(
+            ExecutionTruth {
+                has_successful_tool: true,
+                has_successful_mutating_tool: true,
+            },
+            &ConversationTruth {
+                stream_failed: false,
+                terminal_status: "todo_ledger_incomplete",
+                last_stream_error_reason: None,
+            },
+        );
+        assert_eq!(outcome.task_outcome, "failed");
+        assert_eq!(
+            outcome.degraded_reason.as_deref(),
+            Some("todo_ledger_incomplete")
+        );
+        assert!(outcome.resume_available);
+        assert!(outcome.recoverability.available);
+        assert_eq!(
+            outcome.recoverability.reason,
+            Some(ResumeReason::ModelStopNoTools)
+        );
+        assert!(!outcome.recoverability.safe_to_retry_mutations);
     }
 
     #[test]

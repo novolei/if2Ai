@@ -14,10 +14,20 @@ use crate::modules::application::prompt_planner::{
 use crate::modules::runtime::budget::{
     MAX_REQUEST_CHAR_BUDGET, MAX_REQUEST_MESSAGE_COUNT, MAX_REQUEST_TOKEN_BUDGET_ESTIMATE,
 };
+use crate::modules::runtime::context_compression::{compress_for_request, TierBudgetAllocation};
 
 /// All context needed to build one API iteration's request.
 pub(super) struct PreflightContext<'a> {
     pub session_messages: &'a [InputMessage],
+    /// FEAT-TE-002: optional pre-computed digest of `session_messages`.
+    /// When `Some`, each entry replaces the corresponding original
+    /// message (typically a long message → its LLM summary). Length
+    /// MUST equal `session_messages.len()`; mismatched inputs are
+    /// silently ignored and the original messages are used.
+    /// Computed asynchronously by the orchestrator (see
+    /// [`crate::modules::runtime::context_compression::MessageDigester`])
+    /// before entering this synchronous preflight.
+    pub digested_messages: Option<&'a [InputMessage]>,
     pub tool_defs: &'a [ToolDefinition],
     pub system_prompt: &'a str,
     pub model: &'a str,
@@ -59,6 +69,7 @@ const PREFLIGHT_OUTPUT_RESERVE: u64 = 4_096;
 pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightResult {
     let PreflightContext {
         session_messages,
+        digested_messages,
         tool_defs,
         system_prompt,
         model,
@@ -87,8 +98,51 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
     let preflight_input_budget = (context_window.saturating_sub(PREFLIGHT_OUTPUT_RESERVE))
         .max(MAX_REQUEST_TOKEN_BUDGET_ESTIMATE as u64) as usize;
 
+    // FEAT-TE-001: enforce the 5-tier hard budget *before* the existing
+    // ContextGovernor preflight. The governor still runs (char + message
+    // count caps) so legacy diagnostics keep emitting, but the tier cap
+    // guarantees we never feed it more than `TierBudgetAllocation::total()`
+    // tokens of history regardless of upstream behaviour.
+    // FEAT-TE-002: when the orchestrator pre-computed an LLM digest
+    // (long messages collapsed to summaries), feed *that* slice into
+    // the tier cap; otherwise the original session messages are used.
+    let digest_owned: Vec<InputMessage>;
+    let messages_for_tier: &[InputMessage] = match digested_messages {
+        Some(d) if d.len() == session_messages.len() => {
+            digest_owned = d.to_vec();
+            &digest_owned
+        }
+        Some(d) => {
+            tracing::warn!(
+                "[start_agent_stream] digest length mismatch (digested={}, session={}); ignoring digest",
+                d.len(),
+                session_messages.len(),
+            );
+            session_messages
+        }
+        None => session_messages,
+    };
+    let tier_allocation = TierBudgetAllocation::default();
+    let tier_outcome = compress_for_request(messages_for_tier, &tier_allocation);
+    if tier_outcome.dropped > 0 {
+        tracing::warn!(
+            "[start_agent_stream] tier hard-cap dropped {} oldest message(s): stream_id={}, session_id={}, kept={}, kept_tokens={}, tier_total={}",
+            tier_outcome.dropped,
+            stream_id,
+            _session_id,
+            tier_outcome.kept.len(),
+            tier_outcome.kept_tokens,
+            tier_allocation.total(),
+        );
+    }
+    let tier_capped_messages: Vec<InputMessage> = if tier_outcome.passthrough {
+        messages_for_tier.to_vec()
+    } else {
+        tier_outcome.kept
+    };
+
     let (trimmed_session_messages, preflight_stats) = ContextGovernor.admit(
-        session_messages,
+        &tier_capped_messages,
         MAX_REQUEST_MESSAGE_COUNT,
         MAX_REQUEST_CHAR_BUDGET,
         preflight_input_budget,

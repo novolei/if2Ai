@@ -35,7 +35,6 @@ pub(crate) fn is_mutating_tool_success(tool_name: &str, input_json: &str, is_err
         "file_edit",
         "edit_file",
         "NotebookEdit",
-        "TodoWrite",
         "memory_store",
         "memory_forget",
         "memory_purge",
@@ -101,3 +100,26 @@ pub(crate) fn extract_skill_proposal_name(text: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 // harness symbol marker: skill_proposal|draft|approval
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn todo_write_is_not_artifact_mutation_evidence() {
+        assert!(!is_mutating_tool_success(
+            "TodoWrite",
+            r#"{"todos":[]}"#,
+            false
+        ));
+    }
+
+    #[test]
+    fn file_write_is_artifact_mutation_evidence() {
+        assert!(is_mutating_tool_success(
+            "file_write",
+            r#"{"path":"index.html","content":"<html></html>"}"#,
+            false
+        ));
+    }
+}

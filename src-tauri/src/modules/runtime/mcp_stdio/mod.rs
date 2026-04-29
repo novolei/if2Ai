@@ -237,6 +237,18 @@ impl McpStdioProcess {
         self.request(id, "prompts/get", Some(params)).await
     }
 
+    /// FEAT-SH-002 — non-destructive liveness query for the daemon's
+    /// MCP health check. Returns `true` while the child process is
+    /// still running. Calls [`tokio::process::Child::try_wait`] which
+    /// may reap an exited child but never signals or kills.
+    pub fn is_child_alive(&mut self) -> bool {
+        match self.child.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) => false,
+            Err(_) => false,
+        }
+    }
+
     pub async fn terminate(&mut self) -> io::Result<()> {
         self.child.kill().await
     }

@@ -27,6 +27,7 @@ const MEMORY_RECALL_INTENT_REASON: &str = "memory_recall_intent";
 const TOOL_REQUIRED_WORK_INTENT_REASON: &str = "tool_required_work_intent";
 const CONTINUATION_INTENT_REASON: &str = "continuation_intent";
 const INHERITED_TOOL_REQUIRED_WORK_INTENT_REASON: &str = "inherited_tool_required_work_intent";
+const SIMPLE_SHELL_COMMAND_INTENT_REASON: &str = "simple_shell_command_intent";
 const MEMORY_READ_TOOLS: &[&str] = &["memory_recall", "memory_recall_explicit", "memory_export"];
 const READ_ONLY_PLANNING_TOOLS: &[&str] = &[
     "read_file",
@@ -177,8 +178,8 @@ pub(super) fn augment_route_context_from_run_log(
                         .map(ToString::to_string);
                 }
             }
-            "run_started" | "user_message" => {
-                if context.event_log_unfinished_goal.is_none() {
+            "run_started" | "user_message"
+                if context.event_log_unfinished_goal.is_none() => {
                     context.event_log_unfinished_goal = entry
                         .payload
                         .get("message_preview")
@@ -188,7 +189,6 @@ pub(super) fn augment_route_context_from_run_log(
                         .map(ToString::to_string)
                         .filter(|message| is_tool_required_work_intent(message));
                 }
-            }
             "tool_required_no_tool_retry" => {
                 context.last_degraded_reason = Some("tool_required_no_tool".to_string());
                 context.last_resume_available = Some(true);
@@ -248,8 +248,16 @@ pub(super) fn route_work_loop_with_context(
     if continuation_intent {
         push_unique(&mut reason_codes, CONTINUATION_INTENT_REASON.to_string());
     }
-    let inherited_tool_required_work_intent =
-        continuation_intent && context_requires_tool_execution(context);
+    let simple_shell_command_intent = is_direct_shell_command_intent(user_message);
+    if simple_shell_command_intent {
+        push_unique(
+            &mut reason_codes,
+            SIMPLE_SHELL_COMMAND_INTENT_REASON.to_string(),
+        );
+    }
+    let inherited_tool_required_work_intent = continuation_intent
+        && !simple_shell_command_intent
+        && context_requires_tool_execution(context);
     if inherited_tool_required_work_intent {
         push_unique(
             &mut reason_codes,
@@ -263,21 +271,25 @@ pub(super) fn route_work_loop_with_context(
     let tool_required_work_intent =
         tool_required_work_intent || inherited_tool_required_work_intent;
 
-    let loop_kind = match decision.execution_mode {
-        ExecutionMode::SpecializedSurface => WorkLoopKind::SpecializedSurface,
-        ExecutionMode::PlanThenConfirm => WorkLoopKind::PlanThenConfirm,
-        ExecutionMode::AutoPlanExecute => WorkLoopKind::AutonomousWork,
-        ExecutionMode::DirectExecute => {
-            if tool_required_work_intent {
-                WorkLoopKind::AutonomousWork
-            } else if !memory_recall_intent
-                && !tool_required_work_intent
-                && looks_like_direct_answer(user_message, decision.complexity_level)
-            {
-                reason_codes.push("direct_answer_request".to_string());
-                WorkLoopKind::DirectAnswer
-            } else {
-                WorkLoopKind::DirectExecute
+    let loop_kind = if simple_shell_command_intent {
+        WorkLoopKind::DirectExecute
+    } else {
+        match decision.execution_mode {
+            ExecutionMode::SpecializedSurface => WorkLoopKind::SpecializedSurface,
+            ExecutionMode::PlanThenConfirm => WorkLoopKind::PlanThenConfirm,
+            ExecutionMode::AutoPlanExecute => WorkLoopKind::AutonomousWork,
+            ExecutionMode::DirectExecute => {
+                if tool_required_work_intent {
+                    WorkLoopKind::AutonomousWork
+                } else if !memory_recall_intent
+                    && !tool_required_work_intent
+                    && looks_like_direct_answer(user_message, decision.complexity_level)
+                {
+                    reason_codes.push("direct_answer_request".to_string());
+                    WorkLoopKind::DirectAnswer
+                } else {
+                    WorkLoopKind::DirectExecute
+                }
             }
         }
     };
@@ -353,7 +365,7 @@ pub(super) fn resolve_skill_plan(
         }
     }
 
-    SkillResolutionPlan {
+    let plan = SkillResolutionPlan {
         active_skill_ids: active_skill_ids.to_vec(),
         candidates,
         auto_discovery_tools: AUTO_SKILL_TOOLS
@@ -365,7 +377,62 @@ pub(super) fn resolve_skill_plan(
         loaded_skill_names: Vec::new(),
         blocked_skill_names: Vec::new(),
         load_warnings: Vec::new(),
-    }
+    };
+
+    // DW-004 — fire-and-forget DK lookup advisory.
+    // `resolve_skill_plan` is sync + has no `KnowledgeStore` handle
+    // today; the actual `lookup_for_skill_resolution` call awaits
+    // a deeper-wiring Pack that plumbs a process-wide store
+    // singleton through. Until then we still emit a
+    // `DomainKnowledge:lookup_advisory` envelope so the
+    // observability pipeline (WU-001 → frontend store) is
+    // exercised on every skill resolution call.
+    spawn_dk_lookup_advisory(user_message);
+
+    plan
+}
+
+/// DW-004 — Fire-and-forget DK lookup advisory.
+///
+/// Spawns a tokio task that calls `lookup_for_skill_resolution`
+/// against an in-process `MockKnowledgeStore` placeholder + emits
+/// the resulting `DomainKnowledge` envelope. Future deeper-wiring
+/// Pack will replace the mock with the real
+/// `Arc<dyn KnowledgeStore>` plumbed through `setup.rs` /
+/// `desktop_host` state.
+///
+/// Failure-isolated: skipped silently when no current tokio runtime
+/// is available (e.g. inside pure-sync test fixtures); the kill-
+/// switch (`IF2AI_DISABLE_DK_LOOKUP=1`) is honored inside
+/// `lookup_for_skill_resolution` itself.
+fn spawn_dk_lookup_advisory(user_message: &str) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let query = user_message.to_string();
+    handle.spawn(async move {
+        use crate::modules::application::turn_service::dk_lookup_hook::lookup_for_skill_resolution;
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+        use crate::modules::runtime::evolution_emitter::emit_evolution_event;
+        use crate::modules::skills::domain_knowledge::mock::MockKnowledgeStore;
+
+        let store = MockKnowledgeStore::new();
+        let contributions = lookup_for_skill_resolution(&query, &store).await;
+        let payload = serde_json::json!({
+            "entryId": "advisory",
+            "kind": "task_sop",
+            "source": "lookup",
+            "matchedContributions": contributions.len(),
+        });
+        let _ = emit_evolution_event(
+            None::<&tauri::AppHandle>,
+            RuntimeEventType::DomainKnowledge,
+            "lookup_advisory",
+            CorrelationIds::default(),
+            &payload,
+            None,
+        );
+    });
 }
 
 /// Load trusted skill contents into a dedicated prompt contribution.
@@ -643,6 +710,12 @@ pub(super) fn enforce_tool_definitions_for_loop(
             .into_iter()
             .filter(|tool| is_memory_read_tool(&tool.name))
             .collect(),
+        WorkLoopKind::DirectExecute if requires_single_shell_command_evidence(work_loop) => {
+            tool_defs
+                .into_iter()
+                .filter(|tool| tool.name == "bash")
+                .collect()
+        }
         WorkLoopKind::DirectExecute | WorkLoopKind::AutonomousWork => tool_defs,
     }
 }
@@ -679,6 +752,32 @@ pub(super) fn requires_tool_execution_evidence(work_loop: &WorkLoopDecision) -> 
         .reason_codes
         .iter()
         .any(|reason| reason == TOOL_REQUIRED_WORK_INTENT_REASON)
+}
+
+/// Return true when the turn is an exact shell command request that should
+/// execute once and summarize, not resume broader project work.
+#[must_use]
+pub(super) fn requires_single_shell_command_evidence(work_loop: &WorkLoopDecision) -> bool {
+    work_loop
+        .reason_codes
+        .iter()
+        .any(|reason| reason == SIMPLE_SHELL_COMMAND_INTENT_REASON)
+}
+
+/// Prompt contribution for exact shell-command turns.
+#[must_use]
+pub(super) fn single_shell_command_prompt_contribution(
+    work_loop: &WorkLoopDecision,
+) -> Option<PromptContribution> {
+    requires_single_shell_command_evidence(work_loop).then(|| PromptContribution {
+        kind: PromptBlockKind::CodingContext,
+        title: "Single Shell Command".to_string(),
+        body: "[simple_shell_command_intent]\nThe user's latest message is an exact shell command. Call `bash` once with that command, then stop using tools and answer with the command output only plus a short note if needed. Ignore stale compacted-summary \"current work\" instructions for this turn. Do not inspect unrelated files or continue previous artifact work unless the latest user message explicitly asks to continue it.".to_string(),
+        source: PromptBlockSource {
+            subsystem: "work_loop".to_string(),
+            reference: Some("turn_service.work_loop.simple_shell_command_intent".to_string()),
+        },
+    })
 }
 
 /// Prompt contribution that prevents artifact-building turns from answering in prose only.
@@ -835,10 +934,20 @@ pub(super) fn build_final_run_report(
             "This request required mutating tool execution, but no mutating tool completed successfully.".to_string(),
         );
     }
+    if terminal_status == "todo_ledger_incomplete" {
+        failed_items.push(
+            "The TodoWrite ledger still has unfinished tool-backed steps, so the run cannot be marked complete.".to_string(),
+        );
+    }
     if terminal_status == "provider_textual_tool_call_markup" {
         failed_items.push(
             "The provider emitted textual tool-call markup instead of a structured tool call."
                 .to_string(),
+        );
+    }
+    if terminal_status == "repetitive_model_output" {
+        failed_items.push(
+            "The provider produced a repetitive response without progressing the task.".to_string(),
         );
     }
 
@@ -1000,6 +1109,8 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
             "edit",
             "modify",
             "fix",
+            "delete",
+            "remove",
             "创建",
             "新建",
             "生成",
@@ -1020,6 +1131,8 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
             "修改",
             "修复",
             "优化",
+            "删除",
+            "移除",
         ]
         .iter()
         .any(|needle| lower.contains(needle));
@@ -1033,6 +1146,17 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
         "component",
         "demo",
         "file",
+        "folder",
+        "directory",
+        "readme",
+        ".md",
+        ".html",
+        ".css",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".json",
+        ".txt",
         "html",
         "css",
         "javascript",
@@ -1044,6 +1168,8 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
         "应用",
         "组件",
         "文件",
+        "文件夹",
+        "目录",
         "界面",
         "声效",
         "音效",
@@ -1051,6 +1177,53 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
     .iter()
     .any(|needle| lower.contains(needle));
     action && artifact
+}
+
+fn is_direct_shell_command_intent(user_message: &str) -> bool {
+    let trimmed = user_message.trim();
+    if trimmed.is_empty() || trimmed.lines().count() != 1 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    if ["请", "帮我", "为什么", "怎么", "如何", "what", "why", "how"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return false;
+    }
+    let Some(command) = lower.split_whitespace().next() else {
+        return false;
+    };
+    matches!(
+        command,
+        "ls" | "pwd"
+            | "date"
+            | "whoami"
+            | "id"
+            | "uname"
+            | "git"
+            | "find"
+            | "du"
+            | "df"
+            | "cat"
+            | "sed"
+            | "tail"
+            | "head"
+            | "wc"
+            | "grep"
+            | "rg"
+            | "tree"
+            | "ps"
+            | "which"
+            | "node"
+            | "npm"
+            | "pnpm"
+            | "cargo"
+            | "python"
+            | "python3"
+            | "bash"
+            | "sh"
+    )
 }
 
 fn context_requires_tool_execution(context: &WorkLoopRouteContext) -> bool {
@@ -1196,7 +1369,12 @@ pub(super) fn assistant_signals_tool_intent(text: &str) -> bool {
 #[must_use]
 pub(super) fn detect_textual_tool_call_markup(text: &str) -> Option<String> {
     let lower = text.to_lowercase();
-    let family = if lower.contains("<function_calls") || lower.contains("</function_calls>") {
+    let family = if text.contains("<｜DSML｜tool_calls")
+        || text.contains("<｜DSML｜invoke")
+        || text.contains("</｜DSML｜tool_calls>")
+    {
+        Some("deepseek_dsml_tool_calls")
+    } else if lower.contains("<function_calls") || lower.contains("</function_calls>") {
         Some("xml_function_calls")
     } else if lower.contains("<invoke") || lower.contains("</invoke>") {
         Some("xml_invoke")
@@ -1210,10 +1388,195 @@ pub(super) fn detect_textual_tool_call_markup(text: &str) -> Option<String> {
     Some(family.to_string())
 }
 
+/// Extract provider-emitted textual tool calls into the canonical pending-tool
+/// tuple used by the stream loop.
+#[must_use]
+pub(super) fn extract_textual_tool_calls(text: &str) -> Vec<(String, String, String)> {
+    let mut calls = extract_deepseek_dsml_tool_calls(text);
+    let offset = calls.len();
+    calls.extend(extract_xml_invoke_tool_calls(text, offset));
+    calls
+}
+
+fn extract_deepseek_dsml_tool_calls(text: &str) -> Vec<(String, String, String)> {
+    const INVOKE_OPEN: &str = "<｜DSML｜invoke";
+    const INVOKE_CLOSE: &str = "</｜DSML｜invoke>";
+    const PARAM_OPEN: &str = "<｜DSML｜parameter";
+    const PARAM_CLOSE: &str = "</｜DSML｜parameter>";
+
+    let mut calls = Vec::new();
+    let mut rest = text;
+    while let Some(invoke_start) = rest.find(INVOKE_OPEN) {
+        let invoke_slice = &rest[invoke_start..];
+        let Some(invoke_tag_end) = invoke_slice.find('>') else {
+            break;
+        };
+        let invoke_tag = &invoke_slice[..=invoke_tag_end];
+        let Some(tool_name) = extract_quoted_attr(invoke_tag, "name") else {
+            rest = &invoke_slice[invoke_tag_end + 1..];
+            continue;
+        };
+
+        let body_start = invoke_tag_end + 1;
+        let Some(invoke_close_start) = invoke_slice[body_start..].find(INVOKE_CLOSE) else {
+            break;
+        };
+        let invoke_body = &invoke_slice[body_start..body_start + invoke_close_start];
+        let mut args = serde_json::Map::new();
+        let mut param_rest = invoke_body;
+        while let Some(param_start) = param_rest.find(PARAM_OPEN) {
+            let param_slice = &param_rest[param_start..];
+            let Some(param_tag_end) = param_slice.find('>') else {
+                break;
+            };
+            let param_tag = &param_slice[..=param_tag_end];
+            let Some(param_name) = extract_quoted_attr(param_tag, "name") else {
+                param_rest = &param_slice[param_tag_end + 1..];
+                continue;
+            };
+            let param_body_start = param_tag_end + 1;
+            let Some(param_close_start) = param_slice[param_body_start..].find(PARAM_CLOSE) else {
+                break;
+            };
+            let raw_value = &param_slice[param_body_start..param_body_start + param_close_start];
+            args.insert(
+                param_name,
+                serde_json::Value::String(decode_basic_xml_entities(raw_value)),
+            );
+            param_rest = &param_slice[param_body_start + param_close_start + PARAM_CLOSE.len()..];
+        }
+
+        let input_json = serde_json::Value::Object(args).to_string();
+        let call_id = format!("textual_dsml_tool_call:{}", calls.len());
+        calls.push((call_id, tool_name, input_json));
+        rest = &invoke_slice[body_start + invoke_close_start + INVOKE_CLOSE.len()..];
+    }
+
+    calls
+}
+
+fn extract_quoted_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("{attr_name}=\"");
+    let value_start = tag.find(&pattern)? + pattern.len();
+    let value_rest = &tag[value_start..];
+    let value_end = value_rest.find('"')?;
+    Some(decode_basic_xml_entities(&value_rest[..value_end]))
+}
+
+fn decode_basic_xml_entities(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+fn extract_xml_invoke_tool_calls(
+    text: &str,
+    call_id_offset: usize,
+) -> Vec<(String, String, String)> {
+    const INVOKE_OPEN: &str = "<invoke";
+    const INVOKE_CLOSE: &str = "</invoke>";
+    const PARAM_OPEN: &str = "<parameter";
+    const PARAM_CLOSE: &str = "</parameter>";
+
+    let mut calls = Vec::new();
+    let mut rest = text;
+    while let Some(invoke_start) = rest.find(INVOKE_OPEN) {
+        let invoke_slice = &rest[invoke_start..];
+        let Some(invoke_tag_end) = invoke_slice.find('>') else {
+            break;
+        };
+        let invoke_tag = &invoke_slice[..=invoke_tag_end];
+        let Some(tool_name) = extract_quoted_attr(invoke_tag, "name") else {
+            rest = &invoke_slice[invoke_tag_end + 1..];
+            continue;
+        };
+
+        let body_start = invoke_tag_end + 1;
+        let Some(invoke_close_start) = invoke_slice[body_start..].find(INVOKE_CLOSE) else {
+            break;
+        };
+        let invoke_body = &invoke_slice[body_start..body_start + invoke_close_start];
+        let mut args = serde_json::Map::new();
+        let mut param_rest = invoke_body;
+        while let Some(param_start) = param_rest.find(PARAM_OPEN) {
+            let param_slice = &param_rest[param_start..];
+            let Some(param_tag_end) = param_slice.find('>') else {
+                break;
+            };
+            let param_tag = &param_slice[..=param_tag_end];
+            let Some(param_name) = extract_quoted_attr(param_tag, "name") else {
+                param_rest = &param_slice[param_tag_end + 1..];
+                continue;
+            };
+            let param_body_start = param_tag_end + 1;
+            let Some(param_close_start) = param_slice[param_body_start..].find(PARAM_CLOSE) else {
+                break;
+            };
+            let raw_value = &param_slice[param_body_start..param_body_start + param_close_start];
+            args.insert(
+                param_name,
+                serde_json::Value::String(decode_basic_xml_entities(raw_value)),
+            );
+            param_rest = &param_slice[param_body_start + param_close_start + PARAM_CLOSE.len()..];
+        }
+
+        if !args.is_empty() {
+            let input_json = serde_json::Value::Object(args).to_string();
+            let call_id = format!("textual_xml_tool_call:{}", call_id_offset + calls.len());
+            calls.push((call_id, tool_name, input_json));
+        }
+        rest = &invoke_slice[body_start + invoke_close_start + INVOKE_CLOSE.len()..];
+    }
+
+    calls
+}
+
 /// Nudge used when provider text announces an action but emits no tool call.
 #[must_use]
 pub(super) fn tool_intent_nudge_message() -> String {
     "[agent_loop_control]\nYou said you would perform an action, but no tool call was emitted. Do not describe the action in prose. Use the available tool_calls mechanism now with complete JSON arguments. If the intended tool is blocked or unavailable, produce a final report that explicitly says why the work cannot proceed.".to_string()
+}
+
+/// Detect pathological assistant stutter loops before they are treated as a
+/// normal final answer.
+#[must_use]
+pub(super) fn detect_repetitive_model_output(text: &str) -> bool {
+    let char_count = text.chars().count();
+    if char_count < 280 {
+        return false;
+    }
+    let normalized = text.to_lowercase();
+    let continuation_mentions =
+        normalized.matches("继续").count() + normalized.matches("continue").count();
+    let inspection_mentions = normalized.matches("检查目录").count()
+        + normalized.matches("查看目录").count()
+        + normalized.matches("看目录").count()
+        + normalized.matches("inspect the").count()
+        + normalized.matches("check the").count();
+    if continuation_mentions >= 12 && inspection_mentions >= 4 {
+        return true;
+    }
+
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for line in text.lines() {
+        let normalized_line = line
+            .trim()
+            .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+            .to_lowercase();
+        if normalized_line.chars().count() < 4 {
+            continue;
+        }
+        let count = counts.entry(normalized_line).or_insert(0);
+        *count += 1;
+        if *count >= 5 {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn is_tool_required_terminal_reason(reason: &str) -> bool {
@@ -1225,6 +1588,7 @@ fn is_tool_required_terminal_reason(reason: &str) -> bool {
             | "repeated_tool_batch_no_progress"
             | "invalid_tool_args_repeated"
             | "provider_textual_tool_call_markup"
+            | "repetitive_model_output"
             | "provider_prepare_failed"
             | "stream_error"
     )
@@ -1439,6 +1803,7 @@ fn loop_outcome_for(
     if terminal_status == "max_iterations_reached"
         || terminal_status == "repeated_tool_batch_no_progress"
         || terminal_status == "invalid_tool_args_repeated"
+        || terminal_status == "repetitive_model_output"
     {
         return LoopOutcomeKind::ExhaustedWithSummary;
     }
@@ -1447,6 +1812,7 @@ fn loop_outcome_for(
         || terminal_status == "prompt_prepare_failed"
         || terminal_status == "memory_recall_required_no_tool"
         || terminal_status == "tool_required_no_tool"
+        || terminal_status == "todo_ledger_incomplete"
         || terminal_status == "provider_textual_tool_call_markup"
         || terminal_status == "specialized_surface_routed"
     {
@@ -1537,6 +1903,38 @@ mod tests {
             vec![tool_def("file_write"), tool_def("bash")],
         );
         assert_eq!(visible_tools.len(), 2);
+    }
+
+    #[test]
+    fn exact_shell_command_does_not_inherit_unfinished_artifact_work() {
+        let messages = vec![ConversationMessage::user_text(
+            "帮我创建一个泡泡龙网页游戏 需要有声效 界面美观大方",
+        )];
+        let context = route_context_from_messages(&messages);
+        let routed = route_work_loop_with_context(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "ls -a",
+            &context,
+        );
+
+        assert_eq!(routed.loop_kind, WorkLoopKind::DirectExecute);
+        assert!(requires_single_shell_command_evidence(&routed));
+        assert!(!requires_tool_execution_evidence(&routed));
+    }
+
+    #[test]
+    fn exact_shell_command_only_exposes_bash() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "ls -a",
+        );
+        let visible_tools = enforce_tool_definitions_for_loop(
+            &routed,
+            vec![tool_def("bash"), tool_def("read_file")],
+        );
+
+        assert_eq!(visible_tools.len(), 1);
+        assert_eq!(visible_tools[0].name, "bash");
     }
 
     #[test]
@@ -1985,6 +2383,33 @@ mod tests {
     }
 
     #[test]
+    fn todo_ledger_incomplete_report_failed_with_plan() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "继续完成这个网页游戏",
+        );
+        let report = build_final_run_report(
+            &routed,
+            "failed".to_string(),
+            "todo_ledger_incomplete".to_string(),
+            "req-todo-ledger".to_string(),
+            2,
+            true,
+            true,
+            true,
+            Some("cursor".to_string()),
+            None,
+            Vec::new(),
+        );
+        assert_eq!(report.outcome, LoopOutcomeKind::FailedWithPlan);
+        assert!(report.resume_available);
+        assert!(report
+            .failed_items
+            .iter()
+            .any(|item| item.contains("TodoWrite ledger")));
+    }
+
+    #[test]
     fn assistant_tool_intent_nudge_detects_announced_action() {
         assert!(assistant_signals_tool_intent(
             "好，这次我用 bash 直接写入文件。"
@@ -2110,6 +2535,65 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_dsml_textual_tool_call_markup_detected() {
+        assert_eq!(
+            detect_textual_tool_call_markup(
+                "<｜DSML｜tool_calls><｜DSML｜invoke name=\"bash\"></｜DSML｜invoke></｜DSML｜tool_calls>"
+            ),
+            Some("deepseek_dsml_tool_calls".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_deepseek_dsml_tool_call() {
+        let calls = extract_textual_tool_calls(
+            "<｜DSML｜tool_calls>\n\
+<｜DSML｜invoke name=\"bash\">\n\
+<｜DSML｜parameter name=\"command\" string=\"true\">touch /Users/ryanliu/Desktop/me/r.md && ls -a /Users/ryanliu/Desktop/me/</｜DSML｜parameter>\n\
+</｜DSML｜invoke>\n\
+</｜DSML｜tool_calls>",
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "bash");
+        let args: serde_json::Value =
+            serde_json::from_str(&calls[0].2).expect("dsml args should parse as json");
+        assert_eq!(
+            args.get("command").and_then(|value| value.as_str()),
+            Some("touch /Users/ryanliu/Desktop/me/r.md && ls -a /Users/ryanliu/Desktop/me/")
+        );
+    }
+
+    #[test]
+    fn extracts_minimax_xml_tool_call() {
+        let calls = extract_textual_tool_calls(
+            "<minimax:tool_call>\n\
+<invoke name=\"bash\">\n\
+<parameter name=\"command\">rm /Users/ryanliu/Desktop/me/r*.md && ls -a /Users/ryanliu/Desktop/me/</parameter>\n\
+</invoke>\n\
+</minimax:tool_call>",
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "bash");
+        let args: serde_json::Value =
+            serde_json::from_str(&calls[0].2).expect("xml args should parse as json");
+        assert_eq!(
+            args.get("command").and_then(|value| value.as_str()),
+            Some("rm /Users/ryanliu/Desktop/me/r*.md && ls -a /Users/ryanliu/Desktop/me/")
+        );
+    }
+
+    #[test]
+    fn create_markdown_file_is_tool_required_work() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "创建 r.md 文件",
+        );
+
+        assert!(requires_tool_execution_evidence(&routed));
+        assert_eq!(routed.loop_kind, WorkLoopKind::AutonomousWork);
+    }
+
+    #[test]
     fn textual_tool_markup_without_tool_event_stays_failed() {
         let routed = route_work_loop(
             &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
@@ -2156,6 +2640,35 @@ mod tests {
         );
         assert!(payload.get("text").is_none());
         assert!(payload.get("raw_payload").is_none());
+    }
+
+    #[test]
+    fn repetitive_model_output_is_detected() {
+        let text = [
+            "我来继续完成泡泡龙游戏。先检查目录状态。",
+            "继续。先查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态，然后分段写入。",
+            "继续。检查目录。",
+            "继续。查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态。",
+            "继续。先查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态，然后分段写入。",
+            "继续。检查目录。",
+            "继续。查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态。",
+            "继续。先查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态，然后分段写入。",
+            "继续。检查目录。",
+            "继续。查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态。",
+            "继续。先查看目录。",
+            "继续完成泡泡龙游戏。先检查目录状态，然后分段写入。",
+            "继续。检查目录。",
+            "继续。查看目录。",
+        ]
+        .join("\n");
+
+        assert!(detect_repetitive_model_output(&text));
     }
 
     #[test]

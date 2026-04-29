@@ -54,11 +54,7 @@ impl ReferenceWaveform {
     /// 直接喂给 codec_encode ONNX session。
     pub fn into_channel_major_ndarray(self) -> ndarray::ArrayD<f32> {
         let channels = self.channels as usize;
-        let samples_per_channel = if channels > 0 {
-            self.samples.len() / channels
-        } else {
-            0
-        };
+        let samples_per_channel = self.samples.len().checked_div(channels).unwrap_or(0);
         let mut out =
             ndarray::ArrayD::<f32>::zeros(ndarray::IxDyn(&[1, channels, samples_per_channel]));
         for t in 0..samples_per_channel {

@@ -43,6 +43,20 @@ export type RuntimeEventType =
   | 'execution_mode'
   | 'harness'
   | 'system'
+  // ── Agent Evolution placeholders (FEAT-EVO-000) ──
+  // Reducers are wired up by FEAT-INT-001. These literals are reserved
+  // here so backend Pack work in FEAT-TE / SE / SH / AE / DK / BR can
+  // emit events without a frontend contract drift.
+  | 'daemon_health'
+  | 'skill_sedimented'
+  | 'compression_event'
+  | 'constitution_violation'
+  | 'self_edit_proposal'
+  | 'browser_health'
+  | 'domain_knowledge'
+  | 'checkpoint_updated'
+  | 'verification_decision'
+  | 'content_simplified'
 
 /** Cross-cutting correlation ids carried by every envelope. All
  * fields are optional; absent means "not applicable", not "unknown". */

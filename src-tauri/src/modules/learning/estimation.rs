@@ -32,9 +32,5 @@ pub fn record_turn_duration_ms(sample_ms: u64) {
 pub fn avg_turn_duration_ms() -> Option<u64> {
     let g = cell().lock().ok()?;
     let (sum, n) = *g;
-    if n == 0 {
-        None
-    } else {
-        Some(sum / n)
-    }
+    sum.checked_div(n)
 }

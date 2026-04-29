@@ -1,25 +1,38 @@
-//! Lightweight self-repair / watchdog hooks (Steward-inspired P1-6).
+//! FEAT-SH-001 — Backwards-compatibility shim.
 //!
-//! - Clears a stuck [`MemoryTicker`](crate::modules::memory::MemoryTicker) `daily_running` flag
-//!   after a crash or aborted daily pipeline.
-//! - Tracks consecutive per-tool failures from the streaming agent loop; the
-//!   watchdog logs a warning and resets the streak (bounded “retry window”).
+//! The original 135 LOC of bespoke watchdog logic moved into
+//! [`crate::modules::runtime::daemon`]. This module is kept as a
+//! shim so existing callers — which import
+//! [`record_tool_outcome`] and [`spawn_self_repair_watchdog`] — keep
+//! compiling without churn.
+//!
+//! New code should depend on
+//! [`crate::modules::runtime::daemon::spawn_self_healing_daemon`]
+//! and the per-tool outcome accounting below.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::sync::Arc;
 
 use crate::modules::memory::MemoryTicker;
+use crate::modules::runtime::daemon;
 
-static TOOL_FAIL_STREAKS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+#[allow(unused_imports)]
+#[doc(inline)]
+pub use crate::modules::runtime::daemon::{
+    spawn_self_healing_daemon, DaemonState, HealthCheck, HealthCheckRegistry, HealthStatus,
+    RecoveryAction, RecoveryOutcome, DAEMON_DISABLE_ENV,
+};
 
-fn fail_map() -> &'static Mutex<HashMap<String, u32>> {
-    TOOL_FAIL_STREAKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Record a single tool outcome from the agent loop (streaming or future paths).
+/// Record a single tool outcome from the agent loop. On success the
+/// per-tool counter is cleared; on failure it is incremented. The
+/// daemon's `BrokenToolStreakHealthCheck` consumes this counter on
+/// each poll and triggers `RecoveryAction::ClearBrokenStreak` once
+/// the streak crosses the configured threshold.
+///
+/// API preserved verbatim from the pre-FEAT-SH-001 implementation
+/// (Pack contract I1: signature-stable shim).
 pub fn record_tool_outcome(tool_name: &str, ok: bool) {
-    let Ok(mut g) = fail_map().lock() else {
+    let streaks = daemon::global_tool_fail_streaks();
+    let Ok(mut g) = streaks.lock() else {
         return;
     };
     if ok {
@@ -29,95 +42,11 @@ pub fn record_tool_outcome(tool_name: &str, ok: bool) {
     *g.entry(tool_name.to_string()).or_insert(0) += 1;
 }
 
-fn watchdog_disabled() -> bool {
-    std::env::var("IF2AI_SELF_REPAIR_WATCHDOG")
-        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
-        .unwrap_or(false)
-}
-
-fn interval_secs() -> u64 {
-    std::env::var("IF2AI_SELF_REPAIR_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60)
-}
-
-fn broken_tool_threshold() -> u32 {
-    std::env::var("IF2AI_SELF_REPAIR_BROKEN_TOOL_THRESHOLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4)
-}
-
-fn scan_broken_tools() {
-    let threshold = broken_tool_threshold();
-    if threshold == 0 {
-        return;
-    }
-    let Ok(mut g) = fail_map().lock() else {
-        return;
-    };
-    let snapshot: Vec<(String, u32)> = g.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    for (tool, n) in snapshot {
-        if n >= threshold {
-            tracing::warn!(
-                tool = %tool,
-                streak = n,
-                "[self_repair] broken-tool streak detected (resetting counter for retry window)"
-            );
-            g.remove(&tool);
-        }
-    }
-}
-
-/// Spawn a background Tokio task: periodic memory-ticker + tool-health repair.
+/// Legacy spawn entry point. Now a thin alias for
+/// [`spawn_self_healing_daemon`]; signature preserved per Pack
+/// contract I5 (no caller churn).
 pub fn spawn_self_repair_watchdog(memory_ticker: Arc<MemoryTicker>) {
-    if watchdog_disabled() {
-        tracing::info!("[self_repair] watchdog disabled (IF2AI_SELF_REPAIR_WATCHDOG=0)");
-        return;
-    }
-    let secs = interval_secs().max(10);
-    let task = move |memory_ticker: Arc<MemoryTicker>| async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(secs));
-        loop {
-            interval.tick().await;
-            memory_ticker.repair_clear_stuck_daily();
-            scan_broken_tools();
-        }
-    };
-    // P0-Hotfix: Tauri's `setup` callback runs on the tao main thread
-    // without a current Tokio runtime; `tokio::spawn` would panic and
-    // — because the callback boundary is `extern "C-unwind"` — escalate
-    // to `panic_cannot_unwind` → process abort. Mirror the scheduler
-    // watchdog fix: prefer the current handle, otherwise fall back to a
-    // dedicated thread with its own current-thread runtime.
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(task(memory_ticker));
-        }
-        Err(_) => {
-            tracing::debug!(
-                "[self_repair] no current Tokio runtime at watchdog spawn site; \
-                 falling back to dedicated thread"
-            );
-            std::thread::Builder::new()
-                .name("if2ai-self-repair-watchdog".into())
-                .spawn(move || {
-                    let rt = match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        Ok(rt) => rt,
-                        Err(e) => {
-                            tracing::error!("[self_repair] failed to build fallback runtime: {e}");
-                            return;
-                        }
-                    };
-                    rt.block_on(task(memory_ticker));
-                })
-                .ok();
-        }
-    }
+    spawn_self_healing_daemon(memory_ticker);
 }
 
 #[cfg(test)]
@@ -129,7 +58,8 @@ mod tests {
         record_tool_outcome("bash", false);
         record_tool_outcome("bash", false);
         record_tool_outcome("bash", true);
-        let g = fail_map().lock().unwrap();
+        let streaks = daemon::global_tool_fail_streaks();
+        let g = streaks.lock().unwrap();
         assert!(!g.contains_key("bash"));
     }
 }

@@ -37,6 +37,7 @@ pub(super) fn merge_external_contributions(
                 | PromptBlockKind::Scenario
                 | PromptBlockKind::DayAwareness
                 | PromptBlockKind::LearnedTraits
+                | PromptBlockKind::MiniIndex
         );
         if forbidden_sensitive {
             let issue = PromptValidationIssue {
@@ -121,5 +122,6 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::Continuation => "continuation",
         PromptBlockKind::DayAwareness => "day_awareness",
         PromptBlockKind::LearnedTraits => "learned_traits",
+        PromptBlockKind::MiniIndex => "mini_index",
     }
 }

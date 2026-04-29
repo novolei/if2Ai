@@ -91,6 +91,57 @@ impl PermissionPolicy {
     }
 
     #[must_use]
+    pub fn with_default_agent_tool_requirements(self) -> Self {
+        self
+            // Read-only tools
+            .with_tool_requirement("read_file", PermissionMode::ReadOnly)
+            .with_tool_requirement("glob_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("grep_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("content_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("web_fetch", PermissionMode::ReadOnly)
+            .with_tool_requirement("web_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("WebFetch", PermissionMode::ReadOnly)
+            .with_tool_requirement("WebSearch", PermissionMode::ReadOnly)
+            .with_tool_requirement("tool_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("ToolSearch", PermissionMode::ReadOnly)
+            .with_tool_requirement("json_parse", PermissionMode::ReadOnly)
+            .with_tool_requirement("skill", PermissionMode::ReadOnly)
+            .with_tool_requirement("skill_search", PermissionMode::ReadOnly)
+            .with_tool_requirement("skill_find", PermissionMode::ReadOnly)
+            .with_tool_requirement("skill_view", PermissionMode::ReadOnly)
+            .with_tool_requirement("skills_categories", PermissionMode::ReadOnly)
+            .with_tool_requirement("memory_recall", PermissionMode::ReadOnly)
+            .with_tool_requirement("memory_export", PermissionMode::ReadOnly)
+            .with_tool_requirement("cron_list", PermissionMode::ReadOnly)
+            .with_tool_requirement("sleep", PermissionMode::ReadOnly)
+            .with_tool_requirement("Sleep", PermissionMode::ReadOnly)
+            .with_tool_requirement("SendUserMessage", PermissionMode::ReadOnly)
+            .with_tool_requirement("structured_output", PermissionMode::ReadOnly)
+            .with_tool_requirement("StructuredOutput", PermissionMode::ReadOnly)
+            // Workspace-write tools
+            .with_tool_requirement("file_write", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("file_edit", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("edit_file", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("NotebookEdit", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("memory_store", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("memory_forget", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("memory_purge", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("TodoWrite", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("todo_write", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("Config", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("cron_add", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("cron_remove", PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("cron_run", PermissionMode::WorkspaceWrite)
+            // Dangerous/system tools
+            .with_tool_requirement("bash", PermissionMode::DangerFullAccess)
+            .with_tool_requirement("PowerShell", PermissionMode::DangerFullAccess)
+            .with_tool_requirement("REPL", PermissionMode::DangerFullAccess)
+            .with_tool_requirement("http_request", PermissionMode::DangerFullAccess)
+            .with_tool_requirement("agent", PermissionMode::DangerFullAccess)
+    }
+
+    #[must_use]
     pub fn active_mode(&self) -> PermissionMode {
         self.active_mode
     }
@@ -249,5 +300,20 @@ mod tests {
             policy.authorize("bash", "echo hi", Some(&mut prompter)),
             PermissionOutcome::Deny { reason } if reason == "not now"
         ));
+    }
+
+    #[test]
+    fn default_agent_tool_requirements_allow_todo_write_in_workspace_write() {
+        let policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite)
+            .with_default_agent_tool_requirements();
+
+        assert_eq!(
+            policy.required_mode_for("TodoWrite"),
+            PermissionMode::WorkspaceWrite
+        );
+        assert_eq!(
+            policy.authorize("TodoWrite", "{}", None),
+            PermissionOutcome::Allow
+        );
     }
 }

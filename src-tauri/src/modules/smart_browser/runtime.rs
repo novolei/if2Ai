@@ -23,6 +23,9 @@ use super::contract::{
 };
 use super::local_adapter::browser_tool_action_to_command_kind;
 use super::policy::{resolve_backend_label, BackendPolicyError};
+use super::session_health::{
+    build_recovery_plan, BrowserRecoveryAction, BrowserSessionObservation,
+};
 
 static BROWSER_USE_MCP_MANAGER: OnceLock<Arc<tokio::sync::Mutex<McpServerManager>>> =
     OnceLock::new();
@@ -184,7 +187,144 @@ pub async fn execute_browser_use_mcp_action(
         return Err(SmartBrowserRuntimeError::McpToolError(output));
     }
 
+    // WU-006 — when the textual output looks like raw HTML, run it
+    // through BR-001's `adaptive_simplify` so the agent sees a
+    // bounded, ≤ 35K-char view. Pure-function failure is impossible
+    // (`adaptive_simplify` always returns *something*); the
+    // env-flag kill-switch + non-HTML inputs flow through untouched.
+    let output = simplify_browser_result_text(&output, BROWSER_SIMPLIFY_DEFAULT_TOKENS);
+
     Ok(SmartBrowserMcpExecution { event, output })
+}
+
+// ---------------------------------------------------------------------------
+// WU-006 — wire-up helpers (BR-001 simplify + BR-002 coordinate strategy)
+// ---------------------------------------------------------------------------
+
+/// Default token budget for `adaptive_simplify` when callers don't
+/// pin a value. Conservatively below the 35K char hard limit.
+pub const BROWSER_SIMPLIFY_DEFAULT_TOKENS: usize = 8_000;
+
+/// Env var that disables BR-001 HTML simplification (BR-002
+/// coordinate-strategy decisions are unaffected).
+pub const DISABLE_BROWSER_SIMPLIFY_ENV: &str = "IF2AI_DISABLE_BROWSER_SIMPLIFY";
+
+fn browser_simplify_disabled() -> bool {
+    std::env::var(DISABLE_BROWSER_SIMPLIFY_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn looks_like_html(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with('<')
+        && (trimmed.contains("<html")
+            || trimmed.contains("<body")
+            || trimmed.contains("<div")
+            || trimmed.contains("<main")
+            || trimmed.contains("<section")
+            || trimmed.contains("<article"))
+}
+
+/// Run `raw` through BR-001's `adaptive_simplify` when the input
+/// looks like HTML. Pure / sync; failure modes:
+///
+/// - Kill-switch on → original passed through unchanged.
+/// - Input doesn't look like HTML → original passed through unchanged.
+/// - `adaptive_simplify` is total over `&str` (never panics, never
+///   errors), so the only fall-back path is the two above.
+#[must_use]
+pub fn simplify_browser_result_text(raw: &str, available_tokens: usize) -> String {
+    if browser_simplify_disabled() || !looks_like_html(raw) {
+        return raw.to_string();
+    }
+    let simplified = super::content_simplifier::adaptive_simplify(raw, available_tokens);
+    if simplified.html.is_empty() {
+        return raw.to_string();
+    }
+    simplified.html
+}
+
+/// WU-006 — coordinate-strategy wrapper used at click dispatch.
+/// Pure pass-through to BR-002's `decide_interaction` so the
+/// runtime layer doesn't depend on `coordinate_strategy.rs`'s
+/// concrete types beyond the public re-export.
+#[must_use]
+pub fn decide_browser_click_strategy(
+    target: &str,
+    screenshot: Option<&super::coordinate_strategy::ScreenshotAnalysis>,
+    available_selectors: &[String],
+) -> super::coordinate_strategy::InteractionDecision {
+    super::coordinate_strategy::decide_interaction(target, screenshot, available_selectors)
+}
+
+/// DW-005 — env var that disables the BR-002 click-strategy
+/// decision (caller falls back to whatever selector path was
+/// originally going to run).
+pub const DISABLE_BROWSER_STRATEGY_ENV: &str = "IF2AI_DISABLE_BROWSER_STRATEGY";
+
+fn browser_strategy_disabled() -> bool {
+    std::env::var(DISABLE_BROWSER_STRATEGY_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// DW-005 — Decide a click strategy AND emit a `BrowserHealth`
+/// `click_strategy` envelope so the frontend store sees every
+/// dispatch decision. Returns the chosen strategy (or `None`
+/// when the kill-switch is set, signalling "use original
+/// CssSelector path").
+///
+/// Failure-isolated: emit failures are swallowed (only `tracing::warn`).
+pub fn decide_and_emit_click_strategy(
+    target: &str,
+    screenshot: Option<&super::coordinate_strategy::ScreenshotAnalysis>,
+    available_selectors: &[String],
+) -> Option<super::coordinate_strategy::InteractionDecision> {
+    if browser_strategy_disabled() {
+        return None;
+    }
+    let decision = decide_browser_click_strategy(target, screenshot, available_selectors);
+    let strategy_label = match &decision.strategy {
+        super::coordinate_strategy::InteractionStrategy::CoordinateClick { .. } => "coordinate",
+        super::coordinate_strategy::InteractionStrategy::LabelReference { .. } => "label",
+        super::coordinate_strategy::InteractionStrategy::CssSelector { .. } => "css_selector",
+    };
+    tracing::debug!(
+        strategy = strategy_label,
+        target = target,
+        fallback_count = decision.fallback_chain.len(),
+        "[browser] DW-005 click strategy chosen"
+    );
+    let payload = serde_json::json!({
+        "sessionId": "smart_browser",
+        "status": "connected",
+        "recoveryPlan": "no_action",
+        "strategy": strategy_label,
+        "target": target,
+    });
+    let _ = crate::modules::runtime::evolution_emitter::emit_evolution_event(
+        None::<&tauri::AppHandle>,
+        crate::modules::runtime::contracts::common::RuntimeEventType::BrowserHealth,
+        "click_strategy",
+        crate::modules::runtime::contracts::common::CorrelationIds::default(),
+        &payload,
+        None,
+    );
+    Some(decision)
+}
+
+/// FEAT-SH-003 — Smart Browser monitoring hook. Given an observation
+/// of one session's heartbeat, returns the recovery action the
+/// daemon should drive next. Pure passthrough to
+/// [`build_recovery_plan`] so this module's only responsibility is
+/// the *binding* to the runtime — the rules live in
+/// `session_health.rs`. Currently exposed for future supervisor
+/// wiring; daemon-level integration uses
+/// [`super::session_health::BrowserSessionLivenessCheck`] directly.
+#[must_use]
+pub fn next_browser_recovery_step(obs: &BrowserSessionObservation) -> BrowserRecoveryAction {
+    build_recovery_plan(obs).action
 }
 
 fn now_ms() -> u64 {

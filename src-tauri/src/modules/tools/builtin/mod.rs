@@ -3,6 +3,7 @@
 //! Provides basic tool implementations for the ToolRegistry.
 
 pub mod agent;
+pub mod atomic_consolidation;
 pub mod bash;
 pub mod browser_tool;
 pub mod config;

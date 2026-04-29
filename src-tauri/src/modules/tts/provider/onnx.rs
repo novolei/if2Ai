@@ -484,7 +484,7 @@ impl TtsProvider for OnnxTtsProvider {
                     if tx_ref.send(StreamEvent::Pcm { idx, pcm }).is_err() {
                         return Err(TtsError::StreamClosed("sink receiver dropped".into()));
                     }
-                    let frames = if channels > 0 { len / channels } else { len };
+                    let frames = len.checked_div(channels).unwrap_or(len);
                     total_ref.set(total_ref.get() + frames as u64);
                     Ok(())
                 };

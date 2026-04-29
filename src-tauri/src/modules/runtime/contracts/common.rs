@@ -75,6 +75,37 @@ pub enum RuntimeEventType {
     Harness,
     /// System-level events (boot phase changed, recovery actions).
     System,
+    // ── FEAT-INT-001: Agent Evolution event families (10 new variants).
+    // Each one is paired with a `runtime-event-payloads.ts` interface
+    // on the frontend; serde `rename_all = "snake_case"` makes the
+    // Rust enum name → wire string match exactly.
+    /// FEAT-SH-001~003 — daemon health transition (DaemonState change,
+    /// recovery outcome, MCP / browser liveness probe result).
+    DaemonHealth,
+    /// FEAT-SE-001 — a new SkillDraft was sedimented from a session.
+    SkillSedimented,
+    /// FEAT-TE-001..004 — a context-compression / digest pass ran
+    /// (kept_tokens, dropped, passthrough flag).
+    CompressionEvent,
+    /// FEAT-SE-003 — a constitution rule fired against a draft skill
+    /// or self-edit proposal.
+    ConstitutionViolation,
+    /// FEAT-AE-001~003 — a self-edit proposal was generated /
+    /// verified / promoted.
+    SelfEditProposal,
+    /// FEAT-SH-003 / FEAT-BR-002 — browser session health / coordinate
+    /// strategy decision.
+    BrowserHealth,
+    /// FEAT-DK-001/003 — a domain-knowledge entry was looked up or
+    /// auto-contributed.
+    DomainKnowledge,
+    /// FEAT-DK-002 — a working checkpoint was extracted or injected.
+    CheckpointUpdated,
+    /// FEAT-AE-002 — a verification verdict (pass/fail with gates).
+    VerificationDecision,
+    /// FEAT-BR-001 — a SimplifiedContent payload was produced for a
+    /// browser web_scan call.
+    ContentSimplified,
 }
 
 /// Canonical payload family marker, used as a free-form tag inside

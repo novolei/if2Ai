@@ -128,7 +128,7 @@ pub fn skills_categories_tool_entry() -> ToolEntry {
                     .collect();
 
                 // Sort by count descending
-                categories.sort_by(|a, b| b.count.cmp(&a.count));
+                categories.sort_by_key(|c| std::cmp::Reverse(c.count));
 
                 let result = CategoriesResult {
                     success: true,

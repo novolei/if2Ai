@@ -77,7 +77,7 @@ use crate::modules::runtime::resume_cursor::{
     session_contains_resume_cursor, strip_resume_cursor_marker,
 };
 use crate::modules::runtime::session::{
-    ContentBlock, ConversationMessage, Session as RuntimeSession,
+    ContentBlock, ConversationMessage, MessageRole, Session as RuntimeSession,
 };
 use crate::modules::runtime::stream_emitter::{
     AgentStreamEmitter, ContextBudgetUsagePayload, StreamTokenPayload,
@@ -110,6 +110,39 @@ async fn append_stream_terminal_error(
             }),
         )
         .await;
+}
+
+fn sanitize_compacted_system_block_for_provider(
+    block: InputContentBlock,
+) -> Option<InputContentBlock> {
+    match block {
+        InputContentBlock::Text { text } => {
+            let sanitized = sanitize_compacted_continuation_directive(&text);
+            (!sanitized.trim().is_empty()).then_some(InputContentBlock::Text { text: sanitized })
+        }
+        other => Some(other),
+    }
+}
+
+fn sanitize_compacted_continuation_directive(text: &str) -> String {
+    let mut sanitized_lines = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Continue the conversation from where it left off")
+            || trimmed.starts_with("Resume directly")
+            || trimmed.starts_with("do not acknowledge the summary")
+            || trimmed.starts_with("do not recap what was happening")
+            || trimmed.starts_with("do not preface with continuation text")
+            || trimmed.starts_with("- Current work:")
+            || trimmed.starts_with("Current work:")
+            || trimmed.starts_with("- 当前工作:")
+            || trimmed.starts_with("当前工作:")
+        {
+            continue;
+        }
+        sanitized_lines.push(line);
+    }
+    sanitized_lines.join("\n").trim().to_string()
 }
 
 async fn emit_terminal_final_run_report(
@@ -382,19 +415,23 @@ impl TurnService {
             .messages
             .iter()
             .map(|msg| {
-                let content: Vec<InputContentBlock> = msg
+                let mut content: Vec<InputContentBlock> = msg
                     .blocks
                     .iter()
                     .map(runtime_block_to_input_block)
                     .collect();
+                if msg.role == MessageRole::System {
+                    content = content
+                        .into_iter()
+                        .filter_map(sanitize_compacted_system_block_for_provider)
+                        .collect();
+                }
 
                 let role = match msg.role {
-                    crate::modules::runtime::session::MessageRole::System => "user".to_string(),
-                    crate::modules::runtime::session::MessageRole::User => "user".to_string(),
-                    crate::modules::runtime::session::MessageRole::Assistant => {
-                        "assistant".to_string()
-                    }
-                    crate::modules::runtime::session::MessageRole::Tool => "user".to_string(),
+                    MessageRole::System => "user".to_string(),
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Assistant => "assistant".to_string(),
+                    MessageRole::Tool => "user".to_string(),
                 };
 
                 let has_tool_use = content.iter().any(|block| {
@@ -771,5 +808,32 @@ impl TurnService {
             stream_id_return
         );
         Ok(stream_id_return)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_compacted_continuation_directive;
+
+    #[test]
+    fn compacted_summary_drops_stale_resume_directive() {
+        let sanitized = sanitize_compacted_continuation_directive(
+            "Summary:\n- prior work\nContinue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text.",
+        );
+
+        assert!(sanitized.contains("Summary:"));
+        assert!(sanitized.contains("prior work"));
+        assert!(!sanitized.contains("Resume directly"));
+        assert!(!sanitized.contains("Continue the conversation from where it left off"));
+    }
+
+    #[test]
+    fn compacted_summary_drops_stale_current_work_directive() {
+        let sanitized = sanitize_compacted_continuation_directive(
+            "Summary:\n- Current work: keep inspecting index.html\n- durable fact",
+        );
+
+        assert!(sanitized.contains("durable fact"));
+        assert!(!sanitized.contains("Current work:"));
     }
 }

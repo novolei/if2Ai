@@ -62,6 +62,43 @@ pub enum PromptPlannerError {
     Build(#[from] PromptBuildError),
 }
 
+/// FEAT-TE-003: priority assigned to the mini-index block. Sits at
+/// the same band as `Soul` (95) so the model gets a dynamic situational
+/// anchor immediately after identity but before the per-task scenario
+/// header. Exposed as a constant so callers + tests can assert on it
+/// without hard-coding the literal.
+pub const MINI_INDEX_BLOCK_PRIORITY: i32 = 95;
+
+/// FEAT-TE-003: factory for the mini-index `PromptBlock`.
+///
+/// Returns `None` when `index_text` is empty so the planner can skip
+/// the block entirely (no header on nothing). The block kind is
+/// [`PromptBlockKind::MiniIndex`] and priority is locked to
+/// [`MINI_INDEX_BLOCK_PRIORITY`] = 95.
+///
+/// Pure factory — no dependence on session-wide state — so the same
+/// helper works for the planner itself, harness traces, and future
+/// FEAT-DK-002 working-checkpoint reuse without re-deriving the
+/// priority/kind contract.
+#[must_use]
+pub fn render_mini_index_block(index_text: String) -> Option<PromptBlock> {
+    if index_text.trim().is_empty() {
+        return None;
+    }
+    Some(PromptBlock {
+        id: "mini_index".to_string(),
+        kind: PromptBlockKind::MiniIndex,
+        title: "mini_index".to_string(),
+        content: index_text,
+        source: PromptBlockSource {
+            subsystem: "context_compression".to_string(),
+            reference: Some("mini_index_l1".to_string()),
+        },
+        priority: MINI_INDEX_BLOCK_PRIORITY,
+        is_sensitive: false,
+    })
+}
+
 /// Build the chat-turn prompt plan.
 ///
 /// MIG-006: Now accepts external_contributions parameter for subsystem
@@ -818,5 +855,32 @@ mod tests {
             result.plan.diagnostics.activation_reasons[0].reason_code,
             "resolved_persona_present"
         );
+    }
+
+    /// FEAT-TE-003 spec: the mini-index block emitted by
+    /// [`render_mini_index_block`] MUST carry priority = 95 so it sits
+    /// in the same anchor band as `Soul`/`Persona`. Locked behind a
+    /// dedicated test so future band shuffles must update both this
+    /// assertion *and* the spec table in the Pack.
+    #[test]
+    fn mini_index_block_has_priority_95() {
+        let block = render_mini_index_block("[mini_index] turn_messages=3".to_string())
+            .expect("non-empty index must yield a block");
+
+        assert_eq!(
+            block.priority, MINI_INDEX_BLOCK_PRIORITY,
+            "mini index priority drifted from the FEAT-TE-003 contract"
+        );
+        assert_eq!(block.priority, 95);
+        assert_eq!(block.kind, PromptBlockKind::MiniIndex);
+        assert_eq!(block.id, "mini_index");
+        assert!(
+            !block.is_sensitive,
+            "mini index is operational metadata, not sensitive content"
+        );
+
+        // Empty input → no block (planner skips the header entirely).
+        assert!(render_mini_index_block(String::new()).is_none());
+        assert!(render_mini_index_block("   \n  ".to_string()).is_none());
     }
 }

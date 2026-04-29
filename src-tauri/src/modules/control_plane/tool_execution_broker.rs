@@ -10,7 +10,45 @@ use std::time::Duration;
 
 use crate::modules::control_plane::audit::{AuditEmitter, FailureDiagnostic};
 use crate::modules::control_plane::session_context::SessionExecutionContext;
+use crate::modules::tools::builtin::atomic_consolidation::resolve_alias as resolve_atomic_alias;
 use crate::modules::tools::{ToolContext, ToolError, ToolRegistry};
+
+/// WU-007 — env var that disables BR-003 alias rewriting.
+pub const DISABLE_TOOL_ALIAS_ENV: &str = "IF2AI_DISABLE_TOOL_ALIAS";
+
+fn alias_disabled() -> bool {
+    std::env::var(DISABLE_TOOL_ALIAS_ENV)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Resolve a (possibly legacy) tool name to its atomic equivalent.
+///
+/// - When the kill-switch is set, returns the input unchanged.
+/// - Catches panics in the alias table look-up so a corrupt table
+///   never breaks dispatch — the broker logs a warning and the
+///   original name is used.
+#[must_use]
+pub fn resolve_tool_name(tool_name: &str) -> String {
+    if alias_disabled() {
+        return tool_name.to_string();
+    }
+    let raw = tool_name.to_string();
+    let lookup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        resolve_atomic_alias(tool_name).map(|s| s.to_string())
+    }));
+    match lookup {
+        Ok(Some(atomic)) => atomic,
+        Ok(None) => raw,
+        Err(_) => {
+            tracing::warn!(
+                tool = %raw,
+                "[tool_execution_broker] resolve_alias panicked; passing original tool name"
+            );
+            raw
+        }
+    }
+}
 
 /// Unified broker for session-aware tool execution.
 #[derive(Clone)]
@@ -156,6 +194,13 @@ impl ToolExecutionBroker {
         trace_id: &str,
         request_id: Option<&str>,
     ) -> Result<String, ToolError> {
+        // WU-007 — apply BR-003 atomic-tool alias resolution **before**
+        // every downstream concern (audit log, permission preflight,
+        // executor lookup) sees the name. Unknown names + the kill-
+        // switch path (`IF2AI_DISABLE_TOOL_ALIAS=1`) pass through
+        // unchanged so the contract is purely additive.
+        let resolved_name = resolve_tool_name(tool_name);
+        let tool_name: &str = &resolved_name;
         let fingerprint = crate::modules::tools::context::context_fingerprint(
             &context.session_id,
             &context.workdir,
@@ -181,7 +226,8 @@ impl ToolExecutionBroker {
         // MIG-002-b — prepare_step_execution now acts as enforced preflight gate.
         // Check prepare_step_execution before existing denial checks.
         let permission_policy = Arc::new(
-            crate::modules::runtime::permissions::PermissionPolicy::new(context.permission_mode),
+            crate::modules::runtime::permissions::PermissionPolicy::new(context.permission_mode)
+                .with_default_agent_tool_requirements(),
         );
         let preflight = crate::modules::control_plane::prepare_step_execution(
             crate::modules::control_plane::PrepareStepExecutionInput {

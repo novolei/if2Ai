@@ -135,11 +135,14 @@ pub fn classify_resume_reason(
     match terminal_status {
         "max_iterations_reached" => Some(ResumeReason::MaxIterationsReached),
         "repeated_tool_batch_no_progress" => Some(ResumeReason::RepeatedToolBatchNoProgress),
-        "invalid_tool_args_repeated" => Some(ResumeReason::InvalidToolArgsRepeated),
+        "invalid_tool_args_repeated" | "repetitive_model_output" => {
+            Some(ResumeReason::InvalidToolArgsRepeated)
+        }
         "failed_to_start_stream" => Some(ResumeReason::FailedToStartStream),
         "model_stop_no_tools"
         | "memory_recall_required_no_tool"
         | "tool_required_no_tool"
+        | "todo_ledger_incomplete"
         | "provider_textual_tool_call_markup" => Some(ResumeReason::ModelStopNoTools),
         "stream_error" => {
             // Degraded reasons may carry richer information
@@ -255,6 +258,14 @@ mod tests {
     fn classify_tool_required_no_tool() {
         assert_eq!(
             classify_resume_reason("tool_required_no_tool", None),
+            Some(ResumeReason::ModelStopNoTools)
+        );
+    }
+
+    #[test]
+    fn classify_todo_ledger_incomplete() {
+        assert_eq!(
+            classify_resume_reason("todo_ledger_incomplete", None),
             Some(ResumeReason::ModelStopNoTools)
         );
     }

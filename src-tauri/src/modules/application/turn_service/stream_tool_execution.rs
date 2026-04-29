@@ -75,6 +75,52 @@ fn invalid_tool_args_repair_instruction(
     )
 }
 
+fn repair_tool_input_before_validation(
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if !matches!(tool_name, "file_write" | "write_file") {
+        return None;
+    }
+    let object = tool_input.as_object()?;
+    let has_path = object
+        .get("path")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_path {
+        return None;
+    }
+    let content = object.get("content").and_then(|value| value.as_str())?;
+    let inferred_path = infer_file_write_path_from_content(content)?;
+    let mut repaired = object.clone();
+    repaired.insert(
+        "path".to_string(),
+        serde_json::Value::String(inferred_path.to_string()),
+    );
+    Some(serde_json::Value::Object(repaired))
+}
+
+fn infer_file_write_path_from_content(content: &str) -> Option<&'static str> {
+    let trimmed = content.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower_prefix: String = trimmed.chars().take(256).collect::<String>().to_lowercase();
+    if lower_prefix.starts_with("<!doctype html")
+        || lower_prefix.starts_with("<html")
+        || (lower_prefix.contains("<html") && lower_prefix.contains("<body"))
+    {
+        return Some("index.html");
+    }
+    if lower_prefix.starts_with("{") || lower_prefix.starts_with("[") {
+        return Some("output.json");
+    }
+    if lower_prefix.starts_with("# ") || lower_prefix.starts_with("---\n") {
+        return Some("output.md");
+    }
+    Some("output.txt")
+}
+
 /// All context needed to execute one batch of pending tool calls.
 pub(super) struct ToolExecutionContext {
     pub pending_tool_uses: Vec<(String, String, String)>,
@@ -205,6 +251,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
     );
 
     for (tool_id, tool_name, input_json) in pending_tool_uses.into_iter() {
+        let mut input_json = input_json;
         let policy_trace_id = AuditEmitter::new_trace_id();
         let attempt_id = Uuid::new_v4().to_string();
 
@@ -269,7 +316,18 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             None => "prompt",
         };
 
-        let tool_input = parse_tool_input_json(&input_json);
+        let mut tool_input = parse_tool_input_json(&input_json);
+        if let Some(repaired_input) = repair_tool_input_before_validation(&tool_name, &tool_input) {
+            tracing::warn!(
+                "[start_agent_stream] repaired incomplete tool args before validation: stream_id={}, session_id={}, tool_call_id={}, tool_name={}, repaired_fields=path",
+                stream_id,
+                session_id,
+                tool_id,
+                tool_name
+            );
+            input_json = repaired_input.to_string();
+            tool_input = repaired_input;
+        }
 
         // Emit running event once the permission source is known.
         let running_payload = StreamTokenPayload {
@@ -780,5 +838,34 @@ mod tests {
         assert!(instruction.contains("\"path\""));
         assert!(instruction.contains("\"content\""));
         assert!(instruction.contains("index.html"));
+    }
+
+    #[test]
+    fn repair_tool_input_infers_html_file_write_path() {
+        let repaired = repair_tool_input_before_validation(
+            "file_write",
+            &serde_json::json!({
+                "content": "<!DOCTYPE html>\n<html><body>Hello</body></html>"
+            }),
+        )
+        .expect("repairs missing html path");
+
+        assert_eq!(repaired["path"], "index.html");
+        assert!(repaired["content"]
+            .as_str()
+            .is_some_and(|value| value.contains("Hello")));
+    }
+
+    #[test]
+    fn repair_tool_input_preserves_existing_file_write_path() {
+        let repaired = repair_tool_input_before_validation(
+            "file_write",
+            &serde_json::json!({
+                "path": "game/index.html",
+                "content": "<html></html>"
+            }),
+        );
+
+        assert!(repaired.is_none());
     }
 }

@@ -95,7 +95,7 @@ pub async fn memory_summaries_list(
         .list_in_range(&exec_scope, since, now)
         .await
         .map_err(|e| e.to_string())?;
-    rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
     rows.truncate(cap);
     Ok(rows.into_iter().map(Into::into).collect())
 }

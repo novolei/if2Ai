@@ -28,10 +28,16 @@
 //! let (allowed, reason) = guard.should_allow_install(&result);
 //! ```
 
+pub mod constitution;
 pub mod invisible_unicode;
 pub mod policy;
 pub mod structural_limits;
 pub mod threat_patterns;
+
+#[allow(unused_imports)]
+pub use constitution::{
+    evaluate_constitution, ConstitutionRule, Severity as ConstitutionSeverity, Violation, RULES,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};

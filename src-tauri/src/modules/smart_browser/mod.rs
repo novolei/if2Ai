@@ -9,5 +9,8 @@ pub mod browser_use_mcp;
 pub mod cloud;
 pub mod contract;
 pub mod local_adapter;
+pub mod content_simplifier;
+pub mod coordinate_strategy;
 pub mod policy;
 pub mod runtime;
+pub mod session_health;

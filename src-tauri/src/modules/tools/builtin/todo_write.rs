@@ -12,11 +12,28 @@ use crate::modules::tools::registry::{ToolEntry, ToolError, ToolHandler};
 
 /// A single todo item.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct TodoItem {
+pub(crate) struct TodoItem {
     content: String,
     #[serde(rename = "activeForm", default)]
     active_form: String,
     status: String, // "pending" | "in_progress" | "completed"
+}
+
+impl TodoItem {
+    #[must_use]
+    pub(crate) fn content(&self) -> &str {
+        &self.content
+    }
+
+    #[must_use]
+    pub(crate) fn active_form(&self) -> &str {
+        &self.active_form
+    }
+
+    #[must_use]
+    pub(crate) fn status(&self) -> &str {
+        &self.status
+    }
 }
 
 /// Input schema for TodoWrite tool.
@@ -78,6 +95,21 @@ fn sanitize_session_key(session_id: Option<&str>) -> String {
         normalized = "global".to_string();
     }
     normalized
+}
+
+/// Read the current durable todo list for a session.
+///
+/// This is intentionally read-only so application-layer runtime
+/// guards can use TodoWrite's canonical persistence path without
+/// creating a second todo truth source.
+pub(crate) fn load_session_todos(session_id: Option<&str>) -> Result<Vec<TodoItem>, String> {
+    let store_path = todo_store_path(session_id);
+    if !store_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&store_path)
+        .map_err(|e| format!("Failed to read todo store: {e}"))?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse todo store: {e}"))
 }
 
 /// Creates the TodoWrite tool entry for the registry.
@@ -266,6 +298,28 @@ mod tests {
         assert!(path
             .to_string_lossy()
             .contains("session-session_abc_123.json"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_session_todos_reads_canonical_store() {
+        let session_id = Some("todo-load-test");
+        let path = todo_store_path(session_id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let json = r#"[
+          {"content":"Create file","activeForm":"Creating file","status":"in_progress"},
+          {"content":"Verify file","activeForm":"Verifying file","status":"pending"}
+        ]"#;
+        std::fs::write(&path, json).unwrap();
+
+        let todos = load_session_todos(session_id).unwrap();
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].content(), "Create file");
+        assert_eq!(todos[0].active_form(), "Creating file");
+        assert_eq!(todos[0].status(), "in_progress");
+
         let _ = std::fs::remove_file(&path);
     }
 }

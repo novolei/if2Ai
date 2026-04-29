@@ -63,6 +63,14 @@ pub enum PromptBlockKind {
     /// LLM reads identity first, then user-specific traits, then the
     /// scenario instructions that depend on them.
     LearnedTraits,
+    /// FEAT-TE-003 — L1 mini index over the session history
+    /// (last user goal, last assistant action, recent tool calls).
+    /// Sits at priority 95 alongside `Soul` so the model gets a
+    /// dynamic situational anchor *immediately* after identity but
+    /// *before* the per-task scenario header. Always rendered as
+    /// plain text by `crate::modules::runtime::context_compression::
+    /// mini_index::build_mini_index`.
+    MiniIndex,
 }
 
 impl PromptBlockKind {

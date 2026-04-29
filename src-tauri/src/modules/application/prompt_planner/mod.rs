@@ -66,7 +66,9 @@ mod day_awareness;
 pub use block::{PromptBlock, PromptBlockKind, PromptBlockSource, PromptContribution};
 pub use build_request::{BuildPromptPlanRequest, PromptBuildMode, PromptBuildOptions};
 pub use diagnostics::{PromptPlanDiagnostics, PromptValidationIssue};
-pub use planner::{build_prompt_plan, PromptPlan, PromptPlanResult, PromptPlannerError};
+pub use planner::{
+    build_prompt_plan, render_mini_index_block, PromptPlan, PromptPlanResult, PromptPlannerError,
+};
 
 #[cfg(test)]
 mod tests {

@@ -83,9 +83,13 @@ mod run;
 mod stream;
 mod stream_event_loop;
 mod stream_finalize;
+pub mod dk_lookup_hook;
+pub mod finalize_hooks;
+pub mod preflight_hooks;
 mod stream_preflight;
 mod stream_task;
 mod stream_tool_execution;
+mod todo_ledger;
 mod work_loop;
 
 #[cfg(test)]
@@ -557,10 +561,20 @@ impl TurnService {
         {
             external_contributions.push(contribution);
         }
+        if let Some(contribution) =
+            work_loop::single_shell_command_prompt_contribution(&work_loop_decision)
+        {
+            external_contributions.push(contribution);
+        }
         if let Some(contribution) = work_loop::continuation_context_prompt_contribution(
             &work_loop_decision,
             &work_loop_route_context,
         ) {
+            external_contributions.push(contribution);
+        }
+        if let Some(contribution) =
+            todo_ledger::prompt_contribution(&work_loop_decision, request.session_id.as_deref())
+        {
             external_contributions.push(contribution);
         }
         if let Some(contribution) = skill_prompt_contribution {

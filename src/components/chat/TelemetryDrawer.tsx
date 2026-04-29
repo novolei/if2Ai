@@ -48,6 +48,7 @@ import { ExecutionModePill } from '@/modules/execution-mode/ExecutionModePill'
 import { PromptDiagnosticsPanel } from '@/modules/prompt-diagnostics/components/PromptDiagnosticsPanel'
 import type { PromptDiagnosticsSnapshot } from '@/modules/prompt-diagnostics/storage'
 import { RunInspectorPanel } from './RunInspectorPanel'
+import { EvolutionDevDrawer } from './evolution/EvolutionDevDrawer.tsx'
 
 /**
  * Phase 8A.12 (T-UI-8) — bounded ring buffer of recent
@@ -818,6 +819,11 @@ function TelemetryDrawerContent({
           <SectionHeader title="Run Inspector" />
           <div className="mt-1.5">
             <RunInspectorPanel sessionId={sessionId} variant="embedded" />
+          </div>
+
+          {/* UI-001 — Agent Evolution dev drawer (gated by IF2AI_DEV_EVOLUTION_UI=true). */}
+          <div className="mt-1.5">
+            <EvolutionDevDrawer />
           </div>
 
           <SectionHeader title="Prompt Diagnostics" />

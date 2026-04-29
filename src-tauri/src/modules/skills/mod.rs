@@ -18,5 +18,8 @@ pub mod guard;
 pub mod hub;
 pub mod manager;
 pub mod remote_passthrough;
+pub mod domain_knowledge;
+pub mod sedimentation;
 pub mod snapshot;
 pub mod sync;
+pub mod vector_index;

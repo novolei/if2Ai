@@ -7,3 +7,4 @@
 
 export * from './bootstrap-store.ts'
 export * from './use-bootstrap-store.ts'
+export * from './evolution-event-store.ts'

@@ -652,7 +652,7 @@ fn list_skills_impl(workdir: &std::path::Path) -> Vec<SkillInfo> {
             }
         }
     }
-    skills.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    skills.sort_by_key(|left| left.name.to_lowercase());
     skills
 }
 
