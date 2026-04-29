@@ -88,7 +88,7 @@ mod stream;
 mod stream_event_loop;
 mod stream_finalize;
 mod stream_preflight;
-mod stream_task;
+pub mod stream_task;
 mod stream_tool_execution;
 mod todo_ledger;
 mod work_loop;
@@ -181,6 +181,13 @@ pub struct TurnServiceDeps {
     /// that build `TurnServiceDeps` by hand can pass
     /// `Arc::new(crate::modules::memory::MockUtilityLlm::empty())`.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
+    /// Steward-aligned safety-valve configuration for the agent loop
+    /// (S2-S1b). Defaults preserve current production behaviour and
+    /// will gain a live consumer in S5 Task 5.1 when `run_agentic_loop`
+    /// replaces the bespoke streaming loop. The field is wired through
+    /// to `StreamTaskInputs::loop_config` today so future work only
+    /// touches the loop body, not the dependency surface.
+    pub loop_config: AgenticLoopConfig,
 }
 
 impl TurnServiceDeps {

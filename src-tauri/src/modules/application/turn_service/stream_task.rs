@@ -138,7 +138,7 @@ fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> Strin
 /// `stream_turn`. Bundled into a struct so the spawn call site
 /// stays one line and so individual fields can be added / removed
 /// without churn at the spawn boundary.
-pub(super) struct StreamTaskInputs {
+pub struct StreamTaskInputs {
     pub stream_id_for_task: String,
     pub run_event_logger: RunEventLogger,
     pub session_id: String,
@@ -212,6 +212,13 @@ pub(super) struct StreamTaskInputs {
     /// behaviourally equivalent today but masks ownership and makes
     /// future per-turn `workdir` overrides harder.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
+    /// Steward-aligned safety-valve configuration for the agent loop
+    /// (S2-S1b). Plumbed from `TurnServiceDeps::loop_config`. Today
+    /// the streaming body still uses `agent_max_iterations()` and the
+    /// pre-Steward truncation handling; S5 Task 5.1's `run_agentic_loop`
+    /// is the canonical home for `force_text_after_truncations`,
+    /// `enable_tool_intent_nudge`, and `max_iterations` consumption.
+    pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
 pub(super) async fn append_stream_event(
@@ -364,6 +371,9 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
         utility_llm,
+        // S2-S1b: plumbed through but not yet consumed; S5 Task 5.1
+        // `run_agentic_loop` becomes the consumer.
+        loop_config: _loop_config,
     } = inputs;
 
     // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).

@@ -800,6 +800,7 @@ impl TurnService {
             stream_project_id_for_after_turn,
             harness_bus_for_after_turn,
             utility_llm: self.deps.utility_llm.clone(),
+            loop_config: self.deps.loop_config.clone(),
         };
         tokio::spawn(super::stream_task::run_stream_task(stream_task_inputs));
 
