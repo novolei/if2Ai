@@ -532,6 +532,20 @@ pub fn set_current(config: RuntimeConfig) {
     }
 }
 
+/// Truth-loop iter-8 (Module C MCP probe) — returns `true` once
+/// [`set_current`] has installed a real [`RuntimeConfig`], `false`
+/// while [`current`] would still hand out the lazy `RuntimeConfig::empty`
+/// fallback.
+///
+/// Useful for the self-healing daemon's MCP config-presence probe so
+/// it can distinguish "no MCP servers configured" (Healthy) from
+/// "config not loaded yet" (Degraded — every probed name is unknown
+/// because we have not even read settings.json).
+#[must_use]
+pub fn is_initialised() -> bool {
+    CURRENT_CONFIG.get().is_some()
+}
+
 impl RuntimeFeatureConfig {
     /// Replace the hook config and return the updated builder.
     #[must_use]

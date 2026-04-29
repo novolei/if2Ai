@@ -246,7 +246,9 @@ fn spawn_mcp_health_refresher() {
             };
             // Today this is exactly one server; written as a loop so
             // adding more persistent stdio servers later requires
-            // only widening this slice.
+            // only widening this slice. `#[allow]` documents the
+            // deliberate single-element-loop shape.
+            #[allow(clippy::single_element_loop)]
             for name in [BROWSER_USE_MCP_SERVER_NAME] {
                 let alive = guard.is_server_process_alive(name);
                 snapshot.record(name, alive);

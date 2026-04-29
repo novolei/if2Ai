@@ -27,6 +27,7 @@ pub mod logical_day;
 pub mod lsp;
 pub mod mcp;
 pub mod mcp_client;
+pub mod mcp_health;
 pub mod mcp_stdio;
 pub mod oauth;
 pub mod pending_permission;
