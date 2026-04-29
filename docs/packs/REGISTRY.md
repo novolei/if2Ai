@@ -398,15 +398,16 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 
 WU Pack 完成后，将 helper 接入生产 hot path 的最后一英里。**所有 DW Pack 并行可执行**（互相无序依赖）。
 
-| 顺序 | Pack                                                                                | 状态     | Goal                                                           | 依赖           |
-| ---- | ----------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------- | -------------- |
-| 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)        | active¹  | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005 |
-| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md) | **done** | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004 |
-| 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md) | **done** | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003 |
+| 顺序 | Pack                                                                                | 状态      | Goal                                                           | 依赖           |
+| ---- | ----------------------------------------------------------------------------------- | --------- | -------------------------------------------------------------- | -------------- |
+| 1    | [DW-001](./feature/agent-evolution-wireup/DW-001-self-edit-scanner-spawn.md)        | **done**⁶ | setup.rs spawn self-edit scanner tokio interval task           | WU-001, WU-005 |
+| 2    | [DW-002](./feature/agent-evolution-wireup/DW-002-stream-preflight-digester-wire.md) | **done**  | stream_task.rs build_iteration_request 前注入 digest call      | WU-001, WU-004 |
+| 3    | [DW-003](./feature/agent-evolution-wireup/DW-003-stream-finalize-parallel-hooks.md) | **done**  | finalize_stream_task 内 spawn 3 并行沉淀任务                   | WU-001, WU-003 |
 | 4    | [DW-004](./feature/agent-evolution-wireup/DW-004-work-loop-dk-lookup.md)            | **done**⁴ | work_loop::resolve_skill_plan 内调 lookup_for_skill_resolution | WU-001, WU-008 |
-| 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)    | **done** | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006 |
+| 5    | [DW-005](./feature/agent-evolution-wireup/DW-005-browser-click-strategy-wire.md)    | **done**  | smart_browser Click 派发前接入 decide_browser_click_strategy   | WU-001, WU-006 |
 
 > ¹ 同上 `landed-stub` 标注（gap report 2026-04-30）。DW-004 已于 Iter-5 (`ba830b5`) 真化。
+> ⁶ Iteration 7: scanner 串联真实 LLM / Embedder / HarnessReports，所有三个 landed-stub 已替换。
 
 > **推荐执行顺序**：DW-003 → DW-002（stream hot path 顺序）→ DW-004 → DW-001 → DW-005（可并行）。
 

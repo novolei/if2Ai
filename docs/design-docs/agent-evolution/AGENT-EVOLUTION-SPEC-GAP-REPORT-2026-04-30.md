@@ -88,14 +88,14 @@ WU-002 还需额外补一个 BrowserSession 真探针（`StubBrowserProbe` → �
 
 ---
 
-## 5. Spec 内部矛盾（沿用 04-29 §2，未修复）
+## 5. Spec 内部矛盾（04-29 §2；**2026-04-30 iteration-2b 已对齐 `.qoder` 基准 spec**）
 
-`.qoder/specs/if2ai-agent-evolution-report.md` 仍存在：
+曾存在于 `.qoder/specs/if2ai-agent-evolution-report.md` 的问题（现已修复于同文件）：
 
-- **Part 1.3** 列模块 A/B/D/G/J/L "待实现"——已与现实严重不符（A/B/D/G 已 done，J 已 done，L 已 done）
-- **Part 6** 把 15 个差距点全部标 ✅——但其中 4 个是 `landed-stub`，应改为 ⚠️
+- ~~**Part 1.3** 列模块 A/B/D/G/J/L "待实现"~~ → 已改为 **2026-04-30 真值表** + `landed-stub` 术语说明。
+- ~~**Part 6** 15 格全 ✅~~ → **#1/#5/#8** 已标 **`landed-stub`**；**#3** 已改为 **partial**（反映 iter-4/6 daemon 真化）。
 
-**Iteration 2 任务**：write-only 修复，不动代码。详见 plan §6。
+若本 §3 表格行与 `.qoder` spec 叙述仍偶发不一致，以 **当前 `HEAD` 代码** 为最终仲裁。
 
 ---
 
@@ -217,11 +217,11 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 
 ### 11.1 已落地
 
-| 站点 | 旧状态 | 新状态 |
-| ---- | ------ | ------ |
-| `domain_knowledge/mod.rs` `global_knowledge_store()` | 不存在 | ✅ **新增** — `OnceLock<Arc<dyn KnowledgeStore>>` singleton |
-| `stream_finalize.rs` DK contributor loop | entries 只发 event，不落地 | ✅ 每个 entry 先 `upsert` 进 global store |
-| `work_loop.rs` `spawn_dk_lookup_advisory` | `MockKnowledgeStore::new()` 每次独立实例 | ✅ `global_knowledge_store()` 共享实例 |
+| 站点                                                 | 旧状态                                   | 新状态                                                     |
+| ---------------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| `domain_knowledge/mod.rs` `global_knowledge_store()` | 不存在                                   | ✅ **新增** — `OnceLock<Arc<dyn KnowledgeStore>>` singleton |
+| `stream_finalize.rs` DK contributor loop             | entries 只发 event，不落地               | ✅ 每个 entry 先 `upsert` 进 global store                   |
+| `work_loop.rs` `spawn_dk_lookup_advisory`            | `MockKnowledgeStore::new()` 每次独立实例 | ✅ `global_knowledge_store()` 共享实例                      |
 
 ### 11.2 证据
 
@@ -231,10 +231,10 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 
 ### 11.3 仍剩 `landed-stub`
 
-| Pack | 站点 | 占位 | 替换路径 |
-| ---- | ---- | ---- | -------- |
-| **DW-001** | `setup.rs:177` scanner | `MockUtilityLlm::empty()` + `ConstEmbedder` + `&[], &[]` 空输入 | 需真实 failure 聚合源；非单次 swap |
-| **WU-002 provider/MCP** | `setup.rs:86` probe vec | `Vec::new(), Vec::new()` | 需 `ProviderManager` / `McpServerManager` 暴露 `liveness_probe()` |
+| Pack                    | 站点                    | 占位                                                            | 替换路径                                                          |
+| ----------------------- | ----------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **DW-001**              | `setup.rs:177` scanner  | `MockUtilityLlm::empty()` + `ConstEmbedder` + `&[], &[]` 空输入 | 需真实 failure 聚合源；非单次 swap                                |
+| **WU-002 provider/MCP** | `setup.rs:86` probe vec | `Vec::new(), Vec::new()`                                        | 需 `ProviderManager` / `McpServerManager` 暴露 `liveness_probe()` |
 
 ### 11.4 Iteration 6 候选
 
@@ -249,10 +249,10 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 
 ### 12.1 已落地
 
-| 站点 | 旧状态 | 新状态 |
-| ---- | ------ | ------ |
-| `daemon/mod.rs` `make_provider_api_key_probe()` | 不存在 | ✅ **新增** — env-var-only, sync, ≤ µs |
-| `setup.rs` extras vec | `vec![browser_probe]` | ✅ `vec![browser_probe, provider_probe]` |
+| 站点                                            | 旧状态                | 新状态                                  |
+| ----------------------------------------------- | --------------------- | --------------------------------------- |
+| `daemon/mod.rs` `make_provider_api_key_probe()` | 不存在                | ✅ **新增** — env-var-only, sync, ≤ µs   |
+| `setup.rs` extras vec                           | `vec![browser_probe]` | ✅ `vec![browser_probe, provider_probe]` |
 
 ### 12.2 证据
 
@@ -262,10 +262,27 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 
 ### 12.3 仍剩 `landed-stub`
 
-| Pack | 站点 | 占位 | 替换路径 |
-| ---- | ---- | ---- | -------- |
-| **DW-001** | `setup.rs` scanner | `MockUtilityLlm::empty()` + `ConstEmbedder` + `&[], &[]` | 需真实 failure 聚合源 |
+~~**DW-001**~~ — ✅ 已于 Iteration 7 清零（见 §13）。
+
+**所有 `landed-stub` 已清零。**
 
 ### 12.4 Iteration 7 候选
 
-1. **DW-001 scanner 真实 inputs** — 调查 `run_scanner_once` 参数语义，确定 `candidates/tool_failures` 来源
+1. ~~**DW-001 scanner 真实 inputs**~~ → **✅ 已完成 — Iteration 7**
+
+---
+
+## 13. Iteration 7 增量 — DW-001 Scanner 真化
+
+**Date:** 2026-04-30  
+**Pack:** DW-001  
+**Status:** ✅ done
+
+### Changes
+- `FastEmbedProvider` now implements `sedimentation::Embedder` (graceful fallback to `ConstFallbackEmbedder` if model not loaded)
+- `ScannerTickInput` + `load_scanner_tick_input`: loads up to 100 recent `HarnessRunReport`s from `~/.if2ai/harness/runs/`; derives `failure_rate` (only `Failed` counts) and `sample_size`
+- `ScannerStageState`: persists `PromotionStage` across scanner ticks via `Arc<Mutex<>>`
+- `spawn_self_edit_scanner_interval` wired to real LLM (`ChatProviderUtilityLlm`), real embedder (`FastEmbedProvider`), real reports (disk-loaded)
+
+### Remaining `landed-stub` items
+None. All DW-001 components are now truthified.
