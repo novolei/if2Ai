@@ -414,10 +414,11 @@ fn spawn_dk_lookup_advisory(user_message: &str) {
         use crate::modules::application::turn_service::dk_lookup_hook::lookup_for_skill_resolution;
         use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
         use crate::modules::runtime::evolution_emitter::emit_evolution_event;
-        use crate::modules::skills::domain_knowledge::mock::MockKnowledgeStore;
 
-        let store = MockKnowledgeStore::new();
-        let contributions = lookup_for_skill_resolution(&query, &store).await;
+        // DW-004/WU-008: use the process-wide store so lookups see knowledge
+        // upserted by the DK contributor in previous turns' finalize hooks.
+        let store = crate::modules::skills::domain_knowledge::global_knowledge_store();
+        let contributions = lookup_for_skill_resolution(&query, store.as_ref()).await;
         let payload = serde_json::json!({
             "entryId": "advisory",
             "kind": "task_sop",

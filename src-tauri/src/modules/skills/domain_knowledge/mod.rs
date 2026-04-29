@@ -23,6 +23,8 @@ pub use contributor::{
     extract_domain_knowledge_candidates, verify_knowledge_safety, KnowledgeVerdict,
 };
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -214,6 +216,31 @@ pub async fn lookup_domain_knowledge(
 }
 
 // ---------------------------------------------------------------------------
+// Process-level KnowledgeStore singleton (DW-004 / WU-008 deeper-wiring).
+// ---------------------------------------------------------------------------
+
+use std::sync::OnceLock;
+
+static GLOBAL_KNOWLEDGE_STORE: OnceLock<Arc<dyn KnowledgeStore>> = OnceLock::new();
+
+/// Returns the process-wide [`KnowledgeStore`] singleton.
+///
+/// Initialised on first call with an in-memory [`mock::MockKnowledgeStore`]
+/// that survives for the process lifetime.  DK contributor (`stream_finalize`)
+/// upserts every extracted entry here; DK lookup (`work_loop`) reads from the
+/// same instance — so knowledge gained in one turn is visible in the next.
+///
+/// A future deeper-wiring Pack can swap the backing impl (SQLite / LanceDB)
+/// by calling `GLOBAL_KNOWLEDGE_STORE.set(...)` **before** the first
+/// `global_knowledge_store()` call (typically in `setup.rs`).
+pub fn global_knowledge_store() -> Arc<dyn KnowledgeStore> {
+    Arc::clone(
+        GLOBAL_KNOWLEDGE_STORE
+            .get_or_init(|| Arc::new(mock::MockKnowledgeStore::new())),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Test-only in-memory backend (also reused by FEAT-DK-003 tests).
 // ---------------------------------------------------------------------------
 
@@ -291,5 +318,41 @@ pub mod mock {
             }
             hits
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that `global_knowledge_store()` returns the *same* backing
+    /// store on every call: an entry upserted through one handle is visible
+    /// via a fresh handle obtained after the upsert.
+    #[tokio::test]
+    async fn global_store_shared_across_handles() {
+        let entry = DomainKnowledgeEntry::new(
+            DomainKnowledgeKind::TaskSOP {
+                task_type: "test_task_singleton".to_string(),
+                prerequisites: Vec::new(),
+                key_pitfalls: Vec::new(),
+                execution_steps: Vec::new(),
+            },
+            KnowledgeAuthor::User,
+            1.0,
+        );
+
+        global_knowledge_store().upsert(entry.clone()).await;
+
+        let hits = global_knowledge_store()
+            .lookup("test_task_singleton", None)
+            .await;
+        assert!(
+            hits.iter().any(|e| e.id == entry.id),
+            "entry upserted via one handle must be visible through a second handle"
+        );
     }
 }

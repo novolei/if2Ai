@@ -1268,7 +1268,12 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
                 ));
             let candidates =
                 super::finalize_hooks::run_domain_knowledge_contributor(&history, llm).await;
+            let dk_store =
+                crate::modules::skills::domain_knowledge::global_knowledge_store();
             for entry in candidates {
+                // DW-004/WU-008: persist into the process-wide store so the DK
+                // lookup hook in work_loop sees it on the very next turn.
+                dk_store.upsert(entry.clone()).await;
                 let payload = serde_json::json!({
                     "entryId": entry.id,
                     "kind": entry.kind.label(),
