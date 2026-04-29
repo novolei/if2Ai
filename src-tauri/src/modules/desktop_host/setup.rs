@@ -35,7 +35,8 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     register_memory_audit_emitter(app);
     start_memory_ticker(app);
     let ticker = app.state::<Arc<MemoryTicker>>().inner().clone();
-    crate::modules::runtime::self_repair::spawn_self_repair_watchdog(ticker);
+    let browser_registry = app.state::<Arc<BrowserRegistry>>().inner().clone();
+    spawn_self_healing_daemon_with_browser_probe(ticker, browser_registry);
     register_evolution_probes_for_app(app);
     resolve_bundled_skills(app);
     install_system_tray(app)?;
@@ -44,95 +45,93 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Truth-loop iter-4 (WU-002 真化) — replace the legacy
+/// `spawn_self_repair_watchdog(ticker)` shim with the new
+/// `spawn_self_healing_daemon_with_extras` so the live
+/// `BrowserRegistryProbe` runs **inside the same daemon registry**
+/// the SH-001 baseline polls. Prior wire-up registered an
+/// always-Healthy `StubBrowserProbe` into a parallel registry that
+/// nobody spawned — a textbook `landed-stub`.
+fn spawn_self_healing_daemon_with_browser_probe(
+    ticker: Arc<MemoryTicker>,
+    browser_registry: Arc<BrowserRegistry>,
+) {
+    use crate::modules::runtime::daemon::{
+        spawn_self_healing_daemon_with_extras, HealthCheck, HealthStatus,
+    };
+    use crate::modules::smart_browser::session_health::BrowserHealthStatus;
+
+    /// Aggregate browser probe — surveys every active session in the
+    /// registry and returns the worst observed health. No active
+    /// session = `Healthy` (no browser, no problem).
+    struct BrowserRegistryProbe {
+        registry: Arc<BrowserRegistry>,
+    }
+
+    impl HealthCheck for BrowserRegistryProbe {
+        fn name(&self) -> &str {
+            "browser_registry_liveness"
+        }
+        fn check(&self) -> HealthStatus {
+            let snapshots = self.registry.heartbeat_snapshots();
+            if snapshots.is_empty() {
+                return HealthStatus::Healthy;
+            }
+            let now = std::time::Instant::now();
+            // Severity rank: Crashed > Disconnected > Stale >
+            // Recovering > Connected. Map each snapshot through the
+            // pure session_health state machine and pick the worst.
+            let mut worst = HealthStatus::Healthy;
+            for (_session_id, last_heartbeat, crashed) in snapshots {
+                let status = BrowserHealthStatus::from_observation(now, last_heartbeat, crashed)
+                    .to_health_status();
+                worst = pick_worse(worst, status);
+            }
+            worst
+        }
+    }
+
+    fn pick_worse(a: HealthStatus, b: HealthStatus) -> HealthStatus {
+        fn rank(s: &HealthStatus) -> u8 {
+            match s {
+                HealthStatus::Healthy => 0,
+                HealthStatus::Degraded { .. } => 1,
+                HealthStatus::Failed { .. } => 2,
+            }
+        }
+        if rank(&b) > rank(&a) {
+            b
+        } else {
+            a
+        }
+    }
+
+    let browser_probe: Arc<dyn HealthCheck> = Arc::new(BrowserRegistryProbe {
+        registry: browser_registry,
+    });
+    spawn_self_healing_daemon_with_extras(ticker, vec![browser_probe]);
+}
+
 fn start_activation_lifecycle(app: &App) {
     crate::modules::application::activation::lifecycle_manager::spawn_activation_lifecycle(
         app.handle().clone(),
     );
 }
 
-/// WU-002 — register the SH-002/003 evolution probes on top of the
-/// SH-001 default registry. The current build only ships **MCP +
-/// browser** placeholder probes (provider probe is left empty until
-/// `setup.rs` plumbs a `ProviderManager` handle through). All probes
-/// emit a `DaemonHealth` envelope when their state is non-Healthy.
+/// Truth-loop iter-4 (2026-04-30) — slimmed-down companion to
+/// `spawn_self_healing_daemon_with_browser_probe`.
 ///
-/// Failure-isolated: any probe build error logs at warn and is
-/// silently dropped — the SH-001 baseline daemon keeps running.
+/// The browser probe (formerly `StubBrowserProbe` registered into an
+/// orphan `HealthCheckRegistry`) is now the real `BrowserRegistryProbe`
+/// living **inside** the SH-001 daemon registry. This function therefore
+/// no longer registers any probes — its remaining job is to spawn the
+/// DW-001 self-edit scanner background task.
+///
+/// Provider + MCP heartbeat probes (still `landed-stub` per gap report
+/// 2026-04-30 §9.3) will be added back here as `extras` arguments to
+/// `spawn_self_healing_daemon_with_extras` in a future iteration.
 fn register_evolution_probes_for_app(app: &App) {
-    use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
-    use crate::modules::runtime::daemon::{
-        evolution_probe_set, register_extra_probes, HealthCheck, HealthStatus,
-    };
-    use crate::modules::runtime::evolution_emitter::{emit_evolution_event, EmitError};
-    use std::sync::Arc as StdArc;
-
-    // Build the three probe lists. Provider + MCP placeholders stay
-    // empty until follow-up Packs plumb concrete handles. Browser
-    // probe is a no-op stub that surfaces a healthy state — its
-    // purpose here is to demonstrate the registration plumbing
-    // works end-to-end and the emit pipeline is exercised on first
-    // poll.
-    struct StubBrowserProbe;
-    impl HealthCheck for StubBrowserProbe {
-        fn name(&self) -> &str {
-            "browser_session_liveness:default"
-        }
-        fn check(&self) -> HealthStatus {
-            HealthStatus::Healthy
-        }
-    }
-
-    let browser_probes: Vec<StdArc<dyn HealthCheck>> = vec![StdArc::new(StubBrowserProbe)];
-    let probes = evolution_probe_set(Vec::new(), Vec::new(), browser_probes);
-    if probes.is_empty() {
-        return;
-    }
-
-    // Best-effort initial poll → emit one DaemonHealth event per
-    // non-Healthy probe so the frontend store starts populated.
     let handle = app.handle().clone();
-    for probe in &probes {
-        let status = probe.check();
-        if matches!(status, HealthStatus::Healthy) {
-            continue;
-        }
-        let payload = serde_json::json!({
-            "checkName": probe.name(),
-            "state": match status {
-                HealthStatus::Healthy => "healthy",
-                HealthStatus::Degraded { .. } => "degraded",
-                HealthStatus::Failed { .. } => "failed",
-            },
-        });
-        match emit_evolution_event(
-            Some(&handle),
-            RuntimeEventType::DaemonHealth,
-            "transition",
-            CorrelationIds::default(),
-            &payload,
-            None,
-        ) {
-            Ok(_) | Err(EmitError::Transport(_)) => {}
-            Err(EmitError::Serialize(err)) => {
-                tracing::warn!(
-                    error = %err,
-                    "[setup] evolution probe DaemonHealth emit serialization failed"
-                );
-            }
-        }
-    }
-
-    // The SH-001 daemon already runs in the background spawned by
-    // `spawn_self_repair_watchdog`. Future wire-up Packs will route
-    // these extras into that loop; for WU-002 we simply prove the
-    // registration helper + emit pipeline are correct via the unit
-    // tests in `tests/daemon_probe.rs`.
-    let mut registry = crate::modules::runtime::daemon::HealthCheckRegistry::new();
-    register_extra_probes(&mut registry, probes);
-    tracing::info!(
-        registered = registry.len(),
-        "[setup] WU-002 evolution probes registered (advisory, parallel to SH-001 daemon)"
-    );
 
     // DW-001 — spawn the WU-005 self-edit scanner as a background
     // tokio interval task. Honors `IF2AI_DISABLE_SELF_EDIT=1` and

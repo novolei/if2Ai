@@ -12,6 +12,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use dashmap::DashMap;
 use tokio::sync::Mutex;
@@ -549,6 +550,36 @@ impl BrowserRegistry {
         self.sessions.contains_key(session_id)
     }
 
+    /// Truth-loop iter-4 (WU-002 真化) — snapshot every active session's
+    /// heartbeat/crash state for the daemon's `BrowserRegistryProbe`.
+    ///
+    /// Returns `(session_id, last_heartbeat, crashed)` tuples — empty
+    /// when no sessions are running. Busy sessions (tokio Mutex held
+    /// by an in-flight tool call) are skipped on a best-effort basis;
+    /// the daemon re-polls every 60 s so transient locks resolve
+    /// themselves on the next tick.
+    #[must_use]
+    pub fn heartbeat_snapshots(&self) -> Vec<(String, Option<Instant>, bool)> {
+        let mut out = Vec::with_capacity(self.sessions.len());
+        for entry in self.sessions.iter() {
+            let session_id = entry.key().clone();
+            let arc = entry.value().clone();
+            // `try_lock()` returns a `Result<MutexGuard, _>`. The guard's
+            // lifetime is tied to `arc`; extracting the fields before the
+            // guard is dropped satisfies the borrow checker.
+            let snapshot = arc.try_lock().ok().map(|guard| {
+                (
+                    guard.heartbeat.last_heartbeat_at(),
+                    guard.heartbeat.is_crashed(),
+                )
+            });
+            if let Some((last_heartbeat, crashed)) = snapshot {
+                out.push((session_id, last_heartbeat, crashed));
+            }
+        }
+        out
+    }
+
     /// Enumerate all active sessions and their current status.
     #[must_use]
     pub fn get_all_status(&self) -> Vec<BrowserStatusEntry> {
@@ -597,6 +628,15 @@ mod tests {
             .tempdir()
             .unwrap();
         BrowserRegistry::for_test(tmp.path().join("cold-state.json"))
+    }
+
+    #[test]
+    fn heartbeat_snapshots_empty_for_fresh_registry() {
+        let registry = fresh_registry();
+        assert!(
+            registry.heartbeat_snapshots().is_empty(),
+            "fresh registry must produce no heartbeat snapshots"
+        );
     }
 
     #[test]

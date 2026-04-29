@@ -338,11 +338,52 @@ pub fn register_extra_probes(
 /// from the legacy `spawn_self_repair_watchdog` so Tauri's `setup`
 /// callback path keeps working.
 pub fn spawn_self_healing_daemon(memory_ticker: Arc<MemoryTicker>) {
+    spawn_self_healing_daemon_with_extras(memory_ticker, Vec::new());
+}
+
+/// Truth-loop iter-4 (WU-002 真化) — spawn the daemon with additional
+/// probes appended to the SH-001 default registry.
+///
+/// Used by `desktop_host/setup.rs` to register the live
+/// `BrowserRegistryProbe` (and, in future iterations, provider /
+/// MCP heartbeat checks) **inside the same registry the daemon
+/// actually polls**, retiring the prior orphan-registry pattern that
+/// only proved the helper compiled.
+///
+/// Honors `IF2AI_SELF_REPAIR_WATCHDOG=0` (full daemon disable) and
+/// `IF2AI_DISABLE_DAEMON_PROBES=1` (probes only — daemon still runs
+/// the SH-001 baseline). When the latter kill-switch is set, the
+/// `extras` vec is dropped before the registry is built.
+pub fn spawn_self_healing_daemon_with_extras(
+    memory_ticker: Arc<MemoryTicker>,
+    extras: Vec<Arc<dyn HealthCheck>>,
+) {
     if daemon_disabled() {
         tracing::info!("[daemon] self-healing daemon disabled (IF2AI_SELF_REPAIR_WATCHDOG=0)");
         return;
     }
-    let registry = default_registry(memory_ticker);
+    let mut registry = default_registry(memory_ticker);
+    let extras_to_register = if evolution_probes_disabled() {
+        if !extras.is_empty() {
+            tracing::info!(
+                "[daemon] {} extra probe(s) suppressed by {}=1",
+                extras.len(),
+                DISABLE_EVOLUTION_PROBES_ENV
+            );
+        }
+        Vec::new()
+    } else {
+        extras
+    };
+    let registered_extras = extras_to_register.len();
+    register_extra_probes(&mut registry, extras_to_register);
+    if registered_extras > 0 {
+        tracing::info!(
+            registered_extras,
+            total_checks = registry.len(),
+            "[daemon] spawning with extra probes appended to SH-001 baseline"
+        );
+    }
     let secs = interval_secs_default();
     spawn_with_registry(registry, Duration::from_secs(secs));
 }
