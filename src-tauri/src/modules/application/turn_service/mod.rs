@@ -81,6 +81,7 @@ use crate::modules::tools::ToolRegistry;
 mod agent_loop_delegate;
 pub mod dk_lookup_hook;
 pub mod finalize_hooks;
+mod loop_config;
 pub mod preflight_hooks;
 mod run;
 mod stream;
@@ -95,6 +96,7 @@ mod work_loop;
 #[cfg(test)]
 mod tests;
 
+pub use loop_config::AgenticLoopConfig;
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
 

@@ -255,10 +255,9 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
 
     let stage_state = Arc::new(Mutex::new(ScannerStageState::default()));
     let store = HarnessReportStore::with_default_root();
-    let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-        std::sync::Arc::new(ChatProviderUtilityLlm::new(
-            crate::modules::config::store::if2ai_data_root(),
-        ));
+    let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> = std::sync::Arc::new(
+        ChatProviderUtilityLlm::new(crate::modules::config::store::if2ai_data_root()),
+    );
 
     let task = async move {
         let mut ticker = tokio::time::interval(DEFAULT_SCANNER_INTERVAL);
