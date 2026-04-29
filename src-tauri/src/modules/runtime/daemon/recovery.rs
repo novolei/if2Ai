@@ -61,6 +61,26 @@ pub enum RecoveryAction {
     RestartMcpServer { server_name: String },
 }
 
+impl std::fmt::Debug for RecoveryAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecoveryAction::ClearStuckState(_) => write!(f, "ClearStuckState(..)"),
+            RecoveryAction::ClearBrokenStreak { tool_name, .. } => {
+                write!(f, "ClearBrokenStreak {{ tool_name: {tool_name:?} }}")
+            }
+            RecoveryAction::DegradeGracefully { provider_name } => {
+                write!(
+                    f,
+                    "DegradeGracefully {{ provider_name: {provider_name:?} }}"
+                )
+            }
+            RecoveryAction::RestartMcpServer { server_name } => {
+                write!(f, "RestartMcpServer {{ server_name: {server_name:?} }}")
+            }
+        }
+    }
+}
+
 impl RecoveryAction {
     /// Stable identifier used in tracing.
     #[must_use]
@@ -83,9 +103,7 @@ impl RecoveryAction {
             }
             RecoveryAction::ClearBrokenStreak { tool_name, streaks } => {
                 let Ok(mut g) = streaks.lock() else {
-                    return RecoveryOutcome::Failed(
-                        "broken_streak map mutex poisoned".to_string(),
-                    );
+                    return RecoveryOutcome::Failed("broken_streak map mutex poisoned".to_string());
                 };
                 if g.remove(tool_name).is_some() {
                     RecoveryOutcome::Repaired

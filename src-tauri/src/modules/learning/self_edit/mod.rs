@@ -19,12 +19,13 @@
 pub mod promotion;
 pub mod proposal;
 pub mod scanner;
+pub mod scanner_state;
 pub mod verification;
 
 #[allow(unused_imports)]
 pub use promotion::{
-    next_stage, PromotionStage, StageTransition, DEMOTE_FAILURE_THRESHOLD,
-    MIN_SAMPLE_FOR_DECISION, PROMOTE_FAILURE_THRESHOLD,
+    next_stage, PromotionStage, StageTransition, DEMOTE_FAILURE_THRESHOLD, MIN_SAMPLE_FOR_DECISION,
+    PROMOTE_FAILURE_THRESHOLD,
 };
 #[allow(unused_imports)]
 pub use proposal::{generate_proposals, ProposalKind, SelfEditProposal};
