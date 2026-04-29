@@ -81,6 +81,7 @@ use crate::modules::tools::ToolRegistry;
 mod agent_loop_delegate;
 pub mod dk_lookup_hook;
 pub mod finalize_hooks;
+pub mod hook_registry;
 mod loop_config;
 pub mod preflight_hooks;
 pub mod prompt_cache;
