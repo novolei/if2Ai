@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use thiserror::Error;
 
+use crate::modules::skills::sedimentation::Embedder;
 use crate::modules::system_check::model_download::embedded_model_cache_dir;
 
 /// Error type for embedding operations
@@ -118,13 +119,14 @@ impl FastEmbedProvider {
     }
 }
 
-use crate::modules::skills::sedimentation::Embedder;
-
 impl Embedder for FastEmbedProvider {
     /// Bridge to `embed_one`; returns `Vec::new()` on any error so the
     /// dedup gate degrades gracefully instead of panicking.
     fn embed(&self, text: &str) -> Vec<f32> {
-        self.embed_one(text).unwrap_or_default()
+        self.embed_one(text).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "FastEmbedProvider::embed failed; returning empty vec");
+            Vec::new()
+        })
     }
 }
 
