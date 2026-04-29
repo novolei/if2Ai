@@ -38,6 +38,7 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     let browser_registry = app.state::<Arc<BrowserRegistry>>().inner().clone();
     spawn_self_healing_daemon_with_browser_probe(ticker, browser_registry);
     register_evolution_probes_for_app(app);
+    install_persistent_knowledge_store();
     resolve_bundled_skills(app);
     install_system_tray(app)?;
     install_main_window_policy(app);
@@ -114,8 +115,64 @@ fn spawn_self_healing_daemon_with_browser_probe(
         registry: browser_registry,
     });
     // WU-002 iter-6: provider API-key probe (env-var-only, cheap, sync).
-    let provider_probe = crate::modules::runtime::daemon::make_provider_api_key_probe();
-    spawn_self_healing_daemon_with_extras(ticker, vec![browser_probe, provider_probe]);
+    let provider_api_key_probe = crate::modules::runtime::daemon::make_provider_api_key_probe();
+    // Module C iter-7: provider circuit probe — reads the
+    // process-wide `ProviderCircuitState` streak that
+    // `provider/resilience.rs::StreamCircuitState` now mirrors on
+    // every chat-provider success / failure. No active ping; the
+    // daemon promotes `Healthy → Degraded → Failed` as live stream
+    // outcomes accumulate, and emits `DegradeGracefully` when the
+    // breaker threshold trips.
+    let provider_circuit_probe = crate::modules::api::resilience::make_provider_circuit_probe(
+        "chat_provider",
+        crate::modules::api::resilience::global_provider_circuit(),
+    );
+    spawn_self_healing_daemon_with_extras(
+        ticker,
+        vec![
+            browser_probe,
+            provider_api_key_probe,
+            provider_circuit_probe,
+        ],
+    );
+}
+
+/// DW-004 (truth-loop iter-7) — install a `FileBackedKnowledgeStore`
+/// rooted at `<if2ai_data_root>/domain-knowledge.ndjson` as the
+/// process-wide [`KnowledgeStore`] singleton. Must run before any
+/// `global_knowledge_store()` caller — i.e. before the first
+/// streaming turn. Failure to open the file is **non-fatal**: we log
+/// at `warn` and let `global_knowledge_store()` fall back to the
+/// default in-memory `MockKnowledgeStore`, which keeps the rest of
+/// the app running while DK contributions are forfeited for this
+/// session only.
+fn install_persistent_knowledge_store() {
+    use crate::modules::skills::domain_knowledge::{
+        install_global_knowledge_store, FileBackedKnowledgeStore, KnowledgeStore,
+    };
+
+    let dir = crate::modules::config::store::if2ai_data_root();
+    match FileBackedKnowledgeStore::open_or_create(&dir) {
+        Ok(store) => {
+            let path = store.path().to_path_buf();
+            let arc: std::sync::Arc<dyn KnowledgeStore> = std::sync::Arc::new(store);
+            match install_global_knowledge_store(arc) {
+                Ok(()) => tracing::info!(
+                    "[setup] DW-004 installed FileBackedKnowledgeStore at {}",
+                    path.display()
+                ),
+                Err(_) => tracing::warn!(
+                    "[setup] DW-004 GLOBAL_KNOWLEDGE_STORE already initialised; \
+                     persistent store NOT applied — first writer wins"
+                ),
+            }
+        }
+        Err(e) => tracing::warn!(
+            "[setup] DW-004 falling back to in-memory KnowledgeStore — \
+             could not open {}/domain-knowledge.ndjson: {e}",
+            dir.display()
+        ),
+    }
 }
 
 fn start_activation_lifecycle(app: &App) {
@@ -146,18 +203,26 @@ fn register_evolution_probes_for_app(app: &App) {
     spawn_self_edit_scanner_interval(handle);
 }
 
-/// DW-001 — Periodic self-edit scanner driver.
+/// DW-001 truth-loop iter-7 — replaces three landed-stubs:
 ///
-/// Calls `run_scanner_once` every 60s with a placeholder embedder +
-/// `MockUtilityLlm::empty()` until a deeper-wiring Pack plumbs the
-/// real provider/embedder handles. Even with placeholders the
-/// emit pipeline is exercised on every tick (proving the full chain
-/// is healthy in production).
+/// 1. `MockUtilityLlm::empty()` → `ChatProviderUtilityLlm` (real LLM)
+/// 2. `ConstEmbedder`           → `FastEmbedProvider` (real embeddings; fail-safe fallback)
+/// 3. `&[], &[]`                → disk-loaded recent `HarnessRunReport`s
+///
+/// `PromotionStage` is persisted across ticks via `Arc<Mutex<ScannerStageState>>`.
 fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
+    use std::sync::{Arc, Mutex};
+
+    use crate::modules::harness::HarnessReportStore;
     use crate::modules::learning::self_edit::scanner::{
         run_scanner_once, self_edit_scanner_disabled, DEFAULT_SCANNER_INTERVAL,
     };
+    use crate::modules::learning::self_edit::scanner_state::{
+        load_scanner_tick_input, ScannerStageState,
+    };
     use crate::modules::learning::self_edit::PromotionStage;
+    use crate::modules::memory::embedding::FastEmbedProvider;
+    use crate::modules::memory::llm::ChatProviderUtilityLlm;
     use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
     use crate::modules::runtime::evolution_emitter::emit_evolution_event;
     use crate::modules::skills::sedimentation::Embedder;
@@ -167,27 +232,57 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
         return;
     }
 
-    struct ConstEmbedder;
-    impl Embedder for ConstEmbedder {
+    struct ConstFallbackEmbedder;
+    impl Embedder for ConstFallbackEmbedder {
         fn embed(&self, _text: &str) -> Vec<f32> {
             vec![1.0, 0.0, 0.0]
         }
     }
 
+    let embedder: Arc<dyn Embedder + Send + Sync> = match FastEmbedProvider::new() {
+        Ok(p) => {
+            tracing::info!("[setup] DW-001 using FastEmbedProvider for dedup");
+            Arc::new(p)
+        }
+        Err(err) => {
+            tracing::warn!(
+                ?err,
+                "[setup] DW-001 FastEmbedProvider init failed; falling back to ConstEmbedder"
+            );
+            Arc::new(ConstFallbackEmbedder)
+        }
+    };
+
+    let stage_state = Arc::new(Mutex::new(ScannerStageState::default()));
+    let store = HarnessReportStore::with_default_root();
+
     let task = async move {
         let mut ticker = tokio::time::interval(DEFAULT_SCANNER_INTERVAL);
         loop {
             ticker.tick().await;
+
+            let tick = load_scanner_tick_input(&store, 100).await;
+            let reports_refs: Vec<&crate::modules::harness::run_report::HarnessRunReport> =
+                tick.reports.iter().collect();
+
+            let current_stage = stage_state
+                .lock()
+                .map(|g| g.stage)
+                .unwrap_or(PromotionStage::Shadow);
+
             let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-                std::sync::Arc::new(crate::modules::memory::MockUtilityLlm::empty());
+                std::sync::Arc::new(ChatProviderUtilityLlm::new(
+                    crate::modules::config::store::if2ai_data_root(),
+                ));
+
             let outcome_fut = std::panic::AssertUnwindSafe(run_scanner_once(
-                &[],
+                &reports_refs,
                 &[],
                 llm,
-                &ConstEmbedder,
-                PromotionStage::Shadow,
-                0.0,
-                0,
+                embedder.as_ref(),
+                current_stage,
+                tick.failure_rate,
+                tick.sample_size,
             ));
             let outcome = match futures::FutureExt::catch_unwind(outcome_fut).await {
                 Ok(o) => o,
@@ -196,6 +291,11 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
                     continue;
                 }
             };
+
+            if let Ok(mut g) = stage_state.lock() {
+                g.apply_transition(outcome.transition);
+            }
+
             for proposal in &outcome.proposals {
                 let _ = emit_evolution_event(
                     Some(&app_handle),
@@ -214,47 +314,39 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
             for (proposal, verdict) in &outcome.verdicts {
                 let _ = emit_evolution_event(
                     Some(&app_handle),
-                    RuntimeEventType::VerificationDecision,
-                    "scanner_pass",
+                    RuntimeEventType::SelfEditProposal,
+                    "verdict",
                     CorrelationIds::default(),
                     &serde_json::json!({
-                        "proposalId": proposal.id,
-                        "verdict": match verdict.verdict {
-                            crate::modules::learning::self_edit::Verdict::Pass => "pass",
-                            crate::modules::learning::self_edit::Verdict::Fail => "fail",
-                        },
+                        "id": proposal.id,
+                        "verdict": format!("{:?}", verdict.verdict),
                         "failedGates": verdict.failed_gates,
                     }),
                     None,
+                );
+            }
+
+            if let Some(reason) = &outcome.skipped_reason {
+                tracing::debug!("[DW-001] scanner tick skipped: {reason}");
+            } else {
+                tracing::info!(
+                    proposals = outcome.proposals.len(),
+                    verdicts = outcome.verdicts.len(),
+                    stage = ?outcome.transition,
+                    reports_loaded = tick.sample_size,
+                    failure_rate = tick.failure_rate,
+                    "[DW-001] scanner tick complete"
                 );
             }
         }
     };
 
     match tokio::runtime::Handle::try_current() {
-        Ok(rt) => {
-            rt.spawn(task);
+        Ok(handle) => {
+            handle.spawn(task);
         }
         Err(_) => {
-            tracing::debug!(
-                "[setup] DW-001 no current tokio runtime; falling back to dedicated thread"
-            );
-            std::thread::Builder::new()
-                .name("if2ai-self-edit-scanner".into())
-                .spawn(move || {
-                    let rt = match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        Ok(rt) => rt,
-                        Err(e) => {
-                            tracing::error!("[setup] DW-001 fallback runtime build failed: {e}");
-                            return;
-                        }
-                    };
-                    rt.block_on(task);
-                })
-                .ok();
+            tracing::warn!("[setup] DW-001 no tokio runtime for scanner; skipped");
         }
     }
 }
@@ -357,5 +449,12 @@ mod tests {
         assert_eq!(resolve_tray_action("show"), HostTrayAction::Show);
         assert_eq!(resolve_tray_action("quit"), HostTrayAction::Quit);
         assert_eq!(resolve_tray_action("memory_recall"), HostTrayAction::Ignore);
+    }
+
+    #[test]
+    fn scanner_stage_default_is_shadow() {
+        use crate::modules::learning::self_edit::scanner_state::ScannerStageState;
+        use crate::modules::learning::self_edit::PromotionStage;
+        assert_eq!(ScannerStageState::default().stage, PromotionStage::Shadow);
     }
 }
