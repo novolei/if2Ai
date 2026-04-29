@@ -83,6 +83,7 @@ pub mod dk_lookup_hook;
 pub mod finalize_hooks;
 mod loop_config;
 pub mod preflight_hooks;
+pub mod prompt_cache;
 mod run;
 mod stream;
 mod stream_event_loop;
