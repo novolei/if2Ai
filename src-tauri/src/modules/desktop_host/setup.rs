@@ -39,6 +39,7 @@ pub fn setup_desktop_host(app: &App) -> tauri::Result<()> {
     spawn_self_healing_daemon_with_browser_probe(ticker, browser_registry);
     register_evolution_probes_for_app(app);
     install_persistent_knowledge_store();
+    spawn_mcp_health_refresher();
     resolve_bundled_skills(app);
     install_system_tray(app)?;
     install_main_window_policy(app);
@@ -127,12 +128,25 @@ fn spawn_self_healing_daemon_with_browser_probe(
         "chat_provider",
         crate::modules::api::resilience::global_provider_circuit(),
     );
+    // Module C iter-8: MCP probes — config-presence (sync, env-only)
+    // + browser-use stdio liveness (reads the snapshot the refresher
+    // task below populates every 30s). Together they give the daemon
+    // its first real production view of MCP health without
+    // introducing a third McpServerManager singleton.
+    let mcp_config_presence_probe =
+        crate::modules::runtime::mcp_health::make_mcp_config_presence_probe();
+    let mcp_browser_use_probe =
+        crate::modules::runtime::mcp_health::make_browser_use_liveness_probe(
+            crate::modules::runtime::mcp_health::global_mcp_health(),
+        );
     spawn_self_healing_daemon_with_extras(
         ticker,
         vec![
             browser_probe,
             provider_api_key_probe,
             provider_circuit_probe,
+            mcp_config_presence_probe,
+            mcp_browser_use_probe,
         ],
     );
 }
@@ -172,6 +186,80 @@ fn install_persistent_knowledge_store() {
              could not open {}/domain-knowledge.ndjson: {e}",
             dir.display()
         ),
+    }
+}
+
+/// Truth-loop iter-8 (Module C MCP probe) — spawn the background
+/// task that refreshes [`crate::modules::runtime::mcp_health::global_mcp_health`]
+/// from the live `BROWSER_USE_MCP_MANAGER`. The daemon's MCP probe
+/// reads this snapshot synchronously, so without this refresher the
+/// probe would forever report `Healthy` (its "innocent until proven
+/// dead" default).
+///
+/// - Interval: 30s.  Snapshot stale window is 90s
+///   ([`crate::modules::runtime::mcp_health::DEFAULT_STALE_AFTER`]),
+///   so a single missed tick does NOT escalate to `Degraded`.
+/// - Lock acquisition is bounded by a 100ms tokio timeout: if a
+///   browser action is mid-call, we skip this tick rather than block
+///   either side.
+/// - Kill switch: `IF2AI_DISABLE_MCP_HEALTH=1`.
+/// - Failure isolation: any panic / error inside the loop is logged
+///   at `warn` and the next tick proceeds (mirrors
+///   [`spawn_self_edit_scanner_interval`]).
+fn spawn_mcp_health_refresher() {
+    use crate::modules::runtime::mcp_health::global_mcp_health;
+    use crate::modules::smart_browser::browser_use_mcp::BROWSER_USE_MCP_SERVER_NAME;
+    use crate::modules::smart_browser::runtime::browser_use_mcp_manager;
+    use std::time::Duration;
+
+    if std::env::var("IF2AI_DISABLE_MCP_HEALTH")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        tracing::info!("[setup] iter-8 MCP health refresher disabled (IF2AI_DISABLE_MCP_HEALTH=1)");
+        return;
+    }
+
+    const INTERVAL: Duration = Duration::from_secs(30);
+    const LOCK_TIMEOUT: Duration = Duration::from_millis(100);
+    let snapshot = global_mcp_health();
+
+    let task = async move {
+        // First tick fires immediately so the daemon sees a real
+        // sample within the first probe poll, then settles into
+        // 30s cadence.
+        let mut ticker = tokio::time::interval(INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let manager = browser_use_mcp_manager();
+            let lock_result = tokio::time::timeout(LOCK_TIMEOUT, manager.lock()).await;
+            let mut guard = match lock_result {
+                Ok(g) => g,
+                Err(_) => {
+                    tracing::debug!(
+                        "[mcp_health] skip tick: browser_use MCP manager held > {}ms",
+                        LOCK_TIMEOUT.as_millis()
+                    );
+                    continue;
+                }
+            };
+            // Today this is exactly one server; written as a loop so
+            // adding more persistent stdio servers later requires
+            // only widening this slice.
+            for name in [BROWSER_USE_MCP_SERVER_NAME] {
+                let alive = guard.is_server_process_alive(name);
+                snapshot.record(name, alive);
+            }
+        }
+    };
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::spawn(task);
+    } else {
+        tracing::warn!(
+            "[mcp_health] no current Tokio runtime at refresher spawn site; skipping background task"
+        );
     }
 }
 
@@ -234,8 +322,10 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
 
     struct ConstFallbackEmbedder;
     impl Embedder for ConstFallbackEmbedder {
+        /// Returns empty vector → cosine_similarity returns 0.0 → no proposals merged.
+        /// This is the conservative no-dedup behaviour when FastEmbedProvider is unavailable.
         fn embed(&self, _text: &str) -> Vec<f32> {
-            vec![1.0, 0.0, 0.0]
+            Vec::new()
         }
     }
 
@@ -255,10 +345,9 @@ fn spawn_self_edit_scanner_interval(app_handle: tauri::AppHandle) {
 
     let stage_state = Arc::new(Mutex::new(ScannerStageState::default()));
     let store = HarnessReportStore::with_default_root();
-    let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> =
-        std::sync::Arc::new(ChatProviderUtilityLlm::new(
-            crate::modules::config::store::if2ai_data_root(),
-        ));
+    let llm: std::sync::Arc<dyn crate::modules::memory::UtilityLlm> = std::sync::Arc::new(
+        ChatProviderUtilityLlm::new(crate::modules::config::store::if2ai_data_root()),
+    );
 
     let task = async move {
         let mut ticker = tokio::time::interval(DEFAULT_SCANNER_INTERVAL);

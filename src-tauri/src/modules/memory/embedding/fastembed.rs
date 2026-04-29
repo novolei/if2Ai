@@ -87,7 +87,7 @@ impl FastEmbedProvider {
 
         self.model
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .embed(texts, None)
             .map_err(|e| EmbeddingError::ModelError(e.to_string()))
     }
