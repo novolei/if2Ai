@@ -377,7 +377,7 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 | 顺序 | Pack                                                                                      | 状态   | Goal                                                                      | 依赖         |
 | ---- | ----------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- | ------------ |
 | 1    | [WU-001](./feature/agent-evolution-wireup/WU-001-evolution-emitter-infrastructure.md)     | **done** | Evolution emitter 基础设施（`evolution_emitter.rs` + `App.tsx` listener） | FEAT-INT-001 |
-| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | active¹ | Daemon 探针注册（SH-002/003 provider + MCP + browser liveness）           | WU-001       |
+| 2    | [WU-002](./feature/agent-evolution-wireup/WU-002-daemon-probe-registration.md)            | **done**³ | Daemon 探针注册（SH-002/003 browser liveness；provider + MCP 延后）      | WU-001       |
 | 3    | [WU-003](./feature/agent-evolution-wireup/WU-003-stream-finalize-sedimentation-hooks.md)  | **done** | Stream finalize 沉淀钩子（SE-001/002/004 + DK-002/003）                   | WU-001       |
 | 4    | [WU-004](./feature/agent-evolution-wireup/WU-004-stream-preflight-injection.md)           | active¹ | Stream preflight 注入（TE-002/003 + DK-002 checkpoint）                   | WU-001       |
 | 5    | [WU-005](./feature/agent-evolution-wireup/WU-005-self-edit-background-scanner.md)         | active¹ | Self-edit 后台扫描器（AE-001/002/003 周期性扫描）                         | WU-001       |
@@ -385,8 +385,9 @@ Agents Teams 必须建立在 vNext session runtime 之上。执行前置条件�
 | 7    | [WU-007](./feature/agent-evolution-wireup/WU-007-tool-alias-redirect.md)                  | active² | Tool alias 重定向（BR-003 resolve_alias → broker）                        | FEAT-BR-003  |
 | 8    | [WU-008](./feature/agent-evolution-wireup/WU-008-domain-knowledge-lookup.md)              | active¹ | Domain knowledge lookup（DK-001 → PromptContribution）                    | WU-001       |
 
-> ¹ `landed-stub` per [gap report 2026-04-30](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md): helper + emit + call-site 已交付，但生产依赖（`ProviderManager` / `KnowledgeStore`）仍是 `MockX` / `StubX` 占位。Iter-3 (commit `652b69b`) 已为 `UtilityLlm` 路径完成真化（DW-002 + WU-003 sedimentation/DK 现走 `ChatProviderUtilityLlm`）；剩余 `landed-stub` 见 gap report §9.3。
-> ² `WU-007` audit 待 iteration 4 重审（alias 表存在但 broker 调用站未在 iter-1 详查）。
+> ¹ `landed-stub` per [gap report 2026-04-30 §9.3](../design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md): call-site 已交付，但生产依赖（`ProviderManager` / `KnowledgeStore`）仍是 `MockX` / `StubX` 占位。Iter-3 `652b69b` 真化了 `UtilityLlm`（DW-002 + WU-003）；Iter-4 `04b4a46` 真化了 browser probe（WU-002）。
+> ² `WU-007` audit 待 iteration 5 重审（alias 表存在但 broker 调用站未详查）。
+> ³ Iter-4 (commit `04b4a46`)：browser liveness probe 真化（`StubBrowserProbe` → `BrowserRegistryProbe` 接入真正被 spawn 的 daemon registry）；provider + MCP 探针仍是 `Vec::new()` 占位，留待下一阶段。
 
 > **依赖关系**：WU-001 → {WU-002, WU-003, WU-004, WU-005, WU-006, WU-008} 可并行；WU-007 独立（不依赖 WU-001）。  
 > **推荐执行顺序**：WU-001 → WU-007（独立可同步推进）→ WU-002 → WU-006 → WU-004 → WU-003 → WU-005 → WU-008。

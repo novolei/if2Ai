@@ -174,4 +174,39 @@ Exit Gate（plan §2）通过后写 "Loop closed" 块到本报告底部。
 3. **DW-004 + WU-008 KnowledgeStore singleton**（中大）—— 需在 `bootstrap/` 加 `KnowledgeStoreBootstrap`，暴露 `OnceLock`，再在 `work_loop.rs:412` 取代 `MockKnowledgeStore`。
 4. **WU-002 provider + MCP 探针**（最大）—— 需要 `ProviderManager` / `McpServerManager` 暴露 `liveness_probe()` 工厂；可能需 trait 新增。
 
-**下一步触发**：阅读 plan §1，按 hard rule 选 4.1 或 4.2 之一为 iteration 4，单独 commit。
+---
+
+## 10. Iteration 4 增量（2026-04-30，commit `04b4a46`）
+
+**选项 B 执行**：WU-002 browser probe 真化。
+
+### 10.1 已落地
+
+| 站点 | 旧状态 | 新状态 |
+|---|---|---|
+| `setup.rs` StubBrowserProbe 注入孤立 registry | `landed-stub` | ✅ **done** — 真化 |
+| `BrowserRegistryProbe` 进入真 SH-001 daemon | 不存在 | ✅ **新增** — polls `heartbeat_snapshots()` |
+| `registry.rs` `heartbeat_snapshots()` | 不存在 | ✅ **新增** — try_lock best-effort |
+| `daemon/mod.rs` `spawn_self_healing_daemon_with_extras` | 不存在 | ✅ **新增** — extras 注入主 daemon |
+
+### 10.2 证据
+
+- `cargo check` PASS（exit 0，2m 17s）
+- `cargo test --lib browser::registry`: 4/4 PASS（新增 `heartbeat_snapshots_empty_for_fresh_registry`）
+- WU-002 browser liveness probe 现在随自愈 daemon 每 60 s 轮询浏览器会话健康；Stale/Crashed/Disconnected 时真发 `DaemonHealth degraded/failed` envelope 给前端
+
+### 10.3 仍剩 `landed-stub`
+
+| Pack | 站点 | 占位 | 替换路径 |
+|---|---|---|---|
+| **DW-001** | `setup.rs:177` scanner | `MockUtilityLlm::empty()` + `ConstEmbedder` + `&[], &[]` 空输入 | 需真实 failure 聚合源；非单次 swap |
+| **DW-004 + WU-008** | `work_loop.rs:412` DK lookup | `MockKnowledgeStore` | 需 `OnceLock<Arc<dyn KnowledgeStore>>` singleton 在 setup 注册 |
+| **WU-002 provider/MCP** | `setup.rs:86` probe vec | `Vec::new(), Vec::new()` | 需 `ProviderManager` / `McpServerManager` 暴露 `liveness_probe()` |
+
+### 10.4 Iteration 5 候选
+
+1. **DW-004 + WU-008 KnowledgeStore singleton**（中等，真实行为变化：DK lookup 开始返回真知识）
+2. **WU-002 provider probe**（暴露 `ProviderManager.liveness_probe()`，需 trait 新增）
+3. **DW-001 scanner 真实 inputs**（需决定 candidate set 来源）
+
+**下一步触发**：阅读 plan §1，选 iteration 5 中一个，单独 commit。
