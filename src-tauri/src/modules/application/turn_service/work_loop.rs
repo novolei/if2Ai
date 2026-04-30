@@ -1983,6 +1983,7 @@ mod tests {
                 resume_available: Some(true),
                 resume_cursor: Some("cursor".to_string()),
                 request_id: None,
+                finish_reason: None,
             },
         ];
         let context = route_context_from_messages(&messages);

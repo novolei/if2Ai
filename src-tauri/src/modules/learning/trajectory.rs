@@ -426,6 +426,7 @@ mod tests {
                 resume_available: None,
                 resume_cursor: None,
                 request_id: None,
+                finish_reason: None,
             });
         }
         session
@@ -601,6 +602,7 @@ mod tests {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         });
         let traj = Trajectory::from_session(&session, "", "model");
         // ToolUse blocks should not produce text in ShareGPT conversations

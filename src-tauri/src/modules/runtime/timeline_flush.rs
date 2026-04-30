@@ -42,6 +42,7 @@ pub(crate) fn flush_assistant_timeline_segment(
         resume_available: persisted_outcome.map(|value| value.resume_available),
         resume_cursor: persisted_outcome.and_then(|value| value.resume_cursor.clone()),
         request_id: persisted_outcome.map(|value| value.request_id.clone()),
+        finish_reason: None,
     });
 
     true

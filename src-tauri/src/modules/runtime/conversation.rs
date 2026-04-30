@@ -75,6 +75,11 @@ pub enum AssistantEvent {
     },
     Thinking(String),
     Usage(TokenUsage),
+    /// Provider-reported `stop_reason` / `finish_reason` for the assistant turn.
+    /// Mirrors the streaming path's `MessageDelta::stop_reason` (T2). Emitting
+    /// this is optional — providers that omit it leave the assembled
+    /// `ConversationMessage::finish_reason` as `None`.
+    FinishReason(String),
     MessageStop,
 }
 
@@ -652,6 +657,7 @@ fn build_assistant_message(
     let mut finished = false;
     let mut usage = None;
     let mut thinking = String::new();
+    let mut finish_reason: Option<String> = None;
 
     for event in events {
         match event {
@@ -667,6 +673,13 @@ fn build_assistant_message(
                 thinking.push_str(&content);
             }
             AssistantEvent::Usage(value) => usage = Some(value),
+            AssistantEvent::FinishReason(reason) => {
+                // Last-write-wins, mirrors streaming path's
+                // `record_finish_reason_from_delta` (T2). Empty strings are
+                // treated as a meaningful provider signal — we only skip the
+                // event entirely when the provider omits it.
+                finish_reason = Some(reason);
+            }
             AssistantEvent::MessageStop => {
                 finished = true;
             }
@@ -703,6 +716,7 @@ fn build_assistant_message(
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason,
         },
         usage,
     ))

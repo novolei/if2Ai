@@ -201,6 +201,7 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
                                 resume_available: None,
                                 resume_cursor: None,
                                 request_id: Some(provider_request_id.clone()),
+                                finish_reason: None,
                             });
                             let _ = session_manager.save_session(&interim_session).await;
                             tracing::debug!(
