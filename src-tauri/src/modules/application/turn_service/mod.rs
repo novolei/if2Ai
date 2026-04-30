@@ -88,6 +88,7 @@ pub mod preflight_hooks;
 pub mod prompt_cache;
 mod run;
 mod stream;
+mod stream_delegate;
 mod stream_event_loop;
 mod stream_finalize;
 mod stream_iteration;
