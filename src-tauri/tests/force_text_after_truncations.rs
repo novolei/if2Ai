@@ -17,7 +17,13 @@ use if2ai_backend::modules::runtime::agent_loop::{
 struct TruncationDelegate {
     script: Mutex<std::collections::VecDeque<RespondResult>>,
     /// Records `ctx.force_text` observed at each `call_llm` invocation.
-    force_text_seen: Mutex<Vec<bool>>,
+    force_text_in_call_llm: Mutex<Vec<bool>>,
+    /// Records `ctx.force_text` observed at each `before_llm_call` invocation.
+    /// This is the canonical regression guard for the streaming path
+    /// (StreamDelegate builds the outgoing request inside `before_llm_call`
+    /// via `iteration_preflight`, so it must see the flag set on the
+    /// threshold iteration). See Phase 3 T4 fix C-1.
+    force_text_in_before_llm: Mutex<Vec<bool>>,
 }
 
 #[async_trait]
@@ -25,11 +31,18 @@ impl LoopDelegate for TruncationDelegate {
     async fn check_signals(&self) -> LoopSignal {
         LoopSignal::Continue
     }
-    async fn before_llm_call(&self, _ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
+    async fn before_llm_call(&self, ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
+        self.force_text_in_before_llm
+            .lock()
+            .unwrap()
+            .push(ctx.force_text);
         None
     }
     async fn call_llm(&self, ctx: &mut LoopContext) -> Result<RespondResult, String> {
-        self.force_text_seen.lock().unwrap().push(ctx.force_text);
+        self.force_text_in_call_llm
+            .lock()
+            .unwrap()
+            .push(ctx.force_text);
         Ok(self
             .script
             .lock()
@@ -70,17 +83,30 @@ async fn force_text_engages_after_threshold_truncations() {
         "got {outcome:?}"
     );
 
-    let observed = d.force_text_seen.lock().unwrap().clone();
+    let observed_call = d.force_text_in_call_llm.lock().unwrap().clone();
+    let observed_before = d.force_text_in_before_llm.lock().unwrap().clone();
     assert_eq!(
-        observed.len(),
+        observed_call.len(),
         3,
-        "expected 3 call_llm invocations: {observed:?}"
+        "expected 3 call_llm invocations: {observed_call:?}"
     );
-    assert!(!observed[0], "iter 0: no truncations yet");
-    assert!(!observed[1], "iter 1: only 1 truncation");
+    assert_eq!(
+        observed_before.len(),
+        3,
+        "expected 3 before_llm_call invocations: {observed_before:?}"
+    );
     assert!(
-        observed[2],
-        "iter 2: 2 truncations preceded — force_text should be true"
+        !observed_call[0] && !observed_before[0],
+        "iter 0 baseline: no truncations yet"
+    );
+    assert!(
+        !observed_call[1] && !observed_before[1],
+        "iter 1: only 1 truncation so far"
+    );
+    assert!(observed_call[2], "iter 2 call_llm sees force_text");
+    assert!(
+        observed_before[2],
+        "iter 2 before_llm_call ALSO sees force_text (StreamDelegate path; C-1 fix)"
     );
 }
 
@@ -101,9 +127,14 @@ async fn force_text_does_not_engage_below_threshold() {
         force_text_after_truncations: 2,
     };
     let _ = run_agentic_loop(&d, &cfg).await;
-    let observed = d.force_text_seen.lock().unwrap().clone();
+    let observed_call = d.force_text_in_call_llm.lock().unwrap().clone();
+    let observed_before = d.force_text_in_before_llm.lock().unwrap().clone();
     assert!(
-        observed.iter().all(|f| !f),
-        "force_text should not engage below threshold: {observed:?}"
+        observed_call.iter().all(|f| !f),
+        "force_text (call_llm) should not engage below threshold: {observed_call:?}"
+    );
+    assert!(
+        observed_before.iter().all(|f| !f),
+        "force_text (before_llm_call) should not engage below threshold: {observed_before:?}"
     );
 }

@@ -214,13 +214,18 @@ pub struct StreamTaskInputs {
     /// behaviourally equivalent today but masks ownership and makes
     /// future per-turn `workdir` overrides harder.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
-    /// Steward-aligned safety-valve config. Post-T11/T12: `max_iterations` is
-    /// the single source of truth (read from `agent_max_iterations()` env-var
-    /// at AppState construction, then consumed by both inner preflight cap
-    /// and outer `run_agentic_loop` cap). The remaining field
-    /// (`force_text_after_truncations`) is currently inert in production —
-    /// real safety-valve behaviour lives delegate-side. Phase 3 T2 (N1-α)
-    /// removed the inert `enable_tool_intent_nudge` /
+    /// Steward-aligned safety-valve config. Both fields are now fully wired
+    /// in production:
+    ///
+    /// - `max_iterations`: T11/T12 single-source-of-truth from
+    ///   `agent_max_iterations()` env-var (consumed by both inner preflight
+    ///   cap and outer `run_agentic_loop` cap).
+    /// - `force_text_after_truncations`: T3 (N2-β) wired `ctx.force_text`
+    ///   end-to-end so consecutive `length` truncations drop tools to force
+    ///   a text response. T4 (C-1 fix) ensures the streaming path observes
+    ///   the flag on the same iteration the threshold is crossed.
+    ///
+    /// Phase 3 T2 (N1-α) removed the inert `enable_tool_intent_nudge` /
     /// `max_tool_intent_nudges` fields. See `runtime/agent_loop/config.rs`
     /// module docs for full wiring status.
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,

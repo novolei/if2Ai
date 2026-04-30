@@ -105,11 +105,16 @@ pub async fn run_agentic_loop(
             LoopSignal::Continue => {}
         }
 
+        // Set ctx.force_text BEFORE before_llm_call so delegates that build
+        // the request inside before_llm_call (e.g. StreamDelegate via
+        // iteration_preflight) can honor it on the iteration when the
+        // threshold was crossed, not the next one. RunDelegate reads it
+        // inside call_llm, which still runs after this assignment.
+        ctx.force_text = truncation_count >= config.force_text_after_truncations;
+
         if let Some(outcome) = delegate.before_llm_call(&mut ctx, iteration).await {
             return outcome;
         }
-
-        ctx.force_text = truncation_count >= config.force_text_after_truncations;
 
         let respond = match delegate.call_llm(&mut ctx).await {
             Err(e) => return LoopOutcome::Failure(e),
