@@ -179,6 +179,17 @@ pub struct TurnSummary {
     pub usage: TokenUsage,
 }
 
+/// Mutable per-turn scratch state for [`ConversationRuntime::run_turn`].
+/// Extracted from inline locals (Phase 2 T6) to make the function tractable
+/// and to provide a clean handle for future `RunDelegate` adoption (T10).
+/// **No behavior change vs the prior inline locals — this is a pure refactor.**
+#[derive(Debug, Default)]
+pub(super) struct RunLoopState {
+    pub assistant_messages: Vec<ConversationMessage>,
+    pub tool_results: Vec<ConversationMessage>,
+    pub iterations: usize,
+}
+
 pub struct ConversationRuntime<C, T> {
     session: Session,
     api_client: C,
@@ -432,13 +443,11 @@ where
             .messages
             .push(ConversationMessage::user_text(user_text));
 
-        let mut assistant_messages = Vec::new();
-        let mut tool_results = Vec::new();
-        let mut iterations = 0;
+        let mut state = RunLoopState::default();
 
         loop {
-            iterations += 1;
-            if iterations > self.max_iterations {
+            state.iterations += 1;
+            if state.iterations > self.max_iterations {
                 return Err(RuntimeError::MaxIterationsExceeded);
             }
 
@@ -492,7 +501,7 @@ where
                 .collect::<Vec<_>>();
 
             self.session.messages.push(assistant_message.clone());
-            assistant_messages.push(assistant_message);
+            state.assistant_messages.push(assistant_message);
 
             if pending_tool_uses.is_empty() {
                 break;
@@ -571,7 +580,7 @@ where
                     ok,
                 );
                 self.session.messages.push(result_message.clone());
-                tool_results.push(result_message);
+                state.tool_results.push(result_message);
             }
         }
 
@@ -596,9 +605,9 @@ where
         }
 
         Ok(TurnSummary {
-            assistant_messages,
-            tool_results,
-            iterations,
+            assistant_messages: state.assistant_messages,
+            tool_results: state.tool_results,
+            iterations: state.iterations,
             usage: self.usage_tracker.cumulative_usage(),
         })
     }
