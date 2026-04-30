@@ -24,12 +24,13 @@ pub(super) type AgentLoopDelegateFuture<'a> =
     Pin<Box<dyn Future<Output = AgentLoopDelegateOutput> + Send + 'a>>;
 
 /// Execution boundary for one selected work-loop implementation.
-#[deprecated(
-    note = "Use modules::application::turn_service::agentic_loop::LoopDelegate instead. \
-            The legacy trait is retained while production hot-paths migrate \
-            (sub-commits 5c-2..5c-6, deferred). See \
-            docs/superpowers/specs/2026-04-30-steward-alignment-design.md."
-)]
+#[deprecated(note = "Superseded by the `agentic_loop::run_agentic_loop` + \
+            `LoopDelegate` callback model (see Steward-Alignment S5). \
+            NOT a drop-in replacement: `AgentLoopDelegate::execute` runs an \
+            entire turn and returns `AgentLoopDelegateOutput`, while \
+            `LoopDelegate` is a per-iteration callback bag invoked by \
+            `run_agentic_loop`. Production migration is tracked in deferred \
+            sub-commits 5b-2..5b-5 (stream path) and 5c-2..5c-6 (sync path).")]
 pub(super) trait AgentLoopDelegate {
     /// Execute the loop and return its canonical terminal outcome summary.
     fn execute<'a>(&'a self, input: AgentLoopDelegateInput) -> AgentLoopDelegateFuture<'a>;

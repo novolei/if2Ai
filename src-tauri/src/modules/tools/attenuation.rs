@@ -93,6 +93,17 @@ pub const PROTECTED_TOOL_NAMES: &[&str] = &[
     "http_request",
     "REPL",
     "PowerShell",
+    // S7 review additions: cover sub-agent dispatch, scheduler write/execute,
+    // notebook editing, and alternate file-mutation aliases. `web_fetch` /
+    // `web_search` intentionally stay in READ_ONLY only to preserve the
+    // disjoint invariant; revisit if exfil becomes in-scope for shadowing.
+    "agent",
+    "cron_add",
+    "cron_remove",
+    "cron_run",
+    "NotebookEdit",
+    "write_file",
+    "edit_file",
 ];
 
 /// Tool names safe to expose under low-trust (`Installed`) skills. Reads

@@ -139,3 +139,18 @@ fn protected_names_includes_security_critical_builtins() {
         );
     }
 }
+
+#[test]
+fn protected_set_includes_security_critical_builtins() {
+    for n in &[
+        "agent",
+        "cron_add",
+        "cron_remove",
+        "cron_run",
+        "NotebookEdit",
+        "write_file",
+        "edit_file",
+    ] {
+        assert!(PROTECTED_TOOL_NAMES.contains(n), "missing: {n}");
+    }
+}

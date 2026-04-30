@@ -78,12 +78,13 @@ pub trait LoopDelegate: Send + Sync {
     async fn after_iteration(&self, ctx: &mut LoopContext, iteration: usize);
 }
 
-/// Lower-cased substring check: any finish_reason containing "length" or
-/// "max_token" is treated as a truncation. Adjust if your provider uses a
-/// different sentinel — but keep this conservative.
+/// Strict provider-finish-reason match for known truncation sentinels.
+/// OpenAI emits `"length"`, Anthropic emits `"max_tokens"`. Substring
+/// matching here would false-positive on benign reasons like
+/// `"content_length_filter"` or `"input_length_exceeded"`.
 fn is_length_truncation(finish_reason: &str) -> bool {
-    let s = finish_reason.to_ascii_lowercase();
-    s.contains("length") || s.contains("max_token")
+    let s = finish_reason.trim().to_ascii_lowercase();
+    matches!(s.as_str(), "length" | "max_tokens" | "max_token")
 }
 
 pub async fn run_agentic_loop(
@@ -156,11 +157,17 @@ mod tests {
 
     #[test]
     fn length_finish_reason_recognized() {
+        // True positives.
         assert!(is_length_truncation("length"));
         assert!(is_length_truncation("Length"));
         assert!(is_length_truncation("max_tokens"));
         assert!(is_length_truncation("max_token"));
+        assert!(is_length_truncation(" length "));
+        // True negatives — these previously matched as bypass false-positives.
         assert!(!is_length_truncation("stop"));
         assert!(!is_length_truncation(""));
+        assert!(!is_length_truncation("content_length_filter"));
+        assert!(!is_length_truncation("input_length_exceeded"));
+        assert!(!is_length_truncation("max_token_limit"));
     }
 }

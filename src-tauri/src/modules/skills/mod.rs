@@ -49,8 +49,12 @@ pub fn escape_skill_content(raw: &str) -> String {
 pub fn escape_markdown_skill_section(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for line in raw.split_inclusive('\n') {
-        let trimmed_start = line.trim_start_matches('#');
-        if trimmed_start.len() < line.len() && trimmed_start.trim_start().starts_with("Skill:") {
+        // CommonMark allows up to 3 spaces (or tabs) of indent before an ATX heading.
+        // We accept any leading whitespace before the `#` chars to defend the same
+        // attack vector even from indented headings.
+        let stripped = line.trim_start_matches([' ', '\t']);
+        let after_hashes = stripped.trim_start_matches('#');
+        if after_hashes.len() < stripped.len() && after_hashes.trim_start().starts_with("Skill:") {
             out.push('\\');
             out.push_str(line);
         } else {
