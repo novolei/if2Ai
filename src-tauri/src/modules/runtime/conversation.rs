@@ -430,6 +430,91 @@ where
         Ok(self.system_prompt.join("\n"))
     }
 
+    /// Execute the full per-tool pipeline for one tool call. Mirrors what
+    /// the inline loop body in [`Self::run_turn`] did before T9 — preserves
+    /// all 8 steps in order (permission → pre-hook → execute → merge pre
+    /// feedback → post-hook → merge post feedback → safety sanitize+wrap →
+    /// record outcome). Used by the loop body today and by `RunDelegate`'s
+    /// `execute_tool_calls` in T10. **Pure refactor — no behavior change.**
+    async fn process_single_tool_call(
+        &mut self,
+        tool_use_id: String,
+        tool_name: String,
+        input: String,
+        prompter: &mut Option<&mut (dyn PermissionPrompter + Send)>,
+    ) -> ConversationMessage {
+        let tool_name_for_metrics = tool_name.clone();
+        let permission_outcome = if let Some(prompt) = prompter.as_mut() {
+            self.permission_policy
+                .authorize(&tool_name, &input, Some(*prompt))
+        } else {
+            self.permission_policy.authorize(&tool_name, &input, None)
+        };
+
+        let result_message = match permission_outcome {
+            PermissionOutcome::Allow => {
+                let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
+                if pre_hook_result.is_denied() {
+                    let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
+                    ConversationMessage::tool_result(
+                        tool_use_id,
+                        tool_name,
+                        format_hook_message(&pre_hook_result, &deny_message),
+                        true,
+                    )
+                } else {
+                    let (mut output, mut is_error) =
+                        match self.tool_executor.execute(&tool_name, &input) {
+                            Ok(output) => (output, false),
+                            Err(error) => (error.to_string(), true),
+                        };
+                    output = merge_hook_feedback(pre_hook_result.messages(), output, false);
+
+                    let post_hook_result = self
+                        .hook_runner
+                        .run_post_tool_use(&tool_name, &input, &output, is_error);
+                    if post_hook_result.is_denied() {
+                        is_error = true;
+                    }
+                    output = merge_hook_feedback(
+                        post_hook_result.messages(),
+                        output,
+                        post_hook_result.is_denied(),
+                    );
+
+                    let safety = crate::modules::security::safety::shared_safety_layer();
+                    let sanitized = safety.sanitize_tool_output(&tool_name, &output);
+                    let wrapped_for_llm = safety.wrap_for_llm(&tool_name, &sanitized.content);
+
+                    ConversationMessage::tool_result(
+                        tool_use_id,
+                        tool_name,
+                        wrapped_for_llm,
+                        is_error,
+                    )
+                }
+            }
+            PermissionOutcome::Deny { reason } => {
+                ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
+            }
+        };
+
+        let ok = result_message
+            .blocks
+            .iter()
+            .find_map(|b| {
+                if let ContentBlock::ToolResult { is_error, .. } = b {
+                    Some(!*is_error)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        crate::modules::runtime::self_repair::record_tool_outcome(&tool_name_for_metrics, ok);
+
+        result_message
+    }
+
     /// Drive one full turn of the agent loop: append the user message,
     /// query the model, dispatch tool calls, and return a [`TurnSummary`].
     /// Honours the optional [`PermissionPrompter`] for per-tool approvals.
@@ -516,77 +601,9 @@ where
             }
 
             for (tool_use_id, tool_name, input) in pending_tool_uses {
-                let tool_name_for_metrics = tool_name.clone();
-                let permission_outcome = if let Some(prompt) = prompter.as_mut() {
-                    self.permission_policy
-                        .authorize(&tool_name, &input, Some(*prompt))
-                } else {
-                    self.permission_policy.authorize(&tool_name, &input, None)
-                };
-
-                let result_message = match permission_outcome {
-                    PermissionOutcome::Allow => {
-                        let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
-                        if pre_hook_result.is_denied() {
-                            let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                format_hook_message(&pre_hook_result, &deny_message),
-                                true,
-                            )
-                        } else {
-                            let (mut output, mut is_error) =
-                                match self.tool_executor.execute(&tool_name, &input) {
-                                    Ok(output) => (output, false),
-                                    Err(error) => (error.to_string(), true),
-                                };
-                            output = merge_hook_feedback(pre_hook_result.messages(), output, false);
-
-                            let post_hook_result = self
-                                .hook_runner
-                                .run_post_tool_use(&tool_name, &input, &output, is_error);
-                            if post_hook_result.is_denied() {
-                                is_error = true;
-                            }
-                            output = merge_hook_feedback(
-                                post_hook_result.messages(),
-                                output,
-                                post_hook_result.is_denied(),
-                            );
-
-                            let safety = crate::modules::security::safety::shared_safety_layer();
-                            let sanitized = safety.sanitize_tool_output(&tool_name, &output);
-                            let wrapped_for_llm =
-                                safety.wrap_for_llm(&tool_name, &sanitized.content);
-
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                wrapped_for_llm,
-                                is_error,
-                            )
-                        }
-                    }
-                    PermissionOutcome::Deny { reason } => {
-                        ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
-                    }
-                };
-                let ok = result_message
-                    .blocks
-                    .iter()
-                    .find_map(|b| {
-                        if let ContentBlock::ToolResult { is_error, .. } = b {
-                            Some(!*is_error)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(false);
-                crate::modules::runtime::self_repair::record_tool_outcome(
-                    &tool_name_for_metrics,
-                    ok,
-                );
+                let result_message = self
+                    .process_single_tool_call(tool_use_id, tool_name, input, &mut prompter)
+                    .await;
                 self.session.messages.push(result_message.clone());
                 state.tool_results.push(result_message);
             }
