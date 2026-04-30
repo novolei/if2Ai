@@ -202,6 +202,32 @@ pub fn streaming_window_turns() -> usize {
     }
 }
 
+/// Default number of recent turns kept with full-fidelity tool transcripts
+/// when no env override is set. Phase 6 T3 — tool transcript compression.
+pub const DEFAULT_STREAM_TOOL_KEEP_RECENT: usize = 3;
+
+/// Number of recent turns to keep with full-fidelity tool transcripts.
+/// Older turns get compressed to short summaries while preserving
+/// `tool_use_id` ↔ `tool_result.tool_use_id` pairing for sanitize compatibility.
+///
+/// Env var: `IF2AI_STREAM_TOOL_KEEP_RECENT`
+/// Default: [`DEFAULT_STREAM_TOOL_KEEP_RECENT`] (3).
+/// Floor: 1 (always keep at least the most recent turn full).
+/// Set to `0` to compress everything (most aggressive — model loses tool
+/// detail across all turns; useful for token-cost-sensitive deployments).
+///
+/// Phase 6 T3 — old-message tool transcript compression.
+pub fn stream_tool_keep_recent() -> usize {
+    match std::env::var("IF2AI_STREAM_TOOL_KEEP_RECENT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        Some(0) => 0,
+        Some(n) if n >= 1 => n,
+        _ => DEFAULT_STREAM_TOOL_KEEP_RECENT,
+    }
+}
+
 /// How `auto_load_trusted_skill_context` should inject SKILL.md bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillAutoloadMode {
@@ -786,6 +812,40 @@ mod tests {
         std::env::set_var(SKILL_AUTOLOAD_VAR, "garbage");
         assert_eq!(skill_autoload_mode(), SkillAutoloadMode::Excerpt);
         std::env::remove_var(SKILL_AUTOLOAD_VAR);
+    }
+
+    // ── stream_tool_keep_recent() env-var override ────────────────
+    const STREAM_TOOL_KEEP_VAR: &str = "IF2AI_STREAM_TOOL_KEEP_RECENT";
+
+    #[test]
+    fn stream_tool_keep_recent_default() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+        assert_eq!(stream_tool_keep_recent(), DEFAULT_STREAM_TOOL_KEEP_RECENT);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_honors_env() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "5");
+        assert_eq!(stream_tool_keep_recent(), 5);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_zero_compresses_all() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "0");
+        assert_eq!(stream_tool_keep_recent(), 0);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_ignores_non_numeric() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "garbage");
+        assert_eq!(stream_tool_keep_recent(), DEFAULT_STREAM_TOOL_KEEP_RECENT);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
     }
 
     #[test]

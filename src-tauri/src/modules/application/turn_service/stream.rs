@@ -421,6 +421,16 @@ impl TurnService {
             crate::modules::runtime::budget::streaming_window_turns(),
         );
 
+        // Phase 6 T3: compress old tool transcripts within the windowed slice.
+        // Recent turns stay full-fidelity; older turns get summarized while
+        // preserving tool_use_id ↔ tool_result.tool_use_id pairing so the
+        // downstream sanitize pass doesn't drop them as orphans.
+        let windowed =
+            crate::modules::memory::tool_transcript_compression::compress_old_tool_transcripts(
+                windowed,
+                crate::modules::runtime::budget::stream_tool_keep_recent(),
+            );
+
         let messages: Vec<InputMessage> = windowed
             .iter()
             .map(|msg| {
