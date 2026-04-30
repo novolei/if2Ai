@@ -7,62 +7,73 @@
 //!
 //! ## T5 sub-commit lineage
 //!
-//! - **T5a (this file at this commit)**: struct + `new()` + stub trait methods
-//!   that `unimplemented!()`. No runtime adoption — production
-//!   `run_stream_task_body` is untouched.
-//! - **T5b (next commit)**: real trait method bodies routing through
+//! - **T5a**: struct + `new()` + stub trait methods that `unimplemented!()`.
+//! - **T5b (this file)**: real trait method bodies routing through
 //!   `iteration_preflight` / `iteration_run_stream` / `handle_no_tool_calls`
-//!   / `iteration_execute_tools`. Drive via a mock-provider integration test.
-//!   Still no production change.
+//!   / `iteration_execute_tools`. Production `run_stream_task_body` is still
+//!   untouched — this code is not invoked at runtime yet.
 //! - **T5c (final commit)**: replace the inline loop in `run_stream_task_body`
 //!   with `run_agentic_loop(&delegate, &inputs.loop_config)` + LoopOutcome
 //!   translation match + delegate destructure-back ceremony.
 //!
-//! ## Field shape (T5a baseline)
+//! ## Outcome map (`call_llm`)
 //!
-//! T5a holds only `inputs: &'a StreamTaskInputs` plus the `tokio::sync::Mutex`
-//! cells the audit (see prior subagent escalation) flagged as needing
-//! `&self`-method access:
+//! `iteration_run_stream` returns either `Completed` or `RetryAfterSleep`. On
+//! `Completed`, behaviour branches by whether `pending_tool_uses` is empty
+//! and whether `force_final_response` was set:
 //!
-//! - `state` — main per-turn mutable state.
-//! - `cancel_rx` — `Option`-wrapped so `iteration_preflight` /
-//!   `iteration_run_stream` can `take()` and restore it across the
-//!   `RetryAfterSleep` boundary (the borrow shape they require today).
-//! - `pending_stream` / `pending_force_final` — produced by
-//!   `before_llm_call` (which wraps `iteration_preflight`), consumed by
-//!   `call_llm` (which wraps `iteration_run_stream`).
-//! - `tool_executor_slot` — consumed-and-restored by
-//!   `iteration_execute_tools`, same `Option`-take pattern as `cancel_rx`.
-//! - `pending_calls` — id → `(tool_use_id, tool_name, input_json)` lookup
-//!   so the loop’s opaque-`String` call IDs can be translated back into
-//!   the 3-tuples `iteration_execute_tools` expects.
-//! - `next_text_continues` — sentinel set when `call_llm` routes a
-//!   `NoToolOutcome::Continue` (retry/nudge) through `RespondResult::Text("")`,
-//!   so `handle_text_response` knows to `Continue` instead of `Return`.
-//!
-//! Several other refs (stream_emitter, run_event_logger, harness_bus,
-//! permission policy, app_session, etc.) are reachable via `inputs`. T5b
-//! will decide whether to thread them through additional explicit borrow
-//! fields or reach into `inputs` directly at each call site. T5a deliberately
-//! does not pre-shape those — the audit said “let T5b figure out exact
-//! borrow shape; for T5a just declare `inputs: &'a StreamTaskInputs`.”
+//! | State                                                                 | Translation                                          |
+//! |-----------------------------------------------------------------------|------------------------------------------------------|
+//! | `pending_tool_uses` non-empty AND `force_final_response = false`      | `RespondResult::ToolCalls`                           |
+//! | `pending_tool_uses` non-empty AND `force_final_response = true`       | terminal `max_iterations_reached`, return final text |
+//! | empty → `handle_no_tool_calls` returns `Break`                        | `RespondResult::Text(accumulated)` → `Return`        |
+//! | empty → `handle_no_tool_calls` returns `Continue`                     | `RespondResult::Text("")` (sentinel) → `Continue`    |
+//! | empty → `handle_no_tool_calls` returns `FallThrough`                  | `RespondResult::ToolCalls` (recovered)               |
+//! | `RetryAfterSleep`                                                     | sleep + sentinel `Text("")` → `Continue`             |
 
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::modules::api::MessageStream;
 use crate::modules::application::tool_executor::ToolRegistryExecutor;
+use crate::modules::control_plane::SessionExecutionContext;
+use crate::modules::provider::resilience::LlmResilienceConfig;
+use crate::modules::runtime::cost_guard::CostGuardConfig;
+use crate::modules::runtime::permissions::{PermissionMode, PermissionPolicy};
 
 use super::agentic_loop::{
     LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult, TextAction,
 };
+use super::stream_iteration::{
+    handle_no_tool_calls, iteration_execute_tools, iteration_preflight, iteration_run_stream,
+    ExecuteToolsSharedRefs, NoToolOutcome, NoToolSharedRefs, PreflightOutcome, PreflightSharedRefs,
+    RunStreamOutcome, RunStreamSharedRefs,
+};
 use super::stream_loop_state::StreamLoopState;
 use super::stream_task::StreamTaskInputs;
 
+/// Per-turn locals computed once at the top of `run_stream_task_body` that
+/// are not on `StreamTaskInputs` directly. T5c will populate these at the
+/// call site so `StreamDelegate` can build the `*SharedRefs` structs the
+/// per-phase helpers consume.
+pub(super) struct StreamDelegateExtras {
+    pub(super) max_iterations: usize,
+    pub(super) stream_resilience_cfg: LlmResilienceConfig,
+    pub(super) cost_guard_cfg: CostGuardConfig,
+    pub(super) mode: PermissionMode,
+    pub(super) permission_policy: Arc<PermissionPolicy>,
+    pub(super) execution_context_for_policy: SessionExecutionContext,
+    pub(super) run_id_for_ledger: String,
+    pub(super) app_data_dir_for_ledger: PathBuf,
+}
+
 pub(super) struct StreamDelegate<'a> {
     pub(super) inputs: &'a StreamTaskInputs,
+    pub(super) extras: StreamDelegateExtras,
     pub(super) state: Mutex<StreamLoopState>,
     pub(super) cancel_rx: Mutex<Option<oneshot::Receiver<()>>>,
     pub(super) tool_executor_slot: Mutex<Option<ToolRegistryExecutor>>,
@@ -75,35 +86,41 @@ pub(super) struct StreamDelegate<'a> {
     /// `iteration_preflight`'s `PreflightOutcome::Continue`.
     pub(super) pending_force_final: Mutex<Option<bool>>,
 
-    /// Lookup by call_id for `execute_tool_calls`. Populated by `call_llm`
-    /// when it translates `pending_tool_uses` (returned by
-    /// `iteration_run_stream`) into `RespondResult::ToolCalls { calls }`.
-    /// Tuple is `(tool_use_id, tool_name, input_json)`.
+    /// Tool uses returned by `iteration_run_stream`, ordered as the provider
+    /// emitted them (preserved so `tool_batch_signature` is stable). Drained
+    /// by `execute_tool_calls` and handed to `iteration_execute_tools`.
+    pub(super) pending_tool_uses_vec: Mutex<Vec<(String, String, String)>>,
+
+    /// Lookup by call_id (= tool_use_id) for `execute_tool_calls`. Populated
+    /// by `call_llm` in lockstep with `pending_tool_uses_vec`. Tuple is
+    /// `(tool_use_id, tool_name, input_json)`.
     pub(super) pending_calls: Mutex<HashMap<String, (String, String, String)>>,
 
     /// Sentinel set by `call_llm` when it routes a `NoToolOutcome::Continue`
-    /// (retry/nudge case) through `RespondResult::Text("")`.
-    /// `handle_text_response` observes this and returns `TextAction::Continue`
-    /// (after clearing the flag) instead of `TextAction::Return`.
+    /// (retry/nudge) or a `RunStreamOutcome::RetryAfterSleep` through
+    /// `RespondResult::Text("")`. `handle_text_response` observes this and
+    /// returns `TextAction::Continue` (after clearing the flag) instead of
+    /// `TextAction::Return`.
     pub(super) next_text_continues: Mutex<bool>,
 }
 
 impl<'a> StreamDelegate<'a> {
-    /// Build a delegate from the values currently held as locals inside
-    /// `run_stream_task_body`. T5c will use this constructor at the call site.
     pub(super) fn new(
         inputs: &'a StreamTaskInputs,
+        extras: StreamDelegateExtras,
         state: StreamLoopState,
         cancel_rx: oneshot::Receiver<()>,
         tool_executor: ToolRegistryExecutor,
     ) -> Self {
         Self {
             inputs,
+            extras,
             state: Mutex::new(state),
             cancel_rx: Mutex::new(Some(cancel_rx)),
             tool_executor_slot: Mutex::new(Some(tool_executor)),
             pending_stream: Mutex::new(None),
             pending_force_final: Mutex::new(None),
+            pending_tool_uses_vec: Mutex::new(Vec::new()),
             pending_calls: Mutex::new(HashMap::new()),
             next_text_continues: Mutex::new(false),
         }
@@ -122,67 +139,353 @@ impl<'a> StreamDelegate<'a> {
     }
 }
 
+// ---- *SharedRefs builders -------------------------------------------------
+//
+// Each builder is a one-shot `fn` (not a method) so it borrows `inputs` /
+// `extras` independently of `&self`. Per-method bodies hold these structs only
+// for the duration of one helper await, then drop them.
+
+fn build_preflight_refs<'r>(
+    inputs: &'r StreamTaskInputs,
+    extras: &'r StreamDelegateExtras,
+    tool_executor: &'r ToolRegistryExecutor,
+) -> PreflightSharedRefs<'r> {
+    PreflightSharedRefs {
+        stream_id: &inputs.stream_id_for_task,
+        session_id: &inputs.session_id,
+        max_iterations: extras.max_iterations,
+        utility_llm: &inputs.utility_llm,
+        tool_defs: &inputs.tool_defs_for_stream,
+        system_prompt: &inputs.system_prompt_for_stream,
+        model: &inputs.model_for_stream,
+        context_window: inputs.context_window_for_stream,
+        tool_pool_names: &inputs.tool_pool_names_for_stream,
+        tool_pool_schema_hash: &inputs.tool_pool_schema_hash_for_stream,
+        tool_pool_policy: &inputs.tool_pool_policy_for_stream,
+        work_loop_decision: &inputs.work_loop_decision_for_stream,
+        cost_guard_cfg: &extras.cost_guard_cfg,
+        stream_resilience_cfg: &extras.stream_resilience_cfg,
+        provider_client: &inputs.provider_client_for_stream,
+        failover_provider_client: inputs.failover_provider_client.as_ref(),
+        stream_emitter: &inputs.stream_emitter,
+        run_event_logger: &inputs.run_event_logger,
+        harness_bus: inputs.harness_event_bus_for_stream.as_ref(),
+        tool_executor,
+    }
+}
+
+fn build_run_stream_refs<'r>(
+    inputs: &'r StreamTaskInputs,
+    extras: &'r StreamDelegateExtras,
+) -> RunStreamSharedRefs<'r> {
+    RunStreamSharedRefs {
+        stream_id: &inputs.stream_id_for_task,
+        session_id: &inputs.session_id,
+        provider_id: &inputs.provider_id_for_stream,
+        model: &inputs.model_for_stream,
+        stream_emitter: &inputs.stream_emitter,
+        run_event_logger: &inputs.run_event_logger,
+        app_session: &inputs.app_session_clone,
+        session_manager: &inputs.session_manager,
+        harness_bus: inputs.harness_event_bus_for_stream.as_ref(),
+        execution_context: &extras.execution_context_for_policy,
+    }
+}
+
+fn build_no_tool_refs<'r>(
+    inputs: &'r StreamTaskInputs,
+    force_final_response: bool,
+) -> NoToolSharedRefs<'r> {
+    NoToolSharedRefs {
+        stream_id: &inputs.stream_id_for_task,
+        session_id: &inputs.session_id,
+        provider_id: &inputs.provider_id_for_stream,
+        model: &inputs.model_for_stream,
+        tool_defs: &inputs.tool_defs_for_stream,
+        work_loop_decision: &inputs.work_loop_decision_for_stream,
+        run_event_logger: &inputs.run_event_logger,
+        force_final_response,
+    }
+}
+
+fn build_execute_tools_refs<'r>(
+    inputs: &'r StreamTaskInputs,
+    extras: &'r StreamDelegateExtras,
+) -> ExecuteToolsSharedRefs<'r> {
+    ExecuteToolsSharedRefs {
+        stream_id: &inputs.stream_id_for_task,
+        session_id: &inputs.session_id,
+        stream_emitter: &inputs.stream_emitter,
+        run_event_logger: &inputs.run_event_logger,
+        tool_registry: &inputs.tool_registry_clone,
+        permission_senders: &inputs.permission_senders,
+        permission_overrides: &inputs.permission_overrides,
+        permission_policy: &extras.permission_policy,
+        execution_context: &inputs.execution_context_for_task,
+        work_loop_decision: &inputs.work_loop_decision_for_stream,
+        harness_bus: inputs.harness_event_bus_for_stream.as_ref(),
+        mode: extras.mode,
+        run_id: &extras.run_id_for_ledger,
+        app_data_dir: &extras.app_data_dir_for_ledger,
+    }
+}
+
 #[async_trait]
 impl<'a> LoopDelegate for StreamDelegate<'a> {
-    // T5b will implement: poll cancel_rx; on cancel, set
-    // state.terminal_status = Some("cancelled_by_user") and return Stop;
-    // else Continue.
-    #[allow(clippy::unimplemented)]
     async fn check_signals(&self) -> LoopSignal {
-        unimplemented!("T5b: poll cancel_rx; map to LoopSignal Stop or Continue")
+        let mut cancel = self.cancel_rx.lock().await;
+        let Some(rx) = cancel.as_mut() else {
+            // Receiver currently held by `iteration_run_stream` (i.e. we're
+            // mid-stream). That helper polls cancellation internally.
+            return LoopSignal::Continue;
+        };
+        match rx.try_recv() {
+            Ok(()) => {
+                drop(cancel);
+                let mut state = self.state.lock().await;
+                if state.terminal_status.is_none() {
+                    state.terminal_status = Some("cancelled_by_user");
+                }
+                state.completion_already_emitted = true;
+                LoopSignal::Stop
+            }
+            Err(oneshot::error::TryRecvError::Closed) => {
+                // Sender dropped without signalling — treat as no-cancel and
+                // let the loop proceed; the helper's own poll will surface
+                // any genuine error.
+                LoopSignal::Continue
+            }
+            Err(oneshot::error::TryRecvError::Empty) => LoopSignal::Continue,
+        }
     }
 
-    // T5b will implement: call iteration_preflight; on Continue store
-    // stream + force_final_response; on RetryAfterSleep sleep then return
-    // None; on BreakTerminal return Some(LoopOutcome::Failure(...)).
-    #[allow(clippy::unimplemented)]
     async fn before_llm_call(&self, _ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
-        unimplemented!(
-            "T5b: dispatch iteration_preflight; stash pending_stream/pending_force_final; \
-             map PreflightOutcome → Option<LoopOutcome>"
-        )
+        // Take the executor out of the slot so we can borrow it for refs and
+        // restore it when done. (`PreflightSharedRefs::tool_executor` is &-borrow
+        // only, but the slot still needs to give up exclusive access for the
+        // duration of the await.)
+        let executor = {
+            let mut slot = self.tool_executor_slot.lock().await;
+            slot.take()
+                .expect("tool_executor must be present at before_llm_call")
+        };
+
+        let outcome = {
+            let mut state = self.state.lock().await;
+            let mut cancel_guard = self.cancel_rx.lock().await;
+            let cancel_rx = cancel_guard
+                .as_mut()
+                .expect("cancel_rx must be present at before_llm_call");
+            let refs = build_preflight_refs(self.inputs, &self.extras, &executor);
+            iteration_preflight(&mut state, cancel_rx, &refs).await
+        };
+
+        // Restore executor unconditionally.
+        *self.tool_executor_slot.lock().await = Some(executor);
+
+        match outcome {
+            PreflightOutcome::Continue {
+                stream,
+                force_final_response,
+            } => {
+                *self.pending_stream.lock().await = Some(stream);
+                *self.pending_force_final.lock().await = Some(force_final_response);
+                None
+            }
+            PreflightOutcome::BreakTerminal => {
+                let state = self.state.lock().await;
+                let reason = state
+                    .last_stream_error_reason
+                    .clone()
+                    .or_else(|| state.terminal_status.map(str::to_string))
+                    .unwrap_or_else(|| "preflight_terminal".to_string());
+                Some(LoopOutcome::Failure(reason))
+            }
+            PreflightOutcome::RetryAfterSleep { sleep } => {
+                tokio::time::sleep(sleep).await;
+                None
+            }
+        }
     }
 
-    // T5b will implement: take pending_stream; call iteration_run_stream;
-    // if pending_tool_uses non-empty (or recovered via FallThrough)
-    // populate pending_calls and return ToolCalls; else route
-    // NoToolOutcome::{Break, Continue, FallThrough} per outcome map; if
-    // force_final_response set state.terminal_status='max_iterations_reached'
-    // and return Text(accumulated).
-    #[allow(clippy::unimplemented)]
     async fn call_llm(&self, _ctx: &mut LoopContext) -> Result<RespondResult, String> {
-        unimplemented!(
-            "T5b: take pending_stream; iteration_run_stream → handle_no_tool_calls; \
-             populate pending_calls and return ToolCalls/Text per outcome map"
-        )
+        let stream =
+            self.pending_stream.lock().await.take().ok_or_else(|| {
+                "call_llm: missing pending_stream from before_llm_call".to_string()
+            })?;
+        let force_final_response = self
+            .pending_force_final
+            .lock()
+            .await
+            .take()
+            .unwrap_or(false);
+        let cancel_rx = self
+            .cancel_rx
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| "call_llm: missing cancel_rx".to_string())?;
+
+        // Capture provider request_id before iteration_run_stream consumes the
+        // stream — mirrors the inline production code (stream_task.rs L501-514).
+        if let Some(request_id) = stream
+            .request_id()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(ToOwned::to_owned)
+        {
+            self.state.lock().await.provider_request_id = request_id;
+        }
+
+        // Run the inner SSE event loop.
+        let outcome = {
+            let mut state = self.state.lock().await;
+            let refs = build_run_stream_refs(self.inputs, &self.extras);
+            iteration_run_stream(&mut state, stream, cancel_rx, &refs).await
+        };
+
+        match outcome {
+            RunStreamOutcome::RetryAfterSleep {
+                cancel_rx: returned,
+                sleep,
+            } => {
+                *self.cancel_rx.lock().await = Some(returned);
+                tokio::time::sleep(sleep).await;
+                // Sentinel: tell handle_text_response to Continue, not Return.
+                *self.next_text_continues.lock().await = true;
+                Ok(RespondResult::Text(String::new()))
+            }
+            RunStreamOutcome::Completed {
+                cancel_rx: returned,
+                pending_tool_uses,
+            } => {
+                *self.cancel_rx.lock().await = Some(returned);
+
+                if !pending_tool_uses.is_empty() {
+                    if force_final_response {
+                        // Provider emitted tool calls during finalization pass —
+                        // mirror inline behaviour: stamp terminal status and
+                        // return the accumulated text.
+                        let mut state = self.state.lock().await;
+                        state.terminal_status = Some("max_iterations_reached");
+                        let text = state.accumulated_text.clone();
+                        *self.next_text_continues.lock().await = false;
+                        return Ok(RespondResult::Text(text));
+                    }
+                    return Ok(self.stash_pending_tool_calls(pending_tool_uses).await);
+                }
+
+                // Empty path — dispatch through handle_no_tool_calls.
+                let mut pending = pending_tool_uses;
+                let no_tool_outcome = {
+                    let mut state = self.state.lock().await;
+                    let refs = build_no_tool_refs(self.inputs, force_final_response);
+                    handle_no_tool_calls(&mut state, &mut pending, &refs).await
+                };
+                match no_tool_outcome {
+                    NoToolOutcome::Break => {
+                        *self.next_text_continues.lock().await = false;
+                        let text = self.state.lock().await.accumulated_text.clone();
+                        Ok(RespondResult::Text(text))
+                    }
+                    NoToolOutcome::Continue => {
+                        *self.next_text_continues.lock().await = true;
+                        Ok(RespondResult::Text(String::new()))
+                    }
+                    NoToolOutcome::FallThrough => Ok(self.stash_pending_tool_calls(pending).await),
+                }
+            }
+        }
     }
 
-    // T5b will implement: lookup 3-tuples from pending_calls; take
-    // tool_executor; call iteration_execute_tools; restore tool_executor;
-    // return ids of completed calls.
-    #[allow(clippy::unimplemented)]
     async fn execute_tool_calls(&self, _ids: Vec<String>, _ctx: &mut LoopContext) -> Vec<String> {
-        unimplemented!(
-            "T5b: drain pending_calls by ids; iteration_execute_tools; restore executor; \
-             return completed call ids"
-        )
+        // Drain the cached tool uses (preserves provider-emitted ordering, which
+        // tool_batch_signature relies on). The loop-level `_ids` are derived
+        // from this same Vec so we don't re-translate.
+        let pending = std::mem::take(&mut *self.pending_tool_uses_vec.lock().await);
+        let executed_ids: Vec<String> = pending.iter().map(|tu| tu.0.clone()).collect();
+
+        let executor = self
+            .tool_executor_slot
+            .lock()
+            .await
+            .take()
+            .expect("tool_executor must be present at execute_tool_calls");
+
+        let returned = {
+            let mut state = self.state.lock().await;
+            let refs = build_execute_tools_refs(self.inputs, &self.extras);
+            iteration_execute_tools(&mut state, pending, executor, &refs).await
+        };
+
+        *self.tool_executor_slot.lock().await = Some(returned);
+        self.pending_calls.lock().await.clear();
+        executed_ids
     }
 
-    // T5b will implement: if next_text_continues sentinel is true, return
-    // Continue (after clearing); else store text in state.accumulated_text
-    // and return Return(LoopOutcome::Response(text)).
-    #[allow(clippy::unimplemented)]
-    async fn handle_text_response(&self, _text: String, _ctx: &mut LoopContext) -> TextAction {
-        unimplemented!(
-            "T5b: honor next_text_continues sentinel; otherwise capture text and \
-             return TextAction::Return(LoopOutcome::Response(text))"
-        )
+    async fn handle_text_response(&self, text: String, _ctx: &mut LoopContext) -> TextAction {
+        let should_continue = {
+            let mut next = self.next_text_continues.lock().await;
+            let prev = *next;
+            *next = false;
+            prev
+        };
+        if should_continue {
+            return TextAction::Continue;
+        }
+        // Note: iteration_run_stream has already populated state.accumulated_text,
+        // so we don't need to overwrite it here. We pass `text` straight through
+        // as the LoopOutcome::Response payload.
+        TextAction::Return(LoopOutcome::Response(text))
     }
 
     async fn after_iteration(&self, _ctx: &mut LoopContext, _iter: usize) {
-        // Audit confirmed: no-op. Post-batch logic lives entirely inside
-        // iteration_execute_tools, which call_llm/execute_tool_calls already
-        // dispatch to. Documented for T5c reviewers.
+        // Audit confirmed: no-op. All post-batch logic lives inside
+        // iteration_execute_tools (post-mutation update message injection,
+        // memory-recall finalization guard, single-shell evidence guard,
+        // invalid-tool-args streak bookkeeping), which execute_tool_calls
+        // dispatches to.
+    }
+}
+
+impl<'a> StreamDelegate<'a> {
+    /// Populate `pending_tool_uses_vec` + `pending_calls` from the helper's
+    /// returned tool uses and emit a `RespondResult::ToolCalls`. Called from
+    /// the two `call_llm` branches (non-empty + recovered FallThrough) that
+    /// dispatch tool execution.
+    async fn stash_pending_tool_calls(
+        &self,
+        pending: Vec<(String, String, String)>,
+    ) -> RespondResult {
+        let ids: Vec<String> = pending.iter().map(|tu| tu.0.clone()).collect();
+
+        debug_assert!(
+            !ids.is_empty(),
+            "StreamDelegate::call_llm returned empty ToolCalls — would double-fire \
+             the loop-level tool_intent_nudge"
+        );
+
+        {
+            let mut map = self.pending_calls.lock().await;
+            map.clear();
+            for tu in &pending {
+                map.insert(tu.0.clone(), tu.clone());
+            }
+        }
+        *self.pending_tool_uses_vec.lock().await = pending;
+
+        let finish_reason = self
+            .state
+            .lock()
+            .await
+            .last_finish_reason
+            .clone()
+            .unwrap_or_default();
+
+        RespondResult::ToolCalls {
+            calls: ids,
+            finish_reason,
+        }
     }
 }
 
@@ -190,31 +493,28 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
 mod tests {
     use super::*;
 
-    /// T5a smoke test: the struct compiles, the constructor signature matches
-    /// what T5c will need at the call site, and the trait impl is wired (even
-    /// though every method panics). Runtime invocation is intentionally avoided
-    /// to keep T5a runtime-safe.
+    /// Compile-time witness: the constructor signature matches what T5c will
+    /// need at the call site, and the trait impl is wired into the unified
+    /// loop. Runtime invocation is intentionally avoided (StreamTaskInputs is
+    /// heavy to fake); the e2e tests in `turn_service_stream_turn_e2e` and
+    /// `turn_service_run_turn_e2e` are the canonical regression guard once
+    /// T5c wires this delegate into production.
     #[test]
     fn struct_signatures_compile() {
-        // Compile-time witness only. Constructing a real `StreamDelegate`
-        // requires a fully-built `StreamTaskInputs`, which is heavy to fake
-        // in a unit test; T5b adds the integration fixture once the methods
-        // do something.
         fn _witness_construct<'a>(
             inputs: &'a StreamTaskInputs,
+            extras: StreamDelegateExtras,
             state: StreamLoopState,
             cancel_rx: oneshot::Receiver<()>,
             tool_executor: ToolRegistryExecutor,
         ) -> StreamDelegate<'a> {
-            StreamDelegate::new(inputs, state, cancel_rx, tool_executor)
+            StreamDelegate::new(inputs, extras, state, cancel_rx, tool_executor)
         }
 
         fn _witness_into_parts(d: StreamDelegate<'_>) -> (StreamLoopState, ToolRegistryExecutor) {
             d.into_parts()
         }
 
-        // Trait-object coercion proves the impl satisfies `LoopDelegate`
-        // (Send + Sync + dyn-compatible).
         fn _witness_trait_object<'a>(d: &'a StreamDelegate<'a>) -> &'a dyn LoopDelegate {
             d
         }
