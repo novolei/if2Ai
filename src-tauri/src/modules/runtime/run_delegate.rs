@@ -1,6 +1,6 @@
 //! `RunDelegate` — bridges the synchronous (non-streaming) agent turn body
 //! into the unified [`run_agentic_loop`] from
-//! [`crate::modules::application::turn_service::agentic_loop`].
+//! [`crate::modules::runtime::agent_loop`].
 //!
 //! Phase 2 T10 (5c-6) — see `docs/superpowers/plans/2026-04-30-steward-alignment.md`.
 //!
@@ -35,19 +35,9 @@
 //!
 //! ## Layering note
 //!
-//! This module imports from `application::turn_service` (the higher layer).
-//! That inverse dependency is pragmatic for the bridge step: the alternative
-//! is moving `agentic_loop` + `loop_config` down into `runtime`, which is
-//! out of scope for T10.
-//!
-//! ## Layering note (Phase 2 closing)
-//!
-//! This file imports from `application::turn_service::agentic_loop`
-//! (runtime → application), an inversion of the canonical CHARTER §2.1
-//! direction. Acceptable as a transitional step; the clean fix is moving
-//! `agentic_loop` + `loop_config` down into a shared `runtime::loop`
-//! module (or extracting a thin adapter trait into `runtime` that
-//! `application` plugs into). **FOLLOW-UP**: track in Phase 3 backlog.
+//! Phase 3 T1 relocated `agentic_loop` + `loop_config` into
+//! `runtime/agent_loop/`, eliminating the prior runtime → application
+//! import inversion. This file now depends only on its own layer.
 
 use std::sync::Arc;
 
@@ -62,14 +52,14 @@ use super::conversation::{
 use super::permissions::PermissionPrompter;
 use super::session::ContentBlock;
 
-use crate::modules::application::turn_service::agentic_loop::{
+use crate::modules::runtime::agent_loop::{
     LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult, TextAction,
 };
 
 /// Adapter that exposes a [`ConversationRuntime`] turn through the
 /// [`LoopDelegate`] interface. Lives only for the duration of one
 /// `run_turn` invocation; reclaim ownership of the per-turn state via
-/// [`Self::into_parts`] after [`crate::modules::application::turn_service::agentic_loop::run_agentic_loop`]
+/// [`Self::into_parts`] after [`crate::modules::runtime::agent_loop::run_agentic_loop`]
 /// returns.
 pub(super) struct RunDelegate<'r, 'p, C, T>
 where
@@ -143,7 +133,7 @@ where
         None
     }
 
-    async fn call_llm(&self, _ctx: &mut LoopContext) -> Result<RespondResult, String> {
+    async fn call_llm(&self, ctx: &mut LoopContext) -> Result<RespondResult, String> {
         let mut runtime_guard = self.runtime.lock().await;
         let runtime: &mut ConversationRuntime<C, T> = &mut runtime_guard;
         let mut state = self.state.lock().await;
@@ -183,10 +173,17 @@ where
             runtime.session.messages.clone()
         };
 
+        // Phase 3 T3 (N2-β): when the loop has detected `force_text_after_truncations`
+        // consecutive `length` finishes, drop tool definitions so the provider
+        // is forced to emit a text reply instead of yet another truncated tool call.
         let request = ApiRequest {
             system_prompt: runtime.system_prompt.clone(),
             messages: messages_for_request,
-            tools: Some(runtime.tool_executor.get_definitions()),
+            tools: if ctx.force_text {
+                None
+            } else {
+                Some(runtime.tool_executor.get_definitions())
+            },
         };
 
         let events = match runtime.api_client.stream(request).await {

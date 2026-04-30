@@ -35,6 +35,12 @@ pub(super) struct PreflightContext<'a> {
     pub force_final_response: bool,
     pub finalization_reason: &'a str,
     pub force_tool_choice: bool,
+    /// Phase 3 T3 (N2-β): when `true`, drop all tool definitions from the
+    /// outgoing request so the provider is forced to produce a text reply.
+    /// Set by `run_agentic_loop` after `force_text_after_truncations`
+    /// consecutive `length`-truncation finishes — a safety valve for
+    /// runaway tool-call loops that keep getting cut off mid-output.
+    pub force_text: bool,
     pub tool_loop_iter: usize,
     pub max_iterations: usize,
     pub stream_id: &'a str,
@@ -77,6 +83,7 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         force_final_response,
         finalization_reason,
         force_tool_choice,
+        force_text,
         tool_loop_iter,
         max_iterations,
         stream_id,
@@ -252,7 +259,10 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         session_messages.clone()
     };
 
-    let tool_choice = if force_final_response || tool_defs.is_empty() {
+    // Phase 3 T3 (N2-β): `force_text` collapses tools and tool_choice the
+    // same way `force_final_response` does, so the provider must emit text.
+    let drop_tools = force_final_response || force_text || tool_defs.is_empty();
+    let tool_choice = if drop_tools {
         None
     } else if force_tool_choice {
         Some(ToolChoice::Any)
@@ -269,7 +279,7 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         } else {
             Some(system_prompt.to_string())
         },
-        tools: if force_final_response || tool_defs.is_empty() {
+        tools: if drop_tools {
             None
         } else {
             Some(tool_defs.to_vec())

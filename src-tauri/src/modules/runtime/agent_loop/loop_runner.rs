@@ -5,10 +5,14 @@
 //! delegates (5b: StreamDelegate, 5c: RunDelegate) carry full `ToolCall` /
 //! `ToolResult` values inside their own state and route them by opaque-id
 //! Strings through this loop. The loop never inspects call/result contents.
+//!
+//! Relocated from `application::turn_service::agentic_loop` in Phase 3 T1 so
+//! `runtime/run_delegate.rs` and the streaming delegate can both depend on it
+//! without inverting the runtime → application layering.
 
 use async_trait::async_trait;
 
-use crate::modules::application::turn_service::AgenticLoopConfig;
+use super::config::AgenticLoopConfig;
 
 /// Per-iteration scratch state passed by reference to delegate callbacks.
 /// Delegates may inject messages, append tool results, and read `force_text`
@@ -92,7 +96,6 @@ pub async fn run_agentic_loop(
     config: &AgenticLoopConfig,
 ) -> LoopOutcome {
     let mut ctx = LoopContext::default();
-    let mut nudge_count: u32 = 0;
     let mut truncation_count: u32 = 0;
 
     for iteration in 0..config.max_iterations {
@@ -102,11 +105,16 @@ pub async fn run_agentic_loop(
             LoopSignal::Continue => {}
         }
 
+        // Set ctx.force_text BEFORE before_llm_call so delegates that build
+        // the request inside before_llm_call (e.g. StreamDelegate via
+        // iteration_preflight) can honor it on the iteration when the
+        // threshold was crossed, not the next one. RunDelegate reads it
+        // inside call_llm, which still runs after this assignment.
+        ctx.force_text = truncation_count >= config.force_text_after_truncations;
+
         if let Some(outcome) = delegate.before_llm_call(&mut ctx, iteration).await {
             return outcome;
         }
-
-        ctx.force_text = truncation_count >= config.force_text_after_truncations;
 
         let respond = match delegate.call_llm(&mut ctx).await {
             Err(e) => return LoopOutcome::Failure(e),
@@ -129,16 +137,14 @@ pub async fn run_agentic_loop(
                     truncation_count += 1;
                     continue;
                 }
-                if calls.is_empty()
-                    && config.enable_tool_intent_nudge
-                    && nudge_count < config.max_tool_intent_nudges
-                {
-                    ctx.inject(
-                        "(You signaled tool intent but made no tool calls. \
-                         Please call a tool now or respond with text.)",
+                if calls.is_empty() {
+                    // Empty tool_calls would have been short-circuited by
+                    // delegates already (StreamDelegate has debug_assert!;
+                    // RunDelegate routes via Text). Reaching this branch
+                    // indicates a delegate contract violation — fail loud.
+                    return LoopOutcome::Failure(
+                        "delegate returned empty ToolCalls (call_llm contract violation)".into(),
                     );
-                    nudge_count += 1;
-                    continue;
                 }
                 let results = delegate.execute_tool_calls(calls, &mut ctx).await;
                 ctx.append_tool_results(results);

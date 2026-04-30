@@ -160,6 +160,7 @@ pub(super) async fn iteration_preflight(
     state: &mut StreamLoopState,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
     refs: &PreflightSharedRefs<'_>,
+    force_text: bool,
 ) -> PreflightOutcome {
     // Phase 1 — cancellation poll.
     if cancel_rx.try_recv().is_ok() {
@@ -290,6 +291,7 @@ pub(super) async fn iteration_preflight(
             force_final_response,
             finalization_reason: &current_finalization_reason,
             force_tool_choice,
+            force_text,
             tool_loop_iter: state.tool_loop_iter,
             max_iterations: refs.max_iterations,
             stream_id: refs.stream_id,
@@ -332,6 +334,7 @@ pub(super) async fn iteration_preflight(
                 "tool_choice": request_tool_choice,
                 "force_final_response": force_final_response,
                 "force_tool_choice": force_tool_choice,
+                "force_text": force_text,
                 "requires_tool_execution_evidence": super::work_loop::requires_tool_execution_evidence(refs.work_loop_decision),
                 "has_successful_tool": state.has_successful_tool,
                 "has_successful_mutating_tool": state.has_successful_mutating_tool,

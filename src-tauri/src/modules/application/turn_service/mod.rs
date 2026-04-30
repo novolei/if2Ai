@@ -79,11 +79,9 @@ use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
 mod agent_loop_delegate;
-pub mod agentic_loop;
 pub mod dk_lookup_hook;
 pub mod finalize_hooks;
 pub mod hook_registry;
-mod loop_config;
 pub mod preflight_hooks;
 pub mod prompt_cache;
 mod run;
@@ -102,7 +100,13 @@ mod work_loop;
 #[cfg(test)]
 mod tests;
 
-pub use loop_config::AgenticLoopConfig;
+// Phase 3 T1: agentic_loop and loop_config relocated to runtime/agent_loop/
+// to fix the runtime → application layering inversion. These re-exports
+// preserve the existing public path so consumers in commands/agent/mod.rs,
+// stream_task.rs, stream_delegate.rs, etc. don't need changes. Future
+// cleanup can drop these once consumers migrate.
+pub use crate::modules::runtime::agent_loop as agentic_loop;
+pub use crate::modules::runtime::agent_loop::AgenticLoopConfig;
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
 
