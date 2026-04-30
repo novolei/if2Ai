@@ -93,10 +93,12 @@ use crate::modules::session::Session as AppSession;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
+#[allow(deprecated)]
 use super::agent_loop_delegate::{
     AgentLoopDelegate, AgentLoopDelegateInput, AgentLoopDelegateOutput, AgentLoopTerminalState,
     StreamingAgentLoopDelegate,
 };
+use super::stream_loop_state;
 
 // MAX_REQUEST_* / MAX_STREAM_RETRY_ON_TIMEOUT moved to
 // `crate::modules::runtime::budget` so the canonical preflight /
@@ -138,7 +140,7 @@ fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> Strin
 /// `stream_turn`. Bundled into a struct so the spawn call site
 /// stays one line and so individual fields can be added / removed
 /// without churn at the spawn boundary.
-pub(super) struct StreamTaskInputs {
+pub struct StreamTaskInputs {
     pub stream_id_for_task: String,
     pub run_event_logger: RunEventLogger,
     pub session_id: String,
@@ -212,6 +214,13 @@ pub(super) struct StreamTaskInputs {
     /// behaviourally equivalent today but masks ownership and makes
     /// future per-turn `workdir` overrides harder.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
+    /// Steward-aligned safety-valve configuration for the agent loop
+    /// (S2-S1b). Plumbed from `TurnServiceDeps::loop_config`. Today
+    /// the streaming body still uses `agent_max_iterations()` and the
+    /// pre-Steward truncation handling; S5 Task 5.1's `run_agentic_loop`
+    /// is the canonical home for `force_text_after_truncations`,
+    /// `enable_tool_intent_nudge`, and `max_iterations` consumption.
+    pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
 pub(super) async fn append_stream_event(
@@ -305,6 +314,7 @@ fn should_retry_announced_tool_intent_no_tool(
 /// MIG-001-d preserves behaviour bit-for-bit; the only structural
 /// change vs the previous inline closure is the destructuring at
 /// the top of the function and the location.
+#[allow(deprecated)]
 pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let delegate = StreamingAgentLoopDelegate::new();
     let _ = delegate
@@ -364,6 +374,9 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
         utility_llm,
+        // S2-S1b: plumbed through but not yet consumed; S5 Task 5.1
+        // `run_agentic_loop` becomes the consumer.
+        loop_config: _loop_config,
     } = inputs;
 
     // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
@@ -379,33 +392,6 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     );
 
     let max_iterations: usize = agent_max_iterations();
-    let mut tool_loop_iter: usize = 0;
-    let mut force_final_response_next = false;
-    let mut finalization_reason: Option<String> = None;
-    let mut last_tool_batch_signature: Option<String> = None;
-    let mut repeated_tool_batch_count = 0usize;
-    let mut invalid_tool_args_streak = 0usize;
-    let mut session_messages = messages_for_stream.clone();
-    let mut accumulated_text = String::new();
-    let mut accumulated_thinking = String::new();
-    let mut token_count: u32 = 0;
-    // P1-7 / P2-11: provider-billable usage. Anthropic puts `input_tokens`
-    // on `message_start` and `output_tokens` on `message_delta`; OpenAI
-    // compat puts both on the synthesised `message_delta` in `finish()`.
-    // We keep one running per-call snapshot (`current_call_usage`) using
-    // max-merge so partial fields from either event combine into the
-    // truth, then commit it into `accumulated_usage` on `message_stop` so
-    // multi-iteration tool loops sum correctly.
-    let mut accumulated_usage: crate::modules::runtime::usage::TokenUsage =
-        crate::modules::runtime::usage::TokenUsage::default();
-    let mut current_call_usage: crate::modules::runtime::usage::TokenUsage =
-        crate::modules::runtime::usage::TokenUsage::default();
-    let mut stream_failed = false;
-    let mut completion_already_emitted = false;
-    let mut has_successful_tool = false;
-    let mut has_successful_mutating_tool = false;
-    let mut pending_operation_for_delegate: Option<PendingOperationMetadata> = None;
-    let mut terminal_status: Option<&'static str>;
 
     // Phase 6E harness: emit TurnStarted at the top of the spawned task
     // so all timing measurements include API client setup time.
@@ -415,35 +401,35 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         turn_number_for_stream,
     );
     let stream_turn_started_at = std::time::Instant::now();
-    let mut last_stream_error_reason: Option<String> = None;
-    let mut sanitize_rounds = 0usize;
-    let mut sanitized_dropped_empty_messages = 0usize;
-    let mut sanitized_dropped_orphan_tool_results = 0usize;
-    let mut sanitized_dropped_unmatched_tool_uses = 0usize;
-    let mut sanitized_dropped_invalid_tool_use_inputs = 0usize;
-    let mut sanitize_orphan_samples: Vec<String> = Vec::new();
-    let mut sanitize_unmatched_samples: Vec<String> = Vec::new();
-    let mut sanitize_invalid_tool_use_samples: Vec<String> = Vec::new();
-    let mut preflight_trim_rounds = 0usize;
-    let mut preflight_dropped_messages_total = 0usize;
-    let mut preflight_trimmed_chars_total = 0usize;
-    let mut stream_start_retry_count = 0usize;
-    let mut stream_event_retry_count = 0usize;
-    let mut tool_required_no_tool_retry_count = 0usize;
-    let mut tool_intent_nudge_retry_count = 0usize;
-    let mut diagnostic_warnings: Vec<String> = Vec::new();
-    let mut provider_textual_tool_markup_seen = false;
-    let mut force_tool_choice_next =
+
+    // S5b-1: bag the ~38 mutable per-turn locals into `StreamLoopState`.
+    // Pure structural prep — no behaviour change vs the prior inline
+    // `let mut name = ...` declarations. See `stream_loop_state.rs` for
+    // the per-field rationale; future 5b-2..5b-5 substeps will shrink
+    // this bag as helpers are extracted.
+    //
+    // P1-7 / P2-11 note (carried over): `accumulated_usage` /
+    // `current_call_usage` track provider-billable token usage across
+    // events — Anthropic puts `input_tokens` on `message_start` and
+    // `output_tokens` on `message_delta`; OpenAI compat puts both on
+    // the synthesised `message_delta` in `finish()`. The per-call
+    // snapshot is committed into the running total on `message_stop`
+    // so multi-iteration tool loops sum correctly.
+    let initial_force_tool_choice_next =
         (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
             || super::work_loop::requires_single_shell_command_evidence(
                 &work_loop_decision_for_stream,
             ))
             && !tool_defs_for_stream.is_empty();
-    let mut stream_circuit = crate::modules::provider::resilience::StreamCircuitState::default();
+    let mut state = stream_loop_state::StreamLoopState::new(
+        messages_for_stream,
+        format!("stream_{}", stream_id_for_task),
+        initial_force_tool_choice_next,
+    );
+
     let stream_resilience_cfg =
         crate::modules::provider::resilience::LlmResilienceConfig::from_env();
     let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
-    let mut provider_request_id = format!("stream_{}", stream_id_for_task);
     let is_resume_turn = inbound_resume_cursor.is_some();
     let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
     // Phase M4-C P2 — wrap in `Arc` so the harness
@@ -466,9 +452,6 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     let mut tool_executor =
         ToolRegistryExecutor::new_with_context(tool_registry_clone.clone(), execution_context);
     const SAVE_INTERVAL: u32 = 50;
-    // Session-format timeline messages (for persistence in chronological order)
-    let mut timeline_session_messages: Vec<crate::modules::runtime::session::ConversationMessage> =
-        Vec::new();
 
     loop {
         // Check for cancellation at the start of each iteration
@@ -476,8 +459,8 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             tracing::info!("[start_agent_stream] Stream cancelled at loop iteration");
             let cancelled_truth = TaskOutcomeResolver::resolve(
                 ExecutionTruth {
-                    has_successful_tool,
-                    has_successful_mutating_tool,
+                    has_successful_tool: state.has_successful_tool,
+                    has_successful_mutating_tool: state.has_successful_mutating_tool,
                 },
                 &ConversationTruth {
                     stream_failed: true,
@@ -500,7 +483,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 effective_workdir: None,
                 policy_decision: None,
                 evidence_id: None,
-                request_id: Some(provider_request_id.clone()),
+                request_id: Some(state.provider_request_id.clone()),
                 task_outcome: Some(cancelled_truth.task_outcome.to_string()),
                 degraded_reason: cancelled_truth.degraded_reason,
                 resume_available: Some(cancelled_truth.resume_available),
@@ -515,31 +498,33 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             };
             stream_emitter.emit_payload(payload.clone());
             append_stream_event(&run_event_logger, &payload).await;
-            completion_already_emitted = true;
-            terminal_status = Some("cancelled_by_user");
+            state.completion_already_emitted = true;
+            state.terminal_status = Some("cancelled_by_user");
             break;
         }
 
-        if tool_loop_iter >= max_iterations {
+        if state.tool_loop_iter >= max_iterations {
             tracing::warn!(
                 "[start_agent_stream] Tool loop exceeded max_iterations={}",
                 max_iterations
             );
-            terminal_status = Some("max_iterations_reached");
+            state.terminal_status = Some("max_iterations_reached");
             break;
         }
-        tool_loop_iter += 1;
+        state.tool_loop_iter += 1;
         tool_executor
             .execution_context
             .tool_success_evidence
             .store(0, std::sync::atomic::Ordering::Relaxed);
-        let force_final_response = force_final_response_next || tool_loop_iter >= max_iterations;
-        let force_tool_choice = force_tool_choice_next
+        let force_final_response =
+            state.force_final_response_next || state.tool_loop_iter >= max_iterations;
+        let force_tool_choice = state.force_tool_choice_next
             || (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-                && !has_successful_mutating_tool);
-        force_tool_choice_next = false;
+                && !state.has_successful_mutating_tool);
+        state.force_tool_choice_next = false;
         let current_finalization_reason = if force_final_response {
-            finalization_reason
+            state
+                .finalization_reason
                 .clone()
                 .unwrap_or_else(|| "max_iterations_finalization_pass".to_string())
         } else {
@@ -548,9 +533,9 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
 
         tracing::info!(
             "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}, force_final_response={}, finalization_reason={}",
-            tool_loop_iter,
-            session_messages.len(),
-            accumulated_text.len(),
+            state.tool_loop_iter,
+            state.session_messages.len(),
+            state.accumulated_text.len(),
             force_final_response,
             current_finalization_reason
         );
@@ -569,15 +554,15 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         // Failure-isolated: any error → `digested_messages = None`.
         let digested_owned: Option<Vec<crate::modules::api::InputMessage>> =
             super::preflight_hooks::digest_messages_for_preflight(
-                &session_messages,
+                &state.session_messages,
                 utility_llm.clone(),
             )
             .await;
         if let Some(ref kept) = digested_owned {
             let payload = serde_json::json!({
                 "keptTokens": kept.len(),
-                "dropped": session_messages.len().saturating_sub(kept.len()),
-                "passthrough": kept.len() == session_messages.len(),
+                "dropped": state.session_messages.len().saturating_sub(kept.len()),
+                "passthrough": kept.len() == state.session_messages.len(),
                 "tier": "recent_messages",
             });
             let _ = crate::modules::runtime::evolution_emitter::emit_evolution_event(
@@ -597,7 +582,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         // Build the iteration request via the extracted preflight module (GAP-005).
         let preflight_result = super::stream_preflight::build_iteration_request(
             super::stream_preflight::PreflightContext {
-                session_messages: &session_messages,
+                session_messages: &state.session_messages,
                 digested_messages: digested_owned.as_deref(),
                 tool_defs: &tool_defs_for_stream,
                 system_prompt: &system_prompt_for_stream,
@@ -606,7 +591,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 force_final_response,
                 finalization_reason: &current_finalization_reason,
                 force_tool_choice,
-                tool_loop_iter,
+                tool_loop_iter: state.tool_loop_iter,
                 max_iterations,
                 stream_id: &stream_id_for_task,
                 session_id: &session_id,
@@ -636,7 +621,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 serde_json::json!({
                     "stream_id": stream_id_for_task.clone(),
                     "session_id": session_id.clone(),
-                    "iteration": tool_loop_iter,
+                    "iteration": state.tool_loop_iter,
                     "tool_count": request_tool_count,
                     "tool_names": request_tool_names,
                     "canonical_tool_names": tool_pool_names_for_stream.clone(),
@@ -646,45 +631,51 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                     "force_final_response": force_final_response,
                     "force_tool_choice": force_tool_choice,
                     "requires_tool_execution_evidence": super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream),
-                    "has_successful_tool": has_successful_tool,
-                    "has_successful_mutating_tool": has_successful_mutating_tool,
+                    "has_successful_tool": state.has_successful_tool,
+                    "has_successful_mutating_tool": state.has_successful_mutating_tool,
                     "reason_codes": work_loop_decision_for_stream.reason_codes.clone(),
                 }),
             )
             .await;
-        session_messages = preflight_result.session_messages;
-        preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
-        preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
-        preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;
-        sanitize_rounds += preflight_result.sanitize_rounds_added;
-        sanitized_dropped_empty_messages += preflight_result.sanitized_dropped_empty_messages_added;
-        sanitized_dropped_orphan_tool_results +=
+        state.session_messages = preflight_result.session_messages;
+        state.preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
+        state.preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
+        state.preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;
+        state.sanitize_rounds += preflight_result.sanitize_rounds_added;
+        state.sanitized_dropped_empty_messages +=
+            preflight_result.sanitized_dropped_empty_messages_added;
+        state.sanitized_dropped_orphan_tool_results +=
             preflight_result.sanitized_dropped_orphan_tool_results_added;
-        sanitized_dropped_unmatched_tool_uses +=
+        state.sanitized_dropped_unmatched_tool_uses +=
             preflight_result.sanitized_dropped_unmatched_tool_uses_added;
-        sanitized_dropped_invalid_tool_use_inputs +=
+        state.sanitized_dropped_invalid_tool_use_inputs +=
             preflight_result.sanitized_dropped_invalid_tool_use_inputs_added;
-        sanitize_orphan_samples.extend(preflight_result.sanitize_orphan_samples_added);
-        sanitize_unmatched_samples.extend(preflight_result.sanitize_unmatched_samples_added);
-        sanitize_invalid_tool_use_samples
+        state
+            .sanitize_orphan_samples
+            .extend(preflight_result.sanitize_orphan_samples_added);
+        state
+            .sanitize_unmatched_samples
+            .extend(preflight_result.sanitize_unmatched_samples_added);
+        state
+            .sanitize_invalid_tool_use_samples
             .extend(preflight_result.sanitize_invalid_tool_use_samples_added);
 
         if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
             &cost_guard_cfg,
             &session_id,
         ) {
-            stream_failed = true;
-            last_stream_error_reason = Some(ce.to_string());
-            terminal_status = Some("failed_to_start_stream");
+            state.stream_failed = true;
+            state.last_stream_error_reason = Some(ce.to_string());
+            state.terminal_status = Some("failed_to_start_stream");
             let user_visible_truth = TaskOutcomeResolver::resolve(
                 ExecutionTruth {
-                    has_successful_tool,
-                    has_successful_mutating_tool,
+                    has_successful_tool: state.has_successful_tool,
+                    has_successful_mutating_tool: state.has_successful_mutating_tool,
                 },
                 &ConversationTruth {
                     stream_failed: true,
                     terminal_status: "failed_to_start_stream",
-                    last_stream_error_reason: last_stream_error_reason.clone(),
+                    last_stream_error_reason: state.last_stream_error_reason.clone(),
                 },
             );
             let payload = StreamTokenPayload {
@@ -702,7 +693,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 effective_workdir: None,
                 policy_decision: None,
                 evidence_id: None,
-                request_id: Some(provider_request_id.clone()),
+                request_id: Some(state.provider_request_id.clone()),
                 task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                 degraded_reason: user_visible_truth.degraded_reason,
                 resume_available: Some(user_visible_truth.resume_available),
@@ -720,7 +711,8 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             if let Some(bus) = harness_event_bus_for_stream.as_ref() {
                 let _ = bus.emit(AgentEvent::StreamErrored {
                     session_id: session_id.clone(),
-                    reason: last_stream_error_reason
+                    reason: state
+                        .last_stream_error_reason
                         .clone()
                         .unwrap_or_else(|| "cost_limit".to_string()),
                     resume_available: user_visible_truth.resume_available,
@@ -734,7 +726,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             &provider_client_for_stream,
             failover_provider_client.as_ref(),
             &iter_api_request,
-            &mut stream_circuit,
+            &mut state.stream_circuit,
             &stream_resilience_cfg,
         )
         .await
@@ -749,31 +741,31 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             Err(e) => {
                 let stream_error_reason = format_stream_error_reason(&e);
                 if is_network_timeout_reason(&stream_error_reason)
-                    && stream_start_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
+                    && state.stream_start_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
                 {
-                    stream_start_retry_count += 1;
+                    state.stream_start_retry_count += 1;
                     tracing::warn!(
                         "[start_agent_stream] start-stream timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
                         stream_id_for_task,
                         session_id,
-                        stream_start_retry_count,
+                        state.stream_start_retry_count,
                         MAX_STREAM_RETRY_ON_TIMEOUT,
                         stream_error_reason
                     );
                     tokio::time::sleep(Duration::from_millis(350)).await;
                     continue;
                 }
-                stream_failed = true;
-                last_stream_error_reason = Some(stream_error_reason.clone());
-                terminal_status = Some("failed_to_start_stream");
+                state.stream_failed = true;
+                state.last_stream_error_reason = Some(stream_error_reason.clone());
+                state.terminal_status = Some("failed_to_start_stream");
                 tracing::error!(
                     "[start_agent_stream] Background task failed to start stream: {}",
                     stream_error_reason
                 );
                 let user_visible_truth = TaskOutcomeResolver::resolve(
                     ExecutionTruth {
-                        has_successful_tool,
-                        has_successful_mutating_tool,
+                        has_successful_tool: state.has_successful_tool,
+                        has_successful_mutating_tool: state.has_successful_mutating_tool,
                     },
                     &ConversationTruth {
                         stream_failed: true,
@@ -781,9 +773,13 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                         last_stream_error_reason: Some(stream_error_reason.clone()),
                     },
                 );
-                let resume_cursor = user_visible_truth
-                    .resume_available
-                    .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
+                let resume_cursor = user_visible_truth.resume_available.then(|| {
+                    build_resume_cursor(
+                        &stream_id_for_task,
+                        state.tool_loop_iter,
+                        state.token_count,
+                    )
+                });
                 let degraded_reason = user_visible_truth.degraded_reason.clone();
                 let payload = StreamTokenPayload {
                     stream_id: stream_id_for_task.clone(),
@@ -800,7 +796,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                     effective_workdir: None,
                     policy_decision: None,
                     evidence_id: None,
-                    request_id: Some(provider_request_id.clone()),
+                    request_id: Some(state.provider_request_id.clone()),
                     task_outcome: Some(user_visible_truth.task_outcome.to_string()),
                     degraded_reason,
                     resume_available: Some(user_visible_truth.resume_available),
@@ -821,7 +817,8 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 if let Some(bus) = harness_event_bus_for_stream.as_ref() {
                     let _ = bus.emit(AgentEvent::StreamErrored {
                         session_id: session_id.clone(),
-                        reason: last_stream_error_reason
+                        reason: state
+                            .last_stream_error_reason
                             .clone()
                             .unwrap_or_else(|| "unknown_stream_error".to_string()),
                         resume_available: user_visible_truth.resume_available,
@@ -839,7 +836,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             .filter(|id| !id.is_empty())
             .map(ToOwned::to_owned)
         {
-            provider_request_id = request_id.clone();
+            state.provider_request_id = request_id.clone();
             tracing::info!(
                 "[start_agent_stream] provider request_id captured: stream_id={}, session_id={}, request_id={}",
                 stream_id_for_task,
@@ -854,38 +851,38 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             cancel_rx,
             stream_id: stream_id_for_task.clone(),
             session_id: session_id.clone(),
-            provider_request_id: provider_request_id.clone(),
-            accumulated_text,
-            accumulated_thinking,
-            token_count,
-            current_call_usage,
-            accumulated_usage,
+            provider_request_id: state.provider_request_id.clone(),
+            accumulated_text: std::mem::take(&mut state.accumulated_text),
+            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
+            token_count: state.token_count,
+            current_call_usage: std::mem::take(&mut state.current_call_usage),
+            accumulated_usage: std::mem::take(&mut state.accumulated_usage),
             stream_emitter: stream_emitter.clone(),
             run_event_logger: run_event_logger.clone(),
             app_session: app_session_clone.clone(),
             session_manager: session_manager.clone(),
             harness_bus: harness_event_bus_for_stream.clone(),
             execution_context: execution_context_for_policy.clone(),
-            has_successful_tool,
-            has_successful_mutating_tool,
+            has_successful_tool: state.has_successful_tool,
+            has_successful_mutating_tool: state.has_successful_mutating_tool,
             provider_id: provider_id_for_stream.clone(),
             model: model_for_stream.clone(),
-            stream_event_retry_count,
+            stream_event_retry_count: state.stream_event_retry_count,
         };
         let loop_result = super::stream_event_loop::run_stream_event_loop(event_loop_ctx).await;
         let mut pending_tool_uses = loop_result.pending_tool_uses;
-        accumulated_text = loop_result.accumulated_text;
-        accumulated_thinking = loop_result.accumulated_thinking;
-        token_count = loop_result.token_count;
-        current_call_usage = loop_result.current_call_usage;
-        accumulated_usage = loop_result.accumulated_usage;
-        stream_failed = loop_result.stream_failed;
-        last_stream_error_reason = loop_result.last_stream_error_reason;
-        terminal_status = loop_result.terminal_status;
+        state.accumulated_text = loop_result.accumulated_text;
+        state.accumulated_thinking = loop_result.accumulated_thinking;
+        state.token_count = loop_result.token_count;
+        state.current_call_usage = loop_result.current_call_usage;
+        state.accumulated_usage = loop_result.accumulated_usage;
+        state.stream_failed = loop_result.stream_failed;
+        state.last_stream_error_reason = loop_result.last_stream_error_reason;
+        state.terminal_status = loop_result.terminal_status;
         let retry_outer_after_timeout = loop_result.retry_outer_after_timeout;
-        stream_event_retry_count = loop_result.stream_event_retry_count;
+        state.stream_event_retry_count = loop_result.stream_event_retry_count;
         let _emitted_stream_delta_in_iteration = loop_result.emitted_stream_delta_in_iteration;
-        completion_already_emitted = loop_result.completion_already_emitted;
+        state.completion_already_emitted = loop_result.completion_already_emitted;
         cancel_rx = loop_result.cancel_rx;
 
         if retry_outer_after_timeout {
@@ -899,21 +896,25 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         if pending_tool_uses.is_empty() {
             tracing::info!(
                 "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
-                accumulated_text.len()
+                state.accumulated_text.len()
             );
             if !force_final_response {
                 let textual_tool_calls =
-                    super::work_loop::extract_textual_tool_calls(&accumulated_text);
+                    super::work_loop::extract_textual_tool_calls(&state.accumulated_text);
                 if !textual_tool_calls.is_empty() {
-                    provider_textual_tool_markup_seen = true;
+                    state.provider_textual_tool_markup_seen = true;
                     let markup_family =
-                        super::work_loop::detect_textual_tool_call_markup(&accumulated_text)
+                        super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
                             .unwrap_or_else(|| "textual_tool_calls".to_string());
                     let warning = format!(
                         "provider emitted {markup_family} text instead of structured tool_calls; converted to canonical tool calls"
                     );
-                    if !diagnostic_warnings.iter().any(|value| value == &warning) {
-                        diagnostic_warnings.push(warning);
+                    if !state
+                        .diagnostic_warnings
+                        .iter()
+                        .any(|value| value == &warning)
+                    {
+                        state.diagnostic_warnings.push(warning);
                     }
                     let converted_count = textual_tool_calls.len();
                     let _ = run_event_logger
@@ -925,7 +926,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                                 "provider_id": provider_id_for_stream.clone(),
                                 "model": model_for_stream.clone(),
                                 "markup_family": markup_family,
-                                "text_len": accumulated_text.len(),
+                                "text_len": state.accumulated_text.len(),
                                 "converted_tool_call_count": converted_count,
                                 "recovery_action": "execute_as_structured_tool_calls",
                                 "sanitized": true,
@@ -933,21 +934,25 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                         )
                         .await;
                     pending_tool_uses = textual_tool_calls;
-                    accumulated_text.clear();
-                    accumulated_thinking.clear();
+                    state.accumulated_text.clear();
+                    state.accumulated_thinking.clear();
                 }
             }
         }
         if pending_tool_uses.is_empty() {
             if let Some(markup_family) =
-                super::work_loop::detect_textual_tool_call_markup(&accumulated_text)
+                super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
             {
-                provider_textual_tool_markup_seen = true;
+                state.provider_textual_tool_markup_seen = true;
                 let warning = format!(
                     "provider emitted {markup_family} text instead of structured tool_calls"
                 );
-                if !diagnostic_warnings.iter().any(|value| value == &warning) {
-                    diagnostic_warnings.push(warning.clone());
+                if !state
+                    .diagnostic_warnings
+                    .iter()
+                    .any(|value| value == &warning)
+                {
+                    state.diagnostic_warnings.push(warning.clone());
                 }
                 let _ = run_event_logger
                     .append(
@@ -958,7 +963,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                             "provider_id": provider_id_for_stream.clone(),
                             "model": model_for_stream.clone(),
                             "markup_family": markup_family,
-                            "text_len": accumulated_text.len(),
+                            "text_len": state.accumulated_text.len(),
                             "recovery_action": "nudge_with_required_tool_choice",
                             "sanitized": true,
                         }),
@@ -967,12 +972,12 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             }
             if should_retry_tool_required_no_tool(
                 &work_loop_decision_for_stream,
-                has_successful_mutating_tool,
-                tool_required_no_tool_retry_count,
+                state.has_successful_mutating_tool,
+                state.tool_required_no_tool_retry_count,
                 force_final_response,
                 tool_defs_for_stream.len(),
             ) {
-                tool_required_no_tool_retry_count += 1;
+                state.tool_required_no_tool_retry_count += 1;
                 tracing::warn!(
                     "[start_agent_stream] tool-required task produced no mutating tool call; retrying once with tool-required loop control. stream_id={}, session_id={}",
                     stream_id_for_task,
@@ -980,27 +985,27 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 );
                 let payload = serde_json::json!({
                     "reason": "tool_required_no_tool",
-                    "retry_count": tool_required_no_tool_retry_count,
+                    "retry_count": state.tool_required_no_tool_retry_count,
                     "available_tool_count": tool_defs_for_stream.len(),
                 });
                 let _ = run_event_logger
                     .append("tool_required_no_tool_retry", payload)
                     .await;
-                accumulated_text.clear();
-                accumulated_thinking.clear();
-                session_messages.push(InputMessage::user_text(
+                state.accumulated_text.clear();
+                state.accumulated_thinking.clear();
+                state.session_messages.push(InputMessage::user_text(
                     "[agent_loop_control] The previous assistant response did not call tools, but this user request requires concrete file/tool execution before completion. Call the available tools now to inspect, create or edit the artifact, and verify it. Use complete JSON arguments for every tool call. Do not answer only with prose. If tool execution is impossible, explain the blockage in the final report.",
                 ));
-                force_tool_choice_next = true;
+                state.force_tool_choice_next = true;
                 continue;
             }
             if should_retry_announced_tool_intent_no_tool(
-                &accumulated_text,
-                tool_intent_nudge_retry_count,
+                &state.accumulated_text,
+                state.tool_intent_nudge_retry_count,
                 force_final_response,
                 tool_defs_for_stream.len(),
             ) {
-                tool_intent_nudge_retry_count += 1;
+                state.tool_intent_nudge_retry_count += 1;
                 tracing::warn!(
                     "[start_agent_stream] assistant announced tool intent without tool call; nudging once. stream_id={}, session_id={}",
                     stream_id_for_task,
@@ -1008,22 +1013,22 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 );
                 let payload = serde_json::json!({
                     "reason": "announced_tool_intent_no_tool",
-                    "retry_count": tool_intent_nudge_retry_count,
+                    "retry_count": state.tool_intent_nudge_retry_count,
                     "available_tool_count": tool_defs_for_stream.len(),
                 });
                 let _ = run_event_logger
                     .append("tool_intent_nudge_retry", payload)
                     .await;
-                accumulated_text.clear();
-                accumulated_thinking.clear();
-                session_messages.push(InputMessage::user_text(
+                state.accumulated_text.clear();
+                state.accumulated_thinking.clear();
+                state.session_messages.push(InputMessage::user_text(
                     super::work_loop::tool_intent_nudge_message(),
                 ));
-                force_tool_choice_next = true;
+                state.force_tool_choice_next = true;
                 continue;
             }
-            if terminal_status.is_none() {
-                terminal_status = match finalization_reason.as_deref() {
+            if state.terminal_status.is_none() {
+                state.terminal_status = match state.finalization_reason.as_deref() {
                     Some("invalid_tool_args_repeated") => Some("invalid_tool_args_repeated"),
                     Some("repeated_tool_batch_no_progress") => {
                         Some("repeated_tool_batch_no_progress")
@@ -1033,34 +1038,37 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                     }
                     _ if super::work_loop::requires_memory_recall_evidence(
                         &work_loop_decision_for_stream,
-                    ) && !has_successful_tool
+                    ) && !state.has_successful_tool
                         && super::work_loop::is_incomplete_memory_lookup_response(
-                            &accumulated_text,
+                            &state.accumulated_text,
                         ) =>
                     {
                         Some("memory_recall_required_no_tool")
                     }
                     _ if super::work_loop::requires_tool_execution_evidence(
                         &work_loop_decision_for_stream,
-                    ) && !has_successful_mutating_tool =>
+                    ) && !state.has_successful_mutating_tool =>
                     {
-                        if provider_textual_tool_markup_seen {
+                        if state.provider_textual_tool_markup_seen {
                             Some("provider_textual_tool_call_markup")
                         } else {
                             Some("tool_required_no_tool")
                         }
                     }
                     _ if super::work_loop::assistant_claims_tool_execution_without_tool(
-                        &accumulated_text,
-                    ) && !has_successful_mutating_tool =>
+                        &state.accumulated_text,
+                    ) && !state.has_successful_mutating_tool =>
                     {
-                        if provider_textual_tool_markup_seen {
+                        if state.provider_textual_tool_markup_seen {
                             Some("provider_textual_tool_call_markup")
                         } else {
                             Some("tool_required_no_tool")
                         }
                     }
-                    _ if super::work_loop::detect_repetitive_model_output(&accumulated_text) => {
+                    _ if super::work_loop::detect_repetitive_model_output(
+                        &state.accumulated_text,
+                    ) =>
+                    {
                         Some("repetitive_model_output")
                     }
                     _ => Some("model_stop_no_tools"),
@@ -1073,26 +1081,27 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
                 "[start_agent_stream] Provider emitted tool calls during finalization pass; ending as max_iterations_reached. pending_tool_uses={}",
                 pending_tool_uses.len()
             );
-            terminal_status = Some("max_iterations_reached");
+            state.terminal_status = Some("max_iterations_reached");
             break;
         }
 
         let current_tool_batch_signature = tool_batch_signature(&pending_tool_uses);
-        if last_tool_batch_signature.as_deref() == Some(current_tool_batch_signature.as_str()) {
-            repeated_tool_batch_count += 1;
+        if state.last_tool_batch_signature.as_deref() == Some(current_tool_batch_signature.as_str())
+        {
+            state.repeated_tool_batch_count += 1;
         } else {
-            repeated_tool_batch_count = 1;
-            last_tool_batch_signature = Some(current_tool_batch_signature);
+            state.repeated_tool_batch_count = 1;
+            state.last_tool_batch_signature = Some(current_tool_batch_signature);
         }
-        if repeated_tool_batch_count >= REPEATED_TOOL_BATCH_LIMIT {
+        if state.repeated_tool_batch_count >= REPEATED_TOOL_BATCH_LIMIT {
             tracing::warn!(
                 "[start_agent_stream] repeated tool batch detected; next iteration will force final summary. stream_id={}, session_id={}, repeated_count={}",
                 stream_id_for_task,
                 session_id,
-                repeated_tool_batch_count
+                state.repeated_tool_batch_count
             );
-            force_final_response_next = true;
-            finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
+            state.force_final_response_next = true;
+            state.finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
         }
 
         // Execute the extracted tool batch (GAP-005).
@@ -1100,11 +1109,11 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             pending_tool_uses: std::mem::take(&mut pending_tool_uses),
             stream_id: stream_id_for_task.clone(),
             session_id: session_id.clone(),
-            provider_request_id: provider_request_id.clone(),
-            accumulated_text,
-            accumulated_thinking,
-            session_messages,
-            timeline_session_messages,
+            provider_request_id: state.provider_request_id.clone(),
+            accumulated_text: std::mem::take(&mut state.accumulated_text),
+            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
+            session_messages: std::mem::take(&mut state.session_messages),
+            timeline_session_messages: std::mem::take(&mut state.timeline_session_messages),
             stream_emitter: stream_emitter.clone(),
             run_event_logger: run_event_logger.clone(),
             tool_registry: tool_registry_clone.clone(),
@@ -1116,61 +1125,113 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             work_loop_decision: work_loop_decision_for_stream.clone(),
             harness_bus: harness_event_bus_for_stream.clone(),
             mode,
-            invalid_tool_args_streak,
-            has_successful_tool,
-            has_successful_mutating_tool,
-            sanitized_dropped_invalid_tool_use_inputs,
-            sanitize_invalid_tool_use_samples,
+            invalid_tool_args_streak: state.invalid_tool_args_streak,
+            has_successful_tool: state.has_successful_tool,
+            has_successful_mutating_tool: state.has_successful_mutating_tool,
+            sanitized_dropped_invalid_tool_use_inputs: state
+                .sanitized_dropped_invalid_tool_use_inputs,
+            sanitize_invalid_tool_use_samples: std::mem::take(
+                &mut state.sanitize_invalid_tool_use_samples,
+            ),
             run_id: run_id_for_ledger.clone(),
             app_data_dir: app_data_dir_for_ledger.clone(),
         };
-        let had_successful_mutating_tool_before = has_successful_mutating_tool;
+        let had_successful_mutating_tool_before = state.has_successful_mutating_tool;
         let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
-        accumulated_text = tool_result.accumulated_text;
-        accumulated_thinking = tool_result.accumulated_thinking;
-        session_messages = tool_result.session_messages;
-        timeline_session_messages = tool_result.timeline_session_messages;
-        has_successful_tool = tool_result.has_successful_tool;
-        has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
+        state.accumulated_text = tool_result.accumulated_text;
+        state.accumulated_thinking = tool_result.accumulated_thinking;
+        state.session_messages = tool_result.session_messages;
+        state.timeline_session_messages = tool_result.timeline_session_messages;
+        state.has_successful_tool = tool_result.has_successful_tool;
+        state.has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
         if !had_successful_mutating_tool_before
-            && has_successful_mutating_tool
+            && state.has_successful_mutating_tool
             && super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
         {
             if let Some(message) = super::todo_ledger::post_mutation_update_message(&session_id) {
-                session_messages.push(InputMessage::user_text(message));
+                state
+                    .session_messages
+                    .push(InputMessage::user_text(message));
             }
         }
-        force_final_response_next =
-            force_final_response_next || tool_result.force_final_response_next;
+        state.force_final_response_next =
+            state.force_final_response_next || tool_result.force_final_response_next;
         apply_memory_recall_success_finalization_guard(
             &work_loop_decision_for_stream,
             tool_result.has_successful_tool,
-            &mut force_final_response_next,
-            &mut finalization_reason,
+            &mut state.force_final_response_next,
+            &mut state.finalization_reason,
         );
         if super::work_loop::requires_single_shell_command_evidence(&work_loop_decision_for_stream)
             && tool_result.has_successful_tool
         {
-            force_final_response_next = true;
-            finalization_reason = Some("single_shell_command_executed".to_string());
+            state.force_final_response_next = true;
+            state.finalization_reason = Some("single_shell_command_executed".to_string());
         }
-        if finalization_reason.is_none() {
-            finalization_reason = tool_result.finalization_reason;
+        if state.finalization_reason.is_none() {
+            state.finalization_reason = tool_result.finalization_reason;
         }
-        invalid_tool_args_streak = tool_result.invalid_tool_args_streak;
-        sanitized_dropped_invalid_tool_use_inputs =
+        state.invalid_tool_args_streak = tool_result.invalid_tool_args_streak;
+        state.sanitized_dropped_invalid_tool_use_inputs =
             tool_result.sanitized_dropped_invalid_tool_use_inputs;
-        sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
-        if pending_operation_for_delegate.is_none() {
-            pending_operation_for_delegate = tool_result.pending_operation;
+        state.sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
+        if state.pending_operation_for_delegate.is_none() {
+            state.pending_operation_for_delegate = tool_result.pending_operation;
         }
         tool_executor = tool_result.tool_executor;
         // Continue outer loop → send next LLM request with tool results
         tracing::info!(
             "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",
-            session_messages.len()
+            state.session_messages.len()
         );
     }
+
+    // S5b-1: destructure the bag back into locals so the post-loop
+    // finalization block (lifecycle hook + delegate output + finalize
+    // call) keeps its original variable names. This avoids touching
+    // any post-loop logic in this pure-refactor commit.
+    let stream_loop_state::StreamLoopState {
+        tool_loop_iter,
+        stream_event_retry_count,
+        stream_start_retry_count,
+        tool_required_no_tool_retry_count: _tool_required_no_tool_retry_count,
+        tool_intent_nudge_retry_count: _tool_intent_nudge_retry_count,
+        repeated_tool_batch_count: _repeated_tool_batch_count,
+        invalid_tool_args_streak: _invalid_tool_args_streak,
+        session_messages,
+        accumulated_text,
+        accumulated_thinking,
+        token_count,
+        accumulated_usage,
+        current_call_usage: _current_call_usage,
+        timeline_session_messages,
+        diagnostic_warnings,
+        sanitize_orphan_samples,
+        sanitize_unmatched_samples,
+        sanitize_invalid_tool_use_samples,
+        sanitize_rounds,
+        sanitized_dropped_empty_messages,
+        sanitized_dropped_orphan_tool_results,
+        sanitized_dropped_unmatched_tool_uses,
+        sanitized_dropped_invalid_tool_use_inputs,
+        preflight_trim_rounds,
+        preflight_dropped_messages_total,
+        preflight_trimmed_chars_total,
+        force_final_response_next: _force_final_response_next,
+        force_tool_choice_next: _force_tool_choice_next,
+        stream_failed,
+        completion_already_emitted,
+        has_successful_tool,
+        has_successful_mutating_tool,
+        provider_textual_tool_markup_seen: _provider_textual_tool_markup_seen,
+        terminal_status,
+        last_stream_error_reason,
+        finalization_reason: _finalization_reason,
+        last_tool_batch_signature: _last_tool_batch_signature,
+        pending_operation_for_delegate,
+        provider_request_id,
+        stream_circuit: _stream_circuit,
+    } = state;
 
     let accumulated_text = match lifecycle_hooks
         .run_point(

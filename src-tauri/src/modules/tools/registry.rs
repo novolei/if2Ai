@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -357,6 +358,11 @@ pub struct ToolRegistry {
     tools: Arc<DashMap<String, ToolEntry>>,
     names_to_toolsets: Arc<DashMap<String, String>>,
     context: SharedToolContext,
+    /// Steward-aligned protected-name guard. Starts `true` (builtin
+    /// registration phase). [`Self::lock_protected_names`] flips it
+    /// `false`; afterwards [`Self::register`] rejects any
+    /// [`crate::modules::tools::attenuation::PROTECTED_TOOL_NAMES`] entry.
+    builtin_phase: Arc<AtomicBool>,
 }
 
 #[allow(dead_code)]
@@ -368,7 +374,25 @@ impl ToolRegistry {
             tools: Arc::new(DashMap::new()),
             names_to_toolsets: Arc::new(DashMap::new()),
             context,
+            builtin_phase: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Locks the registry against further registrations of
+    /// [`crate::modules::tools::attenuation::PROTECTED_TOOL_NAMES`].
+    ///
+    /// Call once after all builtin registrations complete (typically at
+    /// the end of [`crate::modules::tools::register_builtin_tools`]).
+    /// Subsequent attempts to register any protected name fail with
+    /// [`ToolError::Register`] and emit a `tracing::warn!`.
+    pub fn lock_protected_names(&self) {
+        self.builtin_phase.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether the protected-name guard has been activated. Test-visible.
+    #[must_use]
+    pub fn is_protected_names_locked(&self) -> bool {
+        !self.builtin_phase.load(Ordering::SeqCst)
     }
 
     /// Returns a reference to the shared tool context.
@@ -384,6 +408,17 @@ impl ToolRegistry {
     /// Returns an error if a tool with the same name is already registered.
     pub fn register(&self, entry: ToolEntry) -> Result<(), ToolError> {
         let name = entry.name.clone();
+        if self.is_protected_names_locked()
+            && super::attenuation::PROTECTED_TOOL_NAMES.contains(&name.as_str())
+        {
+            tracing::warn!(
+                tool = %name,
+                "[tool_registry] rejected dynamic registration of protected tool name"
+            );
+            return Err(ToolError::Register(format!(
+                "tool `{name}` is a protected builtin name; dynamic registration rejected"
+            )));
+        }
         if self.tools.contains_key(&name) {
             return Err(ToolError::Register(format!(
                 "tool `{name}` is already registered"

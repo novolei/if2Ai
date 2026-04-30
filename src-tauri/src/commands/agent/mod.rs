@@ -58,6 +58,10 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         learned_traits: state.learned_traits.clone(),
         rolling_summarizer: state.rolling_summarizer.clone(),
         utility_llm: state.utility_llm.clone(),
+        // S2-S1b: defaults preserve current production behaviour.
+        // A future config-store wiring task will route this from
+        // `AppState` once `loop_config` lives there.
+        loop_config: crate::modules::application::turn_service::AgenticLoopConfig::default(),
     })
 }
 
