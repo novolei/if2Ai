@@ -157,6 +157,21 @@ impl MessageDigester {
     pub async fn digest(&self, messages: &[InputMessage]) -> Vec<CompressedMessage> {
         let mut out = Vec::with_capacity(messages.len());
         for (idx, msg) in messages.iter().enumerate() {
+            // Phase 6.5 fix (digester-tool-pairing): tool-bearing messages must
+            // never be summarized. Collapsing them into a `[summary]` text block
+            // strips the structured `ToolUse` / `ToolResult` blocks, after which
+            // `sanitize_messages_for_provider` drops the orphaned counterpart and
+            // the model loses evidence the tool ever ran — producing the
+            // file_write infinite-retry loop. Phase 6 T3
+            // `compress_old_tool_transcripts` is the correct layer for
+            // tool-aware summarization (it preserves tool_use_id pairing).
+            if message_contains_tool_blocks(msg) {
+                out.push(CompressedMessage::Full {
+                    original_index: idx,
+                    message: msg.clone(),
+                });
+                continue;
+            }
             let tokens = estimate_message_tokens_for_digest(msg);
             if tokens <= self.threshold_tokens {
                 out.push(CompressedMessage::Full {
@@ -299,6 +314,24 @@ fn render_message_for_summarization(msg: &InputMessage) -> String {
     buf
 }
 
+/// Returns `true` if the message contains any structured `ToolUse` or
+/// `ToolResult` content block. Such messages MUST NOT be summarized — collapsing
+/// them into a `[summary]` text block breaks the
+/// `tool_use_id` ↔ `tool_result.tool_use_id` pairing that downstream
+/// `sanitize_messages_for_provider` relies on. The orphan detection then drops
+/// the surviving member, the model never sees the tool result, and it retries
+/// the call indefinitely (file_write infinite loop bug).
+///
+/// Phase 6.5 / digester-tool-pairing fix.
+fn message_contains_tool_blocks(msg: &InputMessage) -> bool {
+    msg.content.iter().any(|b| {
+        matches!(
+            b,
+            InputContentBlock::ToolUse { .. } | InputContentBlock::ToolResult { .. }
+        )
+    })
+}
+
 /// Token-estimate for digester decisions. Mirrors the algorithm used by
 /// [`super::estimate_message_tokens`] but is duplicated here to avoid
 /// exporting that helper publicly (it remains private to the parent
@@ -338,4 +371,146 @@ fn estimate_message_tokens_for_digest(msg: &InputMessage) -> usize {
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::api::ToolResultContentBlock;
+    use crate::modules::memory::MemoryError;
+    use async_trait::async_trait;
+
+    /// Stub LLM that panics if invoked. Proves the digester never reached the
+    /// summarization path for tool-bearing messages — the regression guard.
+    struct PanicLlm;
+
+    #[async_trait]
+    impl UtilityLlm for PanicLlm {
+        async fn complete(
+            &self,
+            _system: &str,
+            _user: &str,
+            _max_tokens: u32,
+            _temperature: f32,
+        ) -> Result<String, MemoryError> {
+            panic!("digester must not invoke summarizer for tool-bearing message");
+        }
+    }
+
+    #[test]
+    fn message_contains_tool_blocks_helper() {
+        let plain = InputMessage {
+            role: "user".into(),
+            content: vec![InputContentBlock::Text { text: "hi".into() }],
+            thinking: None,
+        };
+        assert!(!message_contains_tool_blocks(&plain));
+
+        let tool_use = InputMessage {
+            role: "assistant".into(),
+            content: vec![InputContentBlock::ToolUse {
+                id: "x".into(),
+                name: "y".into(),
+                input: serde_json::Value::Null,
+            }],
+            thinking: None,
+        };
+        assert!(message_contains_tool_blocks(&tool_use));
+
+        let tool_result = InputMessage {
+            role: "user".into(),
+            content: vec![InputContentBlock::ToolResult {
+                tool_use_id: "x".into(),
+                content: vec![ToolResultContentBlock::Text { text: "ok".into() }],
+                is_error: false,
+            }],
+            thinking: None,
+        };
+        assert!(message_contains_tool_blocks(&tool_result));
+
+        let mixed = InputMessage {
+            role: "assistant".into(),
+            content: vec![
+                InputContentBlock::Text {
+                    text: "thinking out loud".into(),
+                },
+                InputContentBlock::ToolUse {
+                    id: "x".into(),
+                    name: "y".into(),
+                    input: serde_json::Value::Null,
+                },
+            ],
+            thinking: None,
+        };
+        assert!(
+            message_contains_tool_blocks(&mixed),
+            "any tool block triggers preservation"
+        );
+    }
+
+    #[tokio::test]
+    async fn digester_preserves_messages_with_tool_use_blocks() {
+        // Large enough to normally trigger summarization, but contains a
+        // ToolUse block. Must pass through as Full to preserve pairing.
+        let large_input = "x".repeat(5_000);
+        let msg = InputMessage {
+            role: "assistant".into(),
+            content: vec![
+                InputContentBlock::Text {
+                    text: large_input.clone(),
+                },
+                InputContentBlock::ToolUse {
+                    id: "call_abc".into(),
+                    name: "file_write".into(),
+                    input: serde_json::json!({"path": "/tmp/x.txt", "content": "data"}),
+                },
+            ],
+            thinking: None,
+        };
+
+        let digester = MessageDigester::new(Arc::new(PanicLlm));
+        let out = digester.digest(&[msg]).await;
+
+        assert_eq!(out.len(), 1);
+        match &out[0] {
+            CompressedMessage::Full { message, .. } => {
+                assert_eq!(message.content.len(), 2, "blocks preserved");
+                assert!(matches!(
+                    &message.content[1],
+                    InputContentBlock::ToolUse { id, .. } if id == "call_abc"
+                ));
+            }
+            CompressedMessage::Summarized { .. } => {
+                panic!("tool-bearing message MUST NOT be summarized");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn digester_preserves_messages_with_tool_result_blocks() {
+        let large_output = "result_data ".repeat(500);
+        let msg = InputMessage {
+            role: "user".into(),
+            content: vec![InputContentBlock::ToolResult {
+                tool_use_id: "call_abc".into(),
+                content: vec![ToolResultContentBlock::Text { text: large_output }],
+                is_error: false,
+            }],
+            thinking: None,
+        };
+
+        let digester = MessageDigester::new(Arc::new(PanicLlm));
+        let out = digester.digest(&[msg]).await;
+
+        assert_eq!(out.len(), 1);
+        match &out[0] {
+            CompressedMessage::Full { message, .. } => {
+                assert!(matches!(
+                    &message.content[0],
+                    InputContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_abc"
+                ));
+            }
+            _ => panic!("tool_result message MUST NOT be summarized"),
+        }
+    }
 }
