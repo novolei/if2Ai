@@ -324,24 +324,174 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         .await;
 }
 
-pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopDelegateOutput {
+pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentLoopDelegateOutput {
+    // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
+    let run_id_for_ledger = inputs.run_event_logger.run_id().to_string();
+    let app_data_dir_for_ledger = inputs
+        .app_handle_for_after_turn
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    tracing::info!(
+        "[start_agent_stream] Spawned background task for stream_id: {}",
+        inputs.stream_id_for_task
+    );
+
+    let max_iterations: usize = agent_max_iterations();
+
+    // Phase 6E harness: emit TurnStarted at the top of the spawned task
+    // so all timing measurements include API client setup time.
+    crate::modules::harness::agent_loop_integration::emit_turn_started(
+        inputs.harness_event_bus_for_stream.as_ref(),
+        &inputs.session_id,
+        inputs.turn_number_for_stream,
+    );
+    let stream_turn_started_at = std::time::Instant::now();
+
+    // S5b-1: bag the ~38 mutable per-turn locals into `StreamLoopState`.
+    // P1-7 / P2-11 note (carried over): `accumulated_usage` /
+    // `current_call_usage` track provider-billable token usage across
+    // events — Anthropic puts `input_tokens` on `message_start` and
+    // `output_tokens` on `message_delta`; OpenAI compat puts both on
+    // the synthesised `message_delta` in `finish()`. The per-call
+    // snapshot is committed into the running total on `message_stop`
+    // so multi-iteration tool loops sum correctly.
+    let initial_force_tool_choice_next =
+        (super::work_loop::requires_tool_execution_evidence(&inputs.work_loop_decision_for_stream)
+            || super::work_loop::requires_single_shell_command_evidence(
+                &inputs.work_loop_decision_for_stream,
+            ))
+            && !inputs.tool_defs_for_stream.is_empty();
+    // Move messages_for_stream out of `inputs` (replaced with empty Vec) so
+    // StreamLoopState owns them; `inputs` stays borrowable by StreamDelegate.
+    let messages_for_stream = std::mem::take(&mut inputs.messages_for_stream);
+    let state = stream_loop_state::StreamLoopState::new(
+        messages_for_stream,
+        format!("stream_{}", inputs.stream_id_for_task),
+        initial_force_tool_choice_next,
+    );
+
+    let stream_resilience_cfg =
+        crate::modules::provider::resilience::LlmResilienceConfig::from_env();
+    let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
+    let is_resume_turn = inputs.inbound_resume_cursor.is_some();
+    let mode = parse_permission_mode(inputs.permission_mode_for_stream.as_deref());
+    // Phase M4-C P2 — wrap in `Arc` so the harness
+    // `prepare_step_execution` shadow trace can borrow the
+    // same policy without re-constructing it.
+    let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
+    // Preserve `tool_success_evidence` Arc from the parent stream so broker
+    // bumps + per-iteration resets apply to the same counter (FEAT-AE-002).
+    let execution_context = SessionExecutionContext {
+        session_id: inputs.execution_context_for_task.session_id.clone(),
+        project_id: inputs.execution_context_for_task.project_id.clone(),
+        workdir: inputs.execution_context_for_task.workdir.clone(),
+        permission_mode: mode,
+        tool_success_evidence: inputs
+            .execution_context_for_task
+            .tool_success_evidence
+            .clone(),
+    };
+    let execution_context_for_policy = execution_context.clone();
+    log_context_fingerprint("start_agent_stream_task", &execution_context);
+    let tool_executor = ToolRegistryExecutor::new_with_context(
+        inputs.tool_registry_clone.clone(),
+        execution_context,
+    );
+
+    // Move cancel_rx out of `inputs` (replaced with a never-firing dummy)
+    // so the delegate can own it without a borrow conflict on `&inputs`.
+    // The dummy sender is dropped immediately; nothing reads inputs.cancel_rx
+    // after this point.
+    let cancel_rx = {
+        let (_dropped_tx, replacement) = tokio::sync::oneshot::channel::<()>();
+        std::mem::replace(&mut inputs.cancel_rx, replacement)
+    };
+
+    // S5-T5c: drive the loop through the unified `run_agentic_loop` via the
+    // StreamDelegate adapter. Replaces the previous inline 12-phase iteration
+    // body. Latent semantic shifts vs the inline body (audited in T5b,
+    // accepted as the price of the abstraction):
+    //   1. RetryAfterSleep paths (preflight+run-stream) now consume an outer
+    //      iteration slot via the synthetic `RespondResult::Text("")` →
+    //      `TextAction::Continue` round-trip.
+    //   2. `truncation_count` resets on that synthetic Text even though no
+    //      real text response happened (run_agentic_loop resets on every
+    //      `RespondResult::Text`).
+    // Neither is exercised by the current e2e suite.
+    let extras = super::stream_delegate::StreamDelegateExtras {
+        max_iterations,
+        stream_resilience_cfg,
+        cost_guard_cfg,
+        mode,
+        permission_policy,
+        execution_context_for_policy,
+        run_id_for_ledger,
+        app_data_dir_for_ledger,
+    };
+    let delegate = super::stream_delegate::StreamDelegate::new(
+        &inputs,
+        extras,
+        state,
+        cancel_rx,
+        tool_executor,
+    );
+    let outcome = super::agentic_loop::run_agentic_loop(&delegate, &inputs.loop_config).await;
+    let (mut state, _tool_executor_returned) = delegate.into_parts();
+
+    match outcome {
+        super::agentic_loop::LoopOutcome::Response(text) => {
+            // accumulated_text is normally already populated by the helpers
+            // that built the Text response. Backstop in case a future helper
+            // returns text without mirroring it into state.
+            if state.accumulated_text.is_empty() {
+                state.accumulated_text = text;
+            }
+        }
+        super::agentic_loop::LoopOutcome::Stopped => {
+            // check_signals stamps terminal_status = "cancelled_by_user"
+            // before returning LoopSignal::Stop.
+            debug_assert!(state.terminal_status.is_some());
+        }
+        super::agentic_loop::LoopOutcome::MaxIterations => {
+            // Outer (loop_config) cap. Inner per-iteration cap normally
+            // trips first via PreflightOutcome::BreakTerminal → Failure.
+            if state.terminal_status.is_none() {
+                state.terminal_status = Some("max_iterations_reached");
+            }
+        }
+        super::agentic_loop::LoopOutcome::Failure(_reason) => {
+            // PreflightOutcome::BreakTerminal / call_llm Err: helpers have
+            // already stamped terminal_status / stream_failed /
+            // last_stream_error_reason before returning.
+            debug_assert!(
+                state.terminal_status.is_some() || state.stream_failed,
+                "LoopOutcome::Failure should leave state with terminal_status or stream_failed set"
+            );
+        }
+    }
+
+    // Now destructure `inputs` for the post-loop / finalize block. Fields
+    // already moved/taken above are bound with `_` so the destructure stays
+    // exhaustive.
     let StreamTaskInputs {
         stream_id_for_task,
         run_event_logger,
         session_id,
         user_message_clone,
-        permission_mode_for_stream,
+        permission_mode_for_stream: _,
         inbound_resume_cursor,
         turn_number_for_stream,
         baseline_message_count_stream,
-        messages_for_stream,
-        tool_defs_for_stream,
-        tool_pool_names_for_stream,
-        tool_pool_schema_hash_for_stream,
-        tool_pool_policy_for_stream,
+        messages_for_stream: _,
+        tool_defs_for_stream: _,
+        tool_pool_names_for_stream: _,
+        tool_pool_schema_hash_for_stream: _,
+        tool_pool_policy_for_stream: _,
         system_prompt_for_stream,
-        provider_client_for_stream,
-        failover_provider_client,
+        provider_client_for_stream: _,
+        failover_provider_client: _,
         lifecycle_hooks,
         model_for_stream,
         provider_id_for_stream,
@@ -349,15 +499,15 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         routing_info_for_stream,
         work_loop_decision_for_stream,
         skill_resolution_plan_for_stream,
-        execution_context_for_task,
-        tool_registry_clone,
+        execution_context_for_task: _,
+        tool_registry_clone: _,
         session_manager,
         rolling_summarizer_for_stream,
         app_session_clone,
         stream_emitter,
-        mut cancel_rx,
-        permission_senders,
-        permission_overrides,
+        cancel_rx: _,
+        permission_senders: _,
+        permission_overrides: _,
         trajectory_manager_for_stream,
         learning_module_for_stream,
         memory_provider_for_stream,
@@ -373,253 +523,13 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
-        utility_llm,
-        // S2-S1b: plumbed through but not yet consumed; S5 Task 5.1
-        // `run_agentic_loop` becomes the consumer.
-        loop_config: _loop_config,
+        utility_llm: _,
+        loop_config: _,
     } = inputs;
-
-    // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
-    let run_id_for_ledger = run_event_logger.run_id().to_string();
-    let app_data_dir_for_ledger = app_handle_for_after_turn
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-    tracing::info!(
-        "[start_agent_stream] Spawned background task for stream_id: {}",
-        stream_id_for_task
-    );
-
-    let max_iterations: usize = agent_max_iterations();
-
-    // Phase 6E harness: emit TurnStarted at the top of the spawned task
-    // so all timing measurements include API client setup time.
-    crate::modules::harness::agent_loop_integration::emit_turn_started(
-        harness_event_bus_for_stream.as_ref(),
-        &session_id,
-        turn_number_for_stream,
-    );
-    let stream_turn_started_at = std::time::Instant::now();
-
-    // S5b-1: bag the ~38 mutable per-turn locals into `StreamLoopState`.
-    // Pure structural prep — no behaviour change vs the prior inline
-    // `let mut name = ...` declarations. See `stream_loop_state.rs` for
-    // the per-field rationale; future 5b-2..5b-5 substeps will shrink
-    // this bag as helpers are extracted.
-    //
-    // P1-7 / P2-11 note (carried over): `accumulated_usage` /
-    // `current_call_usage` track provider-billable token usage across
-    // events — Anthropic puts `input_tokens` on `message_start` and
-    // `output_tokens` on `message_delta`; OpenAI compat puts both on
-    // the synthesised `message_delta` in `finish()`. The per-call
-    // snapshot is committed into the running total on `message_stop`
-    // so multi-iteration tool loops sum correctly.
-    let initial_force_tool_choice_next =
-        (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-            || super::work_loop::requires_single_shell_command_evidence(
-                &work_loop_decision_for_stream,
-            ))
-            && !tool_defs_for_stream.is_empty();
-    let mut state = stream_loop_state::StreamLoopState::new(
-        messages_for_stream,
-        format!("stream_{}", stream_id_for_task),
-        initial_force_tool_choice_next,
-    );
-
-    let stream_resilience_cfg =
-        crate::modules::provider::resilience::LlmResilienceConfig::from_env();
-    let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
-    let is_resume_turn = inbound_resume_cursor.is_some();
-    let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
-    // Phase M4-C P2 — wrap in `Arc` so the harness
-    // `prepare_step_execution` shadow trace can borrow the
-    // same policy without re-constructing it (re-construction
-    // would lose any per-tool requirements set on the
-    // original policy).
-    let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
-    // Preserve `tool_success_evidence` Arc from the parent stream so broker
-    // bumps + per-iteration resets apply to the same counter (FEAT-AE-002).
-    let execution_context = SessionExecutionContext {
-        session_id: execution_context_for_task.session_id.clone(),
-        project_id: execution_context_for_task.project_id.clone(),
-        workdir: execution_context_for_task.workdir.clone(),
-        permission_mode: mode,
-        tool_success_evidence: execution_context_for_task.tool_success_evidence.clone(),
-    };
-    let execution_context_for_policy = execution_context.clone();
-    log_context_fingerprint("start_agent_stream_task", &execution_context);
-    let mut tool_executor =
-        ToolRegistryExecutor::new_with_context(tool_registry_clone.clone(), execution_context);
-    const SAVE_INTERVAL: u32 = 50;
-
-    loop {
-        // S5b-2: phases 1-8 of the iteration body live in
-        // `stream_iteration::iteration_preflight`.  See that helper
-        // for the cancellation poll, iteration cap, per-iter setup,
-        // DW-002 digester, preflight request build + diagnostics
-        // emit, cost guard, and stream-start with resilience.
-        let preflight_refs = super::stream_iteration::PreflightSharedRefs {
-            stream_id: &stream_id_for_task,
-            session_id: &session_id,
-            max_iterations,
-            utility_llm: &utility_llm,
-            tool_defs: &tool_defs_for_stream,
-            system_prompt: &system_prompt_for_stream,
-            model: &model_for_stream,
-            context_window: context_window_for_stream,
-            tool_pool_names: &tool_pool_names_for_stream,
-            tool_pool_schema_hash: &tool_pool_schema_hash_for_stream,
-            tool_pool_policy: &tool_pool_policy_for_stream,
-            work_loop_decision: &work_loop_decision_for_stream,
-            cost_guard_cfg: &cost_guard_cfg,
-            stream_resilience_cfg: &stream_resilience_cfg,
-            provider_client: &provider_client_for_stream,
-            failover_provider_client: failover_provider_client.as_ref(),
-            stream_emitter: &stream_emitter,
-            run_event_logger: &run_event_logger,
-            harness_bus: harness_event_bus_for_stream.as_ref(),
-            tool_executor: &tool_executor,
-        };
-        let (stream, force_final_response) = match super::stream_iteration::iteration_preflight(
-            &mut state,
-            &mut cancel_rx,
-            &preflight_refs,
-        )
-        .await
-        {
-            super::stream_iteration::PreflightOutcome::Continue {
-                stream,
-                force_final_response,
-            } => (stream, force_final_response),
-            super::stream_iteration::PreflightOutcome::BreakTerminal => break,
-            super::stream_iteration::PreflightOutcome::RetryAfterSleep { sleep } => {
-                tokio::time::sleep(sleep).await;
-                continue;
-            }
-        };
-        if let Some(request_id) = stream
-            .request_id()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(ToOwned::to_owned)
-        {
-            state.provider_request_id = request_id.clone();
-            tracing::info!(
-                "[start_agent_stream] provider request_id captured: stream_id={}, session_id={}, request_id={}",
-                stream_id_for_task,
-                session_id,
-                request_id
-            );
-        }
-
-        // S5b-3: phase 10 lives in `stream_iteration::iteration_run_stream`.
-        let run_stream_refs = super::stream_iteration::RunStreamSharedRefs {
-            stream_id: &stream_id_for_task,
-            session_id: &session_id,
-            provider_id: &provider_id_for_stream,
-            model: &model_for_stream,
-            stream_emitter: &stream_emitter,
-            run_event_logger: &run_event_logger,
-            app_session: &app_session_clone,
-            session_manager: &session_manager,
-            harness_bus: harness_event_bus_for_stream.as_ref(),
-            execution_context: &execution_context_for_policy,
-        };
-        let mut pending_tool_uses = match super::stream_iteration::iteration_run_stream(
-            &mut state,
-            stream,
-            cancel_rx,
-            &run_stream_refs,
-        )
-        .await
-        {
-            super::stream_iteration::RunStreamOutcome::Completed {
-                cancel_rx: returned_cancel_rx,
-                pending_tool_uses,
-            } => {
-                cancel_rx = returned_cancel_rx;
-                pending_tool_uses
-            }
-            super::stream_iteration::RunStreamOutcome::RetryAfterSleep {
-                cancel_rx: returned_cancel_rx,
-                sleep,
-            } => {
-                cancel_rx = returned_cancel_rx;
-                tokio::time::sleep(sleep).await;
-                continue;
-            }
-        };
-
-        // S5b-2: phase 11 of the iteration body lives in
-        // `stream_iteration::handle_no_tool_calls`.  The helper may
-        // retroactively populate `pending_tool_uses` via textual
-        // tool-call extraction — in that case it returns
-        // `FallThrough` and the iteration body continues with the
-        // recovered tool calls (phases 12-14 below).
-        if pending_tool_uses.is_empty() {
-            let no_tool_refs = super::stream_iteration::NoToolSharedRefs {
-                stream_id: &stream_id_for_task,
-                session_id: &session_id,
-                provider_id: &provider_id_for_stream,
-                model: &model_for_stream,
-                tool_defs: &tool_defs_for_stream,
-                work_loop_decision: &work_loop_decision_for_stream,
-                run_event_logger: &run_event_logger,
-                force_final_response,
-            };
-            match super::stream_iteration::handle_no_tool_calls(
-                &mut state,
-                &mut pending_tool_uses,
-                &no_tool_refs,
-            )
-            .await
-            {
-                super::stream_iteration::NoToolOutcome::Break => break,
-                super::stream_iteration::NoToolOutcome::Continue => continue,
-                super::stream_iteration::NoToolOutcome::FallThrough => {}
-            }
-        }
-        if force_final_response {
-            tracing::warn!(
-                "[start_agent_stream] Provider emitted tool calls during finalization pass; ending as max_iterations_reached. pending_tool_uses={}",
-                pending_tool_uses.len()
-            );
-            state.terminal_status = Some("max_iterations_reached");
-            break;
-        }
-
-        // S5b-3: phases 13-14 (and post-batch finalization guards)
-        // live in `stream_iteration::iteration_execute_tools`.
-        let execute_tools_refs = super::stream_iteration::ExecuteToolsSharedRefs {
-            stream_id: &stream_id_for_task,
-            session_id: &session_id,
-            stream_emitter: &stream_emitter,
-            run_event_logger: &run_event_logger,
-            tool_registry: &tool_registry_clone,
-            permission_senders: &permission_senders,
-            permission_overrides: &permission_overrides,
-            permission_policy: &permission_policy,
-            execution_context: &execution_context_for_task,
-            work_loop_decision: &work_loop_decision_for_stream,
-            harness_bus: harness_event_bus_for_stream.as_ref(),
-            mode,
-            run_id: &run_id_for_ledger,
-            app_data_dir: &app_data_dir_for_ledger,
-        };
-        tool_executor = super::stream_iteration::iteration_execute_tools(
-            &mut state,
-            pending_tool_uses,
-            tool_executor,
-            &execute_tools_refs,
-        )
-        .await;
-    }
 
     // S5b-1: destructure the bag back into locals so the post-loop
     // finalization block (lifecycle hook + delegate output + finalize
-    // call) keeps its original variable names. This avoids touching
-    // any post-loop logic in this pure-refactor commit.
+    // call) keeps its original variable names.
     let stream_loop_state::StreamLoopState {
         tool_loop_iter,
         stream_event_retry_count,
