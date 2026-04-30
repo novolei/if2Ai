@@ -58,10 +58,17 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         learned_traits: state.learned_traits.clone(),
         rolling_summarizer: state.rolling_summarizer.clone(),
         utility_llm: state.utility_llm.clone(),
-        // S2-S1b: defaults preserve current production behaviour.
-        // A future config-store wiring task will route this from
-        // `AppState` once `loop_config` lives there.
-        loop_config: crate::modules::application::turn_service::AgenticLoopConfig::default(),
+        // T11 — preserve the env-var-derived `IF2AI_AGENT_MAX_ITERATIONS`
+        // cap (default 10) at the AppState construction seam.  Without
+        // this override, `AgenticLoopConfig::default()` would let
+        // `run_agentic_loop` use the Steward baseline of 50, silently
+        // 5× the production cap once both delegates (T5c stream + T10
+        // sync) consume `loop_config.max_iterations`.
+        loop_config: crate::modules::application::turn_service::AgenticLoopConfig {
+            max_iterations:
+                crate::modules::application::turn_service::stream_task::agent_max_iterations(),
+            ..crate::modules::application::turn_service::AgenticLoopConfig::default()
+        },
     })
 }
 

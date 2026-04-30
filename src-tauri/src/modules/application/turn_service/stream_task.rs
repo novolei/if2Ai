@@ -110,7 +110,7 @@ const MIN_MAX_TOOL_LOOP_ITERATIONS: usize = 3;
 pub(super) const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
 const INVALID_TOOL_ARGS_LIMIT: usize = 2;
 
-fn agent_max_iterations() -> usize {
+pub(crate) fn agent_max_iterations() -> usize {
     std::env::var("IF2AI_AGENT_MAX_ITERATIONS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
