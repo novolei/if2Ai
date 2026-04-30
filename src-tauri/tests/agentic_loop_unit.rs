@@ -1,7 +1,8 @@
 //! Unit tests for run_agentic_loop using a scripted MockDelegate.
 //!
 //! Exercises every LoopOutcome variant and the loop's safety-valve behaviors:
-//! max_iterations, stop signal, tool-intent nudge, force_text after truncation.
+//! max_iterations, stop signal, empty-tool-calls failure guard,
+//! force_text after truncation.
 
 use async_trait::async_trait;
 use std::sync::Mutex;
@@ -157,7 +158,6 @@ async fn force_text_engages_after_threshold_truncations() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
-        ..Default::default()
     };
     let _ = run_agentic_loop(&d, &cfg).await;
 
@@ -175,58 +175,64 @@ async fn force_text_engages_after_threshold_truncations() {
 }
 
 #[tokio::test]
-async fn tool_intent_nudge_injects_message_when_calls_empty() {
-    // First response: empty tool_calls (intent without call) → nudge.
-    // Second response: text → return.
+async fn empty_tool_calls_returns_failure() {
+    // Producer-side bug: delegate returns ToolCalls { calls: vec![] }.
+    // Phase 3 T2 (N1-α): loop now fails fast with a contract-violation
+    // Failure outcome instead of nudging. Both production delegates already
+    // short-circuit empty tool calls before reaching this path, so this
+    // guard only fires on a delegate bug.
     let mut script = std::collections::VecDeque::new();
     script.push_back(RespondResult::ToolCalls {
         calls: vec![],
         finish_reason: "stop".into(),
     });
-    script.push_back(RespondResult::Text("ok".into()));
+    let d = ScriptedDelegate {
+        script: Mutex::new(script),
+        ..Default::default()
+    };
+    let cfg = AgenticLoopConfig::default();
+    match run_agentic_loop(&d, &cfg).await {
+        LoopOutcome::Failure(msg) => {
+            assert!(msg.contains("empty ToolCalls"), "got {msg}");
+        }
+        other => panic!("expected Failure, got {other:?}"),
+    }
+    assert_eq!(
+        d.tool_calls_seen.lock().unwrap().len(),
+        0,
+        "no tools should have been executed (failure path)"
+    );
+}
+
+#[tokio::test]
+async fn empty_tool_calls_failure_short_circuits_remaining_script() {
+    // Even with multiple subsequent valid responses queued, the first empty
+    // ToolCalls must terminate the loop immediately with Failure (no further
+    // call_llm invocations).
+    let mut script = std::collections::VecDeque::new();
+    script.push_back(RespondResult::ToolCalls {
+        calls: vec![],
+        finish_reason: "stop".into(),
+    });
+    script.push_back(RespondResult::Text("would-have-been-returned".into()));
     let d = ScriptedDelegate {
         script: Mutex::new(script),
         ..Default::default()
     };
     let cfg = AgenticLoopConfig {
         max_iterations: 5,
-        enable_tool_intent_nudge: true,
-        max_tool_intent_nudges: 2,
         ..Default::default()
     };
     let outcome = run_agentic_loop(&d, &cfg).await;
-    assert!(matches!(outcome, LoopOutcome::Response(_)));
-    assert_eq!(
-        d.tool_calls_seen.lock().unwrap().len(),
-        0,
-        "no tools should have been executed (calls was empty)"
+    assert!(
+        matches!(outcome, LoopOutcome::Failure(_)),
+        "expected Failure, got {outcome:?}"
     );
-}
-
-#[tokio::test]
-async fn nudge_capped_at_max_then_loop_proceeds() {
-    let mut script = std::collections::VecDeque::new();
-    // Exceed nudge cap: 3 empty-tool responses with cap=2.
-    for _ in 0..4 {
-        script.push_back(RespondResult::ToolCalls {
-            calls: vec![],
-            finish_reason: "stop".into(),
-        });
-    }
-    let d = ScriptedDelegate {
-        script: Mutex::new(script),
-        ..Default::default()
-    };
-    let cfg = AgenticLoopConfig {
-        max_iterations: 4,
-        enable_tool_intent_nudge: true,
-        max_tool_intent_nudges: 2,
-        ..Default::default()
-    };
-    // After 2 nudges, the 3rd empty-tools response should NOT nudge — loop proceeds.
-    // With max_iterations=4 and no text response, loop exits MaxIterations.
-    let outcome = run_agentic_loop(&d, &cfg).await;
-    assert!(matches!(outcome, LoopOutcome::MaxIterations));
+    assert_eq!(
+        d.force_text_observed.lock().unwrap().len(),
+        1,
+        "exactly one call_llm invocation before Failure"
+    );
 }
 
 #[tokio::test]
@@ -273,7 +279,6 @@ async fn truncation_count_resets_after_text_response() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
-        ..Default::default()
     };
     let _ = run_agentic_loop(&d, &cfg).await;
     let observed = d.force_text_observed.lock().unwrap().clone();

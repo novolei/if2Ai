@@ -96,7 +96,6 @@ pub async fn run_agentic_loop(
     config: &AgenticLoopConfig,
 ) -> LoopOutcome {
     let mut ctx = LoopContext::default();
-    let mut nudge_count: u32 = 0;
     let mut truncation_count: u32 = 0;
 
     for iteration in 0..config.max_iterations {
@@ -133,16 +132,14 @@ pub async fn run_agentic_loop(
                     truncation_count += 1;
                     continue;
                 }
-                if calls.is_empty()
-                    && config.enable_tool_intent_nudge
-                    && nudge_count < config.max_tool_intent_nudges
-                {
-                    ctx.inject(
-                        "(You signaled tool intent but made no tool calls. \
-                         Please call a tool now or respond with text.)",
+                if calls.is_empty() {
+                    // Empty tool_calls would have been short-circuited by
+                    // delegates already (StreamDelegate has debug_assert!;
+                    // RunDelegate routes via Text). Reaching this branch
+                    // indicates a delegate contract violation — fail loud.
+                    return LoopOutcome::Failure(
+                        "delegate returned empty ToolCalls (call_llm contract violation)".into(),
                     );
-                    nudge_count += 1;
-                    continue;
                 }
                 let results = delegate.execute_tool_calls(calls, &mut ctx).await;
                 ctx.append_tool_results(results);

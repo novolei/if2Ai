@@ -217,11 +217,12 @@ pub struct StreamTaskInputs {
     /// Steward-aligned safety-valve config. Post-T11/T12: `max_iterations` is
     /// the single source of truth (read from `agent_max_iterations()` env-var
     /// at AppState construction, then consumed by both inner preflight cap
-    /// and outer `run_agentic_loop` cap). The other fields
-    /// (`enable_tool_intent_nudge`, `max_tool_intent_nudges`,
-    /// `force_text_after_truncations`) are currently inert in production —
-    /// real safety-valve behaviour lives delegate-side. See
-    /// `loop_config.rs` module docs for wiring status.
+    /// and outer `run_agentic_loop` cap). The remaining field
+    /// (`force_text_after_truncations`) is currently inert in production —
+    /// real safety-valve behaviour lives delegate-side. Phase 3 T2 (N1-α)
+    /// removed the inert `enable_tool_intent_nudge` /
+    /// `max_tool_intent_nudges` fields. See `runtime/agent_loop/config.rs`
+    /// module docs for full wiring status.
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
