@@ -4,7 +4,7 @@
 //! evicting oldest messages when turn count or token budget is exceeded.
 
 use crate::modules::runtime::budget::estimate_tokens;
-use crate::modules::runtime::session::ConversationMessage;
+use crate::modules::runtime::session::{ConversationMessage, MessageRole};
 
 /// Working memory uses a sliding window of recent turns
 #[derive(Debug, Clone)]
@@ -29,7 +29,6 @@ impl Default for WorkingMemory {
 
 impl WorkingMemory {
     /// Create a new working memory with the given limits
-    #[allow(dead_code)] // Public API; callers in streaming path (fix-streaming-parity)
     pub fn new(max_turns: usize, max_tokens: usize) -> Self {
         Self {
             turns: Vec::new(),
@@ -39,7 +38,6 @@ impl WorkingMemory {
     }
 
     /// Add a message and evict oldest entries if limits are exceeded
-    #[allow(dead_code)] // Public API; will be called once streaming path is wired (fix-streaming-parity)
     pub fn push(&mut self, message: ConversationMessage) {
         self.turns.push(message);
         self.evict_if_needed();
@@ -88,6 +86,39 @@ impl WorkingMemory {
             self.turns.remove(0);
         }
     }
+}
+
+/// Return a slice of the last `max_turns` "turns" from a message list.
+///
+/// A "turn" is a logical user→assistant exchange. The slice is cut at the
+/// user-message boundary so that an assistant message and its tool_use blocks
+/// (and any subsequent tool_result acting as user) stay together. Any orphan
+/// tool_use/tool_result blocks that survive should be cleaned by
+/// `sanitize_messages_for_provider` downstream (defense-in-depth).
+///
+/// `max_turns == 0` is treated as "no windowing" (passthrough). This means
+/// callers don't need to special-case the disabled state.
+///
+/// Phase 5 (F1) — F1 streaming parity for WorkingMemory.
+#[must_use]
+pub fn window_recent_turns(
+    messages: &[ConversationMessage],
+    max_turns: usize,
+) -> Vec<ConversationMessage> {
+    if max_turns == 0 || messages.is_empty() {
+        return messages.to_vec();
+    }
+    let user_indexes: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| matches!(m.role, MessageRole::User))
+        .map(|(i, _)| i)
+        .collect();
+    if user_indexes.len() <= max_turns {
+        return messages.to_vec();
+    }
+    let cut_at = user_indexes[user_indexes.len() - max_turns];
+    messages[cut_at..].to_vec()
 }
 
 /// Estimate token count for a single conversation message
@@ -211,6 +242,79 @@ mod tests {
         wm.push(text_message(MessageRole::User, "hello"));
         wm.clear();
         assert!(wm.is_empty());
+    }
+
+    #[test]
+    fn window_recent_turns_passthrough_when_under_budget() {
+        let msgs = vec![
+            text_message(MessageRole::User, "u1"),
+            text_message(MessageRole::Assistant, "a1"),
+            text_message(MessageRole::User, "u2"),
+            text_message(MessageRole::Assistant, "a2"),
+        ];
+        let out = window_recent_turns(&msgs, 8);
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn window_recent_turns_slices_at_user_boundary() {
+        let msgs = vec![
+            text_message(MessageRole::User, "u1"),
+            text_message(MessageRole::Assistant, "a1"),
+            text_message(MessageRole::User, "u2"),
+            text_message(MessageRole::Assistant, "a2"),
+            text_message(MessageRole::User, "u3"),
+            text_message(MessageRole::Assistant, "a3"),
+            text_message(MessageRole::User, "u4"),
+            text_message(MessageRole::Assistant, "a4"),
+        ];
+        let out = window_recent_turns(&msgs, 2);
+        assert_eq!(out.len(), 4);
+        assert!(matches!(out[0].role, MessageRole::User));
+        assert_eq!(
+            out[0].blocks[0],
+            ContentBlock::Text {
+                text: "u3".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn window_recent_turns_zero_returns_passthrough() {
+        let msgs = vec![text_message(MessageRole::User, "hi")];
+        let out = window_recent_turns(&msgs, 0);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn window_recent_turns_empty_input() {
+        let msgs: Vec<ConversationMessage> = vec![];
+        let out = window_recent_turns(&msgs, 8);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn window_recent_turns_keeps_assistant_after_user() {
+        // When we cut at the user boundary, any assistant messages
+        // (potentially carrying tool_use blocks) AFTER that user message survive.
+        let msgs = vec![
+            text_message(MessageRole::User, "u1"),
+            text_message(MessageRole::Assistant, "a1_with_tool_use"),
+            text_message(MessageRole::User, "u2_tool_result"),
+            text_message(MessageRole::Assistant, "a2"),
+            text_message(MessageRole::User, "u3"),
+            text_message(MessageRole::Assistant, "a3"),
+        ];
+        let out = window_recent_turns(&msgs, 1);
+        // Window=1 means "keep last 1 user turn + everything after"; last user is u3.
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0].role, MessageRole::User));
+        assert_eq!(
+            out[0].blocks[0],
+            ContentBlock::Text {
+                text: "u3".to_string()
+            }
+        );
     }
 
     #[test]
