@@ -1448,10 +1448,32 @@ pub(super) fn assistant_signals_tool_intent(text: &str) -> bool {
 /// Order matters: replace doubled pipes (`||`) first so we don't double-replace
 /// single pipes embedded within them.
 pub(super) fn normalize_dsml_delimiters(text: &str) -> String {
-    text.replace("<||DSML||", "<\u{FF5C}DSML\u{FF5C}")
-        .replace("</||DSML||", "</\u{FF5C}DSML\u{FF5C}")
-        .replace("<|DSML|", "<\u{FF5C}DSML\u{FF5C}")
-        .replace("</|DSML|", "</\u{FF5C}DSML\u{FF5C}")
+    use std::sync::OnceLock;
+
+    use regex::Regex;
+
+    static DSML_OPEN: OnceLock<Regex> = OnceLock::new();
+    static DSML_CLOSE: OnceLock<Regex> = OnceLock::new();
+
+    let open_re = DSML_OPEN.get_or_init(|| {
+        Regex::new(
+            r"<\s*[\|\u{FF5C}](?:\s*[\|\u{FF5C}])*\s*DSML\s*[\|\u{FF5C}](?:\s*[\|\u{FF5C}])*\s*",
+        )
+        .expect("DSML open regex must compile")
+    });
+    let close_re = DSML_CLOSE.get_or_init(|| {
+        Regex::new(
+            r"</\s*[\|\u{FF5C}](?:\s*[\|\u{FF5C}])*\s*DSML\s*[\|\u{FF5C}](?:\s*[\|\u{FF5C}])*\s*",
+        )
+        .expect("DSML close regex must compile")
+    });
+
+    let s = close_re
+        .replace_all(text, "</\u{FF5C}DSML\u{FF5C}")
+        .into_owned();
+    open_re
+        .replace_all(&s, "<\u{FF5C}DSML\u{FF5C}")
+        .into_owned()
 }
 
 pub(super) fn detect_textual_tool_call_markup(text: &str) -> Option<String> {
@@ -2727,6 +2749,36 @@ mod tests {
         let n = normalize_dsml_delimiters(s);
         assert!(!n.contains("<|DSML"));
         assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"));
+    }
+
+    #[test]
+    fn normalize_handles_spaces_inside_brackets() {
+        let raw = "< | DSML | tool_calls>";
+        let n = normalize_dsml_delimiters(raw);
+        assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"), "got: {n}");
+    }
+
+    #[test]
+    fn normalize_handles_double_pipes_with_spaces() {
+        let raw = "< | | DSML | | tool_calls>";
+        let n = normalize_dsml_delimiters(raw);
+        assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"), "got: {n}");
+    }
+
+    #[test]
+    fn normalize_handles_mixed_pipe_types() {
+        let raw = "<\u{FF5C}DSML|tool_calls>";
+        let n = normalize_dsml_delimiters(raw);
+        assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"), "got: {n}");
+    }
+
+    #[test]
+    fn extract_handles_real_world_screenshot_variant() {
+        let raw = "< | | DSML | | tool_calls>\n< | | DSML | | invoke name=\"bash\">\n< | | DSML | | parameter name=\"command\" string=\"true\">date</ | | DSML | | parameter>\n</ | | DSML | | invoke>\n</ | | DSML | | tool_calls>";
+        let calls = extract_textual_tool_calls(raw);
+        assert_eq!(calls.len(), 1, "expected 1 call, got {:?}", calls);
+        assert_eq!(calls[0].1, "bash");
+        assert!(calls[0].2.contains("date"), "param missing: {}", calls[0].2);
     }
 
     #[test]

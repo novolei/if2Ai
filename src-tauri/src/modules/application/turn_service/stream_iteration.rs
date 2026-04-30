@@ -552,6 +552,11 @@ pub(super) async fn handle_no_tool_calls(
         "[start_agent_stream] No pending tool uses; attempting textual extraction. accumulated_text len={}",
         state.accumulated_text.len()
     );
+    tracing::debug!(
+        "[start_agent_stream] no_tool_uses_text_dump len={} preview={:?}",
+        state.accumulated_text.len(),
+        state.accumulated_text.chars().take(800).collect::<String>(),
+    );
     if !refs.force_final_response {
         let textual_tool_calls =
             super::work_loop::extract_textual_tool_calls(&state.accumulated_text);
