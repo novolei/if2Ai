@@ -453,10 +453,14 @@ impl StreamState {
         }
 
         if let Some(usage) = chunk.usage {
+            // No standard "cache write" field across OpenAI-compatible
+            // providers today; Anthropic-style `cache_creation_input_tokens`
+            // arrives via a separate code path (anthropic.rs).
+            let cache_read = usage.cache_read_tokens();
             self.usage = Some(Usage {
                 input_tokens: usage.prompt_tokens,
                 cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_read_input_tokens: cache_read,
                 output_tokens: usage.completion_tokens,
             });
         }
@@ -722,6 +726,40 @@ struct OpenAiUsage {
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+    /// DeepSeek-style cache hit count (tokens served from the provider's
+    /// KV cache). See <https://api-docs.deepseek.com/guides/kv_cache>.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u32>,
+    /// DeepSeek-style cache miss count. Currently parsed for completeness
+    /// / debugging — not surfaced via `Usage` because the canonical
+    /// `input_tokens` already accounts for misses.
+    #[serde(default)]
+    #[allow(dead_code)]
+    prompt_cache_miss_tokens: Option<u32>,
+    /// OpenAI-style nested cache details. See
+    /// <https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage>.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
+}
+
+impl OpenAiUsage {
+    /// Tokens the provider served from its prompt cache. Prefers DeepSeek's
+    /// explicit hit counter, falls back to OpenAI's nested details.
+    fn cache_read_tokens(&self) -> u32 {
+        self.prompt_cache_hit_tokens
+            .or_else(|| {
+                self.prompt_tokens_details
+                    .as_ref()
+                    .and_then(|d| d.cached_tokens)
+            })
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1038,7 +1076,10 @@ fn normalize_response(
                 .as_ref()
                 .map_or(0, |usage| usage.prompt_tokens),
             cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
+            cache_read_input_tokens: response
+                .usage
+                .as_ref()
+                .map_or(0, |usage| usage.cache_read_tokens()),
             output_tokens: response
                 .usage
                 .as_ref()
@@ -1190,7 +1231,7 @@ mod tests {
     use super::{
         build_chat_completion_request, build_chat_completion_request_for_provider,
         chat_completions_endpoint, normalize_finish_reason, openai_tool_choice,
-        parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig,
+        parse_tool_arguments, OpenAiCompatClient, OpenAiCompatConfig, OpenAiUsage,
         TOOL_CALL_REASONING_PLACEHOLDER,
     };
     use crate::modules::api::error::ApiError;
@@ -1200,6 +1241,50 @@ mod tests {
     };
     use serde_json::json;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn parses_deepseek_prompt_cache_hit_tokens() {
+        let raw = r#"{
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_cache_hit_tokens": 800,
+            "prompt_cache_miss_tokens": 200
+        }"#;
+        let parsed: OpenAiUsage = serde_json::from_str(raw).expect("parse");
+        assert_eq!(parsed.prompt_cache_hit_tokens, Some(800));
+        assert_eq!(parsed.prompt_cache_miss_tokens, Some(200));
+        assert_eq!(parsed.cache_read_tokens(), 800);
+    }
+
+    #[test]
+    fn parses_openai_prompt_tokens_details_cached() {
+        let raw = r#"{
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": { "cached_tokens": 500 }
+        }"#;
+        let parsed: OpenAiUsage = serde_json::from_str(raw).expect("parse");
+        assert_eq!(
+            parsed
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            Some(500),
+        );
+        assert_eq!(parsed.cache_read_tokens(), 500);
+    }
+
+    #[test]
+    fn missing_cache_fields_default_to_none() {
+        let raw = r#"{
+            "prompt_tokens": 1000,
+            "completion_tokens": 200
+        }"#;
+        let parsed: OpenAiUsage = serde_json::from_str(raw).expect("parse");
+        assert!(parsed.prompt_cache_hit_tokens.is_none());
+        assert!(parsed.prompt_tokens_details.is_none());
+        assert_eq!(parsed.cache_read_tokens(), 0);
+    }
 
     #[test]
     fn request_translation_uses_openai_compatible_shape() {
