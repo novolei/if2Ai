@@ -199,18 +199,18 @@ pub(super) struct RunLoopState {
 }
 
 pub struct ConversationRuntime<C, T> {
-    session: Session,
-    api_client: C,
-    tool_executor: T,
+    pub(super) session: Session,
+    pub(super) api_client: C,
+    pub(super) tool_executor: T,
     permission_policy: PermissionPolicy,
-    system_prompt: Vec<String>,
+    pub(super) system_prompt: Vec<String>,
     max_iterations: usize,
-    context_budget: Option<ContextBudget>,
-    usage_tracker: UsageTracker,
+    pub(super) context_budget: Option<ContextBudget>,
+    pub(super) usage_tracker: UsageTracker,
     hook_runner: HookRunner,
     /// Working memory: when `Some`, only the sliding window of recent messages
     /// is sent to the LLM. Full history is preserved in `self.session.messages`.
-    working_memory: Option<WorkingMemory>,
+    pub(super) working_memory: Option<WorkingMemory>,
     /// Phase 8A.7 — optional [`TurnHook`] fired after each successful turn
     /// (and intended for `on_session_end` once the runtime gains an
     /// explicit shutdown path).  Wired by `AppState` to the Phase 8B
@@ -233,8 +233,8 @@ pub struct ConversationRuntime<C, T> {
 
 impl<C, T> ConversationRuntime<C, T>
 where
-    C: ApiClient,
-    T: ToolExecutor,
+    C: ApiClient + Send,
+    T: ToolExecutor + Send,
 {
     /// Construct a runtime with default feature config.  Equivalent to
     /// [`Self::new_with_features`] with [`RuntimeFeatureConfig::default()`].
@@ -436,7 +436,7 @@ where
     /// feedback → post-hook → merge post feedback → safety sanitize+wrap →
     /// record outcome). Used by the loop body today and by `RunDelegate`'s
     /// `execute_tool_calls` in T10. **Pure refactor — no behavior change.**
-    async fn process_single_tool_call(
+    pub(super) async fn process_single_tool_call(
         &mut self,
         tool_use_id: String,
         tool_name: String,
@@ -521,7 +521,7 @@ where
     pub async fn run_turn(
         &mut self,
         user_input: impl Into<String> + Send,
-        mut prompter: Option<&mut (dyn PermissionPrompter + Send)>,
+        prompter: Option<&mut (dyn PermissionPrompter + Send)>,
     ) -> Result<TurnSummary, RuntimeError> {
         let user_text = user_input.into();
         if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
@@ -536,76 +536,45 @@ where
             .messages
             .push(ConversationMessage::user_text(user_text));
 
-        let mut state = RunLoopState::default();
+        // Phase 2 T10 (5c-6) — bridge to the unified `run_agentic_loop`.
+        // The inner per-iteration body (LLM call → tool dispatch) lives in
+        // [`super::run_delegate::RunDelegate`]; the safety-valve config
+        // (max iterations, tool-intent nudge, force-text after truncations)
+        // is supplied via [`AgenticLoopConfig`]. See
+        // `docs/superpowers/plans/2026-04-30-steward-alignment.md` §5c-6.
+        let initial_state = RunLoopState::default();
+        let cap = self.max_iterations;
+        let delegate = super::run_delegate::RunDelegate::new(self, initial_state, prompter);
+        let config = crate::modules::application::turn_service::AgenticLoopConfig {
+            max_iterations: cap,
+            ..crate::modules::application::turn_service::AgenticLoopConfig::default()
+        };
 
-        loop {
-            state.iterations += 1;
-            if state.iterations > self.max_iterations {
+        let outcome = crate::modules::application::turn_service::agentic_loop::run_agentic_loop(
+            &delegate, &config,
+        )
+        .await;
+        let (state, pending_error) = delegate.into_parts();
+
+        match outcome {
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Response(_) => {}
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::MaxIterations => {
                 return Err(RuntimeError::MaxIterationsExceeded);
             }
-
-            // ContextBudget check — validates total token usage against configured budget
-            // System 10%, Episodic 20%, Semantic 30%, Working 40%
-            if let Some(ref budget) = self.context_budget {
-                let estimated_tokens = estimate_session_tokens(&self.session);
-                if estimated_tokens > budget.total {
-                    return Err(RuntimeError::SessionError(format!(
-                        "context budget exceeded: estimated {estimated_tokens} tokens exceeds total budget of {} (system={}, episodic={}, semantic={}, working={})",
-                        budget.total,
-                        budget.system_tokens(),
-                        budget.episodic_tokens(),
-                        budget.semantic_tokens(),
-                        budget.working_tokens(),
-                    )));
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Stopped => {
+                // `RunDelegate::check_signals` always yields `Continue` today,
+                // so this variant is unreachable in production; surface it as
+                // an `ApiError` rather than panicking if a future revision
+                // changes that contract.
+                return Err(RuntimeError::api_error("agentic loop stopped unexpectedly"));
+            }
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Failure(
+                reason,
+            ) => {
+                if let Some(err) = pending_error {
+                    return Err(err);
                 }
-            }
-
-            // Build the message list for this LLM request.
-            // When a WorkingMemory is configured, populate it from the current
-            // session so that only the most recent turns (within token budget)
-            // are sent — full history stays in `self.session.messages`.
-            let messages_for_request = if let Some(ref mut wm) = self.working_memory {
-                wm.clear();
-                wm.extend(self.session.messages.iter().cloned());
-                wm.messages().to_vec()
-            } else {
-                self.session.messages.clone()
-            };
-
-            let request = ApiRequest {
-                system_prompt: self.system_prompt.clone(),
-                messages: messages_for_request,
-                tools: Some(self.tool_executor.get_definitions()),
-            };
-            let events = self.api_client.stream(request).await?;
-            let (assistant_message, usage) = build_assistant_message(events)?;
-            if let Some(usage) = usage {
-                self.usage_tracker.record(usage);
-            }
-            let pending_tool_uses = assistant_message
-                .blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::ToolUse { id, name, input } => {
-                        Some((id.clone(), name.clone(), input.clone()))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            self.session.messages.push(assistant_message.clone());
-            state.assistant_messages.push(assistant_message);
-
-            if pending_tool_uses.is_empty() {
-                break;
-            }
-
-            for (tool_use_id, tool_name, input) in pending_tool_uses {
-                let result_message = self
-                    .process_single_tool_call(tool_use_id, tool_name, input, &mut prompter)
-                    .await;
-                self.session.messages.push(result_message.clone());
-                state.tool_results.push(result_message);
+                return Err(RuntimeError::api_error(reason));
             }
         }
 
@@ -669,7 +638,7 @@ where
     }
 }
 
-fn build_assistant_message(
+pub(super) fn build_assistant_message(
     events: Vec<AssistantEvent>,
 ) -> Result<(ConversationMessage, Option<TokenUsage>), RuntimeError> {
     let mut text = String::new();
@@ -776,7 +745,7 @@ fn merge_hook_feedback(messages: &[String], output: String, denied: bool) -> Str
     sections.join("\n\n")
 }
 
-type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError>>;
+type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError> + Send>;
 
 #[derive(Default)]
 pub struct StaticToolExecutor {
@@ -792,11 +761,16 @@ impl StaticToolExecutor {
 
     /// Register a handler closure under `tool_name`.  Builder-style:
     /// returns `self` so multiple `register(...)` calls can be chained.
+    ///
+    /// `+ Send` is required so [`StaticToolExecutor`] is `Send`, which in
+    /// turn lets [`crate::modules::runtime::run_delegate::RunDelegate`] hold
+    /// a `Mutex<&mut ConversationRuntime<_, StaticToolExecutor>>` (the
+    /// `LoopDelegate` trait demands `Send + Sync`).
     #[must_use]
     pub fn register(
         mut self,
         tool_name: impl Into<String>,
-        handler: impl FnMut(&str) -> Result<String, ToolError> + 'static,
+        handler: impl FnMut(&str) -> Result<String, ToolError> + Send + 'static,
     ) -> Self {
         self.handlers.insert(tool_name.into(), Box::new(handler));
         self

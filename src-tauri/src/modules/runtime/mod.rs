@@ -39,6 +39,7 @@ pub mod prompt_tools_guide;
 pub mod recoverability;
 pub mod remote;
 pub mod resume_cursor;
+mod run_delegate;
 pub mod sandbox;
 pub mod self_repair;
 pub mod session;
