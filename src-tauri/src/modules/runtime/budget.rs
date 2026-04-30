@@ -173,6 +173,35 @@ pub fn streaming_tier_budget() -> usize {
         .unwrap_or(DEFAULT_STREAM_TIER_BUDGET)
 }
 
+/// Default streaming working-memory recency window (in turns) when no env
+/// override is set. Default 8 (matches WorkingMemory's historical default).
+pub const DEFAULT_STREAM_WINDOW_TURNS: usize = 8;
+
+/// Read the streaming WorkingMemory recency window, honoring
+/// `IF2AI_STREAM_WINDOW_TURNS` env var if set (parses as `usize`).
+/// Falls back to [`DEFAULT_STREAM_WINDOW_TURNS`].
+///
+/// Why this knob exists:
+///   - Default 8 keeps the most recent ~8 user→assistant pairs in full.
+///   - Bump higher (e.g. 16) if your sessions need more long-range context.
+///   - Bump lower (e.g. 4) for token-cost-sensitive deployments.
+///   - Set to 0 to disable WorkingMemory windowing entirely.
+///
+/// Sanity floor: values below 2 (other than 0) clamp to default — at minimum
+/// we want one full user+assistant pair preserved.
+///
+/// Phase 5 (F1) — F1 streaming parity for WorkingMemory.
+pub fn streaming_window_turns() -> usize {
+    match std::env::var("IF2AI_STREAM_WINDOW_TURNS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        Some(0) => 0,
+        Some(n) if n >= 2 => n,
+        _ => DEFAULT_STREAM_WINDOW_TURNS,
+    }
+}
+
 /// Maximum number of times the streaming task will retry a
 /// `provider.stream(...)` call after a network-timeout class
 /// error before giving up and surfacing the failure to the
@@ -648,6 +677,42 @@ mod tests {
         std::env::set_var(STREAM_BUDGET_VAR, "not-a-number");
         assert_eq!(streaming_tier_budget(), DEFAULT_STREAM_TIER_BUDGET);
         std::env::remove_var(STREAM_BUDGET_VAR);
+    }
+
+    // ── streaming_window_turns() env-var override ─────────────────
+    // Shares STREAM_BUDGET_ENV_LOCK to serialize env mutations across
+    // both stream-related env vars within this test binary.
+    const STREAM_WINDOW_VAR: &str = "IF2AI_STREAM_WINDOW_TURNS";
+
+    #[test]
+    fn streaming_window_turns_default_when_unset() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(STREAM_WINDOW_VAR);
+        assert_eq!(streaming_window_turns(), DEFAULT_STREAM_WINDOW_TURNS);
+    }
+
+    #[test]
+    fn streaming_window_turns_honors_env_var() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_WINDOW_VAR, "12");
+        assert_eq!(streaming_window_turns(), 12);
+        std::env::remove_var(STREAM_WINDOW_VAR);
+    }
+
+    #[test]
+    fn streaming_window_turns_zero_means_disabled() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_WINDOW_VAR, "0");
+        assert_eq!(streaming_window_turns(), 0);
+        std::env::remove_var(STREAM_WINDOW_VAR);
+    }
+
+    #[test]
+    fn streaming_window_turns_floor_clamps_to_default() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_WINDOW_VAR, "1");
+        assert_eq!(streaming_window_turns(), DEFAULT_STREAM_WINDOW_TURNS);
+        std::env::remove_var(STREAM_WINDOW_VAR);
     }
 
     #[test]

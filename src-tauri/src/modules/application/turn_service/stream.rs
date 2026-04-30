@@ -411,8 +411,17 @@ impl TurnService {
 
         // Convert session messages to API format
         let runtime_session = app_session_to_runtime(&app_session);
-        let messages: Vec<InputMessage> = runtime_session
-            .messages
+
+        // Phase 5 (F1): apply WorkingMemory recency window before further
+        // processing. Pure recency slice cut at user-message boundaries;
+        // orphan tool_use/tool_result pairs are cleaned downstream by
+        // sanitize_messages_for_provider during preflight (defense-in-depth).
+        let windowed = crate::modules::memory::working_memory::window_recent_turns(
+            &runtime_session.messages,
+            crate::modules::runtime::budget::streaming_window_turns(),
+        );
+
+        let messages: Vec<InputMessage> = windowed
             .iter()
             .map(|msg| {
                 let mut content: Vec<InputContentBlock> = msg
