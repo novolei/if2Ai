@@ -39,6 +39,15 @@
 //! That inverse dependency is pragmatic for the bridge step: the alternative
 //! is moving `agentic_loop` + `loop_config` down into `runtime`, which is
 //! out of scope for T10.
+//!
+//! ## Layering note (Phase 2 closing)
+//!
+//! This file imports from `application::turn_service::agentic_loop`
+//! (runtime → application), an inversion of the canonical CHARTER §2.1
+//! direction. Acceptable as a transitional step; the clean fix is moving
+//! `agentic_loop` + `loop_config` down into a shared `runtime::loop`
+//! module (or extracting a thin adapter trait into `runtime` that
+//! `application` plugs into). **FOLLOW-UP**: track in Phase 3 backlog.
 
 use std::sync::Arc;
 

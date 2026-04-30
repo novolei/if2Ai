@@ -214,12 +214,14 @@ pub struct StreamTaskInputs {
     /// behaviourally equivalent today but masks ownership and makes
     /// future per-turn `workdir` overrides harder.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
-    /// Steward-aligned safety-valve configuration for the agent loop
-    /// (S2-S1b). Plumbed from `TurnServiceDeps::loop_config`. Today
-    /// the streaming body still uses `agent_max_iterations()` and the
-    /// pre-Steward truncation handling; S5 Task 5.1's `run_agentic_loop`
-    /// is the canonical home for `force_text_after_truncations`,
-    /// `enable_tool_intent_nudge`, and `max_iterations` consumption.
+    /// Steward-aligned safety-valve config. Post-T11/T12: `max_iterations` is
+    /// the single source of truth (read from `agent_max_iterations()` env-var
+    /// at AppState construction, then consumed by both inner preflight cap
+    /// and outer `run_agentic_loop` cap). The other fields
+    /// (`enable_tool_intent_nudge`, `max_tool_intent_nudges`,
+    /// `force_text_after_truncations`) are currently inert in production —
+    /// real safety-valve behaviour lives delegate-side. See
+    /// `loop_config.rs` module docs for wiring status.
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
@@ -338,7 +340,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         inputs.stream_id_for_task
     );
 
-    let max_iterations: usize = agent_max_iterations();
+    let max_iterations: usize = inputs.loop_config.max_iterations;
 
     // Phase 6E harness: emit TurnStarted at the top of the spawned task
     // so all timing measurements include API client setup time.
@@ -455,8 +457,11 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
             debug_assert!(state.terminal_status.is_some());
         }
         super::agentic_loop::LoopOutcome::MaxIterations => {
-            // Outer (loop_config) cap. Inner per-iteration cap normally
-            // trips first via PreflightOutcome::BreakTerminal → Failure.
+            // Outer (loop_config) cap. With single-source-of-truth from T12,
+            // outer and inner caps are equal; this arm is reached when the loop
+            // exits cleanly at N iterations. Inner preflight only trips first
+            // if a `RetryAfterSleep` consumed an outer slot without rolling back
+            // `state.tool_loop_iter`.
             if state.terminal_status.is_none() {
                 state.terminal_status = Some("max_iterations_reached");
             }
