@@ -107,7 +107,7 @@ use super::stream_loop_state;
 
 const DEFAULT_MAX_TOOL_LOOP_ITERATIONS: usize = 10;
 const MIN_MAX_TOOL_LOOP_ITERATIONS: usize = 3;
-const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
+pub(super) const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
 const INVALID_TOOL_ARGS_LIMIT: usize = 2;
 
 fn agent_max_iterations() -> usize {
@@ -118,7 +118,7 @@ fn agent_max_iterations() -> usize {
         .unwrap_or(DEFAULT_MAX_TOOL_LOOP_ITERATIONS)
 }
 
-fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> String {
+pub(super) fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> String {
     let mut parts = pending_tool_uses
         .iter()
         .map(|(_, tool_name, input_json)| {
@@ -264,7 +264,7 @@ pub(super) async fn append_remembered_permission_events(
         .await;
 }
 
-fn apply_memory_recall_success_finalization_guard(
+pub(super) fn apply_memory_recall_success_finalization_guard(
     work_loop_decision: &WorkLoopDecision,
     has_successful_tool: bool,
     force_final_response_next: &mut bool,
@@ -513,50 +513,43 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             );
         }
 
-        // Run the extracted inner SSE event-processing loop (GAP-005).
-        let event_loop_ctx = super::stream_event_loop::StreamEventLoopContext {
+        // S5b-3: phase 10 lives in `stream_iteration::iteration_run_stream`.
+        let run_stream_refs = super::stream_iteration::RunStreamSharedRefs {
+            stream_id: &stream_id_for_task,
+            session_id: &session_id,
+            provider_id: &provider_id_for_stream,
+            model: &model_for_stream,
+            stream_emitter: &stream_emitter,
+            run_event_logger: &run_event_logger,
+            app_session: &app_session_clone,
+            session_manager: &session_manager,
+            harness_bus: harness_event_bus_for_stream.as_ref(),
+            execution_context: &execution_context_for_policy,
+        };
+        let mut pending_tool_uses = match super::stream_iteration::iteration_run_stream(
+            &mut state,
             stream,
             cancel_rx,
-            stream_id: stream_id_for_task.clone(),
-            session_id: session_id.clone(),
-            provider_request_id: state.provider_request_id.clone(),
-            accumulated_text: std::mem::take(&mut state.accumulated_text),
-            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
-            token_count: state.token_count,
-            current_call_usage: std::mem::take(&mut state.current_call_usage),
-            accumulated_usage: std::mem::take(&mut state.accumulated_usage),
-            stream_emitter: stream_emitter.clone(),
-            run_event_logger: run_event_logger.clone(),
-            app_session: app_session_clone.clone(),
-            session_manager: session_manager.clone(),
-            harness_bus: harness_event_bus_for_stream.clone(),
-            execution_context: execution_context_for_policy.clone(),
-            has_successful_tool: state.has_successful_tool,
-            has_successful_mutating_tool: state.has_successful_mutating_tool,
-            provider_id: provider_id_for_stream.clone(),
-            model: model_for_stream.clone(),
-            stream_event_retry_count: state.stream_event_retry_count,
+            &run_stream_refs,
+        )
+        .await
+        {
+            super::stream_iteration::RunStreamOutcome::Completed {
+                cancel_rx: returned_cancel_rx,
+                pending_tool_uses,
+            } => {
+                cancel_rx = returned_cancel_rx;
+                pending_tool_uses
+            }
+            super::stream_iteration::RunStreamOutcome::RetryAfterSleep {
+                cancel_rx: returned_cancel_rx,
+                sleep,
+            } => {
+                cancel_rx = returned_cancel_rx;
+                tokio::time::sleep(sleep).await;
+                continue;
+            }
         };
-        let loop_result = super::stream_event_loop::run_stream_event_loop(event_loop_ctx).await;
-        let mut pending_tool_uses = loop_result.pending_tool_uses;
-        state.accumulated_text = loop_result.accumulated_text;
-        state.accumulated_thinking = loop_result.accumulated_thinking;
-        state.token_count = loop_result.token_count;
-        state.current_call_usage = loop_result.current_call_usage;
-        state.accumulated_usage = loop_result.accumulated_usage;
-        state.stream_failed = loop_result.stream_failed;
-        state.last_stream_error_reason = loop_result.last_stream_error_reason;
-        state.terminal_status = loop_result.terminal_status;
-        let retry_outer_after_timeout = loop_result.retry_outer_after_timeout;
-        state.stream_event_retry_count = loop_result.stream_event_retry_count;
-        let _emitted_stream_delta_in_iteration = loop_result.emitted_stream_delta_in_iteration;
-        state.completion_already_emitted = loop_result.completion_already_emitted;
-        cancel_rx = loop_result.cancel_rx;
-
-        if retry_outer_after_timeout {
-            tokio::time::sleep(Duration::from_millis(350)).await;
-            continue;
-        }
 
         // S5b-2: phase 11 of the iteration body lives in
         // `stream_iteration::handle_no_tool_calls`.  The helper may
@@ -596,105 +589,31 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             break;
         }
 
-        let current_tool_batch_signature = tool_batch_signature(&pending_tool_uses);
-        if state.last_tool_batch_signature.as_deref() == Some(current_tool_batch_signature.as_str())
-        {
-            state.repeated_tool_batch_count += 1;
-        } else {
-            state.repeated_tool_batch_count = 1;
-            state.last_tool_batch_signature = Some(current_tool_batch_signature);
-        }
-        if state.repeated_tool_batch_count >= REPEATED_TOOL_BATCH_LIMIT {
-            tracing::warn!(
-                "[start_agent_stream] repeated tool batch detected; next iteration will force final summary. stream_id={}, session_id={}, repeated_count={}",
-                stream_id_for_task,
-                session_id,
-                state.repeated_tool_batch_count
-            );
-            state.force_final_response_next = true;
-            state.finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
-        }
-
-        // Execute the extracted tool batch (GAP-005).
-        let tool_ctx = super::stream_tool_execution::ToolExecutionContext {
-            pending_tool_uses: std::mem::take(&mut pending_tool_uses),
-            stream_id: stream_id_for_task.clone(),
-            session_id: session_id.clone(),
-            provider_request_id: state.provider_request_id.clone(),
-            accumulated_text: std::mem::take(&mut state.accumulated_text),
-            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
-            session_messages: std::mem::take(&mut state.session_messages),
-            timeline_session_messages: std::mem::take(&mut state.timeline_session_messages),
-            stream_emitter: stream_emitter.clone(),
-            run_event_logger: run_event_logger.clone(),
-            tool_registry: tool_registry_clone.clone(),
-            tool_executor,
-            permission_senders: permission_senders.clone(),
-            permission_overrides: permission_overrides.clone(),
-            permission_policy: permission_policy.clone(),
-            execution_context: execution_context_for_task.clone(),
-            work_loop_decision: work_loop_decision_for_stream.clone(),
-            harness_bus: harness_event_bus_for_stream.clone(),
+        // S5b-3: phases 13-14 (and post-batch finalization guards)
+        // live in `stream_iteration::iteration_execute_tools`.
+        let execute_tools_refs = super::stream_iteration::ExecuteToolsSharedRefs {
+            stream_id: &stream_id_for_task,
+            session_id: &session_id,
+            stream_emitter: &stream_emitter,
+            run_event_logger: &run_event_logger,
+            tool_registry: &tool_registry_clone,
+            permission_senders: &permission_senders,
+            permission_overrides: &permission_overrides,
+            permission_policy: &permission_policy,
+            execution_context: &execution_context_for_task,
+            work_loop_decision: &work_loop_decision_for_stream,
+            harness_bus: harness_event_bus_for_stream.as_ref(),
             mode,
-            invalid_tool_args_streak: state.invalid_tool_args_streak,
-            has_successful_tool: state.has_successful_tool,
-            has_successful_mutating_tool: state.has_successful_mutating_tool,
-            sanitized_dropped_invalid_tool_use_inputs: state
-                .sanitized_dropped_invalid_tool_use_inputs,
-            sanitize_invalid_tool_use_samples: std::mem::take(
-                &mut state.sanitize_invalid_tool_use_samples,
-            ),
-            run_id: run_id_for_ledger.clone(),
-            app_data_dir: app_data_dir_for_ledger.clone(),
+            run_id: &run_id_for_ledger,
+            app_data_dir: &app_data_dir_for_ledger,
         };
-        let had_successful_mutating_tool_before = state.has_successful_mutating_tool;
-        let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
-        state.accumulated_text = tool_result.accumulated_text;
-        state.accumulated_thinking = tool_result.accumulated_thinking;
-        state.session_messages = tool_result.session_messages;
-        state.timeline_session_messages = tool_result.timeline_session_messages;
-        state.has_successful_tool = tool_result.has_successful_tool;
-        state.has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
-        if !had_successful_mutating_tool_before
-            && state.has_successful_mutating_tool
-            && super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-        {
-            if let Some(message) = super::todo_ledger::post_mutation_update_message(&session_id) {
-                state
-                    .session_messages
-                    .push(InputMessage::user_text(message));
-            }
-        }
-        state.force_final_response_next =
-            state.force_final_response_next || tool_result.force_final_response_next;
-        apply_memory_recall_success_finalization_guard(
-            &work_loop_decision_for_stream,
-            tool_result.has_successful_tool,
-            &mut state.force_final_response_next,
-            &mut state.finalization_reason,
-        );
-        if super::work_loop::requires_single_shell_command_evidence(&work_loop_decision_for_stream)
-            && tool_result.has_successful_tool
-        {
-            state.force_final_response_next = true;
-            state.finalization_reason = Some("single_shell_command_executed".to_string());
-        }
-        if state.finalization_reason.is_none() {
-            state.finalization_reason = tool_result.finalization_reason;
-        }
-        state.invalid_tool_args_streak = tool_result.invalid_tool_args_streak;
-        state.sanitized_dropped_invalid_tool_use_inputs =
-            tool_result.sanitized_dropped_invalid_tool_use_inputs;
-        state.sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
-        if state.pending_operation_for_delegate.is_none() {
-            state.pending_operation_for_delegate = tool_result.pending_operation;
-        }
-        tool_executor = tool_result.tool_executor;
-        // Continue outer loop → send next LLM request with tool results
-        tracing::info!(
-            "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",
-            state.session_messages.len()
-        );
+        tool_executor = super::stream_iteration::iteration_execute_tools(
+            &mut state,
+            pending_tool_uses,
+            tool_executor,
+            &execute_tools_refs,
+        )
+        .await;
     }
 
     // S5b-1: destructure the bag back into locals so the post-loop
@@ -737,6 +656,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         provider_textual_tool_markup_seen: _provider_textual_tool_markup_seen,
         terminal_status,
         last_stream_error_reason,
+        last_finish_reason: _last_finish_reason,
         finalization_reason: _finalization_reason,
         last_tool_batch_signature: _last_tool_batch_signature,
         pending_operation_for_delegate,
