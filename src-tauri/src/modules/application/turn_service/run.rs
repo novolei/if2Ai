@@ -385,7 +385,7 @@ impl TurnService {
             return Err(ce.to_string());
         }
 
-        let result = runtime.run_turn(user_message.clone(), None);
+        let result = runtime.run_turn(user_message.clone(), None).await;
 
         tracing::info!(
             "[run_agent_turn] run_turn completed, result: {:?}",

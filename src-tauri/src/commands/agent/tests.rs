@@ -29,8 +29,9 @@ struct ScriptedSkillApiClient {
     call_count: usize,
 }
 
+#[async_trait::async_trait]
 impl ApiClient for ScriptedSkillApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+    async fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         self.call_count += 1;
         match self.call_count {
             1 => {
@@ -139,6 +140,7 @@ async fn agent_loop_executes_skill_tool_end_to_end() {
 
     let summary = runtime
         .run_turn("请运行 demo-skill", None)
+        .await
         .expect("runtime should complete skill loop");
     assert_eq!(summary.iterations, 2);
     assert_eq!(summary.tool_results.len(), 1);

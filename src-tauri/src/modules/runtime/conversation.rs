@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use super::budget::ContextBudget;
 use super::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
@@ -83,8 +85,9 @@ pub enum AssistantEvent {
     MessageStop,
 }
 
-pub trait ApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
+#[async_trait]
+pub trait ApiClient: Send {
+    async fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
 }
 
 pub trait ToolExecutor {
@@ -414,7 +417,7 @@ where
         &mut self,
         user_message: String,
     ) -> Result<TurnSummary, RuntimeError> {
-        self.run_turn(user_message, None)
+        self.run_turn(user_message, None).await
     }
 
     /// Builds the system prompt string from the configured system prompt lines.
@@ -430,10 +433,10 @@ where
     /// Drive one full turn of the agent loop: append the user message,
     /// query the model, dispatch tool calls, and return a [`TurnSummary`].
     /// Honours the optional [`PermissionPrompter`] for per-tool approvals.
-    pub fn run_turn(
+    pub async fn run_turn(
         &mut self,
-        user_input: impl Into<String>,
-        mut prompter: Option<&mut dyn PermissionPrompter>,
+        user_input: impl Into<String> + Send,
+        mut prompter: Option<&mut (dyn PermissionPrompter + Send)>,
     ) -> Result<TurnSummary, RuntimeError> {
         let user_text = user_input.into();
         if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
@@ -489,7 +492,7 @@ where
                 messages: messages_for_request,
                 tools: Some(self.tool_executor.get_definitions()),
             };
-            let events = self.api_client.stream(request)?;
+            let events = self.api_client.stream(request).await?;
             let (assistant_message, usage) = build_assistant_message(events)?;
             if let Some(usage) = usage {
                 self.usage_tracker.record(usage);
@@ -797,6 +800,8 @@ impl ToolExecutor for StaticToolExecutor {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use crate::modules::runtime::compact::CompactionConfig;
     use crate::modules::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
     use crate::modules::runtime::conversation::{
@@ -816,8 +821,12 @@ mod tests {
         call_count: usize,
     }
 
+    #[async_trait]
     impl ApiClient for ScriptedApiClient {
-        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        async fn stream(
+            &mut self,
+            request: ApiRequest,
+        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
             self.call_count += 1;
             match self.call_count {
                 1 => {
@@ -874,8 +883,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
+    #[tokio::test]
+    async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         let api_client = ScriptedApiClient { call_count: 0 };
         let tool_executor = StaticToolExecutor::new().register("add", |input| {
             let total = input
@@ -905,6 +914,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("what is 2 + 2?", Some(&mut PromptAllowOnce))
+            .await
             .expect("conversation loop should succeed");
 
         assert_eq!(summary.iterations, 2);
@@ -925,8 +935,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn records_denied_tool_results_when_prompt_rejects() {
+    #[tokio::test]
+    async fn records_denied_tool_results_when_prompt_rejects() {
         struct RejectPrompter;
         impl PermissionPrompter for RejectPrompter {
             fn decide(&mut self, _request: &PermissionRequest) -> PermissionPromptDecision {
@@ -937,8 +947,12 @@ mod tests {
         }
 
         struct SingleCallApiClient;
+        #[async_trait]
         impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 if request
                     .messages
                     .iter()
@@ -970,6 +984,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use the tool", Some(&mut RejectPrompter))
+            .await
             .expect("conversation should continue after denied tool");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -979,11 +994,15 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn denies_tool_use_when_pre_tool_hook_blocks() {
+    #[tokio::test]
+    async fn denies_tool_use_when_pre_tool_hook_blocks() {
         struct SingleCallApiClient;
+        #[async_trait]
         impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 if request
                     .messages
                     .iter()
@@ -1021,6 +1040,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use the tool", None)
+            .await
             .expect("conversation should continue after hook denial");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -1040,14 +1060,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn appends_post_tool_hook_feedback_to_tool_result() {
+    #[tokio::test]
+    async fn appends_post_tool_hook_feedback_to_tool_result() {
         struct TwoCallApiClient {
             calls: usize,
         }
 
+        #[async_trait]
         impl ApiClient for TwoCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 self.calls += 1;
                 match self.calls {
                     1 => Ok(vec![
@@ -1089,6 +1113,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use add", None)
+            .await
             .expect("tool loop succeeds");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -1116,11 +1141,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reconstructs_usage_tracker_from_restored_session() {
+    #[tokio::test]
+    async fn reconstructs_usage_tracker_from_restored_session() {
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1158,11 +1184,12 @@ mod tests {
         assert_eq!(runtime.usage().cumulative_usage().total_tokens(), 21);
     }
 
-    #[test]
-    fn compacts_session_after_turns() {
+    #[tokio::test]
+    async fn compacts_session_after_turns() {
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1180,9 +1207,9 @@ mod tests {
             PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         );
-        runtime.run_turn("a", None).expect("turn a");
-        runtime.run_turn("b", None).expect("turn b");
-        runtime.run_turn("c", None).expect("turn c");
+        runtime.run_turn("a", None).await.expect("turn a");
+        runtime.run_turn("b", None).await.expect("turn b");
+        runtime.run_turn("c", None).await.expect("turn c");
 
         let result = runtime.compact(CompactionConfig {
             preserve_recent_messages: 2,
@@ -1209,8 +1236,8 @@ mod tests {
     /// fires once per successful `run_turn`.  We use a counting hook
     /// to assert exactly one invocation per turn and that the hook
     /// observes the in-flight session messages.
-    #[test]
-    fn turn_hook_fires_once_per_turn() {
+    #[tokio::test]
+    async fn turn_hook_fires_once_per_turn() {
         use crate::modules::memory::scope::MemoryExecutionScope;
         use crate::modules::runtime::conversation::TurnHook;
         use crate::modules::runtime::session::ConversationMessage;
@@ -1237,8 +1264,9 @@ mod tests {
         }
 
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1262,8 +1290,8 @@ mod tests {
         )
         .with_turn_hook(hook.clone());
 
-        runtime.run_turn("first", None).expect("turn 1");
-        runtime.run_turn("second", None).expect("turn 2");
+        runtime.run_turn("first", None).await.expect("turn 1");
+        runtime.run_turn("second", None).await.expect("turn 2");
 
         assert_eq!(hook.count.load(Ordering::SeqCst), 2);
         let observed = *hook.last_seen.lock().expect("lock");
@@ -1278,8 +1306,8 @@ mod tests {
     /// The session is pre-filled with many turns; the API client records how many
     /// messages each request contains.  After one more turn we assert that the
     /// LLM saw at most `max_turns` messages — not the full session history.
-    #[test]
-    fn working_memory_limits_messages_sent_to_llm() {
+    #[tokio::test]
+    async fn working_memory_limits_messages_sent_to_llm() {
         use crate::modules::memory::working_memory::WorkingMemory;
         use std::sync::{Arc, Mutex};
 
@@ -1289,8 +1317,12 @@ mod tests {
             counts: Arc<Mutex<Vec<usize>>>,
         }
 
+        #[async_trait]
         impl ApiClient for MessageCountingApi {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 self.counts
                     .lock()
                     .expect("lock poisoned")
@@ -1334,7 +1366,10 @@ mod tests {
         )
         .with_working_memory(wm);
 
-        runtime.run_turn("new question".to_string(), None).unwrap();
+        runtime
+            .run_turn("new question".to_string(), None)
+            .await
+            .unwrap();
 
         // Full session has 10 pre-existing + 1 new user = 11 messages,
         // but the API should only have seen ≤ 4 (the working memory window).
@@ -1348,8 +1383,12 @@ mod tests {
 
     struct OnceTextApi;
 
+    #[async_trait]
     impl ApiClient for OnceTextApi {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        async fn stream(
+            &mut self,
+            _request: ApiRequest,
+        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
             Ok(vec![
                 AssistantEvent::TextDelta("x".into()),
                 AssistantEvent::MessageStop,
@@ -1357,8 +1396,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn undo_checkpoint_restores_messages_before_last_turn() {
+    #[tokio::test]
+    async fn undo_checkpoint_restores_messages_before_last_turn() {
         let permission_policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite);
         let system_prompt = SystemPromptBuilder::new()
             .with_project_context(ProjectContext {
@@ -1379,7 +1418,7 @@ mod tests {
         )
         .with_undo_checkpoints(true);
 
-        runtime.run_turn("hi", None).expect("turn");
+        runtime.run_turn("hi", None).await.expect("turn");
         assert_eq!(runtime.session().messages.len(), 2);
         assert!(runtime.undo_last_checkpoint());
         assert!(runtime.session().messages.is_empty());
