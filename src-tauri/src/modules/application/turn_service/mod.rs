@@ -90,6 +90,7 @@ mod run;
 mod stream;
 mod stream_event_loop;
 mod stream_finalize;
+mod stream_loop_state;
 mod stream_preflight;
 pub mod stream_task;
 mod stream_tool_execution;
