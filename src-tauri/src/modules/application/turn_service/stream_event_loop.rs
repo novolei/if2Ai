@@ -81,6 +81,20 @@ pub(super) struct StreamEventLoopResult {
     /// Returned to the orchestrator so it can poll for cancellation
     /// at the top of the next outer-loop iteration.
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    /// Provider-supplied finish reason from the final SSE event of this
+    /// API call. Captured from `MessageDelta.delta.stop_reason`, which
+    /// both Anthropic (native) and OpenAI-compat (translated from
+    /// `finish_reason`) populate prior to `MessageStop`.
+    ///
+    /// `Some("max_tokens")` / `Some("length")` indicates the provider
+    /// truncated the response; `Some("end_turn")` / `Some("tool_use")`
+    /// are normal terminations. `None` when the stream ended without a
+    /// finish_reason event (cancelled, errored before MessageDelta, or
+    /// `Ok(None)` reached before any MessageDelta carried a stop_reason).
+    ///
+    /// Steward-Alignment Phase 2 T2: prerequisite for `force_text` and
+    /// `is_length_truncation` to fire on the streaming agent loop path.
+    pub finish_reason: Option<String>,
 }
 
 /// Run the inner SSE event-processing loop for one provider API call
@@ -125,6 +139,7 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
     let mut retry_outer_after_timeout = false;
     let mut emitted_stream_delta_in_iteration = false;
     let mut completion_already_emitted = false;
+    let mut finish_reason: Option<String> = None;
 
     loop {
         let next_event = tokio::select! {
@@ -186,6 +201,7 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
                                 resume_available: None,
                                 resume_cursor: None,
                                 request_id: Some(provider_request_id.clone()),
+                                finish_reason: None,
                             });
                             let _ = session_manager.save_session(&interim_session).await;
                             tracing::debug!(
@@ -396,6 +412,7 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
                         .max(u.cache_read_input_tokens);
                 }
                 ApiStreamEvent::MessageDelta(ev) => {
+                    record_finish_reason_from_delta(&mut finish_reason, &ev);
                     let u = &ev.usage;
                     current_call_usage.input_tokens =
                         current_call_usage.input_tokens.max(u.input_tokens);
@@ -577,5 +594,82 @@ pub(super) async fn run_stream_event_loop(ctx: StreamEventLoopContext) -> Stream
         emitted_stream_delta_in_iteration,
         completion_already_emitted,
         cancel_rx,
+        finish_reason,
+    }
+}
+
+/// When a `MessageDelta` SSE event carries a non-`None` `stop_reason`,
+/// record it as the running finish reason for the current API call.
+///
+/// Both providers feed this field:
+/// - Anthropic (Claw): native `message_delta.delta.stop_reason`
+///   (`"end_turn"`, `"tool_use"`, `"max_tokens"`, etc.).
+/// - OpenAI-compat (Xai/OpenAI): translated from chat-completion
+///   `choice.finish_reason` (`"stop"` → `"end_turn"`, `"tool_calls"` →
+///   `"tool_use"`, `"length"` → `"length"`/`"max_tokens"`).
+///
+/// Later events overwrite earlier values: in practice only the final
+/// `MessageDelta` of an API call carries a non-`None` stop_reason, but
+/// "last write wins" is the safe and conventional rule.
+fn record_finish_reason_from_delta(
+    current: &mut Option<String>,
+    ev: &crate::modules::api::MessageDeltaEvent,
+) {
+    if let Some(reason) = ev.delta.stop_reason.as_ref() {
+        *current = Some(reason.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_finish_reason_from_delta;
+    use crate::modules::api::{MessageDelta, MessageDeltaEvent, Usage};
+
+    fn delta_event(stop_reason: Option<&str>) -> MessageDeltaEvent {
+        MessageDeltaEvent {
+            delta: MessageDelta {
+                stop_reason: stop_reason.map(|s| s.to_string()),
+                stop_sequence: None,
+            },
+            usage: Usage::default(),
+        }
+    }
+
+    #[test]
+    fn records_stop_reason_when_present() {
+        let mut current = None;
+        record_finish_reason_from_delta(&mut current, &delta_event(Some("max_tokens")));
+        assert_eq!(current.as_deref(), Some("max_tokens"));
+    }
+
+    #[test]
+    fn leaves_existing_value_untouched_when_stop_reason_none() {
+        let mut current = Some("end_turn".to_string());
+        record_finish_reason_from_delta(&mut current, &delta_event(None));
+        assert_eq!(current.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn last_non_none_wins() {
+        let mut current = None;
+        record_finish_reason_from_delta(&mut current, &delta_event(Some("tool_use")));
+        record_finish_reason_from_delta(&mut current, &delta_event(None));
+        record_finish_reason_from_delta(&mut current, &delta_event(Some("end_turn")));
+        assert_eq!(current.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn finish_reason_remains_none_when_no_delta_carries_it() {
+        let mut current: Option<String> = None;
+        record_finish_reason_from_delta(&mut current, &delta_event(None));
+        record_finish_reason_from_delta(&mut current, &delta_event(None));
+        assert!(current.is_none());
+    }
+
+    #[test]
+    fn captures_length_truncation_signal() {
+        let mut current = None;
+        record_finish_reason_from_delta(&mut current, &delta_event(Some("length")));
+        assert_eq!(current.as_deref(), Some("length"));
     }
 }

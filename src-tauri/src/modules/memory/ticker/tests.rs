@@ -41,6 +41,7 @@ fn user_msg(text: &str) -> ConversationMessage {
         resume_available: None,
         resume_cursor: None,
         request_id: None,
+        finish_reason: None,
     }
 }
 

@@ -1429,6 +1429,7 @@ mod tests {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 

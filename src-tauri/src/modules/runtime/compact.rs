@@ -163,6 +163,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         resume_available: None,
         resume_cursor: None,
         request_id: None,
+        finish_reason: None,
     }];
     compacted_messages.extend(preserved);
 
@@ -679,6 +680,7 @@ mod tests {
                     resume_available: None,
                     resume_cursor: None,
                     request_id: None,
+                    finish_reason: None,
                 },
             ],
         };
@@ -795,6 +797,7 @@ mod tests {
                     resume_available: None,
                     resume_cursor: None,
                     request_id: None,
+                    finish_reason: None,
                 },
                 ConversationMessage::user_text("tiny"),
                 ConversationMessage::assistant(vec![ContentBlock::Text {

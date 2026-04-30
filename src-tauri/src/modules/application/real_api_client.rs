@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tokio::time::timeout;
 
 use crate::modules::api::{
@@ -41,19 +42,15 @@ impl RealApiClient {
     }
 }
 
+#[async_trait]
 impl ApiClient for RealApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        // Use block_in_place to run async code in a blocking context
-        // This allows us to call async functions from the sync stream method
-        let result = tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::current();
-            handle.block_on(async move {
-                let api_future = self.call_api(request);
-                timeout(self.request_timeout, api_future).await
-            })
-        });
-
-        let response = result
+    async fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        // T8 (Phase 2 5c-4): now natively async. The previous `block_in_place +
+        // Handle::current().block_on(...)` adapter is gone — `run_turn` awaits
+        // this directly, so the inner `call_api` future is polled on the same
+        // runtime as the caller.
+        let response = timeout(self.request_timeout, self.call_api(request))
+            .await
             .map_err(|_| RuntimeError::ApiError("API call timed out".to_string()))?
             .map_err(|e| RuntimeError::ApiError(e.to_string()))?;
 

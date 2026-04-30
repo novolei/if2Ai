@@ -2,6 +2,21 @@
 //!
 //! Mirrors Steward's `AgenticLoopConfig`. All fields have defaults that
 //! preserve current production behaviour.
+//!
+//! ## Wiring status (post-Phase 2)
+//!
+//! - `max_iterations` — **fully wired**: production reads from
+//!   `agent_max_iterations()` env-var via T11/T12 single-source-of-truth.
+//! - `enable_tool_intent_nudge` / `max_tool_intent_nudges` — **inert in
+//!   production**: both delegates short-circuit to `RespondResult::Text`
+//!   when no tool calls are present, so `run_agentic_loop`'s nudge path
+//!   is unreachable. Real nudge logic lives delegate-side
+//!   (`stream_iteration::handle_no_tool_calls` for streaming, no equivalent
+//!   in sync). Tracked for unification in Phase 3.
+//! - `force_text_after_truncations` — **inert in production**: neither
+//!   delegate consults `ctx.force_text` from the loop. Stream uses its own
+//!   `force_final_response_next` (set by `repeated_tool_batch_count`),
+//!   sync uses no force-text mechanism. Tracked for unification in Phase 3.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgenticLoopConfig {

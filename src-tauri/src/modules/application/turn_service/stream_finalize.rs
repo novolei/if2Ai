@@ -472,6 +472,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         resume_available: None,
         resume_cursor: None,
         request_id: Some(provider_request_id.clone()),
+        finish_reason: None,
     };
     // P1-7 / P2-11 — capture the assistant output text length BEFORE
     // `flush_assistant_timeline_segment` `mem::take`s `accumulated_text`,
@@ -506,6 +507,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             resume_available: Some(persisted_turn_outcome.resume_available),
             resume_cursor: persisted_turn_outcome.resume_cursor.clone(),
             request_id: Some(persisted_turn_outcome.request_id.clone()),
+            finish_reason: None,
         });
     }
     // P1-7 / P2-11 — fall back to a tiktoken estimate when the provider

@@ -56,6 +56,12 @@ pub struct ConversationMessage {
     pub resume_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Provider-reported `finish_reason` / `stop_reason` for the assistant turn,
+    /// surfaced by both the streaming path (T2 / `StreamEventLoopResult`) and the
+    /// sync `ConversationRuntime::run_turn` path (T7). `None` for non-assistant
+    /// messages and for assistant turns where the provider did not report one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,6 +179,7 @@ impl ConversationMessage {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -188,6 +195,7 @@ impl ConversationMessage {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -203,6 +211,7 @@ impl ConversationMessage {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -226,6 +235,7 @@ impl ConversationMessage {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -251,6 +261,7 @@ impl ConversationMessage {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -309,6 +320,12 @@ impl ConversationMessage {
                 JsonValue::String(request_id.clone()),
             );
         }
+        if let Some(finish_reason) = &self.finish_reason {
+            object.insert(
+                "finish_reason".to_string(),
+                JsonValue::String(finish_reason.clone()),
+            );
+        }
         JsonValue::Object(object)
     }
 
@@ -363,6 +380,10 @@ impl ConversationMessage {
                 .map(String::from),
             request_id: object
                 .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            finish_reason: object
+                .get("finish_reason")
                 .and_then(|v| v.as_str())
                 .map(String::from),
         })

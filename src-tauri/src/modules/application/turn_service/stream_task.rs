@@ -107,10 +107,10 @@ use super::stream_loop_state;
 
 const DEFAULT_MAX_TOOL_LOOP_ITERATIONS: usize = 10;
 const MIN_MAX_TOOL_LOOP_ITERATIONS: usize = 3;
-const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
+pub(super) const REPEATED_TOOL_BATCH_LIMIT: usize = 3;
 const INVALID_TOOL_ARGS_LIMIT: usize = 2;
 
-fn agent_max_iterations() -> usize {
+pub(crate) fn agent_max_iterations() -> usize {
     std::env::var("IF2AI_AGENT_MAX_ITERATIONS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -118,7 +118,7 @@ fn agent_max_iterations() -> usize {
         .unwrap_or(DEFAULT_MAX_TOOL_LOOP_ITERATIONS)
 }
 
-fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> String {
+pub(super) fn tool_batch_signature(pending_tool_uses: &[(String, String, String)]) -> String {
     let mut parts = pending_tool_uses
         .iter()
         .map(|(_, tool_name, input_json)| {
@@ -214,12 +214,14 @@ pub struct StreamTaskInputs {
     /// behaviourally equivalent today but masks ownership and makes
     /// future per-turn `workdir` overrides harder.
     pub utility_llm: Arc<dyn crate::modules::memory::UtilityLlm>,
-    /// Steward-aligned safety-valve configuration for the agent loop
-    /// (S2-S1b). Plumbed from `TurnServiceDeps::loop_config`. Today
-    /// the streaming body still uses `agent_max_iterations()` and the
-    /// pre-Steward truncation handling; S5 Task 5.1's `run_agentic_loop`
-    /// is the canonical home for `force_text_after_truncations`,
-    /// `enable_tool_intent_nudge`, and `max_iterations` consumption.
+    /// Steward-aligned safety-valve config. Post-T11/T12: `max_iterations` is
+    /// the single source of truth (read from `agent_max_iterations()` env-var
+    /// at AppState construction, then consumed by both inner preflight cap
+    /// and outer `run_agentic_loop` cap). The other fields
+    /// (`enable_tool_intent_nudge`, `max_tool_intent_nudges`,
+    /// `force_text_after_truncations`) are currently inert in production —
+    /// real safety-valve behaviour lives delegate-side. See
+    /// `loop_config.rs` module docs for wiring status.
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
@@ -264,7 +266,7 @@ pub(super) async fn append_remembered_permission_events(
         .await;
 }
 
-fn apply_memory_recall_success_finalization_guard(
+pub(super) fn apply_memory_recall_success_finalization_guard(
     work_loop_decision: &WorkLoopDecision,
     has_successful_tool: bool,
     force_final_response_next: &mut bool,
@@ -279,7 +281,7 @@ fn apply_memory_recall_success_finalization_guard(
     }
 }
 
-fn should_retry_tool_required_no_tool(
+pub(super) fn should_retry_tool_required_no_tool(
     work_loop_decision: &WorkLoopDecision,
     has_successful_mutating_tool: bool,
     retry_count: usize,
@@ -293,7 +295,7 @@ fn should_retry_tool_required_no_tool(
         && available_tool_count > 0
 }
 
-fn should_retry_announced_tool_intent_no_tool(
+pub(super) fn should_retry_announced_tool_intent_no_tool(
     accumulated_text: &str,
     retry_count: usize,
     force_final_response: bool,
@@ -324,24 +326,177 @@ pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
         .await;
 }
 
-pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopDelegateOutput {
+pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentLoopDelegateOutput {
+    // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
+    let run_id_for_ledger = inputs.run_event_logger.run_id().to_string();
+    let app_data_dir_for_ledger = inputs
+        .app_handle_for_after_turn
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    tracing::info!(
+        "[start_agent_stream] Spawned background task for stream_id: {}",
+        inputs.stream_id_for_task
+    );
+
+    let max_iterations: usize = inputs.loop_config.max_iterations;
+
+    // Phase 6E harness: emit TurnStarted at the top of the spawned task
+    // so all timing measurements include API client setup time.
+    crate::modules::harness::agent_loop_integration::emit_turn_started(
+        inputs.harness_event_bus_for_stream.as_ref(),
+        &inputs.session_id,
+        inputs.turn_number_for_stream,
+    );
+    let stream_turn_started_at = std::time::Instant::now();
+
+    // S5b-1: bag the ~38 mutable per-turn locals into `StreamLoopState`.
+    // P1-7 / P2-11 note (carried over): `accumulated_usage` /
+    // `current_call_usage` track provider-billable token usage across
+    // events — Anthropic puts `input_tokens` on `message_start` and
+    // `output_tokens` on `message_delta`; OpenAI compat puts both on
+    // the synthesised `message_delta` in `finish()`. The per-call
+    // snapshot is committed into the running total on `message_stop`
+    // so multi-iteration tool loops sum correctly.
+    let initial_force_tool_choice_next =
+        (super::work_loop::requires_tool_execution_evidence(&inputs.work_loop_decision_for_stream)
+            || super::work_loop::requires_single_shell_command_evidence(
+                &inputs.work_loop_decision_for_stream,
+            ))
+            && !inputs.tool_defs_for_stream.is_empty();
+    // Move messages_for_stream out of `inputs` (replaced with empty Vec) so
+    // StreamLoopState owns them; `inputs` stays borrowable by StreamDelegate.
+    let messages_for_stream = std::mem::take(&mut inputs.messages_for_stream);
+    let state = stream_loop_state::StreamLoopState::new(
+        messages_for_stream,
+        format!("stream_{}", inputs.stream_id_for_task),
+        initial_force_tool_choice_next,
+    );
+
+    let stream_resilience_cfg =
+        crate::modules::provider::resilience::LlmResilienceConfig::from_env();
+    let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
+    let is_resume_turn = inputs.inbound_resume_cursor.is_some();
+    let mode = parse_permission_mode(inputs.permission_mode_for_stream.as_deref());
+    // Phase M4-C P2 — wrap in `Arc` so the harness
+    // `prepare_step_execution` shadow trace can borrow the
+    // same policy without re-constructing it.
+    let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
+    // Preserve `tool_success_evidence` Arc from the parent stream so broker
+    // bumps + per-iteration resets apply to the same counter (FEAT-AE-002).
+    let execution_context = SessionExecutionContext {
+        session_id: inputs.execution_context_for_task.session_id.clone(),
+        project_id: inputs.execution_context_for_task.project_id.clone(),
+        workdir: inputs.execution_context_for_task.workdir.clone(),
+        permission_mode: mode,
+        tool_success_evidence: inputs
+            .execution_context_for_task
+            .tool_success_evidence
+            .clone(),
+    };
+    let execution_context_for_policy = execution_context.clone();
+    log_context_fingerprint("start_agent_stream_task", &execution_context);
+    let tool_executor = ToolRegistryExecutor::new_with_context(
+        inputs.tool_registry_clone.clone(),
+        execution_context,
+    );
+
+    // Move cancel_rx out of `inputs` (replaced with a never-firing dummy)
+    // so the delegate can own it without a borrow conflict on `&inputs`.
+    // The dummy sender is dropped immediately; nothing reads inputs.cancel_rx
+    // after this point.
+    let cancel_rx = {
+        let (_dropped_tx, replacement) = tokio::sync::oneshot::channel::<()>();
+        std::mem::replace(&mut inputs.cancel_rx, replacement)
+    };
+
+    // S5-T5c: drive the loop through the unified `run_agentic_loop` via the
+    // StreamDelegate adapter. Replaces the previous inline 12-phase iteration
+    // body. Latent semantic shifts vs the inline body (audited in T5b,
+    // accepted as the price of the abstraction):
+    //   1. RetryAfterSleep paths (preflight+run-stream) now consume an outer
+    //      iteration slot via the synthetic `RespondResult::Text("")` →
+    //      `TextAction::Continue` round-trip.
+    //   2. `truncation_count` resets on that synthetic Text even though no
+    //      real text response happened (run_agentic_loop resets on every
+    //      `RespondResult::Text`).
+    // Neither is exercised by the current e2e suite.
+    let extras = super::stream_delegate::StreamDelegateExtras {
+        max_iterations,
+        stream_resilience_cfg,
+        cost_guard_cfg,
+        mode,
+        permission_policy,
+        execution_context_for_policy,
+        run_id_for_ledger,
+        app_data_dir_for_ledger,
+    };
+    let delegate = super::stream_delegate::StreamDelegate::new(
+        &inputs,
+        extras,
+        state,
+        cancel_rx,
+        tool_executor,
+    );
+    let outcome = super::agentic_loop::run_agentic_loop(&delegate, &inputs.loop_config).await;
+    let (mut state, _tool_executor_returned) = delegate.into_parts();
+
+    match outcome {
+        super::agentic_loop::LoopOutcome::Response(text) => {
+            // accumulated_text is normally already populated by the helpers
+            // that built the Text response. Backstop in case a future helper
+            // returns text without mirroring it into state.
+            if state.accumulated_text.is_empty() {
+                state.accumulated_text = text;
+            }
+        }
+        super::agentic_loop::LoopOutcome::Stopped => {
+            // check_signals stamps terminal_status = "cancelled_by_user"
+            // before returning LoopSignal::Stop.
+            debug_assert!(state.terminal_status.is_some());
+        }
+        super::agentic_loop::LoopOutcome::MaxIterations => {
+            // Outer (loop_config) cap. With single-source-of-truth from T12,
+            // outer and inner caps are equal; this arm is reached when the loop
+            // exits cleanly at N iterations. Inner preflight only trips first
+            // if a `RetryAfterSleep` consumed an outer slot without rolling back
+            // `state.tool_loop_iter`.
+            if state.terminal_status.is_none() {
+                state.terminal_status = Some("max_iterations_reached");
+            }
+        }
+        super::agentic_loop::LoopOutcome::Failure(_reason) => {
+            // PreflightOutcome::BreakTerminal / call_llm Err: helpers have
+            // already stamped terminal_status / stream_failed /
+            // last_stream_error_reason before returning.
+            debug_assert!(
+                state.terminal_status.is_some() || state.stream_failed,
+                "LoopOutcome::Failure should leave state with terminal_status or stream_failed set"
+            );
+        }
+    }
+
+    // Now destructure `inputs` for the post-loop / finalize block. Fields
+    // already moved/taken above are bound with `_` so the destructure stays
+    // exhaustive.
     let StreamTaskInputs {
         stream_id_for_task,
         run_event_logger,
         session_id,
         user_message_clone,
-        permission_mode_for_stream,
+        permission_mode_for_stream: _,
         inbound_resume_cursor,
         turn_number_for_stream,
         baseline_message_count_stream,
-        messages_for_stream,
-        tool_defs_for_stream,
-        tool_pool_names_for_stream,
-        tool_pool_schema_hash_for_stream,
-        tool_pool_policy_for_stream,
+        messages_for_stream: _,
+        tool_defs_for_stream: _,
+        tool_pool_names_for_stream: _,
+        tool_pool_schema_hash_for_stream: _,
+        tool_pool_policy_for_stream: _,
         system_prompt_for_stream,
-        provider_client_for_stream,
-        failover_provider_client,
+        provider_client_for_stream: _,
+        failover_provider_client: _,
         lifecycle_hooks,
         model_for_stream,
         provider_id_for_stream,
@@ -349,15 +504,15 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         routing_info_for_stream,
         work_loop_decision_for_stream,
         skill_resolution_plan_for_stream,
-        execution_context_for_task,
-        tool_registry_clone,
+        execution_context_for_task: _,
+        tool_registry_clone: _,
         session_manager,
         rolling_summarizer_for_stream,
         app_session_clone,
         stream_emitter,
-        mut cancel_rx,
-        permission_senders,
-        permission_overrides,
+        cancel_rx: _,
+        permission_senders: _,
+        permission_overrides: _,
         trajectory_manager_for_stream,
         learning_module_for_stream,
         memory_provider_for_stream,
@@ -373,823 +528,13 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
-        utility_llm,
-        // S2-S1b: plumbed through but not yet consumed; S5 Task 5.1
-        // `run_agentic_loop` becomes the consumer.
-        loop_config: _loop_config,
+        utility_llm: _,
+        loop_config: _,
     } = inputs;
-
-    // Resolve run_id and app_data_dir for attempt ledger (MIG-022 / T-013).
-    let run_id_for_ledger = run_event_logger.run_id().to_string();
-    let app_data_dir_for_ledger = app_handle_for_after_turn
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-    tracing::info!(
-        "[start_agent_stream] Spawned background task for stream_id: {}",
-        stream_id_for_task
-    );
-
-    let max_iterations: usize = agent_max_iterations();
-
-    // Phase 6E harness: emit TurnStarted at the top of the spawned task
-    // so all timing measurements include API client setup time.
-    crate::modules::harness::agent_loop_integration::emit_turn_started(
-        harness_event_bus_for_stream.as_ref(),
-        &session_id,
-        turn_number_for_stream,
-    );
-    let stream_turn_started_at = std::time::Instant::now();
-
-    // S5b-1: bag the ~38 mutable per-turn locals into `StreamLoopState`.
-    // Pure structural prep — no behaviour change vs the prior inline
-    // `let mut name = ...` declarations. See `stream_loop_state.rs` for
-    // the per-field rationale; future 5b-2..5b-5 substeps will shrink
-    // this bag as helpers are extracted.
-    //
-    // P1-7 / P2-11 note (carried over): `accumulated_usage` /
-    // `current_call_usage` track provider-billable token usage across
-    // events — Anthropic puts `input_tokens` on `message_start` and
-    // `output_tokens` on `message_delta`; OpenAI compat puts both on
-    // the synthesised `message_delta` in `finish()`. The per-call
-    // snapshot is committed into the running total on `message_stop`
-    // so multi-iteration tool loops sum correctly.
-    let initial_force_tool_choice_next =
-        (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-            || super::work_loop::requires_single_shell_command_evidence(
-                &work_loop_decision_for_stream,
-            ))
-            && !tool_defs_for_stream.is_empty();
-    let mut state = stream_loop_state::StreamLoopState::new(
-        messages_for_stream,
-        format!("stream_{}", stream_id_for_task),
-        initial_force_tool_choice_next,
-    );
-
-    let stream_resilience_cfg =
-        crate::modules::provider::resilience::LlmResilienceConfig::from_env();
-    let cost_guard_cfg = crate::modules::runtime::cost_guard::CostGuardConfig::from_env();
-    let is_resume_turn = inbound_resume_cursor.is_some();
-    let mode = parse_permission_mode(permission_mode_for_stream.as_deref());
-    // Phase M4-C P2 — wrap in `Arc` so the harness
-    // `prepare_step_execution` shadow trace can borrow the
-    // same policy without re-constructing it (re-construction
-    // would lose any per-tool requirements set on the
-    // original policy).
-    let permission_policy = std::sync::Arc::new(build_permission_policy(mode));
-    // Preserve `tool_success_evidence` Arc from the parent stream so broker
-    // bumps + per-iteration resets apply to the same counter (FEAT-AE-002).
-    let execution_context = SessionExecutionContext {
-        session_id: execution_context_for_task.session_id.clone(),
-        project_id: execution_context_for_task.project_id.clone(),
-        workdir: execution_context_for_task.workdir.clone(),
-        permission_mode: mode,
-        tool_success_evidence: execution_context_for_task.tool_success_evidence.clone(),
-    };
-    let execution_context_for_policy = execution_context.clone();
-    log_context_fingerprint("start_agent_stream_task", &execution_context);
-    let mut tool_executor =
-        ToolRegistryExecutor::new_with_context(tool_registry_clone.clone(), execution_context);
-    const SAVE_INTERVAL: u32 = 50;
-
-    loop {
-        // Check for cancellation at the start of each iteration
-        if cancel_rx.try_recv().is_ok() {
-            tracing::info!("[start_agent_stream] Stream cancelled at loop iteration");
-            let cancelled_truth = TaskOutcomeResolver::resolve(
-                ExecutionTruth {
-                    has_successful_tool: state.has_successful_tool,
-                    has_successful_mutating_tool: state.has_successful_mutating_tool,
-                },
-                &ConversationTruth {
-                    stream_failed: true,
-                    terminal_status: "cancelled_by_user",
-                    last_stream_error_reason: Some("cancelled_by_user".to_string()),
-                },
-            );
-            let payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "stream_complete".to_string(),
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_args: None,
-                tool_result: None,
-                tool_duration_ms: None,
-                effective_workdir: None,
-                policy_decision: None,
-                evidence_id: None,
-                request_id: Some(state.provider_request_id.clone()),
-                task_outcome: Some(cancelled_truth.task_outcome.to_string()),
-                degraded_reason: cancelled_truth.degraded_reason,
-                resume_available: Some(cancelled_truth.resume_available),
-                resume_cursor: None,
-                recoverability: None,
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(payload.clone());
-            append_stream_event(&run_event_logger, &payload).await;
-            state.completion_already_emitted = true;
-            state.terminal_status = Some("cancelled_by_user");
-            break;
-        }
-
-        if state.tool_loop_iter >= max_iterations {
-            tracing::warn!(
-                "[start_agent_stream] Tool loop exceeded max_iterations={}",
-                max_iterations
-            );
-            state.terminal_status = Some("max_iterations_reached");
-            break;
-        }
-        state.tool_loop_iter += 1;
-        tool_executor
-            .execution_context
-            .tool_success_evidence
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        let force_final_response =
-            state.force_final_response_next || state.tool_loop_iter >= max_iterations;
-        let force_tool_choice = state.force_tool_choice_next
-            || (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-                && !state.has_successful_mutating_tool);
-        state.force_tool_choice_next = false;
-        let current_finalization_reason = if force_final_response {
-            state
-                .finalization_reason
-                .clone()
-                .unwrap_or_else(|| "max_iterations_finalization_pass".to_string())
-        } else {
-            String::new()
-        };
-
-        tracing::info!(
-            "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}, force_final_response={}, finalization_reason={}",
-            state.tool_loop_iter,
-            state.session_messages.len(),
-            state.accumulated_text.len(),
-            force_final_response,
-            current_finalization_reason
-        );
-
-        // DW-002 — call the WU-004 digester before preflight so that
-        // long histories get LLM-summarized into a tighter token
-        // footprint. **Truth-loop iter-7 (2026-04-30)**: replaced the
-        // per-iteration `Arc::new(ChatProviderUtilityLlm::new(...))`
-        // with `utility_llm.clone()`, threaded from
-        // `TurnServiceDeps::utility_llm` — the same shared shim
-        // `bootstrap/memory.rs` constructs once at startup.  Avoids
-        // re-allocating a provider wrapper every outer loop and
-        // proves the `AppState::utility_llm` field has a live
-        // streaming-turn consumer (the `#[allow(dead_code)]` was
-        // dropped in the same commit).
-        // Failure-isolated: any error → `digested_messages = None`.
-        let digested_owned: Option<Vec<crate::modules::api::InputMessage>> =
-            super::preflight_hooks::digest_messages_for_preflight(
-                &state.session_messages,
-                utility_llm.clone(),
-            )
-            .await;
-        if let Some(ref kept) = digested_owned {
-            let payload = serde_json::json!({
-                "keptTokens": kept.len(),
-                "dropped": state.session_messages.len().saturating_sub(kept.len()),
-                "passthrough": kept.len() == state.session_messages.len(),
-                "tier": "recent_messages",
-            });
-            let _ = crate::modules::runtime::evolution_emitter::emit_evolution_event(
-                None,
-                crate::modules::runtime::contracts::common::RuntimeEventType::CompressionEvent,
-                "message_digest",
-                crate::modules::runtime::contracts::common::CorrelationIds {
-                    session_id: Some(session_id.clone()),
-                    stream_id: Some(stream_id_for_task.clone()),
-                    ..Default::default()
-                },
-                &payload,
-                None,
-            );
-        }
-
-        // Build the iteration request via the extracted preflight module (GAP-005).
-        let preflight_result = super::stream_preflight::build_iteration_request(
-            super::stream_preflight::PreflightContext {
-                session_messages: &state.session_messages,
-                digested_messages: digested_owned.as_deref(),
-                tool_defs: &tool_defs_for_stream,
-                system_prompt: &system_prompt_for_stream,
-                model: &model_for_stream,
-                context_window: context_window_for_stream,
-                force_final_response,
-                finalization_reason: &current_finalization_reason,
-                force_tool_choice,
-                tool_loop_iter: state.tool_loop_iter,
-                max_iterations,
-                stream_id: &stream_id_for_task,
-                session_id: &session_id,
-            },
-        );
-        let iter_api_request = preflight_result.request;
-        let request_tool_count = iter_api_request.tools.as_ref().map_or(0, Vec::len);
-        let request_tool_names = iter_api_request
-            .tools
-            .as_ref()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .take(48)
-                    .map(|tool| tool.name.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let request_tool_choice = iter_api_request
-            .tool_choice
-            .as_ref()
-            .map(|choice| format!("{choice:?}"))
-            .unwrap_or_else(|| "none".to_string());
-        let _ = run_event_logger
-            .append(
-                "provider_tool_call_diagnostics",
-                serde_json::json!({
-                    "stream_id": stream_id_for_task.clone(),
-                    "session_id": session_id.clone(),
-                    "iteration": state.tool_loop_iter,
-                    "tool_count": request_tool_count,
-                    "tool_names": request_tool_names,
-                    "canonical_tool_names": tool_pool_names_for_stream.clone(),
-                    "tool_schema_hash": tool_pool_schema_hash_for_stream.clone(),
-                    "tool_pool_policy": tool_pool_policy_for_stream.clone(),
-                    "tool_choice": request_tool_choice,
-                    "force_final_response": force_final_response,
-                    "force_tool_choice": force_tool_choice,
-                    "requires_tool_execution_evidence": super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream),
-                    "has_successful_tool": state.has_successful_tool,
-                    "has_successful_mutating_tool": state.has_successful_mutating_tool,
-                    "reason_codes": work_loop_decision_for_stream.reason_codes.clone(),
-                }),
-            )
-            .await;
-        state.session_messages = preflight_result.session_messages;
-        state.preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
-        state.preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
-        state.preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;
-        state.sanitize_rounds += preflight_result.sanitize_rounds_added;
-        state.sanitized_dropped_empty_messages +=
-            preflight_result.sanitized_dropped_empty_messages_added;
-        state.sanitized_dropped_orphan_tool_results +=
-            preflight_result.sanitized_dropped_orphan_tool_results_added;
-        state.sanitized_dropped_unmatched_tool_uses +=
-            preflight_result.sanitized_dropped_unmatched_tool_uses_added;
-        state.sanitized_dropped_invalid_tool_use_inputs +=
-            preflight_result.sanitized_dropped_invalid_tool_use_inputs_added;
-        state
-            .sanitize_orphan_samples
-            .extend(preflight_result.sanitize_orphan_samples_added);
-        state
-            .sanitize_unmatched_samples
-            .extend(preflight_result.sanitize_unmatched_samples_added);
-        state
-            .sanitize_invalid_tool_use_samples
-            .extend(preflight_result.sanitize_invalid_tool_use_samples_added);
-
-        if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
-            &cost_guard_cfg,
-            &session_id,
-        ) {
-            state.stream_failed = true;
-            state.last_stream_error_reason = Some(ce.to_string());
-            state.terminal_status = Some("failed_to_start_stream");
-            let user_visible_truth = TaskOutcomeResolver::resolve(
-                ExecutionTruth {
-                    has_successful_tool: state.has_successful_tool,
-                    has_successful_mutating_tool: state.has_successful_mutating_tool,
-                },
-                &ConversationTruth {
-                    stream_failed: true,
-                    terminal_status: "failed_to_start_stream",
-                    last_stream_error_reason: state.last_stream_error_reason.clone(),
-                },
-            );
-            let payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "stream_error".to_string(),
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_args: None,
-                tool_result: Some(ce.to_string()),
-                tool_duration_ms: None,
-                effective_workdir: None,
-                policy_decision: None,
-                evidence_id: None,
-                request_id: Some(state.provider_request_id.clone()),
-                task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                degraded_reason: user_visible_truth.degraded_reason,
-                resume_available: Some(user_visible_truth.resume_available),
-                resume_cursor: None,
-                recoverability: Some(user_visible_truth.recoverability.clone()),
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(payload.clone());
-            append_stream_event(&run_event_logger, &payload).await;
-            if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                let _ = bus.emit(AgentEvent::StreamErrored {
-                    session_id: session_id.clone(),
-                    reason: state
-                        .last_stream_error_reason
-                        .clone()
-                        .unwrap_or_else(|| "cost_limit".to_string()),
-                    resume_available: user_visible_truth.resume_available,
-                    at: chrono::Utc::now(),
-                });
-            }
-            break;
-        }
-
-        let stream = match crate::modules::provider::resilience::stream_message_with_resilience(
-            &provider_client_for_stream,
-            failover_provider_client.as_ref(),
-            &iter_api_request,
-            &mut state.stream_circuit,
-            &stream_resilience_cfg,
-        )
-        .await
-        {
-            Ok(s) => {
-                crate::modules::runtime::cost_guard::CostGuard::record_llm_call_charged(
-                    &cost_guard_cfg,
-                    &session_id,
-                );
-                s
-            }
-            Err(e) => {
-                let stream_error_reason = format_stream_error_reason(&e);
-                if is_network_timeout_reason(&stream_error_reason)
-                    && state.stream_start_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
-                {
-                    state.stream_start_retry_count += 1;
-                    tracing::warn!(
-                        "[start_agent_stream] start-stream timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
-                        stream_id_for_task,
-                        session_id,
-                        state.stream_start_retry_count,
-                        MAX_STREAM_RETRY_ON_TIMEOUT,
-                        stream_error_reason
-                    );
-                    tokio::time::sleep(Duration::from_millis(350)).await;
-                    continue;
-                }
-                state.stream_failed = true;
-                state.last_stream_error_reason = Some(stream_error_reason.clone());
-                state.terminal_status = Some("failed_to_start_stream");
-                tracing::error!(
-                    "[start_agent_stream] Background task failed to start stream: {}",
-                    stream_error_reason
-                );
-                let user_visible_truth = TaskOutcomeResolver::resolve(
-                    ExecutionTruth {
-                        has_successful_tool: state.has_successful_tool,
-                        has_successful_mutating_tool: state.has_successful_mutating_tool,
-                    },
-                    &ConversationTruth {
-                        stream_failed: true,
-                        terminal_status: "failed_to_start_stream",
-                        last_stream_error_reason: Some(stream_error_reason.clone()),
-                    },
-                );
-                let resume_cursor = user_visible_truth.resume_available.then(|| {
-                    build_resume_cursor(
-                        &stream_id_for_task,
-                        state.tool_loop_iter,
-                        state.token_count,
-                    )
-                });
-                let degraded_reason = user_visible_truth.degraded_reason.clone();
-                let payload = StreamTokenPayload {
-                    stream_id: stream_id_for_task.clone(),
-                    correlation: None,
-                    text: None,
-                    thinking: None,
-                    event_type: "stream_error".to_string(),
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_status: None,
-                    tool_args: None,
-                    tool_result: Some(stream_error_reason),
-                    tool_duration_ms: None,
-                    effective_workdir: None,
-                    policy_decision: None,
-                    evidence_id: None,
-                    request_id: Some(state.provider_request_id.clone()),
-                    task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                    degraded_reason,
-                    resume_available: Some(user_visible_truth.resume_available),
-                    resume_cursor,
-                    recoverability: Some(user_visible_truth.recoverability.clone()),
-                    context_budget_usage: None,
-                    memory_context: None,
-                    prompt_diagnostics: None,
-                    turn_cost: None,
-                    routing_info: None,
-                    session_totals: None,
-                };
-                stream_emitter.emit_payload(payload.clone());
-                append_stream_event(&run_event_logger, &payload).await;
-                // Phase M4-C P5 — emit harness `StreamErrored`
-                // event so the trace aggregator records the
-                // hard error against the run report.
-                if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                    let _ = bus.emit(AgentEvent::StreamErrored {
-                        session_id: session_id.clone(),
-                        reason: state
-                            .last_stream_error_reason
-                            .clone()
-                            .unwrap_or_else(|| "unknown_stream_error".to_string()),
-                        resume_available: user_visible_truth.resume_available,
-                        at: chrono::Utc::now(),
-                    });
-                }
-                // Save session and emit stream_complete even on error
-                // (break from outer loop so cleanup code runs below)
-                break;
-            }
-        };
-        if let Some(request_id) = stream
-            .request_id()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(ToOwned::to_owned)
-        {
-            state.provider_request_id = request_id.clone();
-            tracing::info!(
-                "[start_agent_stream] provider request_id captured: stream_id={}, session_id={}, request_id={}",
-                stream_id_for_task,
-                session_id,
-                request_id
-            );
-        }
-
-        // Run the extracted inner SSE event-processing loop (GAP-005).
-        let event_loop_ctx = super::stream_event_loop::StreamEventLoopContext {
-            stream,
-            cancel_rx,
-            stream_id: stream_id_for_task.clone(),
-            session_id: session_id.clone(),
-            provider_request_id: state.provider_request_id.clone(),
-            accumulated_text: std::mem::take(&mut state.accumulated_text),
-            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
-            token_count: state.token_count,
-            current_call_usage: std::mem::take(&mut state.current_call_usage),
-            accumulated_usage: std::mem::take(&mut state.accumulated_usage),
-            stream_emitter: stream_emitter.clone(),
-            run_event_logger: run_event_logger.clone(),
-            app_session: app_session_clone.clone(),
-            session_manager: session_manager.clone(),
-            harness_bus: harness_event_bus_for_stream.clone(),
-            execution_context: execution_context_for_policy.clone(),
-            has_successful_tool: state.has_successful_tool,
-            has_successful_mutating_tool: state.has_successful_mutating_tool,
-            provider_id: provider_id_for_stream.clone(),
-            model: model_for_stream.clone(),
-            stream_event_retry_count: state.stream_event_retry_count,
-        };
-        let loop_result = super::stream_event_loop::run_stream_event_loop(event_loop_ctx).await;
-        let mut pending_tool_uses = loop_result.pending_tool_uses;
-        state.accumulated_text = loop_result.accumulated_text;
-        state.accumulated_thinking = loop_result.accumulated_thinking;
-        state.token_count = loop_result.token_count;
-        state.current_call_usage = loop_result.current_call_usage;
-        state.accumulated_usage = loop_result.accumulated_usage;
-        state.stream_failed = loop_result.stream_failed;
-        state.last_stream_error_reason = loop_result.last_stream_error_reason;
-        state.terminal_status = loop_result.terminal_status;
-        let retry_outer_after_timeout = loop_result.retry_outer_after_timeout;
-        state.stream_event_retry_count = loop_result.stream_event_retry_count;
-        let _emitted_stream_delta_in_iteration = loop_result.emitted_stream_delta_in_iteration;
-        state.completion_already_emitted = loop_result.completion_already_emitted;
-        cancel_rx = loop_result.cancel_rx;
-
-        if retry_outer_after_timeout {
-            tokio::time::sleep(Duration::from_millis(350)).await;
-            continue;
-        }
-
-        // Some providers stream textual pseudo tool calls instead of
-        // structured tool-call deltas. Convert supported formats before
-        // falling back to nudge/finalization.
-        if pending_tool_uses.is_empty() {
-            tracing::info!(
-                "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
-                state.accumulated_text.len()
-            );
-            if !force_final_response {
-                let textual_tool_calls =
-                    super::work_loop::extract_textual_tool_calls(&state.accumulated_text);
-                if !textual_tool_calls.is_empty() {
-                    state.provider_textual_tool_markup_seen = true;
-                    let markup_family =
-                        super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
-                            .unwrap_or_else(|| "textual_tool_calls".to_string());
-                    let warning = format!(
-                        "provider emitted {markup_family} text instead of structured tool_calls; converted to canonical tool calls"
-                    );
-                    if !state
-                        .diagnostic_warnings
-                        .iter()
-                        .any(|value| value == &warning)
-                    {
-                        state.diagnostic_warnings.push(warning);
-                    }
-                    let converted_count = textual_tool_calls.len();
-                    let _ = run_event_logger
-                        .append(
-                            "provider_tool_call_compat_warning",
-                            serde_json::json!({
-                                "stream_id": stream_id_for_task.clone(),
-                                "session_id": session_id.clone(),
-                                "provider_id": provider_id_for_stream.clone(),
-                                "model": model_for_stream.clone(),
-                                "markup_family": markup_family,
-                                "text_len": state.accumulated_text.len(),
-                                "converted_tool_call_count": converted_count,
-                                "recovery_action": "execute_as_structured_tool_calls",
-                                "sanitized": true,
-                            }),
-                        )
-                        .await;
-                    pending_tool_uses = textual_tool_calls;
-                    state.accumulated_text.clear();
-                    state.accumulated_thinking.clear();
-                }
-            }
-        }
-        if pending_tool_uses.is_empty() {
-            if let Some(markup_family) =
-                super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
-            {
-                state.provider_textual_tool_markup_seen = true;
-                let warning = format!(
-                    "provider emitted {markup_family} text instead of structured tool_calls"
-                );
-                if !state
-                    .diagnostic_warnings
-                    .iter()
-                    .any(|value| value == &warning)
-                {
-                    state.diagnostic_warnings.push(warning.clone());
-                }
-                let _ = run_event_logger
-                    .append(
-                        "provider_tool_call_compat_warning",
-                        serde_json::json!({
-                            "stream_id": stream_id_for_task.clone(),
-                            "session_id": session_id.clone(),
-                            "provider_id": provider_id_for_stream.clone(),
-                            "model": model_for_stream.clone(),
-                            "markup_family": markup_family,
-                            "text_len": state.accumulated_text.len(),
-                            "recovery_action": "nudge_with_required_tool_choice",
-                            "sanitized": true,
-                        }),
-                    )
-                    .await;
-            }
-            if should_retry_tool_required_no_tool(
-                &work_loop_decision_for_stream,
-                state.has_successful_mutating_tool,
-                state.tool_required_no_tool_retry_count,
-                force_final_response,
-                tool_defs_for_stream.len(),
-            ) {
-                state.tool_required_no_tool_retry_count += 1;
-                tracing::warn!(
-                    "[start_agent_stream] tool-required task produced no mutating tool call; retrying once with tool-required loop control. stream_id={}, session_id={}",
-                    stream_id_for_task,
-                    session_id
-                );
-                let payload = serde_json::json!({
-                    "reason": "tool_required_no_tool",
-                    "retry_count": state.tool_required_no_tool_retry_count,
-                    "available_tool_count": tool_defs_for_stream.len(),
-                });
-                let _ = run_event_logger
-                    .append("tool_required_no_tool_retry", payload)
-                    .await;
-                state.accumulated_text.clear();
-                state.accumulated_thinking.clear();
-                state.session_messages.push(InputMessage::user_text(
-                    "[agent_loop_control] The previous assistant response did not call tools, but this user request requires concrete file/tool execution before completion. Call the available tools now to inspect, create or edit the artifact, and verify it. Use complete JSON arguments for every tool call. Do not answer only with prose. If tool execution is impossible, explain the blockage in the final report.",
-                ));
-                state.force_tool_choice_next = true;
-                continue;
-            }
-            if should_retry_announced_tool_intent_no_tool(
-                &state.accumulated_text,
-                state.tool_intent_nudge_retry_count,
-                force_final_response,
-                tool_defs_for_stream.len(),
-            ) {
-                state.tool_intent_nudge_retry_count += 1;
-                tracing::warn!(
-                    "[start_agent_stream] assistant announced tool intent without tool call; nudging once. stream_id={}, session_id={}",
-                    stream_id_for_task,
-                    session_id
-                );
-                let payload = serde_json::json!({
-                    "reason": "announced_tool_intent_no_tool",
-                    "retry_count": state.tool_intent_nudge_retry_count,
-                    "available_tool_count": tool_defs_for_stream.len(),
-                });
-                let _ = run_event_logger
-                    .append("tool_intent_nudge_retry", payload)
-                    .await;
-                state.accumulated_text.clear();
-                state.accumulated_thinking.clear();
-                state.session_messages.push(InputMessage::user_text(
-                    super::work_loop::tool_intent_nudge_message(),
-                ));
-                state.force_tool_choice_next = true;
-                continue;
-            }
-            if state.terminal_status.is_none() {
-                state.terminal_status = match state.finalization_reason.as_deref() {
-                    Some("invalid_tool_args_repeated") => Some("invalid_tool_args_repeated"),
-                    Some("repeated_tool_batch_no_progress") => {
-                        Some("repeated_tool_batch_no_progress")
-                    }
-                    Some("approval_required_for_mutation") => {
-                        Some("approval_required_for_mutation")
-                    }
-                    _ if super::work_loop::requires_memory_recall_evidence(
-                        &work_loop_decision_for_stream,
-                    ) && !state.has_successful_tool
-                        && super::work_loop::is_incomplete_memory_lookup_response(
-                            &state.accumulated_text,
-                        ) =>
-                    {
-                        Some("memory_recall_required_no_tool")
-                    }
-                    _ if super::work_loop::requires_tool_execution_evidence(
-                        &work_loop_decision_for_stream,
-                    ) && !state.has_successful_mutating_tool =>
-                    {
-                        if state.provider_textual_tool_markup_seen {
-                            Some("provider_textual_tool_call_markup")
-                        } else {
-                            Some("tool_required_no_tool")
-                        }
-                    }
-                    _ if super::work_loop::assistant_claims_tool_execution_without_tool(
-                        &state.accumulated_text,
-                    ) && !state.has_successful_mutating_tool =>
-                    {
-                        if state.provider_textual_tool_markup_seen {
-                            Some("provider_textual_tool_call_markup")
-                        } else {
-                            Some("tool_required_no_tool")
-                        }
-                    }
-                    _ if super::work_loop::detect_repetitive_model_output(
-                        &state.accumulated_text,
-                    ) =>
-                    {
-                        Some("repetitive_model_output")
-                    }
-                    _ => Some("model_stop_no_tools"),
-                };
-            }
-            break;
-        }
-        if force_final_response {
-            tracing::warn!(
-                "[start_agent_stream] Provider emitted tool calls during finalization pass; ending as max_iterations_reached. pending_tool_uses={}",
-                pending_tool_uses.len()
-            );
-            state.terminal_status = Some("max_iterations_reached");
-            break;
-        }
-
-        let current_tool_batch_signature = tool_batch_signature(&pending_tool_uses);
-        if state.last_tool_batch_signature.as_deref() == Some(current_tool_batch_signature.as_str())
-        {
-            state.repeated_tool_batch_count += 1;
-        } else {
-            state.repeated_tool_batch_count = 1;
-            state.last_tool_batch_signature = Some(current_tool_batch_signature);
-        }
-        if state.repeated_tool_batch_count >= REPEATED_TOOL_BATCH_LIMIT {
-            tracing::warn!(
-                "[start_agent_stream] repeated tool batch detected; next iteration will force final summary. stream_id={}, session_id={}, repeated_count={}",
-                stream_id_for_task,
-                session_id,
-                state.repeated_tool_batch_count
-            );
-            state.force_final_response_next = true;
-            state.finalization_reason = Some("repeated_tool_batch_no_progress".to_string());
-        }
-
-        // Execute the extracted tool batch (GAP-005).
-        let tool_ctx = super::stream_tool_execution::ToolExecutionContext {
-            pending_tool_uses: std::mem::take(&mut pending_tool_uses),
-            stream_id: stream_id_for_task.clone(),
-            session_id: session_id.clone(),
-            provider_request_id: state.provider_request_id.clone(),
-            accumulated_text: std::mem::take(&mut state.accumulated_text),
-            accumulated_thinking: std::mem::take(&mut state.accumulated_thinking),
-            session_messages: std::mem::take(&mut state.session_messages),
-            timeline_session_messages: std::mem::take(&mut state.timeline_session_messages),
-            stream_emitter: stream_emitter.clone(),
-            run_event_logger: run_event_logger.clone(),
-            tool_registry: tool_registry_clone.clone(),
-            tool_executor,
-            permission_senders: permission_senders.clone(),
-            permission_overrides: permission_overrides.clone(),
-            permission_policy: permission_policy.clone(),
-            execution_context: execution_context_for_task.clone(),
-            work_loop_decision: work_loop_decision_for_stream.clone(),
-            harness_bus: harness_event_bus_for_stream.clone(),
-            mode,
-            invalid_tool_args_streak: state.invalid_tool_args_streak,
-            has_successful_tool: state.has_successful_tool,
-            has_successful_mutating_tool: state.has_successful_mutating_tool,
-            sanitized_dropped_invalid_tool_use_inputs: state
-                .sanitized_dropped_invalid_tool_use_inputs,
-            sanitize_invalid_tool_use_samples: std::mem::take(
-                &mut state.sanitize_invalid_tool_use_samples,
-            ),
-            run_id: run_id_for_ledger.clone(),
-            app_data_dir: app_data_dir_for_ledger.clone(),
-        };
-        let had_successful_mutating_tool_before = state.has_successful_mutating_tool;
-        let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;
-        state.accumulated_text = tool_result.accumulated_text;
-        state.accumulated_thinking = tool_result.accumulated_thinking;
-        state.session_messages = tool_result.session_messages;
-        state.timeline_session_messages = tool_result.timeline_session_messages;
-        state.has_successful_tool = tool_result.has_successful_tool;
-        state.has_successful_mutating_tool = tool_result.has_successful_mutating_tool;
-        if !had_successful_mutating_tool_before
-            && state.has_successful_mutating_tool
-            && super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-        {
-            if let Some(message) = super::todo_ledger::post_mutation_update_message(&session_id) {
-                state
-                    .session_messages
-                    .push(InputMessage::user_text(message));
-            }
-        }
-        state.force_final_response_next =
-            state.force_final_response_next || tool_result.force_final_response_next;
-        apply_memory_recall_success_finalization_guard(
-            &work_loop_decision_for_stream,
-            tool_result.has_successful_tool,
-            &mut state.force_final_response_next,
-            &mut state.finalization_reason,
-        );
-        if super::work_loop::requires_single_shell_command_evidence(&work_loop_decision_for_stream)
-            && tool_result.has_successful_tool
-        {
-            state.force_final_response_next = true;
-            state.finalization_reason = Some("single_shell_command_executed".to_string());
-        }
-        if state.finalization_reason.is_none() {
-            state.finalization_reason = tool_result.finalization_reason;
-        }
-        state.invalid_tool_args_streak = tool_result.invalid_tool_args_streak;
-        state.sanitized_dropped_invalid_tool_use_inputs =
-            tool_result.sanitized_dropped_invalid_tool_use_inputs;
-        state.sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
-        if state.pending_operation_for_delegate.is_none() {
-            state.pending_operation_for_delegate = tool_result.pending_operation;
-        }
-        tool_executor = tool_result.tool_executor;
-        // Continue outer loop → send next LLM request with tool results
-        tracing::info!(
-            "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",
-            state.session_messages.len()
-        );
-    }
 
     // S5b-1: destructure the bag back into locals so the post-loop
     // finalization block (lifecycle hook + delegate output + finalize
-    // call) keeps its original variable names. This avoids touching
-    // any post-loop logic in this pure-refactor commit.
+    // call) keeps its original variable names.
     let stream_loop_state::StreamLoopState {
         tool_loop_iter,
         stream_event_retry_count,
@@ -1226,6 +571,7 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
         provider_textual_tool_markup_seen: _provider_textual_tool_markup_seen,
         terminal_status,
         last_stream_error_reason,
+        last_finish_reason: _last_finish_reason,
         finalization_reason: _finalization_reason,
         last_tool_batch_signature: _last_tool_batch_signature,
         pending_operation_for_delegate,

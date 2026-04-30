@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use super::budget::ContextBudget;
 use super::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
@@ -75,11 +77,17 @@ pub enum AssistantEvent {
     },
     Thinking(String),
     Usage(TokenUsage),
+    /// Provider-reported `stop_reason` / `finish_reason` for the assistant turn.
+    /// Mirrors the streaming path's `MessageDelta::stop_reason` (T2). Emitting
+    /// this is optional — providers that omit it leave the assembled
+    /// `ConversationMessage::finish_reason` as `None`.
+    FinishReason(String),
     MessageStop,
 }
 
-pub trait ApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
+#[async_trait]
+pub trait ApiClient: Send {
+    async fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
 }
 
 pub trait ToolExecutor {
@@ -179,19 +187,30 @@ pub struct TurnSummary {
     pub usage: TokenUsage,
 }
 
+/// Mutable per-turn scratch state for [`ConversationRuntime::run_turn`].
+/// Extracted from inline locals (Phase 2 T6) to make the function tractable
+/// and to provide a clean handle for future `RunDelegate` adoption (T10).
+/// **No behavior change vs the prior inline locals — this is a pure refactor.**
+#[derive(Debug, Default)]
+pub(super) struct RunLoopState {
+    pub assistant_messages: Vec<ConversationMessage>,
+    pub tool_results: Vec<ConversationMessage>,
+    pub iterations: usize,
+}
+
 pub struct ConversationRuntime<C, T> {
-    session: Session,
-    api_client: C,
-    tool_executor: T,
+    pub(super) session: Session,
+    pub(super) api_client: C,
+    pub(super) tool_executor: T,
     permission_policy: PermissionPolicy,
-    system_prompt: Vec<String>,
+    pub(super) system_prompt: Vec<String>,
     max_iterations: usize,
-    context_budget: Option<ContextBudget>,
-    usage_tracker: UsageTracker,
+    pub(super) context_budget: Option<ContextBudget>,
+    pub(super) usage_tracker: UsageTracker,
     hook_runner: HookRunner,
     /// Working memory: when `Some`, only the sliding window of recent messages
     /// is sent to the LLM. Full history is preserved in `self.session.messages`.
-    working_memory: Option<WorkingMemory>,
+    pub(super) working_memory: Option<WorkingMemory>,
     /// Phase 8A.7 — optional [`TurnHook`] fired after each successful turn
     /// (and intended for `on_session_end` once the runtime gains an
     /// explicit shutdown path).  Wired by `AppState` to the Phase 8B
@@ -214,8 +233,8 @@ pub struct ConversationRuntime<C, T> {
 
 impl<C, T> ConversationRuntime<C, T>
 where
-    C: ApiClient,
-    T: ToolExecutor,
+    C: ApiClient + Send,
+    T: ToolExecutor + Send,
 {
     /// Construct a runtime with default feature config.  Equivalent to
     /// [`Self::new_with_features`] with [`RuntimeFeatureConfig::default()`].
@@ -398,7 +417,7 @@ where
         &mut self,
         user_message: String,
     ) -> Result<TurnSummary, RuntimeError> {
-        self.run_turn(user_message, None)
+        self.run_turn(user_message, None).await
     }
 
     /// Builds the system prompt string from the configured system prompt lines.
@@ -411,13 +430,98 @@ where
         Ok(self.system_prompt.join("\n"))
     }
 
+    /// Execute the full per-tool pipeline for one tool call. Mirrors what
+    /// the inline loop body in [`Self::run_turn`] did before T9 — preserves
+    /// all 8 steps in order (permission → pre-hook → execute → merge pre
+    /// feedback → post-hook → merge post feedback → safety sanitize+wrap →
+    /// record outcome). Used by the loop body today and by `RunDelegate`'s
+    /// `execute_tool_calls` in T10. **Pure refactor — no behavior change.**
+    pub(super) async fn process_single_tool_call(
+        &mut self,
+        tool_use_id: String,
+        tool_name: String,
+        input: String,
+        prompter: &mut Option<&mut (dyn PermissionPrompter + Send)>,
+    ) -> ConversationMessage {
+        let tool_name_for_metrics = tool_name.clone();
+        let permission_outcome = if let Some(prompt) = prompter.as_mut() {
+            self.permission_policy
+                .authorize(&tool_name, &input, Some(*prompt))
+        } else {
+            self.permission_policy.authorize(&tool_name, &input, None)
+        };
+
+        let result_message = match permission_outcome {
+            PermissionOutcome::Allow => {
+                let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
+                if pre_hook_result.is_denied() {
+                    let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
+                    ConversationMessage::tool_result(
+                        tool_use_id,
+                        tool_name,
+                        format_hook_message(&pre_hook_result, &deny_message),
+                        true,
+                    )
+                } else {
+                    let (mut output, mut is_error) =
+                        match self.tool_executor.execute(&tool_name, &input) {
+                            Ok(output) => (output, false),
+                            Err(error) => (error.to_string(), true),
+                        };
+                    output = merge_hook_feedback(pre_hook_result.messages(), output, false);
+
+                    let post_hook_result = self
+                        .hook_runner
+                        .run_post_tool_use(&tool_name, &input, &output, is_error);
+                    if post_hook_result.is_denied() {
+                        is_error = true;
+                    }
+                    output = merge_hook_feedback(
+                        post_hook_result.messages(),
+                        output,
+                        post_hook_result.is_denied(),
+                    );
+
+                    let safety = crate::modules::security::safety::shared_safety_layer();
+                    let sanitized = safety.sanitize_tool_output(&tool_name, &output);
+                    let wrapped_for_llm = safety.wrap_for_llm(&tool_name, &sanitized.content);
+
+                    ConversationMessage::tool_result(
+                        tool_use_id,
+                        tool_name,
+                        wrapped_for_llm,
+                        is_error,
+                    )
+                }
+            }
+            PermissionOutcome::Deny { reason } => {
+                ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
+            }
+        };
+
+        let ok = result_message
+            .blocks
+            .iter()
+            .find_map(|b| {
+                if let ContentBlock::ToolResult { is_error, .. } = b {
+                    Some(!*is_error)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        crate::modules::runtime::self_repair::record_tool_outcome(&tool_name_for_metrics, ok);
+
+        result_message
+    }
+
     /// Drive one full turn of the agent loop: append the user message,
     /// query the model, dispatch tool calls, and return a [`TurnSummary`].
     /// Honours the optional [`PermissionPrompter`] for per-tool approvals.
-    pub fn run_turn(
+    pub async fn run_turn(
         &mut self,
-        user_input: impl Into<String>,
-        mut prompter: Option<&mut dyn PermissionPrompter>,
+        user_input: impl Into<String> + Send,
+        prompter: Option<&mut (dyn PermissionPrompter + Send)>,
     ) -> Result<TurnSummary, RuntimeError> {
         let user_text = user_input.into();
         if let Some(warn) = crate::modules::security::safety::shared_safety_layer()
@@ -432,146 +536,45 @@ where
             .messages
             .push(ConversationMessage::user_text(user_text));
 
-        let mut assistant_messages = Vec::new();
-        let mut tool_results = Vec::new();
-        let mut iterations = 0;
+        // Phase 2 T10 (5c-6) — bridge to the unified `run_agentic_loop`.
+        // The inner per-iteration body (LLM call → tool dispatch) lives in
+        // [`super::run_delegate::RunDelegate`]; the safety-valve config
+        // (max iterations, tool-intent nudge, force-text after truncations)
+        // is supplied via [`AgenticLoopConfig`]. See
+        // `docs/superpowers/plans/2026-04-30-steward-alignment.md` §5c-6.
+        let initial_state = RunLoopState::default();
+        let cap = self.max_iterations;
+        let delegate = super::run_delegate::RunDelegate::new(self, initial_state, prompter);
+        let config = crate::modules::application::turn_service::AgenticLoopConfig {
+            max_iterations: cap,
+            ..crate::modules::application::turn_service::AgenticLoopConfig::default()
+        };
 
-        loop {
-            iterations += 1;
-            if iterations > self.max_iterations {
+        let outcome = crate::modules::application::turn_service::agentic_loop::run_agentic_loop(
+            &delegate, &config,
+        )
+        .await;
+        let (state, pending_error) = delegate.into_parts();
+
+        match outcome {
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Response(_) => {}
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::MaxIterations => {
                 return Err(RuntimeError::MaxIterationsExceeded);
             }
-
-            // ContextBudget check — validates total token usage against configured budget
-            // System 10%, Episodic 20%, Semantic 30%, Working 40%
-            if let Some(ref budget) = self.context_budget {
-                let estimated_tokens = estimate_session_tokens(&self.session);
-                if estimated_tokens > budget.total {
-                    return Err(RuntimeError::SessionError(format!(
-                        "context budget exceeded: estimated {estimated_tokens} tokens exceeds total budget of {} (system={}, episodic={}, semantic={}, working={})",
-                        budget.total,
-                        budget.system_tokens(),
-                        budget.episodic_tokens(),
-                        budget.semantic_tokens(),
-                        budget.working_tokens(),
-                    )));
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Stopped => {
+                // `RunDelegate::check_signals` always yields `Continue` today,
+                // so this variant is unreachable in production; surface it as
+                // an `ApiError` rather than panicking if a future revision
+                // changes that contract.
+                return Err(RuntimeError::api_error("agentic loop stopped unexpectedly"));
+            }
+            crate::modules::application::turn_service::agentic_loop::LoopOutcome::Failure(
+                reason,
+            ) => {
+                if let Some(err) = pending_error {
+                    return Err(err);
                 }
-            }
-
-            // Build the message list for this LLM request.
-            // When a WorkingMemory is configured, populate it from the current
-            // session so that only the most recent turns (within token budget)
-            // are sent — full history stays in `self.session.messages`.
-            let messages_for_request = if let Some(ref mut wm) = self.working_memory {
-                wm.clear();
-                wm.extend(self.session.messages.iter().cloned());
-                wm.messages().to_vec()
-            } else {
-                self.session.messages.clone()
-            };
-
-            let request = ApiRequest {
-                system_prompt: self.system_prompt.clone(),
-                messages: messages_for_request,
-                tools: Some(self.tool_executor.get_definitions()),
-            };
-            let events = self.api_client.stream(request)?;
-            let (assistant_message, usage) = build_assistant_message(events)?;
-            if let Some(usage) = usage {
-                self.usage_tracker.record(usage);
-            }
-            let pending_tool_uses = assistant_message
-                .blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::ToolUse { id, name, input } => {
-                        Some((id.clone(), name.clone(), input.clone()))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            self.session.messages.push(assistant_message.clone());
-            assistant_messages.push(assistant_message);
-
-            if pending_tool_uses.is_empty() {
-                break;
-            }
-
-            for (tool_use_id, tool_name, input) in pending_tool_uses {
-                let tool_name_for_metrics = tool_name.clone();
-                let permission_outcome = if let Some(prompt) = prompter.as_mut() {
-                    self.permission_policy
-                        .authorize(&tool_name, &input, Some(*prompt))
-                } else {
-                    self.permission_policy.authorize(&tool_name, &input, None)
-                };
-
-                let result_message = match permission_outcome {
-                    PermissionOutcome::Allow => {
-                        let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
-                        if pre_hook_result.is_denied() {
-                            let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                format_hook_message(&pre_hook_result, &deny_message),
-                                true,
-                            )
-                        } else {
-                            let (mut output, mut is_error) =
-                                match self.tool_executor.execute(&tool_name, &input) {
-                                    Ok(output) => (output, false),
-                                    Err(error) => (error.to_string(), true),
-                                };
-                            output = merge_hook_feedback(pre_hook_result.messages(), output, false);
-
-                            let post_hook_result = self
-                                .hook_runner
-                                .run_post_tool_use(&tool_name, &input, &output, is_error);
-                            if post_hook_result.is_denied() {
-                                is_error = true;
-                            }
-                            output = merge_hook_feedback(
-                                post_hook_result.messages(),
-                                output,
-                                post_hook_result.is_denied(),
-                            );
-
-                            let safety = crate::modules::security::safety::shared_safety_layer();
-                            let sanitized = safety.sanitize_tool_output(&tool_name, &output);
-                            let wrapped_for_llm =
-                                safety.wrap_for_llm(&tool_name, &sanitized.content);
-
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                wrapped_for_llm,
-                                is_error,
-                            )
-                        }
-                    }
-                    PermissionOutcome::Deny { reason } => {
-                        ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
-                    }
-                };
-                let ok = result_message
-                    .blocks
-                    .iter()
-                    .find_map(|b| {
-                        if let ContentBlock::ToolResult { is_error, .. } = b {
-                            Some(!*is_error)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(false);
-                crate::modules::runtime::self_repair::record_tool_outcome(
-                    &tool_name_for_metrics,
-                    ok,
-                );
-                self.session.messages.push(result_message.clone());
-                tool_results.push(result_message);
+                return Err(RuntimeError::api_error(reason));
             }
         }
 
@@ -596,9 +599,9 @@ where
         }
 
         Ok(TurnSummary {
-            assistant_messages,
-            tool_results,
-            iterations,
+            assistant_messages: state.assistant_messages,
+            tool_results: state.tool_results,
+            iterations: state.iterations,
             usage: self.usage_tracker.cumulative_usage(),
         })
     }
@@ -635,7 +638,7 @@ where
     }
 }
 
-fn build_assistant_message(
+pub(super) fn build_assistant_message(
     events: Vec<AssistantEvent>,
 ) -> Result<(ConversationMessage, Option<TokenUsage>), RuntimeError> {
     let mut text = String::new();
@@ -643,6 +646,7 @@ fn build_assistant_message(
     let mut finished = false;
     let mut usage = None;
     let mut thinking = String::new();
+    let mut finish_reason: Option<String> = None;
 
     for event in events {
         match event {
@@ -658,6 +662,13 @@ fn build_assistant_message(
                 thinking.push_str(&content);
             }
             AssistantEvent::Usage(value) => usage = Some(value),
+            AssistantEvent::FinishReason(reason) => {
+                // Last-write-wins, mirrors streaming path's
+                // `record_finish_reason_from_delta` (T2). Empty strings are
+                // treated as a meaningful provider signal — we only skip the
+                // event entirely when the provider omits it.
+                finish_reason = Some(reason);
+            }
             AssistantEvent::MessageStop => {
                 finished = true;
             }
@@ -694,6 +705,7 @@ fn build_assistant_message(
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason,
         },
         usage,
     ))
@@ -733,7 +745,7 @@ fn merge_hook_feedback(messages: &[String], output: String, denied: bool) -> Str
     sections.join("\n\n")
 }
 
-type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError>>;
+type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError> + Send>;
 
 #[derive(Default)]
 pub struct StaticToolExecutor {
@@ -749,11 +761,16 @@ impl StaticToolExecutor {
 
     /// Register a handler closure under `tool_name`.  Builder-style:
     /// returns `self` so multiple `register(...)` calls can be chained.
+    ///
+    /// `+ Send` is required so [`StaticToolExecutor`] is `Send`, which in
+    /// turn lets [`crate::modules::runtime::run_delegate::RunDelegate`] hold
+    /// a `Mutex<&mut ConversationRuntime<_, StaticToolExecutor>>` (the
+    /// `LoopDelegate` trait demands `Send + Sync`).
     #[must_use]
     pub fn register(
         mut self,
         tool_name: impl Into<String>,
-        handler: impl FnMut(&str) -> Result<String, ToolError> + 'static,
+        handler: impl FnMut(&str) -> Result<String, ToolError> + Send + 'static,
     ) -> Self {
         self.handlers.insert(tool_name.into(), Box::new(handler));
         self
@@ -774,6 +791,8 @@ impl ToolExecutor for StaticToolExecutor {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use crate::modules::runtime::compact::CompactionConfig;
     use crate::modules::runtime::config::{RuntimeFeatureConfig, RuntimeHookConfig};
     use crate::modules::runtime::conversation::{
@@ -793,8 +812,12 @@ mod tests {
         call_count: usize,
     }
 
+    #[async_trait]
     impl ApiClient for ScriptedApiClient {
-        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        async fn stream(
+            &mut self,
+            request: ApiRequest,
+        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
             self.call_count += 1;
             match self.call_count {
                 1 => {
@@ -851,8 +874,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
+    #[tokio::test]
+    async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         let api_client = ScriptedApiClient { call_count: 0 };
         let tool_executor = StaticToolExecutor::new().register("add", |input| {
             let total = input
@@ -882,6 +905,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("what is 2 + 2?", Some(&mut PromptAllowOnce))
+            .await
             .expect("conversation loop should succeed");
 
         assert_eq!(summary.iterations, 2);
@@ -902,8 +926,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn records_denied_tool_results_when_prompt_rejects() {
+    #[tokio::test]
+    async fn records_denied_tool_results_when_prompt_rejects() {
         struct RejectPrompter;
         impl PermissionPrompter for RejectPrompter {
             fn decide(&mut self, _request: &PermissionRequest) -> PermissionPromptDecision {
@@ -914,8 +938,12 @@ mod tests {
         }
 
         struct SingleCallApiClient;
+        #[async_trait]
         impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 if request
                     .messages
                     .iter()
@@ -947,6 +975,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use the tool", Some(&mut RejectPrompter))
+            .await
             .expect("conversation should continue after denied tool");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -956,11 +985,15 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn denies_tool_use_when_pre_tool_hook_blocks() {
+    #[tokio::test]
+    async fn denies_tool_use_when_pre_tool_hook_blocks() {
         struct SingleCallApiClient;
+        #[async_trait]
         impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 if request
                     .messages
                     .iter()
@@ -998,6 +1031,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use the tool", None)
+            .await
             .expect("conversation should continue after hook denial");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -1017,14 +1051,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn appends_post_tool_hook_feedback_to_tool_result() {
+    #[tokio::test]
+    async fn appends_post_tool_hook_feedback_to_tool_result() {
         struct TwoCallApiClient {
             calls: usize,
         }
 
+        #[async_trait]
         impl ApiClient for TwoCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 self.calls += 1;
                 match self.calls {
                     1 => Ok(vec![
@@ -1066,6 +1104,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use add", None)
+            .await
             .expect("tool loop succeeds");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -1093,11 +1132,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reconstructs_usage_tracker_from_restored_session() {
+    #[tokio::test]
+    async fn reconstructs_usage_tracker_from_restored_session() {
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1135,11 +1175,12 @@ mod tests {
         assert_eq!(runtime.usage().cumulative_usage().total_tokens(), 21);
     }
 
-    #[test]
-    fn compacts_session_after_turns() {
+    #[tokio::test]
+    async fn compacts_session_after_turns() {
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1157,9 +1198,9 @@ mod tests {
             PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         );
-        runtime.run_turn("a", None).expect("turn a");
-        runtime.run_turn("b", None).expect("turn b");
-        runtime.run_turn("c", None).expect("turn c");
+        runtime.run_turn("a", None).await.expect("turn a");
+        runtime.run_turn("b", None).await.expect("turn b");
+        runtime.run_turn("c", None).await.expect("turn c");
 
         let result = runtime.compact(CompactionConfig {
             preserve_recent_messages: 2,
@@ -1186,8 +1227,8 @@ mod tests {
     /// fires once per successful `run_turn`.  We use a counting hook
     /// to assert exactly one invocation per turn and that the hook
     /// observes the in-flight session messages.
-    #[test]
-    fn turn_hook_fires_once_per_turn() {
+    #[tokio::test]
+    async fn turn_hook_fires_once_per_turn() {
         use crate::modules::memory::scope::MemoryExecutionScope;
         use crate::modules::runtime::conversation::TurnHook;
         use crate::modules::runtime::session::ConversationMessage;
@@ -1214,8 +1255,9 @@ mod tests {
         }
 
         struct SimpleApi;
+        #[async_trait]
         impl ApiClient for SimpleApi {
-            fn stream(
+            async fn stream(
                 &mut self,
                 _request: ApiRequest,
             ) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -1239,8 +1281,8 @@ mod tests {
         )
         .with_turn_hook(hook.clone());
 
-        runtime.run_turn("first", None).expect("turn 1");
-        runtime.run_turn("second", None).expect("turn 2");
+        runtime.run_turn("first", None).await.expect("turn 1");
+        runtime.run_turn("second", None).await.expect("turn 2");
 
         assert_eq!(hook.count.load(Ordering::SeqCst), 2);
         let observed = *hook.last_seen.lock().expect("lock");
@@ -1255,8 +1297,8 @@ mod tests {
     /// The session is pre-filled with many turns; the API client records how many
     /// messages each request contains.  After one more turn we assert that the
     /// LLM saw at most `max_turns` messages — not the full session history.
-    #[test]
-    fn working_memory_limits_messages_sent_to_llm() {
+    #[tokio::test]
+    async fn working_memory_limits_messages_sent_to_llm() {
         use crate::modules::memory::working_memory::WorkingMemory;
         use std::sync::{Arc, Mutex};
 
@@ -1266,8 +1308,12 @@ mod tests {
             counts: Arc<Mutex<Vec<usize>>>,
         }
 
+        #[async_trait]
         impl ApiClient for MessageCountingApi {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            async fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 self.counts
                     .lock()
                     .expect("lock poisoned")
@@ -1311,7 +1357,10 @@ mod tests {
         )
         .with_working_memory(wm);
 
-        runtime.run_turn("new question".to_string(), None).unwrap();
+        runtime
+            .run_turn("new question".to_string(), None)
+            .await
+            .unwrap();
 
         // Full session has 10 pre-existing + 1 new user = 11 messages,
         // but the API should only have seen ≤ 4 (the working memory window).
@@ -1325,8 +1374,12 @@ mod tests {
 
     struct OnceTextApi;
 
+    #[async_trait]
     impl ApiClient for OnceTextApi {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        async fn stream(
+            &mut self,
+            _request: ApiRequest,
+        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
             Ok(vec![
                 AssistantEvent::TextDelta("x".into()),
                 AssistantEvent::MessageStop,
@@ -1334,8 +1387,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn undo_checkpoint_restores_messages_before_last_turn() {
+    #[tokio::test]
+    async fn undo_checkpoint_restores_messages_before_last_turn() {
         let permission_policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite);
         let system_prompt = SystemPromptBuilder::new()
             .with_project_context(ProjectContext {
@@ -1356,7 +1409,7 @@ mod tests {
         )
         .with_undo_checkpoints(true);
 
-        runtime.run_turn("hi", None).expect("turn");
+        runtime.run_turn("hi", None).await.expect("turn");
         assert_eq!(runtime.session().messages.len(), 2);
         assert!(runtime.undo_last_checkpoint());
         assert!(runtime.session().messages.is_empty());

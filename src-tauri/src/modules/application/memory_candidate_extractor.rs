@@ -291,6 +291,7 @@ mod tests {
             resume_available: None,
             resume_cursor: None,
             request_id: None,
+            finish_reason: None,
         }
     }
 
@@ -336,6 +337,7 @@ mod tests {
                 resume_available: None,
                 resume_cursor: None,
                 request_id: None,
+                finish_reason: None,
             },
         ];
         assert!(extract_memory_store_tool_candidates(&msgs, &scope).is_empty());

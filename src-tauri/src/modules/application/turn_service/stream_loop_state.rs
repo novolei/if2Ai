@@ -79,6 +79,13 @@ pub(super) struct StreamLoopState {
     // === Result status ===
     pub terminal_status: Option<&'static str>,
     pub last_stream_error_reason: Option<String>,
+    /// Provider-supplied finish reason from the most-recent inner SSE
+    /// event-loop call (steward-align Phase 2 T2 surfaced this on
+    /// `StreamEventLoopResult.finish_reason`; T4 stores it on the loop
+    /// state so post-loop / future per-iteration consumers can act on
+    /// `length` / `max_tokens` truncations). `None` until the first
+    /// successful event-loop completion in the current turn.
+    pub last_finish_reason: Option<String>,
     pub finalization_reason: Option<String>,
     pub last_tool_batch_signature: Option<String>,
     pub pending_operation_for_delegate: Option<PendingOperationMetadata>,
@@ -142,6 +149,7 @@ impl StreamLoopState {
 
             terminal_status: None,
             last_stream_error_reason: None,
+            last_finish_reason: None,
             finalization_reason: None,
             last_tool_batch_signature: None,
             pending_operation_for_delegate: None,
