@@ -32,6 +32,7 @@ pub mod scope;
 pub mod security;
 pub mod summary;
 pub mod ticker;
+pub mod tool_transcript_compression;
 pub mod verification_gate;
 pub mod working_memory;
 

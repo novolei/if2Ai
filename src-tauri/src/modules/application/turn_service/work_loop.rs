@@ -435,6 +435,53 @@ fn spawn_dk_lookup_advisory(user_message: &str) {
     });
 }
 
+/// Excerpt a SKILL.md body for token-saving auto-load mode.
+///
+/// Strategy:
+///   1. If the body has a YAML frontmatter block (delimited by `---`),
+///      preserve it verbatim — it's the trusted machine-readable contract
+///      (name, version, etc.).
+///   2. Take the first ~200 characters of the actual body content (post-
+///      frontmatter) so the model sees enough to decide whether to call
+///      `skill_view` for the full text.
+///   3. Append a footer instructing the model how to fetch the rest:
+///      `[truncated — call skill_view name="<skill>" for full body]`.
+///
+/// `skill_name` is interpolated into the footer so the model gets the exact
+/// invocation it needs.
+fn excerpt_skill_body(skill_name: &str, full: &str) -> String {
+    const SNIPPET_CHARS: usize = 200;
+    let trimmed = full.trim_start();
+
+    let mut frontmatter_end: Option<usize> = None;
+    if trimmed.starts_with("---\n") || trimmed.starts_with("---\r\n") {
+        let after_open = if trimmed.starts_with("---\r\n") { 5 } else { 4 };
+        if let Some(rel) = trimmed[after_open..].find("\n---\n") {
+            frontmatter_end = Some(after_open + rel + "\n---\n".len());
+        } else if let Some(rel) = trimmed[after_open..].find("\n---\r\n") {
+            frontmatter_end = Some(after_open + rel + "\n---\r\n".len());
+        }
+    }
+
+    let footer = format!(
+        "\n\n[truncated — call `skill_view name=\"{}\"` for full body]",
+        skill_name,
+    );
+
+    match frontmatter_end {
+        Some(end) => {
+            let frontmatter = &trimmed[..end];
+            let body = trimmed[end..].trim_start();
+            let snippet: String = body.chars().take(SNIPPET_CHARS).collect();
+            format!("{}{}{}", frontmatter, snippet, footer)
+        }
+        None => {
+            let snippet: String = trimmed.chars().take(SNIPPET_CHARS).collect();
+            format!("{}{}", snippet, footer)
+        }
+    }
+}
+
 /// Load trusted skill contents into a dedicated prompt contribution.
 #[must_use]
 pub(super) fn auto_load_trusted_skill_context(
@@ -526,12 +573,32 @@ pub(super) fn auto_load_trusted_skill_context(
         }
         let config_block = resolve_skill_config_block(&candidate.name, &content, workdir);
         let metadata_block = skill_metadata_prompt_block(candidate);
+        let autoload_mode = crate::modules::runtime::budget::skill_autoload_mode();
+        let (header_line, body_section) = match autoload_mode {
+            crate::modules::runtime::budget::SkillAutoloadMode::Disabled => {
+                // Skip body injection entirely; only the active_skill_ids list
+                // and metadata reach the model. The model must call `skill_view`
+                // for any content. Still mark the skill as loaded so the plan
+                // accounting reflects that we considered it.
+                candidate.loaded = true;
+                push_unique(&mut plan.loaded_skill_names, candidate.name.clone());
+                continue;
+            }
+            crate::modules::runtime::budget::SkillAutoloadMode::Full => (
+                "The full SKILL.md content is already loaded. Do not reload it with tools.",
+                crate::modules::skills::escape_markdown_skill_section(&content),
+            ),
+            crate::modules::runtime::budget::SkillAutoloadMode::Excerpt => {
+                let excerpted = excerpt_skill_body(&candidate.name, &content);
+                (
+                    "An excerpt of SKILL.md is shown below. Call `skill_view` for the full body if you need more.",
+                    crate::modules::skills::escape_markdown_skill_section(&excerpted),
+                )
+            }
+        };
         let mut section = format!(
-            "## Skill: {} [{}]\nThe full SKILL.md content is already loaded. Do not reload it with tools.\n{}\n\n{}",
-            candidate.name,
-            candidate.source,
-            metadata_block,
-            crate::modules::skills::escape_markdown_skill_section(&content)
+            "## Skill: {} [{}]\n{}\n{}\n\n{}",
+            candidate.name, candidate.source, header_line, metadata_block, body_section,
         );
         if let Some(warning) = env_warning {
             section.push_str("\n\n");
@@ -2852,5 +2919,41 @@ mod tests {
             vec!["read_file", "write_file", "bash"]
         );
         assert_eq!(metadata.model_hint.as_deref(), Some("coding"));
+    }
+
+    #[test]
+    fn excerpt_skill_body_preserves_frontmatter() {
+        let base = "---\nname: foo\nversion: 1.0\n---\n# Foo skill\n\nThis is the body, with a lot more content that should be truncated after a couple hundred characters of meaningful prose to simulate a typical SKILL.md.";
+        let raw = format!("{}{}", base, "x".repeat(500));
+        let out = excerpt_skill_body("foo", &raw);
+        assert!(
+            out.contains("---\nname: foo\nversion: 1.0\n---"),
+            "frontmatter preserved: {out}"
+        );
+        assert!(out.contains("[truncated"));
+        assert!(out.contains("call `skill_view name=\"foo\"`"));
+        assert!(out.len() < raw.len(), "out shorter than input");
+        assert!(out.contains("# Foo skill") || out.contains("This is the body"));
+    }
+
+    #[test]
+    fn excerpt_skill_body_handles_no_frontmatter() {
+        let raw = "Plain content with no yaml header. ".repeat(20);
+        let out = excerpt_skill_body("bar", &raw);
+        assert!(out.contains("[truncated"));
+        assert!(out.contains("call `skill_view name=\"bar\"`"));
+        assert!(out.len() < raw.len());
+        assert!(
+            !out.contains("---"),
+            "should not have erroneously added frontmatter delimiters: {out}"
+        );
+    }
+
+    #[test]
+    fn excerpt_skill_body_short_content_passthrough_with_footer() {
+        let raw = "Short body.";
+        let out = excerpt_skill_body("baz", raw);
+        assert!(out.contains("Short body."));
+        assert!(out.contains("[truncated"));
     }
 }

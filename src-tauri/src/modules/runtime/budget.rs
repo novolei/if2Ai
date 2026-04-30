@@ -202,6 +202,71 @@ pub fn streaming_window_turns() -> usize {
     }
 }
 
+/// Default number of recent turns kept with full-fidelity tool transcripts
+/// when no env override is set. Phase 6 T3 — tool transcript compression.
+pub const DEFAULT_STREAM_TOOL_KEEP_RECENT: usize = 3;
+
+/// Number of recent turns to keep with full-fidelity tool transcripts.
+/// Older turns get compressed to short summaries while preserving
+/// `tool_use_id` ↔ `tool_result.tool_use_id` pairing for sanitize compatibility.
+///
+/// Env var: `IF2AI_STREAM_TOOL_KEEP_RECENT`
+/// Default: [`DEFAULT_STREAM_TOOL_KEEP_RECENT`] (3).
+/// Floor: 1 (always keep at least the most recent turn full).
+/// Set to `0` to compress everything (most aggressive — model loses tool
+/// detail across all turns; useful for token-cost-sensitive deployments).
+///
+/// Phase 6 T3 — old-message tool transcript compression.
+pub fn stream_tool_keep_recent() -> usize {
+    match std::env::var("IF2AI_STREAM_TOOL_KEEP_RECENT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        Some(0) => 0,
+        Some(n) if n >= 1 => n,
+        _ => DEFAULT_STREAM_TOOL_KEEP_RECENT,
+    }
+}
+
+/// How `auto_load_trusted_skill_context` should inject SKILL.md bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillAutoloadMode {
+    /// Inject the entire SKILL.md body (legacy behavior, large tokens).
+    Full,
+    /// Inject a compressed signature (frontmatter + first ~200 chars +
+    /// footer pointing to `skill_view`). DEFAULT — Phase 6 T2.
+    Excerpt,
+    /// Skip the auto-load injection entirely. The model only sees the
+    /// skill's name in the active_skill_ids list and must call `skill_view`
+    /// to fetch any body. Most aggressive, lowest tokens.
+    Disabled,
+}
+
+impl Default for SkillAutoloadMode {
+    fn default() -> Self {
+        Self::Excerpt
+    }
+}
+
+/// Read the skill auto-load mode, honoring `IF2AI_SKILL_AUTOLOAD_MODE` env.
+/// Values: `full` | `excerpt` | `disabled`. Default: `excerpt`.
+/// Unknown values fall back to `excerpt` with a tracing warning.
+pub fn skill_autoload_mode() -> SkillAutoloadMode {
+    match std::env::var("IF2AI_SKILL_AUTOLOAD_MODE").ok().as_deref() {
+        Some("full") => SkillAutoloadMode::Full,
+        Some("excerpt") => SkillAutoloadMode::Excerpt,
+        Some("disabled") => SkillAutoloadMode::Disabled,
+        Some(other) => {
+            tracing::warn!(
+                "IF2AI_SKILL_AUTOLOAD_MODE='{}' unrecognized; falling back to 'excerpt'",
+                other
+            );
+            SkillAutoloadMode::Excerpt
+        }
+        None => SkillAutoloadMode::Excerpt,
+    }
+}
+
 /// Maximum number of times the streaming task will retry a
 /// `provider.stream(...)` call after a network-timeout class
 /// error before giving up and surfacing the failure to the
@@ -713,6 +778,74 @@ mod tests {
         std::env::set_var(STREAM_WINDOW_VAR, "1");
         assert_eq!(streaming_window_turns(), DEFAULT_STREAM_WINDOW_TURNS);
         std::env::remove_var(STREAM_WINDOW_VAR);
+    }
+
+    // ── skill_autoload_mode() env-var override ────────────────────
+    const SKILL_AUTOLOAD_VAR: &str = "IF2AI_SKILL_AUTOLOAD_MODE";
+
+    #[test]
+    fn skill_autoload_mode_default_excerpt() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(SKILL_AUTOLOAD_VAR);
+        assert_eq!(skill_autoload_mode(), SkillAutoloadMode::Excerpt);
+    }
+
+    #[test]
+    fn skill_autoload_mode_full_when_env_set() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(SKILL_AUTOLOAD_VAR, "full");
+        assert_eq!(skill_autoload_mode(), SkillAutoloadMode::Full);
+        std::env::remove_var(SKILL_AUTOLOAD_VAR);
+    }
+
+    #[test]
+    fn skill_autoload_mode_disabled_when_env_set() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(SKILL_AUTOLOAD_VAR, "disabled");
+        assert_eq!(skill_autoload_mode(), SkillAutoloadMode::Disabled);
+        std::env::remove_var(SKILL_AUTOLOAD_VAR);
+    }
+
+    #[test]
+    fn skill_autoload_mode_unknown_falls_back_to_excerpt() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(SKILL_AUTOLOAD_VAR, "garbage");
+        assert_eq!(skill_autoload_mode(), SkillAutoloadMode::Excerpt);
+        std::env::remove_var(SKILL_AUTOLOAD_VAR);
+    }
+
+    // ── stream_tool_keep_recent() env-var override ────────────────
+    const STREAM_TOOL_KEEP_VAR: &str = "IF2AI_STREAM_TOOL_KEEP_RECENT";
+
+    #[test]
+    fn stream_tool_keep_recent_default() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+        assert_eq!(stream_tool_keep_recent(), DEFAULT_STREAM_TOOL_KEEP_RECENT);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_honors_env() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "5");
+        assert_eq!(stream_tool_keep_recent(), 5);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_zero_compresses_all() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "0");
+        assert_eq!(stream_tool_keep_recent(), 0);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
+    }
+
+    #[test]
+    fn stream_tool_keep_recent_ignores_non_numeric() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_TOOL_KEEP_VAR, "garbage");
+        assert_eq!(stream_tool_keep_recent(), DEFAULT_STREAM_TOOL_KEEP_RECENT);
+        std::env::remove_var(STREAM_TOOL_KEEP_VAR);
     }
 
     #[test]

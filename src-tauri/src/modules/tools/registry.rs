@@ -20,6 +20,27 @@ use super::output::ToolOutput;
 pub const SKILL_SOURCE_PRECEDENCE: [&str; 4] =
     ["workspace", "user", "builtin", "remote-quarantine"];
 
+/// Recursively canonicalize a [`serde_json::Value`] so every `Object` map
+/// emits keys in alphabetical order. Produces byte-stable JSON across calls
+/// regardless of whether `serde_json` was built with the `preserve_order`
+/// feature, which lifts provider prefix-cache hit rate when the canonical
+/// output sits inside a stable cacheable prefix (e.g. `tool_defs`).
+#[must_use]
+pub(crate) fn canonicalize_json_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut sorted: Vec<(String, Value)> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonicalize_json_value(v)))
+                .collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(sorted.into_iter().collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json_value).collect()),
+        other => other.clone(),
+    }
+}
+
 /// Review lifecycle states for skill governance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -465,7 +486,12 @@ impl ToolRegistry {
     /// * `allowed` - Optional list of allowed tool names. If None, all non-disabled tools are included.
     #[must_use]
     pub fn get_definitions(&self, allowed: Option<&[String]>) -> Vec<Value> {
-        self.tools
+        // Phase 6 T1: sort entries by tool name + canonicalize parameter
+        // schemas so the serialized JSON is byte-identical across calls.
+        // `DashMap::iter` yields entries in non-deterministic order, which
+        // would otherwise churn provider prefix caches every turn.
+        let mut entries: Vec<(String, String, Value)> = self
+            .tools
             .iter()
             .filter(|entry| {
                 if entry.disabled {
@@ -477,12 +503,23 @@ impl ToolRegistry {
                 true
             })
             .map(|entry| {
+                (
+                    entry.name.clone(),
+                    entry.description.clone(),
+                    canonicalize_json_value(&entry.input_schema),
+                )
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+            .into_iter()
+            .map(|(name, description, parameters)| {
                 json!({
                     "type": "function",
                     "function": {
-                        "name": entry.name,
-                        "description": entry.description,
-                        "parameters": entry.input_schema,
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
                     }
                 })
             })
@@ -881,5 +918,85 @@ mod tests {
         let defs = registry.get_definitions(Some(&["tool_a".to_string()]));
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0]["function"]["name"], "tool_a");
+    }
+
+    fn register_named(registry: &ToolRegistry, name: &'static str, schema: Value) {
+        registry
+            .register(ToolEntry {
+                name: name.to_string(),
+                toolset: "test".to_string(),
+                description: format!("desc for {name}"),
+                input_schema: schema,
+                max_result_size: None,
+                max_text_bytes: None,
+                max_image_bytes: None,
+                timeout_secs: None,
+                disabled: false,
+                handler: make_test_handler(""),
+                multimodal_handler: None,
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_definitions_byte_stable_across_calls() {
+        let registry = make_test_registry();
+        for name in ["z_tool", "a_tool", "m_tool", "k_tool", "b_tool"] {
+            register_named(
+                &registry,
+                name,
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "z_field": {"type": "string"},
+                        "a_field": {"type": "integer"},
+                        "m_field": {"type": "boolean"},
+                    },
+                    "required": ["a_field", "z_field"],
+                }),
+            );
+        }
+        let a = serde_json::to_string(&registry.get_definitions(None)).unwrap();
+        let b = serde_json::to_string(&registry.get_definitions(None)).unwrap();
+        let c = serde_json::to_string(&registry.get_definitions(None)).unwrap();
+        assert_eq!(a, b, "consecutive get_definitions should be byte-identical");
+        assert_eq!(b, c);
+    }
+
+    #[tokio::test]
+    async fn get_definitions_sorted_by_name() {
+        let registry = make_test_registry();
+        for name in ["z_tool", "a_tool", "m_tool"] {
+            register_named(&registry, name, json!({"type": "object"}));
+        }
+        let defs = registry.get_definitions(None);
+        let names: Vec<&str> = defs
+            .iter()
+            .filter_map(|d| d["function"]["name"].as_str())
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "tool definitions should be sorted by name");
+    }
+
+    #[test]
+    fn canonicalize_sorts_nested_object_keys() {
+        let raw = json!({
+            "z": 1,
+            "a": { "y": 2, "b": 3 },
+        });
+        let canonical = canonicalize_json_value(&raw);
+        let s = serde_json::to_string(&canonical).unwrap();
+        assert!(s.find("\"a\"").unwrap() < s.find("\"z\"").unwrap());
+        assert!(s.find("\"b\"").unwrap() < s.find("\"y\"").unwrap());
+    }
+
+    #[test]
+    fn canonicalize_preserves_arrays_and_atoms() {
+        let raw = json!([1, "two", true, null, {"b": 1, "a": 2}]);
+        let canonical = canonicalize_json_value(&raw);
+        let s = serde_json::to_string(&canonical).unwrap();
+        assert!(s.starts_with("[1,\"two\",true,null,"));
+        assert!(s.contains("\"a\":2,\"b\":1"));
     }
 }
