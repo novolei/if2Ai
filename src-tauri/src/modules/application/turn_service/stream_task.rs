@@ -279,7 +279,7 @@ fn apply_memory_recall_success_finalization_guard(
     }
 }
 
-fn should_retry_tool_required_no_tool(
+pub(super) fn should_retry_tool_required_no_tool(
     work_loop_decision: &WorkLoopDecision,
     has_successful_mutating_tool: bool,
     retry_count: usize,
@@ -293,7 +293,7 @@ fn should_retry_tool_required_no_tool(
         && available_tool_count > 0
 }
 
-fn should_retry_announced_tool_intent_no_tool(
+pub(super) fn should_retry_announced_tool_intent_no_tool(
     accumulated_text: &str,
     retry_count: usize,
     force_final_response: bool,
@@ -454,380 +454,48 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
     const SAVE_INTERVAL: u32 = 50;
 
     loop {
-        // Check for cancellation at the start of each iteration
-        if cancel_rx.try_recv().is_ok() {
-            tracing::info!("[start_agent_stream] Stream cancelled at loop iteration");
-            let cancelled_truth = TaskOutcomeResolver::resolve(
-                ExecutionTruth {
-                    has_successful_tool: state.has_successful_tool,
-                    has_successful_mutating_tool: state.has_successful_mutating_tool,
-                },
-                &ConversationTruth {
-                    stream_failed: true,
-                    terminal_status: "cancelled_by_user",
-                    last_stream_error_reason: Some("cancelled_by_user".to_string()),
-                },
-            );
-            let payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "stream_complete".to_string(),
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_args: None,
-                tool_result: None,
-                tool_duration_ms: None,
-                effective_workdir: None,
-                policy_decision: None,
-                evidence_id: None,
-                request_id: Some(state.provider_request_id.clone()),
-                task_outcome: Some(cancelled_truth.task_outcome.to_string()),
-                degraded_reason: cancelled_truth.degraded_reason,
-                resume_available: Some(cancelled_truth.resume_available),
-                resume_cursor: None,
-                recoverability: None,
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(payload.clone());
-            append_stream_event(&run_event_logger, &payload).await;
-            state.completion_already_emitted = true;
-            state.terminal_status = Some("cancelled_by_user");
-            break;
-        }
-
-        if state.tool_loop_iter >= max_iterations {
-            tracing::warn!(
-                "[start_agent_stream] Tool loop exceeded max_iterations={}",
-                max_iterations
-            );
-            state.terminal_status = Some("max_iterations_reached");
-            break;
-        }
-        state.tool_loop_iter += 1;
-        tool_executor
-            .execution_context
-            .tool_success_evidence
-            .store(0, std::sync::atomic::Ordering::Relaxed);
-        let force_final_response =
-            state.force_final_response_next || state.tool_loop_iter >= max_iterations;
-        let force_tool_choice = state.force_tool_choice_next
-            || (super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream)
-                && !state.has_successful_mutating_tool);
-        state.force_tool_choice_next = false;
-        let current_finalization_reason = if force_final_response {
-            state
-                .finalization_reason
-                .clone()
-                .unwrap_or_else(|| "max_iterations_finalization_pass".to_string())
-        } else {
-            String::new()
+        // S5b-2: phases 1-8 of the iteration body live in
+        // `stream_iteration::iteration_preflight`.  See that helper
+        // for the cancellation poll, iteration cap, per-iter setup,
+        // DW-002 digester, preflight request build + diagnostics
+        // emit, cost guard, and stream-start with resilience.
+        let preflight_refs = super::stream_iteration::PreflightSharedRefs {
+            stream_id: &stream_id_for_task,
+            session_id: &session_id,
+            max_iterations,
+            utility_llm: &utility_llm,
+            tool_defs: &tool_defs_for_stream,
+            system_prompt: &system_prompt_for_stream,
+            model: &model_for_stream,
+            context_window: context_window_for_stream,
+            tool_pool_names: &tool_pool_names_for_stream,
+            tool_pool_schema_hash: &tool_pool_schema_hash_for_stream,
+            tool_pool_policy: &tool_pool_policy_for_stream,
+            work_loop_decision: &work_loop_decision_for_stream,
+            cost_guard_cfg: &cost_guard_cfg,
+            stream_resilience_cfg: &stream_resilience_cfg,
+            provider_client: &provider_client_for_stream,
+            failover_provider_client: failover_provider_client.as_ref(),
+            stream_emitter: &stream_emitter,
+            run_event_logger: &run_event_logger,
+            harness_bus: harness_event_bus_for_stream.as_ref(),
+            tool_executor: &tool_executor,
         };
-
-        tracing::info!(
-            "[start_agent_stream] === Outer loop iteration {} start. session_messages len={}, accumulated_text len={}, force_final_response={}, finalization_reason={}",
-            state.tool_loop_iter,
-            state.session_messages.len(),
-            state.accumulated_text.len(),
-            force_final_response,
-            current_finalization_reason
-        );
-
-        // DW-002 — call the WU-004 digester before preflight so that
-        // long histories get LLM-summarized into a tighter token
-        // footprint. **Truth-loop iter-7 (2026-04-30)**: replaced the
-        // per-iteration `Arc::new(ChatProviderUtilityLlm::new(...))`
-        // with `utility_llm.clone()`, threaded from
-        // `TurnServiceDeps::utility_llm` — the same shared shim
-        // `bootstrap/memory.rs` constructs once at startup.  Avoids
-        // re-allocating a provider wrapper every outer loop and
-        // proves the `AppState::utility_llm` field has a live
-        // streaming-turn consumer (the `#[allow(dead_code)]` was
-        // dropped in the same commit).
-        // Failure-isolated: any error → `digested_messages = None`.
-        let digested_owned: Option<Vec<crate::modules::api::InputMessage>> =
-            super::preflight_hooks::digest_messages_for_preflight(
-                &state.session_messages,
-                utility_llm.clone(),
-            )
-            .await;
-        if let Some(ref kept) = digested_owned {
-            let payload = serde_json::json!({
-                "keptTokens": kept.len(),
-                "dropped": state.session_messages.len().saturating_sub(kept.len()),
-                "passthrough": kept.len() == state.session_messages.len(),
-                "tier": "recent_messages",
-            });
-            let _ = crate::modules::runtime::evolution_emitter::emit_evolution_event(
-                None,
-                crate::modules::runtime::contracts::common::RuntimeEventType::CompressionEvent,
-                "message_digest",
-                crate::modules::runtime::contracts::common::CorrelationIds {
-                    session_id: Some(session_id.clone()),
-                    stream_id: Some(stream_id_for_task.clone()),
-                    ..Default::default()
-                },
-                &payload,
-                None,
-            );
-        }
-
-        // Build the iteration request via the extracted preflight module (GAP-005).
-        let preflight_result = super::stream_preflight::build_iteration_request(
-            super::stream_preflight::PreflightContext {
-                session_messages: &state.session_messages,
-                digested_messages: digested_owned.as_deref(),
-                tool_defs: &tool_defs_for_stream,
-                system_prompt: &system_prompt_for_stream,
-                model: &model_for_stream,
-                context_window: context_window_for_stream,
-                force_final_response,
-                finalization_reason: &current_finalization_reason,
-                force_tool_choice,
-                tool_loop_iter: state.tool_loop_iter,
-                max_iterations,
-                stream_id: &stream_id_for_task,
-                session_id: &session_id,
-            },
-        );
-        let iter_api_request = preflight_result.request;
-        let request_tool_count = iter_api_request.tools.as_ref().map_or(0, Vec::len);
-        let request_tool_names = iter_api_request
-            .tools
-            .as_ref()
-            .map(|tools| {
-                tools
-                    .iter()
-                    .take(48)
-                    .map(|tool| tool.name.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let request_tool_choice = iter_api_request
-            .tool_choice
-            .as_ref()
-            .map(|choice| format!("{choice:?}"))
-            .unwrap_or_else(|| "none".to_string());
-        let _ = run_event_logger
-            .append(
-                "provider_tool_call_diagnostics",
-                serde_json::json!({
-                    "stream_id": stream_id_for_task.clone(),
-                    "session_id": session_id.clone(),
-                    "iteration": state.tool_loop_iter,
-                    "tool_count": request_tool_count,
-                    "tool_names": request_tool_names,
-                    "canonical_tool_names": tool_pool_names_for_stream.clone(),
-                    "tool_schema_hash": tool_pool_schema_hash_for_stream.clone(),
-                    "tool_pool_policy": tool_pool_policy_for_stream.clone(),
-                    "tool_choice": request_tool_choice,
-                    "force_final_response": force_final_response,
-                    "force_tool_choice": force_tool_choice,
-                    "requires_tool_execution_evidence": super::work_loop::requires_tool_execution_evidence(&work_loop_decision_for_stream),
-                    "has_successful_tool": state.has_successful_tool,
-                    "has_successful_mutating_tool": state.has_successful_mutating_tool,
-                    "reason_codes": work_loop_decision_for_stream.reason_codes.clone(),
-                }),
-            )
-            .await;
-        state.session_messages = preflight_result.session_messages;
-        state.preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
-        state.preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
-        state.preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;
-        state.sanitize_rounds += preflight_result.sanitize_rounds_added;
-        state.sanitized_dropped_empty_messages +=
-            preflight_result.sanitized_dropped_empty_messages_added;
-        state.sanitized_dropped_orphan_tool_results +=
-            preflight_result.sanitized_dropped_orphan_tool_results_added;
-        state.sanitized_dropped_unmatched_tool_uses +=
-            preflight_result.sanitized_dropped_unmatched_tool_uses_added;
-        state.sanitized_dropped_invalid_tool_use_inputs +=
-            preflight_result.sanitized_dropped_invalid_tool_use_inputs_added;
-        state
-            .sanitize_orphan_samples
-            .extend(preflight_result.sanitize_orphan_samples_added);
-        state
-            .sanitize_unmatched_samples
-            .extend(preflight_result.sanitize_unmatched_samples_added);
-        state
-            .sanitize_invalid_tool_use_samples
-            .extend(preflight_result.sanitize_invalid_tool_use_samples_added);
-
-        if let Err(ce) = crate::modules::runtime::cost_guard::CostGuard::check_before_llm_call(
-            &cost_guard_cfg,
-            &session_id,
-        ) {
-            state.stream_failed = true;
-            state.last_stream_error_reason = Some(ce.to_string());
-            state.terminal_status = Some("failed_to_start_stream");
-            let user_visible_truth = TaskOutcomeResolver::resolve(
-                ExecutionTruth {
-                    has_successful_tool: state.has_successful_tool,
-                    has_successful_mutating_tool: state.has_successful_mutating_tool,
-                },
-                &ConversationTruth {
-                    stream_failed: true,
-                    terminal_status: "failed_to_start_stream",
-                    last_stream_error_reason: state.last_stream_error_reason.clone(),
-                },
-            );
-            let payload = StreamTokenPayload {
-                stream_id: stream_id_for_task.clone(),
-                correlation: None,
-                text: None,
-                thinking: None,
-                event_type: "stream_error".to_string(),
-                tool_call_id: None,
-                tool_name: None,
-                tool_status: None,
-                tool_args: None,
-                tool_result: Some(ce.to_string()),
-                tool_duration_ms: None,
-                effective_workdir: None,
-                policy_decision: None,
-                evidence_id: None,
-                request_id: Some(state.provider_request_id.clone()),
-                task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                degraded_reason: user_visible_truth.degraded_reason,
-                resume_available: Some(user_visible_truth.resume_available),
-                resume_cursor: None,
-                recoverability: Some(user_visible_truth.recoverability.clone()),
-                context_budget_usage: None,
-                memory_context: None,
-                prompt_diagnostics: None,
-                turn_cost: None,
-                routing_info: None,
-                session_totals: None,
-            };
-            stream_emitter.emit_payload(payload.clone());
-            append_stream_event(&run_event_logger, &payload).await;
-            if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                let _ = bus.emit(AgentEvent::StreamErrored {
-                    session_id: session_id.clone(),
-                    reason: state
-                        .last_stream_error_reason
-                        .clone()
-                        .unwrap_or_else(|| "cost_limit".to_string()),
-                    resume_available: user_visible_truth.resume_available,
-                    at: chrono::Utc::now(),
-                });
-            }
-            break;
-        }
-
-        let stream = match crate::modules::provider::resilience::stream_message_with_resilience(
-            &provider_client_for_stream,
-            failover_provider_client.as_ref(),
-            &iter_api_request,
-            &mut state.stream_circuit,
-            &stream_resilience_cfg,
+        let (stream, force_final_response) = match super::stream_iteration::iteration_preflight(
+            &mut state,
+            &mut cancel_rx,
+            &preflight_refs,
         )
         .await
         {
-            Ok(s) => {
-                crate::modules::runtime::cost_guard::CostGuard::record_llm_call_charged(
-                    &cost_guard_cfg,
-                    &session_id,
-                );
-                s
-            }
-            Err(e) => {
-                let stream_error_reason = format_stream_error_reason(&e);
-                if is_network_timeout_reason(&stream_error_reason)
-                    && state.stream_start_retry_count < MAX_STREAM_RETRY_ON_TIMEOUT
-                {
-                    state.stream_start_retry_count += 1;
-                    tracing::warn!(
-                        "[start_agent_stream] start-stream timeout, scheduling retry: stream_id={}, session_id={}, attempt={}/{}, reason={}",
-                        stream_id_for_task,
-                        session_id,
-                        state.stream_start_retry_count,
-                        MAX_STREAM_RETRY_ON_TIMEOUT,
-                        stream_error_reason
-                    );
-                    tokio::time::sleep(Duration::from_millis(350)).await;
-                    continue;
-                }
-                state.stream_failed = true;
-                state.last_stream_error_reason = Some(stream_error_reason.clone());
-                state.terminal_status = Some("failed_to_start_stream");
-                tracing::error!(
-                    "[start_agent_stream] Background task failed to start stream: {}",
-                    stream_error_reason
-                );
-                let user_visible_truth = TaskOutcomeResolver::resolve(
-                    ExecutionTruth {
-                        has_successful_tool: state.has_successful_tool,
-                        has_successful_mutating_tool: state.has_successful_mutating_tool,
-                    },
-                    &ConversationTruth {
-                        stream_failed: true,
-                        terminal_status: "failed_to_start_stream",
-                        last_stream_error_reason: Some(stream_error_reason.clone()),
-                    },
-                );
-                let resume_cursor = user_visible_truth.resume_available.then(|| {
-                    build_resume_cursor(
-                        &stream_id_for_task,
-                        state.tool_loop_iter,
-                        state.token_count,
-                    )
-                });
-                let degraded_reason = user_visible_truth.degraded_reason.clone();
-                let payload = StreamTokenPayload {
-                    stream_id: stream_id_for_task.clone(),
-                    correlation: None,
-                    text: None,
-                    thinking: None,
-                    event_type: "stream_error".to_string(),
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_status: None,
-                    tool_args: None,
-                    tool_result: Some(stream_error_reason),
-                    tool_duration_ms: None,
-                    effective_workdir: None,
-                    policy_decision: None,
-                    evidence_id: None,
-                    request_id: Some(state.provider_request_id.clone()),
-                    task_outcome: Some(user_visible_truth.task_outcome.to_string()),
-                    degraded_reason,
-                    resume_available: Some(user_visible_truth.resume_available),
-                    resume_cursor,
-                    recoverability: Some(user_visible_truth.recoverability.clone()),
-                    context_budget_usage: None,
-                    memory_context: None,
-                    prompt_diagnostics: None,
-                    turn_cost: None,
-                    routing_info: None,
-                    session_totals: None,
-                };
-                stream_emitter.emit_payload(payload.clone());
-                append_stream_event(&run_event_logger, &payload).await;
-                // Phase M4-C P5 — emit harness `StreamErrored`
-                // event so the trace aggregator records the
-                // hard error against the run report.
-                if let Some(bus) = harness_event_bus_for_stream.as_ref() {
-                    let _ = bus.emit(AgentEvent::StreamErrored {
-                        session_id: session_id.clone(),
-                        reason: state
-                            .last_stream_error_reason
-                            .clone()
-                            .unwrap_or_else(|| "unknown_stream_error".to_string()),
-                        resume_available: user_visible_truth.resume_available,
-                        at: chrono::Utc::now(),
-                    });
-                }
-                // Save session and emit stream_complete even on error
-                // (break from outer loop so cleanup code runs below)
-                break;
+            super::stream_iteration::PreflightOutcome::Continue {
+                stream,
+                force_final_response,
+            } => (stream, force_final_response),
+            super::stream_iteration::PreflightOutcome::BreakTerminal => break,
+            super::stream_iteration::PreflightOutcome::RetryAfterSleep { sleep } => {
+                tokio::time::sleep(sleep).await;
+                continue;
             }
         };
         if let Some(request_id) = stream
@@ -890,191 +558,34 @@ pub(super) async fn run_stream_task_body(inputs: StreamTaskInputs) -> AgentLoopD
             continue;
         }
 
-        // Some providers stream textual pseudo tool calls instead of
-        // structured tool-call deltas. Convert supported formats before
-        // falling back to nudge/finalization.
+        // S5b-2: phase 11 of the iteration body lives in
+        // `stream_iteration::handle_no_tool_calls`.  The helper may
+        // retroactively populate `pending_tool_uses` via textual
+        // tool-call extraction — in that case it returns
+        // `FallThrough` and the iteration body continues with the
+        // recovered tool calls (phases 12-14 below).
         if pending_tool_uses.is_empty() {
-            tracing::info!(
-                "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
-                state.accumulated_text.len()
-            );
-            if !force_final_response {
-                let textual_tool_calls =
-                    super::work_loop::extract_textual_tool_calls(&state.accumulated_text);
-                if !textual_tool_calls.is_empty() {
-                    state.provider_textual_tool_markup_seen = true;
-                    let markup_family =
-                        super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
-                            .unwrap_or_else(|| "textual_tool_calls".to_string());
-                    let warning = format!(
-                        "provider emitted {markup_family} text instead of structured tool_calls; converted to canonical tool calls"
-                    );
-                    if !state
-                        .diagnostic_warnings
-                        .iter()
-                        .any(|value| value == &warning)
-                    {
-                        state.diagnostic_warnings.push(warning);
-                    }
-                    let converted_count = textual_tool_calls.len();
-                    let _ = run_event_logger
-                        .append(
-                            "provider_tool_call_compat_warning",
-                            serde_json::json!({
-                                "stream_id": stream_id_for_task.clone(),
-                                "session_id": session_id.clone(),
-                                "provider_id": provider_id_for_stream.clone(),
-                                "model": model_for_stream.clone(),
-                                "markup_family": markup_family,
-                                "text_len": state.accumulated_text.len(),
-                                "converted_tool_call_count": converted_count,
-                                "recovery_action": "execute_as_structured_tool_calls",
-                                "sanitized": true,
-                            }),
-                        )
-                        .await;
-                    pending_tool_uses = textual_tool_calls;
-                    state.accumulated_text.clear();
-                    state.accumulated_thinking.clear();
-                }
-            }
-        }
-        if pending_tool_uses.is_empty() {
-            if let Some(markup_family) =
-                super::work_loop::detect_textual_tool_call_markup(&state.accumulated_text)
+            let no_tool_refs = super::stream_iteration::NoToolSharedRefs {
+                stream_id: &stream_id_for_task,
+                session_id: &session_id,
+                provider_id: &provider_id_for_stream,
+                model: &model_for_stream,
+                tool_defs: &tool_defs_for_stream,
+                work_loop_decision: &work_loop_decision_for_stream,
+                run_event_logger: &run_event_logger,
+                force_final_response,
+            };
+            match super::stream_iteration::handle_no_tool_calls(
+                &mut state,
+                &mut pending_tool_uses,
+                &no_tool_refs,
+            )
+            .await
             {
-                state.provider_textual_tool_markup_seen = true;
-                let warning = format!(
-                    "provider emitted {markup_family} text instead of structured tool_calls"
-                );
-                if !state
-                    .diagnostic_warnings
-                    .iter()
-                    .any(|value| value == &warning)
-                {
-                    state.diagnostic_warnings.push(warning.clone());
-                }
-                let _ = run_event_logger
-                    .append(
-                        "provider_tool_call_compat_warning",
-                        serde_json::json!({
-                            "stream_id": stream_id_for_task.clone(),
-                            "session_id": session_id.clone(),
-                            "provider_id": provider_id_for_stream.clone(),
-                            "model": model_for_stream.clone(),
-                            "markup_family": markup_family,
-                            "text_len": state.accumulated_text.len(),
-                            "recovery_action": "nudge_with_required_tool_choice",
-                            "sanitized": true,
-                        }),
-                    )
-                    .await;
+                super::stream_iteration::NoToolOutcome::Break => break,
+                super::stream_iteration::NoToolOutcome::Continue => continue,
+                super::stream_iteration::NoToolOutcome::FallThrough => {}
             }
-            if should_retry_tool_required_no_tool(
-                &work_loop_decision_for_stream,
-                state.has_successful_mutating_tool,
-                state.tool_required_no_tool_retry_count,
-                force_final_response,
-                tool_defs_for_stream.len(),
-            ) {
-                state.tool_required_no_tool_retry_count += 1;
-                tracing::warn!(
-                    "[start_agent_stream] tool-required task produced no mutating tool call; retrying once with tool-required loop control. stream_id={}, session_id={}",
-                    stream_id_for_task,
-                    session_id
-                );
-                let payload = serde_json::json!({
-                    "reason": "tool_required_no_tool",
-                    "retry_count": state.tool_required_no_tool_retry_count,
-                    "available_tool_count": tool_defs_for_stream.len(),
-                });
-                let _ = run_event_logger
-                    .append("tool_required_no_tool_retry", payload)
-                    .await;
-                state.accumulated_text.clear();
-                state.accumulated_thinking.clear();
-                state.session_messages.push(InputMessage::user_text(
-                    "[agent_loop_control] The previous assistant response did not call tools, but this user request requires concrete file/tool execution before completion. Call the available tools now to inspect, create or edit the artifact, and verify it. Use complete JSON arguments for every tool call. Do not answer only with prose. If tool execution is impossible, explain the blockage in the final report.",
-                ));
-                state.force_tool_choice_next = true;
-                continue;
-            }
-            if should_retry_announced_tool_intent_no_tool(
-                &state.accumulated_text,
-                state.tool_intent_nudge_retry_count,
-                force_final_response,
-                tool_defs_for_stream.len(),
-            ) {
-                state.tool_intent_nudge_retry_count += 1;
-                tracing::warn!(
-                    "[start_agent_stream] assistant announced tool intent without tool call; nudging once. stream_id={}, session_id={}",
-                    stream_id_for_task,
-                    session_id
-                );
-                let payload = serde_json::json!({
-                    "reason": "announced_tool_intent_no_tool",
-                    "retry_count": state.tool_intent_nudge_retry_count,
-                    "available_tool_count": tool_defs_for_stream.len(),
-                });
-                let _ = run_event_logger
-                    .append("tool_intent_nudge_retry", payload)
-                    .await;
-                state.accumulated_text.clear();
-                state.accumulated_thinking.clear();
-                state.session_messages.push(InputMessage::user_text(
-                    super::work_loop::tool_intent_nudge_message(),
-                ));
-                state.force_tool_choice_next = true;
-                continue;
-            }
-            if state.terminal_status.is_none() {
-                state.terminal_status = match state.finalization_reason.as_deref() {
-                    Some("invalid_tool_args_repeated") => Some("invalid_tool_args_repeated"),
-                    Some("repeated_tool_batch_no_progress") => {
-                        Some("repeated_tool_batch_no_progress")
-                    }
-                    Some("approval_required_for_mutation") => {
-                        Some("approval_required_for_mutation")
-                    }
-                    _ if super::work_loop::requires_memory_recall_evidence(
-                        &work_loop_decision_for_stream,
-                    ) && !state.has_successful_tool
-                        && super::work_loop::is_incomplete_memory_lookup_response(
-                            &state.accumulated_text,
-                        ) =>
-                    {
-                        Some("memory_recall_required_no_tool")
-                    }
-                    _ if super::work_loop::requires_tool_execution_evidence(
-                        &work_loop_decision_for_stream,
-                    ) && !state.has_successful_mutating_tool =>
-                    {
-                        if state.provider_textual_tool_markup_seen {
-                            Some("provider_textual_tool_call_markup")
-                        } else {
-                            Some("tool_required_no_tool")
-                        }
-                    }
-                    _ if super::work_loop::assistant_claims_tool_execution_without_tool(
-                        &state.accumulated_text,
-                    ) && !state.has_successful_mutating_tool =>
-                    {
-                        if state.provider_textual_tool_markup_seen {
-                            Some("provider_textual_tool_call_markup")
-                        } else {
-                            Some("tool_required_no_tool")
-                        }
-                    }
-                    _ if super::work_loop::detect_repetitive_model_output(
-                        &state.accumulated_text,
-                    ) =>
-                    {
-                        Some("repetitive_model_output")
-                    }
-                    _ => Some("model_stop_no_tools"),
-                };
-            }
-            break;
         }
         if force_final_response {
             tracing::warn!(
