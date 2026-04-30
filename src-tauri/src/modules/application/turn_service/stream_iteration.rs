@@ -548,8 +548,8 @@ pub(super) async fn handle_no_tool_calls(
     pending_tool_uses: &mut Vec<(String, String, String)>,
     refs: &NoToolSharedRefs<'_>,
 ) -> NoToolOutcome {
-    tracing::info!(
-        "[start_agent_stream] No pending tool uses, breaking outer loop. accumulated_text len={}",
+    tracing::debug!(
+        "[start_agent_stream] No pending tool uses; attempting textual extraction. accumulated_text len={}",
         state.accumulated_text.len()
     );
     if !refs.force_final_response {
