@@ -1367,7 +1367,29 @@ pub(super) fn assistant_signals_tool_intent(text: &str) -> bool {
 /// Provider compatibility signal for models that print pseudo tool markup
 /// instead of emitting structured `tool_calls` deltas.
 #[must_use]
+/// Normalize ASCII pipe variants to the Unicode fullwidth `｜` (U+FF5C) that
+/// the existing DSML detection/extraction logic recognizes.
+///
+/// DeepSeek-V4-Flash and similar models sometimes emit DSML markers using
+/// ASCII pipes (`<|DSML|...>`), single or doubled (`<||DSML||...>`), instead
+/// of the canonical Unicode fullwidth form (`<｜DSML｜...>`). The two forms
+/// render visually identical in most fonts, so the divergence is easy to
+/// miss. This normalization pass converts the ASCII variants to the canonical
+/// fullwidth form so all downstream logic (detection, extraction, tests)
+/// works against a single representation.
+///
+/// Order matters: replace doubled pipes (`||`) first so we don't double-replace
+/// single pipes embedded within them.
+pub(super) fn normalize_dsml_delimiters(text: &str) -> String {
+    text.replace("<||DSML||", "<\u{FF5C}DSML\u{FF5C}")
+        .replace("</||DSML||", "</\u{FF5C}DSML\u{FF5C}")
+        .replace("<|DSML|", "<\u{FF5C}DSML\u{FF5C}")
+        .replace("</|DSML|", "</\u{FF5C}DSML\u{FF5C}")
+}
+
 pub(super) fn detect_textual_tool_call_markup(text: &str) -> Option<String> {
+    let normalized = normalize_dsml_delimiters(text);
+    let text = normalized.as_str();
     let lower = text.to_lowercase();
     let family = if text.contains("<｜DSML｜tool_calls")
         || text.contains("<｜DSML｜invoke")
@@ -1392,6 +1414,8 @@ pub(super) fn detect_textual_tool_call_markup(text: &str) -> Option<String> {
 /// tuple used by the stream loop.
 #[must_use]
 pub(super) fn extract_textual_tool_calls(text: &str) -> Vec<(String, String, String)> {
+    let normalized = normalize_dsml_delimiters(text);
+    let text = normalized.as_str();
     let mut calls = extract_deepseek_dsml_tool_calls(text);
     let offset = calls.len();
     calls.extend(extract_xml_invoke_tool_calls(text, offset));
@@ -2562,6 +2586,80 @@ mod tests {
             args.get("command").and_then(|value| value.as_str()),
             Some("touch /Users/ryanliu/Desktop/me/r.md && ls -a /Users/ryanliu/Desktop/me/")
         );
+    }
+
+    #[test]
+    fn extract_textual_tool_calls_handles_ascii_single_pipe_dsml() {
+        let raw = "<|DSML|tool_calls>\n<|DSML|invoke name=\"bash\">\n<|DSML|parameter name=\"command\">date</|DSML|parameter>\n</|DSML|invoke>\n</|DSML|tool_calls>";
+        let calls = extract_textual_tool_calls(raw);
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected 1 ascii-pipe DSML call, got {calls:?}"
+        );
+        assert_eq!(calls[0].1, "bash");
+        assert!(calls[0].2.contains("date"), "missing param: {}", calls[0].2);
+    }
+
+    #[test]
+    fn extract_textual_tool_calls_handles_ascii_double_pipe_dsml() {
+        let raw = "<||DSML||tool_calls>\n<||DSML||invoke name=\"bash\">\n<||DSML||parameter name=\"command\">date</||DSML||parameter>\n</||DSML||invoke>\n</||DSML||tool_calls>";
+        let calls = extract_textual_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "bash");
+        assert!(calls[0].2.contains("date"));
+    }
+
+    #[test]
+    fn extract_textual_tool_calls_unicode_fullwidth_still_works() {
+        let raw = "<\u{FF5C}DSML\u{FF5C}tool_calls>\n<\u{FF5C}DSML\u{FF5C}invoke name=\"bash\">\n<\u{FF5C}DSML\u{FF5C}parameter name=\"command\">date</\u{FF5C}DSML\u{FF5C}parameter>\n</\u{FF5C}DSML\u{FF5C}invoke>\n</\u{FF5C}DSML\u{FF5C}tool_calls>";
+        let calls = extract_textual_tool_calls(raw);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "bash");
+    }
+
+    #[test]
+    fn detect_textual_tool_call_markup_recognizes_ascii_variants() {
+        assert_eq!(
+            detect_textual_tool_call_markup("<|DSML|tool_calls>"),
+            Some("deepseek_dsml_tool_calls".to_string())
+        );
+        assert_eq!(
+            detect_textual_tool_call_markup("<||DSML||invoke name=\"x\">"),
+            Some("deepseek_dsml_tool_calls".to_string())
+        );
+        assert_eq!(
+            detect_textual_tool_call_markup("</||DSML||tool_calls>"),
+            Some("deepseek_dsml_tool_calls".to_string())
+        );
+        assert_eq!(
+            detect_textual_tool_call_markup("<\u{FF5C}DSML\u{FF5C}tool_calls"),
+            Some("deepseek_dsml_tool_calls".to_string())
+        );
+        assert_eq!(
+            detect_textual_tool_call_markup("plain text without any markup"),
+            None
+        );
+    }
+
+    #[test]
+    fn normalize_dsml_delimiters_idempotent_on_canonical_form() {
+        let canonical = "<\u{FF5C}DSML\u{FF5C}invoke name=\"x\">";
+        assert_eq!(normalize_dsml_delimiters(canonical), canonical);
+    }
+
+    #[test]
+    fn normalize_dsml_delimiters_replaces_double_then_single() {
+        let d = "<||DSML||tool_calls></||DSML||tool_calls>";
+        let n = normalize_dsml_delimiters(d);
+        assert!(!n.contains("<||"));
+        assert!(!n.contains("</||"));
+        assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"));
+
+        let s = "<|DSML|tool_calls></|DSML|tool_calls>";
+        let n = normalize_dsml_delimiters(s);
+        assert!(!n.contains("<|DSML"));
+        assert!(n.contains("<\u{FF5C}DSML\u{FF5C}tool_calls"));
     }
 
     #[test]
