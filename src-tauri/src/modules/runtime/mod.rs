@@ -2,6 +2,7 @@
 //! Migrated from /rust/crates/runtime
 //! Provides the core agent execution engine
 
+pub mod agent_loop;
 pub mod attempt_ledger;
 pub mod bash;
 pub mod block_conversion;

@@ -5,10 +5,14 @@
 //! delegates (5b: StreamDelegate, 5c: RunDelegate) carry full `ToolCall` /
 //! `ToolResult` values inside their own state and route them by opaque-id
 //! Strings through this loop. The loop never inspects call/result contents.
+//!
+//! Relocated from `application::turn_service::agentic_loop` in Phase 3 T1 so
+//! `runtime/run_delegate.rs` and the streaming delegate can both depend on it
+//! without inverting the runtime → application layering.
 
 use async_trait::async_trait;
 
-use crate::modules::application::turn_service::AgenticLoopConfig;
+use super::config::AgenticLoopConfig;
 
 /// Per-iteration scratch state passed by reference to delegate callbacks.
 /// Delegates may inject messages, append tool results, and read `force_text`

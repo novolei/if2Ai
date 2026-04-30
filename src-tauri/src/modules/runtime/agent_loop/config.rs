@@ -3,6 +3,8 @@
 //! Mirrors Steward's `AgenticLoopConfig`. All fields have defaults that
 //! preserve current production behaviour.
 //!
+//! Relocated from `application::turn_service::loop_config` in Phase 3 T1.
+//!
 //! ## Wiring status (post-Phase 2)
 //!
 //! - `max_iterations` — **fully wired**: production reads from
