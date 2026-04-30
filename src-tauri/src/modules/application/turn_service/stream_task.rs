@@ -93,6 +93,7 @@ use crate::modules::session::Session as AppSession;
 use crate::modules::session::SessionManager;
 use crate::modules::tools::ToolRegistry;
 
+#[allow(deprecated)]
 use super::agent_loop_delegate::{
     AgentLoopDelegate, AgentLoopDelegateInput, AgentLoopDelegateOutput, AgentLoopTerminalState,
     StreamingAgentLoopDelegate,
@@ -313,6 +314,7 @@ fn should_retry_announced_tool_intent_no_tool(
 /// MIG-001-d preserves behaviour bit-for-bit; the only structural
 /// change vs the previous inline closure is the destructuring at
 /// the top of the function and the location.
+#[allow(deprecated)]
 pub(super) async fn run_stream_task(inputs: StreamTaskInputs) {
     let delegate = StreamingAgentLoopDelegate::new();
     let _ = delegate

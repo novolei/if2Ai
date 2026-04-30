@@ -24,6 +24,12 @@ pub(super) type AgentLoopDelegateFuture<'a> =
     Pin<Box<dyn Future<Output = AgentLoopDelegateOutput> + Send + 'a>>;
 
 /// Execution boundary for one selected work-loop implementation.
+#[deprecated(
+    note = "Use modules::application::turn_service::agentic_loop::LoopDelegate instead. \
+            The legacy trait is retained while production hot-paths migrate \
+            (sub-commits 5c-2..5c-6, deferred). See \
+            docs/superpowers/specs/2026-04-30-steward-alignment-design.md."
+)]
 pub(super) trait AgentLoopDelegate {
     /// Execute the loop and return its canonical terminal outcome summary.
     fn execute<'a>(&'a self, input: AgentLoopDelegateInput) -> AgentLoopDelegateFuture<'a>;
@@ -115,6 +121,8 @@ impl StreamingAgentLoopDelegate {
     }
 }
 
+// Legacy delegate retained while RunDelegate adoption (5c-2..5c-6) is queued.
+#[allow(deprecated)]
 impl AgentLoopDelegate for StreamingAgentLoopDelegate {
     fn execute<'a>(&'a self, input: AgentLoopDelegateInput) -> AgentLoopDelegateFuture<'a> {
         Box::pin(async move { run_stream_task_body(input.stream_task_inputs).await })
