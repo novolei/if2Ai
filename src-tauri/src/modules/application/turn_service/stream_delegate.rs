@@ -259,7 +259,7 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
         }
     }
 
-    async fn before_llm_call(&self, _ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
+    async fn before_llm_call(&self, ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
         // Take the executor out of the slot so we can borrow it for refs and
         // restore it when done. (`PreflightSharedRefs::tool_executor` is &-borrow
         // only, but the slot still needs to give up exclusive access for the
@@ -277,7 +277,7 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
                 .as_mut()
                 .expect("cancel_rx must be present at before_llm_call");
             let refs = build_preflight_refs(self.inputs, &self.extras, &executor);
-            iteration_preflight(&mut state, cancel_rx, &refs).await
+            iteration_preflight(&mut state, cancel_rx, &refs, ctx.force_text).await
         };
 
         // Restore executor unconditionally.

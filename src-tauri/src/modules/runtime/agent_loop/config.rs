@@ -5,13 +5,17 @@
 //!
 //! Relocated from `application::turn_service::loop_config` in Phase 3 T1.
 //!
-//! ## Wiring status (post-Phase 3 T2)
+//! ## Wiring status (post-Phase 3 T3)
 //!
 //! - `max_iterations` — **fully wired**: production reads from
 //!   `agent_max_iterations()` env-var via T11/T12 single-source-of-truth.
-//! - `force_text_after_truncations` — **inert in production** as of Phase 3 T2.
-//!   Phase 3 T3 (N2-β) will wire it to drive force_text behavior in both
-//!   delegates.
+//! - `force_text_after_truncations` — **fully wired** as of Phase 3 T3 (N2-β):
+//!   after N consecutive `length`-truncation finishes, `run_agentic_loop`
+//!   sets `ctx.force_text = true`, and both
+//!   `application::turn_service::stream_delegate::StreamDelegate::before_llm_call`
+//!   (via `iteration_preflight` → `stream_preflight::build_iteration_request`)
+//!   and `runtime::run_delegate::RunDelegate::call_llm` honour it by
+//!   dropping tool definitions from the next outgoing LLM request.
 //!
 //! ## Phase 3 T2 (N1-α)
 //!

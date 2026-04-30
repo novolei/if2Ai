@@ -133,7 +133,7 @@ where
         None
     }
 
-    async fn call_llm(&self, _ctx: &mut LoopContext) -> Result<RespondResult, String> {
+    async fn call_llm(&self, ctx: &mut LoopContext) -> Result<RespondResult, String> {
         let mut runtime_guard = self.runtime.lock().await;
         let runtime: &mut ConversationRuntime<C, T> = &mut runtime_guard;
         let mut state = self.state.lock().await;
@@ -173,10 +173,17 @@ where
             runtime.session.messages.clone()
         };
 
+        // Phase 3 T3 (N2-β): when the loop has detected `force_text_after_truncations`
+        // consecutive `length` finishes, drop tool definitions so the provider
+        // is forced to emit a text reply instead of yet another truncated tool call.
         let request = ApiRequest {
             system_prompt: runtime.system_prompt.clone(),
             messages: messages_for_request,
-            tools: Some(runtime.tool_executor.get_definitions()),
+            tools: if ctx.force_text {
+                None
+            } else {
+                Some(runtime.tool_executor.get_definitions())
+            },
         };
 
         let events = match runtime.api_client.stream(request).await {
