@@ -129,7 +129,8 @@ pub(super) fn build_iteration_request(ctx: PreflightContext<'_>) -> PreflightRes
         }
         None => session_messages,
     };
-    let tier_allocation = TierBudgetAllocation::default();
+    let tier_allocation =
+        TierBudgetAllocation::with_total(crate::modules::runtime::budget::streaming_tier_budget());
     let tier_outcome = compress_for_request(messages_for_tier, &tier_allocation);
     if tier_outcome.dropped > 0 {
         tracing::warn!(

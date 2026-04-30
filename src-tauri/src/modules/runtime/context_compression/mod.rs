@@ -87,6 +87,43 @@ impl TierBudgetAllocation {
         }
     }
 
+    /// Construct an allocation whose tiers are scaled proportionally
+    /// from the historical 30K default so a different `total` retains
+    /// the same recent-vs-system-vs-tool shape.
+    ///
+    /// Used by the streaming preflight in concert with
+    /// [`crate::modules::runtime::budget::streaming_tier_budget`] so the
+    /// runtime knob can be lowered (Phase 4 T1) without zero-ing any
+    /// individual tier. Rounding error (≤ 4 tokens) is absorbed into
+    /// `recent_messages` so the returned `total()` matches the requested
+    /// value exactly.
+    pub fn with_total(total: usize) -> Self {
+        const DEFAULT_TOTAL: usize = TIER_SYSTEM_TOKENS
+            + TIER_COMPRESSED_HISTORY_TOKENS
+            + TIER_WORKING_CHECKPOINT_TOKENS
+            + TIER_RECENT_MESSAGES_TOKENS
+            + TIER_TOOL_BUFFER_TOKENS;
+
+        let scale = |numer: usize| -> usize {
+            ((numer as u128 * total as u128) / DEFAULT_TOTAL as u128) as usize
+        };
+
+        let system = scale(TIER_SYSTEM_TOKENS);
+        let compressed_history = scale(TIER_COMPRESSED_HISTORY_TOKENS);
+        let working_checkpoint = scale(TIER_WORKING_CHECKPOINT_TOKENS);
+        let tool_buffer = scale(TIER_TOOL_BUFFER_TOKENS);
+        let assigned = system + compressed_history + working_checkpoint + tool_buffer;
+        let recent_messages = total.saturating_sub(assigned);
+
+        Self {
+            system,
+            compressed_history,
+            working_checkpoint,
+            recent_messages,
+            tool_buffer,
+        }
+    }
+
     /// Hard ceiling — sum of all tier budgets.
     pub const fn total(&self) -> usize {
         self.system

@@ -147,6 +147,32 @@ pub const TIER_RECENT_MESSAGES_TOKENS: usize = 12_000;
 /// Current-turn tool-result buffer tier. Module A tier 5.
 pub const TIER_TOOL_BUFFER_TOKENS: usize = 6_000;
 
+/// Default streaming tier-compression budget when no env override is set.
+/// Lowered from the historical 30_000 (Phase 4 T1) so typical sessions
+/// (~10K tokens of history) start triggering compression. The streaming
+/// preflight constructs its `TierBudgetAllocation` from this value via
+/// [`streaming_tier_budget`]; callers in non-streaming paths (e.g. tests)
+/// continue to use [`crate::modules::runtime::context_compression::TierBudgetAllocation::default`]
+/// which still totals 30K.
+pub const DEFAULT_STREAM_TIER_BUDGET: usize = 8_000;
+
+/// Read the streaming tier-compression budget, honoring the
+/// `IF2AI_STREAM_TIER_BUDGET` env var if set (parses as `usize`).
+/// Falls back to [`DEFAULT_STREAM_TIER_BUDGET`].
+///
+/// Why this knob exists:
+///   - Default 8K allows ~last 4-6 turns of typical chat to pass through uncompressed.
+///   - Bump higher (e.g. 16000) if your sessions need more long-range context.
+///   - Bump lower (e.g. 4000) for token-cost-sensitive deployments.
+///   - Values below the 1024-token sanity floor are ignored.
+pub fn streaming_tier_budget() -> usize {
+    std::env::var("IF2AI_STREAM_TIER_BUDGET")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n >= 1024)
+        .unwrap_or(DEFAULT_STREAM_TIER_BUDGET)
+}
+
 /// Maximum number of times the streaming task will retry a
 /// `provider.stream(...)` call after a network-timeout class
 /// error before giving up and surfacing the failure to the
@@ -583,6 +609,45 @@ mod tests {
         std::fs::write(&p, ":::: not yaml ::::").unwrap();
         let cfg = BudgetConfig::load_or_default(&p);
         assert!(cfg.validate().is_ok());
+    }
+
+    // ── streaming_tier_budget() env-var override ──────────────────
+    // Note: these tests mutate process-global env state. They share a
+    // single `Mutex` so they don't race each other inside the same test
+    // binary even when cargo runs the module in parallel with others.
+    use std::sync::Mutex;
+    static STREAM_BUDGET_ENV_LOCK: Mutex<()> = Mutex::new(());
+    const STREAM_BUDGET_VAR: &str = "IF2AI_STREAM_TIER_BUDGET";
+
+    #[test]
+    fn streaming_tier_budget_default_when_unset() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(STREAM_BUDGET_VAR);
+        assert_eq!(streaming_tier_budget(), DEFAULT_STREAM_TIER_BUDGET);
+    }
+
+    #[test]
+    fn streaming_tier_budget_honors_env_var() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_BUDGET_VAR, "12345");
+        assert_eq!(streaming_tier_budget(), 12345);
+        std::env::remove_var(STREAM_BUDGET_VAR);
+    }
+
+    #[test]
+    fn streaming_tier_budget_rejects_below_floor() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_BUDGET_VAR, "500");
+        assert_eq!(streaming_tier_budget(), DEFAULT_STREAM_TIER_BUDGET);
+        std::env::remove_var(STREAM_BUDGET_VAR);
+    }
+
+    #[test]
+    fn streaming_tier_budget_ignores_non_numeric() {
+        let _g = STREAM_BUDGET_ENV_LOCK.lock().unwrap();
+        std::env::set_var(STREAM_BUDGET_VAR, "not-a-number");
+        assert_eq!(streaming_tier_budget(), DEFAULT_STREAM_TIER_BUDGET);
+        std::env::remove_var(STREAM_BUDGET_VAR);
     }
 
     #[test]
