@@ -53,8 +53,6 @@ import { listen } from '@tauri-apps/api/event'
 import {
   activationGetStatus,
   listenActivationStatusChanged,
-  listenMemoryAfterTurn,
-  listenMemoryEvent,
   listenToBrowserStatus,
   listenToPermissionRequests,
   requestIntelligenceClassify,
@@ -63,6 +61,8 @@ import {
 import { getSessionProjectionCheckpoint, getSupervisorSnapshot, getToolAttemptLedger } from '@/api/sessions'
 import { RUNTIME_EVENT_CHANNEL } from '@/transport/contracts'
 import type {
+  MemoryAfterTurnPayload,
+  MemoryEventPayload,
   RuntimeEventEnvelope,
   StreamTokenPayload,
 } from '@/transport/contracts'
@@ -145,6 +145,33 @@ export function wireRuntimeProjectionListeners(
         if (event) store.dispatch(event)
       },
     },
+    {
+      eventType: 'memory',
+      family: 'lifecycle',
+      handle: (envelope) => {
+        const payload = envelope.payload as MemoryEventPayload
+        store.dispatch(translateMemoryEventPayload(payload))
+      },
+    },
+    {
+      eventType: 'memory',
+      family: 'after_turn',
+      handle: (envelope) => {
+        const payload = envelope.payload as MemoryAfterTurnPayload
+        // (1) batch envelope — fires for every turn end, including
+        // empty batches.  The `quality` / `conflicts` arrays travel
+        // with this event so M4 governance consumers can read them
+        // without re-fetching.
+        store.dispatch(translateMemoryAfterTurn(payload))
+        // (2) per-decision fan-out for the rolling ring.  Empty
+        // batches skip this loop naturally.  candidateId is
+        // synthesised since the backend doesn't carry one today.
+        for (const decision of payload.decisions) {
+          const candidateId = `${payload.policyVersion}::${decision.decidedAt}`
+          store.dispatch(translateMemoryWriteDecision(candidateId, decision))
+        }
+      },
+    },
   ]
   const router = makeEnvelopeRouter(familyHandlers)
   track(
@@ -166,44 +193,6 @@ export function wireRuntimeProjectionListeners(
       store.dispatch(translatePermissionRequestPayload(payload))
     }),
     'permission-request',
-  )
-
-  track(
-    listenMemoryEvent((payload) => {
-      store.dispatch(translateMemoryEventPayload(payload))
-    }),
-    'memory_event',
-  )
-
-  // Phase M3-C closeout — backend `memory_after_turn` batch
-  // envelope.  Fires once per real turn end, even when the batch
-  // is empty.  Bridge fan-out:
-  //
-  //   1. Always dispatch the batch canonical event
-  //      (`memory_after_turn`) so `snapshot.memory.lastAfterTurn`
-  //      is updated even for empty batches — closes the M3-B
-  //      "empty batch is unobservable" audit gap.
-  //   2. For non-empty batches, additionally dispatch one
-  //      `memory_write_decision` canonical event per decision so
-  //      the existing per-decision rolling ring
-  //      (`snapshot.memory.writeDecisions`) keeps populating.
-  track(
-    listenMemoryAfterTurn((payload) => {
-      // (1) batch envelope — fires for every turn end, including
-      // empty batches.  The `quality` / `conflicts` arrays travel
-      // with this event so M4 governance consumers can read
-      // them without re-fetching.
-      store.dispatch(translateMemoryAfterTurn(payload))
-
-      // (2) per-decision fan-out for the rolling ring.  Empty
-      // batches skip this loop naturally.  candidateId is
-      // synthesised since the backend doesn't carry one today.
-      for (const decision of payload.decisions) {
-        const candidateId = `${payload.policyVersion}::${decision.decidedAt}`
-        store.dispatch(translateMemoryWriteDecision(candidateId, decision))
-      }
-    }),
-    'memory_after_turn',
   )
 
   // Phase M2.5 — one-shot activation snapshot fetch on wire.  The
