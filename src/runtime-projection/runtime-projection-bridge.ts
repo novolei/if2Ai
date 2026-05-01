@@ -56,13 +56,13 @@ import {
   listenMemoryAfterTurn,
   listenMemoryEvent,
   listenToBrowserStatus,
-  listenToPermissionRequests,
   requestIntelligenceClassify,
   type RequestIntelligenceClassifyInput,
 } from '@/lib/tauri'
 import { getSessionProjectionCheckpoint, getSupervisorSnapshot, getToolAttemptLedger } from '@/api/sessions'
 import { RUNTIME_EVENT_CHANNEL } from '@/transport/contracts'
 import type {
+  PermissionRequestPayload,
   RuntimeEventEnvelope,
   StreamTokenPayload,
 } from '@/transport/contracts'
@@ -145,6 +145,18 @@ export function wireRuntimeProjectionListeners(
         if (event) store.dispatch(event)
       },
     },
+    {
+      // PR C-2 cut-over: permission prompts now arrive as
+      // RuntimeEventType::Permission envelopes on the canonical
+      // `runtime_event` channel; the legacy `permission-request`
+      // listener is gone.
+      eventType: 'permission',
+      family: 'prompt_opened',
+      handle: (envelope) => {
+        const payload = envelope.payload as PermissionRequestPayload
+        store.dispatch(translatePermissionRequestPayload(payload))
+      },
+    },
   ]
   const router = makeEnvelopeRouter(familyHandlers)
   track(
@@ -159,13 +171,6 @@ export function wireRuntimeProjectionListeners(
       store.dispatch(translateBrowserStatusPayload(payload))
     }),
     'browser-status',
-  )
-
-  track(
-    listenToPermissionRequests((payload) => {
-      store.dispatch(translatePermissionRequestPayload(payload))
-    }),
-    'permission-request',
   )
 
   track(
