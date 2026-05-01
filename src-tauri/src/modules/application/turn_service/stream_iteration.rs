@@ -252,12 +252,19 @@ pub(super) async fn iteration_preflight(
     );
 
     // Phase 4 — DW-002 digester preflight (failure-isolated).
-    let digested_owned: Option<Vec<crate::modules::api::InputMessage>> =
-        super::preflight_hooks::digest_messages_for_preflight(
+    //
+    // Task 16 optimisation: use the incremental cached variant so that
+    // unchanged messages (by content fingerprint) reuse the previous
+    // iteration's digest results instead of making fresh LLM calls.
+    let prior_cache = state.digest_cache.take();
+    let (digested_owned, new_cache): (Option<Vec<crate::modules::api::InputMessage>>, _) =
+        super::preflight_hooks::digest_messages_for_preflight_cached(
             &state.session_messages,
             refs.utility_llm.clone(),
+            prior_cache,
         )
         .await;
+    state.digest_cache = new_cache;
     if let Some(ref kept) = digested_owned {
         let payload = serde_json::json!({
             "keptTokens": kept.len(),
@@ -279,13 +286,64 @@ pub(super) async fn iteration_preflight(
         );
     }
 
-    // Phase 5 — preflight build_iteration_request + sanitize bookkeeping.
+    // Phase 5 — prompt fingerprint cache check + preflight build.
+    //
+    // Compute a PromptFingerprint from the current tool pool names and
+    // compare against the cached entry. On cache hit (same fingerprint,
+    // within FORCE_REFRESH_INTERVAL), reuse the cached tool_defs and
+    // system_prompt. On miss or forced refresh, proceed with the full
+    // build and update the cache.
+    let current_fp = super::prompt_cache::PromptFingerprint::compute(
+        &[], // skill_ids — not yet exposed per-iteration; empty placeholder
+        &refs
+            .tool_pool_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<&str>>(),
+    );
+
+    let (effective_tool_defs, effective_system_prompt, cache_hit) =
+        match state.prompt_cache.as_ref() {
+            Some(cached) if !cached.should_refresh(&current_fp, state.tool_loop_iter) => {
+                let savings = cached.estimated_token_savings();
+                tracing::debug!(
+                    "[prompt_cache] cache HIT at iteration {}: fingerprint unchanged, \
+                     estimated_token_savings={}, cached_at={}",
+                    state.tool_loop_iter,
+                    savings,
+                    cached.cached_at_iteration,
+                );
+                (cached.tool_defs.as_slice(), cached.content.as_str(), true)
+            }
+            Some(cached) => {
+                let reason = if cached.fingerprint != current_fp {
+                    "fingerprint_changed"
+                } else {
+                    "force_refresh_interval"
+                };
+                tracing::info!(
+                    "[prompt_cache] cache MISS at iteration {}: reason={}, \
+                     rebuilding prompt + tool defs",
+                    state.tool_loop_iter,
+                    reason,
+                );
+                (refs.tool_defs, refs.system_prompt, false)
+            }
+            None => {
+                tracing::debug!(
+                    "[prompt_cache] cache COLD at iteration {}: first build",
+                    state.tool_loop_iter,
+                );
+                (refs.tool_defs, refs.system_prompt, false)
+            }
+        };
+
     let preflight_result = super::stream_preflight::build_iteration_request(
         super::stream_preflight::PreflightContext {
             session_messages: &state.session_messages,
             digested_messages: digested_owned.as_deref(),
-            tool_defs: refs.tool_defs,
-            system_prompt: refs.system_prompt,
+            tool_defs: effective_tool_defs,
+            system_prompt: effective_system_prompt,
             model: refs.model,
             context_window: refs.context_window,
             force_final_response,
@@ -343,6 +401,17 @@ pub(super) async fn iteration_preflight(
         )
         .await;
     state.session_messages = preflight_result.session_messages;
+
+    // Update prompt cache on miss.
+    if !cache_hit {
+        state.prompt_cache = Some(super::prompt_cache::CachedSystemPrompt {
+            content: refs.system_prompt.to_string(),
+            tool_defs: refs.tool_defs.to_vec(),
+            fingerprint: current_fp,
+            cached_at_iteration: state.tool_loop_iter,
+        });
+    }
+
     state.preflight_trim_rounds += preflight_result.preflight_trim_rounds_added;
     state.preflight_dropped_messages_total += preflight_result.preflight_dropped_messages_added;
     state.preflight_trimmed_chars_total += preflight_result.preflight_trimmed_chars_added;

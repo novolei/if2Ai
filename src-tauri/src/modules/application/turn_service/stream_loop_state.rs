@@ -26,6 +26,9 @@ use crate::modules::runtime::contracts::agent_loop::PendingOperationMetadata;
 use crate::modules::runtime::session::ConversationMessage;
 use crate::modules::runtime::usage::TokenUsage;
 
+use super::preflight_hooks::DigestCache;
+use super::prompt_cache::CachedSystemPrompt;
+
 /// Mutable per-turn state for `run_stream_task_body`.
 ///
 /// Field-level docs match the inline locals they replaced; see the
@@ -93,6 +96,22 @@ pub(super) struct StreamLoopState {
 
     // === Provider-side resilience breaker ===
     pub stream_circuit: StreamCircuitState,
+
+    // === Prompt fingerprint cache (Task 11 — tool definition versioning) ===
+    /// Caches the system prompt + tool definitions across iterations.
+    /// Populated after the first `iteration_preflight` build; subsequent
+    /// iterations with matching [`PromptFingerprint`] reuse the cached
+    /// content instead of cloning/rebuilding. Force-refreshed every
+    /// [`super::prompt_cache::FORCE_REFRESH_INTERVAL`] iterations.
+    pub prompt_cache: Option<CachedSystemPrompt>,
+
+    // === Digest cache (Task 16 — critical-path latency optimization) ===
+    /// Caches per-message digest results across iterations. Unchanged
+    /// messages (by content fingerprint) reuse the cached
+    /// `CompressedMessage` instead of making a fresh LLM call, reducing
+    /// the `digest_messages_for_preflight` wall-clock from O(N × LLM)
+    /// to O(new_messages × LLM).
+    pub digest_cache: Option<DigestCache>,
 }
 
 impl StreamLoopState {
@@ -156,6 +175,9 @@ impl StreamLoopState {
             provider_request_id,
 
             stream_circuit: StreamCircuitState::default(),
+
+            prompt_cache: None,
+            digest_cache: None,
         }
     }
 }

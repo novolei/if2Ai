@@ -13,13 +13,13 @@
 //!    [`crate::modules::runtime::budget::estimate_tokens`].
 //!
 //! Both functions are sync, allocation-light, never call any async
-//! context, and never touch disk. The actual orchestration (calling
-//! `extract_checkpoint` after each turn, holding the
-//! `WorkingCheckpoint` per-session, calling `inject_checkpoint` in
-//! `stream_preflight`) is left for a future wiring Pack — Pack
-//! contract `OOS` for FEAT-DK-002 explicitly excludes those hooks.
+//! context, and never touch disk. The orchestration wiring lives in:
+//! - `StreamDelegate::before_llm_call` / `after_iteration` (streaming path)
+//! - `RunDelegate::call_llm` / `after_iteration` (non-streaming path)
+//! Checkpoint injection uses [`crate::modules::application::turn_service::preflight_hooks::maybe_inject_checkpoint`]
+//! and extraction uses [`crate::modules::application::turn_service::finalize_hooks::extract_turn_checkpoint`].
 
-#![allow(dead_code)]
+#![allow(dead_code)] // Some items used only by RunDelegate/StreamDelegate wiring
 
 use serde::{Deserialize, Serialize};
 
@@ -179,6 +179,13 @@ fn truncate_to_token_budget(text: &mut String, max_tokens: usize) {
     // Defensive second pass — should never trigger in practice.
     let truncated2: String = text.chars().take(ceil / 2).collect();
     *text = truncated2;
+}
+
+/// Public entry point for [`truncate_to_token_budget`], exposed for
+/// cross-module callers (e.g. `RunDelegate`) that build checkpoint
+/// payloads outside of [`inject_checkpoint`].
+pub fn truncate_to_token_budget_pub(text: &mut String, max_tokens: usize) {
+    truncate_to_token_budget(text, max_tokens);
 }
 
 fn extract_first_tagged_block(text: &str, open: &str, close: &str) -> Option<String> {

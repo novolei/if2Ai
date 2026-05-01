@@ -21,6 +21,8 @@ pub enum ApiError {
         message: Option<String>,
         body: String,
         retryable: bool,
+        /// Parsed `Retry-After` header value in seconds (present on 429 responses).
+        retry_after: Option<Duration>,
     },
     RetriesExhausted {
         attempts: u32,
@@ -64,6 +66,21 @@ impl ApiError {
             | Self::InvalidSseFrame(_)
             | Self::BackoffOverflow { .. }
             | Self::CircuitBreakerOpen { .. } => false,
+        }
+    }
+
+    /// Returns `true` when this is a 429 Too Many Requests error.
+    #[must_use]
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::Api { status, .. } if status.as_u16() == 429)
+    }
+
+    /// Returns the parsed `Retry-After` duration, if present.
+    #[must_use]
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Api { retry_after, .. } => *retry_after,
+            _ => None,
         }
     }
 }

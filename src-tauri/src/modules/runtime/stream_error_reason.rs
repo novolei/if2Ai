@@ -10,6 +10,8 @@ pub(crate) fn format_stream_error_reason(error: &impl std::fmt::Display) -> Stri
     let lower = raw.to_ascii_lowercase();
     let kind = if lower.contains("timed out") || lower.contains("timeout") {
         "network_timeout"
+    } else if lower.contains("429") || lower.contains("too many requests") || lower.contains("rate limit") {
+        "rate_limited"
     } else if lower.contains("invalid_request_error")
         || lower.contains("invalid params")
         || lower.contains("bad request")
@@ -31,4 +33,9 @@ pub(crate) fn format_stream_error_reason(error: &impl std::fmt::Display) -> Stri
 
 pub(crate) fn is_network_timeout_reason(reason: &str) -> bool {
     reason.to_ascii_lowercase().contains("network_timeout:")
+}
+
+/// Returns `true` when the reason string was classified as rate-limited (429).
+pub(crate) fn is_rate_limited_reason(reason: &str) -> bool {
+    reason.to_ascii_lowercase().contains("rate_limited:")
 }

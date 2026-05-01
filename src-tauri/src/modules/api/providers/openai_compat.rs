@@ -1192,6 +1192,7 @@ async fn expect_success(response: reqwest::Response) -> Result<reqwest::Response
         return Ok(response);
     }
 
+    let retry_after = parse_retry_after_header(response.headers());
     let body = response.text().await.unwrap_or_default();
     let parsed_error = serde_json::from_str::<ErrorEnvelope>(&body).ok();
     let retryable = is_retryable_status(status);
@@ -1206,11 +1207,31 @@ async fn expect_success(response: reqwest::Response) -> Result<reqwest::Response
             .and_then(|error| error.error.message.clone()),
         body,
         retryable,
+        retry_after,
     })
 }
 
 fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 409 | 429 | 500 | 502 | 503 | 504)
+}
+
+/// Parse the `Retry-After` HTTP header into a [`Duration`].
+fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let trimmed = value.trim();
+    if let Ok(secs) = trimmed.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(trimmed) {
+        let now = chrono::Utc::now();
+        let target = dt.with_timezone(&chrono::Utc);
+        if target > now {
+            let delta = (target - now).to_std().ok()?;
+            return Some(delta);
+        }
+        return Some(Duration::ZERO);
+    }
+    None
 }
 
 fn normalize_finish_reason(value: &str) -> String {

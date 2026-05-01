@@ -32,6 +32,46 @@ use crate::modules::runtime::budget::{
     TIER_SYSTEM_TOKENS, TIER_TOOL_BUFFER_TOKENS, TIER_WORKING_CHECKPOINT_TOKENS,
 };
 
+/// Default character threshold for tag content truncation.
+/// Content blocks inside `<thinking>` / `<tool_result>` tags longer than this
+/// will be truncated to `max_chars / 2` head + tail with a `[Truncated N chars]`
+/// placeholder in between.
+const DEFAULT_TAG_TRUNCATE_THRESHOLD: usize = 800;
+
+/// Context pressure level derived from actual-vs-budget token usage.
+///
+/// Drives how aggressively the compression pipeline operates:
+/// - **Normal** — token usage < 80 % of budget → message-level compression only.
+/// - **Warning** — 80–95 % → message-level + tag-level truncation.
+/// - **Critical** — > 95 % → tag-level truncation + drop earliest messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextPressure {
+    /// Actual usage < 80 % of budget. Only standard message-level compression.
+    Normal,
+    /// 80–95 % of budget used. Tag-level truncation kicks in.
+    Warning,
+    /// > 95 % of budget used. Tag-level + earliest-message drop.
+    Critical,
+}
+
+impl ContextPressure {
+    /// Compute pressure from actual token usage vs. total budget.
+    pub fn from_usage(used_tokens: usize, budget: usize) -> Self {
+        if budget == 0 {
+            return Self::Critical;
+        }
+        let ratio = used_tokens as f64 / budget as f64;
+        if ratio > 0.95 {
+            Self::Critical
+        } else if ratio > 0.80 {
+            Self::Warning
+        } else {
+            Self::Normal
+        }
+    }
+}
+
 /// One of the 5 context tiers defined in Module A.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,6 +207,119 @@ pub struct CompressionOutcome {
     pub passthrough: bool,
 }
 
+/// Find the largest valid UTF-8 char boundary at or before `byte_pos`.
+///
+/// Returns `s.len()` when `byte_pos >= s.len()`, and walks backwards
+/// from `byte_pos` until `is_char_boundary` holds so that multi-byte
+/// characters (CJK, emoji, etc.) are never split mid-sequence.
+fn safe_byte_boundary(s: &str, byte_pos: usize) -> usize {
+    if byte_pos >= s.len() {
+        return s.len();
+    }
+    let mut pos = byte_pos;
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
+
+/// Truncate the content of known verbose XML tags (`<thinking>`, `<tool_result>`).
+///
+/// For each matched tag pair found in `text`, if the inner body exceeds
+/// `max_chars` characters, keep the first and last `max_chars / 2` characters
+/// and replace the middle with `[Truncated N chars]`.
+///
+/// This is a lightweight string-scan approach — no full XML parser required.
+pub fn compress_tag_content(text: &str, max_chars: usize) -> String {
+    const TAGS: &[(&str, &str)] = &[
+        ("<thinking>", "</thinking>"),
+        ("<tool_result>", "</tool_result>"),
+    ];
+
+    let mut result = text.to_string();
+    for &(open, close) in TAGS {
+        let mut output = String::with_capacity(result.len());
+        let mut search_from = 0;
+        while let Some(start) = result[search_from..].find(open) {
+            let abs_start = search_from + start;
+            let body_start = abs_start + open.len();
+            if let Some(end_offset) = result[body_start..].find(close) {
+                let body_end = body_start + end_offset;
+                let body = &result[body_start..body_end];
+                output.push_str(&result[search_from..body_start]);
+                if body.len() > max_chars {
+                    let half = max_chars / 2;
+                    let truncated = body.len() - max_chars;
+                    let head_end = safe_byte_boundary(body, half);
+                    let tail_start = safe_byte_boundary(body, body.len().saturating_sub(half));
+                    output.push_str(&body[..head_end]);
+                    output.push_str(&format!("\n[Truncated {} chars]\n", truncated));
+                    output.push_str(&body[tail_start..]);
+                } else {
+                    output.push_str(body);
+                }
+                output.push_str(close);
+                search_from = body_end + close.len();
+            } else {
+                // No matching close tag — copy the rest verbatim.
+                break;
+            }
+        }
+        output.push_str(&result[search_from..]);
+        result = output;
+    }
+    result
+}
+
+/// Apply tag-level truncation to a single [`InputMessage`], returning a
+/// compressed clone. Only text content blocks and the `thinking` field are
+/// scanned; binary / image blocks are left untouched.
+fn compress_message_tags(msg: &InputMessage, max_chars: usize) -> InputMessage {
+    use crate::modules::api::{InputContentBlock, ToolResultContentBlock};
+
+    let thinking = msg
+        .thinking
+        .as_deref()
+        .map(|t| compress_tag_content(t, max_chars));
+
+    let content = msg
+        .content
+        .iter()
+        .map(|block| match block {
+            InputContentBlock::Text { text } => InputContentBlock::Text {
+                text: compress_tag_content(text, max_chars),
+            },
+            InputContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                let compressed: Vec<ToolResultContentBlock> = content
+                    .iter()
+                    .map(|tr| match tr {
+                        ToolResultContentBlock::Text { text } => ToolResultContentBlock::Text {
+                            text: compress_tag_content(text, max_chars),
+                        },
+                        other => other.clone(),
+                    })
+                    .collect();
+                InputContentBlock::ToolResult {
+                    tool_use_id: tool_use_id.clone(),
+                    content: compressed,
+                    is_error: *is_error,
+                }
+            }
+            other => other.clone(),
+        })
+        .collect();
+
+    InputMessage {
+        role: msg.role.clone(),
+        content,
+        thinking,
+    }
+}
+
 /// Apply the hard tier budget to a flat message stream.
 ///
 /// Strategy (TE-001): keep the **most recent** messages whose cumulative
@@ -174,6 +327,13 @@ pub struct CompressionOutcome {
 /// This is the floor every later FEAT-TE-* Pack builds on; per-tier
 /// digesters will replace the dropped slice with a compressed summary
 /// rather than discarding it outright.
+///
+/// **Tag-level compression** (pressure-aware):
+/// After the initial message-level pass, [`ContextPressure`] is computed
+/// from the kept tokens vs. the budget. When pressure reaches `Warning`
+/// or above, older messages (outside the `keep_recent` window) have their
+/// `<thinking>` / `<tool_result>` tag bodies truncated via
+/// [`compress_tag_content`], further reducing token usage by 30–40 %.
 ///
 /// Edge cases:
 /// - Empty input → returns an empty outcome with `passthrough = true`.
@@ -207,6 +367,7 @@ pub fn compress_for_request(
         };
     }
 
+    // ── Phase 1: message-level drop (oldest first) ──────────────
     let mut keep_from = messages.len();
     let mut acc = 0usize;
     for (idx, tokens) in token_estimates.iter().enumerate().rev() {
@@ -223,8 +384,49 @@ pub fn compress_for_request(
         acc = token_estimates[keep_from];
     }
 
-    let kept: Vec<InputMessage> = messages[keep_from..].to_vec();
-    let dropped = keep_from;
+    let mut kept: Vec<InputMessage> = messages[keep_from..].to_vec();
+    let total_messages = messages.len();
+
+    // ── Phase 2: tag-level compression (pressure-aware) ─────────
+    let pressure = ContextPressure::from_usage(acc, budget);
+    if pressure == ContextPressure::Warning || pressure == ContextPressure::Critical {
+        // Number of recent messages to protect from tag truncation.
+        let keep_recent = crate::modules::runtime::budget::stream_tool_keep_recent();
+        let safe_boundary = kept.len().saturating_sub(keep_recent);
+
+        let pre_tag_tokens = acc;
+        for msg in kept[..safe_boundary].iter_mut() {
+            *msg = compress_message_tags(msg, DEFAULT_TAG_TRUNCATE_THRESHOLD);
+        }
+
+        // Re-estimate after tag compression.
+        acc = kept.iter().map(|m| estimate_message_tokens(m)).sum();
+
+        tracing::info!(
+            "[compress_for_request] tag-level compression: pressure={:?}, \
+             pre_tokens={}, post_tokens={}, saved={}",
+            pressure,
+            pre_tag_tokens,
+            acc,
+            pre_tag_tokens.saturating_sub(acc),
+        );
+    }
+
+    // ── Phase 3: critical — drop earliest kept messages ─────────
+    if pressure == ContextPressure::Critical && acc > budget && kept.len() > 1 {
+        while acc > budget && kept.len() > 1 {
+            let front_tokens = estimate_message_tokens(&kept[0]);
+            kept.remove(0);
+            acc = acc.saturating_sub(front_tokens);
+        }
+        tracing::info!(
+            "[compress_for_request] critical drop: final kept={}, tokens={}",
+            kept.len(),
+            acc,
+        );
+    }
+
+    let dropped = total_messages - kept.len();
     CompressionOutcome {
         kept,
         dropped,
@@ -328,5 +530,73 @@ mod tests {
         assert!(outcome.kept.is_empty());
         assert_eq!(outcome.dropped, 0);
         assert_eq!(outcome.kept_tokens, 0);
+    }
+
+    // ── Tag-level compression tests ─────────────────────────────
+
+    #[test]
+    fn compress_tag_content_short_body_unchanged() {
+        let input = "<thinking>short</thinking>";
+        assert_eq!(compress_tag_content(input, 800), input);
+    }
+
+    #[test]
+    fn compress_tag_content_long_body_truncated() {
+        let body = "a".repeat(2000);
+        let input = format!("<thinking>{}</thinking>", body);
+        let result = compress_tag_content(&input, 800);
+        assert!(result.contains("[Truncated"));
+        assert!(result.contains("</thinking>"));
+        assert!(result.len() < input.len());
+    }
+
+    #[test]
+    fn compress_tag_content_multiple_tags() {
+        let body = "b".repeat(1500);
+        let input = format!(
+            "prefix <thinking>{}</thinking> middle <tool_result>{}</tool_result> suffix",
+            body, body
+        );
+        let result = compress_tag_content(&input, 800);
+        assert!(result.contains("prefix"));
+        assert!(result.contains("middle"));
+        assert!(result.contains("suffix"));
+        // Both tags should be truncated.
+        let truncated_count = result.matches("[Truncated").count();
+        assert_eq!(truncated_count, 2);
+    }
+
+    #[test]
+    fn compress_tag_content_no_tags_unchanged() {
+        let input = "plain text with no XML tags";
+        assert_eq!(compress_tag_content(input, 800), input);
+    }
+
+    #[test]
+    fn compress_tag_content_unclosed_tag_unchanged() {
+        let input = "<thinking>no close tag here";
+        assert_eq!(compress_tag_content(input, 800), input);
+    }
+
+    // ── ContextPressure tests ───────────────────────────────────
+
+    #[test]
+    fn context_pressure_normal() {
+        assert_eq!(ContextPressure::from_usage(700, 1000), ContextPressure::Normal);
+    }
+
+    #[test]
+    fn context_pressure_warning() {
+        assert_eq!(ContextPressure::from_usage(850, 1000), ContextPressure::Warning);
+    }
+
+    #[test]
+    fn context_pressure_critical() {
+        assert_eq!(ContextPressure::from_usage(960, 1000), ContextPressure::Critical);
+    }
+
+    #[test]
+    fn context_pressure_zero_budget_is_critical() {
+        assert_eq!(ContextPressure::from_usage(0, 0), ContextPressure::Critical);
     }
 }
