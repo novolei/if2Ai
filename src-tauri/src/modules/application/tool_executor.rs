@@ -124,6 +124,7 @@ impl ToolRegistryExecutor {
                     trace_id,
                     request_id,
                 ))
+                .map(|r| r.output)
             } else {
                 tracing::warn!(
                     "[tool_executor] controlPlaneV2Enabled=false, falling back to direct dispatch_with_context"

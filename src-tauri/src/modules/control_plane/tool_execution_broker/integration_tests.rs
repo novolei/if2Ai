@@ -81,7 +81,8 @@ mod mig_002_d_integration_tests {
                 "trace-granted",
                 None,
             )
-            .await;
+            .await
+            .map(|r| r.output);
 
         if let Err(ref e) = result {
             println!("Error: {:?}", e);
@@ -119,7 +120,8 @@ mod mig_002_d_integration_tests {
                 "trace-denied",
                 None,
             )
-            .await;
+            .await
+            .map(|r| r.output);
 
         assert!(
             result.is_err(),
@@ -155,7 +157,8 @@ mod mig_002_d_integration_tests {
                 "trace-todo-write",
                 None,
             )
-            .await;
+            .await
+            .map(|r| r.output);
 
         assert!(
             result.is_ok(),
@@ -188,7 +191,8 @@ mod mig_002_d_integration_tests {
                 "trace-boundary-denied",
                 None,
             )
-            .await;
+            .await
+            .map(|r| r.output);
 
         assert!(
             result.is_err(),

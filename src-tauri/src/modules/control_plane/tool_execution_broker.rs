@@ -50,6 +50,49 @@ pub fn resolve_tool_name(tool_name: &str) -> String {
     }
 }
 
+/// Result of a tool execution, including retry metadata.
+#[derive(Debug, Clone)]
+pub struct ToolExecutionResult {
+    /// The tool output string.
+    pub output: String,
+    /// Number of attempts made (1 = first attempt succeeded, >1 = retried).
+    pub attempts: u32,
+}
+
+impl ToolExecutionResult {
+    /// Create a result from a single successful attempt.
+    #[must_use]
+    pub fn first_attempt(output: String) -> Self {
+        Self {
+            output,
+            attempts: 1,
+        }
+    }
+}
+
+/// Default maximum retry attempts for tool execution.
+const DEFAULT_MAX_RETRY_ATTEMPTS: u32 = 2;
+
+/// Fixed retry interval in seconds.
+const RETRY_INTERVAL_SECS: u64 = 1;
+
+/// Network-oriented tools that get an extra retry attempt.
+const NETWORK_TOOLS: &[&str] = &[
+    "web_fetch",
+    "web_search",
+    "web_research",
+    "http_request",
+];
+
+/// Determine the max retry attempts for a given tool.
+fn max_attempts_for_tool(tool_name: &str) -> u32 {
+    if NETWORK_TOOLS.contains(&tool_name) {
+        3
+    } else {
+        DEFAULT_MAX_RETRY_ATTEMPTS
+    }
+}
+
 /// Unified broker for session-aware tool execution.
 #[derive(Clone)]
 pub struct ToolExecutionBroker {
@@ -184,9 +227,15 @@ impl ToolExecutionBroker {
 
     /// Execute with a pre-generated trace id.
     ///
+    /// Wraps the underlying dispatch with automatic retry logic for
+    /// transient (retryable) errors. Non-retryable errors are returned
+    /// immediately. Each attempt is logged and tracked in the returned
+    /// [`ToolExecutionResult::attempts`] field.
+    ///
     /// # Errors
     ///
-    /// Returns `ToolError` when the underlying tool dispatch fails.
+    /// Returns `ToolError` when all retry attempts are exhausted or
+    /// a non-retryable error is encountered.
     pub async fn execute_with_trace(
         &self,
         context: &SessionExecutionContext,
@@ -194,22 +243,92 @@ impl ToolExecutionBroker {
         args: Value,
         trace_id: &str,
         request_id: Option<&str>,
-    ) -> Result<String, ToolError> {
-        // WU-007 — apply BR-003 atomic-tool alias resolution **before**
-        // every downstream concern (audit log, permission preflight,
-        // executor lookup) sees the name. Unknown names + the kill-
-        // switch path (`IF2AI_DISABLE_TOOL_ALIAS=1`) pass through
-        // unchanged so the contract is purely additive.
+    ) -> Result<ToolExecutionResult, ToolError> {
         let resolved_name = resolve_tool_name(tool_name);
         let tool_name: &str = &resolved_name;
+        let max_attempts = max_attempts_for_tool(tool_name);
+        let mut last_error: Option<ToolError> = None;
+
+        for attempt in 1..=max_attempts {
+            // Clone args for each attempt (the first iteration consumes
+            // nothing extra when max_attempts == 1).
+            let attempt_args = args.clone();
+
+            match self
+                .execute_single_attempt(
+                    context,
+                    tool_name,
+                    attempt_args,
+                    trace_id,
+                    request_id,
+                    attempt,
+                )
+                .await
+            {
+                Ok(output) => {
+                    if attempt > 1 {
+                        tracing::info!(
+                            tool = %tool_name,
+                            attempt = attempt,
+                            "[tool_execution_broker] retry succeeded"
+                        );
+                    }
+                    return Ok(ToolExecutionResult {
+                        output,
+                        attempts: attempt,
+                    });
+                }
+                Err(err) => {
+                    if !err.is_retryable() || attempt == max_attempts {
+                        // Non-retryable or final attempt — return error.
+                        if attempt > 1 {
+                            tracing::warn!(
+                                tool = %tool_name,
+                                attempt = attempt,
+                                error = %err,
+                                "[tool_execution_broker] all retry attempts exhausted"
+                            );
+                        }
+                        return Err(err);
+                    }
+                    tracing::warn!(
+                        tool = %tool_name,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        error = %err,
+                        "[tool_execution_broker] retryable error, will retry after {}s",
+                        RETRY_INTERVAL_SECS
+                    );
+                    last_error = Some(err);
+                    tokio::time::sleep(Duration::from_secs(RETRY_INTERVAL_SECS)).await;
+                }
+            }
+        }
+
+        // Should not reach here, but handle defensively.
+        Err(last_error.unwrap_or_else(|| ToolError::Handler("retry loop ended unexpectedly".to_string())))
+    }
+
+    /// Execute a single attempt of tool dispatch (extracted from the
+    /// original `execute_with_trace` body).
+    async fn execute_single_attempt(
+        &self,
+        context: &SessionExecutionContext,
+        tool_name: &str,
+        args: Value,
+        trace_id: &str,
+        request_id: Option<&str>,
+        attempt: u32,
+    ) -> Result<String, ToolError> {
         let fingerprint = crate::modules::tools::context::context_fingerprint(
             &context.session_id,
             &context.workdir,
         );
         tracing::info!(
-            "[tool_execution_broker] dispatch tool='{}', trace_id='{}', context_fingerprint='{}', session_id='{}', workdir='{}'",
+            "[tool_execution_broker] dispatch tool='{}', trace_id='{}', attempt={}, context_fingerprint='{}', session_id='{}', workdir='{}'",
             tool_name,
             trace_id,
+            attempt,
             fingerprint,
             context.session_id,
             context.workdir.display()
@@ -225,7 +344,6 @@ impl ToolExecutionBroker {
         let started_at = Instant::now();
 
         // MIG-002-b — prepare_step_execution now acts as enforced preflight gate.
-        // Check prepare_step_execution before existing denial checks.
         let permission_policy = Arc::new(
             crate::modules::runtime::permissions::PermissionPolicy::new(context.permission_mode)
                 .with_default_agent_tool_requirements(),
@@ -241,7 +359,6 @@ impl ToolExecutionBroker {
 
         let result = match preflight.outcome {
             crate::modules::control_plane::PrepareStepOutcome::Denied => {
-                // MIG-002-b — Denied outcome blocks tool execution
                 let reason = match &preflight.permission_decision {
                     crate::modules::control_plane::PermissionDecision::Deny { reason } => {
                         reason.clone()
@@ -274,13 +391,10 @@ impl ToolExecutionBroker {
                 Err(ToolError::Handler(reason))
             }
             crate::modules::control_plane::PrepareStepOutcome::RequiresApproval => {
-                // MIG-002-b — RequiresApproval continues to existing prompt path
-                // (prompt handling is outside this broker's scope)
                 tracing::info!(
                     "[tool_execution_broker] prepare_step_execution requires approval for tool='{}'",
                     tool_name
                 );
-                // Fall through to existing checks and dispatch
                 if let Some(reason) = post_skill_reload_denial_reason(request_id, tool_name, &args)
                 {
                     AuditEmitter::policy_decision_made(
@@ -313,7 +427,6 @@ impl ToolExecutionBroker {
                 }
             }
             crate::modules::control_plane::PrepareStepOutcome::Granted => {
-                // MIG-002-b — Granted outcome continues to existing checks and dispatch
                 tracing::info!(
                     "[tool_execution_broker] prepare_step_execution granted tool='{}'",
                     tool_name
@@ -343,10 +456,6 @@ impl ToolExecutionBroker {
                     );
                     Err(ToolError::Handler(reason))
                 } else {
-                    // Phase 7C, slice 7C.2 — `dispatch_with_context` now returns
-                    // `ToolOutput`; collapse to legacy String here so the broker
-                    // contract stays stable.  Future slices (7C.3+) will lift this
-                    // function to return ToolOutput end-to-end.
                     let execution_context = self.to_tool_context(context);
                     self.tool_registry
                         .dispatch_with_context_legacy(tool_name, args, execution_context)
@@ -413,41 +522,42 @@ impl ToolExecutionBroker {
 }
 
 fn summarize_tool_error(err: &ToolError) -> (&'static str, &'static str, bool, String) {
+    let retryable = err.is_retryable();
     match err {
         ToolError::NotFound(_) => (
             "tool_not_found",
             "pre_dispatch",
-            false,
+            retryable,
             "tool not found".to_string(),
         ),
         ToolError::Disabled(_) => (
             "tool_disabled",
             "pre_dispatch",
-            false,
+            retryable,
             "tool is disabled".to_string(),
         ),
         ToolError::Timeout(_) => (
             "tool_timeout",
             "execution",
-            true,
+            retryable,
             "tool execution timed out".to_string(),
         ),
         ToolError::OutputTooLarge { .. } => (
             "output_too_large",
             "post_execution",
-            false,
+            retryable,
             "tool output exceeded allowed size".to_string(),
         ),
         ToolError::Register(_) => (
             "tool_register_error",
             "pre_dispatch",
-            false,
+            retryable,
             "tool registration failure".to_string(),
         ),
         ToolError::Handler(_) => (
             "tool_handler_error",
             "execution",
-            false,
+            retryable,
             "tool handler returned an error".to_string(),
         ),
     }

@@ -204,6 +204,46 @@ impl fmt::Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
+impl ToolError {
+    /// Whether this error category is safe to automatically retry.
+    ///
+    /// Retryable errors are transient failures where a subsequent attempt
+    /// may succeed without any change to the inputs:
+    /// - `Timeout` — network/execution timeouts are inherently transient.
+    /// - `Handler` messages containing IO/network keywords — connection
+    ///   resets, temporary file locks, DNS failures, etc.
+    ///
+    /// Non-retryable errors are deterministic failures:
+    /// - `NotFound` / `Disabled` / `Register` — structural, won't change.
+    /// - `OutputTooLarge` — deterministic given the same handler output.
+    /// - `Handler` errors without transient keywords — logic/permission/
+    ///   validation failures.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Timeout(_) => true,
+            Self::Handler(msg) => {
+                let lower = msg.to_lowercase();
+                lower.contains("timeout")
+                    || lower.contains("connection reset")
+                    || lower.contains("connection refused")
+                    || lower.contains("broken pipe")
+                    || lower.contains("temporarily unavailable")
+                    || lower.contains("network")
+                    || lower.contains("timed out")
+                    || lower.contains("dns")
+                    || lower.contains("econnreset")
+                    || lower.contains("econnrefused")
+                    || lower.contains("epipe")
+            }
+            Self::NotFound(_)
+            | Self::Disabled(_)
+            | Self::OutputTooLarge { .. }
+            | Self::Register(_) => false,
+        }
+    }
+}
+
 /// ToolEntry represents a single tool with its metadata and handler.
 ///
 /// # Phase 7C, slice 7C.2 — multimodal opt-in
