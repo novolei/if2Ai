@@ -453,24 +453,18 @@ impl TurnService {
                     MessageRole::Tool => "user".to_string(),
                 };
 
-                let has_tool_use = content.iter().any(|block| {
-                    matches!(
-                        block,
-                        crate::modules::api::InputContentBlock::ToolUse { .. }
-                    )
-                });
-
+                // Phase 7 / reasoning-replay fix: ALWAYS preserve message.thinking
+                // on InputMessage, including for tool_use rows. Providers with
+                // thinking-mode quirks (DeepSeek-V4-Flash, Kimi-k2.5, …) require
+                // the original `reasoning_content` echoed back; stripping it here
+                // caused 400 errors (DeepSeek) and silent early-stops (Kimi).
+                // The downstream `translate_message` in `openai_compat.rs` decides
+                // whether to actually emit `reasoning_content` based on provider
+                // capabilities — that's the right layer for the policy decision.
                 InputMessage {
                     role,
                     content,
-                    // Never replay full thinking with tool_call history. The
-                    // provider serializer adds an empty protocol placeholder
-                    // when a model requires `reasoning_content`.
-                    thinking: if has_tool_use {
-                        None
-                    } else {
-                        msg.thinking.clone()
-                    },
+                    thinking: msg.thinking.clone(),
                 }
             })
             .collect();

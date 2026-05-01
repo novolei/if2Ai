@@ -934,12 +934,22 @@ fn translate_message(
                 // echo the same internal plan every tool-loop iteration.
                 if cap.reasoning {
                     let value = if cap.reasoning_required_in_tool_calls && !tool_calls.is_empty() {
-                        if message.thinking.is_none() {
-                            tracing::warn!(
-                                "[openai_compat] padding placeholder reasoning_content for assistant tool_call history"
-                            );
+                        // Phase 7: prefer the real captured thinking. Only fall
+                        // back to the placeholder when we genuinely have no
+                        // thinking text — keeps legacy behavior for histories
+                        // captured before reasoning_content streaming, while
+                        // letting DeepSeek/Kimi receive the real
+                        // `reasoning_content` their APIs require for
+                        // thinking-mode tool replay.
+                        match &message.thinking {
+                            Some(t) if !t.trim().is_empty() => Value::String(t.clone()),
+                            _ => {
+                                tracing::warn!(
+                                    "[openai_compat] no captured reasoning_content; padding placeholder for assistant tool_call history"
+                                );
+                                Value::String(TOOL_CALL_REASONING_PLACEHOLDER.to_string())
+                            }
                         }
-                        Value::String(TOOL_CALL_REASONING_PLACEHOLDER.to_string())
                     } else {
                         match &message.thinking {
                             Some(t) => Value::String(t.clone()),
@@ -1420,7 +1430,13 @@ mod tests {
     }
 
     #[test]
-    fn required_tool_history_does_not_replay_captured_thinking() {
+    fn required_tool_history_replays_captured_thinking() {
+        // Phase 7 / reasoning-replay fix: when the assistant tool_call row
+        // carries a real captured `thinking`, providers with the
+        // ReasoningRequiredInToolCalls quirk MUST receive that text verbatim.
+        // DeepSeek-V4-Flash 400s and Kimi-k2.5 silently early-stops when the
+        // history sends a synthetic placeholder instead of the real plan.
+        let captured = "previous private plan that must be replayed".to_string();
         let payload = build_chat_completion_request_for_provider(
             &MessageRequest {
                 model: "kimi-k2.6".to_string(),
@@ -1432,7 +1448,7 @@ mod tests {
                         name: "read_file".to_string(),
                         input: json!({"path": "gomoku.html"}),
                     }],
-                    thinking: Some("previous private plan that must not be replayed".to_string()),
+                    thinking: Some(captured.clone()),
                 }],
                 system: None,
                 tools: None,
@@ -1442,10 +1458,49 @@ mod tests {
             "moonshot",
         );
 
-        assert_eq!(
+        assert_eq!(payload["messages"][0]["reasoning_content"], json!(captured));
+        assert_ne!(
             payload["messages"][0]["reasoning_content"],
             json!(TOOL_CALL_REASONING_PLACEHOLDER)
         );
+    }
+
+    #[test]
+    fn required_tool_history_falls_back_to_placeholder_when_thinking_missing() {
+        // Legacy path: when the captured `thinking` is None or whitespace-only
+        // (e.g. histories created before reasoning_content streaming, or
+        // providers that emit no reasoning deltas), keep padding the
+        // placeholder so the request still satisfies the API's "every
+        // assistant tool_call message must include reasoning_content"
+        // validation.
+        for missing in [None, Some(String::new()), Some("   ".to_string())] {
+            let payload = build_chat_completion_request_for_provider(
+                &MessageRequest {
+                    model: "kimi-k2.6".to_string(),
+                    max_tokens: 64,
+                    messages: vec![InputMessage {
+                        role: "assistant".to_string(),
+                        content: vec![InputContentBlock::ToolUse {
+                            id: "read_file:1".to_string(),
+                            name: "read_file".to_string(),
+                            input: json!({"path": "gomoku.html"}),
+                        }],
+                        thinking: missing.clone(),
+                    }],
+                    system: None,
+                    tools: None,
+                    tool_choice: None,
+                    stream: false,
+                },
+                "moonshot",
+            );
+
+            assert_eq!(
+                payload["messages"][0]["reasoning_content"],
+                json!(TOOL_CALL_REASONING_PLACEHOLDER),
+                "expected placeholder fallback for thinking={missing:?}"
+            );
+        }
     }
 
     #[test]
