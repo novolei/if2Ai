@@ -27,6 +27,11 @@
  * `CONTRACTS_SCHEMA_VERSION` in `common.rs`. */
 export const CONTRACTS_SCHEMA_VERSION = '1.0.0-skeleton'
 
+/** Canonical Tauri channel name carrying every `RuntimeEventEnvelope`.
+ * MUST match `RUNTIME_EVENT_CHANNEL` in
+ * `src-tauri/src/modules/runtime/evolution_emitter.rs`. */
+export const RUNTIME_EVENT_CHANNEL = 'runtime_event'
+
 /** Schema version marker carried on every envelope. */
 export type SchemaVersion = string
 

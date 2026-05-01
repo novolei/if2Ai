@@ -252,6 +252,11 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
 
 **`runtime_event` + Evolution 落盘**：Tauri `emit("runtime_event", envelope)` 已携带完整 `RuntimeEventEnvelope`（含 `correlation`；前端见 `src/transport/contracts.ts`）；当调用方传入 `RunEventLogger` 时，现改为 `append_sync_from_envelope`，使 durable 行与广播 envelope 同源（含 team 等 correlation）。
 
+- 2026-05-01：`agent-token` 频道由 `AgentStreamEmitter::emit_payload` 收敛到
+  `runtime_event`（PR C-1）；前端 `runtime-projection-bridge.ts` 改为单条
+  `listen('runtime_event')` + family router。`runtime/runtime_event.rs::dispatch`
+  作为非-evolution 路径的 canonical helper。
+
 ## 7. Gap 与二次真相清单
 
 ### P0 / P1 架构 Gap

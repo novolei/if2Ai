@@ -41,6 +41,7 @@ pub mod recoverability;
 pub mod remote;
 pub mod resume_cursor;
 mod run_delegate;
+pub mod runtime_event;
 pub mod sandbox;
 pub mod self_repair;
 pub mod session;

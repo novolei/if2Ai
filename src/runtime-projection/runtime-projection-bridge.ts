@@ -48,18 +48,26 @@
 //   `commands/agent.rs` only `tracing::info!`s the decision today.
 //   When that event family lands the bridge swaps fetch → listen.
 
+import { listen } from '@tauri-apps/api/event'
+
 import {
   activationGetStatus,
   listenActivationStatusChanged,
   listenMemoryAfterTurn,
   listenMemoryEvent,
   listenToBrowserStatus,
-  listenToAgentTokenStream,
   listenToPermissionRequests,
   requestIntelligenceClassify,
   type RequestIntelligenceClassifyInput,
 } from '@/lib/tauri'
 import { getSessionProjectionCheckpoint, getSupervisorSnapshot, getToolAttemptLedger } from '@/api/sessions'
+import { RUNTIME_EVENT_CHANNEL } from '@/transport/contracts'
+import type {
+  RuntimeEventEnvelope,
+  StreamTokenPayload,
+} from '@/transport/contracts'
+
+import { makeEnvelopeRouter, type FamilyHandler } from './envelope-router.ts'
 
 import {
   runtimeProjectionStore,
@@ -120,14 +128,30 @@ export function wireRuntimeProjectionListeners(
       })
   }
 
+  const familyHandlers: FamilyHandler[] = [
+    {
+      eventType: 'conversation',
+      handle: (envelope) => {
+        const payload = envelope.payload as StreamTokenPayload
+        const event = translateAgentTokenPayload(payload)
+        if (event) store.dispatch(event)
+      },
+    },
+    {
+      eventType: 'tool',
+      handle: (envelope) => {
+        const payload = envelope.payload as StreamTokenPayload
+        const event = translateAgentTokenPayload(payload)
+        if (event) store.dispatch(event)
+      },
+    },
+  ]
+  const router = makeEnvelopeRouter(familyHandlers)
   track(
-    listenToAgentTokenStream((payload) => {
-      const event = translateAgentTokenPayload(payload)
-      if (event) {
-        store.dispatch(event)
-      }
+    listen<RuntimeEventEnvelope>(RUNTIME_EVENT_CHANNEL, (event) => {
+      router(event.payload)
     }),
-    'agent-token',
+    'runtime_event',
   )
 
   track(

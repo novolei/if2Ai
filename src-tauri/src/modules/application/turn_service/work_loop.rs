@@ -2923,6 +2923,11 @@ mod tests {
                 correlation_id: None,
                 tool_call_id: None,
                 attempt_id: None,
+                team_id: None,
+                member_id: None,
+                role_id: None,
+                parent_run_id: None,
+                delegation_id: None,
             },
             crate::modules::runtime::event_log::RunLogEntry {
                 event_id: "e2".to_string(),
@@ -2943,6 +2948,11 @@ mod tests {
                 correlation_id: None,
                 tool_call_id: None,
                 attempt_id: None,
+                team_id: None,
+                member_id: None,
+                role_id: None,
+                parent_run_id: None,
+                delegation_id: None,
             },
         ];
         augment_route_context_from_run_log(&mut context, &entries);
