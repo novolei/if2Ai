@@ -65,8 +65,7 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         // 5× the production cap once both delegates (T5c stream + T10
         // sync) consume `loop_config.max_iterations`.
         loop_config: crate::modules::application::turn_service::AgenticLoopConfig {
-            max_iterations:
-                crate::modules::application::turn_service::stream_task::agent_max_iterations(),
+            max_iterations: crate::modules::application::turn_service::agent_max_iterations_cap(),
             ..crate::modules::application::turn_service::AgenticLoopConfig::default()
         },
     })

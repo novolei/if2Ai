@@ -43,8 +43,9 @@
 //!   into [`stream_event_loop::run_stream_event_loop`], the per-iteration
 //!   preflight/request builder into [`stream_preflight::build_iteration_request`],
 //!   and the tool-batch execution loop into
-//!   [`stream_tool_execution::execute_tool_batch`]. `stream_task.rs` now
-//!   serves as the pure orchestrator under 800 LOC.
+//!   [`stream_tool_execution::execute_tool_batch`]. Run-log helpers and
+//!   retry guards live in [`stream_task_run_log`] so `stream_task.rs`
+//!   stays the loop orchestrator (watch CHARTER §5 LOC budget).
 //!
 //! Strict layering (CHARTER §2.1 hard constraint, also restated in
 //! MIG-001 §4):
@@ -93,6 +94,7 @@ mod stream_iteration;
 mod stream_loop_state;
 mod stream_preflight;
 pub mod stream_task;
+mod stream_task_run_log;
 mod stream_tool_execution;
 mod todo_ledger;
 mod work_loop;
@@ -109,6 +111,13 @@ pub use crate::modules::runtime::agent_loop as agentic_loop;
 pub use crate::modules::runtime::agent_loop::AgenticLoopConfig;
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
+
+/// Cap for agentic loop iterations (`IF2AI_AGENT_MAX_ITERATIONS`).
+/// The IPC layer (`commands/agent`) uses this; it cannot access private `stream_task_run_log`.
+#[must_use]
+pub fn agent_max_iterations_cap() -> usize {
+    stream_task_run_log::agent_max_iterations()
+}
 
 use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision;
