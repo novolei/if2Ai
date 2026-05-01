@@ -256,6 +256,10 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
   `runtime_event`（PR C-1）；前端 `runtime-projection-bridge.ts` 改为单条
   `listen('runtime_event')` + family router。`runtime/runtime_event.rs::dispatch`
   作为非-evolution 路径的 canonical helper。
+- 2026-05-01：`memory_event` / `memory_after_turn` 收敛到 `runtime_event`
+  envelope (`event_type=memory`, family ∈ {`lifecycle`, `after_turn`})；
+  harness EventBus 上的 `AgentEvent::MemoryAfterTurn` 保留为治理侧独立
+  真值源（PR C-3）。chat-runtime 单频道收敛工作 (C-1/C-2/C-3) 完成。
 
 ## 7. Gap 与二次真相清单
 
