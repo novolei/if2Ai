@@ -393,10 +393,34 @@ impl AgentStreamEmitter {
     /// at TRACE — emission failure is non-fatal for the agent
     /// loop, matching the legacy `let _ = window.emit(...)` shape.
     pub fn emit_payload(&self, payload: StreamTokenPayload) {
+        // HOTFIX 2026-05-02 — dual-emit during transition.
+        //
+        // PR C-1 cut over the broadcast frequency to the canonical
+        // `runtime_event` envelope, but `App.tsx` and `chat-ui.tsx`
+        // still subscribe to `agent-token` directly via
+        // `listenToStream(streamId, …)` (bridge comment in
+        // `runtime-projection-bridge.ts:13` flagged this as a parallel
+        // pipeline). Without the legacy emit those direct callbacks
+        // never observe `text_delta` / `stream_complete`, so the
+        // composer "running" state never clears and incremental text
+        // never renders.
+        //
+        // Until those direct subscribers are migrated to read from the
+        // runtime projection store (follow-up PR D-x), `emit_payload`
+        // MUST emit on both channels. The frontend bridge dedupes by
+        // listening only on `runtime_event`; the legacy listeners
+        // listen only on `agent-token`. There is no double-dispatch.
+        if let Err(e) = self.window.emit(AGENT_TOKEN_EVENT, &payload) {
+            tracing::trace!(
+                channel = AGENT_TOKEN_EVENT,
+                error = %e,
+                "[stream_emitter] agent-token legacy emit failed (non-fatal)"
+            );
+        }
         let Some(envelope) = payload.to_envelope() else {
             tracing::warn!(
                 event_type = %payload.event_type,
-                "[stream_emitter] StreamTokenPayload event_type unmapped — dropping"
+                "[stream_emitter] StreamTokenPayload event_type unmapped — dropping envelope (legacy agent-token already emitted)"
             );
             return;
         };
