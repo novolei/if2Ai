@@ -244,6 +244,7 @@ pub async fn execute_tool(
                 Some(request_id.as_str()),
             )
             .await
+            .map(|r| r.output)
             .map_err(|e| e.to_string())
     } else {
         tracing::warn!(

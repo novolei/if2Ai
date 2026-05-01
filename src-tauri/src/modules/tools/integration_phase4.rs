@@ -370,7 +370,7 @@ mod tests {
         let grep_result = grep_task.await;
         switching.store(false, Ordering::Relaxed);
         switch_task.await.expect("switch task should stop cleanly");
-        let output = grep_result.expect("grep should succeed under explicit context");
+        let output = grep_result.expect("grep should succeed under explicit context").output;
         assert!(
             output.contains("a.txt"),
             "grep output should stay inside session A workdir"
@@ -465,8 +465,8 @@ mod tests {
             None,
         );
         let (result_a, result_b) = tokio::join!(run_a, run_b);
-        let output_a = result_a.expect("session A bash should succeed");
-        let output_b = result_b.expect("session B bash should succeed");
+        let output_a = result_a.expect("session A bash should succeed").output;
+        let output_b = result_b.expect("session B bash should succeed").output;
         assert!(
             output_a.contains(workdir_a.to_string_lossy().as_ref()),
             "session A bash must execute inside session A workdir"

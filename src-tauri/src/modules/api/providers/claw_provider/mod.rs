@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod message_stream;
+mod prompt_caching;
 mod provider_impl;
 
 #[cfg(test)]

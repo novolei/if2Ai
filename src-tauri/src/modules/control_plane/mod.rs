@@ -28,4 +28,4 @@ pub use prepare_step_execution::{
 #[allow(unused_imports)]
 pub use session_context::{SessionContextResolver, SessionExecutionContext};
 #[allow(unused_imports)]
-pub use tool_execution_broker::ToolExecutionBroker;
+pub use tool_execution_broker::{ToolExecutionBroker, ToolExecutionResult};

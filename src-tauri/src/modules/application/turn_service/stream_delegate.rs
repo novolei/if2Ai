@@ -40,13 +40,17 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::modules::api::MessageStream;
 use crate::modules::application::tool_executor::ToolRegistryExecutor;
+use crate::modules::application::turn_service::finalize_hooks::extract_turn_checkpoint;
+use crate::modules::application::turn_service::preflight_hooks::maybe_inject_checkpoint;
 use crate::modules::control_plane::SessionExecutionContext;
 use crate::modules::provider::resilience::LlmResilienceConfig;
 use crate::modules::runtime::cost_guard::CostGuardConfig;
 use crate::modules::runtime::permissions::{PermissionMode, PermissionPolicy};
+use crate::modules::runtime::working_checkpoint::{CheckpointInjectionConfig, WorkingCheckpoint};
 
 use super::agentic_loop::{
-    LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult, TextAction,
+    ContextCompressionLevel, LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult,
+    TextAction,
 };
 use super::stream_iteration::{
     handle_no_tool_calls, iteration_execute_tools, iteration_preflight, iteration_run_stream,
@@ -77,6 +81,11 @@ pub(super) struct StreamDelegate<'a> {
     pub(super) state: Mutex<StreamLoopState>,
     pub(super) cancel_rx: Mutex<Option<oneshot::Receiver<()>>>,
     pub(super) tool_executor_slot: Mutex<Option<ToolRegistryExecutor>>,
+
+    /// DK-002 working checkpoint: persists across iterations within a turn.
+    /// Populated by `after_iteration` (extraction); consumed by `before_llm_call`
+    /// (injection into the message stream before the LLM request).
+    pub(super) working_checkpoint: Mutex<Option<WorkingCheckpoint>>,
 
     /// Produced by `before_llm_call`, consumed by `call_llm`.
     pub(super) pending_stream: Mutex<Option<MessageStream>>,
@@ -123,6 +132,7 @@ impl<'a> StreamDelegate<'a> {
             pending_tool_uses_vec: Mutex::new(Vec::new()),
             pending_calls: Mutex::new(HashMap::new()),
             next_text_continues: Mutex::new(false),
+            working_checkpoint: Mutex::new(None),
         }
     }
 
@@ -246,7 +256,13 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
                 if state.terminal_status.is_none() {
                     state.terminal_status = Some("cancelled_by_user");
                 }
-                state.completion_already_emitted = true;
+                // NOTE: Do NOT set completion_already_emitted here.
+                // check_signals does not emit stream_complete itself,
+                // so setting the flag would cause finalize to skip
+                // emission — leaving the frontend stuck in "running"
+                // state (race condition when cancel arrives as stream
+                // is finishing). Let finalize_stream_task handle the
+                // unified stream_complete emission.
                 LoopSignal::Stop
             }
             Err(oneshot::error::TryRecvError::Closed) => {
@@ -260,6 +276,25 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
     }
 
     async fn before_llm_call(&self, ctx: &mut LoopContext, _iter: usize) -> Option<LoopOutcome> {
+        // DK-002: inject working checkpoint into session_messages before preflight
+        // builds the LLM request. We track whether we injected so we can remove it
+        // afterward (checkpoint is ephemeral per-request, not persisted in state).
+        let checkpoint_injected = {
+            let cp_guard = self.working_checkpoint.lock().await;
+            if cp_guard.is_some() {
+                let mut state = self.state.lock().await;
+                let config = CheckpointInjectionConfig::default();
+                let injected = maybe_inject_checkpoint(
+                    cp_guard.as_ref(),
+                    &mut state.session_messages,
+                    &config,
+                );
+                injected
+            } else {
+                false
+            }
+        };
+
         // Take the executor out of the slot so we can borrow it for refs and
         // restore it when done. (`PreflightSharedRefs::tool_executor` is &-borrow
         // only, but the slot still needs to give up exclusive access for the
@@ -282,6 +317,25 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
 
         // Restore executor unconditionally.
         *self.tool_executor_slot.lock().await = Some(executor);
+
+        // DK-002: remove the injected checkpoint message from session_messages
+        // so it doesn't accumulate across iterations. The message was already
+        // baked into the HTTP request body by iteration_preflight.
+        if checkpoint_injected {
+            let mut state = self.state.lock().await;
+            // The checkpoint is injected before the last user message or at
+            // position 0 (system). Find and remove it by content marker.
+            if let Some(pos) = state.session_messages.iter().position(|m| {
+                m.content.iter().any(|b| match b {
+                    crate::modules::api::InputContentBlock::Text { text } => {
+                        text.starts_with("[checkpoint] ")
+                    }
+                    _ => false,
+                })
+            }) {
+                state.session_messages.remove(pos);
+            }
+        }
 
         match outcome {
             PreflightOutcome::Continue {
@@ -439,12 +493,97 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
         TextAction::Return(LoopOutcome::Response(text))
     }
 
-    async fn after_iteration(&self, _ctx: &mut LoopContext, _iter: usize) {
-        // Audit confirmed: no-op. All post-batch logic lives inside
-        // iteration_execute_tools (post-mutation update message injection,
-        // memory-recall finalization guard, single-shell evidence guard,
-        // invalid-tool-args streak bookkeeping), which execute_tool_calls
-        // dispatches to.
+    async fn after_iteration(&self, _ctx: &mut LoopContext, iter: usize) {
+        // DK-002: extract checkpoint from the assistant's accumulated text.
+        // This is a cheap synchronous tag scan that runs after every iteration.
+        let state = self.state.lock().await;
+        let accumulated = state.accumulated_text.clone();
+        drop(state);
+
+        let extraction = extract_turn_checkpoint(&accumulated);
+
+        if extraction.should_clear {
+            // Agent signalled <task_complete/> — drop the checkpoint.
+            *self.working_checkpoint.lock().await = None;
+            tracing::debug!(
+                "[StreamDelegate::after_iteration] checkpoint cleared (task_complete)"
+            );
+        } else if let Some(ref key_info) = extraction.key_info {
+            let mut cp_guard = self.working_checkpoint.lock().await;
+            let turn = iter as u64;
+            if let Some(ref mut existing) = *cp_guard {
+                existing.key_info = key_info.clone();
+                existing.related_sop = extraction.related_sop.clone();
+                existing.turn_updated = turn;
+            } else {
+                *cp_guard = Some(WorkingCheckpoint {
+                    session_id: self.inputs.session_id.clone(),
+                    key_info: key_info.clone(),
+                    related_sop: extraction.related_sop.clone(),
+                    turn_created: turn,
+                    turn_updated: turn,
+                });
+            }
+            tracing::debug!(
+                "[StreamDelegate::after_iteration] checkpoint updated at iteration {iter}"
+            );
+        }
+    }
+
+    async fn compress_context(&self, level: ContextCompressionLevel) -> bool {
+        let mut state = self.state.lock().await;
+
+        match level {
+            ContextCompressionLevel::StandardCompression => {
+                // Apply tier-budget compression via compress_for_request on
+                // the streaming session messages.
+                use crate::modules::runtime::context_compression::{
+                    compress_for_request, TierBudgetAllocation,
+                };
+                let allocation = TierBudgetAllocation::default();
+                let outcome = compress_for_request(&state.session_messages, &allocation);
+                if outcome.passthrough {
+                    return false;
+                }
+                let dropped = outcome.dropped;
+                state.session_messages = outcome.kept;
+                tracing::info!(
+                    "[compress_context] StandardCompression: dropped {dropped} oldest messages"
+                );
+                true
+            }
+            ContextCompressionLevel::ReduceWindowSize => {
+                // Drop the oldest quarter of session messages.
+                let len = state.session_messages.len();
+                let drop = len / 4;
+                if drop > 0 {
+                    state.session_messages.drain(..drop);
+                    tracing::info!(
+                        "[compress_context] ReduceWindowSize: dropped {drop}/{len} messages"
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+            ContextCompressionLevel::StripNonCriticalSystemPrompt => {
+                // Cannot mutate system_prompt_for_stream (immutable on inputs).
+                // Instead, drop the oldest half of session messages as a
+                // last-resort aggressive compression.
+                let len = state.session_messages.len();
+                let drop = len / 2;
+                if drop > 0 {
+                    state.session_messages.drain(..drop);
+                    tracing::info!(
+                        "[compress_context] StripNonCriticalSystemPrompt: \
+                         aggressively dropped {drop}/{len} messages"
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+        }
     }
 }
 

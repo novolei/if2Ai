@@ -391,10 +391,52 @@ where
     /// When set, each LLM request will contain only the messages retained by
     /// `wm` (evicted by turn count and token budget) rather than the full
     /// session history. Full history is always preserved in `self.session`.
+    ///
+    /// If the session already contains messages (restored / pre-seeded), the
+    /// window is populated immediately so that the first `call_llm` sees a
+    /// consistent view.
     #[must_use]
-    pub fn with_working_memory(mut self, wm: WorkingMemory) -> Self {
+    pub fn with_working_memory(mut self, mut wm: WorkingMemory) -> Self {
+        // Seed from any existing session messages so the WM is never
+        // stale even before the first run_turn.
+        if !self.session.messages.is_empty() {
+            Self::sync_working_memory(&self.session.messages, &mut wm);
+        }
         self.working_memory = Some(wm);
         self
+    }
+
+    /// Rebuild the working memory window from the given message slice.
+    ///
+    /// Clears the window, extends from `messages`, and lets the built-in
+    /// eviction (turn count + token budget) drop stale turns. Any messages
+    /// containing volatile content (session IDs, PIDs) are logged via
+    /// [`crate::modules::memory::verification_gate::volatile_content_hints`]
+    /// so operators can audit ephemeral data entering the working window.
+    pub(super) fn sync_working_memory(
+        messages: &[ConversationMessage],
+        wm: &mut WorkingMemory,
+    ) {
+        wm.clear();
+        for msg in messages {
+            // Volatile-content audit: surface hints for messages that
+            // contain session_id / pid references (Module K).
+            for block in &msg.blocks {
+                let text = match block {
+                    super::session::ContentBlock::Text { text } => text.as_str(),
+                    super::session::ContentBlock::ToolResult { output, .. } => output.as_str(),
+                    _ => continue,
+                };
+                let hints = crate::modules::memory::verification_gate::volatile_content_hints(text);
+                if !hints.is_empty() {
+                    tracing::debug!(
+                        "[WorkingMemory] volatile content detected in message: {:?}",
+                        hints
+                    );
+                }
+            }
+        }
+        wm.extend(messages.iter().cloned());
     }
 
     /// Deprecated: use [`Self::with_context_budget`] instead.
@@ -584,6 +626,16 @@ where
         // TODO(8B): once `runtime::session::Session` carries an `id` and
         // `project_id`, replace the global / "-" fallback with the real
         // scope so audit + dual-write attribution lines up.
+        // Sync WorkingMemory with the final session state after the
+        // agentic loop completes.  During the loop `call_llm` rebuilds
+        // WM from session on every iteration, but tool results appended
+        // after the last LLM call leave it stale.  Re-syncing here
+        // ensures WM is accurate for between-turn queries, TurnHook
+        // consumers, and any checkpoint logic.
+        if let Some(ref mut wm) = self.working_memory {
+            Self::sync_working_memory(&self.session.messages, wm);
+        }
+
         if let Some(ref hook) = self.turn_hook {
             // Phase 8B.11 fix — prefer with_session_context() values; fall
             // back to "-" / global() when the runtime was built without

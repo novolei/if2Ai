@@ -109,6 +109,7 @@ mod tests;
 // cleanup can drop these once consumers migrate.
 pub use crate::modules::runtime::agent_loop as agentic_loop;
 pub use crate::modules::runtime::agent_loop::AgenticLoopConfig;
+pub use crate::modules::runtime::agent_loop::IterationStrategy;
 pub use run::{RunTurnRequest, RunTurnResponse};
 pub use stream::StreamTurnRequest;
 

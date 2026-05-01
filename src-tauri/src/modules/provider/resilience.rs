@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use tokio::time::sleep;
 
@@ -222,6 +223,31 @@ pub async fn send_message_resilient_cached(
     client.send_message(req).await
 }
 
+/// Maximum backoff cap for rate-limit retries (seconds).
+const RATE_LIMIT_MAX_BACKOFF_SECS: u64 = 60;
+/// Base delay for rate-limit exponential backoff.
+const RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(1);
+/// Maximum number of automatic 429 retries.
+const RATE_LIMIT_MAX_RETRIES: u32 = 3;
+
+/// Compute backoff for a 429 rate-limit retry.
+///
+/// `base_delay * 2^attempt + random_jitter`, capped at 60 s.
+/// If `retry_after` is provided (from the `Retry-After` header),
+/// the final delay is `max(computed, retry_after)`.
+fn rate_limit_backoff(attempt: u32, retry_after: Option<Duration>) -> Duration {
+    let exp = RATE_LIMIT_BASE_DELAY
+        .saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX));
+    let jitter_ms = rand::thread_rng().gen_range(0..500);
+    let computed = exp.saturating_add(Duration::from_millis(jitter_ms));
+    let cap = Duration::from_secs(RATE_LIMIT_MAX_BACKOFF_SECS);
+    let capped = computed.min(cap);
+    match retry_after {
+        Some(ra) => capped.max(ra), // Respect server-indicated Retry-After without capping
+        None => capped,
+    }
+}
+
 async fn try_stream_message_inner(
     client: &ProviderClient,
     req: &MessageRequest,
@@ -232,7 +258,8 @@ async fn try_stream_message_inner(
         match client.stream_message(req).await {
             Ok(s) => return Ok(s),
             Err(e) => {
-                let retry = e.is_retryable() && attempt < cfg.stream_start_max_retries;
+                let retry = e.is_retryable() && !e.is_rate_limited()
+                    && attempt < cfg.stream_start_max_retries;
                 last_err = Some(e);
                 if !retry {
                     break;
@@ -251,6 +278,9 @@ async fn try_stream_message_inner(
 }
 
 /// Start a provider message stream: optional failover client, retries, and circuit accounting.
+///
+/// 429 (rate-limited) errors are retried with exponential backoff + jitter,
+/// honoring the `Retry-After` header when present.
 pub async fn stream_message_with_resilience(
     primary: &ProviderClient,
     fallback: Option<&ProviderClient>,
@@ -260,50 +290,130 @@ pub async fn stream_message_with_resilience(
 ) -> Result<MessageStream, ApiError> {
     circuit.check_and_clear_recovered(cfg)?;
 
-    match try_stream_message_inner(primary, req, cfg).await {
+    // --- First, try the normal (non-429) path ---
+    let primary_err = match try_stream_message_inner(primary, req, cfg).await {
         Ok(s) => {
             circuit.record_success();
             crate::modules::observability::emit("llm.stream.start.ok", &req.model);
-            Ok(s)
+            return Ok(s);
         }
-        Err(primary_err) => {
-            if let Some(fb) = fallback {
-                match try_stream_message_inner(fb, req, cfg).await {
-                    Ok(s) => {
-                        tracing::warn!(
-                            "[llm_resilience] primary stream failed; succeeded on failover provider"
-                        );
-                        circuit.record_success();
-                        crate::modules::observability::emit(
-                            "llm.stream.start.failover_ok",
-                            &format!("model={} err={primary_err}", req.model),
-                        );
-                        Ok(s)
-                    }
-                    Err(fb_err) => {
-                        tracing::error!(
-                            "[llm_resilience] primary and failover stream start failed: primary={primary_err}; failover={fb_err}"
-                        );
-                        circuit.record_failure(cfg);
-                        crate::modules::observability::emit(
-                            "llm.stream.start.err",
-                            &format!("model={} err={primary_err}", req.model),
-                        );
-                        Err(primary_err)
-                    }
-                }
-            } else {
-                if primary_err.is_retryable() {
-                    circuit.record_failure(cfg);
-                } else {
+        Err(e) => e,
+    };
+
+    // --- 429 rate-limit: automatic exponential backoff retry ---
+    if primary_err.is_rate_limited() {
+        let retry_after = primary_err.retry_after();
+        tracing::warn!(
+            "[llm_resilience] 429 rate-limited on model={}, retry_after={:?}",
+            req.model,
+            retry_after,
+        );
+        for rate_attempt in 0..RATE_LIMIT_MAX_RETRIES {
+            let delay = rate_limit_backoff(rate_attempt, retry_after);
+            tracing::info!(
+                "[llm_resilience] 429 retry {}/{} for model={}, sleeping {:?}",
+                rate_attempt + 1,
+                RATE_LIMIT_MAX_RETRIES,
+                req.model,
+                delay,
+            );
+            sleep(delay).await;
+            match client_stream_once(primary, req).await {
+                Ok(s) => {
+                    tracing::info!(
+                        "[llm_resilience] 429 retry {}/{} succeeded for model={}",
+                        rate_attempt + 1,
+                        RATE_LIMIT_MAX_RETRIES,
+                        req.model,
+                    );
                     circuit.record_success();
+                    crate::modules::observability::emit(
+                        "llm.stream.start.rate_limit_retry_ok",
+                        &format!("model={} attempt={}", req.model, rate_attempt + 1),
+                    );
+                    return Ok(s);
                 }
+                Err(e) if e.is_rate_limited() => {
+                    tracing::warn!(
+                        "[llm_resilience] 429 retry {}/{} still rate-limited for model={}",
+                        rate_attempt + 1,
+                        RATE_LIMIT_MAX_RETRIES,
+                        req.model,
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Different error after rate-limit retry — give up
+                    tracing::error!(
+                        "[llm_resilience] 429 retry {}/{} failed with non-429 error: {}",
+                        rate_attempt + 1,
+                        RATE_LIMIT_MAX_RETRIES,
+                        e,
+                    );
+                    circuit.record_failure(cfg);
+                    crate::modules::observability::emit(
+                        "llm.stream.start.err",
+                        &format!("model={} err={e}", req.model),
+                    );
+                    return Err(e);
+                }
+            }
+        }
+        // Exhausted rate-limit retries
+        circuit.record_failure(cfg);
+        crate::modules::observability::emit(
+            "llm.stream.start.rate_limit_exhausted",
+            &format!("model={}", req.model),
+        );
+        return Err(primary_err);
+    }
+
+    // --- Non-429 failure: try failover ---
+    if let Some(fb) = fallback {
+        match try_stream_message_inner(fb, req, cfg).await {
+            Ok(s) => {
+                tracing::warn!(
+                    "[llm_resilience] primary stream failed; succeeded on failover provider"
+                );
+                circuit.record_success();
+                crate::modules::observability::emit(
+                    "llm.stream.start.failover_ok",
+                    &format!("model={} err={primary_err}", req.model),
+                );
+                return Ok(s);
+            }
+            Err(fb_err) => {
+                tracing::error!(
+                    "[llm_resilience] primary and failover stream start failed: primary={primary_err}; failover={fb_err}"
+                );
+                circuit.record_failure(cfg);
                 crate::modules::observability::emit(
                     "llm.stream.start.err",
                     &format!("model={} err={primary_err}", req.model),
                 );
-                Err(primary_err)
+                return Err(primary_err);
             }
         }
     }
+
+    // No failover
+    if primary_err.is_retryable() {
+        circuit.record_failure(cfg);
+    } else {
+        circuit.record_success();
+    }
+    crate::modules::observability::emit(
+        "llm.stream.start.err",
+        &format!("model={} err={primary_err}", req.model),
+    );
+    Err(primary_err)
+}
+
+/// Single stream attempt (no retry loop). Used by the 429 retry path to avoid
+/// re-entering the full `try_stream_message_inner` retry loop.
+async fn client_stream_once(
+    client: &ProviderClient,
+    req: &MessageRequest,
+) -> Result<MessageStream, ApiError> {
+    client.stream_message(req).await
 }

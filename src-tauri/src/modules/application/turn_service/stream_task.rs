@@ -583,6 +583,8 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         pending_operation_for_delegate,
         provider_request_id,
         stream_circuit: _stream_circuit,
+        prompt_cache: _prompt_cache,
+        digest_cache: _digest_cache,
     } = state;
 
     let accumulated_text = match lifecycle_hooks

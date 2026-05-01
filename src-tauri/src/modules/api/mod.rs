@@ -31,7 +31,8 @@ pub use providers::manager::{MockProvider, ProviderManager};
 pub use providers::openai_compat::{OpenAiCompatClient, OpenAiCompatConfig};
 #[allow(unused_imports)]
 pub use providers::{
-    detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderKind,
+    detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderCapabilities,
+    ProviderKind, ToolCallFormat,
 };
 #[allow(unused_imports)]
 pub use sse::{parse_frame, SseParser};

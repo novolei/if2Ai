@@ -6,9 +6,12 @@
 //! without depending on the application layer.
 
 pub mod config;
+pub mod iteration_tracker;
 pub mod loop_runner;
 
-pub use config::AgenticLoopConfig;
+pub use config::{AgenticLoopConfig, IterationStrategy, ProgressCheckConfig};
+pub use iteration_tracker::{IterationTracker, ProgressHint};
 pub use loop_runner::{
-    run_agentic_loop, LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult, TextAction,
+    run_agentic_loop, ContextCompressionLevel, LoopContext, LoopDelegate, LoopOutcome, LoopSignal,
+    RespondResult, TextAction,
 };

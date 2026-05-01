@@ -33,6 +33,9 @@ pub enum ResumeReason {
     RepeatedToolBatchNoProgress,
     /// Agent produced consecutive invalid tool arguments.
     InvalidToolArgsRepeated,
+    /// Provider rate-limited the request (HTTP 429).  The request
+    /// can be retried after a delay.
+    RateLimited,
     /// Provider refused the request (bad request / validation /
     /// auth).  The user can adjust the prompt and retry.
     ProviderRejected,
@@ -55,6 +58,7 @@ impl ResumeReason {
             Self::MaxIterationsReached => "达到最大迭代次数",
             Self::RepeatedToolBatchNoProgress => "工具批次无进展",
             Self::InvalidToolArgsRepeated => "工具参数无效",
+            Self::RateLimited => "请求频率受限",
             Self::ProviderRejected => "Provider 拒绝请求",
             Self::ReadOnlySuccessBeforeFailure => "只读成功但后续失败",
             Self::ModelStopNoTools => "模型停止无工具调用",
@@ -153,6 +157,9 @@ pub fn classify_resume_reason(
                 if reason.contains("network_timeout") || reason.contains("timeout") {
                     return Some(ResumeReason::NetworkTimeout);
                 }
+                if reason.contains("rate_limited") {
+                    return Some(ResumeReason::RateLimited);
+                }
                 if reason.contains("provider_rejected")
                     || reason.contains("request_validation_error")
                 {
@@ -204,6 +211,7 @@ mod tests {
             ResumeReason::MaxIterationsReached,
             ResumeReason::RepeatedToolBatchNoProgress,
             ResumeReason::InvalidToolArgsRepeated,
+            ResumeReason::RateLimited,
             ResumeReason::ProviderRejected,
             ResumeReason::ReadOnlySuccessBeforeFailure,
             ResumeReason::ModelStopNoTools,
