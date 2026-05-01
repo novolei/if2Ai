@@ -13,10 +13,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 use crate::modules::harness::{AgentEvent, HarnessState};
+use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
 use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::evolution_emitter::EmitError;
+use crate::modules::runtime::runtime_event;
 use crate::modules::runtime::pending_permission::{
     clear_pending_permission, write_pending_permission, PendingPermissionRecord,
 };
@@ -105,27 +108,29 @@ impl PermissionPrompter for TauriPermissionPrompter {
         }
         let app_data_dir = Some(app_data_dir);
 
-        // 1. emit confirmation event to the frontend
-        let _ = self.window.emit(
-            "permission-request",
-            serde_json::json!({
-                "request_id": request_id,
-                "session_id": self.session_id,
-                "tool_name": request.tool_name,
-                "permission_mode": request.required_mode.as_str(),
-                "current_mode": request.current_mode.as_str(),
-                "message": message,
-            }),
-        );
-        if let Some(event_logger) = &self.event_logger {
-            let _ = event_logger.append_sync(
-                "permission_requested",
-                serde_json::json!({
-                    "request_id": pending_record.request_id,
-                    "tool_name": request.tool_name,
-                    "required_mode": request.required_mode.as_str(),
-                    "current_mode": request.current_mode.as_str(),
-                }),
+        // 1. emit confirmation event to the frontend via the canonical
+        //    `runtime_event` envelope. PR C-2 cut-over: replaces the
+        //    legacy `permission-request` channel emit AND the side-band
+        //    `event_logger.append_sync("permission_requested", ...)`
+        //    write — the run-log entry is now produced inside
+        //    `runtime_event::dispatch` from the same envelope the
+        //    frontend bridge consumes.
+        let app_handle = self.window.app_handle().clone();
+        if let Err(err) = emit_permission_prompt(
+            Some(&app_handle),
+            &request_id,
+            &self.session_id,
+            &request.tool_name,
+            request.required_mode.as_str(),
+            request.current_mode.as_str(),
+            &message,
+            self.event_logger.as_ref(),
+        ) {
+            tracing::warn!(
+                request_id = %request_id,
+                tool = %request.tool_name,
+                error = %err,
+                "[permission] envelope dispatch failed"
             );
         }
 
@@ -292,6 +297,47 @@ pub(crate) fn respond_to_permission_prompt(
     Ok(())
 }
 
+/// Emit one `permission` runtime envelope (`prompt_opened` family).
+///
+/// PR C-2 cut-over seam: this is the single point where
+/// `permission_service` hands the prompt off to the canonical
+/// `runtime_event` channel. Both the `decide()` production path and
+/// the `permission_prompt_dispatch_persists_envelope_to_run_log`
+/// test go through this helper, so the envelope shape and run-log
+/// behaviour are tested without spawning a real Tauri app handle.
+#[allow(clippy::too_many_arguments)]
+fn emit_permission_prompt(
+    handle: Option<&tauri::AppHandle>,
+    request_id: &str,
+    session_id: &str,
+    tool_name: &str,
+    permission_mode: &str,
+    current_mode: &str,
+    message: &str,
+    logger: Option<&RunEventLogger>,
+) -> Result<RuntimeEventEnvelope, EmitError> {
+    let payload = serde_json::json!({
+        "request_id": request_id,
+        "session_id": session_id,
+        "tool_name": tool_name,
+        "permission_mode": permission_mode,
+        "current_mode": current_mode,
+        "message": message,
+    });
+    let correlation = CorrelationIds {
+        session_id: Some(session_id.to_string()),
+        ..Default::default()
+    };
+    runtime_event::dispatch(
+        handle,
+        RuntimeEventType::Permission,
+        "prompt_opened",
+        correlation,
+        &payload,
+        logger,
+    )
+}
+
 fn clear_pending_permission_if_possible(app_data_dir: &Option<PathBuf>, session_id: &str) {
     if let Some(app_data_dir) = app_data_dir {
         if let Err(err) = clear_pending_permission(app_data_dir, session_id) {
@@ -347,6 +393,54 @@ mod tests {
         assert_eq!(
             read_pending_permission(dir.path(), &session_id).unwrap(),
             Some(record)
+        );
+    }
+
+    #[test]
+    fn permission_prompt_dispatch_persists_envelope_to_run_log() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(dir.path(), "sess-1", "run-1");
+
+        let envelope = emit_permission_prompt(
+            None,
+            "req-1",
+            "sess-1",
+            "browser_navigate",
+            "dangerFullAccess",
+            "readOnly",
+            "Tool 'browser_navigate' requires dangerFullAccess permission (current: readOnly)",
+            Some(&logger),
+        )
+        .expect("dispatch ok");
+
+        assert_eq!(envelope.event_type, RuntimeEventType::Permission);
+        assert_eq!(envelope.payload_family.0, "prompt_opened");
+        assert_eq!(
+            envelope.correlation.session_id.as_deref(),
+            Some("sess-1")
+        );
+
+        let path = logger.file_path().expect("run-log path");
+        let raw = std::fs::read_to_string(&path).expect("read run-log");
+        // RunLogEntry serializes event_type as "<event_type>:<family>"
+        // (see RunLogEntry::from_envelope). Assert on the canonical
+        // joined shape so a regression to the legacy "permission_requested"
+        // tag would fail loudly.
+        assert!(
+            raw.contains("\"event_type\":\"permission:prompt_opened\""),
+            "run log missing permission:prompt_opened event_type: {raw}"
+        );
+        assert!(
+            raw.contains("\"request_id\":\"req-1\""),
+            "run log missing request_id: {raw}"
+        );
+        assert!(
+            raw.contains("\"tool_name\":\"browser_navigate\""),
+            "run log missing tool_name: {raw}"
+        );
+        assert!(
+            raw.contains("\"permission_mode\":\"dangerFullAccess\""),
+            "run log missing permission_mode: {raw}"
         );
     }
 }
