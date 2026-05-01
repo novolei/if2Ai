@@ -87,7 +87,7 @@ mod tests {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd src-tauri && cargo test -p if2ai permission_prompt_dispatch --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend permission_prompt_dispatch --lib`
 Expected: FAIL — `emit_permission_prompt_for_test` not defined.
 
 - [ ] **Step 4: Replace raw emit with `runtime_event::dispatch`**
@@ -187,12 +187,12 @@ fn emit_permission_prompt_for_test(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd src-tauri && cargo test -p if2ai permission_prompt_dispatch --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend permission_prompt_dispatch --lib`
 Expected: PASS.
 
 - [ ] **Step 6: Run full permission_service tests**
 
-Run: `cd src-tauri && cargo test -p if2ai permission --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend permission --lib`
 Expected: ALL PASS.
 
 - [ ] **Step 7: Commit**
@@ -280,7 +280,7 @@ runtime_event channel."
 
 - [ ] **Step 1: Full backend test**
 
-Run: `cd src-tauri && cargo test -p if2ai`
+Run: `cd src-tauri && cargo test -p if2ai-backend`
 Expected: ALL PASS.
 
 - [ ] **Step 2: Full frontend test**
@@ -330,6 +330,6 @@ Push and open PR titled `[C-2] runtime: permission-request → runtime_event env
 
 ## Verification Summary
 
-- `cargo test -p if2ai` ALL PASS
+- `cargo test -p if2ai-backend` ALL PASS
 - `pnpm vitest run` ALL PASS
 - Manual: permission dialog flow unchanged; `runtime_event` shows Permission envelope; run log JSONL contains the entry.

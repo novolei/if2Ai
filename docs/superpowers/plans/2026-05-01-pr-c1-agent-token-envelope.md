@@ -88,7 +88,7 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd src-tauri && cargo test -p if2ai dispatch_returns_envelope --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend dispatch_returns_envelope --lib`
 Expected: FAIL — `dispatch` not defined; module not registered.
 
 - [ ] **Step 3: Implement helper**
@@ -137,7 +137,7 @@ pub mod runtime_event;
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd src-tauri && cargo test -p if2ai dispatch_returns_envelope --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend dispatch_returns_envelope --lib`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -189,7 +189,7 @@ fn emit_payload_serializes_to_envelope_via_to_envelope() {
 
 - [ ] **Step 2: Run test to verify it passes immediately**
 
-Run: `cd src-tauri && cargo test -p if2ai emit_payload_serializes --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend emit_payload_serializes --lib`
 Expected: PASS — this asserts existing behavior of `to_envelope()`. **If FAIL, stop and report.**
 
 This is a **regression-anchor** test: it locks the unwrap contract that the frontend router relies on.
@@ -230,7 +230,7 @@ Replace with:
 
 - [ ] **Step 4: Run full stream_emitter tests**
 
-Run: `cd src-tauri && cargo test -p if2ai stream_emitter --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend stream_emitter --lib`
 Expected: ALL PASS.
 
 - [ ] **Step 5: Commit**
@@ -468,7 +468,7 @@ migrated yet)."
 
 - [ ] **Step 1: Full backend test**
 
-Run: `cd src-tauri && cargo test -p if2ai`
+Run: `cd src-tauri && cargo test -p if2ai-backend`
 Expected: ALL PASS.
 
 - [ ] **Step 2: Full frontend test**
@@ -517,7 +517,7 @@ Push branch and open PR titled `[C-1] runtime: agent-token → runtime_event env
 
 ## Verification Summary
 
-- `cargo test -p if2ai` ALL PASS
+- `cargo test -p if2ai-backend` ALL PASS
 - `pnpm vitest run` ALL PASS
 - `pnpm typecheck` ZERO errors
 - Manual smoke: text/thinking deltas render; tool calls render; `runtime_event` envelopes visible in devtools.

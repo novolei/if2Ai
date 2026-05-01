@@ -87,7 +87,7 @@ fn memory_event_dispatch_emits_envelope_with_lifecycle_family() {
 
 - [ ] **Step 3: Run test to verify it fails (then passes — anchor test)**
 
-Run: `cd src-tauri && cargo test -p if2ai memory_event_dispatch --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend memory_event_dispatch --lib`
 Expected: PASS once `runtime_event::dispatch` is on `main` (after C-1). This test anchors envelope-shape regression and does NOT depend on us replacing `emit_to_frontend` yet — it only validates that `MemoryEventPayload` serializes round-trip.
 
 - [ ] **Step 4: Replace `emit_to_frontend` body**
@@ -142,7 +142,7 @@ fn emit_to_frontend(payload: MemoryEventPayload<'_>) {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd src-tauri && cargo test -p if2ai memory --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend memory --lib`
 Expected: ALL PASS.
 
 - [ ] **Step 6: Commit**
@@ -210,7 +210,7 @@ fn memory_after_turn_dispatch_emits_envelope_with_after_turn_family() {
 
 - [ ] **Step 3: Run test (anchor — should pass once C-1 is on main)**
 
-Run: `cd src-tauri && cargo test -p if2ai memory_after_turn_dispatch --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend memory_after_turn_dispatch --lib`
 Expected: PASS.
 
 - [ ] **Step 4: Replace raw emit**
@@ -255,7 +255,7 @@ if let Err(err) = crate::modules::runtime::runtime_event::dispatch(
 
 - [ ] **Step 5: Run test**
 
-Run: `cd src-tauri && cargo test -p if2ai stream_emitter_service --lib`
+Run: `cd src-tauri && cargo test -p if2ai-backend stream_emitter_service --lib`
 Expected: ALL PASS.
 
 - [ ] **Step 6: Commit**
@@ -342,7 +342,7 @@ the rolling write-decision ring is preserved."
 
 - [ ] **Step 1: Full backend test**
 
-Run: `cd src-tauri && cargo test -p if2ai`
+Run: `cd src-tauri && cargo test -p if2ai-backend`
 Expected: ALL PASS.
 
 - [ ] **Step 2: Full frontend test**
@@ -390,6 +390,6 @@ Push and open PR titled `[C-3] runtime: memory_event/after_turn → runtime_even
 
 ## Verification Summary
 
-- `cargo test -p if2ai` ALL PASS
+- `cargo test -p if2ai-backend` ALL PASS
 - `pnpm vitest run` ALL PASS
 - Manual: memory chip / TelemetryDrawer continues to update mid-turn and at turn-end (incl. empty batches).
