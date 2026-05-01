@@ -393,7 +393,23 @@ impl AgentStreamEmitter {
     /// at TRACE — emission failure is non-fatal for the agent
     /// loop, matching the legacy `let _ = window.emit(...)` shape.
     pub fn emit_payload(&self, payload: StreamTokenPayload) {
-        self.emit_event(AGENT_TOKEN_EVENT, payload);
+        let Some(envelope) = payload.to_envelope() else {
+            tracing::warn!(
+                event_type = %payload.event_type,
+                "[stream_emitter] StreamTokenPayload event_type unmapped — dropping"
+            );
+            return;
+        };
+        if let Err(e) = self.window.emit(
+            crate::modules::runtime::evolution_emitter::RUNTIME_EVENT_CHANNEL,
+            &envelope,
+        ) {
+            tracing::trace!(
+                channel = crate::modules::runtime::evolution_emitter::RUNTIME_EVENT_CHANNEL,
+                error = %e,
+                "[stream_emitter] runtime_event emit failed (non-fatal)"
+            );
+        }
     }
 
     /// Emit a `text_delta` event.
@@ -492,6 +508,27 @@ mod tests {
         // Unknown event_type returns None
         let unknown = StreamTokenPayload::skeleton("s1", "unknown_event_xyz");
         assert!(unknown.to_envelope().is_none());
+    }
+
+    #[test]
+    fn emit_payload_serializes_to_envelope_via_to_envelope() {
+        let mut p = StreamTokenPayload::skeleton("s7", "text_delta");
+        p.text = Some("hello".into());
+        p.correlation = Some(CorrelationIds {
+            run_id: Some("run-9".into()),
+            ..CorrelationIds::default()
+        });
+        let env = p.to_envelope().expect("text_delta should map to Conversation");
+        assert_eq!(env.event_type, RuntimeEventType::Conversation);
+        assert_eq!(env.payload_family.0, "text_delta");
+        assert_eq!(env.correlation.run_id.as_deref(), Some("run-9"));
+        let inner = env.payload;
+        assert_eq!(inner.get("text").and_then(|v| v.as_str()), Some("hello"));
+        assert_eq!(inner.get("stream_id").and_then(|v| v.as_str()), Some("s7"));
+        assert_eq!(
+            inner.get("event_type").and_then(|v| v.as_str()),
+            Some("text_delta")
+        );
     }
 
     #[test]
