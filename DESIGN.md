@@ -2,6 +2,8 @@
 
 > 本文档阐述 If2Ai 的核心设计哲学、约束和品味规范。它指导每一个架构决策。
 
+> **运行时与事实源真值（2026-05）**：分层结构、会话事实源、MIG 目标与代码对照以仓库根目录 **[`ARCHITECTURE.md`](ARCHITECTURE.md)** 与 **[`.qoder/specs/if2ai-agent-evolution-report.md`](.qoder/specs/if2ai-agent-evolution-report.md)**（§1.0 联合审计）为准。本文侧重产品与代码品味；若与上述二文冲突，以前者为准。
+
 ## 🎯 核心设计理念
 
 If2Ai 采用 **智能体优先的工程** (Agent-First Engineering) 思想，受 OpenAI 的 Codex Harness 经验启发：

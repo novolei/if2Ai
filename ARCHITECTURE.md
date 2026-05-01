@@ -1,8 +1,10 @@
 # If2Ai 架构全景
 
-> 最后更新: 2026-04-23
+> 最后更新: 2026-05-01（arch/evolution 文档真值同步，见 `docs/superpowers/plans/2026-05-01-arch-evolution-truth-sync.md`）
 >
-> 本文档描述当前 codebase 的真实架构、vNext 目标态、仍存在的 Gap / 二次真相，以及 Agents Teams 的建议设计。Pack 执行规范以 `CLAUDE.md`、`docs/packs/CHARTER.md`、`docs/packs/REGISTRY.md` 为准。
+> 本文档描述当前 codebase 的真实架构、vNext 目标态、仍存在的 Gap / 二次真相，以及 Agents Teams 的建议设计。
+>
+> **Pack / CHARTER / REGISTRY 已弃用**（2026-05-01）：`docs/packs/**` 仅历史存档。**开发需求**必须按 **Superpowers 完整流程**（见 **§1.0a** 与 [`CLAUDE.md`](CLAUDE.md)）。架构联合审计仍以 **§1.0** 双文档为准。
 
 ## 1. Staff 摘要
 
@@ -14,6 +16,31 @@ If2Ai 当前是一个 **React + TypeScript + Tauri 2 + Rust/Tokio** 的桌面 Ag
 - 当前最大风险不是缺少能力，而是 **新旧事实源并存**：`session.json`、run event log、raw stream payload、frontend conversation slice、runtime projection、harness report store 仍有重叠职责。
 
 架构推进的核心方向应当是：把所有运行时事实收敛到 append-only run event log，把 UI 全面切到 projection read model，把 supervisor 变成显式生命周期 owner，并在此基础上再引入 Agents Teams。
+
+### 1.0 架构联合审计基准（superpowers 对齐）
+
+**输入（仅此两份）**
+
+1. 本文件（分层、数据流、事实源、Gap、vNext、Teams 建议、参考路径）。  
+2. [`.qoder/specs/if2ai-agent-evolution-report.md`](.qoder/specs/if2ai-agent-evolution-report.md)（Part 0 设计哲学、Part 1 差距与 Part 1.3 实现对照、Part 2 模块设计、Part 6 追溯矩阵等）。
+
+**工作流**（Superpowers 习惯）：范围与成功标准 → 按本文 §2～§6 与 evolution 对应章节逐条对照 `codebase` → 列出 Gap / 二次真相 / 未连线项 → 回写双文档之一或附录。`docs/packs/**` 已弃用，**不作为**任何审计或交付的必读取输入。
+
+### 1.0a Superpowers 开发流程（强制）
+
+所有**开发需求**（功能、协议/行为变更、非平凡重构、Bug、性能与安全相关改动）必须遵循根目录 **[`CLAUDE.md`](CLAUDE.md)** 与 **[`AGENTS.md`](AGENTS.md)** 中的 **Superpowers 完整流程**（含 `using-superpowers`、`brainstorming`、`writing-plans`、计划执行、`systematic-debugging`、`verification-before-completion` 等）。Cursor 由 [`.cursor/rules/superpowers-workflow.mdc`](.cursor/rules/superpowers-workflow.mdc) 提示；**不得以**已弃用的 Pack/CHARTER/REGISTRY 代替。
+
+### 1.1 Agent Evolution 与 vNext 的衔接（2026-05）
+
+[`.qoder/specs/if2ai-agent-evolution-report.md`](.qoder/specs/if2ai-agent-evolution-report.md) **Part 1.3 / Part 2 / Part 6** 描述与 Browser-Harness / GenericAgent 对齐的 **Self-Evolution、自愈、Token 效率** 等模块与前后端矩阵；与本文 **§6 事实源、§7 Gap、§8 vNext** 同一叙事：进化能力是 **观测与沉淀侧** 增量，**不替代**「canonical run log + projection-first chat」主收敛。实现细节以 **仓库代码 + 该 spec 已更新段落** 为准；**§1.0 审计**不依赖 GAP 报告或 truth-loop 计划文件。
+
+### 1.2 MIG-017 技术债速记（projection-first）
+
+下列表面仍可能 **并行推断** runtime 态，需在后续迭代中逐项迁到 **仅读 `runtimeProjectionStore` / history replay**（并保留 raw stream 为 transport-only）：
+
+- `App.tsx` 与 `conversation-slice` 中对 token / approval / memory 的旁路更新（与 §3.3 表一致）。
+- 仍直接监听 legacy Tauri 事件、未经过 `runtime_event` translator 的 chat UI 分支（新功能禁止再增加）。
+- `src/lib/tauri.ts` 厚 DTO 层：新 UI 只走 `src/api/*`（§3.2 守则）。
 
 ## 2. 当前系统分层
 
@@ -74,12 +101,12 @@ If2Ai 当前是一个 **React + TypeScript + Tauri 2 + Rust/Tokio** 的桌面 Ag
 
 当前前端有四类状态，需要明确边界：
 
-| 层 | 当前职责 | 目标职责 |
-| --- | --- | --- |
-| `bootstrapStore` | app 初始化、启动错误、ready 状态 | 保持启动事实，不承载业务 runtime |
-| `sessionStore` | `activeSessionId` 等当前指针 | 仅保存选择指针，不保存 transcript |
-| `conversation-slice` | 当前 chat UI 展示态、session loading、abort handles | 过渡层，逐步由 runtime projection 派生 |
-| `runtimeProjectionStore` | run、approval、memory、activation、execution mode 的投影 | 成为所有 runtime surface 的唯一读模型 |
+| 层                       | 当前职责                                                 | 目标职责                               |
+| ------------------------ | -------------------------------------------------------- | -------------------------------------- |
+| `bootstrapStore`         | app 初始化、启动错误、ready 状态                         | 保持启动事实，不承载业务 runtime       |
+| `sessionStore`           | `activeSessionId` 等当前指针                             | 仅保存选择指针，不保存 transcript      |
+| `conversation-slice`     | 当前 chat UI 展示态、session loading、abort handles      | 过渡层，逐步由 runtime projection 派生 |
+| `runtimeProjectionStore` | run、approval、memory、activation、execution mode 的投影 | 成为所有 runtime surface 的唯一读模型  |
 
 当前 chat 展示是 `Conversation + RunProjection` 合成，不是纯 projection。`src/runtime-projection/chat-run-projection.ts` 已经在把 run 投影 overlay 到 message 列表上，但 `conversation-slice` 仍然保存大量 UI 展示事实。
 
@@ -198,20 +225,32 @@ Tool needs approval
   -> pending request is cleared and event log records resolution
 ```
 
-Permission UI is already close to projection-driven, but execution blocking still depends on live runtime channels. MIG-019 / MIG-021 should make recovery and resume semantics fully explicit.
+Permission UI 已接近 projection 驱动；**持久化** pending 与 event log 路径已存在（`pending_permission`、§5.3 数据流）。残余风险主要是 **reload / 重连时** 与 **live channel** 的时序与可观测性是否在所有入口等价——需在联合审计中按场景验证，而非假设「尚未实现」。
 
 ## 6. Facts 与事实源
 
-| 事实 | 当前来源 | 目标来源 |
-| --- | --- | --- |
-| Session list / title / project binding | session manager + `session.json` metadata | `SessionMeta` / session registry |
-| Transcript / run events | `session.json` + run event log + stream payload | run event log + projection replay |
-| Active run status | raw stream + runtime projection | runtime projection from event log/envelope |
-| Permission pending | live channel + pending permission file + projection | pending permission record + event log + projection |
-| Memory evidence | message memoryContext + memory events + direct IPC pages | memory domain projection + evidence API |
-| Harness report | harness report store / suite report | canonical run report derived from event log |
+| 事实                                   | 当前来源                                                 | 目标来源                                           |
+| -------------------------------------- | -------------------------------------------------------- | -------------------------------------------------- |
+| Session list / title / project binding | session manager + `session.json` metadata                | `SessionMeta` / session registry                   |
+| Transcript / run events                | `session.json` + run event log + stream payload          | run event log + projection replay                  |
+| Active run status                      | raw stream + runtime projection                          | runtime projection from event log/envelope         |
+| Permission pending                     | live channel + pending permission file + projection      | pending permission record + event log + projection |
+| Memory evidence                        | message memoryContext + memory events + direct IPC pages | memory domain projection + evidence API            |
+| Harness report                         | harness report store / suite report                      | canonical run report derived from event log        |
 
 Staff-level 原则：**写事实只进 canonical log；读事实只读 projection；兼容存储只能作为迁移 fallback。**
+
+### 6.1 Harness 与 canonical run log（过渡契约）
+
+在 **MIG-023** 完成前，`HarnessState` 仍通过 **独立 EventBus → JSONL trace、`HarnessRunReport`、`HarnessReportStore`** 形成 **治理侧旁路真相**（与产品 chat 的 `runtime/run-log` 并行）。这不否定 Staff 原则，而是明确：**当前 harness 报告不可从 append-only run log 自动重放派生**；合并路径应以 event log 为 canonical、harness 为视图或派生层，避免第三套手写 transcript。
+
+**会话历史**：`get_session_history_page` 仅在 **无 run-log `*.jsonl` 文件** 时对首屏使用 `session.json` fallback；一旦该会话目录下存在任意 jsonl 文件，即不再用 `session.json` 覆盖首屏 transcript（见 `history::session_has_run_log_jsonl_files`）。
+
+**流式写入 run log**：`RunEventLogger::append_with_correlation` 将 `StreamTokenPayload.correlation`（含 Teams 预留字段）合并到 `RunLogEntry` 顶层列，便于按 run 查询而不仅依赖 payload JSON。
+
+**非流式 turn**：`run.rs` 对同一 `run_id` 使用固定 `CorrelationIds`（`session_id` + `run_id`）调用 `append_with_correlation`，与流式路径对齐。
+
+**`runtime_event` + Evolution 落盘**：Tauri `emit("runtime_event", envelope)` 已携带完整 `RuntimeEventEnvelope`（含 `correlation`；前端见 `src/transport/contracts.ts`）；当调用方传入 `RunEventLogger` 时，现改为 `append_sync_from_envelope`，使 durable 行与广播 envelope 同源（含 team 等 correlation）。
 
 ## 7. Gap 与二次真相清单
 
@@ -223,12 +262,12 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
 - `runtimeProjectionStore` 已存在，但 `conversation-slice` 和 `App.tsx` 仍保存/合成大量 chat 展示事实。
 - `stream_task.rs` 仍是高复杂度执行 god-file，承担 orchestration、tool loop、stream emission、error handling、部分 persistence。
 - `commands/mod.rs` 仍是过大的 service aggregate，command boundary 与 application layer 边界不够薄。
-- runtime supervisor 还不是显式 bounded context，生命周期、恢复、resume、cancel、permission waiting 仍散落。
-- harness 仍保留独立 report/event 事实，与 run event log 存在并行真相。
+- **Session supervisor（后端）** 已由 `src-tauri/src/modules/runtime/supervisor.rs`（MIG-020）承担 **会话级生命周期快照**；但 **TurnService / stream_task / permission 通道 / 前端 store** 仍可能各自保留编排细节——「单一 owner」在**全栈**上仍未完全成立，需对照调用链继续收口。
+- harness 仍保留独立 report/event 事实，与 run event log 存在并行真相（过渡契约见 **§6.1**）。
 
 ### P2 优化 Gap
 
-- memory UI 存在多读面：消息 `memoryContext`、projection recent events、`MemoryBrowser` / `MemoryDebugTab` direct IPC。
+- memory UI 存在多读面：消息 `memoryContext`、projection recent events、以及仍经 `@/lib/tauri` 的页面/类型；**`MemoryBrowser` / `MemoryDebugTab` 主路径已走 `src/api/memory`**，与「仅 projection + 单一 evidence API」的终态仍有差距。
 - `src/lib/tauri.ts` 仍是过厚兼容层，新 UI 容易绕过 `src/api/*` facade。
 - projection checkpoint / seq 增量 replay 还没有成为 session 打开的主路径。
 - provider resilience、cost guard、self repair 已有模块骨架，但还需要和 run event log / projection contract 形成统一可观测闭环。
@@ -237,7 +276,7 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
 ### 漂移风险
 
 - 文档与代码漂移：旧架构文档仍描述 Svelte、旧 orchestrator、旧 context/budget 模块。
-- Pack 与实现漂移：MIG-016~MIG-023 的真实目标都应引用 vNext blueprint，不能各自定义局部 truth。
+- **双文档与代码漂移**：本文 §8 命名目标与实现进度需定期对照 `codebase`；`docs/packs/**` 已弃用，不得以旧 Registry 行覆盖 §1.0 审计结论。
 - 前后端 contract 漂移：TS DTO、Rust command response、runtime contract、event log schema 必须同源或由生成/测试保证。
 - UI truth 漂移：同一个 permission/run/memory 状态不能由多个 store 分别推断。
 
@@ -269,7 +308,7 @@ Session
 - 不再把 transcript 作为 `session.json` 的长期事实源。
 - 不再让 harness、projection、session manager 各自生成独立 run truth。
 - 所有新 runtime event 必须能关联 `session_id`、`run_id`、必要时 `turn_id`、`stream_id`。
-- 所有新 Pack 和 MIG-003 / MIG-007 必须按 vNext blueprint 更新任务实施，不得绕过 canonical runtime。
+- 新能力与 vNext 收敛应遵循 [if2ai-vnext-session-runtime-blueprint.md](docs/design-docs/if2ai-vnext-session-runtime-blueprint.md)。`docs/packs/**` 为历史材料，**不**再作为任务编排入口。
 
 ## 9. Agents Teams 设计建议
 
@@ -294,16 +333,16 @@ Agents Teams 不是“多个 chat tab”，也不是把 agent 名字塞进 sessi
 
 建议核心模型：
 
-| Model | 说明 |
-| --- | --- |
-| `TeamMeta` | team id、name、description、project binding、created/updated |
-| `TeamMember` | member id、identity/persona binding、role id、capability tags |
-| `AgentRole` | planner/executor/reviewer/researcher/custom role 定义 |
-| `TeamPolicy` | budget、tool allow/deny、approval mode、provider preference、parallelism |
-| `TeamRun` | 一次 team-level run，拥有多个 member run / delegation |
-| `Delegation` | parent run -> member assignment 的任务边 |
-| `TeamArtifact` | shared outputs、review notes、handoff summary |
-| `TeamProjection` | 前端展示所需的 team read model |
+| Model            | 说明                                                                     |
+| ---------------- | ------------------------------------------------------------------------ |
+| `TeamMeta`       | team id、name、description、project binding、created/updated             |
+| `TeamMember`     | member id、identity/persona binding、role id、capability tags            |
+| `AgentRole`      | planner/executor/reviewer/researcher/custom role 定义                    |
+| `TeamPolicy`     | budget、tool allow/deny、approval mode、provider preference、parallelism |
+| `TeamRun`        | 一次 team-level run，拥有多个 member run / delegation                    |
+| `Delegation`     | parent run -> member assignment 的任务边                                 |
+| `TeamArtifact`   | shared outputs、review notes、handoff summary                            |
+| `TeamProjection` | 前端展示所需的 team read model                                           |
 
 建议服务边界：
 
@@ -322,7 +361,8 @@ pub struct CorrelationIds {
     pub project_id: Option<String>,
     pub run_id: Option<String>,
     pub stream_id: Option<String>,
-    pub turn_id: Option<String>,
+    pub turn_index: Option<u32>,
+    pub attempt_id: Option<String>,
     pub team_id: Option<String>,
     pub member_id: Option<String>,
     pub role_id: Option<String>,
@@ -330,6 +370,8 @@ pub struct CorrelationIds {
     pub delegation_id: Option<String>,
 }
 ```
+
+（与 `src-tauri/.../contracts/common.rs` + `src/transport/contracts.ts` 对齐；字段均为可选，未启用 Teams 时省略。）
 
 Team 事件不应绕过 run event log。每个 member 的 tool call、permission request、provider retry、failure attempt、review result 都必须进入 canonical log，并通过 team projection 呈现。
 
@@ -367,7 +409,9 @@ MemoryScope = session | project | team | global
 - reviewer 的 review result 默认进入 team event log，但是否进入 long-term memory 由 `TeamPolicy` 控制。
 - tool permission 既要支持 team-level policy，也要保留 member-level escalation。
 
-### 9.6 Pack 拆分建议
+### 9.6 Teams 实施切片（命名参考，非 Pack 流程）
+
+以下 ID 仅作**工作分解命名**；**不**对应 `docs/packs/**` 或 CHARTER 执行义务。
 
 - `TEAM-001`：Team domain contracts + persistence skeleton，不接 UI。
 - `TEAM-002`：Team API facade + projection contract + frontend store skeleton。
@@ -391,6 +435,8 @@ MemoryScope = session | project | team | global
 - **Session Integrity Score**：基于 event log 完整性、missing event、permission dangling、tool retry exhaustion、provider failure 等生成会话完整性指标。
 
 ## 11. 优先级建议
+
+下列 **MIG-*** 为本文档内对 vNext 收敛的**命名目标**；是否已在实现中满足，由 **§1.0 联合审计**（对照 `codebase`）判定。
 
 ### 立即优先
 
@@ -419,7 +465,7 @@ MemoryScope = session | project | team | global
 ## 12. 参考路径
 
 - `docs/design-docs/if2ai-vnext-session-runtime-blueprint.md`
-- `docs/packs/REGISTRY.md`
+- [`.qoder/specs/if2ai-agent-evolution-report.md`](.qoder/specs/if2ai-agent-evolution-report.md)（与 §1.0 审计配对）
 - `src/App.tsx`
 - `src/api/conversations.ts`
 - `src/api/sessions.ts`

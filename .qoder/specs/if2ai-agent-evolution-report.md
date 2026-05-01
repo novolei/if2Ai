@@ -16,6 +16,12 @@
 7. 最终落地为 `docs/design-docs/` 下的正式设计文档
 8. **新增**: 2026-04 全栈代码重新扫描报告 (Part 1.3)，标记每个模块的实际代码实现状态
 
+### 文档治理：架构联合审计基准（2026-05）
+
+与仓库根目录 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) **配对**，构成 **If2Ai 架构联合审计**的唯一规范输入（见该文档 **§1.0**，superpowers 对齐工作流）。
+
+**已弃用**：`docs/packs/**`（含 CHARTER / REGISTRY / 单 Pack）**不作为**任何审计、Agent 或交付流程的输入。与 Part 1.3 / Part 6 冲突时，以 **双文档已更新段落 + 仓库代码** 为准；`docs/superpowers/plans/*`、GAP 类报告均为**可选**个人笔记，无约束力。
+
 ---
 
 ## Part 0: Browser-Harness 设计哲学精萃
@@ -109,7 +115,7 @@ Chrome 未启动 → 引导用户开启 chrome://inspect → 重试
   - Chrome 未授权 → 打开 chrome://inspect 引导用户
   - 最多 2 次尝试 + 60s 超时
 
-**If2Ai 对标准则**：现有的 `self_repair.rs`（仅 memory stuck-flag + broken-tool streak）太弱了。真正的自愈需要 **健康的检测 + 恢复的幂等性 + 透明的用户引导** 三重保障。Module C (Self-Healing Daemon) 就是对标的完整实现。
+**If2Ai 对标准则（2026-05-01 校准）**：历史上 `self_repair.rs` 曾只有 memory stuck-flag + broken-tool streak；**当前**该文件为 `runtime::daemon` 的兼容 shim，生产自愈主路径为 **Module C**（`src-tauri/src/modules/runtime/daemon/` + `desktop_host/setup.rs` 注册探针）。Browser-Harness 级别的「健康检测 + 幂等恢复 + 用户引导」仍由 Module C 持续迭代补齐，而非以旧 `self_repair.rs` 体量为准。
 
 #### 原则 #5: 坐标优先交互 (Coordinate-First Interaction)
 
@@ -179,7 +185,7 @@ daemon 进程独立维护浏览器状态，agent 通过极简的 socket 协议�
 - `daemon.py:168-197` — daemon handler 仅 30 行，5 个 meta 命令
 - 无框架文档注入到 agent 上下文
 
-**If2Ai 对标准则**：当前 120K chars 的上下文有巨大的压缩空间。Module A (Context Compression Pipeline) 的目标是把上下文降到 ~30K，但这不是终点——Browser-Harness 证明 ~5K 就够了。**关键是让 agent 信任 harness 而不是阅读 harness。**
+**If2Ai 对标准则**：历史上曾允许 ~120K 字符量级的请求组装；默认上限已收至 ~30K（可调）。Module A (Context Compression Pipeline) 仍要把**实际**上下文体积与 token 继续压向更小窗口——Browser-Harness 证明 ~5K 就够了。**关键是让 agent 信任 harness 而不是阅读 harness。**
 
 #### 原则 #9: 幂等性与宽恕 (Idempotence & Grace)
 
@@ -313,7 +319,7 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 | 能力                   | Browser-Harness            | GenericAgent                                                              | If2Ai 现状                                                                                                                                                            | 差距评级          |
 | ---------------------- | -------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| **典型上下文窗口使用** | ~5K (最小化上下文)         | <30K (同类的 1/10)                                                        | ~120K (`MAX_REQUEST_CHAR_BUDGET=120_000`)                                                                                                                             | **P0 - 关键差距** |
+| **典型上下文窗口使用** | ~5K (最小化上下文)         | <30K (同类的 1/10)                                                        | 默认 ~30K 字符上限（`budget::max_request_char_budget()` / `IF2AI_MAX_REQUEST_CHAR_BUDGET` 可选覆盖）；与「典型仍偏大」的观测与 tier 组合另评                          | **P1**            |
 | **消息修剪**           | Daemon deque(500) 自动封顶 | 消息压缩+修剪管线；分层记忆注入替换原始历史                               | `compact.rs` 在 token 阈值做会话压缩；`stream_preflight.rs` 裁剪到 `MAX_REQUEST_MESSAGE_COUNT=180`。但无消息级压缩——完整消息直到被逐出                                | **P0 - 关键差距** |
 | **分层注入**           | 3 层记忆                   | L0(宪法)→L1(迷你索引)→L2(事实)→L3(SOP)→L4(归档)——每 turn 仅注入 ~30 行 L1 | 4 槽预算 (System 10%/Episodic 20%/Semantic 30%/Working 40%，总 4K tokens)。但 working memory 就有 8 turns@1600 tokens，实际请求组装器绕过了预算限制直接用原始消息历史 | **P1 - 高**       |
 | **工具结果压缩**       | 仅坐标（极小输出）         | 工具输出截断+压缩后才加入历史                                             | `summarize_tool_result_for_model` 存在但截断很粗糙（基于字符数）；无 LLM 辅助结果摘要                                                                                 | **P1 - 中**       |
@@ -391,33 +397,28 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 ### 1.3 2026-04-28 全栈代码重新扫描：实现现状对照
 
-> ⚠️ **2026-04-30 校准注**：本节快照早于 commit `aa2deed`（"land complete 41-pack rollout"）。
-> 当前真值参见 [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md)
-> 与 [`docs/superpowers/plans/2026-04-30-agent-evolution-truth-loop.md`](../../docs/superpowers/plans/2026-04-30-agent-evolution-truth-loop.md)。
-> 本节下方的「❌ 待实现」/「🟡 部分」标记仅作为历史；模块 A/B/D/G/J/L 的算法/类型/调用站均已落地，
-> 余下断层是 4 个 `landed-stub`（DW-001/DW-002/DW-004/WU-002）等待 iteration 3 的
-> `WU-009-deep-utility-handle-threading` Pack 串入真实 `UtilityLlm` / `ProviderManager` / `KnowledgeStore` handle。
+> **2026-05-01（审计基准）**：联合架构审计仅以本文 + [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 为输入。`docs/packs/**` 已弃用；GAP / truth-loop 等文件**无**仲裁效力。下表与 Part 6 矩阵为 **spec 内自洽真值**，与任何历史 track 冲突时以 **本表 + 仓库代码** 为准并回写双文档。
+>
+> 历史快照曾早于 `aa2deed` rollout；**2026-05-01** 行：模块 A/B/D/G/H/J/L 算法与主路径已落地；daemon / scanner / browser 探针、DK `global_knowledge_store` 与 file-backed install、preflight digester 经 `TurnServiceDeps::utility_llm` 等已在生产路径接线（细节以代码为准）。术语 **`landed-stub`** 仅当生产依赖仍为 `Mock*`/`Stub*` 时适用；若仍存在，由 **§1.0 审计**对照代码标注，**不**依赖 GAP 报告计数。
 
 > 用户对 codebase 做了大量代码更新后，进行全栈重新扫描。以下对照每个 spec 模块的**设计目标 vs 实际代码实现**。
->
-> **真值优先级**：本表为 2026-04-30 二次校准；若与上方历史段落冲突，以本表及 [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md) §3 为准。术语 **`landed-stub`**：调用站 + 类型/算法骨架已落地，但生产依赖（真实 `UtilityLlm`、`ProviderManager`/`McpServerManager` 探针、`KnowledgeStore` 等）仍为占位——对 Exit Gate 计为 **not-done**。
 
 #### 后端扫描摘要（`src-tauri/src/modules` 下约 495 个 `.rs` 文件量级；LOC 未每次重算）
 
-| 模块               | 代码锚点（实际布局）                                                                                                                                                   | 实现状态                                                                                                                                                                                                                                                |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A (上下文压缩)     | `runtime/context_compression/`（`mod.rs`、`digester.rs`、`mini_index.rs`）+ `stream_preflight.rs` / `preflight_hooks.rs` / `budget.rs`                                 | 🟢 **算法与主路径已落地**；⚠️ **DW-002 `landed-stub`**：`stream_task` 生产 digester 仍接 `MockUtilityLlm`，真实消息摘要为 identity，直至 `UtilityLlm` handle 下传                                                                                         |
-| B (Skill 沉淀)     | `skills/sedimentation/` + `stream_finalize.rs` 内 `run_sedimentation_pipeline`                                                                                         | 🟢 **done**（WU-003）；设计稿中的单文件 `sedimentation.rs` 已演化为子目录模块                                                                                                                                                                            |
-| C (自愈 Daemon)    | `runtime/daemon/{mod,health_check,recovery}.rs` + `self_repair.rs` 兼容层 + `evolution_emitter.rs`；`desktop_host/setup.rs` 内 `spawn_self_healing_daemon_with_extras` | 🟡 **daemon 常驻路径已真化（iter-4/6）**：`BrowserRegistryProbe` + `ProviderApiKeyProbe` 与 SH-001 baseline **同 registry** 轮询；⚠️ **仍剩 stub 线程**：MCP 活性探针、`ProviderManager` 深度 liveness 等见 `setup.rs` 注释与 GAP §9.3 / iteration 7 候选 |
-| D (宪法记忆)       | `skills/guard/constitution.rs` + `prompt_planner` Constitution block                                                                                                   | 🟢 **guard/宪法与注入路径已落地**（非附录中的 `runtime/constitution.rs` 单文件）                                                                                                                                                                         |
-| E (Agent 自编辑)   | `learning/`、`stream_tool_execution.rs`、self-edit scanner helper；`setup.rs` spawn                                                                                    | 🟡 **helper + tick 已落地**；⚠️ **DW-001 `landed-stub`**：`ConstEmbedder` + `MockUtilityLlm`，扫描输入为空，无真实提案                                                                                                                                    |
-| F (浏览器会话自愈) | `smart_browser/runtime.rs` + `browser/session.rs` 等 3-backend                                                                                                         | 🟡 **会话与运行时就绪**；daemon 内浏览器真探针仍为 `StubBrowserProbe`（GAP §4）                                                                                                                                                                          |
-| G (域知识仓库)     | `skills/domain_knowledge/` + `stream_finalize.rs` `run_domain_knowledge_contributor`                                                                                   | 🟢 **finalize 钩子 done**；⚠️ **DW-004 `landed-stub`**：`work_loop`  advisory 仍 `MockKnowledgeStore`                                                                                                                                                     |
-| H (工作检查点)     | `runtime/working_checkpoint.rs` + `projection.rs` / `recoverability.rs`                                                                                                | 🟢 **持久化与恢复基础已落地**                                                                                                                                                                                                                            |
-| I (向量搜索)       | `skills/vector_index.rs` + `memory/embedding/`                                                                                                                         | 🟡 **索引与嵌入基础设施就绪**；与 work_loop 的语义检索深度以代码为准                                                                                                                                                                                     |
-| J (坐标优先策略)   | `smart_browser/runtime.rs` `decide_browser_click_strategy`                                                                                                             | 🟢 **done**（WU-006 / DW-005）                                                                                                                                                                                                                           |
-| K (验证门)         | `memory_quality_gate.rs`、`memory_write_policy.rs` 等                                                                                                                  | 🟡 **策略分散落地**；独立 `memory/verification_gate.rs` 与否以仓库为准                                                                                                                                                                                   |
-| L (HTML 简化器)    | `smart_browser/runtime.rs` `simplify_browser_result_text` / `adaptive_simplify`                                                                                        | 🟢 **done**（WU-006）                                                                                                                                                                                                                                    |
+| 模块               | 代码锚点（实际布局）                                                                                                                                                   | 实现状态                                                                                                                                                                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A (上下文压缩)     | `runtime/context_compression/`（`mod.rs`、`digester.rs`、`mini_index.rs`）+ `stream_preflight.rs` / `preflight_hooks.rs` / `budget.rs`                                 | 🟢 **算法与主路径已落地**；digester 生产路径经 `stream_iteration` + `TurnServiceDeps::utility_llm`（**非** identity）。🟢 **默认请求字符上限** 已与 ~30K 对齐（`max_request_char_budget()`；`IF2AI_MAX_REQUEST_CHAR_BUDGET` 覆盖）；观测闭环与「实际 token 仍偏高」场景仍待加强 |
+| B (Skill 沉淀)     | `skills/sedimentation/` + `stream_finalize.rs` 内 `run_sedimentation_pipeline`                                                                                         | 🟢 **done**（WU-003）；设计稿中的单文件 `sedimentation.rs` 已演化为子目录模块                                                                                                                                                                                                  |
+| C (自愈 Daemon)    | `runtime/daemon/{mod,health_check,recovery}.rs` + `self_repair.rs` 兼容层 + `evolution_emitter.rs`；`desktop_host/setup.rs` 内 `spawn_self_healing_daemon_with_extras` | 🟢 **browser + provider API-key + provider circuit + MCP config-presence + browser-use liveness** 已进入主 daemon（`setup.rs` iter-8）；更深 **主动式 Provider ping** 仍可迭代                                                                                                 |
+| D (宪法记忆)       | `skills/guard/constitution.rs` + `prompt_planner` Constitution block                                                                                                   | 🟢 **guard/宪法与注入路径已落地**（非附录中的 `runtime/constitution.rs` 单文件）                                                                                                                                                                                               |
+| E (Agent 自编辑)   | `learning/`、`stream_tool_execution.rs`、self-edit scanner helper；`setup.rs` spawn                                                                                    | 🟢 **scanner 真化（iter-7）**：`ChatProviderUtilityLlm` + `FastEmbedProvider` + harness 报告输入                                                                                                                                                                               |
+| F (浏览器会话自愈) | `smart_browser/runtime.rs` + `browser/session.rs` 等 3-backend                                                                                                         | 🟢 **daemon 内 `BrowserRegistryProbe`**（iter-4），非 Stub-only                                                                                                                                                                                                                |
+| G (域知识仓库)     | `skills/domain_knowledge/` + `stream_finalize.rs` `run_domain_knowledge_contributor`                                                                                   | 🟢 **finalize + `global_knowledge_store` + file-backed install**（iter-5）；`work_loop` advisory 读同一 store                                                                                                                                                                  |
+| H (工作检查点)     | `runtime/working_checkpoint.rs` + `projection.rs` / `recoverability.rs`                                                                                                | 🟢 **持久化与恢复基础已落地**                                                                                                                                                                                                                                                  |
+| I (向量搜索)       | `skills/vector_index.rs` + `memory/embedding/`                                                                                                                         | 🟡 **索引与嵌入基础设施就绪**；与 work_loop 的语义检索深度以代码为准                                                                                                                                                                                                           |
+| J (坐标优先策略)   | `smart_browser/runtime.rs` `decide_browser_click_strategy`                                                                                                             | 🟢 **done**（WU-006 / DW-005）                                                                                                                                                                                                                                                 |
+| K (验证门)         | `memory_quality_gate.rs`、`memory_write_policy.rs` 等                                                                                                                  | 🟡 **策略分散落地**；独立 `memory/verification_gate.rs` 与否以仓库为准                                                                                                                                                                                                         |
+| L (HTML 简化器)    | `smart_browser/runtime.rs` `simplify_browser_result_text` / `adaptive_simplify`                                                                                        | 🟢 **done**（WU-006）                                                                                                                                                                                                                                                          |
 
 **🆕 新发现的已实现能力（spec 未覆盖）**：
 
@@ -434,21 +435,21 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 
 #### 前端扫描摘要（298 个 TS/TSX 文件）
 
-| 维度                   | Spec 设计                  | 实际代码                                                                       | 差异         |
-| ---------------------- | -------------------------- | ------------------------------------------------------------------------------ | ------------ |
-| **Store 数量**         | 3 (bootstrap/chat/session) | 7 (bootstrap/chat/session/conversation-slice/runtime-projection/browser-slice) | 多 4 个      |
-| **API Facades**        | 未详述                     | 11 个 domain-scoped modules                                                    | 完整架构     |
-| **Runtime Projection** | 提及，未量化               | 45 files, ~3000 LOC                                                            | 比预期更复杂 |
-| **Jiaochang 前端**     | 未覆盖                     | 60 files (游戏可视化+音频+i18n)                                                | 全新模块     |
-| **Voice 组件**         | 未覆盖                     | AgentVoiceIndicator, SttButton, TtsProfilePicker                               | 已实现       |
-| **Spec 设计"新"组件**  | 24 个 planned              | 0 个已实现, 但部分有基线(ExecutionModePill, SmartBrowserCockpit 已存在)        | 基线更成熟   |
+| 维度                   | Spec 设计                  | 实际代码                                                                                                                     | 差异                  |
+| ---------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| **Store 数量**         | 3 (bootstrap/chat/session) | 7 (bootstrap/chat/session/conversation-slice/runtime-projection/browser-slice)                                               | 多 4 个               |
+| **API Facades**        | 未详述                     | 11 个 domain-scoped modules                                                                                                  | 完整架构              |
+| **Runtime Projection** | 提及，未量化               | 45 files, ~3000 LOC                                                                                                          | 比预期更复杂          |
+| **Jiaochang 前端**     | 未覆盖                     | 60 files (游戏可视化+音频+i18n)                                                                                              | 全新模块              |
+| **Voice 组件**         | 未覆盖                     | AgentVoiceIndicator, SttButton, TtsProfilePicker                                                                             | 已实现                |
+| **Spec 设计"新"组件**  | 24 个 planned              | **6** 个 evolution Dev Drawer 子组件已落地（`src/components/chat/evolution/`）+ 基线 ExecutionModePill / SmartBrowserCockpit | Part 7 全缺表述已过时 |
 
-#### 关键结论（2026-04-30）
+#### 关键结论（2026-05-01，与文首「文档治理」一致）
 
-1. **后端 A/B/D/G/H/J/L 的算法与主路径已落地**，目录布局与设计附录中的「单文件新建」不完全一致（多为子目录模块）；**C/E/F/I/K** 仍有 **partial** 或 **`landed-stub`** 依赖线程，集中修复 Pack 建议名 **`WU-009-deep-utility-handle-threading`**（见 GAP 报告 §4）。
-2. **不再成立（历史）**：「12 模块中 5 个完全待建」——请以本表与 GAP §3 替换该判断。
+1. **后端 A/B/D/G/H/J/L 的算法与主路径已落地**，目录多为子目录模块而非附录单文件；**C/E/F** 的 daemon / scanner / browser 探针 **已接生产**（以 `desktop_host/setup.rs`、`runtime/daemon/`、`smart_browser/` 源码为准）。**I/K** 仍为 **🟡**：向量/work_loop 深度与 `memory_quality_gate` / `verification_gate` 并存，见上表与仓库。
+2. **不再成立（历史）**：「12 模块中 5 个完全待建」——以 **本 Part 1.3 表 + 仓库代码** 为准。
 3. **仍存在 6 个 spec 未覆盖的新能力**（M/N 等）：Module M、N 章节保留。
-4. **前端**：`src/components/chat/evolution/` 已落地 6 个 Dev Drawer 子组件并消费 `evolutionEventStore`（GAP §3.3）；Part 7 中「6 类 UI 全缺」的表述已过时，见 §7.1 更新段。
+4. **前端**：`src/components/chat/evolution/` 已落地 6 个 Dev Drawer 子组件并消费 `evolutionEventStore`；`App.tsx` 订阅 `runtime_event` → `evolutionEventStore.applyEnvelope`。Part 7 中「6 类 UI 全缺」的表述已过时，见 §7.1 更新段。
 
 ---
 
@@ -475,11 +476,11 @@ CDP 直连 → agent 可以发送任何 CDP 命令，不限于预封装函数
 | #11 贡献回写            | Module B + G + K (Verification Gate)                           | Agent 默认沉淀发现，经验证后写入 |
 | #12 完整自由            | Module D (Constitution) + Module E (Self-Edit)                 | 宪法定义边界，边界内完全自由     |
 
-### Module A: 上下文压缩管线 (Context Compression Pipeline) — P0 🟢 已落地（⚠️ DW-002 `landed-stub`）
+### Module A: 上下文压缩管线 (Context Compression Pipeline) — P0 🟢 已落地（🟢 #1 默认字符预算已对齐）
 
-**实际代码现状（2026-04-30）**: `runtime/context_compression/` 提供 `ContextTier`、`TierBudgetAllocation`、`compress_for_request`、`MessageDigester`、`build_mini_index` 等；`stream_preflight` / `preflight_hooks` 已接线。**生产路径缺口**：`stream_task` 侧 digester 仍使用占位 `UtilityLlm`（身份变换），真压缩待 **`WU-009-deep-utility-handle-threading`**。下方设计稿中的单文件路径 `context_compression.rs` 已演化为目录模块，类型以仓库为准。
+**实际代码现状（2026-05-01）**: `runtime/context_compression/` 提供 `ContextTier`、`TierBudgetAllocation`、`compress_for_request`、`MessageDigester`、`build_mini_index` 等；`stream_preflight` / `preflight_hooks` 已接线。**Digester 生产路径**：`stream_iteration` + `TurnServiceDeps::utility_llm`。**默认请求字符上限**：`budget::max_request_char_budget()`（默认 30K；`IF2AI_MAX_REQUEST_CHAR_BUDGET` ≥8192 可覆盖）。**仍待加强**：端到端观测与「实际组装仍偏大」类场景。单文件 `context_compression.rs` 已演化为目录模块。
 
-**定位**：将 If2Ai 从"全量发送"转变为"最小可行上下文"架构。目标：将平均请求从 ~120K chars 压缩到 ~30K chars，不丢失任务连贯性。
+**定位**：将 If2Ai 从"全量发送"转变为"最小可行上下文"架构。目标：将典型请求字符组装控制在 ~30K 量级（默认 `max_request_char_budget()`），并继续压降实际 token 与平均体积，不丢失任务连贯性。
 
 **Harness 原则锚定**：#8 最小上下文哲学 + #10 无管理层。关键洞察：Agent 应该**信任 harness 而非阅读 harness**——harness 的复杂度不应泄露到 agent 的执行路径上。
 
@@ -657,9 +658,9 @@ pub async fn persist_skill(skill: &SedimentedSkill) -> Result<String>;
 
 ---
 
-### Module C: Self-Healing Daemon (自修复守护进程) — P0 🟡 框架已落地（⚠️ 残余 stub 见 GAP §9.3）
+### Module C: Self-Healing Daemon (自修复守护进程) — P0 🟢 生产路径已接（🟡 更深 liveness 可迭代）
 
-**实际代码现状（2026-04-30）**: `desktop_host/setup.rs` 在 **truth-loop iter-4+** 已改为 `spawn_self_healing_daemon_with_extras`：同 registry 内运行 **`BrowserRegistryProbe`**（替代孤立 `StubBrowserProbe`）与 **`ProviderApiKeyProbe`**（iter-6，凭据 env 扫描）。**仍待迭代**：MCP 进程探针、`ProviderManager` 工厂式 liveness 等——以 `setup.rs:136-138` 注释与最新 GAP 报告为准，勿复用 rollout 前「仅 legacy 两检查」叙述。
+**实际代码现状（2026-05-01）**: `desktop_host/setup.rs` 使用 `spawn_self_healing_daemon_with_extras`：同 registry 内 **`BrowserRegistryProbe`**、**`ProviderApiKeyProbe`**、provider circuit、MCP 配置与 browser-use 快照等探针（以 `setup.rs` 与 `runtime/daemon/` 源码为准）。**仍待迭代**：更深 **ProviderManager** 主动 ping、MCP 进程级探针等——以 **仓库代码注释** 与 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §7 为准，**不**依赖 GAP 报告章节号。
 
 **定位**：一个轻量级 supervisor 层，监控 agent 健康并自动从崩溃、卡死、降级状态恢复。
 
@@ -800,9 +801,9 @@ pub struct ConstitutionManifest {
 
 ---
 
-### Module E: Agent 自编辑能力 (Agent Self-Edit) — P1 🟡 已部分落地（⚠️ DW-001 `landed-stub`）
+### Module E: Agent 自编辑能力 (Agent Self-Edit) — P1 🟢 已落地（scanner 真化）
 
-**实际代码现状（2026-04-30）**: `attempt_ledger`、`agent_loop_delegate`、`learning/` 与 self-edit **scanner helper** 已存在；`setup.rs` 间歇 spawn scanner。**生产缺口**：`ConstEmbedder` + `MockUtilityLlm` 导致扫描无真实输入/提案（DW-001）。单文件 `runtime/self_edit.rs` 与否以仓库实际模块拆分为准。
+**实际代码现状（2026-05-01）**: `attempt_ledger`、`agent_loop_delegate`、`learning/` 与 self-edit **scanner**；`setup.rs` spawn；**iter-7** 起 `ChatProviderUtilityLlm` + `FastEmbedProvider` + harness 报告驱动输入。单文件 `runtime/self_edit.rs` 与否以仓库实际模块拆分为准。
 
 **定位**：当工具持续失败时，允许 agent 检查失败模式并提出修复方案——参数调整、包装脚本、或（对于用户创作的工具）实际代码编辑。
 
@@ -855,7 +856,7 @@ pub enum SelfEditTarget {
 
 ---
 
-### Module F: 浏览器会话自修复 (Browser Session Self-Healing) — P1 🟡 部分已实现
+### Module F: 浏览器会话自修复 (Browser Session Self-Healing) — P1 🟢 生产路径已接（深度重连/会话策略可迭代）
 
 **实际代码现状（2026-04-30）**: `smart_browser/session_health.rs`（`BrowserHealthStatus` 等）+ `runtime.rs` 3-backend 与 **坐标 / 简化** 策略已增强（与 J、L 联动）。`desktop_host/setup.rs` 内 **`BrowserRegistryProbe`** 将注册表心跳接入 daemon（iter-4）。
 
@@ -908,9 +909,9 @@ pub enum BrowserRecoveryAction {
 
 ---
 
-### Module G: Domain Knowledge Repository (域知识仓库) — P1 🟢 钩子已落地（⚠️ DW-004 `landed-stub`）
+### Module G: Domain Knowledge Repository (域知识仓库) — P1 🟢 已落地
 
-**实际代码现状（2026-04-30）**: `skills/domain_knowledge/` + `stream_finalize.rs` 内 `run_domain_knowledge_contributor` 已在生产路径。**生产缺口**：`work_loop` advisory 仍使用 `MockKnowledgeStore`，直至进程级 `KnowledgeStore` 单例下传（GAP §4）。
+**实际代码现状（2026-05-01）**: `skills/domain_knowledge/` + `stream_finalize` contributor + **`global_knowledge_store()`** + `install_persistent_knowledge_store`（`setup.rs`）；`work_loop` advisory 读同一 store。
 
 **定位**：参考 Browser-Harness 的 73+ domain-skills + 19 interaction-skills，以及 GenericAgent 的 105K+ 技能卡体系，构建 Agent 可读写的结构化域知识库。Agent 不仅使用现有 Skill，还能在执行过程中创作和贡献域知识。
 
@@ -1015,7 +1016,7 @@ pub async fn prune_stale_entries(
 
 ### Module H: Working Checkpoint System (工作检查点系统) — P1 🟢 核心已落地
 
-**实际代码现状（2026-04-30）**: `runtime/working_checkpoint.rs` 与 `projection.rs` / `recoverability.rs` 协同；finalize / preflight 钩子见 WU-003、WU-004 注释。若仍有 `dead_code` 或未启用分支，以仓库与 GAP 报告为准迭代。
+**实际代码现状（2026-05-01）**: `runtime/working_checkpoint.rs` 与 `projection.rs` / `recoverability.rs` 协同；finalize / preflight 钩子见 `stream_finalize` / `preflight_hooks`。若仍有 `dead_code` 或未启用分支，以 **仓库代码** 为准迭代。
 
 **定位**：参考 GenericAgent 的 `update_working_checkpoint` 工具，实现每轮 <200 tokens 的关键信息短期记忆注入机制。确保关键约束、文件路径、失败原因、进度始终在上下文中——即使历史消息被压缩或驱逐。
 
@@ -1710,31 +1711,29 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 > 确保 Part 1 中识别的每一个差距点都在 Part 2 和 Part 3 中被完整覆盖，且贯通 Part 0 的十二大设计原则。
 >
-> ⚠️ **2026-04-30 校准注**：下表 ✅ = "Pack 落地 + 算法存在"。**实际生产路径深度**以
-> [`docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md`](../../docs/design-docs/agent-evolution/AGENT-EVOLUTION-SPEC-GAP-REPORT-2026-04-30.md) §3 为准。
-> **#1 / #5 / #8** 仍对应 **`landed-stub`** Pack：**DW-001**（自编辑扫描）、**DW-002**（preflight digester）、**DW-004**（DK advisory store）。**#3（Self-Healing）** 在 truth-loop iter-4/6 后已为 **browser + provider API-key 真探针**；**MCP / 更深 Provider liveness** 等仍属后续迭代（见 GAP §9.3）。**WU-009-deep-utility-handle-threading** 仍负责把 **`UtilityLlm`** 与 **进程级 `KnowledgeStore`** 串到 DW-001/002/004 的生产路径。
+> **2026-05-01 校准注**：下表 ✅ = 本 spec 内「差距点已由设计中的模块覆盖且主路径已落地」（历史列中的 Pack ID 仅为**标签**，**不**绑定 `docs/packs/**` 执行）。**#1** = Token 效率（含默认请求字符上限与端到端观测；`runtime/budget.rs` 与 `stream_preflight` 对照）；**#3/#5/#8** = daemon / scanner / DK 生产路径（以代码为准）。
 
-| #   | 差距点                      | 优先级 | Harness 原则                              | 覆盖模块     | 实施 Pack(s)              | 状态                                                                                                                                                 |
-| --- | --------------------------- | ------ | ----------------------------------------- | ------------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Token 效率: 120K→30K        | P0     | #8 最小上下文 / #10 无管理层              | Module A     | FEAT-TE-001~004           | ⚠️ **`landed-stub`**（DW-002：`UtilityLlm` 占位 → 生产 digester 恒等）                                                                                |
-| 2   | Skill 自动沉淀              | P0     | #7 技能即文件 / #11 贡献回写              | Module B     | FEAT-SE-001, 002          | ✅                                                                                                                                                    |
-| 3   | Self-Healing Daemon         | P0     | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕 | Module C     | FEAT-SH-001, 002          | 🟡 **partial**（daemon：`BrowserRegistryProbe` + `ProviderApiKeyProbe` 已进 `spawn_self_healing_daemon_with_extras`；**MCP 等**仍 stub，见 GAP §9.3） |
-| 4   | Constitutional Memory (L0)  | P1     | #12 完整自由（边界）                      | Module D     | FEAT-SE-003               | ✅                                                                                                                                                    |
-| 5   | Agent 自编辑工具能力        | P1     | #2 Agent 自编辑 Harness / #12 完整自由    | Module E     | FEAT-AE-001               | ⚠️ **`landed-stub`**（DW-001：`MockUtilityLlm` / 空扫描输入）                                                                                         |
-| 6   | 浏览器会话自修复            | P1     | #4 自愈闭环 / #6 连接用户浏览器           | Module F     | FEAT-SH-003               | ✅                                                                                                                                                    |
-| 7   | Skill 向量语义搜索          | P1     | #7 技能即文件（检索升级）                 | Module I     | FEAT-SE-004               | ✅                                                                                                                                                    |
-| 8   | 域知识编码+Agent 创作       | P1     | #7 技能即文件 / #11 贡献回写              | Module G     | FEAT-DK-001, 003          | ⚠️ **`landed-stub`**（DW-004：`MockKnowledgeStore` advisory）                                                                                         |
-| 9   | 动态工具自创注册            | P1     | #2 Agent 自编辑 Harness                   | Module E + B | FEAT-AE-001 + SE-001      | ✅                                                                                                                                                    |
-| 10  | Working Checkpoint 短期注入 | P1     | #8 最小上下文（关键信息防丢失）           | Module H     | FEAT-DK-002               | ✅                                                                                                                                                    |
-| 11  | 分层注入替代原始历史        | P1     | #8 最小上下文 / #10 无管理层              | Module A + D | FEAT-TE-001, 003 + SE-003 | ✅                                                                                                                                                    |
-| 12  | 执行验证记忆写入            | P2     | #9 幂等宽恕（只记录确定结果）             | Module K     | FEAT-AE-002               | ✅                                                                                                                                                    |
-| 13  | 坐标优先浏览器交互          | P2     | #5 坐标优先交互                           | Module J     | FEAT-BR-002               | ✅                                                                                                                                                    |
-| 14  | 浏览器内容 HTML 简化        | P2     | #1 极简零框架 / #8 最小上下文             | Module L     | FEAT-BR-001               | ✅                                                                                                                                                    |
-| 15  | 工具原子性整合              | P2     | #10 无管理层（工具极简）                  | 跨模块       | FEAT-BR-003               | ✅                                                                                                                                                    |
+| #   | 差距点                      | 优先级 | Harness 原则                              | 覆盖模块     | 实施 Pack(s)              | 状态                                                                                            |
+| --- | --------------------------- | ------ | ----------------------------------------- | ------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | Token 效率: 120K→30K        | P0     | #8 最小上下文 / #10 无管理层              | Module A     | FEAT-TE-001~004           | 🟡 **进行中**（默认字符上限已 ~30K；实际 token/组装体积与观测闭环仍待加强）                      |
+| 2   | Skill 自动沉淀              | P0     | #7 技能即文件 / #11 贡献回写              | Module B     | FEAT-SE-001, 002          | ✅                                                                                               |
+| 3   | Self-Healing Daemon         | P0     | #3 进程即状态 / #4 自愈闭环 / #9 幂等宽恕 | Module C     | FEAT-SH-001, 002          | 🟢 **done（生产路径）**（browser + provider key + circuit + MCP 快照探针；更深主动 ping 可迭代） |
+| 4   | Constitutional Memory (L0)  | P1     | #12 完整自由（边界）                      | Module D     | FEAT-SE-003               | ✅                                                                                               |
+| 5   | Agent 自编辑工具能力        | P1     | #2 Agent 自编辑 Harness / #12 完整自由    | Module E     | FEAT-AE-001               | ✅（scanner 真输入；见 Module E 正文与 `setup.rs`）                                              |
+| 6   | 浏览器会话自修复            | P1     | #4 自愈闭环 / #6 连接用户浏览器           | Module F     | FEAT-SH-003               | ✅                                                                                               |
+| 7   | Skill 向量语义搜索          | P1     | #7 技能即文件（检索升级）                 | Module I     | FEAT-SE-004               | 🟡 **进行中**（与 Part 1.3 一致：索引/嵌入就绪；`work_loop` 语义检索深度以迭代为准）             |
+| 8   | 域知识编码+Agent 创作       | P1     | #7 技能即文件 / #11 贡献回写              | Module G     | FEAT-DK-001, 003          | ✅（`global_knowledge_store` + finalize upsert；见 Module G 正文）                               |
+| 9   | 动态工具自创注册            | P1     | #2 Agent 自编辑 Harness                   | Module E + B | FEAT-AE-001 + SE-001      | ✅                                                                                               |
+| 10  | Working Checkpoint 短期注入 | P1     | #8 最小上下文（关键信息防丢失）           | Module H     | FEAT-DK-002               | ✅                                                                                               |
+| 11  | 分层注入替代原始历史        | P1     | #8 最小上下文 / #10 无管理层              | Module A + D | FEAT-TE-001, 003 + SE-003 | ✅                                                                                               |
+| 12  | 执行验证记忆写入            | P2     | #9 幂等宽恕（只记录确定结果）             | Module K     | FEAT-AE-002               | ✅                                                                                               |
+| 13  | 坐标优先浏览器交互          | P2     | #5 坐标优先交互                           | Module J     | FEAT-BR-002               | ✅                                                                                               |
+| 14  | 浏览器内容 HTML 简化        | P2     | #1 极简零框架 / #8 最小上下文             | Module L     | FEAT-BR-001               | ✅                                                                                               |
+| 15  | 工具原子性整合              | P2     | #10 无管理层（工具极简）                  | 跨模块       | FEAT-BR-003               | ✅                                                                                               |
 
 **覆盖统计**: 15/15 差距点 → 14 模块 (12 后端 + 2 新发现) → 22 后端 Packs + 2 新发现 Pack → 31 前端文件 (20 新建 + 11 修改) + 61 已实现文件, 12 原则完整覆盖, 前后端全栈追溯完毕。
 
-**代码实现进度 (2026-04-30 真值)**: 14 模块中 🟢 **完整/产品级闭环** 主要为 **M、N**；**A、B、D、G、H、J、L** 为 **算法 + 主路径已落地**（其中 **#1、#5、#7（域知识）** 关联的 **DW-001 / DW-002 / DW-004 / WU-002** 为 **`landed-stub`**，见表头校准注）；**C、E、F、I、K** 为 **🟡 partial** 或含 stub。**请勿再使用**「🔴5 个待实现 (A/B/D/G/J/L)」——该句为 rollout 前快照，已构成二次误真。
+**代码实现进度 (2026-05-01 真值)**: 14 模块中 🟢 **完整/产品级闭环** 主要为 **M、N**；**A** 为 **算法落地 + 默认请求字符上限已对齐 ~30K（#1 仍含观测与 token 体积）**；**B、D、G、H、J、L** 为 **算法 + 主路径已落地**；**C、E、F** 自愈 / 自编辑 / 浏览器 daemon 路径 **已接生产**（与 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §1.1、§7 对齐）。**Module I** 与 **差距 #7** 以 **Part 1.3 表（🟡）** 为准，上表 #7 行已与此对齐。**请勿再使用** rollout 前「5 模块待建 / 4×`landed-stub` 未接线」表述。
 
 ### Principle → Module 正向索引
 
@@ -1851,7 +1850,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - **Git 模块**：api.ts (branch detection, repo status)，已实现
 - **Memory Debug / Prompt Diagnostics**：调试页面，已实现
 
-**前端差距 (2026-04-30 真值)**: `src/components/chat/evolution/` 已落地 **EvolutionDevDrawer** 及 **6 个子面板**（`DaemonHealthDashboard`、`CompressionHistoryTable`、`SkillSedimentationTimeline`、`SelfEditPanel`、`EvolutionMiscPanel` 等），`App.tsx` 订阅 `runtime_event` 并调用 **`evolutionEventStore.applyEnvelope`**（详见 GAP 报告 §3.3）。因此下列历史表述 **不再成立**：「6 类可视化全不存在」。**仍可能存在的差距**：生产事件密度不足、部分面板仍为 dev 级、与 **landed-stub** 后端状态对不齐时的空数据体验——归 **iteration 3（WU-009）** 与后续 UX 打磨。
+**前端差距 (2026-05-01 真值)**: `src/components/chat/evolution/` 已落地 **EvolutionDevDrawer** 及 **6 个子面板**，`App.tsx` 订阅 `runtime_event` → **`evolutionEventStore.applyEnvelope`**。历史「6 类可视化全不存在」**不成立**。**仍可能存在的差距**：生产事件密度、dev 级面板打磨、与 **#1 预算/空转** 相关的空数据体验（TE / UX 迭代）。
 
 **关键结论**: 前端基础远超 spec 原始假设（298 files vs 31 planned changes）。spec Part 7 从"全部新建"调整为"在成熟基线上升级"；Evolution 抽屉已提供 **首版可观测性**，后续迭代聚焦数据真实性与交互深度。
 
