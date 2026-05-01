@@ -1,6 +1,7 @@
 import * as React from "react"
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { setActiveModel } from '@/api/models'
 import {
   ArrowDown,
   ArrowUp,
@@ -2456,10 +2457,7 @@ const ComposerDock = React.memo(function ComposerDock({
                   if (availableModelItems.length > 0) {
                     const parts = value.split('/')
                     if (parts.length === 2) {
-                      void invoke('model_set_active', {
-                        providerId: parts[0],
-                        modelId: parts[1],
-                      })
+                      void setActiveModel(parts[0], parts[1])
                     }
                   }
                 }}

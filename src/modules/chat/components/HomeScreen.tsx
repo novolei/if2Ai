@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { setActiveModel } from '@/api/models'
 import { cn } from '@/lib/utils'
 import type { PermissionMode, ProjectMeta } from '@/lib/tauri'
 import type { RecentSession } from '../types'
@@ -278,7 +279,7 @@ export function HomeScreen({
                           onModelChange(item.value)
                           const parts = item.value.split('/')
                           if (parts.length === 2) {
-                            void invoke('model_set_active', { providerId: parts[0], modelId: parts[1] })
+                            void setActiveModel(parts[0], parts[1])
                           }
                           setModelDropdownOpen(false)
                         }}

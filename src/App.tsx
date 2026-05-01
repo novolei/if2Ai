@@ -30,6 +30,7 @@ import {
   getSession,
   getSessionHistoryPage,
   generateSessionTitle,
+  getActiveModel,
   listenToChatPrefill,
   listProjects,
   listProjectSessions,
@@ -60,7 +61,7 @@ import {
   onAppUpdaterState,
   type UpdaterRuntimeState,
 } from "@/api/updater";
-import { invoke } from "@/lib/tauri";
+import { stopAgentStream as stopAgentStreamCommand } from "@/api/streaming";
 import type {
   PermissionMode,
   PermissionRequestPayload,
@@ -213,10 +214,7 @@ function App() {
     let unlistenModelsChanged: (() => void) | null = null;
     const refreshActiveModel = async () => {
       try {
-        const activeModel = await invoke<{
-          provider_id: string;
-          model_id: string;
-        } | null>("model_get_active");
+        const activeModel = await getActiveModel()
         if (activeModel) {
           setSelectedModel(
             `${activeModel.provider_id}/${activeModel.model_id}`,
@@ -2107,9 +2105,7 @@ function App() {
     const streamAbortHandle = streamAbortHandles[sessionId];
     if (streamAbortHandle) {
       try {
-        await invoke<string>("stop_agent_stream", {
-          streamId: streamAbortHandle,
-        });
+        await stopAgentStreamCommand(streamAbortHandle);
       } catch (err) {
         console.error("Failed to stop stream:", err);
       }
