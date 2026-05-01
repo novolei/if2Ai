@@ -503,6 +503,7 @@ mod tests {
             project_id: None,
             turn_index: Some(3),
             attempt_id: Some("att-7".into()),
+            ..CorrelationIds::default()
         };
         let mut p = StreamTokenPayload::skeleton("s1", "text_delta");
         p.text = Some("hello".into());
