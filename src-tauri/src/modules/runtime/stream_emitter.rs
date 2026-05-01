@@ -38,9 +38,6 @@
 //! 2. The wire shape of [`StreamTokenPayload`] MUST NOT change in
 //!    M1.5 — frontend `listenToStream` depends on every field
 //!    name. Any change here is a contract break.
-//! 3. The canonical event name [`AGENT_TOKEN_EVENT`] MUST be the
-//!    only string in this crate that emits to that channel. Any new
-//!    runtime event name belongs in this module too.
 
 // Typed factories / convenience methods below are part of the M1.5
 // public surface and will be consumed by later slices (M1.6
@@ -59,20 +56,6 @@ use super::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEven
 use super::contracts::memory::MemoryItemProjection;
 use super::contracts::prompt::PromptDiagnosticsSummary;
 use super::recoverability::ResumeRecoverability;
-
-/// Legacy Tauri event name for the agent-loop streaming path.
-///
-/// Retired by PR D-1 (2026-05-02): production emissions go through
-/// the canonical [`RuntimeEventEnvelope`] on
-/// `crate::modules::runtime::evolution_emitter::RUNTIME_EVENT_CHANNEL`.
-/// The const is kept temporarily so external integrations / tests
-/// referencing the historical channel name still resolve; remove
-/// after one release cycle.
-#[deprecated(
-    since = "0.13.0",
-    note = "PR D-1 retired the agent-token channel; emit on RUNTIME_EVENT_CHANNEL via StreamTokenPayload::to_envelope()."
-)]
-pub const AGENT_TOKEN_EVENT: &str = "agent-token";
 
 /// Phase M3-C closeout — canonical Tauri event name for the
 /// **batch envelope** emitted by

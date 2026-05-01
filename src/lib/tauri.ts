@@ -16,15 +16,12 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   MEMORY_AFTER_TURN_EVENT,
-  MEMORY_EVENT,
-  PERMISSION_REQUEST_EVENT,
   RUNTIME_EVENT_CHANNEL,
 } from "@/transport/contracts";
 import type {
   ActivationSnapshot,
   ExecutionModeDecision,
   MemoryAfterTurnPayload,
-  MemoryEventPayload,
   McpWorkbenchActivityEntry,
   McpWorkbenchDiscovery,
   McpWorkbenchGetPromptRequest,
@@ -36,7 +33,6 @@ import type {
   McpWorkbenchToolCallRequest,
   McpWorkbenchToolCallResult,
   PermissionMode,
-  PermissionRequestPayload,
   RuntimeEventEnvelope,
   StreamTokenPayload,
 } from "@/transport/contracts";
@@ -84,11 +80,7 @@ export type {
   ScenarioProfileHint,
   StreamTokenPayload,
 } from "@/transport/contracts";
-export {
-  MEMORY_EVENT,
-  PERMISSION_REQUEST_EVENT,
-  RUNTIME_EVENT_CHANNEL,
-} from "@/transport/contracts";
+export { RUNTIME_EVENT_CHANNEL } from "@/transport/contracts";
 
 // ─── DTOs below this line stay in tauri.ts for now (M2.1 scope) ────
 // Slimmer M2.4 slice will progressively migrate session / project /
@@ -101,18 +93,6 @@ export {
 // definitions moved to `@/transport/contracts` in Phase M2.1.
 // They remain re-exported above for backward-compat with existing
 // imports from `@/lib/tauri`.
-
-/**
- * Subscribe to backend memory lifecycle events. Returns an unlisten
- * function.  The event-name constant lives in `@/transport/contracts`.
- */
-export async function listenMemoryEvent(
-  handler: (payload: MemoryEventPayload) => void,
-): Promise<UnlistenFn> {
-  return await listen<MemoryEventPayload>(MEMORY_EVENT, (event) => {
-    handler(event.payload);
-  });
-}
 
 /**
  * Phase M3-C closeout — subscribe to backend `memory_after_turn`
@@ -295,20 +275,6 @@ export async function listenToStream(
       const envStreamId = env?.correlation?.streamId ?? payload.stream_id;
       if (envStreamId !== streamId) return;
       callback(payload);
-    },
-  );
-}
-
-/**
- * 监听后端权限请求事件
- */
-export async function listenToPermissionRequests(
-  callback: (payload: PermissionRequestPayload) => void,
-): Promise<UnlistenFn> {
-  return await listen<PermissionRequestPayload>(
-    PERMISSION_REQUEST_EVENT,
-    (event) => {
-      callback(event.payload);
     },
   );
 }
