@@ -442,9 +442,11 @@ pub async fn drain_job_monitor_lines(id: String) -> Result<Vec<String>, String> 
 
 /// Page through canonical run-log events and replay them into history projection.
 ///
-/// When no event log exists for the first page, returns the legacy full
-/// session in `fallback_session` so existing callers can stay compatible
-/// while new history consumers migrate to event-log replay.
+/// When the first page has no replayable run-log entries **and** the session
+/// has no `*.jsonl` under `runtime/run-log/<id>/`, returns the legacy full
+/// session in `fallback_session`. If at least one run-log jsonl file exists,
+/// fallback is suppressed so the event log remains the single transcript owner
+/// (MIG-018 / GAP-001 narrow).
 #[tauri::command]
 #[allow(dead_code)]
 pub async fn get_session_history_page(
@@ -472,7 +474,10 @@ pub async fn get_session_history_page(
     // so callers and diagnostics can distinguish canonical event-log reads
     // from legacy compatibility reads.
     let mut fallback_reason = None;
-    let fallback_session = if cursor.is_none() && event_page.entries.is_empty() {
+    let run_log_has_jsonl =
+        crate::modules::runtime::history::session_has_run_log_jsonl_files(&base_dir, &id);
+    let fallback_session = if cursor.is_none() && event_page.entries.is_empty() && !run_log_has_jsonl
+    {
         fallback_reason = Some("session_history_fallback: event log is empty".to_string());
         tracing::info!(
             session_id = %id,
@@ -486,6 +491,12 @@ pub async fn get_session_history_page(
                 .map_err(|e| e.to_string())?,
         )
     } else {
+        if cursor.is_none() && event_page.entries.is_empty() && run_log_has_jsonl {
+            tracing::info!(
+                session_id = %id,
+                "[GAP-001] skipping session.json history fallback: run-log *.jsonl present (canonical replay owns first page)"
+            );
+        }
         None
     };
 

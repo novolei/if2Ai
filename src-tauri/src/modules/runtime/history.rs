@@ -228,6 +228,35 @@ pub fn replay_session_history(
     }
 }
 
+/// Canonical on-disk directory for append-only run logs for `session_id`.
+#[must_use]
+pub fn run_log_session_dir(base_dir: &Path, session_id: &str) -> std::path::PathBuf {
+    base_dir.join("runtime").join("run-log").join(session_id)
+}
+
+/// True when `runtime/run-log/<session_id>/` exists and lists at least one `*.jsonl` file.
+///
+/// Used to **narrow** `session.json` history fallback on the first
+/// page: once run-log files exist for a session, transcript replay is owned by the event log
+/// even if the current page parses to zero entries (rare empty file / parse edge).
+#[must_use]
+pub fn session_has_run_log_jsonl_files(base_dir: impl AsRef<Path>, session_id: &str) -> bool {
+    let session_dir = run_log_session_dir(base_dir.as_ref(), session_id);
+    if !session_dir.is_dir() {
+        return false;
+    }
+    let Ok(iter) = std::fs::read_dir(&session_dir) else {
+        return false;
+    };
+    iter.filter_map(std::result::Result::ok).any(|entry| {
+        entry
+            .path()
+            .extension()
+            .and_then(|ext| ext.to_str())
+            == Some("jsonl")
+    })
+}
+
 fn read_all_session_entries(
     base_dir: impl AsRef<Path>,
     session_id: &str,
@@ -276,10 +305,6 @@ fn read_all_session_entries(
             .then_with(|| left.event_id.cmp(&right.event_id))
     });
     Ok(entries)
-}
-
-fn run_log_session_dir(base_dir: &Path, session_id: &str) -> std::path::PathBuf {
-    base_dir.join("runtime").join("run-log").join(session_id)
 }
 
 fn parse_cursor(cursor: Option<&str>) -> io::Result<usize> {
@@ -407,6 +432,21 @@ mod tests {
         std::env::temp_dir().join(format!("if2ai-history-{label}-{nanos}"))
     }
 
+    #[test]
+    fn session_has_run_log_jsonl_files_false_without_material() {
+        let root = unique_temp_root("jsonl-absent");
+        assert!(!session_has_run_log_jsonl_files(&root, "no-such-session"));
+    }
+
+    #[test]
+    fn session_has_run_log_jsonl_files_true_when_jsonl_on_disk() {
+        let root = unique_temp_root("jsonl-present");
+        let dir = run_log_session_dir(&root, "sess-jsonl-flag");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("run-placeholder.jsonl"), "").expect("touch jsonl");
+        assert!(session_has_run_log_jsonl_files(&root, "sess-jsonl-flag"));
+    }
+
     fn log_entry(
         run_id: &str,
         seq: u64,
@@ -426,6 +466,11 @@ mod tests {
             correlation_id: None,
             tool_call_id: None,
             attempt_id: None,
+            team_id: None,
+            member_id: None,
+            role_id: None,
+            parent_run_id: None,
+            delegation_id: None,
         }
     }
 
