@@ -1,0 +1,28 @@
+---
+description: If2Ai 强制 Superpowers 完整开发流程（写代码前必读 CLAUDE.md）。
+globs:
+  - "**/*"
+---
+
+# Superpowers 工作流（强制）
+
+本仓库**任何代码改动**（含一行、单文件、常量/注释）必须按根目录 **[`CLAUDE.md`](../../CLAUDE.md)** 执行 **Superpowers 完整流程**；不得用已弃用的 `docs/packs/**` 替代，不得以「改动小」跳过顺序。
+
+## Cursor：`Skill` 工具的等价做法
+
+用户每条**带任务的需求**（实现、排查、改仓库、计划落盘等）：在**第一次**实质工具动作之前，**必须**用 **`Read`** 打开 **`using-superpowers`** 的 `SKILL.md` 全文（路径以 Cursor 为该 skill 提供的 `fullPath` 为准；常见在 `~/.claude/plugins/cache/claude-plugins-official/superpowers/<版本>/skills/using-superpowers/SKILL.md`）。再按该 skill 判定是否继续 **`Read`** 其它适用 skill（≥1% 可能即须读）。**不可**在未执行本段的情况下直接改文件或宣称走完整流程。
+
+**硬顺序（摘要）**
+
+1. **using-superpowers** — 先判并加载适用 skill。  
+2. **brainstorming** — 创意/行为向改动前先设计。  
+3. **writing-plans** — 多步骤前写 `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`。  
+4. **subagent-driven-development** 或 **executing-plans** — 执行书面计划。  
+5. **systematic-debugging** — 缺陷类先根因。  
+6. **verification-before-completion** — 声称完成前跑命令并贴证据。  
+7. **requesting-code-review** / **finishing-a-development-branch** — PR/合并前。  
+8. **test-driven-development** — 适用时先测后码。
+
+**`N/A`（收紧）**：计划中写某步 `N/A` 时须含 **skill 可引用锚点**（小节标题 / checklist 号 / YAML `description`）或 **evolution / `ARCHITECTURE.md` 章节锚点** + **一句实质理由** — 见根目录 [`CLAUDE.md`](../../CLAUDE.md)「N/A 书写标准」。
+
+**豁免**：仅 `CLAUDE.md` 中「零代码改动（只读等）/ 用户书面点名跳过」。

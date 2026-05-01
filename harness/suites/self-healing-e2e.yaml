@@ -1,0 +1,47 @@
+# Harness Suite: Self-healing + evolution wiring (Exit Gate, spec Part 5.9)
+# Run: ./scripts/pack suite harness/suites/self-healing-e2e.yaml
+# Layer 1–2 still execute full `cargo check` + `cargo test -p if2ai-backend` (see harness/gate.py).
+
+suite_id: "self_healing_e2e"
+name: "Self-Healing E2E — daemon probes + evolution smoke"
+description: >
+  Truth-loop exit gate: focused cargo tests for WU-001/WU-002 wiring,
+  daemon registry behaviour, and evolution phase-0 invariants.
+runner: "cargo_test"
+
+test_cases:
+  - id: "sh-e2e-001"
+    name: "Daemon probe registry — three-slot evolution set"
+    description: "WU-002 evolution_probe_set length + registration invariants"
+    type: "integration"
+    test_fn: "default_registry_has_three_probes"
+
+  - id: "sh-e2e-002"
+    name: "Daemon probe — failed probe does not panic poll"
+    description: "Failure isolation in HealthCheckRegistry::poll_all"
+    type: "integration"
+    test_fn: "probe_error_degrades_gracefully"
+
+  - id: "sh-e2e-003"
+    name: "Evolution emitter — unhealthy transition envelope"
+    description: "WU-001 emit path under IF2AI_DISABLE_EVOLUTION_EMIT"
+    type: "integration"
+    test_fn: "unhealthy_probe_emits_daemon_health_event"
+
+  - id: "sh-e2e-004"
+    name: "Daemon probes — IF2AI_DISABLE_DAEMON_PROBES empty registry"
+    description: "`daemon_probe` integration: env flag disables extra probe registration"
+    type: "integration"
+    test_fn: "env_flag_disables_probe_registration"
+
+  - id: "sh-e2e-005"
+    name: "Provider API-key probe — healthy when env set"
+    description: "make_provider_api_key_probe Healthy branch"
+    type: "unit"
+    test_fn: "provider_api_key_probe_healthy_when_env_var_set"
+
+  - id: "sh-e2e-006"
+    name: "Provider API-key probe — degraded without credentials"
+    description: "make_provider_api_key_probe Degraded branch"
+    type: "unit"
+    test_fn: "provider_api_key_probe_degraded_when_no_env_vars"
