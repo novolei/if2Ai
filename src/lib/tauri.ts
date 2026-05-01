@@ -15,10 +15,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 import {
-  AGENT_TOKEN_EVENT,
   MEMORY_AFTER_TURN_EVENT,
   MEMORY_EVENT,
   PERMISSION_REQUEST_EVENT,
+  RUNTIME_EVENT_CHANNEL,
 } from "@/transport/contracts";
 import type {
   ActivationSnapshot,
@@ -37,6 +37,7 @@ import type {
   McpWorkbenchToolCallResult,
   PermissionMode,
   PermissionRequestPayload,
+  RuntimeEventEnvelope,
   StreamTokenPayload,
 } from "@/transport/contracts";
 
@@ -84,9 +85,9 @@ export type {
   StreamTokenPayload,
 } from "@/transport/contracts";
 export {
-  AGENT_TOKEN_EVENT,
   MEMORY_EVENT,
   PERMISSION_REQUEST_EVENT,
+  RUNTIME_EVENT_CHANNEL,
 } from "@/transport/contracts";
 
 // ─── DTOs below this line stay in tauri.ts for now (M2.1 scope) ────
@@ -269,37 +270,33 @@ export async function startAgentStream(
 }
 
 /**
- * 监听流式 Token 事件
+ * 监听某个具体 streamId 的流式 Token 事件。
+ *
+ * PR D-1（2026-05-02）— 直接从 canonical `runtime_event` envelope
+ * 通道读取，按 `correlation.streamId === streamId` 过滤，并把
+ * envelope 内层的原始 [`StreamTokenPayload`] 交给调用方。
+ *
+ * 旧的 `agent-token` 通道已退役（C-1 envelope 切换 + D-1 收尾）。
  *
  * @param streamId - 流 ID，用于过滤事件
  * @param callback - 回调函数，接收 Token 事件
  * @returns 取消监听函数
  */
-/**
- * 监听所有 agent-token 事件（不按 streamId 过滤）。
- *
- * Phase M2.4 — `runtime-projection-bridge` 用此入口把全部
- * stream 事件喂给 canonical projection pipeline，所有 streamId
- * 的事件都会进入同一队列。原有按 streamId 过滤的
- * [`listenToStream`] 仍保留服务于现存 ChatWorkspace 主路径。
- */
-export async function listenToAgentTokenStream(
-  callback: (payload: StreamTokenPayload) => void,
-): Promise<UnlistenFn> {
-  return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
-    callback(event.payload);
-  });
-}
-
 export async function listenToStream(
   streamId: string,
   callback: (payload: StreamTokenPayload) => void,
 ): Promise<UnlistenFn> {
-  return await listen<StreamTokenPayload>(AGENT_TOKEN_EVENT, (event) => {
-    if (event.payload.stream_id === streamId) {
-      callback(event.payload);
-    }
-  });
+  return await listen<RuntimeEventEnvelope<StreamTokenPayload>>(
+    RUNTIME_EVENT_CHANNEL,
+    (event) => {
+      const env = event.payload;
+      const payload = env?.payload as StreamTokenPayload | undefined;
+      if (!payload || typeof payload.event_type !== "string") return;
+      const envStreamId = env?.correlation?.streamId ?? payload.stream_id;
+      if (envStreamId !== streamId) return;
+      callback(payload);
+    },
+  );
 }
 
 /**

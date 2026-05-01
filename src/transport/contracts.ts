@@ -628,7 +628,13 @@ export type PermissionMode = 'readOnly' | 'workspaceWrite' | 'dangerFullAccess'
 /** Canonical Tauri event names used by the agent loop. Centralised
  * here so the runtime-projection translator and any future dev
  * inspector subscribe against the same constants instead of magic
- * strings. */
+ * strings.
+ *
+ * @deprecated PR D-1 (2026-05-02) retired the `agent-token`
+ * channel. New code MUST subscribe to `RUNTIME_EVENT_CHANNEL`
+ * and unwrap `RuntimeEventEnvelope.payload`. The const is kept
+ * temporarily for any external integration that still references
+ * the historical name; remove after one release cycle. */
 export const AGENT_TOKEN_EVENT = 'agent-token'
 export const PERMISSION_REQUEST_EVENT = 'permission-request'
 export const MEMORY_EVENT = 'memory_event'

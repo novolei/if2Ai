@@ -60,11 +60,18 @@ use super::contracts::memory::MemoryItemProjection;
 use super::contracts::prompt::PromptDiagnosticsSummary;
 use super::recoverability::ResumeRecoverability;
 
-/// Canonical Tauri event name used by the agent-loop streaming
-/// path. Held as a `pub const` so the M2 frontend translator can
-/// `import { AGENT_TOKEN_EVENT } from ...` once we wire the TS
-/// twin (in `src/transport/contracts.ts` / a future
-/// `src/transport/events.ts`).
+/// Legacy Tauri event name for the agent-loop streaming path.
+///
+/// Retired by PR D-1 (2026-05-02): production emissions go through
+/// the canonical [`RuntimeEventEnvelope`] on
+/// `crate::modules::runtime::evolution_emitter::RUNTIME_EVENT_CHANNEL`.
+/// The const is kept temporarily so external integrations / tests
+/// referencing the historical channel name still resolve; remove
+/// after one release cycle.
+#[deprecated(
+    since = "0.13.0",
+    note = "PR D-1 retired the agent-token channel; emit on RUNTIME_EVENT_CHANNEL via StreamTokenPayload::to_envelope()."
+)]
 pub const AGENT_TOKEN_EVENT: &str = "agent-token";
 
 /// Phase M3-C closeout — canonical Tauri event name for the
@@ -393,34 +400,21 @@ impl AgentStreamEmitter {
     /// at TRACE — emission failure is non-fatal for the agent
     /// loop, matching the legacy `let _ = window.emit(...)` shape.
     pub fn emit_payload(&self, payload: StreamTokenPayload) {
-        // HOTFIX 2026-05-02 — dual-emit during transition.
+        // PR D-1 (2026-05-02) — single-channel emit on `runtime_event`.
         //
-        // PR C-1 cut over the broadcast frequency to the canonical
-        // `runtime_event` envelope, but `App.tsx` and `chat-ui.tsx`
-        // still subscribe to `agent-token` directly via
-        // `listenToStream(streamId, …)` (bridge comment in
-        // `runtime-projection-bridge.ts:13` flagged this as a parallel
-        // pipeline). Without the legacy emit those direct callbacks
-        // never observe `text_delta` / `stream_complete`, so the
-        // composer "running" state never clears and incremental text
-        // never renders.
-        //
-        // Until those direct subscribers are migrated to read from the
-        // runtime projection store (follow-up PR D-x), `emit_payload`
-        // MUST emit on both channels. The frontend bridge dedupes by
-        // listening only on `runtime_event`; the legacy listeners
-        // listen only on `agent-token`. There is no double-dispatch.
-        if let Err(e) = self.window.emit(AGENT_TOKEN_EVENT, &payload) {
-            tracing::trace!(
-                channel = AGENT_TOKEN_EVENT,
-                error = %e,
-                "[stream_emitter] agent-token legacy emit failed (non-fatal)"
-            );
-        }
+        // History: PR C-1 wrapped emissions in the canonical
+        // `RuntimeEventEnvelope`; a 2026-05-02 hotfix temporarily
+        // dual-emitted on the legacy `agent-token` channel because
+        // `App.tsx` / `chat-ui.tsx` still subscribed there directly.
+        // PR D-1 retires the legacy channel: the frontend
+        // `listenToStream(streamId, …)` helper now reads `runtime_event`
+        // envelopes and unwraps `envelope.payload` back into a
+        // `StreamTokenPayload`. The bridge keeps reading
+        // `runtime_event` as before — there is no double-dispatch.
         let Some(envelope) = payload.to_envelope() else {
             tracing::warn!(
                 event_type = %payload.event_type,
-                "[stream_emitter] StreamTokenPayload event_type unmapped — dropping envelope (legacy agent-token already emitted)"
+                "[stream_emitter] StreamTokenPayload event_type unmapped — dropping envelope"
             );
             return;
         };

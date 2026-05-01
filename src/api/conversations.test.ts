@@ -74,13 +74,17 @@ describe('api/conversations — startChatTurn handle bundles every chat-turn pri
     ])
   })
 
-  it('handle.subscribe forwards to the agent-token event channel', async () => {
+  it('handle.subscribe forwards to the runtime_event envelope channel (PR D-1)', async () => {
     const { client, subscriptions } = recordingClient({ start_agent_stream: 'sx' })
     setApiClient(client)
     const handle = await startChatTurn({ sessionId: 's', userMessage: 'hi' })
     await handle.subscribe(() => {})
     assert.equal(subscriptions.length, 1)
-    assert.equal(subscriptions[0].event, 'agent-token')
+    assert.equal(
+      subscriptions[0].event,
+      'runtime_event',
+      'PR D-1 retired the legacy agent-token channel; subscribers must read from runtime_event',
+    )
     assert.equal(subscriptions[0].handlerCount, 1)
   })
 

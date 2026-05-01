@@ -265,6 +265,13 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
   envelope (`event_type=memory`, family ∈ {`lifecycle`, `after_turn`})；
   harness EventBus 上的 `AgentEvent::MemoryAfterTurn` 保留为治理侧独立
   真值源（PR C-3）。chat-runtime 单频道收敛工作 (C-1/C-2/C-3) 完成。
+- 2026-05-02：`agent-token` 频道正式退役（PR D-1）。`AgentStreamEmitter::emit_payload`
+  仅向 `RUNTIME_EVENT_CHANNEL` 发射 envelope；前端 `listenToStream(streamId, …)`
+  （`src/api/streaming.ts` + `src/lib/tauri.ts`）改为订阅 `runtime_event`、按
+  `correlation.streamId` 过滤、把 envelope 内层 `StreamTokenPayload` 交回调用方，
+  `App.tsx` / `chat-ui.tsx` 直接订阅路径无需变更即可工作。`AGENT_TOKEN_EVENT`
+  常量在 Rust / TS 双端标记 `#[deprecated]` / `@deprecated`，预留一个发布周期
+  后清理。短暂的 dual-emit 热修复同时回收。
 
 ## 7. Gap 与二次真相清单
 
