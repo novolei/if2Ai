@@ -613,7 +613,10 @@ export interface ResumeRecoverability {
   retry_budget_remaining: number
 }
 
-/** Permission prompt event emitted on the `permission-request` channel. */
+/** Permission prompt payload. Historically emitted on the
+ *  `permission-request` channel (retired by PR D-1, 2026-05-02);
+ *  now delivered as the `payload` of a `RuntimeEventEnvelope` on
+ *  `RUNTIME_EVENT_CHANNEL` with `event_type === 'permission'`. */
 export interface PermissionRequestPayload {
   session_id: string
   tool_name: string

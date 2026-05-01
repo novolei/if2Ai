@@ -1,43 +1,34 @@
-//! Agent stream emitter boundary (Phase M1.5).
+//! Agent stream emitter boundary.
 //!
 //! Owns the single point at which agent-loop runtime events leave
 //! the backend and reach the frontend over Tauri's IPC. The
 //! emitter:
 //!
-//! - Centralises the canonical event names (`agent-token` for
-//!   per-token / per-tool / per-completion updates).
-//! - Centralises the wire payload shape ([`StreamTokenPayload`])
-//!   so M2 frontend translator has exactly **one** struct to
-//!   register against, instead of having to scrape ~13 ad-hoc
-//!   `window.emit("agent-token", ...)` call sites in `commands/agent.rs`.
-//! - Provides typed convenience methods for the simple emission
-//!   shapes (`text_delta` / `thinking_delta` / `thinking_start`)
-//!   while still letting complex sites build a full
-//!   [`StreamTokenPayload`] and pass it through
-//!   [`AgentStreamEmitter::emit_payload`].
+//! - Emits on **one** outbound channel — [`crate::modules::runtime::evolution_emitter::RUNTIME_EVENT_CHANNEL`]
+//!   (`"runtime_event"`).
+//! - Wraps every payload in a canonical
+//!   [`RuntimeEventEnvelope`] before it leaves the process, so the
+//!   frontend translator has exactly **one** wire shape to register
+//!   against.
+//! - Centralises the typed payload struct [`StreamTokenPayload`]
+//!   plus convenience constructors (`text_delta` / `thinking_delta`
+//!   / `thinking_start`) for simple cases, while letting complex
+//!   sites build a full [`StreamTokenPayload`] and pass it through
+//!   [`AgentStreamEmitter::emit_payload`] — that method is the
+//!   canonical emit path.
 //!
-//! Out of scope for this skeleton (deferred to later slices):
-//!
-//! - **Permission prompt event (`permission-request`)** stays in
-//!   [`crate::commands::agent::TauriPermissionPrompter`] for now —
-//!   M1.7 activation / permission service work touches it.
-//! - **Memory event (`memory_event`)** has its own canonical
-//!   audit-emitter path
-//!   ([`crate::modules::memory::audit::register_app_handle`]),
-//!   not part of this M1.5 boundary.
-//! - **Canonical [`crate::modules::runtime::contracts::RuntimeEventEnvelope`]
-//!   migration**: M0.3 already defined the envelope, but actually
-//!   wrapping every emission in it without breaking the frontend
-//!   `listenToStream` consumer is a multi-PR effort. M1.5 keeps the
-//!   legacy `agent-token` + [`StreamTokenPayload`] wire shape and
-//!   defers the envelope migration to M2 once the frontend
-//!   translator exists.
+//! History: PR D-1 (2026-05-02) retired the legacy `agent-token`
+//! Tauri channel; the previous parallel `permission-request` and
+//! `memory_event` channels were collapsed in the same envelope
+//! cut-over (PRs C-1 / C-2 / C-3). All runtime events now flow
+//! through `RUNTIME_EVENT_CHANNEL` with `RuntimeEventType` as the
+//! discriminator.
 //!
 //! Hard rules:
 //! 1. This module MUST NOT import from `crate::commands::*`.
-//! 2. The wire shape of [`StreamTokenPayload`] MUST NOT change in
-//!    M1.5 — frontend `listenToStream` depends on every field
-//!    name. Any change here is a contract break.
+//! 2. Any new outbound runtime event name belongs in this module
+//!    (or in [`super::contracts`]) — never inlined as a magic
+//!    string at a call site.
 
 // Typed factories / convenience methods below are part of the M1.5
 // public surface and will be consumed by later slices (M1.6
