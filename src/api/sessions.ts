@@ -43,6 +43,12 @@ export interface RunLogEntry {
   correlation_id?: string | null;
   tool_call_id?: string | null;
   attempt_id?: string | null;
+  /** Agents Teams correlation persisted on envelope-derived log lines. */
+  team_id?: string | null;
+  member_id?: string | null;
+  role_id?: string | null;
+  parent_run_id?: string | null;
+  delegation_id?: string | null;
 }
 
 export interface SessionHistoryEventPage {

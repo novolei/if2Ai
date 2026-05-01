@@ -84,14 +84,7 @@ pub fn emit_evolution_event<T: Serialize>(
     }
 
     if let Some(logger) = logger {
-        let kind_label = serde_json::to_value(envelope.event_type)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_else(|| "evolution_unknown".to_string());
-        logger.append_sync(
-            format!("{kind_label}:{}", envelope.payload_family.0),
-            &envelope.payload,
-        );
+        let _ = logger.append_sync_from_envelope(&envelope);
     }
 
     Ok(envelope)

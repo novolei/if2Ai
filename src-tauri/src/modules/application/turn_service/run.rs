@@ -54,6 +54,7 @@ use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use crate::modules::runtime::event_log::RunEventLogger;
@@ -117,6 +118,12 @@ impl TurnService {
             })
             .unwrap_or_else(|| RunEventLogger::disabled(session_id.clone(), run_id.clone()));
 
+        let log_correlation = CorrelationIds {
+            session_id: Some(session_id.clone()),
+            run_id: Some(run_id.clone()),
+            ..Default::default()
+        };
+
         tracing::info!(
             "[run_agent_turn] Starting - session_id: {}, run_id: {}, message: {}",
             session_id,
@@ -124,13 +131,14 @@ impl TurnService {
             user_message
         );
         let _ = run_event_logger
-            .append(
+            .append_with_correlation(
                 "run_started",
                 serde_json::json!({
                     "caller": "run_agent_turn",
                     "permission_mode": permission_mode.clone(),
                     "message_preview": user_message.chars().take(160).collect::<String>(),
                 }),
+                Some(&log_correlation),
             )
             .await;
 
@@ -138,12 +146,13 @@ impl TurnService {
             .scan_inbound_for_secrets(&user_message)
         {
             let _ = run_event_logger
-                .append(
+                .append_with_correlation(
                     "run_error",
                     serde_json::json!({
                         "stage": "inbound_secret_scan",
                         "error": warn,
                     }),
+                    Some(&log_correlation),
                 )
                 .await;
             return Err(warn);
@@ -155,12 +164,13 @@ impl TurnService {
             Err(error) => {
                 let message = error.to_string();
                 let _ = run_event_logger
-                    .append(
+                    .append_with_correlation(
                         "run_error",
                         serde_json::json!({
                             "stage": "restore_session",
                             "error": message,
                         }),
+                        Some(&log_correlation),
                     )
                     .await;
                 return Err(message);
@@ -235,12 +245,13 @@ impl TurnService {
                     }
                 };
                 let _ = run_event_logger
-                    .append(
+                    .append_with_correlation(
                         "run_error",
                         serde_json::json!({
                             "stage": "prepare_chat_inputs",
                             "error": message,
                         }),
+                        Some(&log_correlation),
                     )
                     .await;
                 return Err(message);
@@ -261,12 +272,13 @@ impl TurnService {
                     prepared.execution_mode_decision.route_hint
                 );
                 let _ = run_event_logger
-                    .append(
+                    .append_with_correlation(
                         "run_error",
                         serde_json::json!({
                             "stage": "execution_mode_gate",
                             "error": routed_message.clone(),
                         }),
+                        Some(&log_correlation),
                     )
                     .await;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
@@ -723,24 +735,26 @@ impl TurnService {
                 for assistant_message in &summary.assistant_messages {
                     if let Some(thinking) = assistant_message.thinking.as_ref() {
                         let _ = run_event_logger
-                            .append(
+                            .append_with_correlation(
                                 "thinking_delta",
                                 serde_json::json!({
                                     "thinking": thinking,
                                     "request_id": assistant_message.request_id,
                                 }),
+                                Some(&log_correlation),
                             )
                             .await;
                     }
                     for block in &assistant_message.blocks {
                         if let ContentBlock::Text { text } = block {
                             let _ = run_event_logger
-                                .append(
+                                .append_with_correlation(
                                     "text_delta",
                                     serde_json::json!({
                                         "text": text,
                                         "request_id": assistant_message.request_id,
                                     }),
+                                    Some(&log_correlation),
                                 )
                                 .await;
                         }
@@ -756,7 +770,7 @@ impl TurnService {
                         } = block
                         {
                             let _ = run_event_logger
-                                .append(
+                                .append_with_correlation(
                                     if *is_error {
                                         "tool_call_failed"
                                     } else {
@@ -768,13 +782,14 @@ impl TurnService {
                                         "output": output,
                                         "is_error": is_error,
                                     }),
+                                    Some(&log_correlation),
                                 )
                                 .await;
                         }
                     }
                 }
                 let _ = run_event_logger
-                    .append(
+                    .append_with_correlation(
                         "run_completed",
                         serde_json::json!({
                             "message": final_text.clone(),
@@ -783,6 +798,7 @@ impl TurnService {
                             "assistant_message_count": summary.assistant_messages.len(),
                             "tool_result_count": summary.tool_results.len(),
                         }),
+                        Some(&log_correlation),
                     )
                     .await;
 
@@ -809,12 +825,13 @@ impl TurnService {
             Err(e) => {
                 let error_message = friendly_runtime_error_message(&e);
                 let _ = run_event_logger
-                    .append(
+                    .append_with_correlation(
                         "run_error",
                         serde_json::json!({
                             "error": error_message,
                             "runtime_error": e.to_string(),
                         }),
+                        Some(&log_correlation),
                     )
                     .await;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(

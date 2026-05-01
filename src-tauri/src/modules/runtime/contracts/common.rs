@@ -162,6 +162,17 @@ pub struct CorrelationIds {
     /// separately in the attempt ledger, T-013).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
+    // ── Agents Teams (ARCHITECTURE.md §9.3): optional until `team` bounded context ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_id: Option<String>,
 }
 
 /// Canonical envelope wrapping every runtime-emitted event.
@@ -272,5 +283,23 @@ mod tests {
             !json.contains("attemptId"),
             "attempt_id should be skipped when None: {json}"
         );
+    }
+
+    #[test]
+    fn correlation_ids_team_fields_round_trip() {
+        let corr = CorrelationIds {
+            session_id: Some("s1".into()),
+            run_id: Some("r1".into()),
+            team_id: Some("t1".into()),
+            member_id: Some("m1".into()),
+            role_id: Some("planner".into()),
+            parent_run_id: Some("r0".into()),
+            delegation_id: Some("d1".into()),
+            ..CorrelationIds::default()
+        };
+        let json = serde_json::to_string(&corr).unwrap();
+        let back: CorrelationIds = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.team_id.as_deref(), Some("t1"));
+        assert_eq!(back.delegation_id.as_deref(), Some("d1"));
     }
 }

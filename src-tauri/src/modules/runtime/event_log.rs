@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::contracts::common::RuntimeEventEnvelope;
+use super::contracts::common::{CorrelationIds, RuntimeEventEnvelope};
 
 /// One durable append-only run-log record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,6 +33,17 @@ pub struct RunLogEntry {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
+    /// Optional Agents Teams correlation (mirrors [`crate::modules::runtime::contracts::common::CorrelationIds`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_id: Option<String>,
 }
 
 impl RunLogEntry {
@@ -55,6 +66,11 @@ impl RunLogEntry {
             correlation_id: None,
             tool_call_id: None,
             attempt_id: None,
+            team_id: None,
+            member_id: None,
+            role_id: None,
+            parent_run_id: None,
+            delegation_id: None,
         }
     }
 
@@ -95,6 +111,36 @@ impl RunLogEntry {
             correlation_id: corr.stream_id.clone(),
             tool_call_id: None,
             attempt_id: corr.attempt_id.clone(),
+            team_id: corr.team_id.clone(),
+            member_id: corr.member_id.clone(),
+            role_id: corr.role_id.clone(),
+            parent_run_id: corr.parent_run_id.clone(),
+            delegation_id: corr.delegation_id.clone(),
+        }
+    }
+
+    /// Fills top-level correlation columns when still empty (stream payload overlay).
+    pub fn merge_correlation_from_ids(&mut self, corr: &CorrelationIds) {
+        if self.correlation_id.is_none() {
+            self.correlation_id = corr.stream_id.clone();
+        }
+        if self.attempt_id.is_none() {
+            self.attempt_id = corr.attempt_id.clone();
+        }
+        if self.team_id.is_none() {
+            self.team_id = corr.team_id.clone();
+        }
+        if self.member_id.is_none() {
+            self.member_id = corr.member_id.clone();
+        }
+        if self.role_id.is_none() {
+            self.role_id = corr.role_id.clone();
+        }
+        if self.parent_run_id.is_none() {
+            self.parent_run_id = corr.parent_run_id.clone();
+        }
+        if self.delegation_id.is_none() {
+            self.delegation_id = corr.delegation_id.clone();
         }
     }
 }
@@ -195,7 +241,21 @@ impl RunEventLogger {
         event_type: impl Into<String>,
         payload: impl Serialize,
     ) -> RunLogEntry {
-        let entry = self.make_entry(event_type, payload);
+        self.append_with_correlation(event_type, payload, None)
+            .await
+    }
+
+    /// Append one event, optionally promoting [`CorrelationIds`] onto top-level log columns.
+    pub async fn append_with_correlation(
+        &self,
+        event_type: impl Into<String>,
+        payload: impl Serialize,
+        correlation: Option<&CorrelationIds>,
+    ) -> RunLogEntry {
+        let mut entry = self.make_entry(event_type, payload);
+        if let Some(c) = correlation {
+            entry.merge_correlation_from_ids(c);
+        }
         if let Some(sink) = &self.sink {
             if let Err(error) = append_entry_async(sink, &entry).await {
                 tracing::warn!(
@@ -218,7 +278,20 @@ impl RunEventLogger {
         event_type: impl Into<String>,
         payload: impl Serialize,
     ) -> RunLogEntry {
-        let entry = self.make_entry(event_type, payload);
+        self.append_sync_with_correlation(event_type, payload, None)
+    }
+
+    /// Append one event synchronously with optional correlation overlay.
+    pub fn append_sync_with_correlation(
+        &self,
+        event_type: impl Into<String>,
+        payload: impl Serialize,
+        correlation: Option<&CorrelationIds>,
+    ) -> RunLogEntry {
+        let mut entry = self.make_entry(event_type, payload);
+        if let Some(c) = correlation {
+            entry.merge_correlation_from_ids(c);
+        }
         if let Some(sink) = &self.sink {
             if let Err(error) = append_entry_sync(sink, &entry) {
                 tracing::warn!(
@@ -229,6 +302,34 @@ impl RunEventLogger {
                     event_type = %entry.event_type,
                     path = %sink.path.display(),
                     "[event_log] append failed (non-fatal)"
+                );
+            }
+        }
+        entry
+    }
+
+    /// Append one line derived from a [`RuntimeEventEnvelope`] (evolution / runtime_event path).
+    ///
+    /// Uses the same `seq` assignment as [`Self::append`], applies optional redaction to the
+    /// payload copy, and preserves full [`CorrelationIds`] on the durable row via
+    /// [`RunLogEntry::from_envelope`].
+    pub fn append_sync_from_envelope(&self, envelope: &RuntimeEventEnvelope) -> RunLogEntry {
+        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut entry =
+            RunLogEntry::from_envelope(envelope, seq, self.session_id.clone(), self.run_id.clone());
+        if crate::modules::security::redaction::event_log_redaction_enabled() {
+            crate::modules::security::redaction::redact_value_in_place(&mut entry.payload);
+        }
+        if let Some(sink) = &self.sink {
+            if let Err(error) = append_entry_sync(sink, &entry) {
+                tracing::warn!(
+                    error = %error,
+                    session_id = %entry.session_id,
+                    run_id = %entry.run_id,
+                    seq = entry.seq,
+                    event_type = %entry.event_type,
+                    path = %sink.path.display(),
+                    "[event_log] append_sync_from_envelope failed (non-fatal)"
                 );
             }
         }
@@ -328,6 +429,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn append_with_correlation_persists_team_fields_to_jsonl() {
+        use crate::modules::runtime::contracts::common::CorrelationIds;
+
+        let root = unique_temp_root("append-corr-overlay");
+        let logger = RunEventLogger::for_base_dir(&root, "session-corr", "run-corr");
+        let corr = CorrelationIds {
+            stream_id: Some("stream-99".into()),
+            team_id: Some("team-x".into()),
+            member_id: Some("mem-2".into()),
+            ..Default::default()
+        };
+        let _ = logger
+            .append_with_correlation(
+                "run_started",
+                serde_json::json!({ "message_preview": "hi" }),
+                Some(&corr),
+            )
+            .await;
+        let path = logger.file_path().expect("run log path");
+        let raw = std::fs::read_to_string(path).expect("read log");
+        let entry: RunLogEntry =
+            serde_json::from_str(raw.lines().next().expect("one line")).expect("parse");
+        assert_eq!(entry.team_id.as_deref(), Some("team-x"));
+        assert_eq!(entry.member_id.as_deref(), Some("mem-2"));
+        assert_eq!(entry.correlation_id.as_deref(), Some("stream-99"));
+    }
+
+    #[tokio::test]
     async fn event_log_seq_is_monotonic_with_mixed_append_modes() {
         let root = unique_temp_root("event-log-seq");
         let logger = RunEventLogger::for_base_dir(&root, "session-1", "run-1");
@@ -386,6 +515,7 @@ mod tests {
                 project_id: None,
                 turn_index: Some(0),
                 attempt_id: Some("att-3".into()),
+                ..Default::default()
             },
             serde_json::json!({ "text": "hello" }),
         );
@@ -407,6 +537,70 @@ mod tests {
         assert_eq!(back.run_id, "run-1");
         assert_eq!(back.seq, 1);
         assert_eq!(back.attempt_id.as_deref(), Some("att-3"));
+    }
+
+    #[test]
+    fn run_log_entry_from_envelope_copies_team_correlation() {
+        use crate::modules::runtime::contracts::common::{
+            CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+        };
+
+        let envelope = RuntimeEventEnvelope::new(
+            RuntimeEventType::Conversation,
+            "text_delta",
+            CorrelationIds {
+                session_id: Some("sess-1".into()),
+                run_id: Some("run-1".into()),
+                team_id: Some("team-9".into()),
+                member_id: Some("mem-1".into()),
+                role_id: Some("planner".into()),
+                parent_run_id: Some("run-0".into()),
+                delegation_id: Some("del-1".into()),
+                ..Default::default()
+            },
+            serde_json::json!({ "text": "x" }),
+        );
+        let entry = RunLogEntry::from_envelope(&envelope, 1, "fb-sess", "fb-run");
+        assert_eq!(entry.team_id.as_deref(), Some("team-9"));
+        assert_eq!(entry.member_id.as_deref(), Some("mem-1"));
+        assert_eq!(entry.delegation_id.as_deref(), Some("del-1"));
+    }
+
+    #[test]
+    fn append_sync_from_envelope_persists_full_correlation_to_jsonl() {
+        use crate::modules::runtime::contracts::common::{
+            CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+        };
+
+        let root = unique_temp_root("append-from-envelope");
+        let logger = RunEventLogger::for_base_dir(&root, "sess-env", "run-env");
+        let envelope = RuntimeEventEnvelope::new(
+            RuntimeEventType::DaemonHealth,
+            "probe",
+            CorrelationIds {
+                session_id: Some("sess-env".into()),
+                run_id: Some("run-env".into()),
+                team_id: Some("team-ledger".into()),
+                member_id: Some("mem-ledger".into()),
+                ..Default::default()
+            },
+            serde_json::json!({ "ok": true }),
+        );
+        let entry = logger.append_sync_from_envelope(&envelope);
+        assert_eq!(entry.team_id.as_deref(), Some("team-ledger"));
+        let path = logger.file_path().expect("path");
+        let raw = std::fs::read_to_string(path).expect("read");
+        let parsed: RunLogEntry =
+            serde_json::from_str(raw.lines().next().expect("line")).expect("parse");
+        assert_eq!(parsed.member_id.as_deref(), Some("mem-ledger"));
+    }
+
+    #[test]
+    fn run_log_entry_deserializes_legacy_json_without_team_fields() {
+        let json = r#"{"event_id":"e0","session_id":"s","run_id":"r","seq":1,"event_type":"conversation:x","occurred_at":"t","payload":{}}"#;
+        let entry: RunLogEntry = serde_json::from_str(json).expect("legacy line");
+        assert!(entry.team_id.is_none());
+        assert!(entry.delegation_id.is_none());
     }
 
     #[test]

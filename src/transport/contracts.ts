@@ -72,6 +72,12 @@ export interface CorrelationIds {
   turnIndex?: number
   /** Optional tool-attempt identifier inside a run. */
   attemptId?: string
+  /** Agents Teams — optional until team runtime ships (see ARCHITECTURE.md §9.3). */
+  teamId?: string
+  memberId?: string
+  roleId?: string
+  parentRunId?: string
+  delegationId?: string
 }
 
 /** Canonical envelope wrapping every runtime-emitted event. */
