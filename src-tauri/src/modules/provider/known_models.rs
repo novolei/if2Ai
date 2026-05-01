@@ -122,6 +122,20 @@ pub static KNOWN_MODELS: &[KnownModel] = &[
         quirks: &[Quirk::ReasoningRequiredInToolCalls],
     },
     // ── DeepSeek ──
+    // DeepSeek-V4 family (incl. v4-flash): thinking-mode requires the
+    // captured `reasoning_content` to be echoed back on every assistant
+    // tool_call row, otherwise the API returns 400
+    // "The reasoning_content in the thinking mode must be passed back".
+    // Broad `deepseek-v4` substring catches `deepseek-v4-flash`,
+    // `deepseek-v4`, `deepseek-chat-v4`, etc.
+    KnownModel {
+        provider: "deepseek",
+        id_substr: "deepseek-v4",
+        display: "DeepSeek V4",
+        context: 128_000,
+        reasoning: true,
+        quirks: &[Quirk::ReasoningRequiredInToolCalls],
+    },
     KnownModel {
         provider: "deepseek",
         id_substr: "deepseek-r1",
@@ -319,6 +333,19 @@ mod tests {
     fn lookup_matches_versioned_deepseek_r1() {
         let m = lookup("deepseek", "deepseek-r1-0528").unwrap();
         assert!(m.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+    }
+
+    #[test]
+    fn lookup_matches_deepseek_v4_family_with_reasoning_quirk() {
+        // Phase 7: deepseek-v4-flash and v4 family require reasoning replay
+        // on every assistant tool_call row.
+        let flash = lookup("deepseek", "deepseek-v4-flash").unwrap();
+        assert!(flash.reasoning);
+        assert!(flash.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
+
+        let v4 = lookup("deepseek", "deepseek-v4").unwrap();
+        assert!(v4.reasoning);
+        assert!(v4.quirks.contains(&Quirk::ReasoningRequiredInToolCalls));
     }
 
     #[test]
