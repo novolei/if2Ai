@@ -256,6 +256,11 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
   `runtime_event`（PR C-1）；前端 `runtime-projection-bridge.ts` 改为单条
   `listen('runtime_event')` + family router。`runtime/runtime_event.rs::dispatch`
   作为非-evolution 路径的 canonical helper。
+- 2026-05-01：`permission-request` 频道在 `permission_service` 内收敛到
+  `runtime_event` envelope (`event_type=permission`, `family=prompt_opened`)；
+  前端 bridge `familyHandlers` 增加 Permission 条目，旁路
+  `event_logger.append_sync("permission_requested", ...)` 写入由
+  `runtime_event::dispatch` 内的 `append_sync_from_envelope` 替代（PR C-2）。
 
 ## 7. Gap 与二次真相清单
 
