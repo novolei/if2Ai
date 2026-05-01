@@ -23,11 +23,15 @@
 // - It does NOT own the pending permission prompt. That is
 //   already projected from the runtime-projection store
 //   (`approvals` slice) — see App.tsx::permissionPrompt.
+// - It does NOT re-export `appendMessage` / `updateMessage`.
+//   Transcript mutations are owned by the runtime-projection
+//   pipeline (events → reducer → snapshot). The slice still
+//   exposes them under @deprecated for emergency back-compat,
+//   but no production code path should reach them.
 
 import type { Conversation, Message } from '@/modules/chat/types'
 
 import {
-  appendMessage,
   clearMessages,
   clearStreamAbortHandle,
   getConversationSnapshot,
@@ -40,7 +44,6 @@ import {
   setStreamAbortHandle,
   setTitleStage,
   setTitleState,
-  updateMessage,
   useConversationStore,
   type ConversationSlice,
 } from './conversation-slice.ts'
@@ -53,7 +56,6 @@ export type { ConversationSlice, Conversation, Message }
 // can `import { setConversation } from '@/stores/chat-store'`
 // rather than the internal slice path.
 export {
-  appendMessage,
   clearMessages,
   clearStreamAbortHandle,
   getConversationSnapshot,
@@ -66,7 +68,6 @@ export {
   setStreamAbortHandle,
   setTitleStage,
   setTitleState,
-  updateMessage,
   useConversationStore,
 }
 

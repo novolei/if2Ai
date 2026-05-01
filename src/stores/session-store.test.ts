@@ -7,8 +7,8 @@ import { strict as assert } from 'node:assert'
 import { describe, it, beforeEach } from 'node:test'
 
 import { createSessionStore, INITIAL_SESSION_STATE } from './session-store.ts'
+import { appendMessage, updateMessage } from './conversation-slice.ts'
 import {
-  appendMessage,
   clearStreamAbortHandle,
   removeSession,
   setConversation,
@@ -17,7 +17,6 @@ import {
   setStreamAbortHandle,
   setTitleStage,
   initTitleState,
-  updateMessage,
   // Internal slice import for direct snapshot reads in tests
   // (we cannot use the React hook outside a component).
 } from './chat-store.ts'
