@@ -6,28 +6,30 @@
 //! Mirrors Steward's `cached_prompt` on `ReasoningContext`. The cache is
 //! per-turn (lives inside the local stream-loop state), not global.
 //!
-//! ## Wiring status (Steward-Alignment Task 3.2 / S3-S4)
+//! ## Wiring status
 //!
-//! Prior-art investigation (see Task 3.2 report) found that if2Ai already
-//! computes a `tool_pool_schema_hash_for_stream` for tracing/telemetry but
-//! has **no** prompt-plan caching layer — every loop iteration calls
-//! [`build_prompt_plan`](super::build_prompt_plan) from scratch.
+//! Wired into `iteration_preflight` (stream_iteration.rs) via
+//! `StreamLoopState::prompt_cache`. Each iteration computes a
+//! [`PromptFingerprint`] from the current tool pool names and compares
+//! against the cached fingerprint:
 //!
-//! The cache *type* lives here today, but is **not yet wired** into the
-//! legacy `run_stream_task_body`. That body will be rewritten into
-//! `run_agentic_loop` in Session 5 (Task 5.1), which is the natural home
-//! for the iteration-scoped cache. Wiring inline now would create
-//! throwaway code (same justification as Task 2.2's `force_text`
-//! deferral). When `run_agentic_loop` lands, it should:
-//!
-//! 1. Hold a `Option<CachedSystemPrompt>` across iterations.
-//! 2. At the top of each iteration, compute a [`PromptFingerprint`] from
-//!    the current active skill ids + registered tool names.
-//! 3. Reuse the cached `content` on hit; otherwise call
-//!    `build_prompt_plan` and store the result.
+//! 1. **Cache hit** — reuses the cached `system_prompt` + `tool_defs`
+//!    without recomputation. A tracing log records the hit and
+//!    estimated token savings.
+//! 2. **Cache miss** — rebuilds the prompt plan, stores the new
+//!    fingerprint + content, and logs the miss.
+//! 3. **Forced refresh** — every [`FORCE_REFRESH_INTERVAL`] iterations
+//!    the cache is unconditionally invalidated to guard against stale
+//!    state (mirrors GenericAgent's periodic-refresh design).
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+
+use crate::modules::api::ToolDefinition;
+
+/// Force a cache rebuild every N iterations to prevent stale state.
+/// Mirrors GenericAgent's periodic refresh design.
+pub const FORCE_REFRESH_INTERVAL: usize = 10;
 
 /// Stable, order-independent fingerprint over the inputs that determine
 /// the system prompt: the active skill set and the registered tool set.
@@ -72,8 +74,33 @@ impl PromptFingerprint {
 /// whether to reuse `content` or rebuild.
 #[derive(Debug, Clone)]
 pub struct CachedSystemPrompt {
+    /// The system prompt text that was built for this fingerprint.
     pub content: String,
+    /// Tool definitions snapshot corresponding to this fingerprint.
+    pub tool_defs: Vec<ToolDefinition>,
+    /// The fingerprint that produced this cache entry.
     pub fingerprint: PromptFingerprint,
+    /// The iteration at which this cache entry was last refreshed.
+    pub cached_at_iteration: usize,
+}
+
+impl CachedSystemPrompt {
+    /// Returns `true` when the cache entry should be forcibly refreshed,
+    /// either because the fingerprint changed or because the entry has
+    /// lived past [`FORCE_REFRESH_INTERVAL`] iterations.
+    pub fn should_refresh(&self, current_fp: &PromptFingerprint, current_iter: usize) -> bool {
+        self.fingerprint != *current_fp
+            || current_iter.saturating_sub(self.cached_at_iteration) >= FORCE_REFRESH_INTERVAL
+    }
+
+    /// Rough estimate of cached token savings. Uses a 4-chars-per-token
+    /// heuristic on the system prompt plus ~60 tokens per tool definition
+    /// (name + description + schema overhead).
+    pub fn estimated_token_savings(&self) -> usize {
+        let prompt_tokens = self.content.len() / 4;
+        let tool_tokens = self.tool_defs.len() * 60;
+        prompt_tokens + tool_tokens
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +113,57 @@ mod tests {
             PromptFingerprint::compute(&["a"], &["x"]),
             PromptFingerprint::compute(&["aa"], &["x"]),
         );
+    }
+
+    #[test]
+    fn should_refresh_on_fingerprint_change() {
+        let fp_a = PromptFingerprint::compute(&[], &["tool_a"]);
+        let fp_b = PromptFingerprint::compute(&[], &["tool_b"]);
+        let cached = CachedSystemPrompt {
+            content: "system".to_string(),
+            tool_defs: vec![],
+            fingerprint: fp_a,
+            cached_at_iteration: 1,
+        };
+        // Different fingerprint → should refresh.
+        assert!(cached.should_refresh(&fp_b, 2));
+    }
+
+    #[test]
+    fn should_refresh_after_force_interval() {
+        let fp = PromptFingerprint::compute(&[], &["tool_a"]);
+        let cached = CachedSystemPrompt {
+            content: "system".to_string(),
+            tool_defs: vec![],
+            fingerprint: fp.clone(),
+            cached_at_iteration: 1,
+        };
+        // Same fingerprint, within interval → no refresh.
+        assert!(!cached.should_refresh(&fp, 5));
+        // Same fingerprint, at interval boundary → refresh.
+        assert!(cached.should_refresh(&fp, 1 + FORCE_REFRESH_INTERVAL));
+    }
+
+    #[test]
+    fn estimated_token_savings_basic() {
+        let cached = CachedSystemPrompt {
+            content: "a".repeat(400), // 400 chars ≈ 100 tokens
+            tool_defs: vec![
+                ToolDefinition {
+                    name: "t1".to_string(),
+                    description: None,
+                    input_schema: serde_json::json!({}),
+                },
+                ToolDefinition {
+                    name: "t2".to_string(),
+                    description: None,
+                    input_schema: serde_json::json!({}),
+                },
+            ],
+            fingerprint: PromptFingerprint::compute(&[], &["t1", "t2"]),
+            cached_at_iteration: 0,
+        };
+        // 400/4 + 2*60 = 100 + 120 = 220
+        assert_eq!(cached.estimated_token_savings(), 220);
     }
 }

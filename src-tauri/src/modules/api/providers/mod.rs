@@ -28,15 +28,87 @@ pub trait Provider: Send + Sync {
     ) -> ProviderFuture<'a, Self::Stream>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ProviderKind {
     ClawApi,
     Xai,
     OpenAi,
+    /// User-defined provider (assumes OpenAI-compatible format by default).
+    Custom(String),
 }
 
+/// Describes the tool-call wire format a provider expects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallFormat {
+    /// Anthropic-style tool use blocks.
+    Anthropic,
+    /// OpenAI-style function calling.
+    OpenAi,
+    /// Provider does not support tool calling.
+    None,
+}
+
+/// Capability descriptor for a provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub supports_tool_calling: bool,
+    pub supports_vision: bool,
+    pub supports_streaming: bool,
+    pub supports_system_message: bool,
+    pub max_context_window: Option<usize>,
+    pub tool_call_format: ToolCallFormat,
+}
+
+impl ProviderKind {
+    /// Returns the default capabilities for a known provider.
+    /// Custom providers default to OpenAI-compatible assumptions.
+    #[must_use]
+    pub fn capabilities(&self) -> ProviderCapabilities {
+        match self {
+            Self::ClawApi => ProviderCapabilities {
+                supports_tool_calling: true,
+                supports_vision: true,
+                supports_streaming: true,
+                supports_system_message: true,
+                max_context_window: Some(200_000),
+                tool_call_format: ToolCallFormat::Anthropic,
+            },
+            Self::OpenAi => ProviderCapabilities {
+                supports_tool_calling: true,
+                supports_vision: true,
+                supports_streaming: true,
+                supports_system_message: true,
+                max_context_window: Some(128_000),
+                tool_call_format: ToolCallFormat::OpenAi,
+            },
+            Self::Xai => ProviderCapabilities {
+                supports_tool_calling: true,
+                supports_vision: false,
+                supports_streaming: true,
+                supports_system_message: true,
+                max_context_window: Some(131_072),
+                tool_call_format: ToolCallFormat::OpenAi,
+            },
+            Self::Custom(_) => ProviderCapabilities {
+                supports_tool_calling: true,
+                supports_vision: false,
+                supports_streaming: true,
+                supports_system_message: true,
+                max_context_window: None,
+                tool_call_format: ToolCallFormat::OpenAi,
+            },
+        }
+    }
+
+    /// Returns `true` if this is a built-in (non-custom) provider.
+    #[must_use]
+    pub fn is_builtin(&self) -> bool {
+        !matches!(self, Self::Custom(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderMetadata {
     pub provider: ProviderKind,
     pub auth_env: &'static str,
@@ -169,7 +241,7 @@ pub fn resolve_model_alias(model: &str) -> String {
                     "grok-2" => "grok-2",
                     _ => trimmed,
                 },
-                ProviderKind::OpenAi => trimmed,
+                ProviderKind::OpenAi | ProviderKind::Custom(_) => trimmed,
             })
         })
         .map_or_else(|| trimmed.to_string(), ToOwned::to_owned)
@@ -183,7 +255,7 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
     let canonical = resolve_model_alias(model);
     let lower = canonical.to_ascii_lowercase();
     if let Some((_, metadata)) = MODEL_REGISTRY.iter().find(|(alias, _)| *alias == lower) {
-        return Some(*metadata);
+        return Some(metadata.clone());
     }
     if lower.starts_with("grok") {
         return Some(ProviderMetadata {

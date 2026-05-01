@@ -265,8 +265,13 @@ impl ClawApiClient {
     ) -> Result<reqwest::Response, ApiError> {
         let request_url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
+        // Serialize to JSON Value so we can inject Anthropic cache_control
+        // annotations before sending.
+        let mut body = serde_json::to_value(request).map_err(ApiError::from)?;
+        super::prompt_caching::inject_cache_control(&mut body);
+
         // Debug: log the full request body so we can see exactly what's being sent
-        if let Ok(json_str) = serde_json::to_string_pretty(request) {
+        if let Ok(json_str) = serde_json::to_string_pretty(&body) {
             tracing::info!("[send_raw_request] POST {}\n{}", request_url, json_str);
         } else {
             tracing::warn!("[send_raw_request] Failed to serialize request for debug logging");
@@ -279,7 +284,7 @@ impl ClawApiClient {
             .header("content-type", "application/json");
         let mut request_builder = self.auth.apply(request_builder);
 
-        request_builder = request_builder.json(request);
+        request_builder = request_builder.json(&body);
         request_builder.send().await.map_err(ApiError::from)
     }
 
