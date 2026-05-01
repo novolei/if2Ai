@@ -24,7 +24,7 @@
 use std::sync::OnceLock;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::modules::memory::policy::{PolicyDecision, ReasonCode};
 use crate::modules::memory::scope::MemoryExecutionScope;
@@ -95,11 +95,24 @@ fn emit_to_frontend(payload: MemoryEventPayload<'_>) {
     let Some(handle) = APP_HANDLE.get() else {
         return;
     };
-    if let Err(e) = handle.emit("memory_event", &payload) {
+    use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+    let correlation = CorrelationIds {
+        session_id: payload.session_id.map(str::to_owned),
+        project_id: payload.project_id.map(str::to_owned),
+        ..Default::default()
+    };
+    if let Err(err) = crate::modules::runtime::runtime_event::dispatch(
+        Some(handle),
+        RuntimeEventType::Memory,
+        "lifecycle",
+        correlation,
+        &payload,
+        None, // memory/audit has no RunEventLogger handle today; envelope is broadcast-only
+    ) {
         tracing::warn!(
-            "[MemoryAuditEmitter] failed to emit memory_event {event}: {err}",
             event = payload.event,
-            err = e
+            error = %err,
+            "[MemoryAuditEmitter] runtime_event dispatch failed"
         );
     }
 }
@@ -1135,5 +1148,50 @@ mod tests {
         MemoryAuditEmitter::memory_recall_served(&ctx, "query", Some("core"), 3);
         MemoryAuditEmitter::memory_rejected(&ctx, "key", &ReasonCode::ContentTooLong, "too long");
         MemoryAuditEmitter::memory_promoted(&ctx, "key", "conversation", "core");
+    }
+
+    #[test]
+    fn memory_event_dispatch_emits_envelope_with_lifecycle_family() {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+        std::env::set_var(
+            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
+            "1",
+        );
+        let payload = MemoryEventPayload {
+            event: "memory_captured",
+            trace_id: None,
+            session_id: Some("sess-1"),
+            project_id: None,
+            effective_workdir: None,
+            memory_key: None,
+            memory_category: Some("preference"),
+            policy_decision: None,
+            reason_code: None,
+            reason_message: None,
+            recall_query: None,
+            recall_category: None,
+            result_count: None,
+            from_category: None,
+            to_category: None,
+            extra: None,
+            timestamp: "2026-05-01T00:00:00Z".into(),
+        };
+        let env = crate::modules::runtime::runtime_event::dispatch(
+            None,
+            RuntimeEventType::Memory,
+            "lifecycle",
+            CorrelationIds {
+                session_id: payload.session_id.map(str::to_owned),
+                ..Default::default()
+            },
+            &payload,
+            None,
+        )
+        .expect("dispatch ok with kill-switch");
+        assert_eq!(env.event_type, RuntimeEventType::Memory);
+        assert_eq!(env.payload_family.0, "lifecycle");
+        std::env::remove_var(
+            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
+        );
     }
 }

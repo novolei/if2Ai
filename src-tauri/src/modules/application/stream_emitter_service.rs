@@ -9,14 +9,13 @@
 //! Extracted from `commands/agent.rs::dispatch_after_turn` in GFR-004
 //! (pure structural move, function body byte-identical).
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
 use crate::modules::application::{AfterTurnInput, ExistingRecordRef, MemoryCoordinator};
 use crate::modules::harness::{AgentEvent, EventBus};
 use crate::modules::learning::reflection_note::ReflectionNote;
 use crate::modules::runtime::contracts::memory::MemoryWriteCandidate;
-use crate::modules::runtime::stream_emitter::MEMORY_AFTER_TURN_EVENT;
 
 /// Frozen schema marker for the
 /// [`MemoryCoordinator::after_turn`] batch envelope shape (frontend
@@ -30,7 +29,7 @@ pub const MEMORY_AFTER_TURN_TRACE_VERSION: &str = "memory-after-turn-trace@m4.1"
 /// conflict-resolver pipeline at the end of a turn and emit the
 /// **batch envelope** through both:
 ///
-///   1. the frontend [`MEMORY_AFTER_TURN_EVENT`] Tauri channel
+///   1. the frontend [`crate::modules::runtime::stream_emitter::MEMORY_AFTER_TURN_EVENT`] Tauri channel
 ///      (drives the runtime-projection store), and
 ///   2. the harness [`EventBus`] as
 ///      [`AgentEvent::MemoryAfterTurn`] (drives M4 trace sinks /
@@ -91,12 +90,26 @@ pub(crate) async fn dispatch_after_turn(
         "quality": output.quality,
         "conflicts": output.conflicts,
     });
-    if let Err(err) = app_handle.emit(MEMORY_AFTER_TURN_EVENT, payload) {
-        tracing::trace!(
-            event = MEMORY_AFTER_TURN_EVENT,
-            error = %err,
-            "[after_turn] memory_after_turn emit failed (non-fatal)"
-        );
+    {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+        let correlation = CorrelationIds {
+            session_id: session_id.clone(),
+            project_id: project_id.clone(),
+            ..Default::default()
+        };
+        if let Err(err) = crate::modules::runtime::runtime_event::dispatch(
+            Some(app_handle),
+            RuntimeEventType::Memory,
+            "after_turn",
+            correlation,
+            &payload,
+            None, // run-log integration is harness-side; broadcast-only here
+        ) {
+            tracing::trace!(
+                error = %err,
+                "[after_turn] runtime_event dispatch failed (non-fatal)"
+            );
+        }
     }
 
     // (2) Harness EventBus — M4.2 ground-truth seam.  Zero
@@ -119,5 +132,45 @@ pub(crate) async fn dispatch_after_turn(
                 "[after_turn] harness MemoryAfterTurn emit failed (non-fatal)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_after_turn_dispatch_emits_envelope_with_after_turn_family() {
+        use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+        std::env::set_var(
+            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
+            "1",
+        );
+        let payload = serde_json::json!({
+            "traceVersion": MEMORY_AFTER_TURN_TRACE_VERSION,
+            "caller": "test",
+            "policyVersion": "v1",
+            "decidedAt": "2026-05-01T00:00:00Z",
+            "decisions": [],
+            "quality": {},
+            "conflicts": [],
+        });
+        let env = crate::modules::runtime::runtime_event::dispatch(
+            None,
+            RuntimeEventType::Memory,
+            "after_turn",
+            CorrelationIds {
+                session_id: Some("sess-1".into()),
+                ..Default::default()
+            },
+            &payload,
+            None,
+        )
+        .expect("dispatch ok");
+        assert_eq!(env.event_type, RuntimeEventType::Memory);
+        assert_eq!(env.payload_family.0, "after_turn");
+        std::env::remove_var(
+            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
+        );
     }
 }

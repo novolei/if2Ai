@@ -261,6 +261,10 @@ Staff-level 原则：**写事实只进 canonical log；读事实只读 projectio
   前端 bridge `familyHandlers` 增加 Permission 条目，旁路
   `event_logger.append_sync("permission_requested", ...)` 写入由
   `runtime_event::dispatch` 内的 `append_sync_from_envelope` 替代（PR C-2）。
+- 2026-05-01：`memory_event` / `memory_after_turn` 收敛到 `runtime_event`
+  envelope (`event_type=memory`, family ∈ {`lifecycle`, `after_turn`})；
+  harness EventBus 上的 `AgentEvent::MemoryAfterTurn` 保留为治理侧独立
+  真值源（PR C-3）。chat-runtime 单频道收敛工作 (C-1/C-2/C-3) 完成。
 
 ## 7. Gap 与二次真相清单
 
