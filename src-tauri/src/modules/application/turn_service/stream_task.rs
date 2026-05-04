@@ -231,24 +231,6 @@ pub struct StreamTaskInputs {
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
 }
 
-pub(super) async fn append_stream_event(
-    run_event_logger: &RunEventLogger,
-    payload: &StreamTokenPayload,
-) {
-    let event_type = match payload.event_type.as_str() {
-        "thinking_start" => "thinking_started",
-        "tool_call_update" => match payload.tool_status.as_deref() {
-            Some("queued") => "tool_call_queued",
-            Some("running") => "tool_call_running",
-            Some("completed") => "tool_call_completed",
-            Some("error") => "tool_call_failed",
-            _ => "tool_call_update",
-        },
-        other => other,
-    };
-    let _ = run_event_logger.append(event_type, payload.clone()).await;
-}
-
 pub(super) async fn append_remembered_permission_events(
     run_event_logger: &RunEventLogger,
     tool_name: &str,

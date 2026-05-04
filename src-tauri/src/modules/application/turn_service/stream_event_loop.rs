@@ -33,7 +33,7 @@ use crate::modules::runtime::stream_outcome::{
 };
 use crate::modules::session::{Session as AppSession, SessionManager};
 
-use super::stream_task::append_stream_event;
+use super::stream_task_run_log::append_stream_event;
 
 const SAVE_INTERVAL: u32 = 50;
 
