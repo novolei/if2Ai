@@ -33,8 +33,6 @@ import {
   SlidersHorizontal,
   Square,
   Paperclip,
-  AlertTriangle,
-  RotateCcw,
   TerminalSquare,
   UserRound,
   Wrench,
@@ -60,7 +58,6 @@ import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileCont
 import { MemoryChip } from "@/components/memory/MemoryChip"
 import { TurnCostChip } from "@/components/chat/TurnCostChip"
 import { RoutingChip } from "@/components/chat/RoutingChip"
-import { MemoryWriteCard } from "@/components/memory/MemoryWriteCard"
 import { WriteToolDiffCard } from "@/components/chat/WriteToolDiffCard"
 import { BranchPicker } from "@/components/chat/BranchPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
@@ -77,7 +74,6 @@ import type { FinalRunReport } from "@/transport/contracts"
  */
 const VIRTUAL_LIST_THRESHOLD = 50
 import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
-import { WaveDotsAnimation } from "@/components/loading/WaveDotsAnimation"
 import { ProjectPreviewPanel } from "@/components/ui/ProjectPreviewPanel"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import {
@@ -88,8 +84,29 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
+// GF-01 PR-01 — leaf cards / utils extracted from this file.
+import { ThinkingBlock } from "@/components/chat/chat-ui/cards/ThinkingBlock"
+import { LoadingIndicator } from "@/components/chat/chat-ui/cards/LoadingIndicator"
+import { EmptyState } from "@/components/chat/chat-ui/cards/EmptyState"
+import { MemoryStoreToolCard } from "@/components/chat/chat-ui/cards/MemoryStoreToolCard"
+import { FinalRunReportCard } from "@/components/chat/chat-ui/cards/FinalRunReportCard"
+import { RecoveryCard } from "@/components/chat/chat-ui/cards/RecoveryCard"
+import { ErrorCard } from "@/components/chat/chat-ui/cards/ErrorCard"
+import { MenuItemButton } from "@/components/chat/chat-ui/utils/MenuItemButton"
+import {
+  formatDuration,
+  formatShortTime,
+  redactSensitiveText,
+  summarizeThinkingText,
+  truncateText,
+} from "@/components/chat/chat-ui/utils/text"
+import {
+  modelItems,
+  permissionModeItems,
+  permissionModeLabelFor,
+} from "@/components/chat/chat-ui/utils/items"
 
-interface Message {
+export interface Message {
   id: string
   role: "user" | "assistant" | "tool"
   content: string
@@ -189,56 +206,6 @@ const SURFACE_CARD_TOKENS = {
   headerDivider: 'border-b border-border/50',
   headerLabel: 'font-mono text-[10px] tracking-tight text-muted-foreground/45',
 } as const
-
-function FontSansIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <text
-        x="2.3"
-        y="11.2"
-        fontSize="8.4"
-        fontWeight="600"
-        fontFamily="system-ui, -apple-system, Segoe UI, Roboto, sans-serif"
-        fill="currentColor"
-      >
-        Aa
-      </text>
-    </svg>
-  )
-}
-
-function FontSerifIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <text
-        x="2.1"
-        y="11.2"
-        fontSize="8.4"
-        fontWeight="600"
-        fontFamily="ui-serif, Georgia, Cambria, Times New Roman, serif"
-        fill="currentColor"
-      >
-        Aa
-      </text>
-    </svg>
-  )
-}
-
-function DensityCompactIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <path d="M3 5h10M3 8h10M3 11h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function DensityComfortableIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
-      <path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 export function ChatUI({
   messages,
@@ -2549,65 +2516,6 @@ const ComposerDock = React.memo(function ComposerDock({
 
 const WEB_SEARCH_NO_KEY_PREFIX = '[web_search: 当前使用 DuckDuckGo 免费搜索'
 
-function MemoryStoreToolCard({ message }: { message: Message }) {
-  const args = (message.toolArgs ?? {}) as Record<string, unknown>
-  // The user-supplied content is the most accurate preview; the backend
-  // only echoes a 120-char content_preview for prompt decisions, and not at
-  // all for allow / deny.
-  const argsContent =
-    typeof args.content === 'string'
-      ? (args.content as string)
-      : typeof args.text === 'string'
-        ? (args.text as string)
-        : ''
-  // Backend `pending_approval` payload includes a short preview when the
-  // input args aren't reachable (rare, but parses defensively).
-  let backendPreview = ''
-  try {
-    const parsed = JSON.parse(message.content || '') as Record<string, unknown>
-    if (typeof parsed.content_preview === 'string') {
-      backendPreview = parsed.content_preview
-    }
-  } catch {
-    // Not a JSON payload (legacy tool flow); fall through.
-  }
-  const contentText = argsContent || backendPreview || message.content || ''
-
-  // Prefer structured fields lifted from the tool result by App.tsx; fall
-  // back to args (legacy) and finally to derived defaults.
-  const scopeFromArgs =
-    typeof args.scope === 'string' &&
-    (args.scope === 'global' || args.scope === 'project' || args.scope === 'session')
-      ? (args.scope as 'global' | 'project' | 'session')
-      : undefined
-  const scope: 'global' | 'project' | 'session' =
-    message.memoryScope ?? scopeFromArgs ?? 'session'
-
-  const decision = message.policyDecision ?? 'allow'
-  const reasonCode =
-    message.memoryReasonCode ??
-    (typeof args.reason_code === 'string'
-      ? (args.reason_code as string)
-      : decision === 'deny'
-        ? 'POLICY_DENIED'
-        : decision === 'prompt'
-          ? 'USER_APPROVAL_REQUIRED'
-          : 'ALLOWED_BY_POLICY')
-
-  return (
-    <div className="my-1.5 pl-4">
-      <MemoryWriteCard
-        content={contentText}
-        policyDecision={decision}
-        reasonCode={reasonCode}
-        scope={scope}
-        toolStatus={message.toolStatus}
-        isStreaming={message.toolStatus === 'queued' || message.toolStatus === 'running'}
-      />
-    </div>
-  )
-}
-
 function ToolCallMessage({
   message,
   defaultWorkdir,
@@ -3961,15 +3869,6 @@ function extractCodeText(node: React.ReactNode): string {
   return ''
 }
 
-function formatShortTime(date: Date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
-}
 
 type ChatToolStatus = import("@/transport/contracts").ToolAttemptStatus | "error"
 
@@ -4506,444 +4405,6 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
-function EmptyState({ sessionTitle, projectLabel }: { sessionTitle: string; projectLabel: string }) {
-  return (
-    <div className="flex min-h-[55vh] flex-col items-center justify-center gap-6 rounded-[2rem] border border-dashed border-border/70 bg-surface px-8 py-16 text-center">
-      <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-muted text-muted-foreground shadow-inner">
-        <Sparkles className="h-8 w-8" />
-      </div>
-        <div className="max-w-xl space-y-3">
-        <h2 className="text-[22px] font-semibold tracking-tight">{sessionTitle}</h2>
-        <p className="text-[13px] leading-6 text-muted-foreground">
-          当前工作区是 <span className="text-foreground/85">{projectLabel}</span>。输入任务后，右侧会按照 Codex 的节奏显示变更摘要、思考过程和正文。
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function LoadingIndicator() {
-  return (
-    <div className="flex items-center px-0.5 py-1">
-      <WaveDotsAnimation
-        amplitude={11.04}
-        ballRadius={3}
-        count={6}
-        delay={0.19}
-        horizontalStretch={1.10625}
-        topStartColor="#fb923c"
-        topEndColor="#f97316"
-        bottomStartColor="#f59e0b"
-        bottomEndColor="#ea580c"
-        className="opacity-85"
-      />
-    </div>
-  )
-}
-
-function FinalRunReportCard({
-  report,
-}: {
-  report: FinalRunReport
-  onResume?: (resumeCursor: string) => void
-}) {
-  const meta = finalReportMeta(report)
-
-  return (
-    <div className={cn('w-full overflow-hidden rounded-[6px] border px-3 py-2', meta.containerClass)}>
-      <div className="flex items-center gap-2">
-        <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full', meta.iconClass)}>
-          {meta.kind === 'done' ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : meta.kind === 'approval' ? (
-            <Lock className="h-3.5 w-3.5" />
-          ) : meta.kind === 'exhausted' ? (
-            <Clock3 className="h-3.5 w-3.5" />
-          ) : (
-            <AlertTriangle className="h-3.5 w-3.5" />
-          )}
-        </span>
-        <div className="min-w-0 flex-1 truncate">
-          <span className={cn('text-[12.5px] font-semibold leading-4.5', meta.titleClass)}>
-            {meta.title}
-          </span>
-          <span className="ml-2 text-[11.5px] leading-4.5 text-muted-foreground">
-            Details are available in Developer telemetry.
-          </span>
-        </div>
-        <span className="shrink-0 rounded-md border border-border/55 bg-background/45 px-1.5 py-0.5 text-[10.5px] leading-4 text-muted-foreground">
-          {humanizeRuntimeValue(report.loopKind)}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function finalReportMeta(report: FinalRunReport): {
-  kind: 'done' | 'approval' | 'exhausted' | 'failed'
-  title: string
-  containerClass: string
-  iconClass: string
-  titleClass: string
-} {
-  if (report.outcome === 'completed') {
-    return {
-      kind: 'done',
-      title: 'Run completed',
-      containerClass: 'border-emerald-500/35 bg-emerald-500/8',
-      iconClass: 'bg-emerald-500/14 text-emerald-500',
-      titleClass: 'text-emerald-500',
-    }
-  }
-  if (report.outcome === 'needs_approval') {
-    return {
-      kind: 'approval',
-      title: 'Waiting for approval',
-      containerClass: 'border-amber-500/35 bg-amber-500/10',
-      iconClass: 'bg-amber-500/14 text-amber-500',
-      titleClass: 'text-amber-500',
-    }
-  }
-  if (report.outcome === 'exhausted_with_summary') {
-    return {
-      kind: 'exhausted',
-      title: 'Stopped after limits',
-      containerClass: 'border-sky-500/35 bg-sky-500/10',
-      iconClass: 'bg-sky-500/14 text-sky-500',
-      titleClass: 'text-sky-500',
-    }
-  }
-  return {
-    kind: 'failed',
-    title: 'Could not finish',
-    containerClass: 'border-rose-500/35 bg-rose-500/10',
-    iconClass: 'bg-rose-500/14 text-rose-500',
-    titleClass: 'text-rose-500',
-  }
-}
-
-function humanizeRuntimeValue(value: string | undefined): string {
-  if (!value) return 'pending'
-  return value.replace(/_/g, ' ')
-}
-
-function RecoveryCard({
-  error,
-  degradedReason,
-  resumeCursor,
-  isRecovering,
-  onResume,
-}: {
-  error: string
-  degradedReason?: string
-  resumeCursor?: string
-  isRecovering?: boolean
-  onResume?: (resumeCursor: string) => void
-}) {
-  const reasonLabel = summarizeDegradedReason(degradedReason)
-
-  return (
-    <div className="relative w-full overflow-hidden rounded-[6px] border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5">
-      <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-emerald-400/90" />
-      <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
-          <Check className="h-3.5 w-3.5 text-emerald-500" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-emerald-500">任务已部分完成</div>
-            <span className="rounded-full border border-emerald-500/35 bg-emerald-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-emerald-500">
-              {isRecovering ? '恢复中' : '可继续恢复'}
-            </span>
-          </div>
-          <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">
-            {isRecovering
-              ? '正在基于已保留的恢复点继续补全未完成部分，不会重复已确认的副作用操作。'
-              : '已保留本轮已确认的执行结果。继续后只补全未完成部分，不会重复已确认的副作用操作。'}
-          </div>
-          {reasonLabel ? (
-            <div className="mt-1 text-[11px] leading-4 text-emerald-500/85">
-              中断原因：{reasonLabel}
-            </div>
-          ) : null}
-          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-emerald-500/85">
-            {truncateText(error, 500)}
-          </div>
-          {resumeCursor && onResume ? (
-            <button
-              type="button"
-              onClick={() => onResume(resumeCursor)}
-              disabled={isRecovering}
-              className="mt-1.75 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/14 px-2.5 py-1 text-[11px] font-medium text-emerald-500 transition-colors hover:bg-emerald-500/22 disabled:cursor-default disabled:opacity-60"
-            >
-              <RotateCcw className="h-3 w-3" />
-              {isRecovering ? '正在恢复未完成任务…' : '继续未完成任务'}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * ErrorCard — renders assistant errors with actionable messaging.
- * Supports both raw error strings and structured error hints.
- */
-function ErrorCard({
-  error,
-  taskOutcome,
-  resumeCursor,
-  onResume,
-  onRetry,
-}: {
-  error: string
-  taskOutcome?: string
-  resumeCursor?: string
-  onResume?: (resumeCursor: string) => void
-  onRetry?: () => void
-}) {
-  // Classify error for user-friendly messaging
-  const { title, suggestion, isConnection, kindLabel } = classifyError(error, taskOutcome)
-
-  return (
-    <div className="relative w-full overflow-hidden rounded-[6px] border border-rose-500/40 bg-rose-500/10 px-3 py-2.5">
-      <div className="absolute inset-y-0 left-0 w-1.5 rounded-l-[13px] bg-rose-400/90" />
-      <div className="flex items-start gap-2.5 pl-2 pr-1">
-        <div className="mt-0.25 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-rose-500/14">
-          <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="text-[12.5px] font-medium leading-4.5 text-rose-500">{title}</div>
-            <span className="rounded-full border border-rose-500/40 bg-rose-500/12 px-2 py-0.5 text-[10px] font-medium leading-4 text-rose-500">
-              {kindLabel}
-            </span>
-          </div>
-          {suggestion && (
-            <div className="mt-0.5 text-[11.5px] leading-4.5 text-foreground/72">{suggestion}</div>
-          )}
-          <div className="mt-1.25 break-words rounded-md bg-background/35 px-2.5 py-1.25 text-[11px] font-mono leading-4 text-rose-500/90">
-            {truncateText(error, 500)}
-          </div>
-          {isConnection && onRetry && (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="mt-1.75 flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
-            >
-              <RotateCcw className="h-3 w-3" />
-              重试
-            </button>
-          )}
-          {resumeCursor && onResume && (
-            <button
-              type="button"
-              onClick={() => onResume(resumeCursor)}
-              className="mt-1.75 ml-2 inline-flex items-center gap-1.5 rounded-md bg-rose-500/14 px-2.5 py-1 text-[11px] font-medium text-rose-500 transition-colors hover:bg-rose-500/22"
-            >
-              继续未完成任务
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function summarizeDegradedReason(degradedReason?: string) {
-  if (!degradedReason) return null
-  const normalized = degradedReason.split(';')[0]?.trim().toLowerCase()
-  if (!normalized) return null
-  if (normalized.includes('network_timeout')) return '模型流超时'
-  if (normalized.includes('network_transport_error')) return '网络传输中断'
-  if (normalized.includes('request_validation_error')) return '请求校验失败'
-  if (normalized.includes('permission_error')) return '权限受限'
-  if (normalized.includes('max_iterations_reached')) return '达到迭代上限'
-  if (normalized.includes('read_only_success_before_failure')) return '只读工具已完成，但回答尾段中断'
-  return degradedReason.split(';')[0] ?? null
-}
-
-/**
- * Classify an error string into user-friendly messaging.
- */
-function classifyError(error: string, taskOutcome?: string): {
-  title: string
-  suggestion: string
-  isConnection: boolean
-  kindLabel: string
-} {
-  return classifyErrorWithOutcome(error, taskOutcome)
-}
-
-function classifyErrorWithOutcome(error: string, taskOutcome?: string): {
-  title: string
-  suggestion: string
-  isConnection: boolean
-  kindLabel: string
-} {
-  const lower = error.toLowerCase()
-
-  if (taskOutcome === 'partial_success' || lower.includes('task_outcome] partial_success')) {
-    return {
-      title: '任务部分完成',
-      suggestion: '本轮已有部分工具执行成功，但流在尾段中断。可继续发送“继续完成”来补全结果。',
-      isConnection: true,
-      kindLabel: '部分成功',
-    }
-  }
-
-  if (lower.includes('network_timeout:')) {
-    return {
-      title: '模型流超时',
-      suggestion: '上游模型流在超时时间内未返回数据，建议重试或切换模型。',
-      isConnection: true,
-      kindLabel: '网络超时',
-    }
-  }
-
-  if (lower.includes('permission_error:')) {
-    return {
-      title: '权限受限',
-      suggestion: '当前权限模式不允许继续执行，请在权限弹窗中授权后重试。',
-      isConnection: false,
-      kindLabel: '权限错误',
-    }
-  }
-
-  if (lower.includes('request_validation_error:')) {
-    return {
-      title: '请求格式不兼容',
-      suggestion: '会话历史中的工具调用顺序与模型接口约束不一致，建议重试或新建会话。',
-      isConnection: false,
-      kindLabel: '请求校验失败',
-    }
-  }
-
-  if (lower.includes('network_transport_error:')) {
-    return {
-      title: '网络传输中断',
-      suggestion: '连接被中断或网络不稳定，请检查网络后重试。',
-      isConnection: true,
-      kindLabel: '网络中断',
-    }
-  }
-
-  if (lower.includes('model_stream_error:')) {
-    return {
-      title: '模型流异常',
-      suggestion: '模型流式输出异常终止，请稍后重试。',
-      isConnection: false,
-      kindLabel: '模型流断开',
-    }
-  }
-
-  if (lower.includes('connection refused') || lower.includes('network') || lower.includes('dns')) {
-    return {
-      title: '网络连接失败',
-      suggestion: '请检查网络连接和代理设置，确认 LLM 服务地址可访问。',
-      isConnection: true,
-      kindLabel: '网络错误',
-    }
-  }
-
-  if (lower.includes('400') || lower.includes('invalidparameter') || lower.includes('invalid')) {
-    return {
-      title: '请求参数有误',
-      suggestion: '工具定义或消息格式与服务端不兼容，请检查配置后重试。',
-      isConnection: false,
-      kindLabel: '请求错误',
-    }
-  }
-
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-    return {
-      title: '认证失败',
-      suggestion: 'API Key 或认证令牌已过期，请在设置中更新。',
-      isConnection: false,
-      kindLabel: '认证错误',
-    }
-  }
-
-  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests')) {
-    return {
-      title: '请求频率受限',
-      suggestion: 'API 调用已达上限，请稍后再试。',
-      isConnection: false,
-      kindLabel: '限流',
-    }
-  }
-
-  if (lower.includes('500') || lower.includes('502') || lower.includes('503') || lower.includes('504')) {
-    return {
-      title: '服务端异常',
-      suggestion: 'LLM 服务端暂时不可用，请稍后重试。',
-      isConnection: true,
-      kindLabel: '服务异常',
-    }
-  }
-
-  if (lower.includes('missing credential') || lower.includes('missing_credentials')) {
-    return {
-      title: '缺少 API 配置',
-      suggestion: '请在 ~/.claude/settings.json 中配置 ANTHROPIC_AUTH_TOKEN 和 ANTHROPIC_BASE_URL。',
-      isConnection: false,
-      kindLabel: '配置缺失',
-    }
-  }
-
-  return {
-    title: 'Agent 执行异常',
-    suggestion: '请检查后端日志或网络配置，确认 LLM 服务可用。',
-    isConnection: false,
-    kindLabel: '未知错误',
-  }
-}
-
-function ThinkingBlock({
-  thinking,
-  thinkingTime,
-  defaultOpen = false,
-}: {
-  thinking: string
-  thinkingTime?: number
-  defaultOpen?: boolean
-}) {
-  const [open, setOpen] = React.useState(defaultOpen)
-  React.useEffect(() => {
-    setOpen(defaultOpen)
-  }, [defaultOpen, thinking])
-  const durationLabel = thinkingTime ? formatDuration(thinkingTime) : '—'
-
-  return (
-    <div className="relative mb-3 pl-4">
-      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-border/70" />
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] font-light italic tracking-tight text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/70" />
-        <span>已完成思考</span>
-        <span className="text-muted-foreground/70 not-italic"> {durationLabel}</span>
-        <ChevronDown className={cn('ml-0.5 h-3 w-3 transition-transform', open && 'rotate-180')} />
-      </button>
-
-      <div
-        className={cn(
-          'overflow-hidden transition-[max-height,opacity] duration-200',
-          open ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0'
-        )}
-      >
-        <div className="ml-[10px] border-l border-border/55 pl-3 pt-1">
-          <div className="whitespace-pre-wrap px-1 text-[11.5px] font-light italic leading-6 text-muted-foreground">
-            {thinking}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function ThinkingSummaryNode({
   thinking,
@@ -4967,77 +4428,3 @@ function ThinkingSummaryNode({
   )
 }
 
-const modelItems = [
-  { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-  { value: 'gpt-5.4', label: 'GPT-5.4' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-]
-
-const strengthItems = [
-  { value: 'low', label: '低' },
-  { value: 'mid', label: '中' },
-  { value: 'high', label: '高' },
-]
-
-const permissionModeItems: Array<{ value: PermissionMode; label: string }> = [
-  { value: 'dangerFullAccess', label: '完全访问权限' },
-  { value: 'workspaceWrite', label: '受限访问' },
-  { value: 'readOnly', label: '只读' },
-]
-
-function modelLabelFor(value: string) {
-  return modelItems.find((item) => item.value === value)?.label ?? 'GPT-5.4-Mini'
-}
-
-function strengthLabelFor(value: string) {
-  return strengthItems.find((item) => item.value === value)?.label ?? '中'
-}
-
-function permissionModeLabelFor(value: PermissionMode) {
-  return permissionModeItems.find((item) => item.value === value)?.label ?? '完全访问权限'
-}
-
-function summarizeThinkingText(thinking: string): string {
-  const lineCount = thinking.split('\n').filter((line) => line.trim().length > 0).length
-  if (lineCount <= 0) return '已完成思考'
-  return lineCount === 1 ? '已完成上下文判断' : `已完成上下文判断 · ${lineCount} 段`
-}
-
-function MenuItemButton({
-  children,
-  active = false,
-  onClick,
-}: {
-  children: React.ReactNode
-  active?: boolean
-  onClick?: () => void
-}) {
-  return (
-    <DropdownMenuItem
-      className={cn(
-        'h-8 rounded-[6px] px-2.5 text-[12.5px] font-medium',
-        active ? 'bg-accent text-accent-foreground' : 'text-popover-foreground'
-      )}
-      onSelect={() => onClick?.()}
-    >
-      {children}
-    </DropdownMenuItem>
-  )
-}
-
-function formatDuration(value: number) {
-  if (value < 1000) return `${value}ms`
-  return `${(value / 1000).toFixed(1)}s`
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text
-  return text.slice(0, maxLen) + '…'
-}
-
-function redactSensitiveText(text: string): string {
-  if (!text) return text
-  return text
-    .replace(/(token|password|secret|api[_-]?key)\s*[:=]\s*[^\s]+/gi, '$1=<redacted>')
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer <redacted>')
-}
