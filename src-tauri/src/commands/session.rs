@@ -234,23 +234,15 @@ pub async fn close_session(
         .memory_ticker
         .on_session_end(&scope, &session.id, &session.messages);
 
-    // MIG-020 (T-006): Update supervisor state on session close.
+    // MIG-020 (T-006) / DR-01: Update supervisor state on session close.
     if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
-        if let Ok(mut snap) = crate::modules::runtime::supervisor::SessionSupervisor::load_or_create(
-            &app_data_dir,
-            &id,
-        ) {
-            crate::modules::runtime::supervisor::SessionSupervisor::close_session(&mut snap);
-            if let Err(e) =
-                crate::modules::runtime::supervisor::write_supervisor_snapshot(&app_data_dir, &snap)
-            {
-                tracing::warn!(
-                    session_id = %id,
-                    error = %e,
-                    "[supervisor] failed to persist close_session"
-                );
-            }
+        crate::modules::runtime::supervisor::SupervisorOps {
+            app_data_dir: &app_data_dir,
+            session_id: &id,
+            app_handle: Some(&app_handle),
+            run_event_logger: None,
         }
+        .close_session();
     }
 
     Ok(())
@@ -476,7 +468,9 @@ pub async fn get_session_history_page(
     let mut fallback_reason = None;
     let run_log_has_jsonl =
         crate::modules::runtime::history::session_has_run_log_jsonl_files(&base_dir, &id);
-    let fallback_session = if cursor.is_none() && event_page.entries.is_empty() && !run_log_has_jsonl
+    let fallback_session = if cursor.is_none()
+        && event_page.entries.is_empty()
+        && !run_log_has_jsonl
     {
         fallback_reason = Some("session_history_fallback: event log is empty".to_string());
         tracing::info!(

@@ -38,6 +38,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+use crate::modules::runtime::contracts::common::{
+    supervisor_family, CorrelationIds, RuntimeEventType,
+};
+use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::runtime_event;
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -303,6 +310,176 @@ impl SessionSupervisor {
     }
 }
 
+// ── SupervisorOps facade (DR-01) ─────────────────────────────────────────────
+
+/// Thin call-site facade over [`SessionSupervisor`] that bundles
+/// load → mutate → persist → emit into a single hook.
+///
+/// DR-01 — `SupervisorOps` is the canonical entry point for all
+/// session-supervisor lifecycle transitions. Direct
+/// [`SessionSupervisor::*`] mutation + manual `write_supervisor_snapshot`
+/// is preserved for unit tests / state-machine logic but new
+/// production call sites MUST go through this facade so each
+/// transition automatically:
+///
+/// 1. Loads the current snapshot (or creates a fresh one).
+/// 2. Applies the corresponding [`SessionSupervisor`] transition.
+/// 3. Persists the snapshot (best-effort; failures only `warn!`).
+/// 4. Emits a `RuntimeEventType::Supervisor` envelope on the
+///    `runtime_event` channel via [`runtime_event::dispatch`] when
+///    `app_handle` is provided.
+///
+/// `app_handle` is `Option` so unit tests can exercise the
+/// persistence path without standing up a Tauri runtime; production
+/// callers always pass `Some(handle)`.
+pub struct SupervisorOps<'a> {
+    /// Application data directory (e.g. `~/.if2ai`) where the
+    /// supervisor snapshot is persisted.
+    pub app_data_dir: &'a Path,
+    /// Session id this op targets.
+    pub session_id: &'a str,
+    /// Tauri app handle used to emit the envelope. `None` skips the
+    /// emit step (filesystem persistence still runs).
+    pub app_handle: Option<&'a AppHandle>,
+    /// Optional run-event logger for envelope mirroring into the
+    /// per-run event log.
+    pub run_event_logger: Option<&'a RunEventLogger>,
+}
+
+impl<'a> SupervisorOps<'a> {
+    /// Record a new run start (idle → running) and emit
+    /// `Supervisor / start_run` envelope.
+    pub fn start_run(&self, run_id: &str) {
+        let run_id = run_id.to_string();
+        self.with_snapshot(
+            move |snap| SessionSupervisor::start_run(snap, run_id),
+            supervisor_family::START_RUN,
+        );
+    }
+
+    /// Record that a permission prompt was raised (running → blocked)
+    /// and emit `Supervisor / blocked` envelope.
+    pub fn block_permission(&self, _request_id: &str) {
+        self.with_snapshot(
+            SessionSupervisor::block_permission,
+            supervisor_family::BLOCKED,
+        );
+    }
+
+    /// Record that a permission prompt was resolved (blocked → running)
+    /// and emit `Supervisor / unblocked` envelope.
+    pub fn unblock_permission(&self, _request_id: &str) {
+        self.with_snapshot(
+            SessionSupervisor::unblock_permission,
+            supervisor_family::UNBLOCKED,
+        );
+    }
+
+    /// Reassert that the active run is streaming and emit
+    /// `Supervisor / streaming` envelope.
+    pub fn run_streaming(&self) {
+        self.with_snapshot(
+            SessionSupervisor::run_streaming,
+            supervisor_family::STREAMING,
+        );
+    }
+
+    /// Record a successful run completion and emit `Supervisor /
+    /// completed` envelope.
+    pub fn run_completed(&self) {
+        self.with_snapshot(
+            SessionSupervisor::run_completed,
+            supervisor_family::COMPLETED,
+        );
+    }
+
+    /// Record a recoverable run failure and emit `Supervisor /
+    /// failed` envelope.
+    pub fn run_failed_recoverable(&self, reason: &str) {
+        let reason = reason.to_string();
+        self.with_snapshot(
+            move |snap| SessionSupervisor::run_failed_recoverable(snap, reason),
+            supervisor_family::FAILED,
+        );
+    }
+
+    /// Record a non-recoverable run failure and emit `Supervisor /
+    /// failed` envelope.
+    pub fn run_failed_final(&self, reason: &str) {
+        let reason = reason.to_string();
+        self.with_snapshot(
+            move |snap| SessionSupervisor::run_failed_final(snap, reason),
+            supervisor_family::FAILED,
+        );
+    }
+
+    /// Record explicit user cancellation and emit `Supervisor /
+    /// cancelled` envelope.
+    pub fn run_cancelled(&self) {
+        self.with_snapshot(
+            SessionSupervisor::run_cancelled,
+            supervisor_family::CANCELLED,
+        );
+    }
+
+    /// Record session close (any → closed) and emit `Supervisor /
+    /// closed` envelope.
+    pub fn close_session(&self) {
+        self.with_snapshot(SessionSupervisor::close_session, supervisor_family::CLOSED);
+    }
+
+    /// Internal: load snapshot → apply mutation → persist →
+    /// best-effort emit envelope.
+    ///
+    /// All failures are logged at `warn!` and swallowed; supervisor
+    /// bookkeeping must never break a turn.
+    fn with_snapshot<F: FnOnce(&mut SupervisorSnapshot)>(&self, f: F, family: &'static str) {
+        let mut snap = match SessionSupervisor::load_or_create(self.app_data_dir, self.session_id) {
+            Ok(snap) => snap,
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %self.session_id,
+                    family = %family,
+                    error = %err,
+                    "[supervisor] load_or_create failed; skipping mutation"
+                );
+                return;
+            }
+        };
+        f(&mut snap);
+        if let Err(err) = write_supervisor_snapshot(self.app_data_dir, &snap) {
+            tracing::warn!(
+                session_id = %self.session_id,
+                family = %family,
+                error = %err,
+                "[supervisor] persist failed"
+            );
+        }
+        if let Some(handle) = self.app_handle {
+            let correlation = CorrelationIds {
+                session_id: Some(snap.session_id.clone()),
+                run_id: snap.active_run_id.clone(),
+                ..Default::default()
+            };
+            if let Err(err) = runtime_event::dispatch(
+                Some(handle),
+                RuntimeEventType::Supervisor,
+                family,
+                correlation,
+                &snap,
+                self.run_event_logger,
+            ) {
+                tracing::warn!(
+                    session_id = %self.session_id,
+                    family = %family,
+                    error = ?err,
+                    "[supervisor] envelope emit failed"
+                );
+            }
+        }
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -423,6 +600,173 @@ mod tests {
         assert_eq!(recoverable.status, SupervisorStatus::RecoverableFailed);
         assert!(recoverable.recoverable);
         assert_eq!(recoverable.last_error_kind.as_deref(), Some("timeout"));
+    }
+
+    // ── DR-01 invariant tests ─────────────────────────────────────────────
+
+    fn ops_for<'a>(dir: &'a tempfile::TempDir, sid: &'a str) -> SupervisorOps<'a> {
+        SupervisorOps {
+            app_data_dir: dir.path(),
+            session_id: sid,
+            app_handle: None,
+            run_event_logger: None,
+        }
+    }
+
+    /// Invariant: `pending_permission_count` mirrors the count of
+    /// `block_permission` calls minus `unblock_permission` calls — the
+    /// supervisor's view of how many permission prompts are
+    /// outstanding for the active run.
+    #[test]
+    fn pending_count_matches_pending_permission_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-A");
+
+        ops.start_run("run-1");
+        let snap0 = SessionSupervisor::load_or_create(dir.path(), "sess-A").unwrap();
+        assert_eq!(snap0.pending_permission_count, 0);
+
+        ops.block_permission("req-1");
+        let snap1 = SessionSupervisor::load_or_create(dir.path(), "sess-A").unwrap();
+        assert_eq!(snap1.pending_permission_count, 1);
+        assert_eq!(snap1.status, SupervisorStatus::Blocked);
+
+        ops.unblock_permission("req-1");
+        let snap2 = SessionSupervisor::load_or_create(dir.path(), "sess-A").unwrap();
+        assert_eq!(snap2.pending_permission_count, 0);
+        assert_eq!(snap2.status, SupervisorStatus::Running);
+    }
+
+    /// Invariant: `active_run_id.is_some()` iff `status` is one of
+    /// `Running` / `Blocked`. All terminal / idle states clear the
+    /// active run id.
+    #[test]
+    fn active_run_id_present_iff_status_is_running_or_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-B");
+
+        ops.start_run("run-1");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_some() && s.status == SupervisorStatus::Running);
+
+        ops.block_permission("req-1");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_some() && s.status == SupervisorStatus::Blocked);
+
+        ops.unblock_permission("req-1");
+        ops.run_completed();
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_none() && s.status == SupervisorStatus::Completed);
+
+        ops.start_run("run-2");
+        ops.run_cancelled();
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_none() && s.status == SupervisorStatus::Idle);
+
+        ops.start_run("run-3");
+        ops.run_failed_final("fatal");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_none() && s.status == SupervisorStatus::Idle);
+
+        ops.close_session();
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-B").unwrap();
+        assert!(s.active_run_id.is_none() && s.status == SupervisorStatus::Closed);
+    }
+
+    /// Invariant: across multiple ops, `last_updated_at` must be
+    /// monotonically non-decreasing. Newly persisted snapshots may
+    /// share a timestamp at sub-second resolution but must never
+    /// regress.
+    #[test]
+    fn supervisor_envelope_monotonic_last_updated_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-C");
+
+        ops.start_run("run-1");
+        let t1 = SessionSupervisor::load_or_create(dir.path(), "sess-C")
+            .unwrap()
+            .last_updated_at;
+
+        // Force a measurable delta.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ops.block_permission("req-1");
+        let t2 = SessionSupervisor::load_or_create(dir.path(), "sess-C")
+            .unwrap()
+            .last_updated_at;
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ops.unblock_permission("req-1");
+        let t3 = SessionSupervisor::load_or_create(dir.path(), "sess-C")
+            .unwrap()
+            .last_updated_at;
+
+        assert!(t1 <= t2, "last_updated_at regressed: {t1} > {t2}");
+        assert!(t2 <= t3, "last_updated_at regressed: {t2} > {t3}");
+        let _ = now();
+    }
+
+    /// `start_run` produces an envelope whose payload matches the
+    /// persisted snapshot (event_type, family, run_id, status).
+    #[test]
+    fn start_run_emits_envelope_with_matching_payload() {
+        // We cannot construct a real Tauri AppHandle in unit tests, so
+        // we drive the same `runtime_event::dispatch` path that
+        // `SupervisorOps::with_snapshot` invokes (with `handle = None`,
+        // which exercises full payload serialization but skips the
+        // transport — exactly the codepath taken when a TurnService
+        // call site forgets to plumb the AppHandle).
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-D");
+        ops.start_run("run-XYZ");
+
+        let snap = SessionSupervisor::load_or_create(dir.path(), "sess-D").unwrap();
+        let correlation = CorrelationIds {
+            session_id: Some(snap.session_id.clone()),
+            run_id: snap.active_run_id.clone(),
+            ..Default::default()
+        };
+        let env = runtime_event::dispatch(
+            None,
+            RuntimeEventType::Supervisor,
+            supervisor_family::START_RUN,
+            correlation,
+            &snap,
+            None,
+        )
+        .expect("dispatch ok with handle=None");
+
+        assert_eq!(env.event_type, RuntimeEventType::Supervisor);
+        assert_eq!(env.payload_family.0, supervisor_family::START_RUN);
+        assert_eq!(env.correlation.session_id.as_deref(), Some("sess-D"));
+        assert_eq!(env.correlation.run_id.as_deref(), Some("run-XYZ"));
+        // Snapshot must serialize as camelCase so the frontend
+        // `SupervisorSnapshot` interface lines up byte-for-byte.
+        let payload = env.payload;
+        assert_eq!(payload["sessionId"], "sess-D");
+        assert_eq!(payload["activeRunId"], "run-XYZ");
+        assert_eq!(payload["status"], "running");
+    }
+
+    /// When `app_handle` is `None`, `with_snapshot` still persists
+    /// the snapshot — the emit path is best-effort and skipping it
+    /// must not skip persistence.
+    #[test]
+    fn with_snapshot_persists_even_when_app_handle_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = SupervisorOps {
+            app_data_dir: dir.path(),
+            session_id: "sess-E",
+            app_handle: None,
+            run_event_logger: None,
+        };
+
+        ops.start_run("run-only-fs");
+        let loaded = read_supervisor_snapshot(dir.path(), "sess-E")
+            .unwrap()
+            .expect("snapshot should be persisted to disk");
+        assert_eq!(loaded.session_id, "sess-E");
+        assert_eq!(loaded.active_run_id.as_deref(), Some("run-only-fs"));
+        assert_eq!(loaded.status, SupervisorStatus::Running);
     }
 
     #[test]

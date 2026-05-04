@@ -62,6 +62,24 @@ export type RuntimeEventType =
   | 'checkpoint_updated'
   | 'verification_decision'
   | 'content_simplified'
+  // ── DR-01 — supervisor lifecycle transitions ──
+  | 'supervisor'
+
+/** Family-tag constants for `RuntimeEventType = 'supervisor'`
+ * envelopes (DR-01). Payload is `SupervisorSnapshot`. Mirror of
+ * `supervisor_family` in `common.rs`. */
+export const SUPERVISOR_FAMILY = {
+  START_RUN: 'start_run',
+  BLOCKED: 'blocked',
+  UNBLOCKED: 'unblocked',
+  STREAMING: 'streaming',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+  CLOSED: 'closed',
+} as const
+
+export type SupervisorFamily = (typeof SUPERVISOR_FAMILY)[keyof typeof SUPERVISOR_FAMILY]
 
 /** Cross-cutting correlation ids carried by every envelope. All
  * fields are optional; absent means "not applicable", not "unknown". */

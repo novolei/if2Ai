@@ -106,6 +106,32 @@ pub enum RuntimeEventType {
     /// FEAT-BR-001 — a SimplifiedContent payload was produced for a
     /// browser web_scan call.
     ContentSimplified,
+    /// DR-01 — Session supervisor lifecycle transition (start_run,
+    /// blocked, unblocked, streaming, completed, failed, cancelled,
+    /// closed). Payload is `SupervisorSnapshot` (camelCase).
+    Supervisor,
+}
+
+/// Family-tag string constants for [`RuntimeEventType::Supervisor`]
+/// envelopes (DR-01). Each string is the `payload_family` value for
+/// one supervisor lifecycle transition.
+pub mod supervisor_family {
+    /// A new run was registered (idle → running).
+    pub const START_RUN: &str = "start_run";
+    /// The active run is blocked on a permission prompt.
+    pub const BLOCKED: &str = "blocked";
+    /// A pending permission prompt was resolved (blocked → running).
+    pub const UNBLOCKED: &str = "unblocked";
+    /// The active run reasserted streaming progress (e.g. first token).
+    pub const STREAMING: &str = "streaming";
+    /// The active run terminated successfully.
+    pub const COMPLETED: &str = "completed";
+    /// The active run terminated in failure (recoverable or final).
+    pub const FAILED: &str = "failed";
+    /// The active run was cancelled by the user.
+    pub const CANCELLED: &str = "cancelled";
+    /// The session was closed (any → closed).
+    pub const CLOSED: &str = "closed";
 }
 
 /// Canonical payload family marker, used as a free-form tag inside
