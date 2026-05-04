@@ -655,8 +655,12 @@ pub async fn list_configured_providers() -> Vec<String> {
 ///
 /// * `provider_id` - Provider ID
 /// * `model_id` - Model ID to select
-pub async fn select_model(provider_id: &str, model_id: &str) -> Result<(), String> {
-    use crate::modules::config::ModelSelection;
+pub async fn select_model(
+    provider_id: &str,
+    model_id: &str,
+    auth_variant: Option<&str>,
+) -> Result<(), String> {
+    use crate::modules::config::model_resolver::build_active_model_selection;
 
     let service = ConfigService::new();
     service
@@ -665,11 +669,11 @@ pub async fn select_model(provider_id: &str, model_id: &str) -> Result<(), Strin
                 .load_config()
                 .await
                 .map_err(|e| format!("Failed to load config: {e}"))?;
-            config.active_model = Some(ModelSelection {
-                provider_id: provider_id.to_string(),
-                model_id: model_id.to_string(),
-                auth_variant: None,
-            });
+            config.active_model = Some(build_active_model_selection(
+                provider_id,
+                model_id,
+                auth_variant,
+            ));
             config
         })
         .await

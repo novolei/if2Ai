@@ -167,10 +167,22 @@ pub async fn model_get_active() -> Result<Option<crate::modules::config::ModelSe
 }
 
 /// Set the active model (per-session selection).
+///
+/// `auth_variant` is optional and required only for multi-auth providers
+/// (e.g. moonshot-cn vs moonshot-code) where the same `provider_id`
+/// is reused across distinct credential sets. See ER-01.
 #[tauri::command]
-pub async fn model_set_active(provider_id: String, model_id: String) -> Result<(), String> {
-    crate::modules::config::model_resolver::ModelResolver::set_active_model(&provider_id, &model_id)
-        .await
+pub async fn model_set_active(
+    provider_id: String,
+    model_id: String,
+    auth_variant: Option<String>,
+) -> Result<(), String> {
+    crate::modules::config::model_resolver::ModelResolver::set_active_model(
+        &provider_id,
+        &model_id,
+        auth_variant.as_deref(),
+    )
+    .await
 }
 
 /// Get role-based model assignments (chat, utility, summarizer, etc.).
@@ -198,9 +210,13 @@ pub async fn model_set_role_config(role: String, model_ref: String) -> Result<()
         let model = crate::modules::config::ModelRef::parse(&model_ref).ok_or_else(|| {
             format!("Invalid model reference '{model_ref}'. Expected 'provider_id/model_id'.")
         })?;
+        // The role-config command does not (yet) accept auth_variant — when
+        // mirroring the chat role into active_model, pass `None`. Variant-aware
+        // selection happens through `model_set_active` (see ER-01).
         crate::modules::config::model_resolver::ModelResolver::set_active_model(
             &model.provider_id,
             &model.model_id,
+            None,
         )
         .await?;
     }

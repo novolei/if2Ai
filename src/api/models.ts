@@ -23,13 +23,20 @@ export async function getActiveModel(): Promise<ActiveModel | null> {
 
 /** Persist a new provider/model selection. Backend emits
  * `if2ai://models-changed` on success — listeners in App.tsx /
- * chat-ui pick this up to refresh dependent UI. */
+ * chat-ui pick this up to refresh dependent UI.
+ *
+ * `authVariant` is required for multi-auth providers (e.g. moonshot-cn
+ * vs moonshot-code) where the same `providerId` is reused across
+ * distinct credential sets. Omitting it is correct for single-auth
+ * providers (Anthropic, OpenAI, Ollama, …). See ER-01. */
 export async function setActiveModel(
   providerId: string,
   modelId: string,
+  authVariant?: string,
 ): Promise<void> {
   return getApiClient().call<void>('model_set_active', {
     providerId,
     modelId,
+    authVariant,
   })
 }
