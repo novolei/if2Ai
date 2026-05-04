@@ -8,7 +8,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
 // MIG-012 — canonical App.tsx transport seam.
 //
 // Business helpers come from `@/api/*` domain facades;
@@ -30,8 +29,6 @@ import {
   getSession,
   getSessionHistoryPage,
   generateSessionTitle,
-  getActiveModel,
-  listenToChatPrefill,
   listProjects,
   listProjectSessions,
   openProjectInFinder,
@@ -54,13 +51,6 @@ import {
   type SessionIdentityInput,
   type SessionMeta,
 } from "@/api";
-import {
-  checkAppUpdater,
-  downloadAndInstallAppUpdate,
-  getAppUpdaterState,
-  onAppUpdaterState,
-  type UpdaterRuntimeState,
-} from "@/api/updater";
 import { stopAgentStream as stopAgentStreamCommand } from "@/api/streaming";
 import type {
   PermissionMode,
@@ -75,15 +65,18 @@ import {
   runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
-  wireRuntimeProjectionListeners,
 } from "@/runtime-projection";
+import { RuntimeProjectionWiring } from "@/app-effects/RuntimeProjectionWiring";
+import { useUpdaterBanner } from "@/app-effects/useUpdaterBanner";
+import { useGlobalHotkeys } from "@/app-effects/useGlobalHotkeys";
+import { useChatPrefill } from "@/app-effects/useChatPrefill";
 // MIG-013 — AppShell is the canonical top-level shell container
 // (BootShell + MainShell + ContentRouter). Boot state lives in
 // the bootstrap-store; App.tsx is now a data-flow host, not a
 // render / boot orchestrator.
 import { AppShell } from "@/modules/app-shell/AppShell";
 import { runBootSequence } from "@/boot/boot-orchestrator";
-import { bootstrapStore, evolutionEventStore, useBootstrapSelector } from "@/state";
+import { bootstrapStore, useBootstrapSelector } from "@/state";
 // MIG-014 — chat + session stores own per-session runtime
 // state. App.tsx no longer holds the canonical truth; the
 // `setX` wrappers below diff against the store snapshot and
@@ -176,6 +169,16 @@ function App() {
   // X 件事" without opening Settings.
   useMemoryWriteToasts();
 
+  // GF-03 PR-1 — runtime/effect wiring extracted to `src/app-effects/`.
+  const {
+    appUpdaterState,
+    latestUpdaterVersion,
+    updaterBannerVisible,
+    dismiss: handleDismissUpdaterBanner,
+    runUpdater: handleRunUpdaterFromRail,
+  } = useUpdaterBanner();
+  const { isTelemetryDrawerOpen, setTelemetryDrawerOpen } = useGlobalHotkeys();
+
   // 跨窗口监听 Onboarding 重置：设置窗口点重置后，主窗口立即跳回 Onboarding 流程
   useCrossWindowChange("cross:onboarding-reset", () => {
     console.log(
@@ -209,64 +212,21 @@ function App() {
   // MIG-013 — boot orchestration moved to `src/boot/boot-orchestrator.ts`.
   // The `useEffect` below is now a thin call into the canonical
   // runner; the store transitions own every phase change.
+  // GF-03 PR-1 — models-changed listener + `runtime_event` evolution
+  // listener moved into `<RuntimeProjectionWiring />` (mounted in the
+  // render tree below).
   useEffect(() => {
     const signal = { cancelled: false };
-    let unlistenModelsChanged: (() => void) | null = null;
-    const refreshActiveModel = async () => {
-      try {
-        const activeModel = await getActiveModel()
-        if (activeModel) {
-          setSelectedModel(
-            `${activeModel.provider_id}/${activeModel.model_id}`,
-          );
-        }
-      } catch {
-        // Fallback: leave empty so chat-ui shows first available model from list
-      }
-    };
-    void (async () => {
-      await runBootSequence(bootstrapStore, {
-        awaitGatewayReady,
-        getOnboardingState,
-        ensureDefaultWorkdir,
-        listProjects,
-        listProjectSessions,
-        signal,
-      });
-      if (signal.cancelled) return;
-      // Model bootstrap is orthogonal to project-list bootstrap;
-      // kept inline here until the future settings-store pack
-      // picks it up.
-      await refreshActiveModel();
-    })();
-    // Refresh the active model whenever settings emit a change (provider
-    // saved / role reassigned) so the chat dropdown follows ModelSettings.
-    const onModelsChanged = () => {
-      void refreshActiveModel();
-    };
-    window.addEventListener("if2ai:models-changed", onModelsChanged);
-    void listen("if2ai://models-changed", onModelsChanged).then((unlisten) => {
-      unlistenModelsChanged = unlisten;
-    });
-    // WU-001 — subscribe to the Agent Evolution `runtime_event`
-    // channel and pipe every envelope through the typed translator
-    // into `evolutionEventStore`. Failures are swallowed so a
-    // listener glitch never breaks boot.
-    let unlistenEvolution: (() => void) | null = null;
-    void listen<unknown>("runtime_event", (event) => {
-      try {
-        evolutionEventStore.applyEnvelope(event.payload);
-      } catch (err) {
-        console.warn("[evolution_emitter] applyEnvelope failed", err);
-      }
-    }).then((unlisten) => {
-      unlistenEvolution = unlisten;
+    void runBootSequence(bootstrapStore, {
+      awaitGatewayReady,
+      getOnboardingState,
+      ensureDefaultWorkdir,
+      listProjects,
+      listProjectSessions,
+      signal,
     });
     return () => {
       signal.cancelled = true;
-      window.removeEventListener("if2ai:models-changed", onModelsChanged);
-      unlistenModelsChanged?.();
-      unlistenEvolution?.();
     };
   }, []);
 
@@ -381,12 +341,8 @@ function App() {
   const [leftPaneWidth, setLeftPaneWidth] = useState(240);
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [appUpdaterState, setAppUpdaterState] =
-    useState<UpdaterRuntimeState | null>(null);
-  const [dismissedUpdaterBannerVersion, setDismissedUpdaterBannerVersion] =
-    useState<string | null>(() =>
-      localStorage.getItem("if2ai:app-updater:dismissed-banner-version"),
-    );
+  // GF-03 PR-1 — updater banner state machine moved to
+  // `useUpdaterBanner()` (see top of component).
   // MIG-014 — `conversations` lives in the chat store
   // (conversation-slice.ts). Reads go through `useChatStore`;
   // writes go through `setConversations` wrapper that diffs
@@ -438,6 +394,8 @@ function App() {
     [],
   );
   const [input, setInput] = useState("");
+  // GF-03 PR-1 — chat-prefill listener (Tauri tray / deeplink → chat).
+  useChatPrefill({ setActiveSection, setInput });
   // Phase M2.6 — opt-in classifier preview. Watches the active
   // chat draft and dispatches the deterministic
   // `ExecutionModeDecision` into the projection store. Developer
@@ -1389,173 +1347,13 @@ function App() {
   // which `permissionPrompt` (above) reads via
   // `useRuntimeProjectionSelector`.
 
-  // Phase M2.4 — wire the canonical runtime projection pipeline.
-  // The bridge subscribes broadly to `agent-token` /
-  // `permission-request` / `memory_event`, normalises each via the
-  // translator family and feeds the projection store.  Existing
-  // per-stream listeners and the legacy permission/memory wiring
-  // continue to drive the current ChatWorkspace + TelemetryDrawer
-  // surfaces in parallel — M2.5+ will swap consumers over to the
-  // projection store and retire the per-stream callbacks.
-  useEffect(() => {
-    const unwire = wireRuntimeProjectionListeners();
-    return () => unwire();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void getAppUpdaterState()
-      .then((state) => {
-        if (!cancelled) setAppUpdaterState(state);
-      })
-      .catch((error) => {
-        console.debug("[app-updater] failed to load state", error);
-      });
-    void onAppUpdaterState((state) => {
-      setAppUpdaterState(state);
-    }).then((dispose) => {
-      if (cancelled) dispose();
-      else unlisten = dispose;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const lastCheckKey = "if2ai:app-updater:last-check-ms";
-    const lastToastKey = "if2ai:app-updater:last-toast-version";
-    const now = Date.now();
-    const lastCheck = Number(localStorage.getItem(lastCheckKey) || "0");
-    if (now - lastCheck < 6 * 60 * 60 * 1000) return;
-    localStorage.setItem(lastCheckKey, String(now));
-    void getAppUpdaterState()
-      .then((state) => {
-        if (!cancelled) setAppUpdaterState(state);
-        if (!state.auto_check_enabled) return null;
-        return checkAppUpdater();
-      })
-      .then((result) => {
-        if (!result) return;
-        if (!cancelled) {
-          setAppUpdaterState((state) =>
-            state
-              ? {
-                  ...state,
-                  status:
-                    result.status === "update_available"
-                      ? "available"
-                      : result.status === "no_update"
-                        ? "latest"
-                        : "error",
-                  latest_version: result.latest_version ?? state.latest_version,
-                  release_notes_url:
-                    result.release_notes_url ?? state.release_notes_url,
-                  artifact_url: result.artifact_url ?? state.artifact_url,
-                  diagnostic: result.diagnostic ?? null,
-                }
-              : state,
-          );
-        }
-        if (cancelled || result.status !== "update_available") return;
-        const latest = result.latest_version ?? "新版本";
-        if (localStorage.getItem(lastToastKey) === latest) return;
-        localStorage.setItem(lastToastKey, latest);
-        toast.info(`If2Ai ${latest} 可更新`, {
-          description: "已发现 GitHub Release 更新包，可在设置 > 关于中下载并安装。",
-          duration: 9000,
-        });
-      })
-      .catch((error) => {
-        console.debug("[app-updater] background check failed", error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Auto-compact: when the backend's stream_finalize crosses
-  // `IF2AI_AUTO_COMPACT_THRESHOLD` (default 85%) it spawns a
-  // background fold and emits `chat_compact_completed` with a tiny
-  // report. Show a single-line toast so the user knows the next turn
-  // will ship with a leaner context.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    void (async () => {
-      const { listenChatCompactCompleted } = await import("@/lib/tauri");
-      unlisten = await listenChatCompactCompleted((report) => {
-        if (!report.didCompact) return;
-        const freed =
-          report.freedTokens > 0
-            ? `${(report.freedTokens / 1000).toFixed(1)}k`
-            : "0";
-        toast.success(
-          `上下文接近上限，已自动压缩 ${report.summarizedMessages} 条消息`,
-          {
-            description: `释放约 ${freed} tokens · 摘要：${report.summaryExcerpt}…`,
-            duration: 5000,
-          },
-        );
-      });
-    })();
-    return () => {
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listenToChatPrefill((payload) => {
-      setActiveSection("chat");
-      if (typeof payload?.prompt === "string" && payload.prompt.trim()) {
-        setInput(payload.prompt);
-      }
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch((err) => {
-        console.error("Failed to listen chat prefill event:", err);
-      });
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Cmd+, (macOS) / Ctrl+, (Win/Linux) — universal shortcut to open settings
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-        e.preventDefault();
-        void openSettingsWindow();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // ⌘+Shift+D (macOS) / Ctrl+Shift+D — developer shortcut that toggles
-  // the TelemetryDrawer for the active session.  Drives the Phase 6E
-  // harness observability surface visible from the chat workspace.
-  const [isTelemetryDrawerOpen, setIsTelemetryDrawerOpen] = useState(false);
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        (e.code === "KeyD" || e.key.toLowerCase() === "d")
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsTelemetryDrawerOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, []);
+  // GF-03 PR-1 / ER-04 — runtime + updater + hotkeys + chat-prefill +
+  // auto-compact effects moved to `src/app-effects/`.  The runtime
+  // projection bridge is mounted as `<RuntimeProjectionWiring />`
+  // below; it subscribes to the canonical `runtime_event` envelope
+  // routed via the projection bridge (`agent-token` / permission /
+  // memory channels were retired in PR D-1 / D-2 / FIX-14) and feeds
+  // `snapshot.approvals` plus the evolution event store.
 
   const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
@@ -3013,114 +2811,9 @@ function App() {
     void promptDownloadSenseVoiceAfterOnboarding();
   };
 
-  const latestUpdaterVersion = appUpdaterState?.latest_version ?? null;
-  const updaterBannerVisible =
-    appUpdaterState?.status === "available" &&
-    Boolean(latestUpdaterVersion) &&
-    dismissedUpdaterBannerVersion !== latestUpdaterVersion;
-
-  const handleDismissUpdaterBanner = useCallback(() => {
-    const version = latestUpdaterVersion;
-    if (!version) return;
-    localStorage.setItem("if2ai:app-updater:dismissed-banner-version", version);
-    setDismissedUpdaterBannerVersion(version);
-  }, [latestUpdaterVersion]);
-
-  const handleRunUpdaterFromRail = useCallback(async () => {
-    const status = appUpdaterState?.status;
-    if (
-      status === "checking" ||
-      status === "downloading" ||
-      status === "installing"
-    ) {
-      return;
-    }
-
-    if (status !== "available") {
-      setAppUpdaterState((state) =>
-        state ? { ...state, status: "checking", diagnostic: null } : state,
-      );
-      const result = await checkAppUpdater();
-      if (result.status !== "update_available") {
-        setAppUpdaterState((state) =>
-          state
-            ? {
-                ...state,
-                status: result.status === "no_update" ? "latest" : "error",
-                diagnostic: result.diagnostic ?? null,
-                checked_at: new Date().toISOString(),
-              }
-            : state,
-        );
-        if (result.status === "no_update") {
-          toast.success("已是最新版本");
-        } else {
-          toast.error("检查更新失败", {
-            description: result.diagnostic ?? "请稍后重试。",
-          });
-        }
-        return;
-      }
-      setAppUpdaterState((state) =>
-        state
-          ? {
-              ...state,
-              status: "available",
-              latest_version: result.latest_version ?? state.latest_version,
-              release_notes_url:
-                result.release_notes_url ?? state.release_notes_url,
-              artifact_url: result.artifact_url ?? state.artifact_url,
-              diagnostic: null,
-              checked_at: new Date().toISOString(),
-            }
-          : state,
-      );
-    }
-
-    setAppUpdaterState((state) =>
-      state ? { ...state, status: "downloading", diagnostic: null } : state,
-    );
-    try {
-      const result = await downloadAndInstallAppUpdate();
-      if (result.status === "installing" || result.status === "downloaded") {
-        setAppUpdaterState((state) =>
-          state
-            ? {
-                ...state,
-                status: result.status,
-                latest_version: result.latest_version ?? state.latest_version,
-                artifact_url: result.artifact_url ?? state.artifact_url,
-                diagnostic: null,
-              }
-            : state,
-        );
-        toast.success("更新安装已启动", {
-          description: "系统安装器已接管流程，If2Ai 可能会自动退出或重启。",
-        });
-      } else if (result.status === "no_update") {
-        setAppUpdaterState((state) =>
-          state ? { ...state, status: "latest", diagnostic: null } : state,
-        );
-        toast.success("已是最新版本");
-      } else {
-        setAppUpdaterState((state) =>
-          state
-            ? { ...state, status: "error", diagnostic: result.diagnostic ?? null }
-            : state,
-        );
-        toast.error("下载更新失败", {
-          description: result.diagnostic ?? "请稍后重试。",
-        });
-      }
-    } catch (error) {
-      setAppUpdaterState((state) =>
-        state
-          ? { ...state, status: "error", diagnostic: String(error) }
-          : state,
-      );
-      toast.error("下载更新失败", { description: String(error) });
-    }
-  }, [appUpdaterState?.status]);
+  // GF-03 PR-1 — `latestUpdaterVersion`, `updaterBannerVisible`,
+  // `handleDismissUpdaterBanner`, `handleRunUpdaterFromRail` are now
+  // returned from `useUpdaterBanner()` at the top of the component.
 
   // MIG-013 — App.tsx renders via the canonical
   // `<AppShell>` container. Boot phase / boot surface decision
@@ -3128,6 +2821,8 @@ function App() {
   // internally); AppShell reads activation-gate state via the
   // existing `useBootRoute` hook inside its own body.
   return (
+    <>
+      <RuntimeProjectionWiring onActiveModelChanged={setSelectedModel} />
     <AppShell
       navbar={{
         activeSection,
@@ -3299,11 +2994,12 @@ function App() {
             sessionId={activeSessionId}
             latestPromptDiagnostics={latestPromptDiagnosticsSnapshot}
             open={isTelemetryDrawerOpen}
-            onClose={() => setIsTelemetryDrawerOpen(false)}
+            onClose={() => setTelemetryDrawerOpen(false)}
           />
         </>
       }
     />
+    </>
   );
 }
 
