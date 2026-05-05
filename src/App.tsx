@@ -23,7 +23,6 @@ import {
   deleteProject,
   deleteSession,
   ensureDefaultWorkdir,
-  executeSlashCommand,
   getOnboardingState,
   listProjects,
   listProjectSessions,
@@ -31,29 +30,17 @@ import {
   openSettingsWindow,
   pickFolderDialog,
   renameProject,
-  resolveSkillSlash,
-  sessionRedo,
-  sessionUndo,
-  sessionUndoStatus,
   setSessionPinned,
-  startChatTurn,
-  suggestSlashCommands,
   updateSessionIdentity,
-  type ConversationUndoStatus,
   type ProjectMeta,
   type SessionIdentityInput,
   type SessionMeta,
 } from "@/api";
-import { stopAgentStream as stopAgentStreamCommand } from "@/api/streaming";
-import type {
-  PermissionMode,
-  StreamTokenPayload,
-} from "@/transport/contracts";
+import type { PermissionMode } from "@/transport/contracts";
 import { toast } from "sonner";
 import appIconAsset from "@/assets/app-icon.png";
 import {
   projectConversationMessagesFromRuns,
-  runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
 } from "@/runtime-projection";
@@ -67,6 +54,7 @@ import {
   isMeaningfulUserMessage,
 } from "@/session/titleStage";
 import { useSessionTitleStage } from "@/session/useSessionTitleStage";
+import { useSessionRuntime } from "@/session/SessionEffects";
 // MIG-013 — AppShell is the canonical top-level shell container
 // (BootShell + MainShell + ContentRouter). Boot state lives in
 // the bootstrap-store; App.tsx is now a data-flow host, not a
@@ -84,7 +72,6 @@ import { SectionWorkspace } from "@/modules/app-shell/components/SectionWorkspac
 import type { AppSection } from "@/modules/app-shell/types";
 import { ChatWorkspace } from "@/modules/chat/components/ChatWorkspace";
 import type {
-  Message,
   RecentSession,
   SessionTitleState,
 } from "@/modules/chat/types";
@@ -92,10 +79,7 @@ import { useAgentVoiceBridge } from "@/modules/chat/useAgentVoiceBridge";
 import { useMemoryWriteToasts } from "@/components/memory/useMemoryWriteToasts";
 import { AgentVoiceIndicator } from "@/modules/chat/AgentVoiceIndicator";
 import { broadcastChange, useCrossWindowChange } from "@/lib/crossWindowSync";
-import {
-  publishLatestPromptDiagnosticsSnapshot,
-  type PromptDiagnosticsSnapshot,
-} from "@/modules/prompt-diagnostics/storage";
+import type { PromptDiagnosticsSnapshot } from "@/modules/prompt-diagnostics/storage";
 // OnboardingApp moved into BootShell (Phase M2.7).
 import { MemoryBrowser } from "@/components/memory/MemoryBrowser";
 // If2AiLoadingScreen moved into BootShell (Phase M2.7).
@@ -243,8 +227,6 @@ function App() {
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [isRightRailOpen, setIsRightRailOpen] = useState(false);
-  const [conversationUndoStatus, setConversationUndoStatus] =
-    useState<ConversationUndoStatus | null>(null);
 
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === "undefined") return "dangerFullAccess";
@@ -275,36 +257,15 @@ function App() {
       pendingAutoTitleSessionIdsRef,
     },
   );
-  const setRecoveryStateForCursor = (
-    sessionId: string,
-    resumeCursor: string,
-    isRecovering: boolean,
-  ) => {
-    setConversations((prev) => {
-      const currentConv = prev[sessionId];
-      if (!currentConv) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...currentConv,
-          messages: currentConv.messages.map((msg) => {
-            if (msg.taskOutcome !== "partial_success") return msg;
-            if (msg.resumeCursor !== resumeCursor) return msg;
-            return { ...msg, isRecovering };
-          }),
-        },
-      };
-    });
-  };
   // GF-03 PR-5 — permission overlay state + decide handler are
   // owned by `usePermissionOverlay()` and rendered via
   // `<PermissionOverlayHost />` in the overlays slot below.  The
   // hook continues to read `snapshot.approvals` from the canonical
   // projection store and dispatches `permission_resolved` so the
   // reducer clears the entry — behavior is unchanged.
-  const sessionLoadingRef = useRef<Record<string, boolean>>({});
-  const autoResumeAttemptsRef = useRef<Record<string, number>>({});
-  const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set());
+  // GF-03 PR-6 — sessionLoadingRef / autoResumeAttemptsRef /
+  // attemptedAutoResumeCursorsRef + their sync useEffect now live
+  // inside `useSessionRuntime` (see `src/session/SessionEffects.tsx`).
   const leftPaneCollapsedBeforePreviewRef = useRef(false);
   const wasPreviewFocusModeRef = useRef(false);
   const resizeRef = useRef<{
@@ -603,10 +564,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem("permissionMode", permissionMode);
   }, [permissionMode]);
-
-  useEffect(() => {
-    sessionLoadingRef.current = sessionLoading;
-  }, [sessionLoading]);
 
   // P1: compute stable counters so the rename effect only fires when truly necessary,
   // not on every streaming token that updates message content.
@@ -1003,690 +960,55 @@ function App() {
     }
   };
 
-  const stopAgentStream = async (sessionIdOverride?: string) => {
-    const sessionId = sessionIdOverride ?? activeSessionId;
-    if (!sessionId) return;
-    const streamAbortHandle = streamAbortHandles[sessionId];
-    if (streamAbortHandle) {
-      try {
-        await stopAgentStreamCommand(streamAbortHandle);
-      } catch (err) {
-        console.error("Failed to stop stream:", err);
-      }
-      setStreamAbortHandles((prev) => {
-        const { [sessionId]: _removed, ...rest } = prev;
-        return rest;
-      });
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-    }
-  };
+  // GF-03 PR-6 — sendChatTurn / stopAgentStream / undo+redo /
+  // resume-from-cursor + supporting refs (sessionLoadingRef etc.)
+  // moved to `useSessionRuntime` (`src/session/SessionEffects.tsx`).
+  // The hook is bound below once `handleSelectSession` and
+  // `refreshProjectSessions` are in scope.
 
-  const refreshConversationUndoStatus = useCallback(async () => {
-    if (!activeSessionId) {
-      setConversationUndoStatus(null);
-      return;
-    }
-    try {
-      setConversationUndoStatus(await sessionUndoStatus(activeSessionId));
-    } catch {
-      setConversationUndoStatus(null);
-    }
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    void refreshConversationUndoStatus();
-  }, [
-    refreshConversationUndoStatus,
-    activeSessionId,
-    activeConv?.messages.length,
-  ]);
-
-  const handleConversationUndo = useCallback(async () => {
-    if (!activeSessionId || !activeProjectId) return;
-    if (sessionLoading[activeSessionId]) {
-      const ok = window.confirm(
-        "当前会话仍在生成回复，撤销将先停止流式输出。是否继续？",
-      );
-      if (!ok) return;
-      await stopAgentStream(activeSessionId);
-    }
-    try {
-      await sessionUndo(activeSessionId);
-      runtimeProjectionStore.dispatch({
-        kind: "projection_discard_session_runs",
-        sessionId: activeSessionId,
-        receivedAt: Date.now(),
-      });
-      runtimeProjectionStore.flush();
-      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
+  const reloadSession = useCallback(
+    (projectId: string, sessionId: string) =>
+      handleSelectSession(projectId, sessionId, undefined, {
         forceReload: true,
-      });
-      toast.success("已撤销");
-    } catch (err) {
-      toast.error("撤销失败", { description: String(err) });
-    }
-    void refreshConversationUndoStatus();
-    // handleSelectSession is stable enough for UX; omitting from deps avoids a large refactor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
-  }, [
-    activeSessionId,
-    activeProjectId,
-    sessionLoading,
+      }),
+    // handleSelectSession is captured from the surrounding closure;
+    // identical to App.tsx pre-extraction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const {
+    sendChatTurn: sendMessage,
     stopAgentStream,
-    refreshConversationUndoStatus,
-  ]);
-
-  const handleConversationRedo = useCallback(async () => {
-    if (!activeSessionId || !activeProjectId) return;
-    if (sessionLoading[activeSessionId]) {
-      const ok = window.confirm(
-        "当前会话仍在生成回复，重做将先停止流式输出。是否继续？",
-      );
-      if (!ok) return;
-      await stopAgentStream(activeSessionId);
-    }
-    try {
-      await sessionRedo(activeSessionId);
-      runtimeProjectionStore.dispatch({
-        kind: "projection_discard_session_runs",
-        sessionId: activeSessionId,
-        receivedAt: Date.now(),
-      });
-      runtimeProjectionStore.flush();
-      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
-        forceReload: true,
-      });
-      toast.success("已重做");
-    } catch (err) {
-      toast.error("重做失败", { description: String(err) });
-    }
-    void refreshConversationUndoStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
-  }, [
-    activeSessionId,
+    handleResumeFromCursor,
+    handleConversationUndo,
+    handleConversationRedo,
+    conversationUndoStatus,
+  } = useSessionRuntime({
     activeProjectId,
+    activeSessionId,
+    projects,
+    conversations,
     sessionLoading,
-    stopAgentStream,
-    refreshConversationUndoStatus,
-  ]);
+    streamAbortHandles,
+    input,
+    permissionMode,
+    selectedModel,
+    currentProjectWorkdir: currentProject?.workdir,
+    agentVoice,
+    setInput,
+    setSessionLoading,
+    setSessionTodos,
+    setStreamAbortHandles,
+    setConversations,
+    handleNewChat,
+    maybeAutoRenameSession,
+    refreshProjectSessions,
+    reloadSession,
+    extractTodosFromToolResult,
+    activeMessagesLength: activeConv?.messages.length ?? 0,
+  });
 
-  const buildResumePrompt = (resumeCursor: string) =>
-    `[resume_cursor] ${resumeCursor}\n` +
-    "请从该游标继续完成上一次任务，仅补全未完成步骤，禁止重复已确认的副作用操作。";
-
-  const sendMessage = async (
-    overrideText?: string,
-    options?: {
-      sessionIdOverride?: string;
-      isInternalResume?: boolean;
-      resumeCursor?: string;
-    },
-  ) => {
-    const messageText = (overrideText ?? input).trim();
-    let targetSessionId = options?.sessionIdOverride ?? activeSessionId;
-    let freshProjectId: string | undefined;
-    if (!targetSessionId && !options?.sessionIdOverride) {
-      const fallbackProjectId = activeProjectId ?? projects[0]?.id ?? null;
-      if (fallbackProjectId) {
-        freshProjectId = fallbackProjectId;
-        targetSessionId = await handleNewChat(fallbackProjectId);
-      }
-    }
-    if (!messageText || !targetSessionId) return;
-    const sessionId = targetSessionId;
-    if (sessionLoadingRef.current[sessionId]) return;
-    if (!options?.isInternalResume) {
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }));
-    }
-
-    // When handleNewChat just created this session the React state hasn't
-    // re-rendered yet, so conversations[sessionId] is still undefined.
-    // Construct a synthetic conv for new sessions rather than bailing out.
-    const conv =
-      conversations[sessionId] ??
-      (freshProjectId
-        ? {
-            id: sessionId,
-            projectId: freshProjectId,
-            title: PLACEHOLDER_SESSION_TITLE,
-            messages: [],
-            updatedAt: new Date(),
-          }
-        : null);
-    if (!conv) return;
-
-    if (!options?.isInternalResume) {
-      autoResumeAttemptsRef.current[sessionId] = 0;
-    } else if (options.resumeCursor) {
-      setRecoveryStateForCursor(sessionId, options.resumeCursor, true);
-    }
-
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: messageText,
-      timestamp: new Date(),
-    };
-
-    const updatedConv = {
-      ...conv,
-      messages: [...conv.messages, userMsg],
-      updatedAt: new Date(),
-    };
-
-    setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }));
-    maybeAutoRenameSession(conv.projectId, sessionId, updatedConv);
-    if (!overrideText) {
-      setInput("");
-    }
-    setSessionLoading((prev) => ({ ...prev, [sessionId]: true }));
-
-    const startTime = Date.now();
-    let accumulatedText = "";
-    let accumulatedThinking = "";
-    let assistantMsgId: string | null = null;
-    let hasPendingTextDelta = false;
-    let hasPendingThinkingDelta = false;
-    let streamRafId: number | null = null;
-    const seenToolCallIds = new Set<string>();
-
-    const createAssistantMessage = (streamId?: string) => {
-      if (assistantMsgId) {
-        if (streamId) {
-          const currentAssistantId = assistantMsgId;
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: currentConv.messages.map((msg) =>
-                  msg.id === currentAssistantId ? { ...msg, streamId } : msg,
-                ),
-              },
-            };
-          });
-        }
-        return;
-      }
-      assistantMsgId = crypto.randomUUID();
-      const assistantMsg: Message = {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        timestamp: new Date(),
-        streamId,
-        isStreaming: true,
-        statusLabel: options?.isInternalResume
-          ? "正在恢复未完成任务…"
-          : undefined,
-        statusKind: options?.isInternalResume ? "info" : undefined,
-      };
-
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: [...currentConv.messages, assistantMsg],
-          },
-        };
-      });
-    };
-
-    const finalizeCurrentAssistantSegment = () => {
-      if (!assistantMsgId) return;
-
-      const finalizedAssistantId = assistantMsgId;
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.id === finalizedAssistantId
-                ? {
-                    ...msg,
-                    isStreaming: false,
-                    statusLabel: undefined,
-                    statusKind: undefined,
-                  }
-                : msg,
-            ),
-          },
-        };
-      });
-
-      assistantMsgId = null;
-      accumulatedText = "";
-      accumulatedThinking = "";
-    };
-
-    const ensureAssistantMessage = (streamId?: string) => {
-      if (!assistantMsgId) {
-        createAssistantMessage(streamId);
-      } else if (streamId) {
-        createAssistantMessage(streamId);
-      }
-
-      return assistantMsgId;
-    };
-
-    const flushAssistantDeltas = () => {
-      if (!assistantMsgId) return;
-      if (!hasPendingTextDelta && !hasPendingThinkingDelta) return;
-      const currentAssistantId = assistantMsgId;
-      const nextText = accumulatedText;
-      const nextThinking = accumulatedThinking;
-
-      hasPendingTextDelta = false;
-      hasPendingThinkingDelta = false;
-
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.id === currentAssistantId
-                ? {
-                    ...msg,
-                    content: nextText,
-                    thinking: nextThinking || msg.thinking,
-                    statusLabel: undefined,
-                    statusKind: undefined,
-                  }
-                : msg,
-            ),
-          },
-        };
-      });
-    };
-
-    const cancelScheduledAssistantFlush = () => {
-      if (streamRafId !== null) {
-        window.cancelAnimationFrame(streamRafId);
-        streamRafId = null;
-      }
-    };
-
-    const scheduleAssistantFlush = () => {
-      if (streamRafId !== null) return;
-      streamRafId = window.requestAnimationFrame(() => {
-        streamRafId = null;
-        flushAssistantDeltas();
-      });
-    };
-
-    const finishProjectedStream = (
-      payload: StreamTokenPayload,
-      unlisten: () => void,
-    ) => {
-      cancelScheduledAssistantFlush();
-      void agentVoice.flushAndStop();
-      if (payload.prompt_diagnostics) {
-        void publishLatestPromptDiagnosticsSnapshot({
-          sessionId,
-          projectId: conv.projectId,
-          assistantMessageId: assistantMsgId ?? null,
-          updatedAt: Date.now(),
-          summary: payload.prompt_diagnostics,
-        });
-      }
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-      setStreamAbortHandles((prev) => {
-        const { [sessionId]: _removed, ...rest } = prev;
-        return rest;
-      });
-      void refreshProjectSessions(conv.projectId).catch((error) => {
-        console.error("Failed to refresh session counts:", error);
-      });
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.isRecovering ? { ...msg, isRecovering: false } : msg,
-            ),
-          },
-        };
-      });
-      unlisten();
-    };
-
-    const handleProjectedStreamSideEffect = (
-      payload: StreamTokenPayload,
-      unlisten: () => void,
-    ) => {
-      if (payload.event_type === "text_delta" && payload.text) {
-        agentVoice.feed(payload.text);
-        return;
-      }
-
-      if (payload.event_type === "tool_call_update") {
-        if (payload.tool_name === "TodoWrite" && payload.tool_result) {
-          const nextTodos = extractTodosFromToolResult(payload.tool_result);
-          if (nextTodos) {
-            setSessionTodos((prev) => ({ ...prev, [sessionId]: nextTodos }));
-          }
-        }
-        return;
-      }
-
-      if (payload.event_type === "stream_complete") {
-        finishProjectedStream(payload, unlisten);
-        autoResumeAttemptsRef.current[sessionId] = 0;
-        attemptedAutoResumeCursorsRef.current.clear();
-        return;
-      }
-
-      if (payload.event_type === "stream_error") {
-        finishProjectedStream(payload, unlisten);
-        const errMsg = payload.tool_result || "Agent 执行失败，请稍后重试。";
-        const taskOutcome = payload.task_outcome ?? "failed";
-        const resumeAvailable = payload.resume_available ?? false;
-        const resumeCursor = payload.resume_cursor;
-        if (
-          taskOutcome === "partial_success" &&
-          resumeAvailable &&
-          resumeCursor
-        ) {
-          const cursorKey = `${sessionId}:${resumeCursor}`;
-          const attemptCount = autoResumeAttemptsRef.current[sessionId] ?? 0;
-          if (
-            !attemptedAutoResumeCursorsRef.current.has(cursorKey) &&
-            attemptCount < 2
-          ) {
-            attemptedAutoResumeCursorsRef.current.add(cursorKey);
-            autoResumeAttemptsRef.current[sessionId] = attemptCount + 1;
-            setRecoveryStateForCursor(sessionId, resumeCursor, true);
-            window.setTimeout(() => {
-              void sendMessage(buildResumePrompt(resumeCursor), {
-                sessionIdOverride: sessionId,
-                isInternalResume: true,
-                resumeCursor,
-              });
-            }, 80);
-          }
-        }
-      }
-    };
-
-    // Detect slash commands
-    if (messageText.startsWith("/")) {
-      const cmdPrefix = messageText.split(/\s+/)[0];
-      const suggestions = await suggestSlashCommands(cmdPrefix, 1);
-      if (suggestions.length > 0) {
-        // Check if this is a skill-based slash command: resolve the invocation
-        // message (contains full SKILL.md) and send it to the agent for LLM
-        // processing.  Builtin commands (/help, /clear, /skills, /agents) always
-        // start with a known prefix that does NOT resolve via resolveSkillSlash,
-        // so they fall through to executeSlashCommand as before.
-        const cwd = currentProject?.workdir;
-        const skillInvocation = await resolveSkillSlash(messageText, cwd);
-        if (skillInvocation) {
-          // Skill slash: route through the agent so the LLM activates the skill
-          // via the skill() tool and then responds according to its instructions.
-          try {
-            createAssistantMessage();
-            const handle = await startChatTurn({
-              sessionId,
-              userMessage: skillInvocation,
-              permissionMode,
-              selectedModel,
-            });
-            runtimeProjectionStore.dispatch({
-              kind: "stream_run_bound",
-              runId: handle.streamId,
-              sessionId,
-              receivedAt: Date.now(),
-            });
-            createAssistantMessage(handle.streamId);
-            setStreamAbortHandles((prev) => ({
-              ...prev,
-              [sessionId]: handle.streamId,
-            }));
-            const unlisten = await handle.subscribe(
-              (payload: StreamTokenPayload) => {
-                handleProjectedStreamSideEffect(payload, unlisten);
-              },
-            );
-          } catch (err) {
-            setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-          }
-          return;
-        }
-
-        // /compact — manual context compaction (opt-out of skill / builtin
-        // slash routes). Calls the chat_compact_session IPC, then renders
-        // a tiny "已压缩 N 条消息，释放 X tokens" assistant message.
-        const trimmedSlash = messageText.trim();
-        if (trimmedSlash === "/compact" || trimmedSlash.startsWith("/compact ")) {
-          setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-          try {
-            const { chatCompactSession } = await import("@/lib/tauri");
-            const report = await chatCompactSession(sessionId);
-            const assistantMsgId = crypto.randomUUID();
-            const content = report.didCompact
-              ? `已压缩 ${report.summarizedMessages} 条消息，释放约 ${
-                  report.freedTokens > 0
-                    ? `${(report.freedTokens / 1000).toFixed(1)}k`
-                    : "0"
-                } tokens。\n\n摘要预览：${report.summaryExcerpt}…`
-              : "上下文已是最新，无需压缩。";
-            const assistantMsg: Message = {
-              id: assistantMsgId,
-              role: "assistant",
-              content,
-              timestamp: new Date(),
-              isStreaming: false,
-              slashCommand: "/compact",
-            };
-            setConversations((prev) => {
-              const currentConv = prev[sessionId];
-              if (!currentConv) return prev;
-              return {
-                ...prev,
-                [sessionId]: {
-                  ...currentConv,
-                  messages: [...currentConv.messages, assistantMsg],
-                },
-              };
-            });
-          } catch (err) {
-            const errorMsg: Message = {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `/compact 失败: ${String(err)}`,
-              timestamp: new Date(),
-              isStreaming: false,
-            };
-            setConversations((prev) => {
-              const currentConv = prev[sessionId];
-              if (!currentConv) return prev;
-              return {
-                ...prev,
-                [sessionId]: {
-                  ...currentConv,
-                  messages: [...currentConv.messages, errorMsg],
-                },
-              };
-            });
-          }
-          return;
-        }
-
-        // Builtin slash command: execute and display result as a static message
-        setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-        try {
-          const result = await executeSlashCommand(messageText, sessionId);
-          const assistantMsgId = crypto.randomUUID();
-          const slashToken = messageText
-            .trim()
-            .split(/\s+/, 1)[0];
-          const assistantMsg: Message = {
-            id: assistantMsgId,
-            role: "assistant",
-            content: result,
-            timestamp: new Date(),
-            isStreaming: false,
-            slashCommand:
-              slashToken && slashToken.startsWith("/") ? slashToken : undefined,
-          };
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: [...currentConv.messages, assistantMsg],
-              },
-            };
-          });
-        } catch (err) {
-          const errorMsg: Message = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: String(err),
-            timestamp: new Date(),
-            isStreaming: false,
-          };
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: [...currentConv.messages, errorMsg],
-              },
-            };
-          });
-        }
-        return;
-      }
-    }
-
-    try {
-      createAssistantMessage();
-      const handle = await startChatTurn({
-        sessionId,
-        userMessage: userMsg.content,
-        permissionMode,
-        selectedModel,
-      });
-      runtimeProjectionStore.dispatch({
-        kind: "stream_run_bound",
-        runId: handle.streamId,
-        sessionId,
-        receivedAt: Date.now(),
-      });
-      createAssistantMessage(handle.streamId);
-      setStreamAbortHandles((prev) => ({
-        ...prev,
-        [sessionId]: handle.streamId,
-      }));
-
-      const unlisten = await handle.subscribe((payload: StreamTokenPayload) => {
-        handleProjectedStreamSideEffect(payload, unlisten);
-      });
-    } catch (err) {
-      console.error("startAgentStream error:", err);
-
-      const errorMessage =
-        err && typeof err === "object" && "message" in err
-          ? String(
-              (err as { message?: string }).message ||
-                "Agent 执行失败，请稍后重试。",
-            )
-          : err instanceof Error
-            ? err.message
-            : "Agent 执行失败，请稍后重试。";
-
-      if (assistantMsgId) {
-        setConversations((prev) => {
-          const currentConv = prev[sessionId];
-          if (!currentConv) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...currentConv,
-              messages: currentConv.messages.map((msg) =>
-                msg.id === assistantMsgId
-                  ? {
-                      ...msg,
-                      content: "",
-                      isStreaming: false,
-                      isError: true,
-                      statusLabel: undefined,
-                      statusKind: undefined,
-                      toolArgs: { rawError: errorMessage },
-                    }
-                  : msg,
-              ),
-            },
-          };
-        });
-      } else {
-        // No assistant message yet — create one with the error
-        const errorMsgId = crypto.randomUUID();
-        const errorMsg: Message = {
-          id: errorMsgId,
-          role: "assistant",
-          content: "",
-          timestamp: new Date(),
-          isStreaming: false,
-          isError: true,
-          toolArgs: { rawError: errorMessage },
-        };
-        setConversations((prev) => ({
-          ...prev,
-          [sessionId]: {
-            ...updatedConv,
-            messages: [...updatedConv.messages, errorMsg],
-          },
-        }));
-      }
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-      void refreshProjectSessions(conv.projectId).catch((error) => {
-        console.error("Failed to refresh session counts:", error);
-      });
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.isRecovering ? { ...msg, isRecovering: false } : msg,
-            ),
-          },
-        };
-      });
-    } finally {
-      // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
-    }
-  };
-
-  const handleResumeFromCursor = async (resumeCursor: string) => {
-    await sendMessage(buildResumePrompt(resumeCursor), {
-      isInternalResume: true,
-      resumeCursor,
-    });
-  };
 
   const beginResize = (
     startX: number,
