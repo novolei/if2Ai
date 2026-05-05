@@ -25,14 +25,12 @@ import {
   ensureDefaultWorkdir,
   executeSlashCommand,
   getOnboardingState,
-  generateSessionTitle,
   listProjects,
   listProjectSessions,
   openProjectInFinder,
   openSettingsWindow,
   pickFolderDialog,
   renameProject,
-  renameSession,
   resolveSkillSlash,
   respondPermission,
   sessionRedo,
@@ -66,6 +64,11 @@ import { useUpdaterBanner } from "@/app-effects/useUpdaterBanner";
 import { useGlobalHotkeys } from "@/app-effects/useGlobalHotkeys";
 import { useChatPrefill } from "@/app-effects/useChatPrefill";
 import { loadConversationHistory } from "@/session/loadConversationHistory";
+import {
+  PLACEHOLDER_SESSION_TITLE,
+  isMeaningfulUserMessage,
+} from "@/session/titleStage";
+import { useSessionTitleStage } from "@/session/useSessionTitleStage";
 // MIG-013 — AppShell is the canonical top-level shell container
 // (BootShell + MainShell + ContentRouter). Boot state lives in
 // the bootstrap-store; App.tsx is now a data-flow host, not a
@@ -83,7 +86,6 @@ import { SectionWorkspace } from "@/modules/app-shell/components/SectionWorkspac
 import type { AppSection } from "@/modules/app-shell/types";
 import { ChatWorkspace } from "@/modules/chat/components/ChatWorkspace";
 import type {
-  Conversation,
   Message,
   RecentSession,
   SessionTitleState,
@@ -113,23 +115,9 @@ import {
 } from "@/components/ui/dialog";
 
 const appIconSrc = appIconAsset;
-const PLACEHOLDER_SESSION_TITLE = "新对话";
-const MAX_AUTO_RENAME_COUNT = 1;
-const GENERIC_USER_PROMPTS = [
-  "继续",
-  "继续完成",
-  "帮我看看",
-  "看一下",
-  "改一下",
-  "优化一下",
-  "修一下",
-  "处理一下",
-  "请继续",
-  "开始",
-  "你好",
-  "hi",
-  "hello",
-];
+// GF-03 PR-4 — title-stage constants + helpers extracted to
+// `src/session/titleStage.ts` (pure) and the React surface to
+// `src/session/useSessionTitleStage.ts`.
 
 function App() {
   const appWindow = getCurrentWindow();
@@ -280,12 +268,23 @@ function App() {
     }
     return "dangerFullAccess";
   });
-  // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
+  // GF-03 PR-4 — sessionTitleStatesRef + pendingAutoTitleSessionIdsRef
+  // are owned here but mutated by `useSessionTitleStage` (which also
+  // owns the ref-sync useEffect).
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({});
   const pendingAutoTitleSessionIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    sessionTitleStatesRef.current = sessionTitleStates;
-  }, [sessionTitleStates]);
+  const { maybeAutoRenameSession, handleRenameSession } = useSessionTitleStage(
+    {
+      conversations,
+      projectSessions,
+      sessionTitleStates,
+      setConversations,
+      setProjectSessions,
+      setSessionTitleStates,
+      sessionTitleStatesRef,
+      pendingAutoTitleSessionIdsRef,
+    },
+  );
   const setRecoveryStateForCursor = (
     sessionId: string,
     resumeCursor: string,
@@ -447,413 +446,6 @@ function App() {
     return Object.keys(out).length > 0 ? out : null;
   };
 
-  const buildLoopCompletionStatus = (
-    messages: Message[],
-    streamId: string | undefined,
-    taskOutcome?: Message["taskOutcome"],
-    degradedReason?: string,
-  ): { label: string; kind: NonNullable<Message["statusKind"]> } => {
-    const scopedToolMessages = messages.filter((msg) => {
-      if (msg.role !== "tool") return false;
-      if (!streamId) return true;
-      return msg.streamId === streamId;
-    });
-    const total = scopedToolMessages.length;
-    const completed = scopedToolMessages.filter(
-      (msg) => msg.toolStatus === "completed",
-    ).length;
-    const failed = scopedToolMessages.filter(
-      (msg) => msg.toolStatus === "error",
-    ).length;
-
-    if (taskOutcome === "partial_success") {
-      if (degradedReason?.includes("max_iterations_reached")) {
-        return {
-          label:
-            total > 0
-              ? `本轮已完成 ${completed}/${total} 个步骤，达到迭代上限，可继续未完成部分`
-              : "达到迭代上限，可继续未完成部分",
-          kind: "partial",
-        };
-      }
-      return {
-        label:
-          total > 0
-            ? `本轮部分完成：已完成 ${completed}/${total} 个步骤`
-            : "本轮任务部分完成，可继续补全",
-        kind: "partial",
-      };
-    }
-
-    if (taskOutcome === "failed") {
-      return {
-        label:
-          total > 0
-            ? `本轮执行失败：已完成 ${completed}/${total} 个步骤`
-            : "本轮执行失败",
-        kind: "failed",
-      };
-    }
-
-    if (total === 0) return { label: "本轮执行完成", kind: "success" };
-    if (failed > 0) {
-      return {
-        label: `本轮执行完成：成功 ${completed} 个，失败 ${failed} 个`,
-        kind: "partial",
-      };
-    }
-    return {
-      label: `本轮执行完成：共完成 ${completed} 个步骤`,
-      kind: "success",
-    };
-  };
-
-  const normalizeSessionTitleSource = (raw: string): string => {
-    const cleaned = raw
-      .replace(/\[resume_cursor\][\s\S]*$/gi, "")
-      .replace(
-        /^(请|帮我|麻烦|继续|继续帮我|继续把|我想|想要|我要|需要|请先|先帮我)\s*/u,
-        "",
-      )
-      .replace(/(一下|一下子|好吗|可以吗|吧|谢谢|thanks|thank you)\s*$/giu, "")
-      .replace(/`+/g, "")
-      .replace(/[#>*_\-\[\]]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return cleaned;
-  };
-
-  // P3: accept the owning conversation so [resume_cursor] falls back to its title,
-  // not the currently-visible activeConv (which may differ mid-rename).
-  const formatSessionTitle = (raw: string, conv?: Conversation): string => {
-    if (raw.includes("[resume_cursor]")) {
-      return conv?.title ?? activeConv?.title ?? "继续当前任务";
-    }
-    const cleaned = normalizeSessionTitleSource(raw);
-
-    if (!cleaned) return PLACEHOLDER_SESSION_TITLE;
-    const firstLine =
-      cleaned
-        .split(/[\n。！？!?]/)
-        .find((segment) => segment.trim())
-        ?.trim() ?? cleaned;
-    return firstLine.slice(0, 30) || PLACEHOLDER_SESSION_TITLE;
-  };
-
-  const normalizeTitleComparison = (value: string): string =>
-    value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-
-  const areTitlesSimilar = (a: string, b: string): boolean => {
-    const normalizedA = normalizeTitleComparison(a);
-    const normalizedB = normalizeTitleComparison(b);
-    if (!normalizedA || !normalizedB) return false;
-    return (
-      normalizedA === normalizedB ||
-      normalizedA.includes(normalizedB) ||
-      normalizedB.includes(normalizedA)
-    );
-  };
-
-  const currentTitleIsResolved = (title: string): boolean => {
-    const normalized = title.trim();
-    return Boolean(normalized && normalized !== PLACEHOLDER_SESSION_TITLE);
-  };
-
-  const isMeaningfulUserMessage = (content: string): boolean => {
-    const normalized = normalizeSessionTitleSource(content);
-    if (!normalized) return false;
-    if (normalized.includes("[resume_cursor]")) return false;
-    if (normalized.length < 2) return false;
-    const lower = normalized.toLowerCase();
-    return !GENERIC_USER_PROMPTS.some((prompt) => lower === prompt);
-  };
-
-  const getMeaningfulUserMessages = (messages: Message[]): Message[] =>
-    messages.filter(
-      (message) =>
-        message.role === "user" && isMeaningfulUserMessage(message.content),
-    );
-
-  const getInitialSessionTitleCandidate = (
-    messages: Message[],
-    conv?: Conversation,
-  ): string | null => {
-    const meaningfulMessages = getMeaningfulUserMessages(messages);
-    const seedMessage =
-      meaningfulMessages.find(
-        (message) =>
-          formatSessionTitle(message.content, conv) !==
-          PLACEHOLDER_SESSION_TITLE,
-      ) ?? meaningfulMessages[0];
-    if (!seedMessage) return null;
-    const nextTitle = formatSessionTitle(seedMessage.content, conv);
-    return nextTitle === PLACEHOLDER_SESSION_TITLE ? null : nextTitle;
-  };
-
-  const getCorrectionTitleCandidate = (
-    messages: Message[],
-    currentTitle: string,
-    conv?: Conversation,
-  ): string | null => {
-    const userMessages = getMeaningfulUserMessages(messages);
-    if (userMessages.length < 2) return null;
-    const recentCandidates = userMessages
-      .slice(-2)
-      .map((message) => formatSessionTitle(message.content, conv))
-      .filter(
-        (candidate) => candidate && candidate !== PLACEHOLDER_SESSION_TITLE,
-      );
-    if (recentCandidates.length === 0) return null;
-    const [previousCandidate, latestCandidate] = recentCandidates;
-    const resolvedCandidate = latestCandidate ?? previousCandidate;
-    if (!resolvedCandidate) return null;
-    if (areTitlesSimilar(resolvedCandidate, currentTitle)) return null;
-    return resolvedCandidate;
-  };
-
-  const getInitialSessionTitleState = (
-    title: string,
-    _existingMessages: Message[] = [],
-  ): SessionTitleState => {
-    if (title && title !== PLACEHOLDER_SESSION_TITLE) {
-      return {
-        stage: "locked",
-        autoRenameCount: MAX_AUTO_RENAME_COUNT,
-      };
-    }
-
-    return {
-      stage: "placeholder",
-      autoRenameCount: 0,
-    };
-  };
-
-  const maybeAutoRenameSession = (
-    projectId: string,
-    sessionId: string,
-    conversation: Conversation,
-  ) => {
-    const titleState =
-      sessionTitleStates[sessionId] ??
-      getInitialSessionTitleState(conversation.title, conversation.messages);
-
-    // P0: manual stage = user-initiated rename; never auto-override
-    if (titleState.stage === "manual" || titleState.stage === "locked") return;
-
-    const meaningfulUserMessages = getMeaningfulUserMessages(
-      conversation.messages,
-    );
-    const meaningfulTurnCount = meaningfulUserMessages.length;
-
-    if (meaningfulTurnCount === 0) return;
-
-    // P2: wait until AI has responded at least once before setting any title,
-    // so the session title reflects real context rather than just the first user prompt.
-    const hasAiReply = conversation.messages.some(
-      (m) => m.role === "assistant",
-    );
-    if (!hasAiReply) return;
-
-    if (conversation.titlePending || pendingAutoTitleSessionIdsRef.current.has(sessionId)) {
-      return;
-    }
-
-    if (currentTitleIsResolved(conversation.title)) {
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: {
-          ...titleState,
-          stage: "locked",
-          autoRenameCount: Math.max(titleState.autoRenameCount, 1),
-        },
-      }));
-      return;
-    }
-
-    // P3: pass the owning conversation so [resume_cursor] resolves correctly
-    const initialCandidate = getInitialSessionTitleCandidate(
-      conversation.messages,
-      conversation,
-    );
-    if (titleState.stage === "placeholder" && initialCandidate) {
-      syncGeneratedSessionTitle(projectId, sessionId, initialCandidate);
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: {
-          stage: "locked",
-          autoRenameCount: MAX_AUTO_RENAME_COUNT,
-        },
-      }));
-      return;
-    }
-  };
-
-  const syncSessionTitle = (
-    projectId: string,
-    sessionId: string,
-    title: string,
-  ) => {
-    const nextTitle = title.trim();
-    if (!nextTitle) return;
-
-    // Capture previous title for rollback before the optimistic update
-    const previousTitle =
-      conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE;
-
-    setConversations((prev) => {
-      const conversation = prev[sessionId];
-      if (!conversation || conversation.title === nextTitle) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...conversation,
-          title: nextTitle,
-        },
-      };
-    });
-
-    setProjectSessions((prev) => {
-      const sessions = prev[projectId];
-      if (!sessions) return prev;
-      let changed = false;
-      const nextSessions = sessions.map((session) => {
-        if (session.id !== sessionId || session.title === nextTitle)
-          return session;
-        changed = true;
-        return { ...session, title: nextTitle };
-      });
-      return changed ? { ...prev, [projectId]: nextSessions } : prev;
-    });
-
-    // P1: rollback optimistic update and show error toast on persistence failure
-    void renameSession(sessionId, nextTitle).catch((err) => {
-      console.error("Failed to rename session:", err);
-      toast.error("重命名失败，已恢复原名称", { duration: 3000 });
-      setConversations((prev) => {
-        const conversation = prev[sessionId];
-        if (!conversation || conversation.title !== nextTitle) return prev;
-        return {
-          ...prev,
-          [sessionId]: { ...conversation, title: previousTitle },
-        };
-      });
-      setProjectSessions((prev) => {
-        const sessions = prev[projectId];
-        if (!sessions) return prev;
-        return {
-          ...prev,
-          [projectId]: sessions.map((s) =>
-            s.id === sessionId && s.title === nextTitle
-              ? { ...s, title: previousTitle }
-              : s,
-          ),
-        };
-      });
-    });
-  };
-
-  const syncGeneratedSessionTitle = (
-    projectId: string,
-    sessionId: string,
-    titleHint: string,
-  ) => {
-    const nextTitle = titleHint.trim();
-    if (!nextTitle) return;
-
-    const previousTitle =
-      conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE;
-    const previousSession =
-      projectSessions[projectId]?.find((session) => session.id === sessionId) ??
-      null;
-    pendingAutoTitleSessionIdsRef.current.add(sessionId);
-
-    setConversations((prev) => {
-      const conversation = prev[sessionId];
-      if (!conversation || conversation.title === nextTitle) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...conversation,
-          title: nextTitle,
-          titlePending: true,
-        },
-      };
-    });
-
-    setProjectSessions((prev) => {
-      const sessions = prev[projectId];
-      if (!sessions) return prev;
-      return {
-        ...prev,
-        [projectId]: sessions.map((session) =>
-          session.id === sessionId
-            ? { ...session, title: nextTitle, title_pending: true }
-            : session,
-        ),
-      };
-    });
-
-    void generateSessionTitle(sessionId, nextTitle)
-      .then((updated) => {
-        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
-        setConversations((prev) => {
-          const conversation = prev[sessionId];
-          if (!conversation) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...conversation,
-              title: updated.title,
-              titleIcon: updated.title_icon ?? null,
-              titlePending: Boolean(updated.title_pending),
-            },
-          };
-        });
-        setProjectSessions((prev) => {
-          const sessions = prev[projectId];
-          if (!sessions) return prev;
-          return {
-            ...prev,
-            [projectId]: sessions.map((session) =>
-              session.id === sessionId ? { ...session, ...updated } : session,
-            ),
-          };
-        });
-      })
-      .catch((err) => {
-        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
-        console.error("Failed to generate session title:", err);
-        setConversations((prev) => {
-          const conversation = prev[sessionId];
-          if (!conversation || conversation.title !== nextTitle) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...conversation,
-              title: previousTitle,
-              titlePending: false,
-            },
-          };
-        });
-        setProjectSessions((prev) => {
-          const sessions = prev[projectId];
-          if (!sessions) return prev;
-          return {
-            ...prev,
-            [projectId]: sessions.map((session) =>
-              session.id === sessionId
-                ? previousSession ?? {
-                    ...session,
-                    title: previousTitle,
-                    title_pending: false,
-                  }
-                : session,
-            ),
-          };
-        });
-      });
-  };
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null;
   const activeSessionMeta = useMemo(() => {
@@ -1352,20 +944,7 @@ function App() {
     }
   };
 
-  // P0: user-initiated rename — marks stage as 'manual' so auto-rename never overrides again
-  const handleRenameSession = (sessionId: string, newTitle: string) => {
-    const conv = conversations[sessionId];
-    if (!conv) return;
-    // Lock the stage first so any in-flight auto-rename is a no-op once it checks the stage
-    setSessionTitleStates((prev) => ({
-      ...prev,
-      [sessionId]: {
-        stage: "manual",
-        autoRenameCount: MAX_AUTO_RENAME_COUNT,
-      },
-    }));
-    syncSessionTitle(conv.projectId, sessionId, newTitle);
-  };
+  // GF-03 PR-4 — `handleRenameSession` moved to `useSessionTitleStage`.
 
   const handleTogglePinSession = async (
     projectId: string,

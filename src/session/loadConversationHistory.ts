@@ -18,9 +18,10 @@ import type {
 } from "@/modules/chat/types";
 import type { TodoItem } from "@/components/ui/TodoPanel";
 import { extractTodosFromToolResult } from "./messageExtraction";
-
-const PLACEHOLDER_SESSION_TITLE = "新对话";
-const MAX_AUTO_RENAME_COUNT = 1;
+import {
+  PLACEHOLDER_SESSION_TITLE,
+  getInitialSessionTitleState,
+} from "./titleStage";
 
 /**
  * Result of {@link loadConversationHistory}.  The three fields map 1:1
@@ -33,25 +34,10 @@ export type LoadedSessionHistory = {
   titleState: SessionTitleState;
 };
 
-/**
- * Initial title state derived from a session title.  Mirrors the helper
- * still living in `App.tsx` (`getInitialSessionTitleState`, L885-900).
- * Will be consolidated in GF-03 PR-4 when the title-stage cluster moves
- * into `src/session/titleStage.ts`; replicated here so PR-2 stands
- * alone without touching the title cluster.
- */
-function initialTitleState(title: string): SessionTitleState {
-  if (title && title !== PLACEHOLDER_SESSION_TITLE) {
-    return {
-      stage: "locked",
-      autoRenameCount: MAX_AUTO_RENAME_COUNT,
-    };
-  }
-  return {
-    stage: "placeholder",
-    autoRenameCount: 0,
-  };
-}
+// GF-03 PR-4 — the title-state derivation now lives canonically in
+// `./titleStage.getInitialSessionTitleState`; the local replica that
+// PR-2 introduced has been removed and the call sites below import
+// directly from there.
 
 /**
  * Load + convert a session's persisted history into the shape the chat
@@ -254,7 +240,7 @@ export async function loadConversationHistory(args: {
         sessionTotals: fullSession.session_totals,
       },
       recoveredTodos,
-      titleState: initialTitleState(resolvedTitle),
+      titleState: getInitialSessionTitleState(resolvedTitle),
     };
   } catch (err) {
     console.error("Failed to load session:", err);
@@ -270,7 +256,7 @@ export async function loadConversationHistory(args: {
         updatedAt: new Date(),
       },
       recoveredTodos: [],
-      titleState: initialTitleState(fallbackTitle),
+      titleState: getInitialSessionTitleState(fallbackTitle),
     };
   }
 }
