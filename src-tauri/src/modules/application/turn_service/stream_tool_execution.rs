@@ -359,7 +359,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             session_totals: None,
         };
         stream_emitter.emit_payload(running_payload.clone());
-        super::stream_task::append_stream_event(&run_event_logger, &running_payload).await;
+        super::stream_task_run_log::append_stream_event(&run_event_logger, &running_payload).await;
 
         // ── Attempt Ledger: transition to running ──
         attempt_entry.transition_running();
@@ -407,7 +407,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 session_totals: None,
             };
             stream_emitter.emit_payload(terminal_tool_payload.clone());
-            super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload)
+            super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload)
                 .await;
 
             attempt_entry.transition_blocked();
@@ -520,7 +520,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 session_totals: None,
             };
             stream_emitter.emit_payload(terminal_tool_payload.clone());
-            super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload)
+            super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload)
                 .await;
 
             // ── Attempt Ledger: transition to failed (invalid args) ──
@@ -729,7 +729,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             session_totals: None,
         };
         stream_emitter.emit_payload(terminal_tool_payload.clone());
-        super::stream_task::append_stream_event(&run_event_logger, &terminal_tool_payload).await;
+        super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload).await;
 
         // ── Attempt Ledger: transition to terminal status ──
         if denied_by_policy {
