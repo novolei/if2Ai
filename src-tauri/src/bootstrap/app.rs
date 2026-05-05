@@ -76,6 +76,7 @@ pub fn build_app_bootstrap(paths: &super::BootPaths) -> super::AppBootstrap {
         browser_registry,
         memory_ticker: memory_bootstrap.memory_ticker,
         learned_traits: memory_bootstrap.learned_traits,
+        daydream_engine: memory_bootstrap.daydream_engine,
     }
 }
 

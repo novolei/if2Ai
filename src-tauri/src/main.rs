@@ -36,8 +36,20 @@ fn main() {
         host_composition.tts_state,
         host_composition.tts_download_state,
     )
+    .manage(app_bootstrap.daydream_engine.clone())
     .invoke_handler(crate::if2ai_command_surface!())
-    .setup(|app| Ok(modules::desktop_host::setup_desktop_host(app)?))
+    .setup(move |app| {
+        // Start DayDream background monitoring loop inside Tauri's
+        // managed tokio runtime so that `tokio::spawn` inside the
+        // scheduler finds a reactor.  The setup closure runs on the
+        // native main thread (Cocoa on macOS) which is *outside*
+        // the tokio context, hence the indirection.
+        let engine = app_bootstrap.daydream_engine.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = engine.start();
+        });
+        Ok(modules::desktop_host::setup_desktop_host(app)?)
+    })
     // SAFETY: run() error is unrecoverable for a desktop app
     .run(tauri::generate_context!())
     .map_err(|e| tracing::error!("Tauri application exited with error: {e}"))

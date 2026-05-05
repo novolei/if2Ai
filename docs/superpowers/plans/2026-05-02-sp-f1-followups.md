@@ -128,14 +128,14 @@ UI `getActiveModel()` → `auth_variant: "moonshot-cn"` → UI 修改 model → 
 
 ## SP-F1 交付摘要（参考）
 
-| Commit | 内容 | 状态 |
-|---|---|---|
-| `000b432` | FIX-14: drop retired channel constants & dead listeners | ✅ |
-| `f93f82c` | FIX-14 fixup: align stream_emitter banner & PermissionRequestPayload JSDoc | ✅ |
-| `a07c2c2` | docs: SP-F1 plan + verification command fix | ✅ |
-| `ee0cca5` | FIX-10: collapse duplicate listenToStream | ✅ |
-| `9c02d8b` | FIX-11: introduce src/api/models.ts + migrate invoke sites | ✅ |
-| `f1c26ed` | FIX-11 fixup: ActiveModel.auth_variant + style fixes | ✅ |
-| `b6bf7d1` | FIX-17: stop re-exporting appendMessage/updateMessage | ✅ |
+| Commit    | 内容                                                                       | 状态 |
+| --------- | -------------------------------------------------------------------------- | ---- |
+| `000b432` | FIX-14: drop retired channel constants & dead listeners                    | ✅    |
+| `f93f82c` | FIX-14 fixup: align stream_emitter banner & PermissionRequestPayload JSDoc | ✅    |
+| `a07c2c2` | docs: SP-F1 plan + verification command fix                                | ✅    |
+| `ee0cca5` | FIX-10: collapse duplicate listenToStream                                  | ✅    |
+| `9c02d8b` | FIX-11: introduce src/api/models.ts + migrate invoke sites                 | ✅    |
+| `f1c26ed` | FIX-11 fixup: ActiveModel.auth_variant + style fixes                       | ✅    |
+| `b6bf7d1` | FIX-17: stop re-exporting appendMessage/updateMessage                      | ✅    |
 
 **总计**：7 commits，11 files changed，+491 / -153 lines。npm test 148/148 ✅。Final integrated review：APPROVED FOR MERGE。

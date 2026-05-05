@@ -1246,6 +1246,12 @@ export interface MemoryConfig {
    * actually resolves to. `null`/undefined when the OS probe failed.
    */
   detected_os_timezone?: string | null;
+  /**
+   * Whether conflict detection runs when storing a new memory.
+   * When true, checks incoming facts against existing memories for
+   * contradictions before persisting.  Default `true`.
+   */
+  conflict_detection_enabled: boolean;
 }
 
 /** Configuration input to persist. */
@@ -2089,6 +2095,14 @@ export interface MemoryEntryDto {
   session_id: string | null;
   /** Persisted project scope tag; null = entry not project-scoped. */
   project_id: string | null;
+  /** Composite quality score in [0.0, 1.0]. */
+  quality_score: number;
+  /** Source reliability in [0.0, 1.0]. */
+  source_reliability: number;
+  /** ISO-8601 timestamp of last validation, or null. */
+  last_validated_at: string | null;
+  /** Number of contradiction flags. */
+  contradiction_count: number;
 }
 
 /** Three-tier memory scope kind matching `MemoryScopeKind` on the backend. */
@@ -3149,3 +3163,252 @@ export async function learningResolveActiveOverlay(): Promise<LearningActiveStra
     "learning_resolve_active_overlay",
   );
 }
+
+// ─── DayDream IPC (Memory Consolidation) ─────────────────────────────────────
+
+/**
+ * Serde externally-tagged enum from Rust:
+ * - `"Idle"` / `"Disabled"` for unit variants
+ * - `{ "Running": { "started_at": "..." } }` for struct variants
+ */
+export type DayDreamState =
+  | "Idle"
+  | "Disabled"
+  | { Running: { started_at: string } }
+  | { Completed: { finished_at: string } };
+
+/** Consolidation aggressiveness — Rust enum unit variants serialize as strings. */
+export type ConsolidationStrategy = "Conservative" | "Balanced" | "Aggressive";
+
+export interface DayDreamConfig {
+  enabled: boolean;
+  idle_trigger_minutes: number;
+  session_end_trigger: boolean;
+  max_entries_per_cycle: number;
+  llm_budget_tokens: number;
+  strategy: ConsolidationStrategy;
+}
+
+export interface PruneReport {
+  scanned: number;
+  pruned: number;
+  reasons: string[];
+}
+
+export interface MergeReport {
+  clusters_found: number;
+  merged: number;
+  entries_consumed: number;
+}
+
+export interface RefreshReport {
+  candidates: number;
+  refreshed: number;
+  unchanged: number;
+}
+
+export interface DayDreamReport {
+  cycle_id: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  prune: PruneReport;
+  merge: MergeReport;
+  refresh: RefreshReport;
+  strategy: ConsolidationStrategy;
+  errors: string[];
+}
+
+// ── Helper to normalize DayDreamState for display ─────────────────────────────
+
+export type DayDreamStateKind = "Idle" | "Running" | "Completed" | "Disabled";
+
+export function parseDayDreamState(raw: DayDreamState): {
+  kind: DayDreamStateKind;
+  startedAt?: string;
+  finishedAt?: string;
+} {
+  if (raw === "Idle") return { kind: "Idle" };
+  if (raw === "Disabled") return { kind: "Disabled" };
+  if (typeof raw === "object" && "Running" in raw) {
+    return { kind: "Running", startedAt: raw.Running.started_at };
+  }
+  if (typeof raw === "object" && "Completed" in raw) {
+    return { kind: "Completed", finishedAt: raw.Completed.finished_at };
+  }
+  return { kind: "Idle" };
+}
+
+/** 获取 DayDream 当前运行状态。 */
+export async function daydreamStatus(): Promise<DayDreamState> {
+  return invoke<DayDreamState>("daydream_status");
+}
+
+/** 手动触发一次 DayDream 巩固周期。 */
+export async function daydreamTrigger(): Promise<DayDreamReport> {
+  return invoke<DayDreamReport>("daydream_trigger");
+}
+
+/** 获取 DayDream 配置。 */
+export async function daydreamConfigGet(): Promise<DayDreamConfig> {
+  return invoke<DayDreamConfig>("daydream_config_get");
+}
+
+/** 更新 DayDream 配置。 */
+export async function daydreamConfigSet(config: DayDreamConfig): Promise<void> {
+  await invoke<void>("daydream_config_set", { config });
+}
+
+/** 获取 DayDream 历史报告（最近 50 条）。 */
+export async function daydreamHistory(): Promise<DayDreamReport[]> {
+  return invoke<DayDreamReport[]>("daydream_history");
+}
+
+// ─── Memory Graph IPC ───────────────────────────────────────────────────────────────
+
+/** A typed link between two memory entries. */
+export interface MemoryLinkDto {
+  source_key: string;
+  target_key: string;
+  link_type: string;
+  created_at: string;
+}
+
+/** Minimal entry DTO carried inside graph nodes. */
+export interface GraphEntryDto {
+  key: string;
+  content: string;
+  category: string;
+  importance: number;
+  trust_score: number;
+  created_at: string;
+  cognitive_layer: number;
+}
+
+/** A node discovered during BFS graph traversal. */
+export interface GraphNodeDto {
+  key: string;
+  depth: number;
+  entry?: GraphEntryDto;
+  links: MemoryLinkDto[];
+}
+
+/** Structured neighborhood of a single memory node. */
+export interface GraphNeighborhoodDto {
+  center: GraphEntryDto;
+  incoming: [MemoryLinkDto, GraphEntryDto][];
+  outgoing: [MemoryLinkDto, GraphEntryDto][];
+  by_link_type: Record<string, string[]>;
+}
+
+/** BFS graph traversal from a seed key. */
+export async function memoryGraphTraverse(
+  seedKey: string,
+  depth?: number,
+  linkTypes?: string[],
+): Promise<GraphNodeDto[]> {
+  return invoke<GraphNodeDto[]>("memory_graph_traverse", {
+    seedKey,
+    depth: depth ?? null,
+    linkTypes: linkTypes ?? null,
+  });
+}
+
+/** Get the structured neighborhood of a memory node. */
+export async function memoryGraphNeighborhood(
+  key: string,
+  radius?: number,
+): Promise<GraphNeighborhoodDto> {
+  return invoke<GraphNeighborhoodDto>("memory_graph_neighborhood", {
+    key,
+    radius: radius ?? null,
+  });
+}
+
+/** Discover new links between memories in a scope. */
+export async function memoryGraphDiscover(args?: {
+  scopeKind?: string;
+  sessionId?: string;
+  projectId?: string;
+}): Promise<MemoryLinkDto[]> {
+  return invoke<MemoryLinkDto[]>("memory_graph_discover", {
+    scopeKind: args?.scopeKind ?? null,
+    sessionId: args?.sessionId ?? null,
+    projectId: args?.projectId ?? null,
+  });
+}
+
+/** Full graph DTO containing all memory nodes and their links. */
+export interface FullGraphDto {
+  nodes: GraphEntryDto[];
+  links: MemoryLinkDto[];
+}
+
+/** Load the full memory graph — all nodes and all links. */
+export async function memoryGraphFull(): Promise<FullGraphDto> {
+  return invoke<FullGraphDto>("memory_graph_full");
+}
+
+// ─── Evolution IPC (Agent Self-Improvement) ──────────────────────────────────
+
+/** A single tool call recorded within a turn. */
+export interface ToolCallRecord {
+  tool_name: string;
+  args_summary: string;
+  success: boolean;
+  duration_ms: number;
+  error_message: string | null;
+}
+
+/** A single turn within an agent trajectory. */
+export interface TurnRecord {
+  turn_id: number;
+  timestamp: string;
+  user_input_summary: string;
+  agent_action: string; // "Reply" | "ToolUse" | "Reasoning" | "Error"
+  tool_calls: ToolCallRecord[];
+  success: boolean;
+  self_assessment: string | null;
+}
+
+/** Full trajectory DTO from backend. */
+export interface TrajectoryDto {
+  trajectory_id: string;
+  session_id: string;
+  task_description: string;
+  turns: TurnRecord[];
+  outcome: string; // JSON serialized TaskOutcome
+  started_at: string;
+  finished_at: string | null;
+  duration_secs: number;
+  tool_usage: Record<string, number>;
+  error_count: number;
+}
+
+/** Insight DTO — an extracted insight from self-reflection. */
+export interface InsightDto {
+  id: string;
+  category: string; // "HeuristicRule" | "AntiPattern" | "BestPractice" | "UserPreference" | "ToolUsagePattern"
+  content: string;
+  confidence: number;
+  applicable_contexts: string[];
+  source_trajectory_ids: string[];
+  created_at: string;
+}
+
+/** DayDream reflection report summary. */
+export interface DayDreamReflectionReport {
+  trajectories_analyzed: number;
+  insights_extracted: number;
+  procedures_created: number;
+  procedures_updated: number;
+  patterns_found: number;
+}
+
+/** Insight category string union for display. */
+export type InsightCategory =
+  | "HeuristicRule"
+  | "AntiPattern"
+  | "BestPractice"
+  | "UserPreference"
+  | "ToolUsagePattern";
