@@ -2,50 +2,16 @@ import * as React from "react"
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { setActiveModel } from '@/api/models'
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  ArrowUpRight,
-  Cpu,
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  FileText,
-  File,
-  Folder,
-  FolderOpen,
-  Laptop,
-  Mic,
-  GripVertical,
-  Clock3,
-  LoaderCircle,
-  Plus,
-  Sparkles,
-  SlidersHorizontal,
-  Square,
-  Paperclip,
-  X,
-  Quote,
-  ScanSearch,
-} from "lucide-react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import rehypeHighlight from "rehype-highlight"
-import "highlight.js/styles/github.css"
+import { ArrowDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 // 语音输入按钮（SenseVoice STT）
 const SttButtonLazy = React.lazy(() =>
   import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
 )
 import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode, type SessionTotals } from "@/lib/tauri"
-import { BranchPicker } from "@/components/chat/BranchPicker"
-import { ModelPicker } from "@/components/chat/ModelPicker"
-import { ContextBar } from "@/components/chat/ContextBar"
 import type { FinalRunReport } from "@/transport/contracts"
 
-import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
-import { ProjectPreviewPanel } from "@/components/ui/ProjectPreviewPanel"
+import { type TodoItem } from "@/components/ui/TodoPanel"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,6 +42,16 @@ import {
 import { ChatTranscript } from "@/components/chat/chat-ui/transcript/ChatTranscript"
 // GF-01 PR-06 — ComposerDock + slash/@ overlays + PermissionModePicker extracted.
 import { ComposerDock } from "@/components/chat/chat-ui/composer/ComposerDock"
+// GF-01 PR-07 — sidebars + panels extracted from this file.
+import { ProjectFilesRail } from "@/components/chat/chat-ui/sidebars/ProjectFilesRail"
+import {
+  PROJECT_RAIL_MAX_WIDTH,
+  PROJECT_RAIL_MIN_WIDTH,
+  sortRailDirectoryEntries,
+} from "@/components/chat/chat-ui/sidebars/utils"
+import { TodoPanelMount } from "@/components/chat/chat-ui/panels/TodoPanelMount"
+import { ContextBarMount } from "@/components/chat/chat-ui/panels/ContextBarMount"
+import { ProjectPreviewMount } from "@/components/chat/chat-ui/panels/ProjectPreviewMount"
 
 export interface Message {
   id: string
@@ -164,8 +140,6 @@ const BOTTOM_EPSILON_PX = 120
 const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
 const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
 const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
-const PROJECT_RAIL_MIN_WIDTH = 140
-const PROJECT_RAIL_MAX_WIDTH = 300
 const PREVIEW_AUTOSAVE_DELAY_MS = 900
 const PROJECT_RAIL_NOTICE_DURATION_MS = 2800
 
@@ -1170,39 +1144,23 @@ export function ChatUI({
             </div>
           )}
           {todos.length > 0 && (
-            <div
-              className="relative z-0 shrink-0 px-10 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-              style={{ paddingRight: `${40 + chatVisibleRightInset}px` }}
-            >
-              <div className="mx-auto w-full transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]" style={{ maxWidth: `${todoMaxWidth}px` }}>
-                <TodoPanel
-                  ref={todoPanelRef}
-                  todos={todos}
-                  collapsed={isTodoCollapsed}
-                  onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
-                  className="w-full translate-y-[8px]"
-                />
-              </div>
-            </div>
+            <TodoPanelMount
+              todoPanelRef={todoPanelRef}
+              todos={todos}
+              isTodoCollapsed={isTodoCollapsed}
+              onToggleCollapsed={() => setIsTodoCollapsed((value) => !value)}
+              todoMaxWidth={todoMaxWidth}
+              chatVisibleRightInset={chatVisibleRightInset}
+            />
           )}
-          {latestContextBudgetUsage ? (
-            <div
-              className="relative z-0 shrink-0 px-10 transition-[padding-right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-              style={{ paddingRight: `${40 + chatVisibleRightInset}px` }}
-            >
-              <div
-                className="mx-auto w-full transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                style={{ maxWidth: `${composerMaxWidth}px` }}
-              >
-                <ContextBar
-                  usage={latestContextBudgetUsage}
-                  windowSize={messages.length}
-                  sessionTotals={sessionTotals}
-                  sessionId={sessionId}
-                />
-              </div>
-            </div>
-          ) : null}
+          <ContextBarMount
+            usage={latestContextBudgetUsage}
+            windowSize={messages.length}
+            sessionTotals={sessionTotals}
+            sessionId={sessionId}
+            composerMaxWidth={composerMaxWidth}
+            chatVisibleRightInset={chatVisibleRightInset}
+          />
           <ComposerDock
             input={draftInput}
             onInputChange={setDraftInput}
@@ -1254,7 +1212,7 @@ export function ChatUI({
         </div>
 
         {isPreviewFocusMode ? (
-          <ProjectPreviewPanel
+          <ProjectPreviewMount
             tabs={projectPreviewTabs}
             activeTabPath={activeProjectPreviewPath}
             drafts={projectPreviewDrafts}
@@ -1352,497 +1310,3 @@ export function ChatUI({
     </div>
   )
 }
-
-const ProjectFilesRail = React.memo(function ProjectFilesRail({
-  open,
-  width,
-  title,
-  projectLabel,
-  breadcrumbs,
-  currentPath,
-  entries,
-  childEntries,
-  expandedPaths,
-  loadingPaths,
-  isLoading,
-  sortMode,
-  onSortModeChange,
-  previewError,
-  onWidthChange,
-  onNavigateUp,
-  onJumpToBreadcrumb,
-  onOpenEntry,
-  onToggleFolder,
-  onOpenFolder,
-}: {
-  open: boolean
-  width: number
-  title: string
-  projectLabel: string
-  breadcrumbs: RailBreadcrumb[]
-  currentPath: string | null
-  entries: DirectoryEntryPreview[]
-  childEntries: RailTreeMap
-  expandedPaths: string[]
-  loadingPaths: string[]
-  isLoading: boolean
-  sortMode: 'recent' | 'name'
-  onSortModeChange: React.Dispatch<React.SetStateAction<'recent' | 'name'>>
-  previewError: string | null
-  onWidthChange: React.Dispatch<React.SetStateAction<number>>
-  onNavigateUp: () => void
-  onJumpToBreadcrumb: (path: string) => void
-  onOpenEntry: (entry: DirectoryEntryPreview) => void | Promise<void>
-  onToggleFolder: (entry: DirectoryEntryPreview) => void
-  onOpenFolder: () => void
-}) {
-  const startResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    const startX = event.clientX
-    const startWidth = width
-    const separatorEl = event.currentTarget
-    const pointerId = event.pointerId
-
-    const handleMove = (moveEvent: PointerEvent) => {
-      const delta = startX - moveEvent.clientX
-      onWidthChange(Math.min(PROJECT_RAIL_MAX_WIDTH, Math.max(PROJECT_RAIL_MIN_WIDTH, startWidth + delta)))
-    }
-
-    const handleUp = () => {
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      window.removeEventListener('pointermove', handleMove)
-      window.removeEventListener('pointerup', handleUp)
-      try {
-        separatorEl.releasePointerCapture(pointerId)
-      } catch {
-        // ignore pointer capture release failures
-      }
-    }
-
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-    try {
-      separatorEl.setPointerCapture(pointerId)
-    } catch {
-      // ignore pointer capture failures
-    }
-    window.addEventListener('pointermove', handleMove)
-    window.addEventListener('pointerup', handleUp)
-  }, [onWidthChange, width])
-
-  return (
-    <aside
-      className={cn(
-        'pointer-events-none absolute inset-y-2.5 right-2.5 z-20 overflow-hidden origin-right transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-        open ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0'
-      )}
-      style={{ width: open ? `${width}px` : '0px' }}
-      aria-hidden={!open}
-    >
-      <div
-        className="pointer-events-auto absolute inset-y-5 -left-3 flex w-6 cursor-col-resize items-center justify-center"
-        onPointerDown={startResize}
-      >
-        <div className="flex h-16 w-3 items-center justify-center rounded-full bg-surface-raised/82 shadow-[0_8px_20px_rgba(78,61,38,0.08)] backdrop-blur-sm">
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-        </div>
-      </div>
-      <div className="pointer-events-auto flex h-full flex-col justify-start">
-        <div className="h-3 shrink-0" />
-        <div className="min-h-0 flex-1 px-2 pb-2">
-          <div className="flex h-full min-h-0 flex-col rounded-[18px] border border-border bg-surface shadow-xs">
-            <div className="flex items-start justify-between gap-3 px-4 pt-4">
-              <div className="min-w-0 flex-1 pr-2">
-                <div
-                  className="truncate text-[18px] font-medium tracking-[-0.03em] text-foreground"
-                  style={{ fontFamily: '"Iowan Old Style", "Baskerville", ui-serif, Georgia, serif' }}
-                >
-                  {title}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1 pt-0.5">
-                <button
-                  type="button"
-                  onClick={onOpenFolder}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.25 text-[10px] font-medium text-muted-foreground transition-all duration-200 hover:border-border hover:bg-accent hover:text-foreground"
-                >
-                  <Folder className="h-3.25 w-3.25 stroke-[1.85]" />
-                  <span>打开文件夹</span>
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-7 items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.25 text-[10px] font-medium text-muted-foreground transition-all duration-200 hover:border-border hover:bg-accent hover:text-foreground"
-                >
-                  <Sparkles className="h-3.25 w-3.25" />
-                  <span>项目技能 · 2</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-2 flex items-center justify-between border-b border-border/60 px-4 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="text-[11px] font-semibold tracking-[-0.01em] text-muted-foreground">技能</div>
-                <div className="inline-flex min-w-7 items-center justify-center rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                  {entries.length}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-3">
-              <div className="flex items-center justify-between gap-3 px-0.5">
-                {breadcrumbs.length > 1 ? (
-                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden rounded-[6px] bg-surface-raised px-2.5 py-1 text-[10.5px] text-muted-foreground">
-                    <>
-                      <button
-                        type="button"
-                        onClick={onNavigateUp}
-                        className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        <ChevronRight className="h-3 w-3 rotate-180" />
-                      </button>
-                      <div className="flex min-w-0 items-center overflow-hidden">
-                        {breadcrumbs.map((crumb, index) => (
-                          <React.Fragment key={crumb.path}>
-                            {index > 0 ? <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" /> : null}
-                            <button
-                              type="button"
-                              onClick={() => onJumpToBreadcrumb(crumb.path)}
-                              className={cn(
-                                'min-w-0 shrink truncate rounded px-0.5 py-0.5 transition-colors hover:text-foreground',
-                                index === breadcrumbs.length - 1 ? 'font-medium text-foreground' : 'text-muted-foreground'
-                              )}
-                            >
-                              {crumb.label}
-                            </button>
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    </>
-                  </div>
-                ) : (
-                  <div className="min-w-0 flex-1" />
-                )}
-                <button
-                  type="button"
-                  onClick={() => onSortModeChange((current) => current === 'recent' ? 'name' : 'recent')}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-1 text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
-                >
-                  {sortMode === 'recent' ? (
-                    <Clock3 className="h-3.25 w-3.25" />
-                  ) : (
-                    <ArrowUpDown className="h-3.25 w-3.25" />
-                  )}
-                  <span>{sortMode === 'recent' ? '时间' : '名称'}</span>
-                </button>
-              </div>
-
-              <div className="mt-2 min-h-0 flex-1 overflow-hidden bg-transparent">
-                {previewError ? (
-                  <div className="mb-2 rounded-[6px] border border-border bg-muted px-3 py-2 text-[11px] text-muted-foreground">
-                    {previewError}
-                  </div>
-                ) : null}
-                {isLoading ? (
-                  <div className="flex items-center gap-2 px-1 py-3 text-[11.5px] text-muted-foreground">
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                    <span>正在整理当前项目文件…</span>
-                  </div>
-                ) : entries.length === 0 ? (
-                  <div className="px-1 py-5 text-center text-[11.5px] text-muted-foreground">
-                    当前目录里还没有可显示的文件。
-                  </div>
-                ) : (
-                  <div className="h-full min-h-0 overflow-y-auto px-0 py-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <div className="space-y-0 pb-1">
-                      {entries.map((entry) => (
-                        <ProjectRailTreeNode
-                          key={entry.path}
-                          entry={entry}
-                          level={0}
-                          selectedPath={currentPath}
-                          childEntries={childEntries}
-                          expandedPaths={expandedPaths}
-                          loadingPaths={loadingPaths}
-                          onOpen={onOpenEntry}
-                          onToggleFolder={onToggleFolder}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </aside>
-  )
-})
-
-function ProjectRailGroup({
-  title,
-  count,
-  children,
-}: {
-  title: string
-  count: number
-  children: React.ReactNode
-}) {
-  return (
-    <section className="mb-2">
-      <div className="mb-1.5 flex items-center justify-between px-1">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground/50">{title}</div>
-        <div className="text-[10px] text-muted-foreground/40">{count}</div>
-      </div>
-      <div className="space-y-0.5">{children}</div>
-    </section>
-  )
-}
-
-function ProjectRailFilePreview({
-  preview,
-  onBack,
-  onOpenExternally,
-  onQuoteIntoChat,
-  onInsertIntoChat,
-}: {
-  preview: FilePreviewPayload
-  onBack: () => void
-  onOpenExternally: (preview: FilePreviewPayload) => void
-  onQuoteIntoChat: (preview: FilePreviewPayload) => void
-  onInsertIntoChat: (preview: FilePreviewPayload) => void
-}) {
-  const codeFence = React.useMemo(() => {
-    const raw = preview.content ?? ''
-    const language = inferPreviewLanguage(preview.name, preview.kind)
-    return `\`\`\`${language}\n${raw}\n\`\`\``
-  }, [preview.content, preview.kind, preview.name])
-  const dataUrl = React.useMemo(() => {
-    if (!preview.data_base64 || !preview.mime_type) return null
-    return `data:${preview.mime_type};base64,${preview.data_base64}`
-  }, [preview.data_base64, preview.mime_type])
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-border/60 px-1 pb-2.5">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/80"
-        >
-          <ChevronRight className="h-3 w-3 rotate-180" />
-          <span>返回目录</span>
-        </button>
-        <div className="min-w-0 truncate pl-3 text-[11px] text-muted-foreground">{preview.name}</div>
-      </div>
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => onOpenExternally(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
-        >
-          <ArrowUpRight className="h-3.5 w-3.5" />
-          <span>在外部打开</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => onQuoteIntoChat(preview)}
-          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
-        >
-          <Quote className="h-3.5 w-3.5" />
-          <span>在聊天中引用</span>
-        </button>
-        <button
-          type="button"
-          draggable
-          onClick={() => onInsertIntoChat(preview)}
-          onDragStart={(event) => {
-            const payload = `请把 \`${preview.path}\` 作为当前上下文文件一起考虑。`
-            event.dataTransfer.setData('text/plain', payload)
-            event.dataTransfer.effectAllowed = 'copy'
-          }}
-          className="inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-surface-raised px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all duration-150 hover:-translate-y-0.5 hover:bg-surface"
-        >
-          <ScanSearch className="h-3.5 w-3.5" />
-          <span>拖入上下文</span>
-        </button>
-      </div>
-      <div className="mt-3 min-h-0 overflow-auto rounded-[6px] border border-border bg-surface/88">
-        {preview.kind === 'image' && dataUrl ? (
-          <div className="flex min-h-full items-start justify-center p-4">
-            <img src={dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-[6px] object-contain shadow-xs" />
-          </div>
-        ) : preview.kind === 'pdf' && dataUrl ? (
-          <iframe title={preview.name} src={dataUrl} className="h-full min-h-[520px] w-full rounded-[6px]" />
-        ) : preview.kind === 'markdown' ? (
-          <div className="px-4 py-4 text-[12px] leading-5.5 text-foreground/70">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-              {preview.content ?? ''}
-            </ReactMarkdown>
-          </div>
-        ) : (
-          <div className="px-4 py-4 text-[11px] leading-5.5 text-foreground/68">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-              {codeFence}
-            </ReactMarkdown>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-const ProjectRailTreeNode = React.memo(function ProjectRailTreeNode({
-  entry,
-  level,
-  selectedPath,
-  childEntries,
-  expandedPaths,
-  loadingPaths,
-  onOpen,
-  onToggleFolder,
-}: {
-  entry: DirectoryEntryPreview
-  level: number
-  selectedPath: string | null
-  childEntries: RailTreeMap
-  expandedPaths: string[]
-  loadingPaths: string[]
-  onOpen: (entry: DirectoryEntryPreview) => void | Promise<void>
-  onToggleFolder: (entry: DirectoryEntryPreview) => void
-}) {
-  const isFolder = entry.kind === 'folder'
-  const isExpanded = expandedPaths.includes(entry.path)
-  const isLoading = loadingPaths.includes(entry.path)
-  const children = childEntries[entry.path] ?? []
-  const Icon = isFolder ? (isExpanded ? FolderOpen : Folder) : File
-  const isSelected = selectedPath === entry.path
-
-  return (
-    <div>
-      <div
-        role="button"
-        tabIndex={0}
-        draggable
-        onClick={() => {
-          if (entry.kind === 'folder') {
-            void onOpen(entry)
-          }
-        }}
-        onDoubleClick={() => {
-          if (entry.kind === 'file') {
-            void onOpen(entry)
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            void onOpen(entry)
-          }
-        }}
-        onDragStart={(event) => {
-          const payload = JSON.stringify({
-            path: entry.path,
-            name: entry.name,
-            kind: entry.kind,
-          })
-          event.dataTransfer.setData('application/x-if2ai-rail-entry', payload)
-          event.dataTransfer.setData('text/plain', entry.path)
-          event.dataTransfer.effectAllowed = 'copy'
-        }}
-        className={cn(
-          'group flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-0.5 py-1 text-left text-foreground/80 transition-all duration-150 hover:bg-muted',
-          isSelected && 'bg-accent',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
-        )}
-        style={{ paddingLeft: `${2 + level * 12}px` }}
-      >
-        <div className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/60">
-          {isFolder ? (
-            <span className="inline-flex h-4 w-4 items-center justify-center text-muted-foreground/60">
-              <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', isExpanded && 'rotate-90')} />
-            </span>
-          ) : (
-            <span className="h-3.5 w-3.5" />
-          )}
-        </div>
-        <div className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-150 group-hover:-translate-y-0.5">
-          <Icon className="h-[15px] w-[15px] stroke-[1.65]" />
-        </div>
-        <div className="min-w-0 flex-1 truncate text-[12px] font-[380] tracking-[-0.01em] text-foreground/75 [font-feature-settings:'ss01'_1,'cv01'_1]">
-          {entry.name}
-        </div>
-        {isLoading ? (
-          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/60" />
-        ) : isFolder ? (
-          <div className="text-[9.5px] uppercase tracking-[0.16em] text-muted-foreground/40">{children.length > 0 ? '' : ''}</div>
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100" />
-        )}
-      </div>
-
-      {isFolder && isExpanded ? (
-        <div>
-          <div className="space-y-0 pt-0.5">
-            {children.length > 0 ? (
-              children.map((child) => (
-                <ProjectRailTreeNode
-                  key={child.path}
-                  entry={child}
-                  level={level + 1}
-                  selectedPath={selectedPath}
-                  childEntries={childEntries}
-                  expandedPaths={expandedPaths}
-                  loadingPaths={loadingPaths}
-                  onOpen={onOpen}
-                  onToggleFolder={onToggleFolder}
-                />
-              ))
-            ) : !isLoading ? (
-              <div className="px-2 py-1 text-[10px] italic text-muted-foreground/50" style={{ paddingLeft: `${16 + level * 12}px` }}>
-                这个文件夹目前是空的
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
-function inferPreviewLanguage(fileName: string, kind?: FilePreviewPayload['kind']) {
-  const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
-  if (kind === 'markdown' || ext === 'md' || ext === 'markdown') return 'markdown'
-  if (ext === 'ts' || ext === 'tsx' || ext === 'js' || ext === 'jsx') return ext
-  if (ext === 'rs' || ext === 'py' || ext === 'json' || ext === 'css' || ext === 'html' || ext === 'sh' || ext === 'md' || ext === 'sql' || ext === 'yaml' || ext === 'yml') return ext
-  return 'text'
-}
-
-function sortRailDirectoryEntries(entries: DirectoryEntryPreview[], sortMode: 'recent' | 'name') {
-  const next = [...entries]
-  next.sort((a, b) => {
-    if (a.kind !== b.kind) {
-      return a.kind === 'folder' ? -1 : 1
-    }
-    if (sortMode === 'recent') {
-      const aTime = a.modified_ms ?? 0
-      const bTime = b.modified_ms ?? 0
-      if (aTime !== bTime) return bTime - aTime
-    }
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-  })
-  return next
-}
-
-
-
-
-
-
