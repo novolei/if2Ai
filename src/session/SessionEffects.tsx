@@ -2,12 +2,12 @@
 // lifecycle previously inlined in App.tsx: sendChatTurn, stop,
 // resume-from-cursor, undo / redo, undo-status polling, plus refs.
 //
-// TODO(ER-03): rapid session-switch race window persists.  When the
-// user switches sessions while a stream is mid-flight the projection
-// store can briefly attribute incoming `runtime_event` rows to the
-// new session before `stream_run_bound` lands.  This existed in
-// App.tsx pre-extraction; ER-03 (`runtimeProjectionStore.swapSession()`
-// atomic op) is the canonical fix and is tracked separately.
+// ER-03 (resolved): the rapid session-switch race window is closed by
+// `runtimeProjectionStore.swapSession(newSessionId)`, called from
+// `handleSelectSession` in App.tsx before `loadConversationHistory`.
+// The store atomically clears its snapshot and binds a session guard
+// so the reducer drops any in-flight `runtime_event` rows that still
+// reference the previous session.
 
 import {
   useCallback,

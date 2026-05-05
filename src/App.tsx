@@ -41,6 +41,7 @@ import { toast } from "sonner";
 import appIconAsset from "@/assets/app-icon.png";
 import {
   projectConversationMessagesFromRuns,
+  runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
 } from "@/runtime-projection";
@@ -686,6 +687,11 @@ function App() {
     projectOverride?: ProjectMeta,
     options?: { forceReload?: boolean },
   ) => {
+    // ER-03 — atomically clear the projection and bind it to the new
+    // session before any history loads.  Drops in-flight events that
+    // still reference the previous session via the reducer guard
+    // (see runtime-event-reducer.ts `shouldDropForSessionGuard`).
+    runtimeProjectionStore.swapSession(sessionId);
     setActiveSection("chat");
     setActiveProjectId(projectId);
     setActiveSessionId(sessionId);

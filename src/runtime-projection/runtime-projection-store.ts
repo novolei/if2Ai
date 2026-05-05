@@ -23,7 +23,10 @@
 //    instance.
 
 import type { CanonicalRuntimeEvent, RuntimeProjectionSnapshot } from './types.ts'
-import { emptyProjectionSnapshot } from './types.ts'
+import {
+  emptyProjectionSnapshot,
+  emptyProjectionSnapshotForSession,
+} from './types.ts'
 import { createRuntimeEventQueue, type RuntimeEventQueue } from './runtime-event-queue.ts'
 import { reduceRuntimeEventBatch } from './runtime-event-reducer.ts'
 
@@ -54,6 +57,13 @@ export interface RuntimeProjectionStore {
   /** T-020 — restore a serialized checkpoint snapshot. Replaces the
    * internal state with `snapshot`, firing listeners. */
   restoreSnapshot(snapshot: RuntimeProjectionSnapshot): void
+  /** ER-03 — atomically clear the projection and bind it to a new
+   * session id.  Drops any in-flight queued events first so a stale
+   * batch from the previous session can't leak into the fresh
+   * snapshot.  Subsequent reducer invocations will drop events whose
+   * session id is set and differs from `newSessionId`. Pass `null`
+   * to clear without enabling the guard. */
+  swapSession(newSessionId: string | null): void
 }
 
 export interface CreateRuntimeProjectionStoreOptions {
@@ -130,6 +140,16 @@ export function createRuntimeProjectionStore(
         snapshot = next
         notifyAll()
       }
+    },
+    swapSession(newSessionId: string | null) {
+      // Drop any in-flight queued events from the previous session
+      // so the next reducer invocation starts from a known-clean
+      // baseline.  This is the atomic "flip" that ER-03 requires:
+      // observers see a single transition from old → new state, no
+      // intermediate fragment from a stale event.
+      queue.reset()
+      snapshot = emptyProjectionSnapshotForSession(newSessionId)
+      notifyAll()
     },
   }
 }

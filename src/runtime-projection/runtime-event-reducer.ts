@@ -463,9 +463,56 @@ export function reduceRuntimeEventBatch(
 ): RuntimeProjectionSnapshot {
   let next = prev;
   for (const event of events) {
+    if (shouldDropForSessionGuard(next, event)) {
+      // ER-03 — quiet diagnostic; never warn/error so a brisk
+      // session-switch storm does not flood the console.
+      // eslint-disable-next-line no-console
+      console.debug(
+        "[runtime-event-reducer] drop mismatched-session event",
+        { kind: event.kind, currentSessionId: next.currentSessionId },
+      );
+      continue;
+    }
     next = reduceRuntimeEvent(next, event);
   }
   return next;
+}
+
+/**
+ * ER-03 — predicate used by [`reduceRuntimeEventBatch`] to drop
+ * events that belong to a session other than the one the snapshot
+ * is currently scoped to (set via
+ * [`RuntimeProjectionStore.swapSession`]).
+ *
+ * The runtime event family is heterogeneous: some kinds carry an
+ * explicit `sessionId`, others only a `runId`.  For run-only events
+ * we look up the run's bound session id (recorded by
+ * `stream_run_bound`).  Events that carry no session id and no
+ * known run binding fall through unchanged — there is no ground for
+ * a guard decision and the legacy behavior is "accept".
+ */
+function shouldDropForSessionGuard(
+  snapshot: RuntimeProjectionSnapshot,
+  event: CanonicalRuntimeEvent,
+): boolean {
+  const current = snapshot.currentSessionId;
+  if (current == null) return false;
+  // Direct session-id fields — drop on mismatch.
+  if ("sessionId" in event && typeof event.sessionId === "string") {
+    return event.sessionId !== current;
+  }
+  // Run-bound events: resolve via the run projection populated by
+  // `stream_run_bound`. If the run is known and bound to a different
+  // session, drop. If it is bound to the current session, accept.
+  // If the run is unknown (e.g. its `stream_run_bound` was wiped by
+  // `swapSession`), drop as well — a known-bound run is the only
+  // safe attribution path while a session guard is active.
+  if ("runId" in event && typeof event.runId === "string") {
+    const run = snapshot.runs[event.runId];
+    if (run?.sessionId != null) return run.sessionId !== current;
+    return true;
+  }
+  return false;
 }
 
 /** Re-export the empty-snapshot factory so consumers only need to

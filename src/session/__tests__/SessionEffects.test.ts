@@ -12,10 +12,11 @@ const source = readFileSync(
   "utf8",
 );
 
-test("(1) source-text presence: ER-03 TODO + canonical refs are owned here", () => {
-  // Rapid session-switch race window is documented inline so future
-  // readers know not to add ad-hoc guards before ER-03 ships.
-  assert.match(source, /TODO\(ER-03\)/);
+test("(1) source-text presence: ER-03 resolution note + canonical refs are owned here", () => {
+  // Rapid session-switch race window is now resolved by
+  // `runtimeProjectionStore.swapSession()`.  The inline note documents
+  // the canonical fix so future readers don't re-introduce ad-hoc guards.
+  assert.match(source, /ER-03 \(resolved\)/);
   assert.match(source, /runtimeProjectionStore\.swapSession/);
   // The three lifecycle refs migrated out of App.tsx into the hook.
   assert.match(source, /sessionLoadingRef = useRef<Record<string, boolean>>/);
