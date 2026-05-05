@@ -17,6 +17,12 @@ const toolCallBuildersSource = readFileSync(
   new URL('./chat-ui/utils/toolCallDisplay/builders.ts', import.meta.url),
   'utf8',
 )
+// GF-01 PR-04 — caller wiring (`isToolFailureStatus(status)` + write-diff
+// guard) moved out of chat-ui.tsx into the extracted ToolCallCard module.
+const toolCallCardSource = readFileSync(
+  new URL('./chat-ui/cards/ToolCallCard.tsx', import.meta.url),
+  'utf8',
+)
 const telemetryDrawerSource = readFileSync(
   new URL('./TelemetryDrawer.tsx', import.meta.url),
   'utf8',
@@ -128,7 +134,7 @@ test('chat tool renderer handles pending and failed statuses consistently', () =
   assert.match(toolCallBuildersSource, /status === 'failed'/)
   assert.match(toolCallBuildersSource, /status === 'blocked'/)
   assert.match(toolCallBuildersSource, /status === 'cancelled'/)
-  // Caller wiring stays in chat-ui.tsx.
-  assert.match(chatUiSource, /const isFailed = isToolFailureStatus\(status\)/)
-  assert.match(chatUiSource, /status === 'completed' &&\s+Boolean\(writePath\)/)
+  // Caller wiring lives in chat-ui/cards/ToolCallCard.tsx (GF-01 PR-04).
+  assert.match(toolCallCardSource, /const isFailed = isToolFailureStatus\(status\)/)
+  assert.match(toolCallCardSource, /status === 'completed' &&\s+Boolean\(writePath\)/)
 })
