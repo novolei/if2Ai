@@ -134,6 +134,10 @@ pub struct SystemPromptBuilder {
     /// (synchronous) builder runs (per v2 §0.5 Δ-7) and rendered after
     /// the dynamic boundary.
     memory_injection: Option<crate::modules::memory::MemoryInjection>,
+    /// When `true`, the builder injects a pre-boundary section that
+    /// teaches the LLM how and when to proactively call `memory_store`.
+    /// Set via [`Self::with_memory_tools_guide`]; defaults to `false`.
+    memory_tools_available: bool,
 }
 
 impl SystemPromptBuilder {
@@ -244,6 +248,18 @@ impl SystemPromptBuilder {
         self
     }
 
+    /// Enable the memory-tools usage guide section.  When `available`
+    /// is `true` the builder injects a pre-boundary section that
+    /// teaches the LLM when and how to call `memory_store`.
+    ///
+    /// Callers should pass `true` when `memory_store` is among the
+    /// registered tool definitions for the current turn.
+    #[must_use]
+    pub fn with_memory_tools_guide(mut self, available: bool) -> Self {
+        self.memory_tools_available = available;
+        self
+    }
+
     /// Render the system prompt as an ordered list of sections.
     ///
     /// Stable contract: the static intro / system / actions sections
@@ -272,6 +288,11 @@ impl SystemPromptBuilder {
         if let Some(ref guide) = self.tool_routing_guide {
             sections.push(guide.clone());
         }
+        // Memory-tools usage guide — pre-boundary so the LLM always
+        // sees it when memory_store is available.
+        if self.memory_tools_available {
+            sections.push(get_memory_tools_guide_section());
+        }
         sections.push(SYSTEM_PROMPT_DYNAMIC_BOUNDARY.to_string());
         sections.push(self.environment_section());
         if let Some(project_context) = &self.project_context {
@@ -289,6 +310,9 @@ impl SystemPromptBuilder {
             }
             if let Some(ref compiled) = injection.compiled_section {
                 sections.push(compiled.clone());
+            }
+            if let Some(ref procedural) = injection.procedural_section {
+                sections.push(procedural.clone());
             }
             sections.push(injection.rules_section.clone());
         }
@@ -423,6 +447,47 @@ fn get_actions_section() -> String {
     [
         "# Executing actions with care".to_string(),
         "Carefully consider reversibility and blast radius. Local, reversible actions like editing files or running tests are usually fine. Actions that affect shared systems, publish state, delete data, or otherwise have high blast radius should be explicitly authorized by the user or durable workspace instructions.".to_string(),
+    ]
+    .join("\n")
+}
+
+/// Pre-boundary section that teaches the LLM when and how to
+/// proactively call `memory_store` to persist user facts.
+/// Only injected when memory tools are available.
+pub fn get_memory_tools_guide_section() -> String {
+    [
+        "## Memory Tools Guide",
+        "",
+        "You have access to a `memory_store` tool for persisting important information about the user across conversations. Use it proactively \u{2014} do NOT wait for the user to ask you to remember something.",
+        "",
+        "### When to store memory",
+        "Call `memory_store` when the user mentions:",
+        "- **Personal preferences**: hobbies, interests, likes/dislikes (e.g., \"I like tropical fish\", \"I prefer dark mode\")",
+        "- **Possessions & equipment**: devices, tools, pets, vehicles (e.g., \"I have a Xiaomi fish tank\", \"I use a MacBook Pro\")",
+        "- **Personal background**: name, age, occupation, location, family, education",
+        "- **Work context**: projects, tech stack, team structure, deadlines",
+        "- **Habits & routines**: daily schedule, workflows, communication style",
+        "- **Important decisions**: choices made, plans, goals",
+        "",
+        "### When NOT to store",
+        "- Temporary/ephemeral information (e.g., \"run this command now\")",
+        "- Generic technical questions unrelated to the user personally",
+        "- Information already stored (check existing memories first via `memory_recall`)",
+        "",
+        "### How to use memory_store",
+        "- **key**: Use lowercase_snake_case, semantically clear (e.g., `fish_hobby`, `xiaomi_fish_tank`, `preferred_language`)",
+        "- **content**: Write a complete, self-contained sentence (e.g., \"User enjoys keeping tropical fish and owns a Xiaomi smart fish tank\")",
+        "- **category**: Choose appropriately:",
+        "  - `core` \u{2014} fundamental identity facts (name, occupation, location)",
+        "  - `daily` \u{2014} preferences, habits, routines, possessions",
+        "  - `conversation` \u{2014} contextual facts from ongoing discussions",
+        "",
+        "### Examples",
+        "User: \"\u{6211}\u{559c}\u{6b22}\u{517b}\u{70ed}\u{5e26}\u{9c7c}\u{ff0c}\u{8fd8}\u{6709}\u{4e00}\u{4e2a}\u{5c0f}\u{7c73}\u{9c7c}\u{7f38}\"",
+        "\u{2192} Call memory_store with key=\"tropical_fish_hobby\", content=\"User enjoys keeping tropical fish and owns a Xiaomi smart fish tank\", category=\"daily\"",
+        "",
+        "User: \"\u{6211}\u{662f}\u{4e00}\u{540d} Rust \u{5f00}\u{53d1}\u{8005}\u{ff0c}\u{5728}\u{4e0a}\u{6d77}\u{5de5}\u{4f5c}\"",
+        "\u{2192} Call memory_store with key=\"occupation\", content=\"User is a Rust developer working in Shanghai\", category=\"core\"",
     ]
     .join("\n")
 }

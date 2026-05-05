@@ -300,7 +300,9 @@ fn builder_appends_pinned_section_after_boundary() {
         pinned_section: Some("## Pinned memory\n\n- alpha\n".to_string()),
         compiled_section: Some("## Compiled memory\n\nbody\n".to_string()),
         rules_section: "## Memory usage rules\n\n- rule one\n".to_string(),
+        procedural_section: None,
         total_tokens_estimate: 10,
+        ..Default::default()
     };
     let sections = SystemPromptBuilder::new()
         .with_memory_injection(injection)

@@ -3,6 +3,7 @@
 //! MIG-007: Extracted from mod.rs for better modularity.
 
 use crate::modules::application::memory_injection_service::MemoryInjectionSectionKind;
+use crate::modules::memory::inject::CacheHint;
 
 /// Canonical kinds of prompt blocks a [`super::PromptPlan`] can hold.
 ///
@@ -32,6 +33,9 @@ pub enum PromptBlockKind {
     MemoryInjectionPinned,
     /// Compiled-memory section.
     MemoryInjectionCompiled,
+    /// Procedural-memory section (learned rules from experience).
+    /// Sits between compiled-memory and rules in the prompt.
+    MemoryInjectionProcedural,
     /// Memory-rules section (always emitted by
     /// [`crate::modules::memory::build_memory_injection`] when memory
     /// injection is enabled).
@@ -71,6 +75,10 @@ pub enum PromptBlockKind {
     /// plain text by `crate::modules::runtime::context_compression::
     /// mini_index::build_mini_index`.
     MiniIndex,
+    /// Memory-tools usage guide — teaches the agent when and how to
+    /// proactively call `memory_store` to persist user facts. Only
+    /// injected when the `memory_store` tool is registered.
+    MemoryToolsGuide,
 }
 
 impl PromptBlockKind {
@@ -82,6 +90,7 @@ impl PromptBlockKind {
         match kind {
             MemoryInjectionSectionKind::Pinned => Self::MemoryInjectionPinned,
             MemoryInjectionSectionKind::Compiled => Self::MemoryInjectionCompiled,
+            MemoryInjectionSectionKind::Procedural => Self::MemoryInjectionProcedural,
             MemoryInjectionSectionKind::Rules => Self::MemoryInjectionRules,
             MemoryInjectionSectionKind::Retrieved => Self::RetrievedMemory,
         }
@@ -122,6 +131,12 @@ pub struct PromptBlock {
     pub priority: i32,
     /// Whether this block contains sensitive content that should be redacted in diagnostics.
     pub is_sensitive: bool,
+    /// Prompt caching hint for the provider layer.
+    /// Defaults to [`CacheHint::None`]; memory-injection blocks
+    /// carry the hint computed by
+    /// [`crate::modules::memory::inject::build_memory_injection`].
+    #[serde(default)]
+    pub cache_hint: CacheHint,
 }
 
 /// External contribution to a prompt plan.

@@ -3,6 +3,7 @@
 //! MIG-008: Provides workspace context and tool surface blocks for Coding mode.
 
 use super::block::{PromptBlock, PromptBlockKind, PromptBlockSource};
+use crate::modules::memory::inject::CacheHint;
 use std::path::Path;
 
 /// Build coding-specific augmentation blocks.
@@ -36,6 +37,7 @@ pub(super) fn build_coding_augment_blocks(
         },
         priority: 60,
         is_sensitive: false,
+        cache_hint: CacheHint::None,
     });
 
     // Tool surface block (if tools are available)
@@ -58,6 +60,7 @@ pub(super) fn build_coding_augment_blocks(
             },
             priority: 59,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 

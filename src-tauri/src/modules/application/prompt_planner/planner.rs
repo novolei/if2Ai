@@ -12,6 +12,7 @@ use crate::modules::identity::{
     read_identity_naming_settings, render_identity_naming_block, render_persona_block,
     render_soul_block, IdentityRegistry,
 };
+use crate::modules::memory::inject::CacheHint;
 use crate::modules::runtime::prompt::{load_system_prompt, PromptBuildError, SystemPromptBuilder};
 use crate::modules::runtime::prompt_tools_guide::web_tools_routing_block;
 
@@ -96,6 +97,7 @@ pub fn render_mini_index_block(index_text: String) -> Option<PromptBlock> {
         },
         priority: MINI_INDEX_BLOCK_PRIORITY,
         is_sensitive: false,
+        cache_hint: CacheHint::None,
     })
 }
 
@@ -156,6 +158,7 @@ pub async fn build_prompt_plan(
         },
         priority: 100,
         is_sensitive: true,
+        cache_hint: CacheHint::None,
     });
 
     // 1b. Identity blocks stay outside the base system prompt so they
@@ -193,6 +196,7 @@ pub async fn build_prompt_plan(
                 },
                 priority: 96,
                 is_sensitive: true,
+                cache_hint: CacheHint::None,
             });
         }
 
@@ -208,6 +212,7 @@ pub async fn build_prompt_plan(
                 },
                 priority: 95,
                 is_sensitive: true,
+                cache_hint: CacheHint::None,
             });
         }
         if let Some(persona_id) = resolved_identity.persona_id.as_deref() {
@@ -223,6 +228,7 @@ pub async fn build_prompt_plan(
                     },
                     priority: 94,
                     is_sensitive: true,
+                    cache_hint: CacheHint::None,
                 });
             }
         }
@@ -248,6 +254,7 @@ pub async fn build_prompt_plan(
                 },
                 priority: 93,
                 is_sensitive: true,
+                cache_hint: CacheHint::None,
             });
         }
     }
@@ -271,6 +278,7 @@ pub async fn build_prompt_plan(
             },
             priority: 92,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 
@@ -290,6 +298,7 @@ pub async fn build_prompt_plan(
             },
             priority: 91,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 
@@ -306,6 +315,30 @@ pub async fn build_prompt_plan(
             },
             priority: 90,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
+        });
+    }
+
+    // 2a. Memory-tools usage guide — teaches the agent when/how to
+    // proactively call `memory_store`. Only injected when that tool
+    // is registered for the current turn.
+    if request
+        .registered_tool_names
+        .iter()
+        .any(|n| n == "memory_store")
+    {
+        blocks.push(PromptBlock {
+            id: "memory_tools_guide".to_string(),
+            kind: PromptBlockKind::MemoryToolsGuide,
+            title: "memory_tools_guide".to_string(),
+            content: crate::modules::runtime::prompt::get_memory_tools_guide_section(),
+            source: PromptBlockSource {
+                subsystem: "memory".to_string(),
+                reference: Some("memory_tools_guide".to_string()),
+            },
+            priority: 89,
+            is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 
@@ -327,6 +360,7 @@ pub async fn build_prompt_plan(
                 },
                 priority: 85,
                 is_sensitive: false,
+                cache_hint: CacheHint::None,
             });
         }
     }
@@ -348,6 +382,7 @@ pub async fn build_prompt_plan(
             let (priority, is_sensitive) = match section.kind {
                 MemoryInjectionSectionKind::Pinned => (80, false),
                 MemoryInjectionSectionKind::Compiled => (70, false),
+                MemoryInjectionSectionKind::Procedural => (65, false),
                 MemoryInjectionSectionKind::Rules => (60, false),
                 MemoryInjectionSectionKind::Retrieved => (50, true),
             };
@@ -364,6 +399,7 @@ pub async fn build_prompt_plan(
                 },
                 priority,
                 is_sensitive,
+                cache_hint: section.cache_hint,
             });
         }
     }
@@ -381,6 +417,7 @@ pub async fn build_prompt_plan(
             },
             priority: 40,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 
@@ -441,6 +478,7 @@ fn title_for_memory_section(kind: MemoryInjectionSectionKind) -> &'static str {
     match kind {
         MemoryInjectionSectionKind::Pinned => "memory_pinned",
         MemoryInjectionSectionKind::Compiled => "memory_compiled",
+        MemoryInjectionSectionKind::Procedural => "memory_procedural",
         MemoryInjectionSectionKind::Rules => "memory_rules",
         MemoryInjectionSectionKind::Retrieved => "retrieved_memory",
     }
@@ -632,6 +670,7 @@ mod tests {
                     },
                     priority: 100,
                     is_sensitive: true,
+                    cache_hint: CacheHint::None,
                 },
                 PromptBlock {
                     id: "retrieved_memory-0".to_string(),
@@ -644,6 +683,7 @@ mod tests {
                     },
                     priority: 50,
                     is_sensitive: true,
+                    cache_hint: CacheHint::None,
                 },
             ],
         };
@@ -664,6 +704,7 @@ mod tests {
             },
             priority: 100,
             is_sensitive: true,
+            cache_hint: CacheHint::None,
         }];
         let hash1 = compute_block_hash(&blocks);
         let hash2 = compute_block_hash(&blocks);
@@ -678,18 +719,22 @@ mod tests {
                 MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Pinned,
                     content: "P".into(),
+                    cache_hint: CacheHint::Stable,
                 },
                 MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Compiled,
                     content: "C".into(),
+                    cache_hint: CacheHint::Ephemeral,
                 },
                 MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Rules,
                     content: "R".into(),
+                    cache_hint: CacheHint::Stable,
                 },
                 MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Retrieved,
                     content: "X".into(),
+                    cache_hint: CacheHint::None,
                 },
             ],
             memory_items: Vec::new(),
