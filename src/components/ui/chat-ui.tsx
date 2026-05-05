@@ -1,14 +1,8 @@
 import * as React from "react"
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { setActiveModel } from '@/api/models'
+import { useAvailableModels } from '@/api/models'
 import { ArrowDown } from "lucide-react"
 import { cn } from "@/lib/utils"
-// 语音输入按钮（SenseVoice STT）
-const SttButtonLazy = React.lazy(() =>
-  import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
-)
-import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode, type SessionTotals } from "@/lib/tauri"
+import { listDirectoryPreview, openDirectoryPath, readFilePreview, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode, type SessionTotals } from "@/lib/tauri"
 import type { FinalRunReport } from "@/transport/contracts"
 
 import { type TodoItem } from "@/components/ui/TodoPanel"
@@ -45,13 +39,19 @@ import { ComposerDock } from "@/components/chat/chat-ui/composer/ComposerDock"
 // GF-01 PR-07 — sidebars + panels extracted from this file.
 import { ProjectFilesRail } from "@/components/chat/chat-ui/sidebars/ProjectFilesRail"
 import {
-  PROJECT_RAIL_MAX_WIDTH,
-  PROJECT_RAIL_MIN_WIDTH,
+  inferPreviewLanguage,
   sortRailDirectoryEntries,
 } from "@/components/chat/chat-ui/sidebars/utils"
 import { TodoPanelMount } from "@/components/chat/chat-ui/panels/TodoPanelMount"
 import { ContextBarMount } from "@/components/chat/chat-ui/panels/ContextBarMount"
 import { ProjectPreviewMount } from "@/components/chat/chat-ui/panels/ProjectPreviewMount"
+// GF-01 PR-08 — chat-ui shell hooks extracted from this file.
+import { useDensityFontMode } from "@/components/chat/chat-ui/hooks/useDensityFontMode"
+import { useChatScroll } from "@/components/chat/chat-ui/hooks/useChatScroll"
+import { useProjectRailState } from "@/components/chat/chat-ui/hooks/useProjectRailState"
+import { useProjectPreviewState } from "@/components/chat/chat-ui/hooks/useProjectPreviewState"
+import { useComposerOverlays } from "@/components/chat/chat-ui/hooks/useComposerOverlays"
+import { useComposerDropItems } from "@/components/chat/chat-ui/hooks/useComposerDropItems"
 
 export interface Message {
   id: string
@@ -136,12 +136,11 @@ export type ComposerDropItem = {
   isMention?: boolean
 }
 
-const BOTTOM_EPSILON_PX = 120
-const CHAT_DENSITY_MODE_STORAGE_KEY = 'chatDensityModeV2'
-const CHAT_FONT_MODE_STORAGE_KEY = 'chatFontModeV2'
-const PROJECT_RAIL_WIDTH_STORAGE_KEY = 'projectRailWidthV1'
-const PREVIEW_AUTOSAVE_DELAY_MS = 900
-const PROJECT_RAIL_NOTICE_DURATION_MS = 2800
+// GF-01 PR-08 — these constants moved into the hooks that own them:
+//  - BOTTOM_EPSILON_PX → useChatScroll
+//  - CHAT_DENSITY_MODE_STORAGE_KEY / CHAT_FONT_MODE_STORAGE_KEY → useDensityFontMode
+//  - PROJECT_RAIL_WIDTH_STORAGE_KEY / PROJECT_RAIL_NOTICE_DURATION_MS → useProjectRailState
+//  - PREVIEW_AUTOSAVE_DELAY_MS → useProjectPreviewState
 
 export function ChatUI({
   messages,
@@ -172,90 +171,89 @@ export function ChatUI({
   onPreviewFocusChange,
   sessionTotals,
 }: ChatUIProps) {
-  const bottomRef = React.useRef<HTMLDivElement>(null)
-  const transcriptScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
   const todoPanelRef = React.useRef<HTMLDivElement>(null)
-  const isAtBottomRef = React.useRef(true)
-  const forceAutoScrollRef = React.useRef(false)
-  const stickToBottomDuringStreamRef = React.useRef(true)
-  const lastScrollTopRef = React.useRef(0)
-  const lastBottomOccupancyRef = React.useRef(0)
-  const scrollRafRef = React.useRef<number | null>(null)
-  const slashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedModel, setSelectedModel] = React.useState(selectedModelProp)
-  // Dynamic model list state (Slice 4)
-  const [availableModelItems, setAvailableModelItems] = React.useState<
-    Array<{ value: string; label: string }>
-  >([])
-  // Refetch the model list whenever the settings UI emits a change.
-  // Provider config saves / model selection saves dispatch a
-  // `if2ai:models-changed` window event (see ProvidersSettingsPage +
-  // ModelSettingsPage). Listening lets the chat dropdown reflect new
-  // models / providers without a hard reload.
+
+  // GF-01 PR-08 / ER-02 — chat-ui shell hooks centralise the scroll,
+  // density/font, project-rail, preview-state, composer overlay and
+  // drop-item state machines previously inlined in this file.
+  const {
+    bottomRef,
+    scrollRef: transcriptScrollRef,
+    isAtBottomRef,
+    forceAutoScrollRef,
+    stickToBottomDuringStreamRef,
+    lastScrollTopRef,
+    lastBottomOccupancyRef,
+    isAtBottom,
+    setIsAtBottom,
+    scrollToBottom: scrollTranscriptToBottom,
+    updateBottomState,
+    handleScroll: handleScrollInternal,
+  } = useChatScroll()
+
+  // ER-02 — single facade-backed subscription replacing the raw
+  // `invoke('model_list_available')` + `listen('if2ai://models-changed')`.
+  const { groups: availableModelGroups } = useAvailableModels()
+  const availableModelItems = React.useMemo(
+    () =>
+      availableModelGroups
+        .filter((g) => g.models.length > 0)
+        .flatMap((g) =>
+          g.models.map((m) => ({
+            value: `${g.provider_id}/${m.model_id}`,
+            label: `${g.provider_name} / ${m.name}`,
+          })),
+        ),
+    [availableModelGroups],
+  )
+  // If the parent hasn't provided a real model yet, auto-select the
+  // first available one so the picker always shows a real model name.
   React.useEffect(() => {
-    let cancelled = false
-    let unlistenModelsChanged: (() => void) | null = null
-    const refresh = async () => {
-      try {
-        const groups = await invoke<Array<{
-          provider_id: string
-          provider_name: string
-          models: Array<{ model_id: string; name: string }>
-        }>>('model_list_available')
-        if (cancelled) return
-        const items = groups
-          .filter((g) => g.models.length > 0)
-          .flatMap((g) =>
-            g.models.map((m) => ({
-              value: `${g.provider_id}/${m.model_id}`,
-              label: `${g.provider_name} / ${m.name}`,
-            }))
-          )
-        setAvailableModelItems(items)
-
-        // If the parent hasn't provided a real model yet, auto-select the first
-        // available one so the picker always shows a real model name.
-        if (!selectedModelProp && items.length > 0 && onModelChangeProp) {
-          onModelChangeProp(items[0].value)
-        }
-      } catch {
-        // Fallback: leave list empty, hardcoded fallback below
-      }
+    if (!selectedModelProp && availableModelItems.length > 0 && onModelChangeProp) {
+      onModelChangeProp(availableModelItems[0].value)
     }
-
-    void refresh()
-    const onChanged = () => void refresh()
-    window.addEventListener('if2ai:models-changed', onChanged)
-    void listen('if2ai://models-changed', onChanged).then((unlisten) => {
-      unlistenModelsChanged = unlisten
-    })
-    return () => {
-      cancelled = true
-      window.removeEventListener('if2ai:models-changed', onChanged)
-      unlistenModelsChanged?.()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableModelItems])
   const [selectedPermissionMode, setSelectedPermissionMode] = React.useState<PermissionMode>(permissionModeProp)
   const [selectedStrength, setSelectedStrength] = React.useState('mid')
   const [isComposerFocused, setIsComposerFocused] = React.useState(false)
-  const [isAtBottom, setIsAtBottom] = React.useState(true)
   const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(null)
   const [isTodoCollapsed, setIsTodoCollapsed] = React.useState(false)
   const [todoPanelHeight, setTodoPanelHeight] = React.useState(0)
   const [draftInput, setDraftInput] = React.useState(input)
-  const [projectRailEntries, setProjectRailEntries] = React.useState<DirectoryEntryPreview[]>([])
-  const [projectRailTree, setProjectRailTree] = React.useState<RailTreeMap>({})
-  const [projectRailExpandedPaths, setProjectRailExpandedPaths] = React.useState<string[]>([])
-  const [projectRailLoadingPaths, setProjectRailLoadingPaths] = React.useState<string[]>([])
-  const [isProjectRailLoading, setIsProjectRailLoading] = React.useState(false)
-  const [projectRailSort, setProjectRailSort] = React.useState<'recent' | 'name'>('recent')
-  const [projectRailPath, setProjectRailPath] = React.useState<string | null>(defaultWorkdir ?? null)
-  const [projectRailPreviewError, setProjectRailPreviewError] = React.useState<string | null>(null)
-  const projectRailRefreshSeqRef = React.useRef(0)
-  const projectRailNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [composerDropItems, setComposerDropItems] = React.useState<ComposerDropItem[]>([])
+
+  const railState = useProjectRailState({ defaultWorkdir })
+  const {
+    projectRailEntries,
+    setProjectRailEntries,
+    projectRailTree,
+    setProjectRailTree,
+    projectRailExpandedPaths,
+    setProjectRailExpandedPaths,
+    projectRailLoadingPaths,
+    setProjectRailLoadingPaths,
+    isProjectRailLoading,
+    setIsProjectRailLoading,
+    projectRailSort,
+    setProjectRailSort,
+    projectRailPath,
+    setProjectRailPath,
+    projectRailPreviewError,
+    setProjectRailPreviewError,
+    projectRailRefreshSeqRef,
+    projectRailNoticeTimerRef,
+    showProjectRailNotice,
+    projectRailWidth,
+    setProjectRailWidth,
+  } = railState
+
+  const dropItemsState = useComposerDropItems()
+  const composerDropItems = dropItemsState.dropItems
+  const setComposerDropItems = dropItemsState.setDropItems
+  const handleComposerDropItem = dropItemsState.addDropItem
+  const handleRemoveComposerDropItem = dropItemsState.removeDropItem
   // Derive the most recent context-budget snapshot from the assistant
   // messages.  This is propagated by `App.tsx` from the `stream_complete`
   // event payload.  When no turn has completed yet, the bar renders
@@ -267,48 +265,22 @@ export function ChatUI({
     }
     return undefined
   }, [messages])
-  const [projectPreviewTabs, setProjectPreviewTabs] = React.useState<FilePreviewPayload[]>([])
-  const [activeProjectPreviewPath, setActiveProjectPreviewPath] = React.useState<string | null>(null)
-  const [isProjectPreviewOpen, setIsProjectPreviewOpen] = React.useState(false)
-  const [projectPreviewDrafts, setProjectPreviewDrafts] = React.useState<Record<string, string>>({})
-  const [projectPreviewSaveStates, setProjectPreviewSaveStates] = React.useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({})
-  const [projectPreviewDirtyPaths, setProjectPreviewDirtyPaths] = React.useState<string[]>([])
-  const projectPreviewSaveTimersRef = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const projectRailOpenBeforePreviewRef = React.useRef(true)
   const wasPreviewFocusModeRef = React.useRef(false)
-  const [projectRailWidth, setProjectRailWidth] = React.useState(() => {
-    if (typeof window === 'undefined') return 200
-    const stored = Number(window.localStorage.getItem(PROJECT_RAIL_WIDTH_STORAGE_KEY))
-    if (Number.isFinite(stored)) {
-      return Math.min(PROJECT_RAIL_MAX_WIDTH, Math.max(PROJECT_RAIL_MIN_WIDTH, stored))
-    }
-    return 200
-  })
   const isProjectRailOpen = isProjectRailOpenProp
-  const densityMode = densityModeProp
-  const fontMode = fontModeProp
-  const [slashOverlay, setSlashOverlay] = React.useState<{
-    visible: boolean
-    selectedIndex: number
-    suggestions: string[]
-    rawInput: string
-  } | null>(null)
-
-  const [atOverlay, setAtOverlay] = React.useState<{
-    visible: boolean
-    selectedIndex: number
-    entries: DirectoryEntryPreview[]
-    query: string
-    /** Position of the @ character in the textarea (−1 = already cleaned) */
-    atPos: number
-    /** Currently browsed directory path; null = workdir root */
-    browsePath: string | null
-    /** Navigation history stack for back navigation */
-    breadcrumbs: Array<{ name: string; path: string | null }>
-    /** When true the overlay is detached from the textarea (@token already removed) */
-    pinned: boolean
-  } | null>(null)
-  const atTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { densityMode, fontMode } = useDensityFontMode({
+    density: densityModeProp,
+    font: fontModeProp,
+  })
+  const overlays = useComposerOverlays()
+  const {
+    slashOverlay,
+    setSlashOverlay,
+    atOverlay,
+    setAtOverlay,
+    slashTimerRef,
+    atTimerRef,
+  } = overlays
 
   // Use prop-provided model if provided, otherwise fall back to local state
   const modelValue = onModelChangeProp !== undefined ? selectedModelProp : selectedModel
@@ -317,34 +289,10 @@ export function ChatUI({
   const handlePermissionModeChange: React.Dispatch<React.SetStateAction<PermissionMode>> =
     onPermissionModeChangeProp ?? setSelectedPermissionMode
 
-  // Cleanup timer on unmount
-  React.useEffect(() => {
-    return () => {
-      if (slashTimerRef.current) {
-        clearTimeout(slashTimerRef.current)
-      }
-      if (atTimerRef.current) {
-        clearTimeout(atTimerRef.current)
-      }
-      if (scrollRafRef.current !== null) {
-        window.cancelAnimationFrame(scrollRafRef.current)
-      }
-      if (projectRailNoticeTimerRef.current) {
-        clearTimeout(projectRailNoticeTimerRef.current)
-      }
-      Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
-    }
-  }, [])
-
-  const updateBottomState = React.useCallback((container: HTMLDivElement) => {
-    const maxScrollTop = container.scrollHeight - container.clientHeight
-    const nextIsAtBottom = maxScrollTop - container.scrollTop < BOTTOM_EPSILON_PX
-    isAtBottomRef.current = nextIsAtBottom
-    if (nextIsAtBottom) {
-      stickToBottomDuringStreamRef.current = true
-    }
-    setIsAtBottom((prev) => (prev === nextIsAtBottom ? prev : nextIsAtBottom))
-  }, [])
+  // GF-01 PR-08 — every per-feature unmount cleanup (slash/at debounce
+  // timers, the scroll RAF, the rail notice timer, the preview autosave
+  // timers) now lives inside its owning hook. `updateBottomState` is
+  // returned from `useChatScroll` above.
 
   React.useEffect(() => {
     const shouldAutoScroll = isAtBottomRef.current || forceAutoScrollRef.current
@@ -370,82 +318,20 @@ export function ChatUI({
     setDraftInput(input)
   }, [input])
 
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(CHAT_DENSITY_MODE_STORAGE_KEY, densityMode)
-  }, [densityMode])
+  // GF-01 PR-08 — density/font + rail width persistence now live
+  // inside `useDensityFontMode` / `useProjectRailState`. The
+  // workdir-change reset effect lives further down, after the
+  // `useProjectPreviewState` hook initialises.
 
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(CHAT_FONT_MODE_STORAGE_KEY, fontMode)
-  }, [fontMode])
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(PROJECT_RAIL_WIDTH_STORAGE_KEY, String(projectRailWidth))
-  }, [projectRailWidth])
-
-  React.useEffect(() => {
-    setProjectRailPath(defaultWorkdir ?? null)
-    setProjectRailPreviewError(null)
-    setComposerDropItems([])
-    if (projectRailNoticeTimerRef.current) {
-      clearTimeout(projectRailNoticeTimerRef.current)
-      projectRailNoticeTimerRef.current = null
-    }
-    setProjectRailExpandedPaths([])
-    setProjectRailTree({})
-    setProjectPreviewTabs([])
-    setActiveProjectPreviewPath(null)
-    setIsProjectPreviewOpen(false)
-    setProjectPreviewDrafts({})
-    setProjectPreviewSaveStates({})
-    setProjectPreviewDirtyPaths([])
-  }, [defaultWorkdir])
-
-  const isPreviewFocusMode = isProjectPreviewOpen && projectPreviewTabs.length > 0
-  const chatVisibleRightInset = !isPreviewFocusMode && isProjectRailOpen ? projectRailWidth + 28 : 0
-  const transcriptMaxWidth = isLeftPaneCollapsed
-    ? (isProjectRailOpen ? 980 : 1120)
-    : (isProjectRailOpen ? 900 : 1020)
-  const composerMaxWidth = isLeftPaneCollapsed
-    ? (isProjectRailOpen ? 940 : 1080)
-    : (isProjectRailOpen ? 860 : 980)
-  const todoMaxWidth = isLeftPaneCollapsed
-    ? (isProjectRailOpen ? 820 : 960)
-    : (isProjectRailOpen ? 760 : 860)
-
-  React.useEffect(() => {
-    onPreviewFocusChange?.(isPreviewFocusMode)
-  }, [isPreviewFocusMode, onPreviewFocusChange])
-
-  React.useEffect(() => {
-    if (isPreviewFocusMode) {
-      projectRailOpenBeforePreviewRef.current = isProjectRailOpen
-      if (isProjectRailOpen) {
-        onProjectRailOpenChange?.(false)
-      }
-    } else if (wasPreviewFocusModeRef.current && projectRailOpenBeforePreviewRef.current) {
-      onProjectRailOpenChange?.(true)
-    }
-    wasPreviewFocusModeRef.current = isPreviewFocusMode
-  }, [isPreviewFocusMode, isProjectRailOpen, onProjectRailOpenChange])
+  // Forward declaration: filled in once `refreshDirectoryPreview` is
+  // available below; satisfied by the hook returned from
+  // `useProjectPreviewState`.
+  // (See the `previewState` declaration further down.)
 
   const railRootPath = defaultWorkdir ?? null
 
-  const showProjectRailNotice = React.useCallback((message: string | null) => {
-    if (projectRailNoticeTimerRef.current) {
-      clearTimeout(projectRailNoticeTimerRef.current)
-      projectRailNoticeTimerRef.current = null
-    }
-    setProjectRailPreviewError(message)
-    if (message) {
-      projectRailNoticeTimerRef.current = window.setTimeout(() => {
-        setProjectRailPreviewError((current) => current === message ? null : current)
-        projectRailNoticeTimerRef.current = null
-      }, PROJECT_RAIL_NOTICE_DURATION_MS)
-    }
-  }, [])
+  // GF-01 PR-08 — `showProjectRailNotice` is now returned from
+  // `useProjectRailState` (destructured above).
 
   const refreshDirectoryPreview = React.useCallback(async (options?: { silent?: boolean }) => {
     if (!railRootPath || !isProjectRailOpen) return
@@ -513,6 +399,83 @@ export function ChatUI({
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [railRootPath, isProjectRailOpen, refreshDirectoryPreview])
+
+  // GF-01 PR-08 — every preview-tab state slot + callback now lives
+  // here. The shell only forwards the bag down to <ProjectPreviewMount>.
+  const previewState = useProjectPreviewState({
+    messages,
+    defaultWorkdir,
+    onProjectRailOpenChange,
+    refreshDirectoryPreview,
+  })
+  const {
+    projectPreviewTabs,
+    activeProjectPreviewPath,
+    setActiveProjectPreviewPath,
+    isProjectPreviewOpen,
+    projectPreviewDrafts,
+    projectPreviewSaveStates,
+    projectPreviewDirtyPaths,
+    openPreviewTab: openPreviewTabInternal,
+    closePreviewTab,
+    closePreviewPanel,
+    savePreviewDraft,
+    refreshPreviewTab,
+    handlePreviewDraftChange,
+  } = previewState
+
+  // Wrapper preserves the original `openPreviewTab` side-effect of
+  // clearing the rail's transient preview-error notice (the inline
+  // version did this in the same call site).
+  const openPreviewTab = React.useCallback(
+    (preview: FilePreviewPayload) => {
+      openPreviewTabInternal(preview)
+      setProjectRailPreviewError(null)
+    },
+    [openPreviewTabInternal, setProjectRailPreviewError],
+  )
+
+  const isPreviewFocusMode = isProjectPreviewOpen && projectPreviewTabs.length > 0
+  const chatVisibleRightInset = !isPreviewFocusMode && isProjectRailOpen ? projectRailWidth + 28 : 0
+  const transcriptMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 980 : 1120)
+    : (isProjectRailOpen ? 900 : 1020)
+  const composerMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 940 : 1080)
+    : (isProjectRailOpen ? 860 : 980)
+  const todoMaxWidth = isLeftPaneCollapsed
+    ? (isProjectRailOpen ? 820 : 960)
+    : (isProjectRailOpen ? 760 : 860)
+
+  React.useEffect(() => {
+    onPreviewFocusChange?.(isPreviewFocusMode)
+  }, [isPreviewFocusMode, onPreviewFocusChange])
+
+  React.useEffect(() => {
+    if (isPreviewFocusMode) {
+      projectRailOpenBeforePreviewRef.current = isProjectRailOpen
+      if (isProjectRailOpen) {
+        onProjectRailOpenChange?.(false)
+      }
+    } else if (wasPreviewFocusModeRef.current && projectRailOpenBeforePreviewRef.current) {
+      onProjectRailOpenChange?.(true)
+    }
+    wasPreviewFocusModeRef.current = isPreviewFocusMode
+  }, [isPreviewFocusMode, isProjectRailOpen, onProjectRailOpenChange])
+
+  React.useEffect(() => {
+    setProjectRailPath(defaultWorkdir ?? null)
+    setProjectRailPreviewError(null)
+    setComposerDropItems([])
+    if (projectRailNoticeTimerRef.current) {
+      clearTimeout(projectRailNoticeTimerRef.current)
+      projectRailNoticeTimerRef.current = null
+    }
+    setProjectRailExpandedPaths([])
+    setProjectRailTree({})
+    previewState.resetAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultWorkdir])
 
   React.useEffect(() => {
     const container = transcriptScrollRef.current
@@ -609,26 +572,8 @@ export function ChatUI({
   }, [composerDropItems, draftInput, isLoading, onSubmit, onInputChange])
 
   const handleTranscriptScroll = React.useCallback(() => {
-    const container = transcriptScrollRef.current
-    if (!container) return
-    if (container.scrollLeft !== 0) {
-      container.scrollLeft = 0
-    }
-    if (scrollRafRef.current !== null) return
-    scrollRafRef.current = window.requestAnimationFrame(() => {
-      scrollRafRef.current = null
-      const nextContainer = transcriptScrollRef.current
-      if (!nextContainer) return
-      const nextScrollTop = nextContainer.scrollTop
-      const scrollDelta = nextScrollTop - lastScrollTopRef.current
-      lastScrollTopRef.current = nextScrollTop
-      if (isLoading && scrollDelta < -2) {
-        // User actively scrolls upward while streaming: pause sticky auto-follow.
-        stickToBottomDuringStreamRef.current = false
-      }
-      updateBottomState(nextContainer)
-    })
-  }, [isLoading, updateBottomState])
+    handleScrollInternal(isLoading)
+  }, [handleScrollInternal, isLoading])
 
   const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Never intercept keystrokes while an IME composition session is active.
@@ -797,13 +742,8 @@ export function ChatUI({
     appendToDraft(`请把 \`${path}\` 作为当前上下文文件一起考虑。`)
   }, [appendToDraft])
 
-  const handleComposerDropItem = React.useCallback((item: ComposerDropItem) => {
-    setComposerDropItems((current) => current.some((entry) => entry.path === item.path && entry.kind === item.kind) ? current : [...current, item])
-  }, [])
-
-  const handleRemoveComposerDropItem = React.useCallback((id: string) => {
-    setComposerDropItems((current) => current.filter((item) => item.id !== id))
-  }, [])
+  // GF-01 PR-08 — `handleComposerDropItem` + `handleRemoveComposerDropItem`
+  // are now provided by `useComposerDropItems` (destructured above).
 
   /** Called when the user picks a file/folder from the @-mention overlay. */
   const handleAtSelect = React.useCallback((entry: DirectoryEntryPreview, overlay: { atPos: number; query: string }) => {
@@ -949,151 +889,10 @@ export function ChatUI({
     }
   }, [loadProjectRailChildren, projectRailTree])
 
-  const savePreviewDraft = React.useCallback(async (path: string, content: string) => {
-    setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'saving' }))
-    try {
-      await writeFileContents(path, content)
-      setProjectPreviewTabs((current) => current.map((item) => item.path === path ? { ...item, content } : item))
-      setProjectPreviewDirtyPaths((current) => current.filter((item) => item !== path))
-      setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'saved' }))
-      window.setTimeout(() => {
-        setProjectPreviewSaveStates((current) => current[path] === 'saved' ? { ...current, [path]: 'idle' } : current)
-      }, 1200)
-      void refreshDirectoryPreview({ silent: true })
-    } catch (err) {
-      console.error('Failed to save preview draft:', err)
-      setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'error' }))
-    }
-  }, [refreshDirectoryPreview])
-
-  const schedulePreviewAutosave = React.useCallback((path: string, content: string) => {
-    const timers = projectPreviewSaveTimersRef.current
-    if (timers[path]) {
-      clearTimeout(timers[path])
-    }
-    timers[path] = setTimeout(() => {
-      delete timers[path]
-      void savePreviewDraft(path, content)
-    }, PREVIEW_AUTOSAVE_DELAY_MS)
-  }, [savePreviewDraft])
-
-  const openPreviewTab = React.useCallback((preview: FilePreviewPayload) => {
-    setProjectPreviewTabs((current) => current.some((item) => item.path === preview.path) ? current.map((item) => item.path === preview.path ? preview : item) : [...current, preview])
-    setActiveProjectPreviewPath(preview.path)
-    setIsProjectPreviewOpen(true)
-    setProjectPreviewDrafts((current) => current[preview.path] !== undefined ? current : { ...current, [preview.path]: preview.content ?? '' })
-    setProjectPreviewSaveStates((current) => ({ ...current, [preview.path]: current[preview.path] ?? 'idle' }))
-    setProjectRailPreviewError(null)
-  }, [])
-
-  /**
-   * 重新拉取一个已经打开的 preview tab 的内容，把 tab 数据替换成最新
-   * 磁盘版本。`projectPreviewDrafts[path]` 不动 —— 用户正在编辑的草稿
-   * 不能被外部写入静默覆盖；新内容只刷"原文"层（preview.content / tab
-   * 头里显示的元数据）。如果 path 没在打开列表里就忽略。
-   */
-  const refreshPreviewTab = React.useCallback(
-    async (absPath: string) => {
-      try {
-        const fresh = await readFilePreview(absPath)
-        setProjectPreviewTabs((current) => {
-          if (!current.some((item) => item.path === fresh.path)) return current
-          return current.map((item) => (item.path === fresh.path ? fresh : item))
-        })
-        // 用户没在编辑（不在 dirty 列表）才同步刷草稿；否则保留草稿，
-        // 让用户决定是否手动 reset。
-        setProjectPreviewDrafts((current) => {
-          if (projectPreviewDirtyPaths.includes(fresh.path)) return current
-          return { ...current, [fresh.path]: fresh.content ?? '' }
-        })
-      } catch (err) {
-        console.warn('[preview] refresh failed for', absPath, err)
-      }
-    },
-    [projectPreviewDirtyPaths],
-  )
-
-  /**
-   * Auto-refresh：监听 messages 里 file_write 工具调用完成事件，
-   * 当被写入的路径正好对应一个已经打开的 preview tab 时，自动拉一
-   * 次最新内容刷新展示。tool 流过来的 path 既可能是绝对路径也可能
-   * 是相对 workdir 的相对路径，两种 case 都比对一遍。
-   *
-   * processedToolIdsRef 记录已经处理过的 tool_call_id，避免同一条
-   * 消息在重渲染 / 状态变化时被重复拉取。
-   */
-  const processedToolIdsRef = React.useRef<Set<string>>(new Set())
-  React.useEffect(() => {
-    if (projectPreviewTabs.length === 0) return
-    for (const message of messages) {
-      if (message.role !== 'tool') continue
-      if (message.toolStatus !== 'completed') continue
-      const toolName = message.toolName ?? ''
-      if (!toolName.includes('file_write')) continue
-      const toolCallId = message.toolCallId
-      if (!toolCallId || processedToolIdsRef.current.has(toolCallId)) continue
-      const args = (message.toolArgs ?? {}) as Record<string, unknown>
-      const rawPath = typeof args.path === 'string' ? args.path : ''
-      if (!rawPath) continue
-      // 解析绝对路径：相对路径相对 effectiveWorkdir / defaultWorkdir
-      const root = message.effectiveWorkdir ?? defaultWorkdir ?? ''
-      const absCandidate = rawPath.startsWith('/')
-        ? rawPath
-        : root
-          ? `${root.replace(/\/+$/, '')}/${rawPath.replace(/^\/+/, '')}`
-          : rawPath
-      const matched = projectPreviewTabs.find(
-        (tab) => tab.path === absCandidate || tab.path === rawPath || tab.path.endsWith(`/${rawPath}`),
-      )
-      processedToolIdsRef.current.add(toolCallId)
-      if (matched) {
-        void refreshPreviewTab(matched.path)
-      }
-    }
-  }, [messages, projectPreviewTabs, defaultWorkdir, refreshPreviewTab])
-
-  const closePreviewTab = React.useCallback((path: string) => {
-    const timers = projectPreviewSaveTimersRef.current
-    if (timers[path]) {
-      clearTimeout(timers[path])
-      delete timers[path]
-    }
-    if (projectPreviewDirtyPaths.includes(path)) {
-      const next = projectPreviewDrafts[path] ?? ''
-      void savePreviewDraft(path, next)
-    }
-    setProjectPreviewTabs((current) => {
-      const next = current.filter((item) => item.path !== path)
-      setActiveProjectPreviewPath((active) => {
-        if (active !== path) return active
-        return next.at(-1)?.path ?? null
-      })
-      if (next.length === 0) {
-        setIsProjectPreviewOpen(false)
-        onProjectRailOpenChange?.(true)
-      }
-      return next
-    })
-    setProjectPreviewDirtyPaths((current) => current.filter((item) => item !== path))
-  }, [onProjectRailOpenChange, projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
-
-  const closePreviewPanel = React.useCallback(() => {
-    Object.values(projectPreviewSaveTimersRef.current).forEach((timer) => clearTimeout(timer))
-    projectPreviewSaveTimersRef.current = {}
-    projectPreviewDirtyPaths.forEach((path) => {
-      const next = projectPreviewDrafts[path] ?? ''
-      void savePreviewDraft(path, next)
-    })
-    setIsProjectPreviewOpen(false)
-    onProjectRailOpenChange?.(true)
-  }, [onProjectRailOpenChange, projectPreviewDirtyPaths, projectPreviewDrafts, savePreviewDraft])
-
-  const handlePreviewDraftChange = React.useCallback((path: string, value: string) => {
-    setProjectPreviewDrafts((current) => ({ ...current, [path]: value }))
-    setProjectPreviewDirtyPaths((current) => current.includes(path) ? current : [...current, path])
-    setProjectPreviewSaveStates((current) => ({ ...current, [path]: 'idle' }))
-    schedulePreviewAutosave(path, value)
-  }, [schedulePreviewAutosave])
+  // GF-01 PR-08 — savePreviewDraft / schedulePreviewAutosave /
+  // openPreviewTab / refreshPreviewTab / closePreviewTab /
+  // closePreviewPanel / handlePreviewDraftChange + the
+  // file_write→refresh effect now live in `useProjectPreviewState`.
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-transparent text-foreground">

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
+import { fetchAvailableModelGroups } from '@/api/models'
 import { toast } from 'sonner'
 import { SettingsSurface } from '../components/SettingsSurface'
 import { CompactInput } from '../components/CompactInput'
@@ -354,14 +355,10 @@ export function ModelSettingsPage() {
 
   const loadModels = useCallback(async () => {
     setLoadingModels(true)
-    try {
-      const groups = await invoke<AvailableModelGroup[]>('model_list_available')
-      setModelGroups(groups)
-    } catch {
-      setModelGroups([])
-    } finally {
-      setLoadingModels(false)
-    }
+    // ER-02 — facade-backed fetch replaces raw `invoke('model_list_available')`.
+    const groups = (await fetchAvailableModelGroups()) as AvailableModelGroup[]
+    setModelGroups(groups)
+    setLoadingModels(false)
   }, [])
 
   useEffect(() => {

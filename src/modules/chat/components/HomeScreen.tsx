@@ -14,9 +14,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import { setActiveModel } from '@/api/models'
+import { setActiveModel, useAvailableModels } from '@/api/models'
 import { cn } from '@/lib/utils'
 import type { PermissionMode, ProjectMeta } from '@/lib/tauri'
 import type { RecentSession } from '../types'
@@ -58,47 +56,21 @@ export function HomeScreen({
   isLoading,
   branchLabel,
 }: HomeScreenProps) {
-  const [availableModelItems, setAvailableModelItems] = useState<
-    Array<{ value: string; label: string }>
-  >([])
-  useEffect(() => {
-    let cancelled = false
-    let unlistenModelsChanged: (() => void) | null = null
-    const refresh = async () => {
-      try {
-        const groups = await invoke<
-          Array<{
-            provider_id: string
-            provider_name: string
-            models: Array<{ model_id: string; name: string }>
-          }>
-        >('model_list_available')
-        if (cancelled) return
-        const items = groups
-          .filter((g) => g.models.length > 0)
-          .flatMap((g) =>
-            g.models.map((m) => ({
-              value: `${g.provider_id}/${m.model_id}`,
-              label: m.name,
-            }))
-          )
-        setAvailableModelItems(items)
-      } catch {
-        // Fallback to empty
-      }
-    }
-    void refresh()
-    const onChanged = () => void refresh()
-    window.addEventListener('if2ai:models-changed', onChanged)
-    void listen('if2ai://models-changed', onChanged).then((unlisten) => {
-      unlistenModelsChanged = unlisten
-    })
-    return () => {
-      cancelled = true
-      window.removeEventListener('if2ai:models-changed', onChanged)
-      unlistenModelsChanged?.()
-    }
-  }, [])
+  // ER-02 — single facade-backed subscription replacing the raw
+  // `invoke('model_list_available')` + `listen('if2ai://models-changed')`.
+  const { groups: availableModelGroups } = useAvailableModels()
+  const availableModelItems = React.useMemo(
+    () =>
+      availableModelGroups
+        .filter((g) => g.models.length > 0)
+        .flatMap((g) =>
+          g.models.map((m) => ({
+            value: `${g.provider_id}/${m.model_id}`,
+            label: m.name,
+          })),
+        ),
+    [availableModelGroups],
+  )
   const [localInput, setLocalInput] = useState('')
   const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false)

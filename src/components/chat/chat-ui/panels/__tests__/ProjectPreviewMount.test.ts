@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 const source = readFileSync(new URL('../ProjectPreviewMount.tsx', import.meta.url), 'utf8')
-const chatUiSource = readFileSync(
-  new URL('../../../../ui/chat-ui.tsx', import.meta.url),
+const previewHookSource = readFileSync(
+  new URL('../../hooks/useProjectPreviewState.ts', import.meta.url),
   'utf8',
 )
 
@@ -14,15 +14,13 @@ test('ProjectPreviewMount — exports the named mount wrapper declaration', () =
   assert.match(source, /export function ProjectPreviewMount\(/)
 })
 
-test('ProjectPreviewMount — documents the deferred 900ms autosave timer in chat-ui', () => {
-  // The 900ms `PREVIEW_AUTOSAVE_DELAY_MS` debounce is intentionally
-  // kept in `ChatUI` for PR-07 (extraction of the state machine into
-  // `useProjectPreviewState` is deferred to PR-08). Both halves of that
-  // contract must remain visible in source.
+test('ProjectPreviewMount — 900ms autosave timer now lives in useProjectPreviewState (PR-08)', () => {
+  // PR-07 deferred extraction of the preview state machine; PR-08
+  // landed it in `useProjectPreviewState`. The 900ms
+  // `PREVIEW_AUTOSAVE_DELAY_MS` debounce moved with it.
   assert.match(source, /Scope note \(deferred\)/)
-  assert.match(source, /PREVIEW_AUTOSAVE_DELAY_MS/)
-  assert.match(chatUiSource, /const PREVIEW_AUTOSAVE_DELAY_MS = 900/)
-  assert.match(chatUiSource, /\}, PREVIEW_AUTOSAVE_DELAY_MS\)/)
+  assert.match(previewHookSource, /export const PREVIEW_AUTOSAVE_DELAY_MS = 900/)
+  assert.match(previewHookSource, /\}, PREVIEW_AUTOSAVE_DELAY_MS\)/)
 })
 
 test('ProjectPreviewMount — preserves dirty/draft/save state surface as props', () => {

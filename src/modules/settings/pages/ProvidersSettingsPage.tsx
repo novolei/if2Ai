@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, RefreshCw, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
+import { fetchAvailableModelGroups } from "@/api/models";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -281,13 +282,10 @@ function ProviderDetail({ provider, isConfigured, onSaved }: ProviderDetailProps
       }
       if (savedModelIds.length > 0) {
         let groupModels = new Map<string, AvailableModelGroup["models"][number]>();
-        try {
-          const groups = await invoke<AvailableModelGroup[]>("model_list_available");
-          const group = groups.find((item) => item.provider_id === provider.id);
-          groupModels = new Map((group?.models ?? []).map((model) => [model.model_id, model]));
-        } catch {
-          groupModels = new Map();
-        }
+        // ER-02 — facade-backed fetch replaces raw `invoke('model_list_available')`.
+        const groups = (await fetchAvailableModelGroups()) as AvailableModelGroup[];
+        const group = groups.find((item) => item.provider_id === provider.id);
+        groupModels = new Map((group?.models ?? []).map((model) => [model.model_id, model]));
         setAvailableModels(
           savedModelIds.map((id) => {
             const saved = groupModels.get(id);
