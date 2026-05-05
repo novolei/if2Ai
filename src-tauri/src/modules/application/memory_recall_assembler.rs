@@ -134,15 +134,19 @@ pub async fn assemble_recall(
     let artifacts = prepare_memory_injection(deps, request).await;
     let memory_items = artifacts.memory_items.clone();
 
-    // Index the 4 legacy section kinds for O(1) lookup.
+    // Index the 5 legacy section kinds for O(1) lookup.
     let mut pinned: Option<String> = None;
     let mut compiled: Option<String> = None;
+    // Procedural rules are injected into the system prompt via PromptBlock::MemoryInjectionProcedural.
+    // They are intentionally excluded from RecallArtifacts to avoid double-injection.
+    let mut _procedural: Option<String> = None;
     let mut rules: Option<String> = None;
     let mut retrieved: Option<String> = None;
     for s in &artifacts.prompt_sections {
         match s.kind {
             MemoryInjectionSectionKind::Pinned => pinned = Some(s.content.clone()),
             MemoryInjectionSectionKind::Compiled => compiled = Some(s.content.clone()),
+            MemoryInjectionSectionKind::Procedural => _procedural = Some(s.content.clone()),
             MemoryInjectionSectionKind::Rules => rules = Some(s.content.clone()),
             MemoryInjectionSectionKind::Retrieved => retrieved = Some(s.content.clone()),
         }

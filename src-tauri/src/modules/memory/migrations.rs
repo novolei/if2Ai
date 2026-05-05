@@ -239,6 +239,16 @@ const MEMORY_MIGRATIONS: &[Migration] = &[
         name: "conversation_recall_embeddings",
         up: memory_v6_conversation_recall_embeddings,
     },
+    Migration {
+        version: 7,
+        name: "quality_scoring_columns",
+        up: memory_v7_quality_scoring,
+    },
+    Migration {
+        version: 8,
+        name: "cognitive_layer_columns",
+        up: memory_v8_cognitive_layer,
+    },
 ];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
@@ -424,6 +434,77 @@ fn memory_v6_conversation_recall_embeddings(conn: &Connection) -> rusqlite::Resu
     Ok(())
 }
 
+/// CoALA cognitive layer — v8: add `cognitive_layer` and `context_tags`
+/// columns to `memory_entries`.  The `cognitive_layer` stores the CoALA
+/// tier (1=Reactive, 2=Deliberative, 3=Reflective, 4=Meta) and defaults
+/// to 2 (Deliberative).  `context_tags` is a JSON text array.
+///
+/// After adding columns, back-fills existing rows based on `category`.
+fn memory_v8_cognitive_layer(conn: &Connection) -> rusqlite::Result<()> {
+    fn add_col(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(e) if e.to_string().contains("duplicate column name") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    add_col(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN cognitive_layer INTEGER DEFAULT 2",
+    )?;
+    add_col(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN context_tags TEXT DEFAULT '[]'",
+    )?;
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memory_cognitive_layer ON memory_entries(cognitive_layer);",
+    )?;
+
+    // Back-fill cognitive_layer from category for existing rows.
+    conn.execute_batch(
+        "UPDATE memory_entries SET cognitive_layer = 1 WHERE category = 'conversation';
+         UPDATE memory_entries SET cognitive_layer = 2 WHERE category IN ('working', 'daily');
+         UPDATE memory_entries SET cognitive_layer = 3 WHERE category IN ('reflection', 'procedural');
+         UPDATE memory_entries SET cognitive_layer = 4 WHERE category = 'core';",
+    )?;
+    Ok(())
+}
+
+/// Quality scoring — v7: add `quality_score`, `source_reliability`,
+/// `last_validated_at`, and `contradiction_count` columns to
+/// `memory_entries`.  Each `ALTER TABLE` uses the SQLite "ignore
+/// duplicate column" pattern (`let _ = ...`) so re-running on a DB
+/// that already has the columns is a safe no-op.
+fn memory_v7_quality_scoring(conn: &Connection) -> rusqlite::Result<()> {
+    fn add_column_if_not_exists(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(e) if e.to_string().contains("duplicate column name") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN quality_score REAL DEFAULT 0.5",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN source_reliability REAL DEFAULT 0.5",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN last_validated_at TEXT",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN contradiction_count INTEGER DEFAULT 0",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,7 +518,7 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
@@ -465,8 +546,8 @@ mod tests {
         assert!(report.v1_backfilled);
         assert_eq!(
             report.applied,
-            vec![2, 3, 4, 5, 6],
-            "v1 backfilled, v2..=v6 fresh"
+            vec![2, 3, 4, 5, 6, 7, 8],
+            "v1 backfilled, v2..=v8 fresh"
         );
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
@@ -482,7 +563,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.skipped, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -513,6 +594,6 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 }

@@ -56,6 +56,8 @@ use std::collections::HashSet;
 
 use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter, RecoveredSummary};
 use crate::modules::memory::compiler::{CompilePaths, MemoryCompiler};
+use crate::modules::memory::forgetting::ForgettingCurveEngine;
+use crate::modules::memory::quality::QualityScorer;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::summary::rolling::RollingSummarizer;
 use crate::modules::memory::summary::store::SessionSummaryStore;
@@ -92,6 +94,10 @@ pub struct MemoryTicker {
     /// into durable traits.  Independent of `reflection_runtime` so
     /// either feature can be wired alone.
     learned_traits_runtime: Option<LearnedTraitsRuntime>,
+    /// Optional forgetting-curve runtime.  When `Some`, the daily
+    /// timer loop periodically runs a decay sweep over all stored
+    /// memories, updating importance and flagging archival candidates.
+    forgetting_runtime: Option<ForgettingRuntime>,
 }
 
 /// MEM-MOD-P5 — bundle of runtime dependencies the reflection pulse
@@ -111,6 +117,14 @@ struct ReflectionRuntime {
 struct LearnedTraitsRuntime {
     llm: Arc<dyn crate::modules::memory::llm::UtilityLlm>,
     store: crate::modules::memory::learned_traits::LearnedTraitsStore,
+    memory: crate::modules::memory::SharedMemoryProvider,
+}
+
+/// Bundle of dependencies the forgetting-curve sweep needs.
+#[derive(Clone)]
+struct ForgettingRuntime {
+    engine: Arc<ForgettingCurveEngine>,
+    scorer: Arc<QualityScorer>,
     memory: crate::modules::memory::SharedMemoryProvider,
 }
 
@@ -139,6 +153,7 @@ impl MemoryTicker {
             state: Arc::new(Mutex::new(TickerState::default())),
             reflection_runtime: None,
             learned_traits_runtime: None,
+            forgetting_runtime: None,
         }
     }
 
@@ -180,6 +195,23 @@ impl MemoryTicker {
         memory: crate::modules::memory::SharedMemoryProvider,
     ) -> Self {
         self.learned_traits_runtime = Some(LearnedTraitsRuntime { llm, store, memory });
+        self
+    }
+
+    /// Attach a forgetting-curve engine + quality scorer + memory provider
+    /// so the daily timer loop runs periodic decay sweeps.
+    #[must_use]
+    pub fn with_forgetting_runtime(
+        mut self,
+        engine: ForgettingCurveEngine,
+        scorer: QualityScorer,
+        memory: crate::modules::memory::SharedMemoryProvider,
+    ) -> Self {
+        self.forgetting_runtime = Some(ForgettingRuntime {
+            engine: Arc::new(engine),
+            scorer: Arc::new(scorer),
+            memory,
+        });
         self
     }
 
@@ -490,6 +522,10 @@ impl MemoryTicker {
             }
         }
 
+        // Clone scope before the first spawn consumes it so that
+        // the forgetting-curve loop below still has access.
+        let scope_for_sweep = scope.clone();
+
         let me = Arc::clone(self);
         let interval_secs = self.config.daily_check_interval_secs.max(1);
         tokio::spawn(async move {
@@ -504,6 +540,54 @@ impl MemoryTicker {
                 me.maybe_run_daily(&scope);
             }
         });
+
+        // Forgetting-curve sweep loop — runs every `sweep_interval_hours`
+        // (default 12h).  Independent of the daily compile cycle.
+        if let Some(ref rt) = self.forgetting_runtime {
+            let engine = rt.engine.clone();
+            let scorer = rt.scorer.clone();
+            let memory = rt.memory.clone();
+            let sweep_hours = engine.config().sweep_interval_hours.max(1);
+            tokio::spawn(async move {
+                let mut sweep_tick =
+                    tokio::time::interval(std::time::Duration::from_secs(sweep_hours * 3600));
+                // Skip the immediate first tick.
+                sweep_tick.tick().await;
+                loop {
+                    sweep_tick.tick().await;
+                    tracing::info!("[ticker] forgetting-curve sweep starting");
+                    match engine.sweep(memory.as_ref(), scorer.as_ref()).await {
+                        Ok(report) => {
+                            tracing::info!(
+                                scanned = report.scanned_count,
+                                archived = report.archived_count,
+                                updated = report.updated_count,
+                                elapsed_ms = report.elapsed_ms,
+                                "[ticker] forgetting-curve sweep completed"
+                            );
+                            let audit_ctx = AuditContext::from_scope(&scope_for_sweep);
+                            MemoryAuditEmitter::memory_job_skipped(
+                                &audit_ctx,
+                                "forgetting_sweep",
+                                report.archived_count as u32,
+                                &format!(
+                                    "scanned={}, updated={}, archived={}",
+                                    report.scanned_count,
+                                    report.updated_count,
+                                    report.archived_count,
+                                ),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                "[ticker] forgetting-curve sweep failed"
+                            );
+                        }
+                    }
+                }
+            });
+        }
     }
 
     /// Catch up rolling summaries for sessions whose on-disk sidecar

@@ -452,6 +452,12 @@ mod tests {
             trust_score: 0.0,
             session_id: session_id.map(str::to_string),
             project_id: project_id.map(str::to_string),
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            cognitive_layer: crate::modules::memory::CognitiveLayer::Reactive,
+            context_tags: Vec::new(),
         }
     }
 

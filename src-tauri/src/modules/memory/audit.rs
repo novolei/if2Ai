@@ -1190,8 +1190,6 @@ mod tests {
         .expect("dispatch ok with kill-switch");
         assert_eq!(env.event_type, RuntimeEventType::Memory);
         assert_eq!(env.payload_family.0, "lifecycle");
-        std::env::remove_var(
-            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
-        );
+        std::env::remove_var(crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV);
     }
 }

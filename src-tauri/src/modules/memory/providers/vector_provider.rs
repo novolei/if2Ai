@@ -33,7 +33,7 @@ use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
 use crate::modules::memory::embedding::FastEmbedProvider;
 use crate::modules::memory::security::ThreatScanner;
 use crate::modules::memory::{
-    MemoryCategory, MemoryEntry, MemoryError, MemoryExecutionScope, MemoryProvider,
+    CognitiveLayer, MemoryCategory, MemoryEntry, MemoryError, MemoryExecutionScope, MemoryProvider,
 };
 
 /// Error type for VectorMemoryProvider operations
@@ -295,6 +295,7 @@ fn scored_to_entry(scored: &ScoredMemory) -> MemoryEntry {
     MemoryEntry {
         key: scored.key.clone(),
         content: scored.content.clone(),
+        cognitive_layer: CognitiveLayer::from_category(&category),
         category,
         created_at: now,
         updated_at: now,
@@ -303,6 +304,11 @@ fn scored_to_entry(scored: &ScoredMemory) -> MemoryEntry {
         trust_score: 0.0,
         session_id: None,
         project_id: None,
+        quality_score: 0.5,
+        source_reliability: 0.5,
+        last_validated_at: None,
+        contradiction_count: 0,
+        context_tags: Vec::new(),
     }
 }
 
@@ -339,6 +345,7 @@ impl MemoryProvider for VectorMemoryProvider {
         let entry = MemoryEntry {
             key: key.to_string(),
             content: content.to_string(),
+            cognitive_layer: CognitiveLayer::from_category(&category),
             category,
             created_at: now,
             updated_at: now,
@@ -347,6 +354,11 @@ impl MemoryProvider for VectorMemoryProvider {
             trust_score: 0.0,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            context_tags: Vec::new(),
         };
 
         // Step 3: LanceDB write (async background when SQLite is present).
@@ -570,6 +582,7 @@ impl MemoryProvider for VectorMemoryProvider {
             let entry = MemoryEntry {
                 key: key.to_string(),
                 content: content.to_string(),
+                cognitive_layer: CognitiveLayer::from_category(&category),
                 category,
                 created_at: now,
                 updated_at: now,
@@ -578,6 +591,11 @@ impl MemoryProvider for VectorMemoryProvider {
                 trust_score: 0.0,
                 session_id: scope.session_id.clone(),
                 project_id: scope.project_id.clone(),
+                quality_score: 0.5,
+                source_reliability: 0.5,
+                last_validated_at: None,
+                contradiction_count: 0,
+                context_tags: Vec::new(),
             };
             let lancedb = Arc::clone(&self.lancedb);
             let key_for_log = key.to_string();

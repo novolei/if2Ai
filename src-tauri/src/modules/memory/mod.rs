@@ -10,11 +10,17 @@
 //! - [`VectorMemoryProvider`] — Vector-backed (FastEmbed + LanceDB, P1)
 
 pub mod audit;
+pub mod cognitive;
 pub mod compat;
 pub mod compiler;
+pub mod conflict;
 pub mod conversation_recall_vector;
+pub mod daydream;
 pub mod decision_tree;
 pub mod embedding;
+pub mod evolution;
+pub mod forgetting;
+pub mod graph;
 pub mod hrr;
 pub mod inject;
 pub mod intent;
@@ -26,6 +32,7 @@ pub mod pinned;
 pub mod policy;
 pub mod promotion;
 mod providers;
+pub mod quality;
 pub mod reflection_loop;
 pub mod retrieval;
 pub mod scope;
@@ -81,7 +88,10 @@ pub use pinned::{PinScope, PinSource, PinnedItem, MAX_PINS_PER_SCOPE, MAX_PIN_CO
 // it exported even though the bin doesn't reach for it directly.
 #[allow(unused_imports)]
 pub use inject::CHARS_PER_TOKEN_ESTIMATE;
-pub use inject::{build_memory_injection, MemoryInjection};
+#[allow(unused_imports)]
+pub use inject::{
+    build_memory_injection, CacheEfficiencyStats, CacheHint, MemoryCacheHints, MemoryInjection,
+};
 
 // MemoryExecutionScope is part of the trait surface; MemoryScopeResolver is imported
 // directly from scope:: by callers (tools), so only re-export the type needed for signatures.
@@ -104,10 +114,136 @@ pub use ticker::{DailyStep, TickerState};
 pub use ticker::{MemoryTicker, TickerConfig};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// CoALA (Cognitive Architectures for Language Agents) cognitive layer.
+///
+/// Maps the four-tier cognitive memory hierarchy:
+/// - L1 Reactive: immediate context, shortest lifespan
+/// - L2 Deliberative: active tasks and daily rollups
+/// - L3 Reflective: pattern recognition and procedural how-tos
+/// - L4 Meta: persistent identity and cross-session traits
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CognitiveLayer {
+    /// L1: 反应层 — 即时上下文，最短生命周期
+    Reactive = 1,
+    /// L2: 审议层 — 活跃任务和日汇总
+    Deliberative = 2,
+    /// L3: 反思层 — 模式识别和操作指南
+    Reflective = 3,
+    /// L4: 元认知层 — 持久身份和跨会话特质
+    Meta = 4,
+}
+
+impl CognitiveLayer {
+    /// Derive the cognitive layer from a [`MemoryCategory`].
+    ///
+    /// Mapping:
+    /// - `Conversation` → `Reactive`
+    /// - `Working`, `Daily` → `Deliberative`
+    /// - `Reflection`, `Procedural` → `Reflective`
+    /// - `Core` → `Meta`
+    /// - `Custom(_)` → `Deliberative` (default)
+    #[must_use]
+    pub fn from_category(cat: &MemoryCategory) -> Self {
+        match cat {
+            MemoryCategory::Conversation => CognitiveLayer::Reactive,
+            MemoryCategory::Working | MemoryCategory::Daily => CognitiveLayer::Deliberative,
+            MemoryCategory::Reflection | MemoryCategory::Procedural => CognitiveLayer::Reflective,
+            MemoryCategory::Core => CognitiveLayer::Meta,
+            MemoryCategory::Custom(_) => CognitiveLayer::Deliberative,
+        }
+    }
+
+    /// Convert a stored integer (1–4) back into a [`CognitiveLayer`].
+    ///
+    /// Returns `Deliberative` for any out-of-range value.
+    #[must_use]
+    pub fn from_i32(v: i32) -> Self {
+        match v {
+            1 => CognitiveLayer::Reactive,
+            2 => CognitiveLayer::Deliberative,
+            3 => CognitiveLayer::Reflective,
+            4 => CognitiveLayer::Meta,
+            _ => CognitiveLayer::Deliberative,
+        }
+    }
+
+    /// Return the integer representation for SQLite storage.
+    #[must_use]
+    pub fn as_i32(self) -> i32 {
+        self as i32
+    }
+}
+
+impl Default for CognitiveLayer {
+    fn default() -> Self {
+        CognitiveLayer::Deliberative
+    }
+}
+
+impl std::fmt::Display for CognitiveLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CognitiveLayer::Reactive => write!(f, "reactive"),
+            CognitiveLayer::Deliberative => write!(f, "deliberative"),
+            CognitiveLayer::Reflective => write!(f, "reflective"),
+            CognitiveLayer::Meta => write!(f, "meta"),
+        }
+    }
+}
+
+/// A typed link between two memory entries in the knowledge graph.
+///
+/// Links are directional (`source_key` → `target_key`) and carry a free-form
+/// `link_type` string (e.g. `"related_to"`, `"supersedes"`, `"contradicts"`,
+/// `"evidence_for"`, `"consolidated_into"`, `"promoted_to"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryLink {
+    /// The key of the source memory entry.
+    pub source_key: String,
+    /// The key of the target memory entry.
+    pub target_key: String,
+    /// The type of link (e.g. `"related_to"`, `"supersedes"`).
+    pub link_type: String,
+    /// When the link was created.
+    pub created_at: DateTime<Utc>,
+}
+
+/// A single node discovered during a graph traversal.
+///
+/// Each node carries the BFS depth at which it was discovered, optionally
+/// the fully-hydrated [`MemoryEntry`], and all outgoing/incoming links
+/// connected to this node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    /// The memory key of this node.
+    pub key: String,
+    /// BFS depth from the seed node (0 = seed itself).
+    pub depth: usize,
+    /// The full entry, if hydration was requested.
+    pub entry: Option<MemoryEntry>,
+    /// All links connected to this node (both directions).
+    pub links: Vec<MemoryLink>,
+}
+
+/// The "neighborhood" of a single memory node — its center entry plus
+/// all directly connected entries grouped by link direction and type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNeighborhood {
+    /// The center memory entry.
+    pub center: MemoryEntry,
+    /// Incoming links with their source entries.
+    pub incoming: Vec<(MemoryLink, MemoryEntry)>,
+    /// Outgoing links with their target entries.
+    pub outgoing: Vec<(MemoryLink, MemoryEntry)>,
+    /// Links grouped by type: `link_type → [related_keys]`.
+    pub by_link_type: HashMap<String, Vec<String>>,
+}
 
 /// Memory entry stored in the memory system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +268,21 @@ pub struct MemoryEntry {
     ///
     /// When `Some`, this entry is only visible to callers with matching project scope.
     pub project_id: Option<String>,
+    /// Composite quality score in `[0.0, 1.0]`, computed by the quality scoring engine.
+    /// Higher values indicate higher-quality, more trustworthy memories.
+    pub quality_score: f64,
+    /// Source reliability in `[0.0, 1.0]`. Tracks how reliable the origin of
+    /// this memory is (e.g. user-confirmed vs. inferred by agent).
+    pub source_reliability: f64,
+    /// Timestamp of the last external validation of this memory's accuracy.
+    /// `None` means the entry has never been validated.
+    pub last_validated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Number of times this memory has been flagged as contradicting other memories.
+    pub contradiction_count: u32,
+    /// CoALA cognitive layer — automatically derived from `category`.
+    pub cognitive_layer: CognitiveLayer,
+    /// Episodic context tags (e.g. `"file:foo.rs"`, `"tool:grep"`, `"session:abc"`).
+    pub context_tags: Vec<String>,
 }
 
 /// MEM-MOD-P6 — One historical snapshot of a memory entry as captured
@@ -527,6 +678,20 @@ pub trait MemoryProvider: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Update `importance` and `quality_score` for a single entry.  Used by
+    /// the forgetting-curve sweep to persist decay results.  The default
+    /// implementation is a no-op so providers that do not yet support
+    /// partial field updates remain functional.
+    async fn update_decay_scores(
+        &self,
+        key: &str,
+        importance: f64,
+        quality_score: f64,
+    ) -> Result<(), MemoryError> {
+        let _ = (key, importance, quality_score);
+        Ok(())
+    }
+
     /// MEM-MOD-P1 — Adjust the persisted `trust_score` of a memory entry by
     /// `delta`, clamping the resulting value to `[-1.0, 1.0]`. Returns the
     /// new `trust_score` so callers (LLM tools, audit emitter) can echo it
@@ -566,6 +731,58 @@ pub trait MemoryProvider: Send + Sync {
             "conversation_recall_search is not available for this memory backend".to_string(),
         ))
     }
+
+    /// Retrieve all outgoing links from a given source memory key.
+    ///
+    /// Optionally filters by `link_type`. Returns an empty vec when the
+    /// provider does not support graph operations.
+    async fn get_outgoing_links(
+        &self,
+        _source_key: &str,
+        _link_type: Option<&str>,
+    ) -> Result<Vec<MemoryLink>, MemoryError> {
+        Ok(vec![])
+    }
+
+    /// Retrieve all incoming links to a given target memory key.
+    ///
+    /// Optionally filters by `link_type`. Returns an empty vec when the
+    /// provider does not support graph operations.
+    async fn get_incoming_links(
+        &self,
+        _target_key: &str,
+        _link_type: Option<&str>,
+    ) -> Result<Vec<MemoryLink>, MemoryError> {
+        Ok(vec![])
+    }
+
+    /// Retrieve all links in the memory graph.
+    ///
+    /// Returns every row from the `memory_links` table without any key
+    /// filter.  Used by the full-graph visualization endpoint to avoid
+    /// per-node fan-out queries.  Default returns an empty vec for
+    /// providers that do not support graph operations.
+    async fn get_all_links(&self) -> Result<Vec<MemoryLink>, MemoryError> {
+        Ok(vec![])
+    }
+
+    /// Perform a breadth-first graph traversal starting from `seed_key`.
+    ///
+    /// Explores up to `depth` hops along memory links. When `link_types`
+    /// is `Some`, only links whose `link_type` is in the provided slice
+    /// are followed. Returns all discovered [`GraphNode`]s with hydrated
+    /// entries. Uses a visited set to prevent infinite loops.
+    ///
+    /// The default implementation returns an empty vec; concrete providers
+    /// (e.g. [`SqliteMemoryProvider`]) override this with real BFS logic.
+    async fn graph_traverse(
+        &self,
+        _seed_key: &str,
+        _depth: usize,
+        _link_types: Option<&[&str]>,
+    ) -> Result<Vec<GraphNode>, MemoryError> {
+        Ok(vec![])
+    }
 }
 
 /// In-memory implementation of MemoryProvider
@@ -603,6 +820,7 @@ impl MemoryProvider for InMemoryMemoryProvider {
     ) -> Result<(), MemoryError> {
         let now = chrono::Utc::now();
         let entry = MemoryEntry {
+            cognitive_layer: CognitiveLayer::from_category(&category),
             key: key.to_string(),
             content: content.to_string(),
             category: category.clone(),
@@ -613,6 +831,11 @@ impl MemoryProvider for InMemoryMemoryProvider {
             trust_score: 0.0,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            context_tags: Vec::new(),
         };
         let mut entries = self.entries.write().await;
         entries.insert(key.to_string(), entry);

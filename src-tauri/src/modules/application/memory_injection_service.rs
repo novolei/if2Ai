@@ -34,6 +34,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::modules::memory::inject::CacheHint;
 use crate::modules::memory::retrieval::{ActiveRetrievalManager, ScoredMemory};
 use crate::modules::memory::{PinnedStore, SharedMemoryProvider};
 
@@ -77,6 +78,7 @@ pub struct MemoryInjectionRequest {
 pub enum MemoryInjectionSectionKind {
     Pinned,
     Compiled,
+    Procedural,
     Rules,
     Retrieved,
 }
@@ -87,6 +89,11 @@ pub enum MemoryInjectionSectionKind {
 pub struct MemoryInjectionSection {
     pub kind: MemoryInjectionSectionKind,
     pub content: String,
+    /// Cache hint propagated from [`crate::modules::memory::inject::MemoryCacheHints`].
+    /// Defaults to [`CacheHint::None`] for sections without explicit hints
+    /// (e.g. retrieved memory).
+    #[serde(default)]
+    pub cache_hint: CacheHint,
 }
 
 // `MemoryItemProjection` lives in
@@ -125,6 +132,7 @@ pub async fn prepare_memory_injection(
     append_static_sections(
         &mut prompt_sections,
         deps.pinned_store.clone(),
+        deps.memory_provider.clone(),
         req.session_id.as_deref(),
         req.project_id.as_deref(),
         req.workdir.as_deref(),
@@ -137,6 +145,7 @@ pub async fn prepare_memory_injection(
         prompt_sections.push(MemoryInjectionSection {
             kind: MemoryInjectionSectionKind::Retrieved,
             content: retrieved.prompt_fragment,
+            cache_hint: CacheHint::None, // retrieved memory is turn-specific
         });
     }
 
@@ -233,12 +242,13 @@ fn map_scored_memory_to_projection(sm: &ScoredMemory) -> MemoryItemProjection {
 }
 
 /// Pre-fetch [`crate::modules::memory::MemoryInjection`] and append
-/// it as up to three sections (pinned / compiled / rules).
+/// it as up to four sections (pinned / compiled / procedural / rules).
 /// Equivalent to the M1.3 `prompt_planner::append_memory_injection_blocks`
 /// helper, now relocated to its proper service home.
 async fn append_static_sections(
     sections: &mut Vec<MemoryInjectionSection>,
     pinned_store: Arc<dyn PinnedStore>,
+    memory_provider: SharedMemoryProvider,
     session_id: Option<&str>,
     project_id: Option<&str>,
     workdir: Option<&str>,
@@ -266,6 +276,7 @@ async fn append_static_sections(
         &compiled_path,
         is_zh,
         max_tokens,
+        Some(memory_provider),
     )
     .await
     {
@@ -274,17 +285,27 @@ async fn append_static_sections(
                 sections.push(MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Pinned,
                     content: section,
+                    cache_hint: injection.cache_hints.pinned,
                 });
             }
             if let Some(section) = injection.compiled_section {
                 sections.push(MemoryInjectionSection {
                     kind: MemoryInjectionSectionKind::Compiled,
                     content: section,
+                    cache_hint: injection.cache_hints.compiled,
+                });
+            }
+            if let Some(section) = injection.procedural_section {
+                sections.push(MemoryInjectionSection {
+                    kind: MemoryInjectionSectionKind::Procedural,
+                    content: section,
+                    cache_hint: injection.cache_hints.procedural,
                 });
             }
             sections.push(MemoryInjectionSection {
                 kind: MemoryInjectionSectionKind::Rules,
                 content: injection.rules_section,
+                cache_hint: injection.cache_hints.rules,
             });
             tracing::debug!(
                 caller = caller,

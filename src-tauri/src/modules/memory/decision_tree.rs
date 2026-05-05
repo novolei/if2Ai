@@ -87,6 +87,17 @@ Schema (every field optional unless required by the verb):
   { \"verb\": \"add\" }
   { \"verb\": \"update\", \"existing_key\": \"<key>\" }
   { \"verb\": \"delete\", \"existing_key\": \"<key>\" }
+
+IMPORTANT: \"noop\" means the new fact adds ZERO new information beyond what is already stored.
+- If the new fact contains MORE SPECIFIC details (species, brand, model, quantity, location, etc.) than an existing memory, choose \"update\" — NOT \"noop\".
+- If the new fact covers a DIFFERENT ASPECT of the same topic, choose \"add\".
+- Only use \"noop\" when the new fact is truly redundant — every piece of information in it is already captured.
+
+Examples:
+- Existing: \"User likes keeping fish\" + New: \"User likes keeping tropical fish and owns a Xiaomi smart fish tank\" → {\"verb\": \"update\", \"existing_key\": \"...\"} (new fact has more specific details)
+- Existing: \"User likes programming\" + New: \"User likes programming\" → {\"verb\": \"noop\", \"covered_by\": \"...\"} (truly redundant)
+- Existing: \"User likes cats\" + New: \"User also likes dogs\" → {\"verb\": \"add\"} (different topic)
+- Existing: \"User works in tech\" + New: \"User is a Rust developer at Company X in Shanghai\" → {\"verb\": \"update\", \"existing_key\": \"...\"} (much more specific)
 "
     .to_string();
 
@@ -204,6 +215,12 @@ mod tests {
             trust_score: 0.0,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            cognitive_layer: crate::modules::memory::CognitiveLayer::Reactive,
+            context_tags: Vec::new(),
         }
     }
 

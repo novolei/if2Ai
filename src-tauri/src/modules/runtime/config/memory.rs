@@ -172,9 +172,20 @@ pub struct MemoryFeatureConfig {
     // MEM-MOD-P4 — Mem0-style memory update decision tree.  When `true`,
     // `memory_store` consults a small utility-LLM classifier before
     // persisting a new fact and may turn the write into NOOP / UPDATE /
-    // DELETE instead of always ADD.  Default `false` (gated rollout):
-    // turn on per-user when the LLM you have wired is reliable enough.
+    // DELETE instead of always ADD.  Default `true`: the prompt now
+    // includes specificity-vs-coverage rules that prevent false NOOPs.
     decision_tree_enabled: bool,
+    // Whether to run conflict detection when storing a new memory.
+    // Independent of the decision tree — checks for contradictions
+    // between the incoming fact and existing memories.  Default `true`
+    // (the feature is stable enough to be on by default).
+    conflict_detection_enabled: bool,
+    // MEM-AUTO-EXTRACT — When `true`, the after-turn pipeline uses a
+    // utility LLM to extract memorable personal facts from user messages
+    // even when the agent did not explicitly call `memory_store`.  This
+    // is a supplementary path that runs alongside the existing
+    // tool-call-based extraction.  Default `true`.
+    auto_extract_enabled: bool,
 }
 
 impl Default for MemoryFeatureConfig {
@@ -188,7 +199,9 @@ impl Default for MemoryFeatureConfig {
             inject_to_prompt: true,
             max_inject_tokens: 2000,
             compiler: CompilerConfig::default(),
-            decision_tree_enabled: false,
+            decision_tree_enabled: true,
+            conflict_detection_enabled: true,
+            auto_extract_enabled: true,
         }
     }
 }
@@ -264,10 +277,28 @@ impl MemoryFeatureConfig {
 
     /// MEM-MOD-P4 — `true` when `memory_store` is allowed to consult
     /// the Mem0-style update decision tree before persisting.  Default
-    /// `false`; flip on per-user once the wired LLM is trustworthy.
+    /// `true` — the prompt includes specificity-vs-coverage rules that
+    /// prevent false NOOPs so every `memory_store` call is classified.
     #[must_use]
     pub fn decision_tree_enabled(&self) -> bool {
         self.decision_tree_enabled
+    }
+
+    /// Whether conflict detection is enabled for new memory writes.
+    /// When `true`, `memory_store` checks incoming facts against existing
+    /// memories for contradictions before persisting.  Default `true`.
+    #[must_use]
+    pub fn conflict_detection_enabled(&self) -> bool {
+        self.conflict_detection_enabled
+    }
+
+    /// MEM-AUTO-EXTRACT — `true` when the after-turn pipeline should use
+    /// a utility LLM to extract memorable personal facts from user
+    /// messages, even if the agent did not call `memory_store`.
+    /// Default `true`.
+    #[must_use]
+    pub fn auto_extract_enabled(&self) -> bool {
+        self.auto_extract_enabled
     }
 }
 
@@ -350,6 +381,12 @@ pub(super) fn parse_optional_memory_feature_config(
         if let Some(flag) = overrides.decision_tree_enabled {
             config.decision_tree_enabled = flag;
         }
+        if let Some(flag) = overrides.conflict_detection_enabled {
+            config.conflict_detection_enabled = flag;
+        }
+        if let Some(flag) = overrides.auto_extract_enabled {
+            config.auto_extract_enabled = flag;
+        }
     }
 
     Ok(config)
@@ -390,6 +427,12 @@ pub(super) struct If2AiMemoryOverrides {
     /// MEM-MOD-P4 — Mem0-style update decision tree feature flag.
     #[serde(default)]
     pub(super) decision_tree_enabled: Option<bool>,
+    /// Whether conflict detection runs when storing a new memory.
+    #[serde(default)]
+    pub(super) conflict_detection_enabled: Option<bool>,
+    /// MEM-AUTO-EXTRACT — toggle LLM-based user-message extraction.
+    #[serde(default)]
+    pub(super) auto_extract_enabled: Option<bool>,
 }
 
 pub(super) fn read_if2ai_memory_overrides() -> Option<If2AiMemoryOverrides> {

@@ -53,6 +53,12 @@ import {
   memoryRecall,
   memorySummariesList,
   pinnedGet,
+  daydreamStatus,
+  daydreamTrigger,
+  daydreamConfigGet,
+  daydreamConfigSet,
+  daydreamHistory,
+  parseDayDreamState,
   type CompileReport,
   type CompileResult,
   type CompileSkipReason,
@@ -63,6 +69,29 @@ import {
   type MemoryScopeKind,
   type PinnedItemDto,
   type SessionSummaryDto,
+  type DayDreamState,
+  type DayDreamStateKind,
+  type DayDreamConfig,
+  type DayDreamReport,
+  type ConsolidationStrategy,
+  type PruneReport,
+  type MergeReport,
+  type RefreshReport,
+  type InsightCategory,
+  type InsightDto,
+  type TrajectoryDto,
+  type ToolCallRecord,
+  type TurnRecord,
+  type DayDreamReflectionReport,
+  memoryGraphTraverse,
+  memoryGraphNeighborhood,
+  memoryGraphDiscover,
+  memoryGraphFull,
+  type MemoryLinkDto,
+  type GraphEntryDto,
+  type GraphNodeDto,
+  type GraphNeighborhoodDto,
+  type FullGraphDto,
 } from "@/lib/tauri";
 
 // ─── Re-exports ──────────────────────────────────────────────────────
@@ -83,6 +112,16 @@ export {
   memoryRecall,
   memorySummariesList,
   pinnedGet,
+  daydreamStatus,
+  daydreamTrigger,
+  daydreamConfigGet,
+  daydreamConfigSet,
+  daydreamHistory,
+  parseDayDreamState,
+  memoryGraphTraverse,
+  memoryGraphNeighborhood,
+  memoryGraphDiscover,
+  memoryGraphFull,
 };
 export type {
   CompileReport,
@@ -95,6 +134,25 @@ export type {
   MemoryScopeKind,
   PinnedItemDto,
   SessionSummaryDto,
+  DayDreamState,
+  DayDreamStateKind,
+  DayDreamConfig,
+  DayDreamReport,
+  ConsolidationStrategy,
+  PruneReport,
+  MergeReport,
+  RefreshReport,
+  InsightCategory,
+  InsightDto,
+  TrajectoryDto,
+  ToolCallRecord,
+  TurnRecord,
+  DayDreamReflectionReport,
+  MemoryLinkDto,
+  GraphEntryDto,
+  GraphNodeDto,
+  GraphNeighborhoodDto,
+  FullGraphDto,
 };
 
 // ─── Invalidation helper ────────────────────────────────────────────
@@ -242,4 +300,348 @@ export function useMemoryPromotionCandidates(
   }, [refetch, invalidationKey]);
 
   return { candidates, loading, error, refetch };
+}
+
+// ─── DayDream hooks ─────────────────────────────────────────────────
+
+export interface DayDreamStatusQuery {
+  state: DayDreamState | null;
+  parsed: { kind: DayDreamStateKind; startedAt?: string; finishedAt?: string } | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load + auto-refresh DayDream engine status.
+ *
+ * Polls once on mount and can be manually refetched. The `parsed`
+ * field normalizes the Rust externally-tagged enum into a flat
+ * `{ kind, startedAt?, finishedAt? }` shape for display convenience.
+ */
+export function useDayDreamStatus(): DayDreamStatusQuery {
+  const [state, setState] = useState<DayDreamState | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const refetch = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await daydreamStatus();
+      if (reqId === reqIdRef.current) setState(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  return {
+    state,
+    parsed: state ? parseDayDreamState(state) : null,
+    loading,
+    error,
+    refetch,
+  };
+}
+
+export interface DayDreamConfigQuery {
+  config: DayDreamConfig | null;
+  loading: boolean;
+  error: string | null;
+  update: (config: DayDreamConfig) => Promise<void>;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load, update, and auto-refresh DayDream configuration.
+ */
+export function useDayDreamConfig(): DayDreamConfigQuery {
+  const [config, setConfig] = useState<DayDreamConfig | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const refetch = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await daydreamConfigGet();
+      if (reqId === reqIdRef.current) setConfig(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, []);
+
+  const update = useCallback(async (newConfig: DayDreamConfig) => {
+    setError(null);
+    try {
+      await daydreamConfigSet(newConfig);
+      setConfig(newConfig);
+    } catch (e) {
+      setError(String(e));
+      throw e;
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  return { config, loading, error, update, refetch };
+}
+
+export interface DayDreamHistoryQuery {
+  reports: DayDreamReport[];
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load DayDream history reports.
+ */
+export function useDayDreamHistory(): DayDreamHistoryQuery {
+  const [reports, setReports] = useState<DayDreamReport[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const refetch = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await daydreamHistory();
+      if (reqId === reqIdRef.current) setReports(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  return { reports, loading, error, refetch };
+}
+
+// ─── Evolution hooks ──────────────────────────────────────────────────────
+
+export interface ProceduralMemoriesQuery {
+  procedures: MemoryEntryDto[];
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load procedural memories (category = "Procedural").
+ *
+ * These are rules and patterns the agent has learned from experience
+ * via the SelfReflector → ProceduralMemoryManager pipeline.
+ */
+export function useProceduralMemories(): ProceduralMemoriesQuery {
+  const { entries, loading, error, refetch } = useMemoryEntries({
+    category: "Procedural",
+  });
+  return { procedures: entries, loading, error, refetch };
+}
+
+export interface InsightMemoriesQuery {
+  insights: MemoryEntryDto[];
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load insight memories (category = "Reflection").
+ *
+ * These are raw insights extracted by the SelfReflector before they
+ * are promoted to procedural memory.
+ */
+export function useInsightMemories(): InsightMemoriesQuery {
+  const { entries, loading, error, refetch } = useMemoryEntries({
+    category: "Reflection",
+  });
+  return { insights: entries, loading, error, refetch };
+}
+
+/**
+ * Load all evolution-related memories (Procedural + Reflection).
+ *
+ * Merges both categories and sorts by updated_at descending for
+ * timeline display.
+ */
+export interface EvolutionMemoriesQuery {
+  entries: MemoryEntryDto[];
+  procedureCount: number;
+  insightCount: number;
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+export function useEvolutionMemories(): EvolutionMemoriesQuery {
+  const proc = useProceduralMemories();
+  const ins = useInsightMemories();
+
+  const entries = [...proc.procedures, ...ins.insights].sort((a, b) =>
+    b.updated_at.localeCompare(a.updated_at),
+  );
+
+  const refetch = useCallback(async () => {
+    await Promise.all([proc.refetch(), ins.refetch()]);
+  }, [proc.refetch, ins.refetch]);
+
+  return {
+    entries,
+    procedureCount: proc.procedures.length,
+    insightCount: ins.insights.length,
+    loading: proc.loading || ins.loading,
+    error: proc.error || ins.error,
+    refetch,
+  };
+}
+
+// ─── Memory Graph hooks ───────────────────────────────────────────────────
+
+export interface MemoryGraphQuery {
+  nodes: GraphNodeDto[];
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * BFS graph traversal from a seed key.
+ * Returns nodes with hydrated entries and connected links.
+ */
+export function useMemoryGraph(
+  seedKey: string | null,
+  depth = 2,
+): MemoryGraphQuery {
+  const [nodes, setNodes] = useState<GraphNodeDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const refetch = useCallback(async () => {
+    if (!seedKey) return;
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await memoryGraphTraverse(seedKey, depth);
+      if (reqId === reqIdRef.current) setNodes(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, [seedKey, depth]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  return { nodes, loading, error, refetch };
+}
+
+export interface MemoryNeighborhoodQuery {
+  neighborhood: GraphNeighborhoodDto | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load the structured neighborhood of a memory node.
+ */
+export function useMemoryNeighborhood(
+  key: string | null,
+): MemoryNeighborhoodQuery {
+  const [neighborhood, setNeighborhood] =
+    useState<GraphNeighborhoodDto | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const refetch = useCallback(async () => {
+    if (!key) return;
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await memoryGraphNeighborhood(key);
+      if (reqId === reqIdRef.current) setNeighborhood(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, [key]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  return { neighborhood, loading, error, refetch };
+}
+
+// ─── Full Memory Graph hook ─────────────────────────────────────────────────
+
+export interface FullMemoryGraphQuery {
+  graph: FullGraphDto | null;
+  loading: boolean;
+  error: string | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * Load the full memory graph — all nodes and all links.
+ *
+ * Used by the MemoryGraphPanel for default full-graph visualization.
+ */
+export function useFullMemoryGraph(): FullMemoryGraphQuery {
+  const [graph, setGraph] = useState<FullGraphDto | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
+
+  const invalidationKey = useMemoryInvalidationKey("entries");
+
+  const refetch = useCallback(async () => {
+    const reqId = ++reqIdRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await memoryGraphFull();
+      if (reqId === reqIdRef.current) setGraph(result);
+    } catch (e) {
+      if (reqId === reqIdRef.current) setError(String(e));
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetch, invalidationKey]);
+
+  return { graph, loading, error, refetch };
 }
