@@ -13,15 +13,20 @@
 //!   [`HarnessRunReport`].  The mapping table is the canonical spec
 //!   from `docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`
 //!   §2.1.
-//! - `S1.2` closes one emit gap from the audit:
+//! - `S1.2` closed one emit gap from the audit:
 //!   `ExecutionModeJudged` → `execution_mode:judged` envelope (see
 //!   `commands/request_intelligence.rs`).
-//! - The two other top-priority emit gaps (`TurnFinished` and
-//!   `PrepareStepExecuted`) are deferred to S1.3 — both touch
-//!   files that currently carry in-flight work outside DT-01's
-//!   scope.  The fold therefore returns `0` / empty for the
-//!   aggregates that depend on those envelopes and documents each
-//!   gap with a `// TODO(DT-01 S1.3): …` comment.
+//! - `S1.3` closes the two remaining top-priority emit gaps:
+//!   `TurnFinished` → `conversation:turn_finished` (audit §2) and
+//!   `PrepareStepExecuted` → `system:prepare_step` (audit §10).
+//!   The fold below now reduces both into the corresponding
+//!   `aggregate.turns_*`, `aggregate.total_turn_duration_ms`,
+//!   `task.last_turn_succeeded`, `aggregate.prepare_step_*`, and
+//!   `evidence.prepare_step` fields.  The remaining `0`-defaults
+//!   (`input_tokens_total`, `output_tokens_total`,
+//!   `compaction_events`, `resume_invocations`) are intentional
+//!   per the audit's "variants intentionally left untouched"
+//!   list — no production caller exists today.
 //!
 //! No production code path consumes [`fold_run_log_to_report`] in
 //! S1.2; behaviour is therefore zero-change.  S1.3 will switch
@@ -38,10 +43,13 @@ use chrono::{DateTime, Utc};
 
 use super::run_report::{
     AggregateMetrics, BlockingFailure, EvidenceBundle, ExecutionModeTrace, HarnessRunReport,
-    MemoryAfterTurnTrace, PermissionPromptTrace, PermissionResolutionTrace, Severity,
-    StreamErrorTrace, TaskOutcome, TaskRunResult, HARNESS_RUN_REPORT_VERSION,
+    MemoryAfterTurnTrace, PermissionPromptTrace, PermissionResolutionTrace, PrepareStepTrace,
+    Severity, StreamErrorTrace, TaskOutcome, TaskRunResult, HARNESS_RUN_REPORT_VERSION,
 };
 use crate::modules::application::ConflictResolutionOutcome;
+use crate::modules::control_plane::prepare_step_execution::{
+    BoundaryDecision, PermissionDecision, PrepareStepOutcome, SandboxPolicy,
+};
 use crate::modules::runtime::contracts::memory::MemoryWriteDisposition;
 use crate::modules::runtime::event_log::RunLogEntry;
 
@@ -376,16 +384,67 @@ pub fn fold_run_log_to_report(entries: &[RunLogEntry]) -> HarnessRunReport {
                 }
             }
 
-            // TODO(DT-01 S1.3): the audit's two top-priority emit
-            // gaps land here once the in-flight work clears:
-            //   - ("conversation", "turn_finished")  → turns_*,
-            //     last_turn_succeeded, total_turn_duration_ms,
-            //     input_tokens_total
-            //   - ("system",       "prepare_step")   → prepare_step_*,
-            //     evidence.prepare_step
-            // Until then those aggregates remain at their default
-            // zero values and the reconciliation test asserts only
-            // the fields the fold can actually produce.
+            // ── DT-01 S1.3 — turn-level rollup (audit §2) ─────
+            // Mirrors the canonical envelope dispatched alongside
+            // every `emit_turn_finished` bus emit (run.rs +
+            // stream_finalize.rs).  Drives `turn_count`,
+            // `turns_completed`, `turns_succeeded`,
+            // `last_turn_succeeded`, `total_turn_duration_ms`, and
+            // (when present) per-turn token totals.
+            ("conversation", "turn_finished") => {
+                report.task.turn_count = report.task.turn_count.saturating_add(1);
+                report.aggregate.turns_completed =
+                    report.aggregate.turns_completed.saturating_add(1);
+                let succeeded = payload
+                    .get("succeeded")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if succeeded {
+                    report.aggregate.turns_succeeded =
+                        report.aggregate.turns_succeeded.saturating_add(1);
+                }
+                report.task.last_turn_succeeded = succeeded;
+                let duration_ms = payload
+                    .get("durationMs")
+                    .or_else(|| payload.get("duration_ms"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                report.aggregate.total_turn_duration_ms = report
+                    .aggregate
+                    .total_turn_duration_ms
+                    .saturating_add(duration_ms);
+                // Wire keys are `inputUsage` / `outputUsage` so the
+                // `SENSITIVE_JSON_KEYS` redaction filter (substring
+                // `"token"`) does not strip the integers.  Legacy
+                // snake_case fallbacks are kept for hand-written
+                // fixtures.
+                if let Some(t_in) = payload
+                    .get("inputUsage")
+                    .or_else(|| payload.get("input_usage"))
+                    .and_then(|v| v.as_u64())
+                {
+                    report.aggregate.input_tokens_total =
+                        report.aggregate.input_tokens_total.saturating_add(t_in);
+                }
+                if let Some(t_out) = payload
+                    .get("outputUsage")
+                    .or_else(|| payload.get("output_usage"))
+                    .and_then(|v| v.as_u64())
+                {
+                    report.aggregate.output_tokens_total =
+                        report.aggregate.output_tokens_total.saturating_add(t_out);
+                }
+            }
+
+            // ── DT-01 S1.3 — prepare-step rollup (audit §10) ──
+            // Mirrors the canonical envelope dispatched alongside
+            // every `AgentEvent::PrepareStepExecuted` bus emit
+            // (`stream_tool_execution.rs`).  Drives
+            // `prepare_step_total/granted/requires_approval/denied`
+            // and `evidence.prepare_step`.
+            ("system", "prepare_step") => {
+                fold_prepare_step(&mut report, payload, observed_at);
+            }
             _ => {}
         }
     }
@@ -540,6 +599,85 @@ fn fold_memory_after_turn(
             quality,
             conflicts,
         });
+}
+
+/// DT-01 S1.3 — fold one `system:prepare_step` envelope into the
+/// report's `prepare_step_*` aggregate counters and
+/// `evidence.prepare_step` vector.  Audit §10.
+fn fold_prepare_step(
+    report: &mut HarnessRunReport,
+    payload: &serde_json::Value,
+    observed_at: DateTime<Utc>,
+) {
+    let tool_name = payload
+        .get("toolName")
+        .or_else(|| payload.get("tool_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let outcome: PrepareStepOutcome = payload
+        .get("outcome")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(PrepareStepOutcome::Granted);
+    let boundary: BoundaryDecision = payload
+        .get("boundary")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(BoundaryDecision::NotApplicable);
+    let permission: PermissionDecision = payload
+        .get("permission")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(PermissionDecision::Allow);
+    let sandbox: SandboxPolicy = payload
+        .get("sandbox")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(SandboxPolicy::None);
+    let policy_version = payload
+        .get("policyVersion")
+        .or_else(|| payload.get("policy_version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    report.aggregate.prepare_step_total = report.aggregate.prepare_step_total.saturating_add(1);
+    match outcome {
+        PrepareStepOutcome::Granted => {
+            report.aggregate.prepare_step_granted =
+                report.aggregate.prepare_step_granted.saturating_add(1);
+        }
+        PrepareStepOutcome::RequiresApproval => {
+            report.aggregate.prepare_step_requires_approval = report
+                .aggregate
+                .prepare_step_requires_approval
+                .saturating_add(1);
+        }
+        PrepareStepOutcome::Denied => {
+            report.aggregate.prepare_step_denied =
+                report.aggregate.prepare_step_denied.saturating_add(1);
+            report.blocking_failures.push(BlockingFailure {
+                code: "prepare_step_denied".to_string(),
+                severity: Severity::Blocking,
+                message: format!("prepare_step denied tool '{tool_name}'"),
+                evidence_ref: Some(format!(
+                    "prepare_step:{}",
+                    report.evidence.prepare_step.len()
+                )),
+                observed_at,
+            });
+        }
+    }
+    report.evidence.prepare_step.push(PrepareStepTrace {
+        tool_name,
+        outcome,
+        boundary,
+        permission,
+        sandbox,
+        policy_version,
+        observed_at,
+    });
 }
 
 fn derive_task_outcome(r: &HarnessRunReport) -> TaskOutcome {
@@ -774,32 +912,25 @@ mod tests {
         assert_eq!(block, 1);
     }
 
-    /// Reconciliation scenario test (DT-01-S1.2 implementation).
+    /// Reconciliation scenario test (DT-01-S1.3 implementation).
     ///
-    /// Drives a hand-written fixture covering the full S1.2 fold
-    /// surface (memory after-turn, permission prompt + decision,
-    /// tool call lifecycle, stream error, execution-mode judgment)
-    /// and asserts that `fold_run_log_to_report` produces the
-    /// expected report shape.
+    /// Drives a hand-written fixture covering the full S1.3 fold
+    /// surface: memory after-turn, permission prompt + decision,
+    /// tool call lifecycle, stream error, execution-mode judgment,
+    /// **TurnFinished × 2** (multi-turn — one success then one
+    /// failure), and **PrepareStepExecuted** (granted + denied).
     ///
-    /// **Documented gaps deferred to S1.3** (asserted as zero):
+    /// **Intentional zeros remain only for variants the audit
+    /// flagged as having no production caller**:
     ///
-    /// - `aggregate.turns_completed` / `turns_succeeded` /
-    ///   `total_turn_duration_ms` — depend on a
-    ///   `conversation:turn_finished` envelope that S1.3 will add.
-    /// - `aggregate.prepare_step_*` + `evidence.prepare_step` —
-    ///   depend on a `system:prepare_step` envelope that S1.3
-    ///   will mirror from the bus emit.
-    /// - `aggregate.input_tokens_total` /
-    ///   `aggregate.output_tokens_total` — bus-only today; the
-    ///   audit (variants #3, #4) flagged both as deliberate zeros
-    ///   on both sides.
-    /// - `aggregate.compaction_events` — bus variant has no
-    ///   production caller (audit §7).
+    /// - `aggregate.input_tokens_total` — `LlmRequested` is unwired
+    ///   (audit §3).
+    /// - `aggregate.compaction_events` — bus variant unused
+    ///   (audit §7).
     /// - `aggregate.resume_invocations` — reserved for M4.5+
     ///   (audit §14).
     #[test]
-    fn reconciliation_runlog_fold_matches_audit_table_for_s12_surface() {
+    fn reconciliation_runlog_fold_matches_audit_table_for_s13_surface() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let session_id = "sess-recon";
         let run_id = "run-recon";
@@ -873,6 +1004,51 @@ mod tests {
             "conversation:stream_error",
             serde_json::json!({"reason": "network_timeout", "resume_available": true}),
         );
+        // DT-01 S1.3 — prepare_step (granted) + prepare_step (denied).
+        logger.append_sync(
+            "system:prepare_step",
+            serde_json::json!({
+                "toolName": "bash",
+                "outcome": "granted",
+                "boundary": "within_workdir",
+                "permission": "allow",
+                "sandbox": "none",
+                "policyVersion": "prepare-step@m1.8-sandbox",
+            }),
+        );
+        logger.append_sync(
+            "system:prepare_step",
+            serde_json::json!({
+                "toolName": "file_edit",
+                "outcome": "denied",
+                "boundary": "outside_and_denied",
+                "permission": { "deny": { "reason": "outside workdir" } },
+                "sandbox": "none",
+                "policyVersion": "prepare-step@m1.8-sandbox",
+            }),
+        );
+        // DT-01 S1.3 — turn_finished × 2 (multi-turn: one failure
+        // then one success — final turn drives `last_turn_succeeded`).
+        logger.append_sync(
+            "conversation:turn_finished",
+            serde_json::json!({
+                "turnNumber": 1,
+                "succeeded": false,
+                "durationMs": 1234,
+                "terminalStatus": "failed",
+                "outputUsage": 42,
+            }),
+        );
+        logger.append_sync(
+            "conversation:turn_finished",
+            serde_json::json!({
+                "turnNumber": 2,
+                "succeeded": true,
+                "durationMs": 567,
+                "terminalStatus": "completed",
+                "outputUsage": 17,
+            }),
+        );
 
         let entries = collect_run_entries(tmp.path(), session_id, run_id)
             .expect("collect_run_entries should succeed");
@@ -916,39 +1092,129 @@ mod tests {
         assert_eq!(report.evidence.execution_mode.len(), 1);
         assert_eq!(report.evidence.stream_errors.len(), 1);
 
-        // ── Documented S1.3 gaps (asserted as zero on purpose) ─
-        // turn_finished / prepare_step envelopes will arrive in
-        // S1.3 once the in-flight contamination on run.rs /
-        // stream_finalize.rs / stream_tool_execution.rs clears.
+        // ── DT-01 S1.3 closed gaps — turn_finished surface ────
         assert_eq!(
-            report.aggregate.turns_completed, 0,
-            "documented gap: TurnFinished emit lands in S1.3"
+            report.task.turn_count, 2,
+            "S1.3: 2 turn_finished envelopes folded"
         );
-        assert_eq!(report.aggregate.turns_succeeded, 0);
-        assert_eq!(report.aggregate.total_turn_duration_ms, 0);
+        assert_eq!(report.aggregate.turns_completed, 2);
+        assert_eq!(report.aggregate.turns_succeeded, 1);
+        assert_eq!(report.aggregate.total_turn_duration_ms, 1234 + 567);
+        assert!(
+            report.task.last_turn_succeeded,
+            "S1.3: last turn_finished succeeded=true wins"
+        );
+        // tokensOut is the only token field carried in the fixture
+        // (redaction disabled above so the fold actually sees the
+        // numeric values).
+        assert_eq!(report.aggregate.output_tokens_total, 42 + 17);
+
+        // ── DT-01 S1.3 closed gaps — prepare_step surface ─────
         assert_eq!(
-            report.aggregate.prepare_step_total, 0,
-            "documented gap: PrepareStepExecuted emit lands in S1.3"
+            report.aggregate.prepare_step_total, 2,
+            "S1.3: 2 prepare_step envelopes folded"
         );
-        assert!(report.evidence.prepare_step.is_empty());
+        assert_eq!(report.aggregate.prepare_step_granted, 1);
+        assert_eq!(report.aggregate.prepare_step_denied, 1);
+        assert_eq!(report.aggregate.prepare_step_requires_approval, 0);
+        assert_eq!(report.evidence.prepare_step.len(), 2);
+        assert!(
+            report
+                .blocking_failures
+                .iter()
+                .any(|f| f.code == "prepare_step_denied" && f.severity == Severity::Blocking),
+            "S1.3: a denied prepare_step surfaces as Blocking failure"
+        );
+
+        // ── Intentional zeros (no production caller) ──────────
         assert_eq!(
             report.aggregate.input_tokens_total, 0,
-            "documented gap: LlmRequested/Responded unwired (audit §3-4)"
+            "audit §3-4: no inputUsage in fixture; LlmRequested unwired in production"
         );
-        assert_eq!(report.aggregate.output_tokens_total, 0);
         assert_eq!(
             report.aggregate.compaction_events, 0,
-            "documented gap: ContextCompacted bus variant unused (audit §7)"
+            "audit §7: ContextCompacted bus variant unused"
         );
-        assert_eq!(report.aggregate.resume_invocations, 0);
+        assert_eq!(
+            report.aggregate.resume_invocations, 0,
+            "audit §14: ResumeInvoked reserved for M4.5+"
+        );
 
         // ── Outcome derivation ────────────────────────────────
-        // turns_completed == 0 ⇒ Incomplete (until S1.3 wires
-        // turn_finished).  Documented expectation, not a bug.
-        assert_eq!(report.task.outcome, TaskOutcome::Incomplete);
+        // turns_completed > 0 + a Blocking prepare_step_denied
+        // failure ⇒ TaskOutcome::Failed.  The recoverable
+        // stream_error contributes a Warning but the Blocking
+        // override wins.
+        assert_eq!(report.task.outcome, TaskOutcome::Failed);
 
         // Avoid dead variable warning; t0_started binds time we
         // sampled before fixture writes.
         let _ = t0_started;
+    }
+
+    /// DT-01 S1.3 — focused unit test: a single happy-path
+    /// `conversation:turn_finished` envelope drives the full
+    /// turn-level rollup with no other context.  Uses the canonical
+    /// non-redacted wire keys `inputUsage` / `outputUsage` (see
+    /// `TurnFinishedPayload` doc) so the values survive
+    /// `SENSITIVE_JSON_KEYS` redaction.
+    #[test]
+    fn fold_turn_finished_drives_turn_aggregates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "conversation:turn_finished",
+            serde_json::json!({
+                "turnNumber": 1,
+                "succeeded": true,
+                "durationMs": 999,
+                "inputUsage": 10,
+                "outputUsage": 20,
+            }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.task.turn_count, 1);
+        assert_eq!(report.aggregate.turns_completed, 1);
+        assert_eq!(report.aggregate.turns_succeeded, 1);
+        assert_eq!(report.aggregate.total_turn_duration_ms, 999);
+        assert_eq!(report.aggregate.input_tokens_total, 10);
+        assert_eq!(report.aggregate.output_tokens_total, 20);
+        assert!(report.task.last_turn_succeeded);
+        assert_eq!(report.task.outcome, TaskOutcome::Success);
+    }
+
+    /// DT-01 S1.3 — focused unit test: a single
+    /// `system:prepare_step` envelope with `outcome=granted`
+    /// drives the granted counter and pushes a typed
+    /// `PrepareStepTrace` into the evidence vector.
+    #[test]
+    fn fold_prepare_step_granted_appends_evidence_and_counter() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "system:prepare_step",
+            serde_json::json!({
+                "toolName": "bash",
+                "outcome": "granted",
+                "boundary": "within_workdir",
+                "permission": "allow",
+                "sandbox": "none",
+                "policyVersion": "prepare-step@m1.8-sandbox",
+            }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.aggregate.prepare_step_total, 1);
+        assert_eq!(report.aggregate.prepare_step_granted, 1);
+        assert_eq!(report.aggregate.prepare_step_denied, 0);
+        assert_eq!(report.evidence.prepare_step.len(), 1);
+        assert_eq!(report.evidence.prepare_step[0].tool_name.as_str(), "bash");
+        assert!(report
+            .blocking_failures
+            .iter()
+            .all(|f| f.code != "prepare_step_denied"));
     }
 }

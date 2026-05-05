@@ -998,6 +998,24 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         token_count,
         turn_duration_ms,
     );
+    // DT-01 S1.3 — mirror the canonical `conversation:turn_finished`
+    // envelope onto the run-log so the runlog-fold path
+    // (`fold_run_log_to_report`) can derive turn-level aggregates
+    // without reaching into the harness EventBus.  Audit §2.
+    crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+        Some(&app_handle_for_after_turn),
+        Some(&run_event_logger),
+        &session_id,
+        Some(run_event_logger.run_id()),
+        &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+            turn_number: turn_number_for_stream,
+            succeeded: !stream_failed,
+            duration_ms: turn_duration_ms,
+            terminal_status: terminal_status.map(str::to_string),
+            tokens_in: None,
+            tokens_out: Some(u64::from(token_count)),
+        },
+    );
     crate::modules::learning::estimation::record_turn_duration_ms(turn_duration_ms);
     crate::modules::observability::emit(
         "stream_turn_finished",

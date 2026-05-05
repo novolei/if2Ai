@@ -407,8 +407,11 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 session_totals: None,
             };
             stream_emitter.emit_payload(terminal_tool_payload.clone());
-            super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload)
-                .await;
+            super::stream_task_run_log::append_stream_event(
+                &run_event_logger,
+                &terminal_tool_payload,
+            )
+            .await;
 
             attempt_entry.transition_blocked();
             let _ = attempt_ledger::record_attempt(&app_data_dir, &attempt_entry);
@@ -520,8 +523,11 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                 session_totals: None,
             };
             stream_emitter.emit_payload(terminal_tool_payload.clone());
-            super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload)
-                .await;
+            super::stream_task_run_log::append_stream_event(
+                &run_event_logger,
+                &terminal_tool_payload,
+            )
+            .await;
 
             // ── Attempt Ledger: transition to failed (invalid args) ──
             attempt_entry.transition_failed("invalid_args".to_string(), 0);
@@ -637,7 +643,17 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         );
 
         // Harness: PrepareStepExecuted shadow trace.
-        if let Some(bus) = harness_bus.as_ref() {
+        //
+        // DT-01 S1.3 — mirror the bus emit onto the canonical
+        // run-log via `system:prepare_step` so the runlog-fold path
+        // (`fold_run_log_to_report`) can populate
+        // `aggregate.prepare_step_*` and `evidence.prepare_step`
+        // without reaching into the harness EventBus.  Audit §10.
+        // The compute used to be gated on `harness_bus.is_some()`;
+        // now the prepare-step decision is always computed because
+        // the run-log is the canonical truth (the bus emit remains
+        // gated as before).
+        {
             let parsed_args = parse_tool_input_json(&input_json);
             let prep_out =
                 crate::modules::control_plane::prepare_step_execution::prepare_step_execution(
@@ -648,16 +664,47 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
                         permission_policy: permission_policy.clone(),
                     },
                 );
-            let _ = bus.emit(AgentEvent::PrepareStepExecuted {
-                session_id: session_id.clone(),
-                tool_name: tool_name.clone(),
-                outcome: prep_out.outcome,
-                boundary: prep_out.boundary_decision,
-                permission: prep_out.permission_decision,
-                sandbox: prep_out.sandbox_policy,
-                policy_version: prep_out.policy_version,
-                at: chrono::Utc::now(),
+            // (1) Run-log mirror — canonical truth for fold path.
+            let prepare_payload = serde_json::json!({
+                "toolName": tool_name,
+                "outcome": prep_out.outcome,
+                "boundary": prep_out.boundary_decision,
+                "permission": prep_out.permission_decision,
+                "sandbox": prep_out.sandbox_policy,
+                "policyVersion": prep_out.policy_version,
             });
+            let prepare_correlation = CorrelationIds {
+                session_id: Some(session_id.clone()),
+                run_id: Some(run_id.clone()),
+                ..Default::default()
+            };
+            if let Err(err) = crate::modules::runtime::runtime_event::dispatch(
+                None,
+                crate::modules::runtime::contracts::common::RuntimeEventType::System,
+                "prepare_step",
+                prepare_correlation,
+                &prepare_payload,
+                Some(&run_event_logger),
+            ) {
+                tracing::trace!(
+                    error = ?err,
+                    "[harness] prepare_step envelope dispatch failed (non-fatal)"
+                );
+            }
+            // (2) Bus emit — preserved for telemetry / aggregator
+            // until DT-01 Stage 2 retires the EventBus.
+            if let Some(bus) = harness_bus.as_ref() {
+                let _ = bus.emit(AgentEvent::PrepareStepExecuted {
+                    session_id: session_id.clone(),
+                    tool_name: tool_name.clone(),
+                    outcome: prep_out.outcome,
+                    boundary: prep_out.boundary_decision,
+                    permission: prep_out.permission_decision,
+                    sandbox: prep_out.sandbox_policy,
+                    policy_version: prep_out.policy_version,
+                    at: chrono::Utc::now(),
+                });
+            }
         }
 
         let (result_text, is_error) = match permission_outcome {
@@ -729,7 +776,8 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             session_totals: None,
         };
         stream_emitter.emit_payload(terminal_tool_payload.clone());
-        super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload).await;
+        super::stream_task_run_log::append_stream_event(&run_event_logger, &terminal_tool_payload)
+            .await;
 
         // ── Attempt Ledger: transition to terminal status ──
         if denied_by_policy {

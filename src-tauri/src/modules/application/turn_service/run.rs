@@ -297,13 +297,28 @@ impl TurnService {
                         Some(&log_correlation),
                     )
                     .await;
+                let dur_ms_specialized = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     false,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_specialized,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: false,
+                        duration_ms: dur_ms_specialized,
+                        terminal_status: Some("specialized_surface".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 return Err(routed_message);
             }
@@ -837,13 +852,28 @@ impl TurnService {
                     thinking_content.as_ref().map(|s| s.len()),
                     session_id
                 );
+                let dur_ms_success = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     true,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_success,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: true,
+                        duration_ms: dur_ms_success,
+                        terminal_status: Some("completed".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 Ok(RunTurnResponse {
                     message: final_text,
@@ -896,13 +926,28 @@ impl TurnService {
                     }
                 }
 
+                let dur_ms_failed = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     false,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_failed,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: false,
+                        duration_ms: dur_ms_failed,
+                        terminal_status: Some("failed".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 Err(error_message)
             }
