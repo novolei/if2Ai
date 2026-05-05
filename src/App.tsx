@@ -20,7 +20,6 @@ import {
   createPermanentWorktree,
   createProject,
   createSession,
-  closeSession,
   deleteProject,
   deleteSession,
   ensureDefaultWorkdir,
@@ -43,7 +42,6 @@ import {
   startChatTurn,
   suggestSlashCommands,
   updateSessionIdentity,
-  type Project,
   type ConversationUndoStatus,
   type ProjectMeta,
   type SessionIdentityInput,
@@ -74,26 +72,12 @@ import { loadConversationHistory } from "@/session/loadConversationHistory";
 // render / boot orchestrator.
 import { AppShell } from "@/modules/app-shell/AppShell";
 import { runBootSequence } from "@/boot/boot-orchestrator";
-import { bootstrapStore, useBootstrapSelector } from "@/state";
-// MIG-014 — chat + session stores own per-session runtime
-// state. App.tsx no longer holds the canonical truth; the
-// `setX` wrappers below diff against the store snapshot and
-// dispatch the store's explicit actions so the React-shaped
-// `Dispatch<SetStateAction<T>>` API is preserved at every
-// existing call site.
-import {
-  getConversationSnapshot,
-  removeSession,
-  setConversation,
-  setSessionLoading as setStoreSessionLoading,
-  setSessionTodos as setStoreSessionTodos,
-  setStreamAbortHandle as setStoreStreamAbortHandle,
-  clearStreamAbortHandle as clearStoreStreamAbortHandle,
-  initTitleState as initStoreTitleState,
-  setTitleState as setStoreTitleState,
-  useChatStore,
-} from "@/stores";
-import { sessionStore, useSessionSelector } from "@/stores";
+import { bootstrapStore } from "@/state";
+// MIG-014 + GF-03 PR-3 — chat + session store wiring lives in
+// `useAppStateSetters()`; App.tsx only consumes the destructured
+// shims so the `Dispatch<SetStateAction<T>>` shape is preserved
+// at every existing call site without per-store imports here.
+import { useAppStateSetters } from "@/stores/use-store-setter-shims";
 // AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from "@/modules/app-shell/components/SectionWorkspace";
 import type { AppSection } from "@/modules/app-shell/types";
@@ -238,159 +222,37 @@ function App() {
       ? stored
       : "chat";
   });
-  // MIG-013 — these four slices live in the bootstrap store.
-  // Reads go through `useBootstrapSelector` so React re-renders
-  // only when the slice changes; writes go through store-aware
-  // setters that preserve React's `Dispatch<SetStateAction<T>>`
-  // shape so existing call sites (`setProjects(prev => ...)`,
-  // `setCurrentProject({ ... })`) compile unchanged.
-  const projects = useBootstrapSelector((s) => s.projects);
-  const setProjects = useCallback(
-    (next: ProjectMeta[] | ((prev: ProjectMeta[]) => ProjectMeta[])) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: ProjectMeta[]) => ProjectMeta[])(
-              bootstrapStore.getSnapshot().projects,
-            )
-          : next;
-      bootstrapStore.setProjectList(value);
-    },
-    [],
-  );
-  const projectSessions = useBootstrapSelector((s) => s.projectSessions);
-  const setProjectSessions = useCallback(
-    (
-      next:
-        | Record<string, SessionMeta[]>
-        | ((
-            prev: Record<string, SessionMeta[]>,
-          ) => Record<string, SessionMeta[]>),
-    ) => {
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                prev: Record<string, SessionMeta[]>,
-              ) => Record<string, SessionMeta[]>
-            )(bootstrapStore.getSnapshot().projectSessions)
-          : next;
-      bootstrapStore.setProjectSessions(value);
-    },
-    [],
-  );
-  const currentProject = useBootstrapSelector((s) => s.currentProject);
-  const activeProjectId = useBootstrapSelector((s) => s.activeProjectId);
-  const setCurrentProject = useCallback(
-    (next: Project | null | ((prev: Project | null) => Project | null)) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: Project | null) => Project | null)(
-              bootstrapStore.getSnapshot().currentProject,
-            )
-          : next;
-      bootstrapStore.selectProject({
-        projectId: bootstrapStore.getSnapshot().activeProjectId,
-        currentProject: value,
-      });
-    },
-    [],
-  );
-  const setActiveProjectId = useCallback(
-    (next: string | null | ((prev: string | null) => string | null)) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: string | null) => string | null)(
-              bootstrapStore.getSnapshot().activeProjectId,
-            )
-          : next;
-      bootstrapStore.selectProject({
-        projectId: value,
-        currentProject: bootstrapStore.getSnapshot().currentProject,
-      });
-    },
-    [],
-  );
-  // MIG-014 — activeSessionId moved to the canonical session
-  // store; reads via `useSessionSelector`, writes via the
-  // store-backed wrapper that keeps React's
-  // `Dispatch<SetStateAction<string | null>>` shape so existing
-  // call sites compile unchanged.
-  const activeSessionId = useSessionSelector((s) => s.activeSessionId);
-  const setActiveSessionId = useCallback(
-    (next: string | null | ((prev: string | null) => string | null)) => {
-      const previous = sessionStore.getSnapshot().activeSessionId;
-      const value =
-        typeof next === "function"
-          ? (next as (prev: string | null) => string | null)(previous)
-          : next;
-      // MEM-MOD-WIRE-FIX-2 — fire `on_session_end` for the session
-      // we're about to leave so the rolling-summary / compile_today
-      // / reflection / learned_traits pipelines actually run.  Best-
-      // effort: a failed close never blocks the switch.
-      if (previous && previous !== value) {
-        void closeSession(previous).catch((err) => {
-          console.warn("[session_close] failed", previous, err);
-        });
-      }
-      sessionStore.setActiveSessionId(value);
-    },
-    [],
-  );
+  // GF-03 PR-3 — bootstrap / session / chat store setter shims
+  // are composed in a single hook so App.tsx no longer carries
+  // ~330 LOC of `useCallback` boilerplate. Behavior is identical
+  // to the inline definitions; see `use-store-setter-shims.ts`.
+  const {
+    projects,
+    setProjects,
+    projectSessions,
+    setProjectSessions,
+    currentProject,
+    setCurrentProject,
+    activeProjectId,
+    setActiveProjectId,
+    activeSessionId,
+    setActiveSessionId,
+    conversations,
+    setConversations,
+    sessionLoading,
+    setSessionLoading,
+    sessionTodos,
+    setSessionTodos,
+    sessionTitleStates,
+    setSessionTitleStates,
+    streamAbortHandles,
+    setStreamAbortHandles,
+  } = useAppStateSetters();
   const [leftPaneWidth, setLeftPaneWidth] = useState(240);
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
   // GF-03 PR-1 — updater banner state machine moved to
   // `useUpdaterBanner()` (see top of component).
-  // MIG-014 — `conversations` lives in the chat store
-  // (conversation-slice.ts). Reads go through `useChatStore`;
-  // writes go through `setConversations` wrapper that diffs
-  // against the previous record and dispatches the appropriate
-  // chat-store mutation so call sites that use
-  // `setConversations(prev => ({ ...prev, [id]: conv }))`
-  // continue to compile unchanged.
-  const chatSlice = useChatStore();
-  const conversations = chatSlice.conversations;
-  const setConversations = useCallback(
-    (
-      next:
-        | Record<string, Conversation>
-        | ((
-            prev: Record<string, Conversation>,
-          ) => Record<string, Conversation>),
-    ) => {
-      // Always read the latest snapshot from the store, not the
-      // stale React-rendered chatSlice.conversations. This ensures
-      // that multiple setConversations calls within the same
-      // sendMessage invocation see each other's updates.
-      const prev = getConversationSnapshot().conversations;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, Conversation>,
-              ) => Record<string, Conversation>
-            )(prev)
-          : next;
-      // Compute add/update/delete diff against the slice and
-      // dispatch through the canonical actions so subscribers
-      // (chat workspace, telemetry drawer, etc.) see the same
-      // events whether the call came through the wrapper or
-      // through a direct `setConversation(...)` import.
-      const prevIds = new Set(Object.keys(prev));
-      const nextIds = new Set(Object.keys(value));
-      for (const id of nextIds) {
-        if (value[id] !== prev[id]) {
-          setConversation(value[id]);
-        }
-      }
-      for (const id of prevIds) {
-        if (!nextIds.has(id)) {
-          removeSession(id);
-        }
-      }
-    },
-    [],
-  );
   const [input, setInput] = useState("");
   // GF-03 PR-1 — chat-prefill listener (Tauri tray / deeplink → chat).
   useChatPrefill({ setActiveSection, setInput });
@@ -400,36 +262,6 @@ function App() {
   // telemetry renders the resulting judgment.
   // Honest scope: pure preview, the agent loop is NOT auto-routed.
   useExecutionModePreview(input, { sessionId: activeSessionId ?? undefined });
-  // MIG-014 — sessionLoading lives in the chat store. Wrapper
-  // diffs against the previous record and dispatches the
-  // canonical `setSessionLoading(id, bool)` action per id
-  // change.
-  const sessionLoading = chatSlice.sessionLoading;
-  const setSessionLoading = useCallback(
-    (
-      next:
-        | Record<string, boolean>
-        | ((prev: Record<string, boolean>) => Record<string, boolean>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionLoading;
-      const value =
-        typeof next === "function"
-          ? (next as (p: Record<string, boolean>) => Record<string, boolean>)(
-              prev,
-            )
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id] === true;
-        const current = prev[id] === true;
-        if (wanted !== current) {
-          setStoreSessionLoading(id, wanted);
-        }
-      }
-    },
-    [],
-  );
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [isRightRailOpen, setIsRightRailOpen] = useState(false);
@@ -448,73 +280,6 @@ function App() {
     }
     return "dangerFullAccess";
   });
-  // MIG-014 — sessionTodos + sessionTitleStates live in the
-  // chat store. Wrappers preserve `Dispatch<SetStateAction<T>>`.
-  const sessionTodos = chatSlice.sessionTodos;
-  const setSessionTodos = useCallback(
-    (
-      next:
-        | Record<string, TodoItem[]>
-        | ((prev: Record<string, TodoItem[]>) => Record<string, TodoItem[]>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionTodos;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, TodoItem[]>,
-              ) => Record<string, TodoItem[]>
-            )(prev)
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id] ?? [];
-        const current = prev[id];
-        if (wanted !== current) {
-          setStoreSessionTodos(id, wanted);
-        }
-      }
-    },
-    [],
-  );
-  const sessionTitleStates = chatSlice.sessionTitleStates;
-  const setSessionTitleStates = useCallback(
-    (
-      next:
-        | Record<string, SessionTitleState>
-        | ((
-            prev: Record<string, SessionTitleState>,
-          ) => Record<string, SessionTitleState>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionTitleStates;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, SessionTitleState>,
-              ) => Record<string, SessionTitleState>
-            )(prev)
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id];
-        const current = prev[id];
-        if (!wanted) continue;
-        if (current === wanted) continue;
-        // Replace wholesale via the canonical `setTitleState`
-        // action so both `stage` and `autoRenameCount` end up
-        // synced (the previous "stage-only" wrapper silently
-        // dropped autoRenameCount mutations and broke the
-        // `MAX_AUTO_RENAME_COUNT` guard in
-        // `maybeAutoRenameSession`).
-        if (!current) initStoreTitleState(id);
-        setStoreTitleState(id, wanted);
-      }
-    },
-    [],
-  );
   // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({});
   const pendingAutoTitleSessionIdsRef = useRef<Set<string>>(new Set());
@@ -542,39 +307,6 @@ function App() {
       };
     });
   };
-
-  // MIG-014 — streamAbortHandles live in the chat store.
-  // Wrapper diffs and dispatches `setStreamAbortHandle` /
-  // `clearStreamAbortHandle` per id.
-  const streamAbortHandles = chatSlice.streamAbortHandles;
-  const setStreamAbortHandles = useCallback(
-    (
-      next:
-        | Record<string, string>
-        | ((prev: Record<string, string>) => Record<string, string>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().streamAbortHandles;
-      const value =
-        typeof next === "function"
-          ? (next as (p: Record<string, string>) => Record<string, string>)(
-              prev,
-            )
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id];
-        const current = prev[id];
-        if (wanted === current) continue;
-        if (wanted) {
-          setStoreStreamAbortHandle(id, wanted);
-        } else {
-          clearStoreStreamAbortHandle(id);
-        }
-      }
-    },
-    [],
-  );
   // Phase M2.8 — permission prompt now reads from the canonical
   // projection store (`snapshot.approvals`).  The bridge feeds the
   // store via `translatePermissionRequestPayload`; we pick the
