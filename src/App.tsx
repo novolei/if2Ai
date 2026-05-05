@@ -32,7 +32,6 @@ import {
   pickFolderDialog,
   renameProject,
   resolveSkillSlash,
-  respondPermission,
   sessionRedo,
   sessionUndo,
   sessionUndoStatus,
@@ -48,7 +47,6 @@ import {
 import { stopAgentStream as stopAgentStreamCommand } from "@/api/streaming";
 import type {
   PermissionMode,
-  PermissionRequestPayload,
   StreamTokenPayload,
 } from "@/transport/contracts";
 import { toast } from "sonner";
@@ -104,15 +102,7 @@ import { MemoryBrowser } from "@/components/memory/MemoryBrowser";
 import { TelemetryDrawer } from "@/components/chat/TelemetryDrawer";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import type { TodoItem } from "@/components/ui/TodoPanel";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { PermissionOverlayHost } from "@/permission/PermissionOverlayHost";
 
 const appIconSrc = appIconAsset;
 // GF-03 PR-4 — title-stage constants + helpers extracted to
@@ -306,25 +296,12 @@ function App() {
       };
     });
   };
-  // Phase M2.8 — permission prompt now reads from the canonical
-  // projection store (`snapshot.approvals`).  The bridge feeds the
-  // store via `translatePermissionRequestPayload`; we pick the
-  // first pending approval (single-prompt UX preserved) and
-  // dispatch `permission_resolved` after the user decides so the
-  // reducer clears the entry.  No more `useState<PermissionRequestPayload>`.
-  const approvals = useRuntimeProjectionSelector((s) => s.approvals);
-  const permissionPrompt = useMemo<PermissionRequestPayload | null>(() => {
-    const ids = Object.keys(approvals);
-    if (ids.length === 0) return null;
-    const a = approvals[ids[0]];
-    return {
-      session_id: a.sessionId,
-      tool_name: a.toolName,
-      permission_mode: a.permissionMode,
-      current_mode: a.currentMode,
-      message: a.message,
-    };
-  }, [approvals]);
+  // GF-03 PR-5 — permission overlay state + decide handler are
+  // owned by `usePermissionOverlay()` and rendered via
+  // `<PermissionOverlayHost />` in the overlays slot below.  The
+  // hook continues to read `snapshot.approvals` from the canonical
+  // projection store and dispatches `permission_resolved` so the
+  // reducer clears the entry — behavior is unchanged.
   const sessionLoadingRef = useRef<Record<string, boolean>>({});
   const autoResumeAttemptsRef = useRef<Record<string, number>>({});
   const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set());
@@ -1132,32 +1109,6 @@ function App() {
     stopAgentStream,
     refreshConversationUndoStatus,
   ]);
-
-  const handlePermissionDecision = async (
-    decision: "allow" | "deny",
-    scope: "once" | "session" = "once",
-  ) => {
-    if (!permissionPrompt) return;
-    const sessionId = permissionPrompt.session_id;
-    try {
-      await respondPermission(sessionId, decision, {
-        toolName: permissionPrompt.tool_name,
-        scope,
-      });
-    } catch (err) {
-      console.error("Failed to respond permission:", err);
-    } finally {
-      // Phase M2.8 — clear the projection-store approval so the
-      // dialog closes.  Local `setPermissionPrompt(null)` removed.
-      runtimeProjectionStore.dispatch({
-        kind: "permission_resolved",
-        sessionId,
-        decision,
-        scope,
-        receivedAt: Date.now(),
-      });
-    }
-  };
 
   const buildResumePrompt = (resumeCursor: string) =>
     `[resume_cursor] ${resumeCursor}\n` +
@@ -2061,63 +2012,7 @@ function App() {
             onSubmit={handleCreateProject}
           />
 
-          <Dialog open={Boolean(permissionPrompt)}>
-            <DialogContent
-              showCloseButton={false}
-              onEscapeKeyDown={(e) => e.preventDefault()}
-              onPointerDownOutside={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle>权限请求</DialogTitle>
-                <DialogDescription>
-                  {permissionPrompt?.message ?? "该操作需要更高权限。"}
-                </DialogDescription>
-              </DialogHeader>
-              {permissionPrompt && (
-                <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-[12px] text-black/60">
-                  工具：{permissionPrompt.tool_name} · 当前模式：
-                  {permissionPrompt.current_mode}
-                </div>
-              )}
-              <DialogFooter className="sm:justify-between">
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("deny", "once")}
-                  >
-                    拒绝本次
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("deny", "session")}
-                  >
-                    本会话拒绝
-                  </Button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("allow", "once")}
-                  >
-                    允许本次
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("allow", "session")}
-                  >
-                    本会话允许
-                  </Button>
-                </div>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <PermissionOverlayHost />
 
           <TelemetryDrawer
             sessionId={activeSessionId}
