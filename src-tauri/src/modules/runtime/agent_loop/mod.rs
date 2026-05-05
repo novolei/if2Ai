@@ -9,7 +9,9 @@ pub mod config;
 pub mod iteration_tracker;
 pub mod loop_runner;
 
+#[allow(unused_imports)]
 pub use config::{AgenticLoopConfig, IterationStrategy, ProgressCheckConfig};
+#[allow(unused_imports)]
 pub use iteration_tracker::{IterationTracker, ProgressHint};
 pub use loop_runner::{
     run_agentic_loop, ContextCompressionLevel, LoopContext, LoopDelegate, LoopOutcome, LoopSignal,

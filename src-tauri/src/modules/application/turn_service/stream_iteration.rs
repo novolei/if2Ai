@@ -57,9 +57,9 @@ use crate::modules::tools::ToolRegistry;
 
 use super::stream_loop_state::StreamLoopState;
 use super::stream_task::{
-    apply_memory_recall_success_finalization_guard,
-    should_retry_announced_tool_intent_no_tool, should_retry_tool_required_no_tool,
-    tool_batch_signature, REPEATED_TOOL_BATCH_LIMIT,
+    apply_memory_recall_success_finalization_guard, should_retry_announced_tool_intent_no_tool,
+    should_retry_tool_required_no_tool, tool_batch_signature, tool_required_nudge_message,
+    REPEATED_TOOL_BATCH_LIMIT,
 };
 use super::stream_task_run_log::append_stream_event;
 
@@ -710,15 +710,19 @@ pub(super) async fn handle_no_tool_calls(
         refs.force_final_response,
         refs.tool_defs.len(),
     ) {
+        let current_retry = state.tool_required_no_tool_retry_count;
         state.tool_required_no_tool_retry_count += 1;
         tracing::warn!(
-            "[start_agent_stream] tool-required task produced no mutating tool call; retrying once with tool-required loop control. stream_id={}, session_id={}",
+            "[start_agent_stream] tool-required task produced no mutating tool call; \
+             progressive retry level {}/3 with escalated nudge. stream_id={}, session_id={}",
+            current_retry,
             refs.stream_id,
             refs.session_id
         );
         let payload = serde_json::json!({
             "reason": "tool_required_no_tool",
             "retry_count": state.tool_required_no_tool_retry_count,
+            "escalation_level": current_retry,
             "available_tool_count": refs.tool_defs.len(),
         });
         let _ = refs
@@ -727,9 +731,11 @@ pub(super) async fn handle_no_tool_calls(
             .await;
         state.accumulated_text.clear();
         state.accumulated_thinking.clear();
-        state.session_messages.push(InputMessage::user_text(
-            "[agent_loop_control] The previous assistant response did not call tools, but this user request requires concrete file/tool execution before completion. Call the available tools now to inspect, create or edit the artifact, and verify it. Use complete JSON arguments for every tool call. Do not answer only with prose. If tool execution is impossible, explain the blockage in the final report.",
-        ));
+        state
+            .session_messages
+            .push(InputMessage::user_text(tool_required_nudge_message(
+                current_retry,
+            )));
         state.force_tool_choice_next = true;
         return NoToolOutcome::Continue;
     }
@@ -1042,6 +1048,31 @@ pub(super) async fn iteration_execute_tools(
     state.sanitize_invalid_tool_use_samples = tool_result.sanitize_invalid_tool_use_samples;
     if state.pending_operation_for_delegate.is_none() {
         state.pending_operation_for_delegate = tool_result.pending_operation;
+    }
+
+    // Read-only loop nudge: if the agent has been reading files for
+    // multiple iterations without any mutating tool call, inject a
+    // system-level reminder so the LLM has a chance to take action
+    // before the turn exhausts its iteration budget.
+    if !state.read_only_loop_nudge_injected
+        && state.has_successful_tool
+        && !state.has_successful_mutating_tool
+        && state.tool_loop_iter >= 5
+        && refs.work_loop_decision.loop_kind
+            != crate::modules::runtime::contracts::WorkLoopKind::DirectAnswer
+    {
+        state.read_only_loop_nudge_injected = true;
+        tracing::warn!(
+            "[start_agent_stream] read-only loop nudge injected at iteration {}. stream_id={}, session_id={}",
+            state.tool_loop_iter,
+            refs.stream_id,
+            refs.session_id
+        );
+        state.session_messages.push(InputMessage::user_text(
+            "[agent_loop_control] You have been reading files for multiple iterations without making any changes. \
+             If the task requires creating or modifying files, please use write_file or bash now. \
+             Do not just analyze \u{2014} take action.",
+        ));
     }
     tracing::info!(
         "[start_agent_stream] Tool execution done, continuing outer loop. session_messages len={}",

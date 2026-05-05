@@ -232,6 +232,12 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
         "user_message_chars": msg.chars().count(),
     });
 
+    // Mark short-direct-request (Trivial + DirectExecute) as ambiguous
+    // so the application layer can optionally escalate via LLM semantic
+    // verification.
+    let is_ambiguous =
+        mode == ExecutionMode::DirectExecute && complexity == ComplexityLevel::Trivial;
+
     let decision = ExecutionModeDecision {
         execution_mode: mode,
         risk_level: risk,
@@ -244,14 +250,14 @@ pub fn classify_request(input: IngressClassifierInput<'_>) -> IngressClassifierO
         classifier_policy_version: CLASSIFIER_POLICY_VERSION.to_string(),
         classifier_matched_rule_ids: matched_rule_ids.clone(),
         classifier_slot_summary: slot_summary.clone(),
-        classifier_ambiguous_escalated: false,
+        classifier_ambiguous_escalated: is_ambiguous,
         classifier_escalation_source: None,
     };
     let evidence = ClassifierEvidence {
         policy_version: CLASSIFIER_POLICY_VERSION.to_string(),
         matched_rule_ids,
         slot_summary,
-        ambiguous_escalated: false,
+        ambiguous_escalated: is_ambiguous,
         escalation_source: None,
     };
 

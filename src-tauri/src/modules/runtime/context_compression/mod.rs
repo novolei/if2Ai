@@ -582,17 +582,26 @@ mod tests {
 
     #[test]
     fn context_pressure_normal() {
-        assert_eq!(ContextPressure::from_usage(700, 1000), ContextPressure::Normal);
+        assert_eq!(
+            ContextPressure::from_usage(700, 1000),
+            ContextPressure::Normal
+        );
     }
 
     #[test]
     fn context_pressure_warning() {
-        assert_eq!(ContextPressure::from_usage(850, 1000), ContextPressure::Warning);
+        assert_eq!(
+            ContextPressure::from_usage(850, 1000),
+            ContextPressure::Warning
+        );
     }
 
     #[test]
     fn context_pressure_critical() {
-        assert_eq!(ContextPressure::from_usage(960, 1000), ContextPressure::Critical);
+        assert_eq!(
+            ContextPressure::from_usage(960, 1000),
+            ContextPressure::Critical
+        );
     }
 
     #[test]

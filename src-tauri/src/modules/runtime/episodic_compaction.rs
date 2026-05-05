@@ -194,6 +194,12 @@ mod tests {
             trust_score: 0.0,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            cognitive_layer: crate::modules::memory::CognitiveLayer::Meta,
+            context_tags: Vec::new(),
         }
     }
 

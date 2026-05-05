@@ -248,13 +248,8 @@ pub fn session_has_run_log_jsonl_files(base_dir: impl AsRef<Path>, session_id: &
     let Ok(iter) = std::fs::read_dir(&session_dir) else {
         return false;
     };
-    iter.filter_map(std::result::Result::ok).any(|entry| {
-        entry
-            .path()
-            .extension()
-            .and_then(|ext| ext.to_str())
-            == Some("jsonl")
-    })
+    iter.filter_map(std::result::Result::ok)
+        .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
 }
 
 fn read_all_session_entries(

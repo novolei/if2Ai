@@ -671,6 +671,7 @@ impl TurnService {
                 },
                 priority: 90,
                 is_sensitive: false,
+                cache_hint: crate::modules::memory::inject::CacheHint::None,
             });
             prompt.text = prompt.plan.join_into_text();
         }
@@ -732,6 +733,7 @@ impl TurnService {
                 },
                 priority: 88,
                 is_sensitive: false,
+                cache_hint: crate::modules::memory::inject::CacheHint::None,
             });
             prompt.text = prompt.plan.join_into_text();
         }

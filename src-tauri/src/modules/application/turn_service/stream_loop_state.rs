@@ -78,6 +78,10 @@ pub(super) struct StreamLoopState {
     pub has_successful_tool: bool,
     pub has_successful_mutating_tool: bool,
     pub provider_textual_tool_markup_seen: bool,
+    /// Whether we already injected a read-only loop nudge message to
+    /// remind the LLM to perform mutating operations. Only injected
+    /// once per turn to avoid spamming.
+    pub read_only_loop_nudge_injected: bool,
 
     // === Result status ===
     pub terminal_status: Option<&'static str>,
@@ -165,6 +169,7 @@ impl StreamLoopState {
             has_successful_tool: false,
             has_successful_mutating_tool: false,
             provider_textual_tool_markup_seen: false,
+            read_only_loop_nudge_injected: false,
 
             terminal_status: None,
             last_stream_error_reason: None,

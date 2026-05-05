@@ -22,6 +22,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::modules::api::InputMessage;
 use crate::modules::application::memory_candidate_extractor::{
+    extract_from_assistant_output, extract_from_user_messages,
     extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
 };
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
@@ -38,6 +39,7 @@ use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryTicker, PinnedStore, SharedMemoryProvider};
 use crate::modules::runtime::budget::MAX_REQUEST_TOKEN_BUDGET_ESTIMATE;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::config::ConfigLoader;
 use crate::modules::runtime::contracts::agent_loop::{SkillResolutionPlan, WorkLoopDecision};
 use crate::modules::runtime::contracts::prompt::PromptDiagnosticsSummary;
 use crate::modules::runtime::event_log::RunEventLogger;
@@ -100,6 +102,10 @@ pub(super) struct FinalizeStreamInputs {
     pub sanitized_dropped_invalid_tool_use_inputs: usize,
     pub stream_start_retry_count: usize,
     pub stream_event_retry_count: usize,
+    /// Number of `tool_required_no_tool` progressive retries consumed
+    /// during this turn (0..=3). Used to compute the dynamic
+    /// `retry_budget_remaining` on the recoverability payload.
+    pub tool_required_no_tool_retry_count: usize,
     pub sanitize_orphan_samples: Vec<String>,
     pub sanitize_unmatched_samples: Vec<String>,
     pub sanitize_invalid_tool_use_samples: Vec<String>,
@@ -151,6 +157,10 @@ pub(super) struct FinalizeStreamInputs {
     pub active_retrieval_manager_for_after_turn: Option<Arc<ActiveRetrievalManager>>,
     pub stream_session_id_for_after_turn: String,
     pub stream_project_id_for_after_turn: Option<String>,
+    /// MEM-AUTO-EXTRACT — utility LLM for user-message extraction.
+    pub utility_llm_for_after_turn: Arc<dyn crate::modules::memory::UtilityLlm>,
+    /// Workdir for loading memory config (auto_extract_enabled check).
+    pub workdir_for_after_turn: std::path::PathBuf,
 }
 
 /// Run the post-loop finalize block for one streaming chat turn.
@@ -197,6 +207,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         sanitized_dropped_invalid_tool_use_inputs,
         stream_start_retry_count,
         stream_event_retry_count,
+        tool_required_no_tool_retry_count,
         sanitize_orphan_samples,
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
@@ -229,6 +240,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         active_retrieval_manager_for_after_turn,
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
+        utility_llm_for_after_turn,
+        workdir_for_after_turn,
     } = inputs;
 
     // Guardrail: do not allow "operation completed" claims without a successful
@@ -344,7 +357,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         diagnostic_warnings.push(warning);
     }
 
-    let user_visible_truth = TaskOutcomeResolver::resolve(
+    let mut user_visible_truth = TaskOutcomeResolver::resolve(
         ExecutionTruth {
             has_successful_tool,
             has_successful_mutating_tool,
@@ -355,6 +368,18 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             last_stream_error_reason: last_stream_error_reason.clone(),
         },
     );
+    // Override retry_budget_remaining with the dynamic budget from
+    // the progressive escalation ladder (Task #37).
+    if matches!(
+        terminal_status,
+        Some("tool_required_no_tool") | Some("provider_textual_tool_call_markup")
+    ) {
+        user_visible_truth.recoverability.retry_budget_remaining =
+            crate::modules::runtime::recoverability::compute_tool_retry_budget(
+                tool_required_no_tool_retry_count,
+                super::stream_task::TOOL_REQUIRED_NO_TOOL_MAX_RETRIES,
+            );
+    }
     let resume_cursor = user_visible_truth
         .resume_available
         .then(|| build_resume_cursor(&stream_id_for_task, tool_loop_iter, token_count));
@@ -707,28 +732,121 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
     };
     let candidates_stream =
         extract_memory_store_tool_candidates(&new_messages_stream, &after_turn_scope_stream);
-    let existing_stream = lookup_existing_records_for_candidates(
-        &memory_provider_for_after_turn,
-        &after_turn_scope_stream,
-        &candidates_stream,
-    )
-    .await;
-    dispatch_after_turn(
-        &app_handle_for_after_turn,
-        harness_bus_for_after_turn.as_ref(),
-        MemoryInjectionDeps {
-            pinned_store: pinned_store_for_after_turn.clone(),
-            memory_provider: memory_provider_for_after_turn.clone(),
-            active_retrieval_manager: active_retrieval_manager_for_after_turn.clone(),
-        },
-        Some(stream_session_id_for_after_turn.clone()),
-        stream_project_id_for_after_turn.clone(),
-        candidates_stream,
-        existing_stream,
-        Vec::new(),
-        "start_agent_stream",
-    )
-    .await;
+
+    // MEM-AUTO-EXTRACT + dispatch_after_turn — run entire after-turn
+    // memory pipeline in background so the turn completes immediately.
+    let auto_extract_enabled = ConfigLoader::default_for(&workdir_for_after_turn)
+        .load()
+        .map(|c| c.memory().auto_extract_enabled())
+        .unwrap_or(true);
+    // Clone variables that are also used after the spawn block.
+    let bg_app_handle = app_handle_for_after_turn.clone();
+    let bg_session_id = stream_session_id_for_after_turn.clone();
+    let bg_utility_llm = utility_llm_for_after_turn.clone();
+    let bg_scope = after_turn_scope_stream.clone();
+    let bg_messages = new_messages_stream.clone();
+    let bg_memory_provider = memory_provider_for_after_turn.clone();
+    let bg_harness_bus = harness_bus_for_after_turn.clone();
+    let bg_pinned_store = pinned_store_for_after_turn.clone();
+    let bg_active_retrieval_manager = active_retrieval_manager_for_after_turn.clone();
+    let bg_project_id = stream_project_id_for_after_turn.clone();
+    // Task#33 — collect content_preview from LLM-explicit memory_store
+    // candidates so the auto-extraction prompts can skip already-stored facts.
+    let already_stored_previews: Vec<String> = candidates_stream
+        .iter()
+        .map(|c| c.content_preview.clone())
+        .collect();
+    // Task#32 — pre-compute MemoryItemProjection items from the tool-call
+    // candidates before the spawn moves `candidates_stream`.
+    let tool_call_memory_projections: Vec<MemoryItemProjection> = candidates_stream
+        .iter()
+        .enumerate()
+        .map(|(idx, candidate)| {
+            let scope_label = match candidate.scope {
+                crate::modules::runtime::contracts::memory::MemoryScope::Session => "session",
+                crate::modules::runtime::contracts::memory::MemoryScope::Project => "project",
+                crate::modules::runtime::contracts::memory::MemoryScope::Global => "global",
+            };
+            MemoryItemProjection {
+                id: candidate
+                    .evidence_id
+                    .clone()
+                    .unwrap_or_else(|| format!("ms-candidate-{}", idx)),
+                content: candidate.content_preview.clone(),
+                scope: scope_label.to_string(),
+                relevance_score: None,
+                stored_at: None,
+            }
+        })
+        .collect();
+    tokio::spawn(async move {
+        let mut all_candidates_stream = candidates_stream;
+
+        if auto_extract_enabled {
+            let auto = extract_from_user_messages(
+                &bg_messages,
+                bg_utility_llm.as_ref(),
+                &bg_scope,
+                &already_stored_previews,
+            )
+            .await;
+            if !auto.is_empty() {
+                tracing::debug!(
+                    count = auto.len(),
+                    "[start_agent_stream] auto-extracted memory candidates from user messages"
+                );
+                all_candidates_stream.extend(auto);
+            }
+
+            let assistant_auto = extract_from_assistant_output(
+                &bg_messages,
+                bg_utility_llm.as_ref(),
+                &bg_scope,
+                &already_stored_previews,
+            )
+            .await;
+            if !assistant_auto.is_empty() {
+                tracing::debug!(
+                    count = assistant_auto.len(),
+                    "[start_agent_stream] auto-extracted memory candidates from assistant output"
+                );
+                all_candidates_stream.extend(assistant_auto);
+            }
+        }
+
+        let existing_stream = lookup_existing_records_for_candidates(
+            &bg_memory_provider,
+            &bg_scope,
+            &all_candidates_stream,
+        )
+        .await;
+        if let Err(e) = async {
+            dispatch_after_turn(
+                &bg_app_handle,
+                bg_harness_bus.as_ref(),
+                MemoryInjectionDeps {
+                    pinned_store: bg_pinned_store.clone(),
+                    memory_provider: bg_memory_provider.clone(),
+                    active_retrieval_manager: bg_active_retrieval_manager.clone(),
+                },
+                Some(bg_session_id.clone()),
+                bg_project_id.clone(),
+                all_candidates_stream,
+                existing_stream,
+                Vec::new(),
+                "start_agent_stream",
+            )
+            .await;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await
+        {
+            tracing::warn!(
+                error = %e,
+                "[start_agent_stream] background after-turn memory pipeline failed"
+            );
+        }
+    });
 
     // LearningModule: record turn + reflection trigger.
     if let Some(lm_arc) = &learning_module_for_stream {
@@ -878,10 +996,17 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             output_reserve: OUTPUT_RESERVE,
             remaining,
         };
-        let memory_payload = if memory_context_items_for_task.is_empty() {
+        // Task#32 — also surface memory_store tool-call candidates as
+        // MemoryItemProjection items so the frontend MemoryChip renders
+        // even when the retrieval-based memory_context was empty (e.g.
+        // DirectAnswer mode). The candidates were extracted synchronously
+        // before the tokio::spawn so they are available here.
+        let mut merged_memory_items = memory_context_items_for_task.clone();
+        merged_memory_items.extend(tool_call_memory_projections);
+        let memory_payload = if merged_memory_items.is_empty() {
             None
         } else {
-            Some(memory_context_items_for_task.clone())
+            Some(merged_memory_items)
         };
 
         // Build the per-turn / per-session payloads from the values we
@@ -1151,6 +1276,9 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         history: session_messages.clone(),
         accumulated_text: accumulated_text.clone(),
         app_handle: app_handle_for_after_turn.clone(),
+        has_successful_mutating_tool,
+        message_count: session_messages.len(),
+        workdir: workdir_for_after_turn.clone(),
     });
 }
 
@@ -1163,6 +1291,9 @@ struct EvolutionFinalizeArgs {
     history: Vec<InputMessage>,
     accumulated_text: String,
     app_handle: AppHandle,
+    has_successful_mutating_tool: bool,
+    message_count: usize,
+    workdir: std::path::PathBuf,
 }
 
 /// Spawn the three WU-003 finalize pipelines as fire-and-forget
@@ -1187,6 +1318,9 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
         history,
         accumulated_text,
         app_handle,
+        has_successful_mutating_tool,
+        message_count,
+        workdir,
     } = args;
 
     // (2) Sync checkpoint extraction — always runs (no LLM, no I/O).
@@ -1220,15 +1354,35 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
     }
 
     // (1) Sedimentation pipeline — real chat-provider LLM (iter-3).
+    //     When the turn had successful mutating tools and enough
+    //     conversation depth, auto-persist new drafts to disk.
     {
         let session_id = session_id.clone();
         let history = history.clone();
         let app_handle = app_handle.clone();
+        let skills_dir = workdir.join(".if2ai/skills");
         tokio::spawn(async move {
             let llm: Arc<dyn crate::modules::memory::UtilityLlm> = Arc::new(
                 ChatProviderUtilityLlm::new(crate::modules::config::store::if2ai_data_root()),
             );
             let drafts = super::finalize_hooks::run_sedimentation_pipeline(&history, llm).await;
+
+            // Skill crystallization: auto-persist when the turn had
+            // successful mutating tools and enough conversation depth.
+            if has_successful_mutating_tool && message_count >= 6 && !drafts.is_empty() {
+                let saved = crate::modules::skills::sedimentation::auto_persist_drafts(
+                    &drafts,
+                    &skills_dir,
+                );
+                if !saved.is_empty() {
+                    tracing::info!(
+                        "[after_turn] skill crystallization persisted {} skill(s): {:?}",
+                        saved.len(),
+                        saved
+                    );
+                }
+            }
+
             for draft in drafts {
                 let payload = serde_json::json!({
                     "name": draft.name,
