@@ -34,32 +34,16 @@ import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import "highlight.js/styles/github.css"
 import { cn } from "@/lib/utils"
-// Phase TTS-E：消息级语音播放按钮（lazy 加载，避免 AudioContext 在入口初始化）
-const MessageVoiceButtonLazy = React.lazy(() =>
-  import('@/modules/chat/MessageVoiceButton').then((m) => ({ default: m.MessageVoiceButton }))
-)
 // 语音输入按钮（SenseVoice STT）
 const SttButtonLazy = React.lazy(() =>
   import('@/modules/chat/SttButton').then((m) => ({ default: m.SttButton }))
 )
 import { listDirectoryPreview, openDirectoryPath, readFilePreview, writeFileContents, type ContextBudgetUsage, type DirectoryEntryPreview, type FilePreviewPayload, type MemoryContextItem, type PermissionMode, type SessionTotals } from "@/lib/tauri"
-import { MemoryChip } from "@/components/memory/MemoryChip"
-import { TurnCostChip } from "@/components/chat/TurnCostChip"
-import { RoutingChip } from "@/components/chat/RoutingChip"
 import { BranchPicker } from "@/components/chat/BranchPicker"
 import { ModelPicker } from "@/components/chat/ModelPicker"
-import { SlashResultCard } from "@/components/chat/SlashResultCard"
 import { ContextBar } from "@/components/chat/ContextBar"
-import { VirtualMessageList } from "@/components/chat/VirtualMessageList"
 import type { FinalRunReport } from "@/transport/contracts"
 
-/**
- * Threshold above which the chat transcript switches from straight
- * `messages.map(...)` rendering to virtualised rendering.  Sessions below
- * this size keep the original DOM shape (zero behaviour change); long
- * sessions automatically opt into virtualisation for stable scroll perf.
- */
-const VIRTUAL_LIST_THRESHOLD = 50
 import { TodoPanel, type TodoItem } from "@/components/ui/TodoPanel"
 import { ProjectPreviewPanel } from "@/components/ui/ProjectPreviewPanel"
 import {
@@ -71,20 +55,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
 // GF-01 PR-01 — leaf cards / utils extracted from this file.
-import { ThinkingBlock } from "@/components/chat/chat-ui/cards/ThinkingBlock"
-import { LoadingIndicator } from "@/components/chat/chat-ui/cards/LoadingIndicator"
-import { EmptyState } from "@/components/chat/chat-ui/cards/EmptyState"
-import { FinalRunReportCard } from "@/components/chat/chat-ui/cards/FinalRunReportCard"
-import { RecoveryCard } from "@/components/chat/chat-ui/cards/RecoveryCard"
-import { ErrorCard } from "@/components/chat/chat-ui/cards/ErrorCard"
-import { MessageCopyButton } from "@/components/chat/chat-ui/cards/MessageCopyButton"
-import { MarkdownContent } from "@/components/chat/chat-ui/transcript/MarkdownContent"
 import { MenuItemButton } from "@/components/chat/chat-ui/utils/MenuItemButton"
 import {
-  formatDuration,
   formatShortTime,
   redactSensitiveText,
-  summarizeThinkingText,
   truncateText,
 } from "@/components/chat/chat-ui/utils/text"
 import {
@@ -94,14 +68,12 @@ import {
 } from "@/components/chat/chat-ui/utils/items"
 // GF-01 PR-02 — tool-call display + diagnostic + markdown normalize utils.
 import {
-  getAssistantStatusMeta,
   isToolPendingStatus,
   pickToolString,
   type ChatToolStatus,
 } from "@/components/chat/chat-ui/utils/toolCallDisplay"
-import { hashString } from "@/components/chat/chat-ui/utils/markdownNormalize"
-// GF-01 PR-04 — ToolCallCard extracted from this file.
-import { ToolCallCard } from "@/components/chat/chat-ui/cards/ToolCallCard"
+// GF-01 PR-05 — ChatTranscript + ChatMessage extracted to chat-ui/transcript/.
+import { ChatTranscript } from "@/components/chat/chat-ui/transcript/ChatTranscript"
 
 export interface Message {
   id: string
@@ -1867,132 +1839,6 @@ function sortRailDirectoryEntries(entries: DirectoryEntryPreview[], sortMode: 'r
   return next
 }
 
-const ChatTranscript = React.memo(function ChatTranscript({
-  messages,
-  bottomPadding,
-  sessionTitle,
-  projectLabel,
-  defaultWorkdir,
-  bottomRef,
-  scrollRef,
-  onScroll,
-  onCopyMessage,
-  onResumeFromCursor,
-  copiedMessageId,
-  densityMode,
-  fontMode,
-  isLeftPaneCollapsed,
-  contentRightInset,
-  contentMaxWidth,
-}: {
-  messages: Message[]
-  bottomPadding: number
-  sessionTitle: string
-  projectLabel: string
-  defaultWorkdir?: string
-  bottomRef: React.RefObject<HTMLDivElement | null>
-  scrollRef: React.RefObject<HTMLDivElement | null>
-  onScroll: () => void
-  onCopyMessage: (message: Message) => void
-  onResumeFromCursor?: (resumeCursor: string) => void
-  copiedMessageId: string | null
-  densityMode: DensityMode
-  fontMode: FontMode
-  isLeftPaneCollapsed: boolean
-  contentRightInset: number
-  contentMaxWidth: number
-}) {
-  const primaryThinkingMessageIds = React.useMemo(() => {
-    const primaryIds = new Set<string>()
-    let seenThinkingThisTurn = false
-
-    for (const item of messages) {
-      if (item.role === 'user') {
-        seenThinkingThisTurn = false
-        continue
-      }
-
-      if (item.role === 'assistant' && item.thinking?.trim()) {
-        if (!seenThinkingThisTurn) {
-          primaryIds.add(item.id)
-          seenThinkingThisTurn = true
-        }
-      }
-    }
-
-    return primaryIds
-  }, [messages])
-
-  return (
-    <div
-      ref={scrollRef}
-      onScroll={onScroll}
-      className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none"
-      style={{ overscrollBehaviorX: 'none', paddingRight: `${contentRightInset}px` }}
-    >
-      <div
-        className="mx-auto flex w-full flex-col gap-4 px-10 pt-6 transition-[max-width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        style={{ paddingBottom: `${bottomPadding}px`, maxWidth: `${contentMaxWidth}px` }}
-      >
-        {messages.length === 0 ? (
-          <EmptyState sessionTitle={sessionTitle} projectLabel={projectLabel} />
-        ) : messages.length >= VIRTUAL_LIST_THRESHOLD ? (
-          <VirtualMessageList
-            messages={messages}
-            scrollElementRef={scrollRef}
-            estimatedItemSize={84}
-            renderMessage={(msg) => (
-              <div className={densityMode === 'compact' ? 'pb-2' : 'pb-3'}>
-                <ChatMessage
-                  message={msg}
-                  onCopyMessage={onCopyMessage}
-                  onResumeFromCursor={onResumeFromCursor}
-                  isCopied={copiedMessageId === msg.id}
-                  defaultWorkdir={defaultWorkdir}
-                  isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
-                  densityMode={densityMode}
-                  fontMode={fontMode}
-                />
-              </div>
-            )}
-          />
-        ) : (
-          <div className={densityMode === 'compact' ? 'space-y-2' : 'space-y-3'}>
-            {messages.map((msg) => (
-              <ChatMessage
-                key={msg.id}
-                message={msg}
-                onCopyMessage={onCopyMessage}
-                onResumeFromCursor={onResumeFromCursor}
-                isCopied={copiedMessageId === msg.id}
-                defaultWorkdir={defaultWorkdir}
-                isPrimaryThinkingMessage={primaryThinkingMessageIds.has(msg.id)}
-                densityMode={densityMode}
-                fontMode={fontMode}
-              />
-            ))}
-          </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
-    </div>
-  )
-}, (prev, next) =>
-  prev.messages === next.messages &&
-  prev.bottomPadding === next.bottomPadding &&
-  prev.sessionTitle === next.sessionTitle &&
-  prev.projectLabel === next.projectLabel &&
-  prev.copiedMessageId === next.copiedMessageId &&
-  prev.densityMode === next.densityMode &&
-  prev.fontMode === next.fontMode &&
-  prev.isLeftPaneCollapsed === next.isLeftPaneCollapsed &&
-  prev.contentRightInset === next.contentRightInset &&
-  prev.contentMaxWidth === next.contentMaxWidth &&
-  prev.onCopyMessage === next.onCopyMessage &&
-  prev.onResumeFromCursor === next.onResumeFromCursor
-)
-
 const ComposerDock = React.memo(function ComposerDock({
   input,
   onInputChange,
@@ -2747,248 +2593,7 @@ function AtFileSuggestions({
   )
 }
 
-const ChatMessage = React.memo(function ChatMessage({
-  message,
-  onCopyMessage,
-  onResumeFromCursor,
-  isCopied,
-  defaultWorkdir,
-  isPrimaryThinkingMessage,
-  densityMode,
-  fontMode,
-}: {
-  message: Message
-  onCopyMessage: (message: Message) => void
-  onResumeFromCursor?: (resumeCursor: string) => void
-  isCopied: boolean
-  defaultWorkdir?: string
-  isPrimaryThinkingMessage?: boolean
-  densityMode: DensityMode
-  fontMode: FontMode
-}) {
-  const isUser = message.role === 'user'
-  const isTool = message.role === 'tool'
-  const hasThinking = Boolean(message.thinking?.trim())
-  const hasContent = Boolean(message.content?.trim())
-  const shortTime = formatShortTime(message.timestamp)
-  const showCopyButton = isCopied
-  const contentHash = React.useMemo(() => hashString(message.content), [message.content])
-  const showStatusLabel = !isUser && !isTool && Boolean(message.statusLabel)
-  const statusMeta = getAssistantStatusMeta(message)
-
-  if (isTool) {
-    return <ToolCallCard message={message} defaultWorkdir={defaultWorkdir} />
-  }
-
-  // Slash 命令的静态结果（来自 `executeSlashCommand`，由 App.tsx 在
-  // 消息上打 `slashCommand` 标记）→ 用紧凑型单行卡片替代 markdown 气泡。
-  // 只在 assistant 侧生效；isUser 早就走了 `if (isUser)` 分支。
-  if (!isUser && !isTool && message.slashCommand && hasContent) {
-    return (
-      <div
-        className={cn(
-          'group flex flex-col items-start',
-          densityMode === 'compact' ? 'gap-1.5' : 'gap-2.5',
-        )}
-      >
-        <SlashResultCard
-          slashCommand={message.slashCommand}
-          content={message.content}
-        />
-        <div className="flex items-center gap-1.5 pl-1">
-          <MessageCopyButton
-            side="right"
-            copied={isCopied}
-            visible={showCopyButton}
-            onClick={() => onCopyMessage(message)}
-          />
-          <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className={cn('group flex flex-col', fontMode === 'serif' ? 'font-serif' : 'font-sans', densityMode === 'compact' ? 'gap-1.5' : 'gap-2.5', isUser ? 'items-end' : 'items-start')}>
-      {isUser ? (
-        <div className={cn('flex flex-col items-end gap-1', densityMode === 'compact' ? 'max-w-[min(620px,78%)]' : 'max-w-[min(680px,78%)]')}>
-          <div
-            className={cn(
-              'rounded-lg bg-secondary px-3 text-foreground/80 shadow-xs',
-              densityMode === 'compact' ? 'py-1.5 text-[12px] leading-5.5' : 'py-2 text-[13px] leading-6'
-            )}
-          >
-            <div className={cn('whitespace-pre-wrap break-words [overflow-wrap:anywhere]', fontMode === 'serif' ? 'font-serif' : 'font-sans')}>
-              {message.content}
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 pr-1">
-            <MessageCopyButton
-              side="left"
-              copied={isCopied}
-              visible={showCopyButton}
-              onClick={() => onCopyMessage(message)}
-            />
-            <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
-          </div>
-        </div>
-      ) : (
-        <div className="w-full space-y-2.5">
-          {message.isError && message.toolArgs?.rawError ? (
-            (() => {
-              const taskOutcome =
-                typeof message.toolArgs.taskOutcome === 'string'
-                  ? message.toolArgs.taskOutcome
-                  : message.taskOutcome
-              const resumeCursor =
-                typeof message.toolArgs.resumeCursor === 'string'
-                  ? message.toolArgs.resumeCursor
-                  : message.resumeCursor
-              const degradedReason =
-                typeof message.toolArgs.degradedReason === 'string'
-                  ? message.toolArgs.degradedReason
-                  : message.degradedReason
-              const rawError = String(message.toolArgs.rawError)
-
-              return taskOutcome === 'partial_success' ? (
-                <RecoveryCard
-                  error={rawError}
-                  degradedReason={degradedReason}
-                  resumeCursor={resumeCursor}
-                  isRecovering={Boolean(message.isRecovering)}
-                  onResume={onResumeFromCursor}
-                />
-              ) : (
-                <ErrorCard
-                  error={rawError}
-                  taskOutcome={taskOutcome}
-                  resumeCursor={resumeCursor}
-                  onResume={onResumeFromCursor}
-                />
-              )
-            })()
-          ) : (
-            <>
-              <div
-                className={cn(
-                  'pt-0 font-normal text-foreground/86',
-                  densityMode === 'compact' ? 'text-[12px] leading-5.25' : 'text-[13px] leading-5.75'
-                )}
-              >
-                {hasThinking && (
-                  isPrimaryThinkingMessage ? (
-                    <ThinkingBlock
-                      thinking={message.thinking ?? ''}
-                      thinkingTime={message.thinkingTime}
-                    />
-                  ) : (
-                    <ThinkingSummaryNode
-                      thinking={message.thinking ?? ''}
-                      thinkingTime={message.thinkingTime}
-                    />
-                  )
-                )}
-
-                {!hasThinking && message.isStreaming ? (
-                  <div className="mb-2.5 flex items-start">
-                    <LoadingIndicator />
-                  </div>
-                ) : null}
-
-                {showStatusLabel ? (
-                  <div className={cn(
-                    'mb-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-4',
-                    statusMeta.containerClass
-                  )}>
-                    <span className={cn('h-1.5 w-1.5 rounded-full', statusMeta.dotClass)} />
-                    <span>{message.statusLabel}</span>
-                  </div>
-                ) : null}
-
-                {hasContent ? (
-                  <>
-                    <MarkdownContent
-                      content={message.content}
-                      contentHash={contentHash}
-                      densityMode={densityMode}
-                    />
-                    <div className="mt-1.5 flex items-center gap-1.5 pl-1">
-                      <div className="text-[11px] leading-none text-muted-foreground/70">{shortTime}</div>
-                      {/* Per-message TurnCost chip — placed before the copy
-                          button so the user sees billable usage right after
-                          the timestamp, mirroring Steward's `turn-cost-bar`
-                          layout (see ChatArea.svelte). */}
-                      {message.turnCost ? (
-                        <TurnCostChip turnCost={message.turnCost} className="ml-1" />
-                      ) : null}
-                      <MessageCopyButton
-                        side="right"
-                        copied={isCopied}
-                        visible={showCopyButton}
-                        onClick={() => onCopyMessage(message)}
-                      />
-                      {/* Phase TTS-E：消息级语音播放按钮（有 agent voice 时才显示） */}
-                      {!message.isStreaming ? (
-                        <React.Suspense fallback={null}>
-                          <MessageVoiceButtonLazy text={message.content} />
-                        </React.Suspense>
-                      ) : null}
-                      {message.memoryContext && message.memoryContext.length > 0 ? (
-                        <MemoryChip items={message.memoryContext} className="ml-1" />
-                      ) : null}
-                      {message.routing ? (
-                        <RoutingChip routing={message.routing} className="ml-1" />
-                      ) : null}
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </>
-          )}
-          {message.finalRunReport ? (
-            <FinalRunReportCard
-              report={message.finalRunReport}
-              onResume={onResumeFromCursor}
-            />
-          ) : null}
-        </div>
-      )}
-    </div>
-  )
-}, (prev, next) =>
-  prev.message === next.message &&
-  prev.isCopied === next.isCopied &&
-  prev.defaultWorkdir === next.defaultWorkdir &&
-  prev.isPrimaryThinkingMessage === next.isPrimaryThinkingMessage &&
-  prev.densityMode === next.densityMode &&
-  prev.fontMode === next.fontMode &&
-  prev.onCopyMessage === next.onCopyMessage &&
-  prev.onResumeFromCursor === next.onResumeFromCursor
-)
 
 
 
-
-
-function ThinkingSummaryNode({
-  thinking,
-  thinkingTime,
-}: {
-  thinking: string
-  thinkingTime?: number
-}) {
-  const durationLabel = thinkingTime ? formatDuration(thinkingTime) : ''
-  const summary = summarizeThinkingText(thinking)
-  const label = durationLabel ? `${summary} · ${durationLabel}` : summary
-
-  return (
-    <div className="relative mb-3 pl-4">
-      <div className="absolute bottom-0 left-[5px] top-0 w-px bg-border/70" />
-      <div className="flex items-center gap-1.5 rounded-none px-0 py-[2px] text-[12px] italic tracking-tight text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/70" />
-        <span className="truncate">{label}</span>
-      </div>
-    </div>
-  )
-}
 
