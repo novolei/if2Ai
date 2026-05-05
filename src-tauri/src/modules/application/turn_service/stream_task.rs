@@ -86,6 +86,7 @@ use crate::modules::runtime::stream_error_reason::{
 use crate::modules::runtime::stream_outcome::{
     ConversationTruth, ExecutionTruth, TaskOutcomeResolver,
 };
+use crate::modules::runtime::supervisor::SupervisorOps;
 use crate::modules::runtime::timeline_flush::{
     flush_assistant_timeline_segment, PersistedTurnOutcome,
 };
@@ -443,6 +444,25 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
             // check_signals stamps terminal_status = "cancelled_by_user"
             // before returning LoopSignal::Stop.
             debug_assert!(state.terminal_status.is_some());
+
+            // DR-01 PR-B: supervisor running/blocked → idle transition on
+            // explicit user cancellation. Best-effort: persistence /
+            // emit failures must never fail the turn. Note that the
+            // subsequent `stream_finalize` path will treat the cancelled
+            // run as `stream_failed` and may re-emit a `failed` envelope;
+            // until that codepath gets DR-01 cancel-aware branching the
+            // last-write-wins semantics here are intentional.
+            if state.terminal_status == Some("cancelled_by_user") {
+                if let Ok(app_data_dir) = inputs.app_handle_for_after_turn.path().app_data_dir() {
+                    SupervisorOps {
+                        app_data_dir: &app_data_dir,
+                        session_id: &inputs.session_id,
+                        app_handle: Some(&inputs.app_handle_for_after_turn),
+                        run_event_logger: Some(&inputs.run_event_logger),
+                    }
+                    .run_cancelled();
+                }
+            }
         }
         super::agentic_loop::LoopOutcome::MaxIterations => {
             // Outer (loop_config) cap. With single-source-of-truth from T12,
