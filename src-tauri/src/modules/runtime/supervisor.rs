@@ -769,6 +769,75 @@ mod tests {
         assert_eq!(loaded.status, SupervisorStatus::Running);
     }
 
+    /// DR-01 PR-B integration test: drive a mock turn that triggers
+    /// permission_request → respond → completion through the
+    /// `SupervisorOps` facade and verify supervisor snapshot
+    /// transitions Idle → Running → Blocked → Running → Completed
+    /// with the correct `pending_permission_count` at each step.
+    #[test]
+    fn pr_b_full_turn_lifecycle_transitions() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-pr-b");
+
+        // 1. Idle baseline (no snapshot on disk → load_or_create yields fresh Idle).
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Idle);
+        assert!(s.active_run_id.is_none());
+        assert_eq!(s.pending_permission_count, 0);
+
+        // 2. start_run — non-streaming run.rs / streaming stream.rs entry.
+        ops.start_run("run-pr-b-1");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Running);
+        assert_eq!(s.active_run_id.as_deref(), Some("run-pr-b-1"));
+        assert_eq!(s.active_run_status, Some(RunStatus::Streaming));
+        assert_eq!(s.pending_permission_count, 0);
+
+        // 3. block_permission — TauriPermissionPrompter raises a prompt.
+        ops.block_permission("perm-req-1");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Blocked);
+        assert_eq!(s.pending_permission_count, 1);
+        // active_run_id must persist while blocked.
+        assert_eq!(s.active_run_id.as_deref(), Some("run-pr-b-1"));
+
+        // 4. unblock_permission — user responds via respond_permission IPC.
+        ops.unblock_permission("perm-req-1");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Running);
+        assert_eq!(s.pending_permission_count, 0);
+        assert_eq!(s.active_run_id.as_deref(), Some("run-pr-b-1"));
+
+        // 5. run_completed — terminal success at end of turn.
+        ops.run_completed();
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Completed);
+        assert!(s.active_run_id.is_none());
+        assert_eq!(s.active_run_status, Some(RunStatus::Completed));
+        assert_eq!(s.pending_permission_count, 0);
+    }
+
+    /// DR-01 PR-B: cancel path resets to Idle with `Cancelled` per-run
+    /// status (mirrors `stream_task::LoopOutcome::Stopped` behaviour).
+    #[test]
+    fn pr_b_cancel_after_block_leaves_snapshot_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops_for(&dir, "sess-pr-b-cancel");
+
+        ops.start_run("run-cancel");
+        ops.block_permission("perm-req-cancel");
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b-cancel").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Blocked);
+        assert_eq!(s.pending_permission_count, 1);
+
+        // User cancels turn while permission prompt is still open.
+        ops.run_cancelled();
+        let s = SessionSupervisor::load_or_create(dir.path(), "sess-pr-b-cancel").unwrap();
+        assert_eq!(s.status, SupervisorStatus::Idle);
+        assert!(s.active_run_id.is_none());
+        assert_eq!(s.active_run_status, Some(RunStatus::Cancelled));
+    }
+
     #[test]
     fn multiple_permission_blocks() {
         let mut snap = SupervisorSnapshot::new("session-1".to_string());
