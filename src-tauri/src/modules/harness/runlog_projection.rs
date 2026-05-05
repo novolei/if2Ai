@@ -1,31 +1,48 @@
-//! DT-01 Stage 1 PR S1.1 — skeleton for deriving [`HarnessRunReport`]
-//! from the canonical run-log JSONL (per ARCHITECTURE.md §6.1 and
+//! DT-01 Stage 1 — derive [`HarnessRunReport`] from the canonical
+//! run-log JSONL (per ARCHITECTURE.md §6.1 and
 //! `docs/superpowers/plans/2026-05-05-dt01-harness-derive-from-runlog.md`).
 //!
-//! Honest scope of this slice:
+//! Honest scope of this slice (PR S1.2):
 //!
-//! - [`collect_run_entries`] is implemented end-to-end: it reads the
-//!   canonical per-session/per-run JSONL file (path layout owned by
+//! - [`collect_run_entries`] reads the canonical per-session/per-run
+//!   JSONL file (path layout owned by
 //!   [`crate::modules::runtime::event_log::RunEventLogger`]) and
-//!   parses each line into a [`RunLogEntry`], preserving file order
-//!   (which is the monotonic `seq` order maintained by the logger).
-//! - [`fold_run_log_to_report`] is **deliberately unimplemented** in
-//!   S1.1 and panics via `todo!()`. The fold itself lands in S1.2
-//!   together with any run-log emit gaps surfaced by the schema audit
-//!   (`docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`).
-//! - The reconciliation test in this module's `tests` sub-module is
-//!   marked `#[ignore]` and exists as an executable spec for S1.2.
+//!   parses each line into a [`RunLogEntry`], preserving file order.
+//! - [`fold_run_log_to_report`] is now implemented.  It consumes an
+//!   ordered slice of run-log entries and folds them into a
+//!   [`HarnessRunReport`].  The mapping table is the canonical spec
+//!   from `docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`
+//!   §2.1.
+//! - `S1.2` closes one emit gap from the audit:
+//!   `ExecutionModeJudged` → `execution_mode:judged` envelope (see
+//!   `commands/request_intelligence.rs`).
+//! - The two other top-priority emit gaps (`TurnFinished` and
+//!   `PrepareStepExecuted`) are deferred to S1.3 — both touch
+//!   files that currently carry in-flight work outside DT-01's
+//!   scope.  The fold therefore returns `0` / empty for the
+//!   aggregates that depend on those envelopes and documents each
+//!   gap with a `// TODO(DT-01 S1.3): …` comment.
 //!
 //! No production code path consumes [`fold_run_log_to_report`] in
-//! S1.1; behaviour is therefore zero-change.
+//! S1.2; behaviour is therefore zero-change.  S1.3 will switch
+//! `TraceAggregator::finalize` over to this path.
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use super::run_report::HarnessRunReport;
+use chrono::{DateTime, Utc};
+
+use super::run_report::{
+    AggregateMetrics, BlockingFailure, EvidenceBundle, ExecutionModeTrace, HarnessRunReport,
+    MemoryAfterTurnTrace, PermissionPromptTrace, PermissionResolutionTrace, Severity,
+    StreamErrorTrace, TaskOutcome, TaskRunResult, HARNESS_RUN_REPORT_VERSION,
+};
+use crate::modules::application::ConflictResolutionOutcome;
+use crate::modules::runtime::contracts::memory::MemoryWriteDisposition;
 use crate::modules::runtime::event_log::RunLogEntry;
 
 /// Resolve the canonical run-log JSONL path for a `(session_id, run_id)`
@@ -88,21 +105,472 @@ pub fn collect_run_entries(
     Ok(entries)
 }
 
+/// Parse an `occurred_at` RFC3339 string into a UTC [`DateTime`],
+/// falling back to `now` on parse error so a single corrupt
+/// timestamp cannot poison the whole fold.
+fn parse_occurred_at(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
+}
+
+/// Family-tag normalisation: split a run-log `event_type` of the
+/// form `"<family_kind>:<family_tag>"` into `(family_kind, tag)`.
+/// Entries appended via the legacy `append_sync(event_type, …)`
+/// path may carry a bare tag with no `:`; in that case `kind` is
+/// the empty string and the whole value is returned as the tag.
+fn split_family(event_type: &str) -> (&str, &str) {
+    match event_type.split_once(':') {
+        Some((kind, tag)) => (kind, tag),
+        None => ("", event_type),
+    }
+}
+
 /// Fold an ordered slice of [`RunLogEntry`] rows into a
 /// [`HarnessRunReport`].
 ///
-/// **S1.1 status**: deliberately unimplemented. The full reconciliation
-/// fold (every aggregate counter, evidence vector, and blocking
-/// failure rule) is the subject of PR DT-01-S1.2; the schema audit at
-/// `docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`
-/// enumerates the required event-family mappings.
+/// Mapping is the canonical §2.1 table from
+/// `docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`.
 ///
-/// # Panics
+/// `started_at` / `ended_at` are the first/last `occurred_at`
+/// timestamps observed.  When `entries` is empty the report falls
+/// back to `Utc::now()` for both bounds (matching the empty-report
+/// shape from [`HarnessRunReport::new_empty`]).
 ///
-/// Always panics with `todo!("DT-01 S1.2: implement reconciliation fold")`.
+/// The `run_id` / `session_id` are taken from the first entry that
+/// carries them.  Caller is expected to pass entries from a single
+/// `(session_id, run_id)` slice; mixed slices yield an undefined
+/// (last-wins) projection and should not occur in practice because
+/// [`collect_run_entries`] reads exactly one file.
 #[must_use]
-pub fn fold_run_log_to_report(_entries: &[RunLogEntry]) -> HarnessRunReport {
-    todo!("DT-01 S1.2: implement reconciliation fold")
+pub fn fold_run_log_to_report(entries: &[RunLogEntry]) -> HarnessRunReport {
+    // ── Bootstrapping ────────────────────────────────────────────
+    let (run_id, session_id) = entries
+        .first()
+        .map(|e| (e.run_id.clone(), Some(e.session_id.clone())))
+        .unwrap_or_else(|| (String::new(), None));
+    let started_at = entries
+        .first()
+        .map(|e| parse_occurred_at(&e.occurred_at))
+        .unwrap_or_else(Utc::now);
+    let ended_at = entries
+        .last()
+        .map(|e| parse_occurred_at(&e.occurred_at))
+        .unwrap_or(started_at);
+
+    let mut report = HarnessRunReport {
+        report_version: HARNESS_RUN_REPORT_VERSION.to_string(),
+        run_id: run_id.clone(),
+        label: None,
+        session_id,
+        project_id: None,
+        started_at,
+        ended_at,
+        task: TaskRunResult {
+            task_id: run_id,
+            outcome: TaskOutcome::Incomplete,
+            turn_count: 0,
+            last_turn_succeeded: false,
+            error_summary: None,
+        },
+        aggregate: AggregateMetrics::default(),
+        blocking_failures: Vec::new(),
+        evidence: EvidenceBundle::default(),
+    };
+
+    // Track tool_call_id → tool_name so the *result* row can be
+    // attributed to the tool name even when the failed/completed
+    // payload omits it (defensive — usually carried).
+    let mut tool_call_names: HashMap<String, String> = HashMap::new();
+
+    for entry in entries {
+        let (kind, tag) = split_family(&entry.event_type);
+        let observed_at = parse_occurred_at(&entry.occurred_at);
+        let payload = &entry.payload;
+
+        match (kind, tag) {
+            // ── Memory after-turn (✅ canonical, full fidelity) ─
+            ("memory", "after_turn") => fold_memory_after_turn(&mut report, payload, observed_at),
+
+            // ── Permission prompt (✅ canonical) ────────────────
+            ("permission", "prompt_opened") => {
+                report.aggregate.permission_prompts += 1;
+                let tool_name = payload
+                    .get("tool_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                report
+                    .evidence
+                    .permission_prompts
+                    .push(PermissionPromptTrace {
+                        tool_name,
+                        observed_at,
+                    });
+            }
+
+            // ── Permission decision (canonical family + legacy
+            //     bare-string `permission_resolved` rows; both are
+            //     accepted per audit §12) ─────────────────────────
+            ("permission", "decision") | ("", "permission_resolved") => {
+                let decision = payload
+                    .get("decision")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let scope = payload
+                    .get("scope")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("once")
+                    .to_string();
+                let tool_name = payload
+                    .get("tool_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                if decision == "allow" {
+                    report.aggregate.permission_resolved_allow += 1;
+                } else if decision == "deny" {
+                    report.aggregate.permission_resolved_deny += 1;
+                }
+                report
+                    .evidence
+                    .permission_resolved
+                    .push(PermissionResolutionTrace {
+                        tool_name,
+                        decision,
+                        scope,
+                        observed_at,
+                    });
+            }
+
+            // ── Execution-mode classifier judgment (closed in
+            //     S1.2 by the new dispatch in
+            //     commands/request_intelligence.rs) ───────────────
+            ("execution_mode", "judged") => {
+                report.aggregate.execution_mode_judgments += 1;
+                let execution_mode = payload
+                    .get("execution_mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let risk_level = payload
+                    .get("risk_level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let complexity_level = payload
+                    .get("complexity_level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let policy_version = payload
+                    .get("policy_version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                report.evidence.execution_mode.push(ExecutionModeTrace {
+                    execution_mode,
+                    risk_level,
+                    complexity_level,
+                    policy_version,
+                    observed_at,
+                });
+            }
+
+            // ── Tool call lifecycle ─────────────────────────────
+            // First observation of each tool_call_id increments the
+            // requested counter (audit §5).  Later events attribute
+            // success/failure (audit §6).
+            ("tool", "tool_call_queued") | ("tool", "tool_call_running") => {
+                let tool_name = payload
+                    .get("tool_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let tool_call_id = entry
+                    .tool_call_id
+                    .clone()
+                    .or_else(|| {
+                        payload
+                            .get("tool_call_id")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_default();
+                if !tool_call_id.is_empty() && !tool_call_names.contains_key(&tool_call_id) {
+                    if let Some(name) = tool_name {
+                        report.aggregate.tool_calls_total += 1;
+                        *report
+                            .aggregate
+                            .tool_calls_by_name
+                            .entry(name.clone())
+                            .or_insert(0) += 1;
+                        tool_call_names.insert(tool_call_id, name);
+                    }
+                }
+            }
+            ("tool", "tool_call_completed") => {
+                let name = resolve_tool_name(entry, payload, &tool_call_names);
+                if let Some(name) = name {
+                    *report
+                        .aggregate
+                        .tool_successes_by_name
+                        .entry(name)
+                        .or_insert(0) += 1;
+                }
+            }
+            ("tool", "tool_call_failed") => {
+                let name = resolve_tool_name(entry, payload, &tool_call_names);
+                if let Some(name) = name {
+                    report.blocking_failures.push(BlockingFailure {
+                        code: "tool_failure".to_string(),
+                        severity: Severity::Warning,
+                        message: format!("Tool '{name}' returned success=false"),
+                        evidence_ref: Some(format!("tool_result:{name}")),
+                        observed_at,
+                    });
+                }
+            }
+
+            // ── Stream errors (canonical conversation:stream_error) ─
+            ("conversation", "stream_error") => {
+                report.aggregate.stream_errors += 1;
+                let reason = payload
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let resume_available = payload
+                    .get("resume_available")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                report.evidence.stream_errors.push(StreamErrorTrace {
+                    reason: reason.clone(),
+                    resume_available,
+                    observed_at,
+                });
+                let severity = if resume_available {
+                    Severity::Warning
+                } else {
+                    Severity::Blocking
+                };
+                report.blocking_failures.push(BlockingFailure {
+                    code: "stream_error".to_string(),
+                    severity,
+                    message: format!("stream errored: {reason}"),
+                    evidence_ref: Some(format!(
+                        "stream_errors:{}",
+                        report.evidence.stream_errors.len() - 1
+                    )),
+                    observed_at,
+                });
+            }
+
+            // ── Project id may ride on a run_started payload ────
+            ("conversation", "run_started") => {
+                if let Some(pid) = payload
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|_| report.project_id.is_none())
+                {
+                    report.project_id = Some(pid.to_string());
+                }
+            }
+
+            // TODO(DT-01 S1.3): the audit's two top-priority emit
+            // gaps land here once the in-flight work clears:
+            //   - ("conversation", "turn_finished")  → turns_*,
+            //     last_turn_succeeded, total_turn_duration_ms,
+            //     input_tokens_total
+            //   - ("system",       "prepare_step")   → prepare_step_*,
+            //     evidence.prepare_step
+            // Until then those aggregates remain at their default
+            // zero values and the reconciliation test asserts only
+            // the fields the fold can actually produce.
+            _ => {}
+        }
+    }
+
+    report.task.outcome = derive_task_outcome(&report);
+    report
+}
+
+fn resolve_tool_name(
+    entry: &RunLogEntry,
+    payload: &serde_json::Value,
+    seen: &HashMap<String, String>,
+) -> Option<String> {
+    if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
+        return Some(name.to_string());
+    }
+    let id = entry
+        .tool_call_id
+        .clone()
+        .or_else(|| {
+            payload
+                .get("tool_call_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if id.is_empty() {
+        None
+    } else {
+        seen.get(&id).cloned()
+    }
+}
+
+fn fold_memory_after_turn(
+    report: &mut HarnessRunReport,
+    payload: &serde_json::Value,
+    observed_at: DateTime<Utc>,
+) {
+    use crate::modules::application::QualityGateResult;
+    use crate::modules::runtime::contracts::memory::MemoryWriteDecision;
+
+    // The canonical envelope is camelCase per
+    // `application/stream_emitter_service.rs`.  Fall back to
+    // snake_case keys so the fold also accepts hand-written
+    // fixtures (mostly to keep tests resilient).
+    let trace_version = payload
+        .get("traceVersion")
+        .or_else(|| payload.get("trace_version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let caller = payload
+        .get("caller")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let policy_version = payload
+        .get("policyVersion")
+        .or_else(|| payload.get("policy_version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let session_id = payload
+        .get("sessionId")
+        .or_else(|| payload.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let project_id = payload
+        .get("projectId")
+        .or_else(|| payload.get("project_id"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let decided_at = payload
+        .get("decidedAt")
+        .or_else(|| payload.get("decided_at"))
+        .and_then(|v| v.as_str())
+        .map(parse_occurred_at)
+        .unwrap_or(observed_at);
+
+    let decisions: Vec<MemoryWriteDecision> = payload
+        .get("decisions")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let quality: QualityGateResult = payload
+        .get("quality")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_else(|| QualityGateResult {
+            accepted: Vec::new(),
+            rejected: Vec::new(),
+            warnings: Vec::new(),
+            policy_version: String::new(),
+        });
+    let conflicts: Vec<crate::modules::application::ConflictResolution> = payload
+        .get("conflicts")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+
+    report.aggregate.memory_decision_count += decisions.len() as u64;
+    report.aggregate.memory_accepted_count += quality.accepted.len() as u64;
+    report.aggregate.memory_rejected_count += quality.rejected.len() as u64;
+    report.aggregate.memory_warning_count += quality.warnings.len() as u64;
+    for c in &conflicts {
+        match c.outcome {
+            ConflictResolutionOutcome::RequirePrompt => {
+                report.aggregate.memory_conflict_prompt_count += 1;
+            }
+            ConflictResolutionOutcome::AcceptReplacement => {
+                report.aggregate.memory_conflict_replace_count += 1;
+            }
+            ConflictResolutionOutcome::KeepExisting
+            | ConflictResolutionOutcome::RejectCandidate => {
+                report.aggregate.memory_conflict_keep_existing_count += 1;
+            }
+            ConflictResolutionOutcome::NoConflict => {
+                report.aggregate.memory_conflict_no_conflict_count += 1;
+            }
+        }
+    }
+    let deny_count = decisions
+        .iter()
+        .filter(|d| matches!(d.disposition, MemoryWriteDisposition::Deny))
+        .count();
+    if deny_count > 0 {
+        report.blocking_failures.push(BlockingFailure {
+            code: "memory_write_denied".to_string(),
+            severity: Severity::Blocking,
+            message: format!("{deny_count} memory candidate(s) denied by write policy"),
+            evidence_ref: Some(format!(
+                "memory_after_turn:{}",
+                report.evidence.memory_after_turn.len()
+            )),
+            observed_at,
+        });
+    }
+    if project_id.is_some() && report.project_id.is_none() {
+        report.project_id = project_id.clone();
+    }
+    report
+        .evidence
+        .memory_after_turn
+        .push(MemoryAfterTurnTrace {
+            trace_version,
+            caller,
+            session_id,
+            project_id,
+            policy_version,
+            decided_at,
+            decisions,
+            quality,
+            conflicts,
+        });
+}
+
+fn derive_task_outcome(r: &HarnessRunReport) -> TaskOutcome {
+    if r.aggregate.turns_completed == 0 {
+        return TaskOutcome::Incomplete;
+    }
+    let has_blocking = r
+        .blocking_failures
+        .iter()
+        .any(|f| f.severity == Severity::Blocking);
+    if has_blocking {
+        return TaskOutcome::Failed;
+    }
+    let has_warning = r
+        .blocking_failures
+        .iter()
+        .any(|f| f.severity == Severity::Warning);
+    match (r.task.last_turn_succeeded, has_warning) {
+        (true, false) => TaskOutcome::Success,
+        (true, true) => TaskOutcome::PartialSuccess,
+        (false, _) => TaskOutcome::Failed,
+    }
+}
+
+/// Compute the absolute difference in seconds between two
+/// [`DateTime<Utc>`] values.  Used by the reconciliation test's
+/// ±1s tolerance check (kept here so other harness tests can
+/// reuse the helper).
+#[must_use]
+pub fn timestamp_within_tolerance(a: DateTime<Utc>, b: DateTime<Utc>, tolerance_secs: i64) -> bool {
+    (a - b).num_seconds().abs() <= tolerance_secs
 }
 
 #[cfg(test)]
@@ -118,8 +586,6 @@ mod tests {
         let session_id = "sess-collect";
         let run_id = "run-collect";
 
-        // Use the production logger to write the JSONL so we exercise
-        // the same on-disk layout (`<base>/runtime/run-log/<sid>/<rid>.jsonl`).
         let logger = RunEventLogger::for_base_dir(tmp.path(), session_id, run_id);
         let a = logger.append_sync("conversation:run_started", serde_json::json!({"k": 1}));
         let b = logger.append_sync("tool:tool_call_queued", serde_json::json!({"k": 2}));
@@ -144,45 +610,345 @@ mod tests {
         );
     }
 
-    /// Reconciliation scenario test (DT-01-S1.1 spec).
-    ///
-    /// Marked `#[ignore]` because [`fold_run_log_to_report`] panics
-    /// with `todo!()` in S1.1 — that panic is the executable spec
-    /// reminding S1.2 to implement the fold.  Once S1.2 lands the
-    /// `#[ignore]` should be removed and the body extended to
-    /// (a) drive a real `TurnService` turn through `EventBus` +
-    /// `RunEventLogger`, (b) call `TraceAggregator::finalize` to get
-    /// `eventbus_report`, (c) call `fold_run_log_to_report(
-    /// collect_run_entries(...))` to get `runlog_report`, and
-    /// (d) assert deep equivalence modulo a ±1s timestamp tolerance
-    /// on `started_at` / `ended_at` / `observed_at`.
+    /// Unit test: empty input produces an `Incomplete` report
+    /// pinned to the current contract version.
     #[test]
-    #[ignore = "DT-01 S1.2: fold_run_log_to_report unimplemented; reconciliation test is the spec"]
-    fn reconciliation_eventbus_vs_runlog_equivalent_for_minimal_turn() {
+    fn fold_empty_entries_returns_incomplete_report() {
+        let report = fold_run_log_to_report(&[]);
+        assert_eq!(report.report_version, HARNESS_RUN_REPORT_VERSION);
+        assert_eq!(report.task.outcome, TaskOutcome::Incomplete);
+        assert_eq!(report.aggregate.turns_completed, 0);
+        assert_eq!(report.aggregate.permission_prompts, 0);
+        assert!(report.evidence.memory_after_turn.is_empty());
+    }
+
+    /// Unit test: `permission:prompt_opened` and
+    /// `permission:decision` envelopes feed the corresponding
+    /// counters and evidence vectors.
+    #[test]
+    fn fold_permission_envelopes_update_counts_and_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "permission:prompt_opened",
+            serde_json::json!({ "tool_name": "bash" }),
+        );
+        logger.append_sync(
+            "permission:decision",
+            serde_json::json!({ "tool_name": "bash", "decision": "allow", "scope": "once" }),
+        );
+        logger.append_sync(
+            "permission:decision",
+            serde_json::json!({ "decision": "deny", "scope": "session" }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.aggregate.permission_prompts, 1);
+        assert_eq!(report.aggregate.permission_resolved_allow, 1);
+        assert_eq!(report.aggregate.permission_resolved_deny, 1);
+        assert_eq!(report.evidence.permission_prompts.len(), 1);
+        assert_eq!(report.evidence.permission_resolved.len(), 2);
+        assert_eq!(
+            report.evidence.permission_prompts[0].tool_name.as_str(),
+            "bash"
+        );
+    }
+
+    /// Unit test: tool lifecycle envelopes feed
+    /// `tool_calls_total`, `tool_calls_by_name`, and
+    /// `tool_successes_by_name`.  Failed tool calls produce a
+    /// `tool_failure` warning.
+    #[test]
+    fn fold_tool_envelopes_track_calls_and_successes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "tool:tool_call_queued",
+            serde_json::json!({
+                "tool_name": "bash",
+                "tool_call_id": "tc-1",
+            }),
+        );
+        logger.append_sync(
+            "tool:tool_call_completed",
+            serde_json::json!({
+                "tool_name": "bash",
+                "tool_call_id": "tc-1",
+            }),
+        );
+        logger.append_sync(
+            "tool:tool_call_queued",
+            serde_json::json!({
+                "tool_name": "read_file",
+                "tool_call_id": "tc-2",
+            }),
+        );
+        logger.append_sync(
+            "tool:tool_call_failed",
+            serde_json::json!({
+                "tool_name": "read_file",
+                "tool_call_id": "tc-2",
+            }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.aggregate.tool_calls_total, 2);
+        assert_eq!(
+            report.aggregate.tool_calls_by_name.get("bash").copied(),
+            Some(1)
+        );
+        assert_eq!(
+            report.aggregate.tool_successes_by_name.get("bash").copied(),
+            Some(1)
+        );
+        assert!(report
+            .blocking_failures
+            .iter()
+            .any(|f| f.code == "tool_failure"));
+    }
+
+    /// Unit test: `execution_mode:judged` rows feed the
+    /// classifier counter + evidence trace (closes the S1.2 emit
+    /// gap on the read side).
+    #[test]
+    fn fold_execution_mode_judged_appends_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "execution_mode:judged",
+            serde_json::json!({
+                "execution_mode": "direct_execute",
+                "risk_level": "low",
+                "complexity_level": "trivial",
+                "policy_version": "ingress-classifier@m1.6",
+            }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.aggregate.execution_mode_judgments, 1);
+        assert_eq!(report.evidence.execution_mode.len(), 1);
+        assert_eq!(
+            report.evidence.execution_mode[0].execution_mode.as_str(),
+            "direct_execute"
+        );
+    }
+
+    /// Unit test: stream errors increment counters and surface
+    /// blocking-vs-warning severity per `resume_available`.
+    #[test]
+    fn fold_stream_error_classifies_severity_by_resume_available() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let logger = RunEventLogger::for_base_dir(tmp.path(), "s", "r");
+        logger.append_sync(
+            "conversation:stream_error",
+            serde_json::json!({
+                "reason": "network_timeout",
+                "resume_available": true,
+            }),
+        );
+        logger.append_sync(
+            "conversation:stream_error",
+            serde_json::json!({
+                "reason": "fatal",
+                "resume_available": false,
+            }),
+        );
+        let entries =
+            collect_run_entries(tmp.path(), "s", "r").expect("collect_run_entries should succeed");
+        let report = fold_run_log_to_report(&entries);
+        assert_eq!(report.aggregate.stream_errors, 2);
+        let warn = report
+            .blocking_failures
+            .iter()
+            .filter(|f| f.code == "stream_error" && f.severity == Severity::Warning)
+            .count();
+        let block = report
+            .blocking_failures
+            .iter()
+            .filter(|f| f.code == "stream_error" && f.severity == Severity::Blocking)
+            .count();
+        assert_eq!(warn, 1);
+        assert_eq!(block, 1);
+    }
+
+    /// Reconciliation scenario test (DT-01-S1.2 implementation).
+    ///
+    /// Drives a hand-written fixture covering the full S1.2 fold
+    /// surface (memory after-turn, permission prompt + decision,
+    /// tool call lifecycle, stream error, execution-mode judgment)
+    /// and asserts that `fold_run_log_to_report` produces the
+    /// expected report shape.
+    ///
+    /// **Documented gaps deferred to S1.3** (asserted as zero):
+    ///
+    /// - `aggregate.turns_completed` / `turns_succeeded` /
+    ///   `total_turn_duration_ms` — depend on a
+    ///   `conversation:turn_finished` envelope that S1.3 will add.
+    /// - `aggregate.prepare_step_*` + `evidence.prepare_step` —
+    ///   depend on a `system:prepare_step` envelope that S1.3
+    ///   will mirror from the bus emit.
+    /// - `aggregate.input_tokens_total` /
+    ///   `aggregate.output_tokens_total` — bus-only today; the
+    ///   audit (variants #3, #4) flagged both as deliberate zeros
+    ///   on both sides.
+    /// - `aggregate.compaction_events` — bus variant has no
+    ///   production caller (audit §7).
+    /// - `aggregate.resume_invocations` — reserved for M4.5+
+    ///   (audit §14).
+    #[test]
+    fn reconciliation_runlog_fold_matches_audit_table_for_s12_surface() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let session_id = "sess-recon";
         let run_id = "run-recon";
-
-        // Write a minimal run-log fixture so `collect_run_entries`
-        // returns a non-empty slice; the fold is what we are gating
-        // on, not the read.  S1.2 will replace this fixture with a
-        // real TurnService-driven scenario.
         let logger = RunEventLogger::for_base_dir(tmp.path(), session_id, run_id);
-        let _ = logger.append_sync(
+
+        let t0_started = Utc::now();
+        // run_started — used to seed project_id projection.
+        logger.append_sync(
             "conversation:run_started",
-            serde_json::json!({ "caller": "reconciliation_test" }),
+            serde_json::json!({
+                "caller": "reconciliation_test",
+                "project_id": "proj-x",
+            }),
         );
-        let _ = logger.append_sync(
-            "conversation:stream_complete",
-            serde_json::json!({ "status": "ok" }),
+        // memory:after_turn — accepted=1, conflict=RequirePrompt.
+        logger.append_sync(
+            "memory:after_turn",
+            serde_json::json!({
+                "traceVersion": "memory-after-turn-trace@m4.1",
+                "caller": "reconciliation",
+                "policyVersion": "memory-write-policy@m3.3",
+                "decidedAt": Utc::now().to_rfc3339(),
+                "decisions": [],
+                "quality": {
+                    "accepted": [],
+                    "rejected": [],
+                    "warnings": [],
+                    "policyVersion": "memory-quality-gate@m4.0",
+                },
+                "conflicts": [],
+            }),
+        );
+        // tool lifecycle — one success, one failure.
+        logger.append_sync(
+            "tool:tool_call_queued",
+            serde_json::json!({"tool_name": "bash", "tool_call_id": "tc-a"}),
+        );
+        logger.append_sync(
+            "tool:tool_call_completed",
+            serde_json::json!({"tool_name": "bash", "tool_call_id": "tc-a"}),
+        );
+        logger.append_sync(
+            "tool:tool_call_queued",
+            serde_json::json!({"tool_name": "read_file", "tool_call_id": "tc-b"}),
+        );
+        logger.append_sync(
+            "tool:tool_call_failed",
+            serde_json::json!({"tool_name": "read_file", "tool_call_id": "tc-b"}),
+        );
+        // permission prompt + allow.
+        logger.append_sync(
+            "permission:prompt_opened",
+            serde_json::json!({"tool_name": "bash"}),
+        );
+        logger.append_sync(
+            "permission:decision",
+            serde_json::json!({"tool_name": "bash", "decision": "allow", "scope": "once"}),
+        );
+        // execution-mode judgment (S1.2 closed gap).
+        logger.append_sync(
+            "execution_mode:judged",
+            serde_json::json!({
+                "execution_mode": "direct_execute",
+                "risk_level": "low",
+                "complexity_level": "trivial",
+                "policy_version": "ingress-classifier@m1.6",
+            }),
+        );
+        // recoverable stream error.
+        logger.append_sync(
+            "conversation:stream_error",
+            serde_json::json!({"reason": "network_timeout", "resume_available": true}),
         );
 
         let entries = collect_run_entries(tmp.path(), session_id, run_id)
             .expect("collect_run_entries should succeed");
-        // The next line panics today via `todo!()`; that is the
-        // S1.1 contract (executable spec for S1.2).
-        let _runlog_report = fold_run_log_to_report(&entries);
-        // S1.2 will add the EventBus comparison + ±1s timestamp
-        // tolerance assertion here.
+        let report = fold_run_log_to_report(&entries);
+
+        // ── Identity / scoping ─────────────────────────────────
+        assert_eq!(report.report_version, HARNESS_RUN_REPORT_VERSION);
+        assert_eq!(report.run_id, run_id);
+        assert_eq!(report.session_id.as_deref(), Some(session_id));
+        assert_eq!(report.project_id.as_deref(), Some("proj-x"));
+        assert!(
+            timestamp_within_tolerance(report.started_at, t0_started, 1),
+            "started_at within ±1s of fixture clock"
+        );
+        assert!(
+            timestamp_within_tolerance(report.ended_at, Utc::now(), 1),
+            "ended_at within ±1s of now"
+        );
+
+        // ── Aggregates the S1.2 fold can produce ──────────────
+        assert_eq!(report.aggregate.permission_prompts, 1);
+        assert_eq!(report.aggregate.permission_resolved_allow, 1);
+        assert_eq!(report.aggregate.permission_resolved_deny, 0);
+        assert_eq!(report.aggregate.tool_calls_total, 2);
+        assert_eq!(
+            report.aggregate.tool_calls_by_name.get("bash").copied(),
+            Some(1)
+        );
+        assert_eq!(
+            report.aggregate.tool_successes_by_name.get("bash").copied(),
+            Some(1)
+        );
+        assert_eq!(report.aggregate.execution_mode_judgments, 1);
+        assert_eq!(report.aggregate.stream_errors, 1);
+        assert_eq!(report.aggregate.memory_decision_count, 0);
+
+        // ── Evidence vectors ──────────────────────────────────
+        assert_eq!(report.evidence.memory_after_turn.len(), 1);
+        assert_eq!(report.evidence.permission_prompts.len(), 1);
+        assert_eq!(report.evidence.permission_resolved.len(), 1);
+        assert_eq!(report.evidence.execution_mode.len(), 1);
+        assert_eq!(report.evidence.stream_errors.len(), 1);
+
+        // ── Documented S1.3 gaps (asserted as zero on purpose) ─
+        // turn_finished / prepare_step envelopes will arrive in
+        // S1.3 once the in-flight contamination on run.rs /
+        // stream_finalize.rs / stream_tool_execution.rs clears.
+        assert_eq!(
+            report.aggregate.turns_completed, 0,
+            "documented gap: TurnFinished emit lands in S1.3"
+        );
+        assert_eq!(report.aggregate.turns_succeeded, 0);
+        assert_eq!(report.aggregate.total_turn_duration_ms, 0);
+        assert_eq!(
+            report.aggregate.prepare_step_total, 0,
+            "documented gap: PrepareStepExecuted emit lands in S1.3"
+        );
+        assert!(report.evidence.prepare_step.is_empty());
+        assert_eq!(
+            report.aggregate.input_tokens_total, 0,
+            "documented gap: LlmRequested/Responded unwired (audit §3-4)"
+        );
+        assert_eq!(report.aggregate.output_tokens_total, 0);
+        assert_eq!(
+            report.aggregate.compaction_events, 0,
+            "documented gap: ContextCompacted bus variant unused (audit §7)"
+        );
+        assert_eq!(report.aggregate.resume_invocations, 0);
+
+        // ── Outcome derivation ────────────────────────────────
+        // turns_completed == 0 ⇒ Incomplete (until S1.3 wires
+        // turn_finished).  Documented expectation, not a bug.
+        assert_eq!(report.task.outcome, TaskOutcome::Incomplete);
+
+        // Avoid dead variable warning; t0_started binds time we
+        // sampled before fixture writes.
+        let _ = t0_started;
     }
 }
