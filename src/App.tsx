@@ -26,8 +26,6 @@ import {
   ensureDefaultWorkdir,
   executeSlashCommand,
   getOnboardingState,
-  getSession,
-  getSessionHistoryPage,
   generateSessionTitle,
   listProjects,
   listProjectSessions,
@@ -61,7 +59,6 @@ import { toast } from "sonner";
 import appIconAsset from "@/assets/app-icon.png";
 import {
   projectConversationMessagesFromRuns,
-  replayRunLogEntriesToMessages,
   runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
@@ -70,6 +67,7 @@ import { RuntimeProjectionWiring } from "@/app-effects/RuntimeProjectionWiring";
 import { useUpdaterBanner } from "@/app-effects/useUpdaterBanner";
 import { useGlobalHotkeys } from "@/app-effects/useGlobalHotkeys";
 import { useChatPrefill } from "@/app-effects/useChatPrefill";
+import { loadConversationHistory } from "@/session/loadConversationHistory";
 // MIG-013 — AppShell is the canonical top-level shell container
 // (BootShell + MainShell + ContentRouter). Boot state lives in
 // the bootstrap-store; App.tsx is now a data-flow host, not a
@@ -1453,200 +1451,20 @@ function App() {
       (session) => session.id === sessionId,
     );
 
-    try {
-      const [fullSession, historyPage] = await Promise.all([
-        getSession(sessionId),
-        getSessionHistoryPage(sessionId, { limit: 1000 }).catch((error) => {
-          console.warn("Failed to load session run-log history:", error);
-          return null;
-        }),
-      ]);
-      const baseTimestamp = new Date(fullSession.updated_at);
-      let convertedMessages: Message[] = [];
-      const replayedMessages =
-        historyPage && historyPage.eventPage.entries.length > 0
-          ? replayRunLogEntriesToMessages(
-              historyPage.eventPage.entries,
-              sessionId,
-            ).map((message) => ({
-              ...message,
-              disableAnimation: true,
-            }))
-          : [];
-      const toolMessageIndexById = new Map<string, number>();
-      let recoveredTodos: TodoItem[] = [];
-
-      const upsertToolMessage = (toolCallId: string, nextMessage: Message) => {
-        const existingIndex = toolMessageIndexById.get(toolCallId);
-        if (existingIndex !== undefined) {
-          convertedMessages[existingIndex] = {
-            ...convertedMessages[existingIndex],
-            ...nextMessage,
-            id: convertedMessages[existingIndex].id,
-            toolCallId,
-          };
-          return;
-        }
-
-        const index = convertedMessages.push(nextMessage) - 1;
-        toolMessageIndexById.set(toolCallId, index);
-      };
-
-      for (const msg of fullSession.messages) {
-        if (msg.role === "system") {
-          continue;
-        }
-        const messageOutcome = {
-          requestId: msg.request_id,
-          taskOutcome: msg.task_outcome,
-          degradedReason: msg.degraded_reason,
-          resumeAvailable: msg.resume_available,
-          resumeCursor: msg.resume_cursor,
-        };
-        let pushedAssistantText = false;
-        for (const block of msg.blocks) {
-          if (block.type === "tool_use" && block.tool_use_block) {
-            const toolCallId = block.tool_use_block.id;
-            upsertToolMessage(toolCallId, {
-              id: `tool-use-${toolCallId}`,
-              role: "tool",
-              content: "",
-              timestamp: baseTimestamp,
-              toolCallId,
-              toolName: block.tool_use_block.name,
-              toolArgs: block.tool_use_block.input as
-                | Record<string, unknown>
-                | undefined,
-              toolStatus: "running",
-              policyDecision: "prompt",
-              evidenceId: toolCallId,
-              effectiveWorkdir: project?.workdir,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-            continue;
-          }
-
-          if (block.type === "tool_result" && block.tool_use_id) {
-            const toolCallId = block.tool_use_id;
-            const existingIndex = toolMessageIndexById.get(toolCallId);
-            const toolArgs =
-              existingIndex !== undefined
-                ? convertedMessages[existingIndex]?.toolArgs
-                : undefined;
-            upsertToolMessage(toolCallId, {
-              id: `tool-${toolCallId}-${Date.now()}`,
-              role: "tool",
-              content: block.output || "",
-              timestamp: baseTimestamp,
-              toolCallId,
-              toolName: block.tool_name || "unknown",
-              toolArgs,
-              toolStatus: "completed",
-              policyDecision: "allow",
-              evidenceId: toolCallId,
-              effectiveWorkdir: project?.workdir,
-              isError: false,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-            const isTodoWriteResult =
-              (block.tool_name ?? "").trim() === "TodoWrite" ||
-              (existingIndex !== undefined &&
-                convertedMessages[existingIndex]?.toolName?.trim() ===
-                  "TodoWrite");
-            if (isTodoWriteResult) {
-              const nextTodos = extractTodosFromToolResult(block.output);
-              if (nextTodos) {
-                recoveredTodos = nextTodos;
-              }
-            }
-            continue;
-          }
-
-          if (block.type === "text" && block.text) {
-            pushedAssistantText = true;
-            convertedMessages.push({
-              id: `${msg.role}-${crypto.randomUUID()}`,
-              role: msg.role as "user" | "assistant",
-              content: block.text,
-              timestamp: baseTimestamp,
-              thinking: msg.thinking,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-          }
-        }
-
-        if (msg.role === "assistant" && msg.thinking && !pushedAssistantText) {
-          convertedMessages.push({
-            id: `${msg.role}-${crypto.randomUUID()}`,
-            role: "assistant",
-            content: "",
-            timestamp: baseTimestamp,
-            thinking: msg.thinking,
-            disableAnimation: true,
-            ...messageOutcome,
-          });
-        }
-      }
-
-      if (
-        replayedMessages.some(
-          (message) => message.role === "assistant" || message.role === "tool",
-        )
-      ) {
-        convertedMessages = replayedMessages;
-      }
-
-      setConversations((prev) => ({
-        ...prev,
-        [sessionId]: {
-          id: sessionId,
-          projectId,
-          title:
-            fullSession.title ||
-            sessionMeta?.title ||
-            PLACEHOLDER_SESSION_TITLE,
-          titleIcon: fullSession.title_icon ?? sessionMeta?.title_icon ?? null,
-          titlePending: Boolean(
-            fullSession.title_pending ?? sessionMeta?.title_pending,
-          ),
-          messages: convertedMessages,
-          updatedAt: new Date(fullSession.updated_at),
-          sessionTotals: fullSession.session_totals,
-        },
-      }));
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: getInitialSessionTitleState(
-          fullSession.title || sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-          convertedMessages,
-        ),
-      }));
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: recoveredTodos }));
-    } catch (err) {
-      console.error("Failed to load session:", err);
-      setConversations((prev) => ({
-        ...prev,
-        [sessionId]: {
-          id: sessionId,
-          projectId,
-          title: sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-          titleIcon: sessionMeta?.title_icon ?? null,
-          titlePending: Boolean(sessionMeta?.title_pending),
-          messages: [],
-          updatedAt: new Date(),
-        },
-      }));
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: getInitialSessionTitleState(
-          sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-        ),
-      }));
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }));
-    }
+    // GF-03 PR-2 — history → Message reducer extracted to
+    // `src/session/loadConversationHistory.ts`.  This handler now
+    // orchestrates the three slice writes; the helper is the sole
+    // owner of the (legacy `messages[]` × canonical run-log) merge.
+    const { conversation, recoveredTodos, titleState } =
+      await loadConversationHistory({
+        sessionId,
+        projectId,
+        sessionMeta,
+        projectWorkdir: project?.workdir,
+      });
+    setConversations((prev) => ({ ...prev, [sessionId]: conversation }));
+    setSessionTitleStates((prev) => ({ ...prev, [sessionId]: titleState }));
+    setSessionTodos((prev) => ({ ...prev, [sessionId]: recoveredTodos }));
   };
 
   const handleNewChat = async (projectId: string): Promise<string | null> => {
