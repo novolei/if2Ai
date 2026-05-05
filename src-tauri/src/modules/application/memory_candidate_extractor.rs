@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Memory candidate extractor + existing-record lookup (Phase M4.1).
 //!
 //! First real source of [`MemoryWriteCandidate`]s for the
@@ -33,19 +35,16 @@
 //!
 //! ## Out of scope (M4-A intentional non-goals)
 //!
-//! - Assistant-output extraction (`object_kind` inference from
-//!   plain text), reflection-note → candidate adapter, and tool
-//!   trace extraction beyond `memory_store` — these belong to
-//!   later M4 / M5 slices.
+//! - Reflection-note → candidate adapter, and tool trace extraction
+//!   beyond `memory_store` — these belong to later M4 / M5 slices.
 //! - Cross-scope dedup, embedding-based similarity, persistent
 //!   per-record evidence registry — left for the M3-B+ persistence
 //!   wiring referenced in the M3 audit doc.
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use crate::modules::application::memory_conflict_resolution::ExistingRecordRef;
+use crate::modules::memory::llm::UtilityLlm;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::{MemoryEntry, MemoryProvider};
 use crate::modules::runtime::contracts::memory::{
@@ -56,6 +55,12 @@ use crate::modules::runtime::session::{ContentBlock, ConversationMessage, Messag
 /// Stable source tag emitted on every candidate this module produces.
 /// Pinned so M4 governance traces can filter / count by source.
 pub const SOURCE_MEMORY_STORE_TOOL: &str = "memory_store_tool";
+
+/// Source tag for candidates produced by the LLM auto-extraction path.
+pub const SOURCE_AUTO_EXTRACT: &str = "auto_extract";
+
+/// Source tag for candidates extracted from assistant output analysis.
+pub const SOURCE_ASSISTANT_OUTPUT_EXTRACT: &str = "assistant_output_extract";
 
 /// Maximum content_preview characters surfaced into the candidate.
 /// Mirrors the `pending_approval` preview length used by the
@@ -248,6 +253,177 @@ fn candidate_scope_from(scope: &MemoryExecutionScope) -> MemoryScope {
     }
 }
 
+/// Maximum characters of assistant text fed into the extraction prompt.
+/// Keeps the utility-LLM call within a reasonable token budget.
+const ASSISTANT_TEXT_MAX_CHARS: usize = 2000;
+
+/// Minimum assistant text length (in characters) worth analysing.
+/// Shorter texts are unlikely to contain meaningful user-profile signals.
+const ASSISTANT_TEXT_MIN_CHARS: usize = 20;
+
+/// Extract assistant-message plain text (skipping ToolUse / ToolResult
+/// blocks) and concatenate into a single string, truncated to
+/// [`ASSISTANT_TEXT_MAX_CHARS`].
+fn extract_assistant_text(messages: &[ConversationMessage]) -> String {
+    let mut buf = String::new();
+    for msg in messages {
+        if msg.role != MessageRole::Assistant {
+            continue;
+        }
+        for block in &msg.blocks {
+            if let ContentBlock::Text { text } = block {
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                buf.push_str(text);
+            }
+            // Skip ToolUse and ToolResult blocks — they carry
+            // operational data, not conversational content.
+        }
+    }
+    // Truncate to the budget so the prompt stays compact.
+    if buf.len() > ASSISTANT_TEXT_MAX_CHARS {
+        let truncation_point = buf
+            .char_indices()
+            .nth(ASSISTANT_TEXT_MAX_CHARS)
+            .map(|(i, _)| i)
+            .unwrap_or(buf.len());
+        buf.truncate(truncation_point);
+    }
+    buf
+}
+
+/// System prompt used by [`extract_from_assistant_output`] to guide the
+/// utility LLM towards user-profile inferences.
+const ASSISTANT_EXTRACT_SYSTEM_PROMPT: &str = r#"You are a user-profile inference assistant. Analyze the assistant's response and extract any implicit inferences about the user that are worth remembering.
+
+Return a JSON array where each element has:
+- "key": lowercase_snake_case identifier (e.g., "is_developer", "works_on_tauri_project")
+- "content": A factual sentence about the user (e.g., "User is working on a Tauri desktop application project")
+- "category": one of "core" (identity), "daily" (preferences/habits), "conversation" (contextual)
+
+Rules:
+- Extract ONLY inferences about the USER, not about the assistant's actions
+- Focus on: user's occupation, skills, projects, goals, technical preferences, communication style
+- Ignore: assistant's operational responses, code output, tool result summaries, generic advice
+- Only extract facts that are clearly implied or stated, not speculative guesses
+- If nothing worth remembering, return []
+- Write content in the same language as the assistant's response"#;
+
+/// From Assistant replies, automatically extract inferences about the
+/// user's profile (occupation, skills, preferences, projects, etc.).
+///
+/// Analyses the **plain text** portions of assistant messages
+/// (excluding tool-use / tool-result blocks) and uses a utility LLM
+/// to identify implicit facts about the user.  This is a complementary
+/// extraction path to the explicit `memory_store` tool-call extractor
+/// and the user-message extractor.
+///
+/// `already_stored` carries the `content_preview` strings of candidates
+/// that the LLM already explicitly stored via `memory_store` tool calls
+/// in this same turn.  The extraction prompt tells the utility LLM to
+/// skip facts that overlap with these entries so we avoid duplicates.
+///
+/// Graceful degradation:
+/// - Returns an empty `Vec` when the assistant text is too short.
+/// - Returns an empty `Vec` on any LLM error or JSON parse failure.
+pub async fn extract_from_assistant_output(
+    assistant_messages: &[ConversationMessage],
+    llm: &dyn UtilityLlm,
+    fallback_scope: &MemoryExecutionScope,
+    already_stored: &[String],
+) -> Vec<MemoryWriteCandidate> {
+    let text = extract_assistant_text(assistant_messages);
+    if text.len() < ASSISTANT_TEXT_MIN_CHARS {
+        return Vec::new();
+    }
+
+    let stored_section = build_already_stored_section(already_stored);
+    let user_prompt = format!(
+        "Assistant's response:\n{}\n{stored_section}\nExtract user profile inferences as JSON array:",
+        text
+    );
+
+    let llm_response = match llm
+        .complete(ASSISTANT_EXTRACT_SYSTEM_PROMPT, &user_prompt, 512, 0.0)
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::debug!(
+                error = %err,
+                "[extract_from_assistant_output] LLM call failed, skipping"
+            );
+            return Vec::new();
+        }
+    };
+
+    parse_assistant_extract_response(&llm_response, fallback_scope)
+}
+
+/// Parse the LLM JSON response into [`MemoryWriteCandidate`]s.
+///
+/// Expects a JSON array of `{ "key", "content", "category" }` objects.
+/// Invalid / missing fields are silently skipped; a completely
+/// unparseable response yields an empty `Vec`.
+fn parse_assistant_extract_response(
+    raw: &str,
+    fallback_scope: &MemoryExecutionScope,
+) -> Vec<MemoryWriteCandidate> {
+    // The LLM sometimes wraps the array in a code fence — strip it.
+    let trimmed = raw.trim();
+    let json_str = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+
+    let items: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::debug!(
+                error = %err,
+                raw_len = raw.len(),
+                "[extract_from_assistant_output] JSON parse failed, returning empty"
+            );
+            return Vec::new();
+        }
+    };
+
+    let scope = candidate_scope_from(fallback_scope);
+    let mut candidates = Vec::new();
+    for item in &items {
+        let key = match item.get("key").and_then(|v| v.as_str()) {
+            Some(k) if !k.is_empty() => k,
+            _ => continue,
+        };
+        let content = match item.get("content").and_then(|v| v.as_str()) {
+            Some(c) if !c.is_empty() => c,
+            _ => continue,
+        };
+        let category = item
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("conversation");
+
+        let object_kind = classify_object_kind(category);
+        let preview = content_preview_for_candidate(key, content);
+
+        candidates.push(MemoryWriteCandidate {
+            object_kind,
+            scope,
+            content_preview: preview,
+            evidence_id: None,
+            source: SOURCE_ASSISTANT_OUTPUT_EXTRACT.to_string(),
+        });
+    }
+    candidates
+}
+
 fn map_first_hit_to_existing_ref(
     hits: &[MemoryEntry],
     candidate: &MemoryWriteCandidate,
@@ -269,6 +445,167 @@ fn map_first_hit_to_existing_ref(
         has_evidence: true,
         polarity: None,
     })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// MEM-AUTO-EXTRACT — LLM-based user message extraction
+// ────────────────────────────────────────────────────────────────────────────
+
+/// System prompt for the auto-extraction LLM call.
+const AUTO_EXTRACT_SYSTEM_PROMPT: &str = r#"You are a memory extraction assistant. Analyze the user's message and extract any personal facts worth remembering long-term.
+
+Return a JSON array where each element has:
+- "key": lowercase_snake_case identifier (e.g., "tropical_fish_hobby", "xiaomi_fish_tank")
+- "content": A complete sentence describing the fact (e.g., "User enjoys keeping tropical fish")
+- "category": one of "core" (identity facts), "daily" (preferences, possessions, habits), "conversation" (contextual facts)
+
+Rules:
+- Extract: preferences, hobbies, possessions, devices, pets, family, work, education, habits, goals
+- Ignore: questions, commands, technical discussions, temporary requests, code snippets
+- If nothing worth remembering, return []
+- Keep content concise but self-contained
+- Write content in the same language as the user's message"#;
+
+/// Minimum user text length (in chars) below which we skip LLM extraction.
+const MIN_USER_TEXT_LEN: usize = 10;
+
+/// Use LLM to extract memorable personal facts from user messages.
+///
+/// This is a supplementary path to `extract_memory_store_tool_candidates`:
+/// even when the agent does not explicitly call `memory_store`, this
+/// function can capture preferences, possessions, habits, etc. mentioned
+/// by the user.
+///
+/// `already_stored` carries the `content_preview` strings of candidates
+/// that the LLM already explicitly stored via `memory_store` tool calls
+/// in this same turn.  The extraction prompt tells the utility LLM to
+/// skip facts that overlap with these entries so we avoid duplicates.
+///
+/// Graceful degradation: returns an empty `Vec` on any LLM or parse
+/// failure — never panics, never blocks the main turn flow.
+pub async fn extract_from_user_messages(
+    user_messages: &[ConversationMessage],
+    llm: &dyn UtilityLlm,
+    fallback_scope: &MemoryExecutionScope,
+    already_stored: &[String],
+) -> Vec<MemoryWriteCandidate> {
+    // 1. Collect user text blocks.
+    let user_text = collect_user_text(user_messages);
+    if user_text.len() < MIN_USER_TEXT_LEN {
+        return Vec::new();
+    }
+
+    // 2. Build the user prompt, including already-stored facts.
+    let stored_section = build_already_stored_section(already_stored);
+    let user_prompt = format!(
+        "User message:\n{}\n{stored_section}\nExtract memorable personal facts as JSON array:",
+        user_text
+    );
+
+    // 3. Call LLM (max_tokens=512, temperature=0.0).
+    let raw_response = match llm
+        .complete(AUTO_EXTRACT_SYSTEM_PROMPT, &user_prompt, 512, 0.0)
+        .await
+    {
+        Ok(text) => text,
+        Err(e) => {
+            tracing::debug!(error = %e, "[auto_extract] LLM call failed, skipping");
+            return Vec::new();
+        }
+    };
+
+    if raw_response.is_empty() {
+        return Vec::new();
+    }
+
+    // 4. Parse JSON.
+    let items = parse_extraction_json(&raw_response);
+
+    // 5. Convert to MemoryWriteCandidate.
+    let scope = candidate_scope_from(fallback_scope);
+    items
+        .into_iter()
+        .map(|item| {
+            let object_kind = classify_object_kind(&item.category);
+            let preview = content_preview_for_candidate(&item.key, &item.content);
+            MemoryWriteCandidate {
+                object_kind,
+                scope,
+                content_preview: preview,
+                evidence_id: None,
+                source: SOURCE_AUTO_EXTRACT.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Build the "already stored facts" section for the extraction prompt.
+/// Returns an empty string when `already_stored` is empty so the prompt
+/// is unchanged in the common no-overlap case.
+fn build_already_stored_section(already_stored: &[String]) -> String {
+    if already_stored.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from("\nAlready stored facts (DO NOT extract these again):\n");
+    for item in already_stored {
+        section.push_str("- ");
+        section.push_str(item);
+        section.push('\n');
+    }
+    section
+}
+
+/// Concatenate text content from user-role messages.
+fn collect_user_text(messages: &[ConversationMessage]) -> String {
+    let mut buf = String::new();
+    for msg in messages {
+        if msg.role != MessageRole::User {
+            continue;
+        }
+        for block in &msg.blocks {
+            if let ContentBlock::Text { text } = block {
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                buf.push_str(text);
+            }
+        }
+    }
+    buf
+}
+
+/// A single extracted fact from the LLM JSON output.
+#[derive(serde::Deserialize)]
+struct ExtractedFact {
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    category: String,
+}
+
+/// Parse the LLM response into extracted facts with robust handling
+/// of markdown fences and partial failures.
+fn parse_extraction_json(raw: &str) -> Vec<ExtractedFact> {
+    // Strip markdown code fences if present.
+    let trimmed = raw.trim();
+    let json_str = if trimmed.starts_with("```") {
+        // Remove opening fence (```json or ```)
+        let after_open = match trimmed.find('\n') {
+            Some(idx) => &trimmed[idx + 1..],
+            None => return Vec::new(),
+        };
+        // Remove closing fence
+        match after_open.rfind("```") {
+            Some(idx) => after_open[..idx].trim(),
+            None => after_open.trim(),
+        }
+    } else {
+        trimmed
+    };
+
+    serde_json::from_str::<Vec<ExtractedFact>>(json_str).unwrap_or_default()
 }
 
 #[cfg(test)]

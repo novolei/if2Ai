@@ -236,8 +236,7 @@ const RATE_LIMIT_MAX_RETRIES: u32 = 3;
 /// If `retry_after` is provided (from the `Retry-After` header),
 /// the final delay is `max(computed, retry_after)`.
 fn rate_limit_backoff(attempt: u32, retry_after: Option<Duration>) -> Duration {
-    let exp = RATE_LIMIT_BASE_DELAY
-        .saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX));
+    let exp = RATE_LIMIT_BASE_DELAY.saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX));
     let jitter_ms = rand::thread_rng().gen_range(0..500);
     let computed = exp.saturating_add(Duration::from_millis(jitter_ms));
     let cap = Duration::from_secs(RATE_LIMIT_MAX_BACKOFF_SECS);
@@ -258,7 +257,8 @@ async fn try_stream_message_inner(
         match client.stream_message(req).await {
             Ok(s) => return Ok(s),
             Err(e) => {
-                let retry = e.is_retryable() && !e.is_rate_limited()
+                let retry = e.is_retryable()
+                    && !e.is_rate_limited()
                     && attempt < cfg.stream_start_max_retries;
                 last_err = Some(e);
                 if !retry {

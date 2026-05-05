@@ -8,21 +8,17 @@ resolver = "2"
 # root, because Cargo silently ignores [profile.*] in member crates.
 #
 # [profile.dev]  — default for `cargo build` / `cargo run` / tauri dev
-# [profile.test] — `cargo test` overrides only `incremental` (see below)
+# [profile.test] — `cargo test`; inherits dev
 # ─────────────────────────────────────────────────────────────────────
 
 [profile.dev]
 # Stack traces still work; just no full local-variable debuginfo.
 debug = "line-tables-only"
 codegen-units = 256
-# CRITICAL — must be `false` when `sccache` is the rustc-wrapper.
-# Mozilla/sccache documented caveat: incremental compilation writes
-# per-session metadata that breaks sccache's deterministic hash, so
-# every Rust crate becomes an unconditional miss when both are on.
-# Trade-off: full crate recompile on first-party file changes (instead
-# of incremental partial), but sccache crate-level cache is the bigger
-# win here (200+ crates × repeated branch switches).
-incremental = false
+# Incremental dev builds: faster `cargo check` / edit cycles for local work.
+# If you use `RUSTC_WRAPPER=sccache`, switch this back to `false` — sccache
+# and incremental together cause cache misses (Mozilla/sccache docs).
+incremental = true
 
 # Apply opt-level = 1 to all dependencies but leave first-party crates
 # at opt-level = 0.  Heavy native deps (fastembed, lancedb, datafusion,
@@ -32,16 +28,9 @@ incremental = false
 opt-level = 1
 codegen-units = 16
 
-# `cargo test` produces binaries with different crate-hashes than
-# `cargo build` (--cfg test + --emit=link vs --emit=metadata/rlib),
-# so sccache always misses on the first test of a session.  With
-# incremental=false (inherited from dev) that meant full recompile of
-# all 336 source files every test run.  Override incremental=true here:
-#   + 2nd+ `cargo test` in same session are 5-10× faster
-#   - Cold first run unchanged; branch-switch builds still use sccache
+# Test binaries inherit dev (including incremental builds).
 [profile.test]
 inherits = "dev"
-incremental = true
 
 [profile.test.package."*"]
 opt-level = 1

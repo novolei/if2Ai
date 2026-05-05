@@ -41,6 +41,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::modules::memory::audit::{AuditContext, MemoryAuditEmitter};
+use crate::modules::memory::conflict::ConflictDetector;
 use crate::modules::memory::decision_tree::{decide_via_llm, DecisionPlan};
 use crate::modules::memory::llm::UtilityLlm;
 use crate::modules::memory::policy::{
@@ -486,6 +487,37 @@ pub fn entry(memory: SharedMemoryProvider, utility_llm: Option<Arc<dyn UtilityLl
                     }
                     DecisionPlan::Add => {
                         // fall through to the historical add path
+                    }
+                }
+
+                // Step 6.5: Conflict detection (optional — gated by feature
+                // flag, defaults on).  Runs after the decision tree judged
+                // this write as Add, before final persistence.
+                let conflict_detection_enabled = crate::modules::runtime::config::current()
+                    .memory()
+                    .conflict_detection_enabled();
+                if conflict_detection_enabled {
+                    let conflict_detector = ConflictDetector::new();
+                    if let Ok(conflicts) = conflict_detector
+                        .detect_conflicts(&key, &content, &*memory)
+                        .await
+                    {
+                        for conflict in &conflicts {
+                            let resolution = conflict_detector
+                                .resolve(conflict, 0.5 /* default new-entry quality */);
+                            // Best-effort apply — failures are logged but
+                            // never block the primary write path.
+                            if let Err(e) = conflict_detector
+                                .apply_resolution(conflict, &resolution, &*memory)
+                                .await
+                            {
+                                tracing::warn!(
+                                    target: "memory.conflict",
+                                    error = %e,
+                                    "conflict resolution apply failed; continuing",
+                                );
+                            }
+                        }
                     }
                 }
 

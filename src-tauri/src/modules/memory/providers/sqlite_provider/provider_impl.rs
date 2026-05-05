@@ -26,6 +26,8 @@ impl MemoryProvider for SqliteMemoryProvider {
         let key = key.to_string();
         let content = content.to_string();
         let category_str = category.as_str().to_string();
+        let cognitive_layer_val =
+            crate::modules::memory::CognitiveLayer::from_category(&category).as_i32();
 
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
@@ -33,8 +35,8 @@ impl MemoryProvider for SqliteMemoryProvider {
             // session_id/project_id are NULL for unscoped store() — use store_scoped() for isolation.
             c.execute(
                 "INSERT INTO memory_entries
-                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
-                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, NULL, NULL)
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id, quality_score, source_reliability, last_validated_at, contradiction_count, cognitive_layer, context_tags)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, NULL, NULL, 0.5, 0.5, NULL, 0, $5, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                      content = excluded.content,
                      category = excluded.category,
@@ -44,6 +46,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                     content,
                     category_str,
                     chrono::Utc::now().to_rfc3339(),
+                    cognitive_layer_val,
                 ],
             )
             .map_err(|e| MemoryError::Generic(format!("Failed to store entry: {e}")))?;
@@ -76,6 +79,8 @@ impl MemoryProvider for SqliteMemoryProvider {
         };
         let key = key.to_string();
         let category_str = category.as_str().to_string();
+        let cognitive_layer_val =
+            crate::modules::memory::CognitiveLayer::from_category(&category).as_i32();
         let session_id = scope.session_id.clone();
         let project_id = scope.project_id.clone();
 
@@ -84,8 +89,8 @@ impl MemoryProvider for SqliteMemoryProvider {
             let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
             c.execute(
                 "INSERT INTO memory_entries
-                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
-                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, $5, $6)
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id, quality_score, source_reliability, last_validated_at, contradiction_count, cognitive_layer, context_tags)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, $5, $6, 0.5, 0.5, NULL, 0, $7, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                      content = excluded.content,
                      category = excluded.category,
@@ -99,6 +104,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                     chrono::Utc::now().to_rfc3339(),
                     session_id,
                     project_id,
+                    cognitive_layer_val,
                 ],
             )
             .map_err(|e| MemoryError::Generic(format!("Failed to store scoped entry: {e}")))?;
@@ -160,7 +166,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let limit_pos = scope_params.len() + 2;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                        AND category = ?{cat_pos}
@@ -188,7 +196,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let limit_pos = scope_params.len() + 1;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                      ORDER BY {order_by}
@@ -258,7 +268,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE category = ?1
                      ORDER BY updated_at DESC
@@ -266,7 +278,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 )?,
                 None => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      ORDER BY updated_at DESC
                      LIMIT ?1",
@@ -392,12 +406,16 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries WHERE category = ?1 ORDER BY updated_at DESC",
                 )?,
                 None => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries ORDER BY updated_at DESC",
                 )?,
             };
@@ -452,7 +470,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let cat_pos = scope_params.len() + 1;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                        AND category = ?{cat_pos}
@@ -477,7 +497,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             } else {
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                      ORDER BY updated_at DESC"
@@ -574,7 +596,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = c
                 .prepare(
                     "SELECT key, content, category, created_at, updated_at, \
-                     importance, access_count, trust_score, session_id, project_id \
+                     importance, access_count, trust_score, session_id, project_id, \
+                     quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags \
                      FROM memory_entries",
                 )
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
@@ -620,7 +644,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let mut stmt = c.prepare(
                 "SELECT key, content, category, created_at, updated_at, importance,
-                        access_count, trust_score, session_id, project_id
+                        access_count, trust_score, session_id, project_id,
+                        quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                  FROM memory_entries
                  WHERE key = ?1",
             )?;
@@ -774,8 +800,10 @@ impl MemoryProvider for SqliteMemoryProvider {
             c.execute(
                 "INSERT INTO memory_entries
                     (key, content, category, created_at, updated_at,
-                     importance, access_count, trust_score)
-                 VALUES (?1, ?2, ?3, ?4, ?4, 0.6, 0, 0.0)
+                     importance, access_count, trust_score,
+                     quality_score, source_reliability, last_validated_at, contradiction_count,
+                     cognitive_layer, context_tags)
+                 VALUES (?1, ?2, ?3, ?4, ?4, 0.6, 0, 0.0, 0.5, 0.5, NULL, 0, 2, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                     content = excluded.content,
                     category = excluded.category,
@@ -798,6 +826,35 @@ impl MemoryProvider for SqliteMemoryProvider {
                 linked += n;
             }
             Ok(linked)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Persist updated `importance` and `quality_score` for a single entry.
+    /// Used by the forgetting-curve sweep after computing decay.
+    async fn update_decay_scores(
+        &self,
+        key: &str,
+        importance: f64,
+        quality_score: f64,
+    ) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let changed = c
+                .execute(
+                    "UPDATE memory_entries SET importance = ?1, quality_score = ?2 WHERE key = ?3",
+                    params![importance, quality_score, key],
+                )
+                .map_err(|e| MemoryError::Generic(format!("update_decay_scores failed: {e}")))?;
+            if changed == 0 {
+                return Err(MemoryError::KeyNotFound(key));
+            }
+            Ok(())
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
@@ -1068,6 +1125,304 @@ impl MemoryProvider for SqliteMemoryProvider {
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
     }
+
+    /// Retrieve all outgoing links from a given source memory key.
+    async fn get_outgoing_links(
+        &self,
+        source_key: &str,
+        link_type: Option<&str>,
+    ) -> Result<Vec<crate::modules::memory::MemoryLink>, MemoryError> {
+        let source_key = source_key.to_string();
+        let link_type = link_type.map(str::to_string);
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let (sql, result) = if let Some(ref lt) = link_type {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT source_key, target_key, link_type, created_at \
+                         FROM memory_links WHERE source_key = ?1 AND link_type = ?2",
+                    )
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![source_key, lt], row_to_memory_link)
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+                }
+                ("filtered", out)
+            } else {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT source_key, target_key, link_type, created_at \
+                         FROM memory_links WHERE source_key = ?1",
+                    )
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![source_key], row_to_memory_link)
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+                }
+                ("all", out)
+            };
+            let _ = sql; // suppress unused
+            Ok(result)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Retrieve all incoming links to a given target memory key.
+    async fn get_incoming_links(
+        &self,
+        target_key: &str,
+        link_type: Option<&str>,
+    ) -> Result<Vec<crate::modules::memory::MemoryLink>, MemoryError> {
+        let target_key = target_key.to_string();
+        let link_type = link_type.map(str::to_string);
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let (sql, result) = if let Some(ref lt) = link_type {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT source_key, target_key, link_type, created_at \
+                         FROM memory_links WHERE target_key = ?1 AND link_type = ?2",
+                    )
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![target_key, lt], row_to_memory_link)
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+                }
+                ("filtered", out)
+            } else {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT source_key, target_key, link_type, created_at \
+                         FROM memory_links WHERE target_key = ?1",
+                    )
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![target_key], row_to_memory_link)
+                    .map_err(|e| MemoryError::Generic(e.to_string()))?;
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+                }
+                ("all", out)
+            };
+            let _ = sql;
+            Ok(result)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Retrieve all links in the memory graph (no key filter).
+    ///
+    /// Returns every row from `memory_links` in a single query, used by
+    /// the full-graph visualization to avoid per-node fan-out.
+    async fn get_all_links(&self) -> Result<Vec<crate::modules::memory::MemoryLink>, MemoryError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut stmt = c
+                .prepare("SELECT source_key, target_key, link_type, created_at FROM memory_links")
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let rows = stmt
+                .query_map([], row_to_memory_link)
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// BFS graph traversal over `memory_links`.
+    ///
+    /// Performs the entire BFS inside a single `spawn_blocking` call so
+    /// that repeated SQLite queries reuse the same connection lock
+    /// instead of acquiring/releasing it per-node.  This significantly
+    /// reduces overhead for dense graphs.
+    async fn graph_traverse(
+        &self,
+        seed_key: &str,
+        depth: usize,
+        link_types: Option<&[&str]>,
+    ) -> Result<Vec<crate::modules::memory::GraphNode>, MemoryError> {
+        use std::collections::{HashSet, VecDeque};
+
+        let max_depth = depth.min(5);
+        let conn = self.conn.clone();
+        let seed = seed_key.to_string();
+        let types: Option<Vec<String>> =
+            link_types.map(|t| t.iter().map(|s| s.to_string()).collect());
+
+        tokio::task::spawn_blocking(move || {
+            let db = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+
+            let mut visited: HashSet<String> = HashSet::new();
+            let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+            let mut nodes: Vec<crate::modules::memory::GraphNode> = Vec::new();
+
+            queue.push_back((seed, 0usize));
+
+            while let Some((key, d)) = queue.pop_front() {
+                if d > max_depth || visited.contains(&key) {
+                    continue;
+                }
+                visited.insert(key.clone());
+
+                // Query outgoing links directly on the held connection.
+                let outgoing = query_links_sync(&db, &key, &types, true)?;
+                let incoming = query_links_sync(&db, &key, &types, false)?;
+
+                let mut node_links = Vec::new();
+                for link in &outgoing {
+                    node_links.push(link.clone());
+                    if d < max_depth && !visited.contains(&link.target_key) {
+                        queue.push_back((link.target_key.clone(), d + 1));
+                    }
+                }
+                for link in &incoming {
+                    node_links.push(link.clone());
+                    if d < max_depth && !visited.contains(&link.source_key) {
+                        queue.push_back((link.source_key.clone(), d + 1));
+                    }
+                }
+
+                // Query entry metadata.
+                let entry = query_entry_by_key_sync(&db, &key)?;
+
+                nodes.push(crate::modules::memory::GraphNode {
+                    key,
+                    depth: d,
+                    entry,
+                    links: node_links,
+                });
+            }
+
+            Ok(nodes)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+}
+
+/// Synchronous helper: query outgoing or incoming links for a key.
+///
+/// When `outgoing` is `true`, queries `source_key = ?`; otherwise `target_key = ?`.
+/// Applies an optional `link_type` IN-filter when `types` is `Some`.
+fn query_links_sync(
+    db: &rusqlite::Connection,
+    key: &str,
+    types: &Option<Vec<String>>,
+    outgoing: bool,
+) -> Result<Vec<crate::modules::memory::MemoryLink>, MemoryError> {
+    let direction_col = if outgoing { "source_key" } else { "target_key" };
+    let mut links: Vec<crate::modules::memory::MemoryLink> = Vec::new();
+
+    if let Some(ref type_list) = types {
+        if type_list.is_empty() {
+            return Ok(links);
+        }
+        let placeholders: Vec<String> = (2..2 + type_list.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT source_key, target_key, link_type, created_at \
+             FROM memory_links WHERE {direction_col} = ?1 AND link_type IN ({})",
+            placeholders.join(",")
+        );
+        let mut stmt = db
+            .prepare(&sql)
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + type_list.len());
+        params.push(&key as &dyn rusqlite::ToSql);
+        for t in type_list {
+            params.push(t as &dyn rusqlite::ToSql);
+        }
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params), row_to_memory_link)
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
+        for row in rows {
+            links.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+        }
+    } else {
+        let sql = format!(
+            "SELECT source_key, target_key, link_type, created_at \
+             FROM memory_links WHERE {direction_col} = ?1"
+        );
+        let mut stmt = db
+            .prepare(&sql)
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![key], row_to_memory_link)
+            .map_err(|e| MemoryError::Generic(e.to_string()))?;
+        for row in rows {
+            links.push(row.map_err(|e| MemoryError::Generic(e.to_string()))?);
+        }
+    }
+
+    Ok(links)
+}
+
+/// Synchronous helper: fetch a single `MemoryEntry` by primary key.
+fn query_entry_by_key_sync(
+    db: &rusqlite::Connection,
+    key: &str,
+) -> Result<Option<MemoryEntry>, MemoryError> {
+    let mut stmt = db
+        .prepare(
+            "SELECT key, content, category, created_at, updated_at, importance, \
+             access_count, trust_score, session_id, project_id, \
+             quality_score, source_reliability, last_validated_at, contradiction_count, \
+             cognitive_layer, context_tags \
+             FROM memory_entries WHERE key = ?1",
+        )
+        .map_err(|e| MemoryError::Generic(e.to_string()))?;
+    let mut rows = stmt
+        .query_map(params![key], SqliteMemoryProvider::row_to_entry)
+        .map_err(|e| MemoryError::Generic(e.to_string()))?;
+    match rows.next() {
+        Some(Ok(entry)) => Ok(Some(entry)),
+        Some(Err(err)) => Err(MemoryError::Generic(err.to_string())),
+        None => Ok(None),
+    }
+}
+
+/// Parse a `memory_links` row into a [`MemoryLink`].
+///
+/// Expected column order: 0=source_key, 1=target_key, 2=link_type, 3=created_at.
+fn row_to_memory_link(
+    row: &rusqlite::Row<'_>,
+) -> Result<crate::modules::memory::MemoryLink, rusqlite::Error> {
+    let created_at_str: String = row.get(3)?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now());
+    Ok(crate::modules::memory::MemoryLink {
+        source_key: row.get(0)?,
+        target_key: row.get(1)?,
+        link_type: row.get(2)?,
+        created_at,
+    })
 }
 
 /// MEM-MOD-P6 — best-effort snapshot of the current `memory_entries`

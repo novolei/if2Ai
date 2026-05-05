@@ -17,6 +17,8 @@ pub(super) struct MemoryBootstrap {
     /// IPCs degrade to "no traits" but the rest of the app keeps
     /// running).
     pub learned_traits: Option<modules::memory::learned_traits::LearnedTraitsStore>,
+    /// DayDream engine — background memory consolidation system.
+    pub daydream_engine: Arc<modules::memory::daydream::DayDreamEngine>,
 }
 
 pub(super) fn build_memory_bootstrap(
@@ -153,9 +155,10 @@ pub(super) fn build_memory_bootstrap(
             }
         };
 
-    // MEM-MOD-P5 + P7 — finish the ticker by attaching every runtime
-    // we now have.  `with_reflection_runtime` always wires; the P7
-    // runtime is only attached when the store opened successfully.
+    // MEM-MOD-P5 + P7 + forgetting — finish the ticker by attaching
+    // every runtime we now have.  `with_reflection_runtime` always
+    // wires; P7 is only attached when the store opened successfully;
+    // forgetting-curve is unconditional (engine + scorer are infallible).
     let mut ticker_finished =
         memory_ticker_base.with_reflection_runtime(utility_llm.clone(), memory_provider.clone());
     if let Some(ref store) = learned_traits {
@@ -165,7 +168,25 @@ pub(super) fn build_memory_bootstrap(
             memory_provider.clone(),
         );
     }
+    // MEM-MOD-FORGETTING — attach the forgetting-curve engine so the
+    // daily timer loop inside `MemoryTicker::start()` periodically
+    // sweeps low-retention memories and marks archival candidates.
+    ticker_finished = ticker_finished.with_forgetting_runtime(
+        modules::memory::forgetting::ForgettingCurveEngine::new(),
+        modules::memory::quality::QualityScorer::new(),
+        memory_provider.clone(),
+    );
     let memory_ticker = Arc::new(ticker_finished);
+
+    // DayDream engine — Phase 2 background memory consolidation.
+    let daydream_engine = Arc::new(modules::memory::daydream::DayDreamEngine::new(
+        memory_provider.clone(),
+        modules::memory::daydream::DayDreamConfig::default(),
+        Some(utility_llm.clone()),
+    ));
+    tracing::info!(
+        "[init] DayDreamEngine created (idle_trigger=15min, strategy=Balanced, llm=enabled)"
+    );
 
     MemoryBootstrap {
         job_runner,
@@ -177,6 +198,7 @@ pub(super) fn build_memory_bootstrap(
         pinned_store,
         memory_provider,
         learned_traits,
+        daydream_engine,
     }
 }
 

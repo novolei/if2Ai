@@ -270,6 +270,9 @@ pub(super) fn apply_memory_recall_success_finalization_guard(
     }
 }
 
+/// Maximum number of progressive retry attempts for `tool_required_no_tool`.
+pub(super) const TOOL_REQUIRED_NO_TOOL_MAX_RETRIES: usize = 3;
+
 pub(super) fn should_retry_tool_required_no_tool(
     work_loop_decision: &WorkLoopDecision,
     has_successful_mutating_tool: bool,
@@ -279,9 +282,45 @@ pub(super) fn should_retry_tool_required_no_tool(
 ) -> bool {
     super::work_loop::requires_tool_execution_evidence(work_loop_decision)
         && !has_successful_mutating_tool
-        && retry_count == 0
+        && retry_count < TOOL_REQUIRED_NO_TOOL_MAX_RETRIES
         && !force_final_response
         && available_tool_count > 0
+}
+
+/// Build the escalation nudge message for the given retry level.
+///
+/// - Level 0: soft nudge (original behaviour)
+/// - Level 1: strong nudge with step-by-step guidance
+/// - Level 2: final-attempt nudge directing towards `ask_user`
+#[must_use]
+pub(super) fn tool_required_nudge_message(retry_count: usize) -> &'static str {
+    match retry_count {
+        0 => {
+            "[agent_loop_control] The previous assistant response did not call tools, \
+             but this user request requires concrete file/tool execution before completion. \
+             Call the available tools now to inspect, create or edit the artifact, and verify it. \
+             Use complete JSON arguments for every tool call. Do not answer only with prose. \
+             If tool execution is impossible, explain the blockage in the final report."
+        }
+        1 => {
+            "[agent_loop_control] CRITICAL: You have failed to execute any file-modifying tools \
+             after multiple attempts. This task REQUIRES creating or modifying files. \
+             Follow these steps NOW:\n\
+             1. Identify the specific file(s) that need to be created or modified\n\
+             2. Call write_file or file_edit with the COMPLETE content\n\
+             3. Verify the result with read_file\n\
+             If you cannot determine what to create, call ask_user to clarify the requirement.\n\
+             DO NOT respond with text only \u{2014} you MUST call a tool."
+        }
+        _ => {
+            "[agent_loop_control] FINAL ATTEMPT: Multiple tool execution retries have failed. \
+             You MUST either:\n\
+             A) Call write_file/file_edit to create the requested artifact NOW, OR\n\
+             B) Call ask_user to ask the user what specific files they want created.\n\
+             This is your last chance before the task is marked as failed.\n\
+             Respond ONLY with a tool call, not text."
+        }
+    }
 }
 
 pub(super) fn should_retry_announced_tool_intent_no_tool(
@@ -512,7 +551,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         routing_info_for_stream,
         work_loop_decision_for_stream,
         skill_resolution_plan_for_stream,
-        execution_context_for_task: _,
+        execution_context_for_task: execution_context_for_finalize,
         tool_registry_clone: _,
         session_manager,
         rolling_summarizer_for_stream,
@@ -536,7 +575,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
         harness_bus_for_after_turn,
-        utility_llm: _,
+        utility_llm: utility_llm_for_task,
         loop_config: _,
     } = inputs;
 
@@ -547,7 +586,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         tool_loop_iter,
         stream_event_retry_count,
         stream_start_retry_count,
-        tool_required_no_tool_retry_count: _tool_required_no_tool_retry_count,
+        tool_required_no_tool_retry_count,
         tool_intent_nudge_retry_count: _tool_intent_nudge_retry_count,
         repeated_tool_batch_count: _repeated_tool_batch_count,
         invalid_tool_args_streak: _invalid_tool_args_streak,
@@ -577,6 +616,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         has_successful_tool,
         has_successful_mutating_tool,
         provider_textual_tool_markup_seen: _provider_textual_tool_markup_seen,
+        read_only_loop_nudge_injected: _read_only_loop_nudge_injected,
         terminal_status,
         last_stream_error_reason,
         last_finish_reason: _last_finish_reason,
@@ -649,6 +689,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         sanitized_dropped_invalid_tool_use_inputs,
         stream_start_retry_count,
         stream_event_retry_count,
+        tool_required_no_tool_retry_count,
         sanitize_orphan_samples,
         sanitize_unmatched_samples,
         sanitize_invalid_tool_use_samples,
@@ -681,6 +722,8 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         active_retrieval_manager_for_after_turn,
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
+        utility_llm_for_after_turn: utility_llm_for_task,
+        workdir_for_after_turn: execution_context_for_finalize.workdir,
     })
     .await;
 
@@ -818,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_required_no_tool_gets_one_retry_before_terminal_failure() {
+    fn tool_required_no_tool_gets_three_retries_before_terminal_failure() {
         let routed = crate::modules::application::turn_service::work_loop::route_work_loop(
             &crate::modules::runtime::contracts::execution_mode::ExecutionModeDecision {
                 execution_mode:
@@ -840,12 +883,21 @@ mod tests {
             "帮我创建一个泡泡龙网页游戏 需要有声效 界面美观大方",
         );
 
+        // retry_count < 3 → should retry
         assert!(should_retry_tool_required_no_tool(
             &routed, false, 0, false, 3
         ));
-        assert!(!should_retry_tool_required_no_tool(
+        assert!(should_retry_tool_required_no_tool(
             &routed, false, 1, false, 3
         ));
+        assert!(should_retry_tool_required_no_tool(
+            &routed, false, 2, false, 3
+        ));
+        // retry_count >= 3 → should NOT retry
+        assert!(!should_retry_tool_required_no_tool(
+            &routed, false, 3, false, 3
+        ));
+        // other conditions that prevent retry
         assert!(!should_retry_tool_required_no_tool(
             &routed, true, 0, false, 3
         ));

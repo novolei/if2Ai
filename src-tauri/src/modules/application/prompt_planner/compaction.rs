@@ -4,6 +4,7 @@
 //! continuation summaries for context preservation.
 
 use super::block::{PromptBlock, PromptBlockKind, PromptBlockSource};
+use crate::modules::memory::inject::CacheHint;
 
 /// Default thresholds for coding session compaction.
 const DEFAULT_TOKEN_THRESHOLD: usize = 4000;
@@ -74,5 +75,6 @@ pub(super) fn build_coding_continuation_block(session_snapshot: &str) -> PromptB
         },
         priority: 50,
         is_sensitive: false,
+        cache_hint: CacheHint::None,
     }
 }

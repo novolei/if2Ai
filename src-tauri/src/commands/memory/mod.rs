@@ -18,6 +18,8 @@
 //! the same `crate::commands::*` path.
 
 pub mod compile;
+pub mod daydream;
+pub mod graph;
 pub mod narrative;
 
 pub use compile::{
@@ -81,6 +83,14 @@ pub struct MemoryEntryDto {
     pub trust_score: f64,
     pub session_id: Option<String>,
     pub project_id: Option<String>,
+    /// Composite quality score in `[0.0, 1.0]`.
+    pub quality_score: f64,
+    /// Source reliability in `[0.0, 1.0]`.
+    pub source_reliability: f64,
+    /// ISO-8601 timestamp of the last validation, or `null`.
+    pub last_validated_at: Option<String>,
+    /// Number of contradiction flags.
+    pub contradiction_count: u32,
 }
 
 /// MEM-MOD-P6 — One historical snapshot of a memory entry returned
@@ -109,6 +119,10 @@ fn entry_to_dto(entry: &MemoryEntry) -> MemoryEntryDto {
         trust_score: entry.trust_score,
         session_id: entry.session_id.clone(),
         project_id: entry.project_id.clone(),
+        quality_score: entry.quality_score,
+        source_reliability: entry.source_reliability,
+        last_validated_at: entry.last_validated_at.map(|dt| dt.to_rfc3339()),
+        contradiction_count: entry.contradiction_count,
     }
 }
 

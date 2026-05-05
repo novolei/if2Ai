@@ -13,13 +13,14 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ThumbsDown, Sparkles, AlertCircle } from "lucide-react";
+import { ThumbsDown, Sparkles, AlertCircle, Award, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import {
   learnedTraitsDisagree,
   learnedTraitsList,
   type LearnedTraitDto,
 } from "@/lib/tauri";
+import { useProceduralMemories } from "@/api/memory";
 import { cn } from "@/lib/utils";
 
 function formatRelative(rfc3339: string): string {
@@ -178,6 +179,77 @@ export function LearnedTraitsPanel() {
           </div>
         );
       })}
+
+      {/* ── 从经验中学到的规则 (Procedural) ── */}
+      <ProceduralRulesSection />
+    </div>
+  );
+}
+
+// ── Procedural rules mini-section ───────────────────────────────────
+
+function ProceduralRulesSection() {
+  const { procedures, loading } = useProceduralMemories();
+
+  if (loading || procedures.length === 0) return null;
+
+  // Show top 5 by trust_score
+  const topRules = [...procedures]
+    .sort((a, b) => b.trust_score - a.trust_score)
+    .slice(0, 5);
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Award className="h-3.5 w-3.5 text-emerald-600" />
+        <span className="text-[11px] font-semibold text-foreground/80">
+          从经验中学到的规则
+        </span>
+        <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-700">
+          {procedures.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {topRules.map((rule) => {
+          const pct = Math.round(rule.trust_score * 100);
+          return (
+            <div
+              key={rule.key}
+              className="rounded-lg border border-emerald-200/50 bg-emerald-50/30 px-3 py-2"
+            >
+              <div className="text-[11.5px] leading-snug text-foreground/80">
+                {rule.content.length > 100
+                  ? rule.content.slice(0, 100) + "…"
+                  : rule.content}
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
+                <span
+                  className={cn(
+                    "font-mono tabular-nums",
+                    pct > 50
+                      ? "text-emerald-600"
+                      : pct > 20
+                        ? "text-amber-600"
+                        : "text-red-600",
+                  )}
+                >
+                  {pct}%
+                </span>
+                <span>·</span>
+                <span>更新 {formatRelative(rule.updated_at)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {procedures.length > 5 && (
+        <div className="mt-2 text-center">
+          <span className="inline-flex items-center gap-0.5 text-[10.5px] text-primary">
+            在「进化」标签页查看全部 {procedures.length} 条
+            <ChevronRight className="h-3 w-3" />
+          </span>
+        </div>
+      )}
     </div>
   );
 }

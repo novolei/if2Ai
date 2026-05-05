@@ -76,7 +76,8 @@ pub use gateway_service::{
 };
 pub use license_lifecycle_service::{snapshot_with_kind, LicenseLifecycleService};
 pub use memory_candidate_extractor::{
-    extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
+    extract_from_assistant_output, extract_memory_store_tool_candidates,
+    lookup_existing_records_for_candidates, SOURCE_ASSISTANT_OUTPUT_EXTRACT,
     SOURCE_MEMORY_STORE_TOOL,
 };
 pub use memory_conflict_resolution::{

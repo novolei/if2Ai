@@ -46,6 +46,9 @@ pub struct AppBootstrap {
     /// successfully.  Forwarded into AppState via
     /// `with_learned_traits` after construction.
     pub learned_traits: Option<modules::memory::learned_traits::LearnedTraitsStore>,
+    /// DayDream engine — Phase 2 background memory consolidation.
+    /// Managed as a separate Tauri state via `app.manage()`.
+    pub daydream_engine: Arc<modules::memory::daydream::DayDreamEngine>,
 }
 
 /// Resolve all process-level data directories used by the desktop host.

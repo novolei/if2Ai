@@ -124,6 +124,18 @@ pub fn safe_to_retry_mutations(has_successful_mutating_tool: bool) -> bool {
     !has_successful_mutating_tool
 }
 
+/// Compute the remaining retry budget for `tool_required_no_tool`
+/// progressive escalation.  Returns `max(0, max_retries - used)`.
+///
+/// `max_retries` defaults to 3 (the escalation ladder has levels
+/// 0, 1, 2). After all internal retries are exhausted the budget
+/// is 0, but `resume_available` can still be true so the user
+/// can manually resume.
+#[must_use]
+pub fn compute_tool_retry_budget(retry_count: usize, max_retries: usize) -> u32 {
+    (max_retries.saturating_sub(retry_count)) as u32
+}
+
 /// Classify a run's terminal status string into a typed
 /// [`ResumeReason`] variant. Returns `None` when the status does
 /// not correspond to any known resumable reason.

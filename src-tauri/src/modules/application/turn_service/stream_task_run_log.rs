@@ -106,7 +106,8 @@ pub(super) fn apply_memory_recall_success_finalization_guard(
     }
 }
 
-/// Whether to retry once when tools are required but the model returned none.
+/// Whether to retry when tools are required but the model returned none.
+/// Supports up to 3 progressive escalation retries.
 #[must_use]
 pub(super) fn should_retry_tool_required_no_tool(
     work_loop_decision: &WorkLoopDecision,
@@ -117,7 +118,7 @@ pub(super) fn should_retry_tool_required_no_tool(
 ) -> bool {
     super::work_loop::requires_tool_execution_evidence(work_loop_decision)
         && !has_successful_mutating_tool
-        && retry_count == 0
+        && retry_count < super::stream_task::TOOL_REQUIRED_NO_TOOL_MAX_RETRIES
         && !force_final_response
         && available_tool_count > 0
 }

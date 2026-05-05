@@ -29,6 +29,12 @@ const CONTINUATION_INTENT_REASON: &str = "continuation_intent";
 const INHERITED_TOOL_REQUIRED_WORK_INTENT_REASON: &str = "inherited_tool_required_work_intent";
 const SIMPLE_SHELL_COMMAND_INTENT_REASON: &str = "simple_shell_command_intent";
 const MEMORY_READ_TOOLS: &[&str] = &["memory_recall", "memory_recall_explicit", "memory_export"];
+const MEMORY_TOOLS: &[&str] = &[
+    "memory_store",
+    "memory_recall",
+    "memory_recall_explicit",
+    "memory_export",
+];
 const READ_ONLY_PLANNING_TOOLS: &[&str] = &[
     "read_file",
     "glob_search",
@@ -721,7 +727,19 @@ pub(super) fn build_canonical_tool_pool(
         tool_defs,
         active_skill_ids,
     );
+    let original_tool_defs = tool_defs.clone();
     let mut definitions = enforce_tool_definitions_for_loop(work_loop, tool_defs);
+
+    // Safety fallback: if tools are empty but user message suggests tool need,
+    // log a warning and restore full tool list
+    if definitions.is_empty() && work_loop.loop_kind != WorkLoopKind::SpecializedSurface {
+        tracing::warn!(
+            "[tool_pool] enforce_tool_definitions returned empty list for {:?}, restoring full set",
+            work_loop.loop_kind
+        );
+        definitions = original_tool_defs;
+    }
+
     definitions.sort_by(|left, right| left.name.cmp(&right.name));
     let tool_names = definitions
         .iter()
@@ -752,7 +770,7 @@ fn tool_pool_policy_label(work_loop: &WorkLoopDecision) -> &'static str {
     match work_loop.loop_kind {
         WorkLoopKind::DirectAnswer => "direct_answer_hidden",
         WorkLoopKind::SpecializedSurface => "specialized_surface_hidden",
-        WorkLoopKind::PlanThenConfirm => "plan_then_confirm_read_only",
+        WorkLoopKind::PlanThenConfirm => "plan_then_confirm_read_and_write",
         WorkLoopKind::DirectExecute if requires_memory_recall_evidence(work_loop) => {
             "direct_execute_memory_read"
         }
@@ -768,19 +786,39 @@ pub(super) fn enforce_tool_definitions_for_loop(
     tool_defs: Vec<ToolDefinition>,
 ) -> Vec<ToolDefinition> {
     match work_loop.loop_kind {
-        WorkLoopKind::DirectAnswer | WorkLoopKind::SpecializedSurface => Vec::new(),
+        WorkLoopKind::DirectAnswer => tool_defs
+            .into_iter()
+            .filter(|tool| MEMORY_TOOLS.contains(&tool.name.as_str()))
+            .collect(),
+        WorkLoopKind::SpecializedSurface => Vec::new(),
         WorkLoopKind::PlanThenConfirm => tool_defs
             .into_iter()
-            .filter(|tool| is_read_only_planning_tool(&tool.name))
+            .filter(|tool| is_read_only_planning_tool(&tool.name) || is_plan_write_tool(&tool.name))
             .collect(),
         WorkLoopKind::DirectExecute if requires_memory_recall_evidence(work_loop) => tool_defs
             .into_iter()
-            .filter(|tool| is_memory_read_tool(&tool.name))
+            .filter(|tool| {
+                is_memory_read_tool(&tool.name)
+                    || matches!(
+                        tool.name.as_str(),
+                        "read_file" | "grep_search" | "glob_search" | "content_search"
+                    )
+            })
             .collect(),
         WorkLoopKind::DirectExecute if requires_single_shell_command_evidence(work_loop) => {
             tool_defs
                 .into_iter()
-                .filter(|tool| tool.name == "bash")
+                .filter(|tool| {
+                    matches!(
+                        tool.name.as_str(),
+                        "bash"
+                            | "read_file"
+                            | "write_file"
+                            | "file_write"
+                            | "file_edit"
+                            | "edit_file"
+                    )
+                })
                 .collect()
         }
         WorkLoopKind::DirectExecute | WorkLoopKind::AutonomousWork => tool_defs,
@@ -947,7 +985,9 @@ pub(super) fn mutation_block_reason(
     tool_name: &str,
     input_json: &str,
 ) -> Option<String> {
-    if work_loop.loop_kind != WorkLoopKind::PlanThenConfirm || is_read_only_planning_tool(tool_name)
+    if work_loop.loop_kind != WorkLoopKind::PlanThenConfirm
+        || is_read_only_planning_tool(tool_name)
+        || is_plan_write_tool(tool_name)
     {
         return None;
     }
@@ -1178,6 +1218,18 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
             "fix",
             "delete",
             "remove",
+            "upgrade",
+            "improve",
+            "enhance",
+            "refactor",
+            "rewrite",
+            "iterate",
+            "extend",
+            "revamp",
+            "overhaul",
+            "rework",
+            "redesign",
+            "update",
             "创建",
             "新建",
             "生成",
@@ -1200,6 +1252,21 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
             "优化",
             "删除",
             "移除",
+            "升级",
+            "改进",
+            "重构",
+            "重写",
+            "迭代",
+            "增强",
+            "改造",
+            "扩展",
+            "调整",
+            "更新",
+            "翻新",
+            "改版",
+            "帮我升级",
+            "帮我改进",
+            "帮我优化",
         ]
         .iter()
         .any(|needle| lower.contains(needle));
@@ -1240,6 +1307,35 @@ fn is_tool_required_work_intent(user_message: &str) -> bool {
         "界面",
         "声效",
         "音效",
+        "五子棋",
+        "gomoku",
+        "gobang",
+        "棋",
+        "chess",
+        "象棋",
+        "围棋",
+        "贪吃蛇",
+        "snake",
+        "俄罗斯方块",
+        "tetris",
+        "扫雷",
+        "minesweeper",
+        "项目",
+        "工程",
+        "代码",
+        "程序",
+        "脚本",
+        "模板",
+        "prototype",
+        "原型",
+        "模块",
+        "module",
+        "structure",
+        "service",
+        "服务",
+        "功能",
+        "function",
+        "feature",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
@@ -1885,6 +1981,13 @@ fn is_read_only_planning_tool(tool_name: &str) -> bool {
     READ_ONLY_PLANNING_TOOLS.contains(&tool_name)
 }
 
+fn is_plan_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file" | "file_write" | "file_edit" | "edit_file"
+    )
+}
+
 fn is_memory_read_tool(tool_name: &str) -> bool {
     MEMORY_READ_TOOLS.contains(&tool_name)
 }
@@ -2036,18 +2139,26 @@ mod tests {
     }
 
     #[test]
-    fn exact_shell_command_only_exposes_bash() {
+    fn exact_shell_command_exposes_bash_and_file_tools() {
         let routed = route_work_loop(
             &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
             "ls -a",
         );
         let visible_tools = enforce_tool_definitions_for_loop(
             &routed,
-            vec![tool_def("bash"), tool_def("read_file")],
+            vec![
+                tool_def("bash"),
+                tool_def("read_file"),
+                tool_def("write_file"),
+                tool_def("memory_recall"),
+            ],
         );
 
-        assert_eq!(visible_tools.len(), 1);
-        assert_eq!(visible_tools[0].name, "bash");
+        let names: Vec<&str> = visible_tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"bash"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(!names.contains(&"memory_recall"));
     }
 
     #[test]
@@ -2321,7 +2432,7 @@ mod tests {
     }
 
     #[test]
-    fn work_loop_router_direct_answer_hides_tools() {
+    fn work_loop_router_direct_answer_hides_non_memory_tools() {
         let routed = route_work_loop(
             &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
             "what is this project?",
@@ -2346,6 +2457,27 @@ mod tests {
         );
         assert_eq!(report.loop_kind, WorkLoopKind::DirectAnswer);
         assert_eq!(report.outcome, LoopOutcomeKind::Completed);
+    }
+
+    #[test]
+    fn direct_answer_preserves_memory_tools() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "我喜欢大狗",
+        );
+        assert_eq!(routed.loop_kind, WorkLoopKind::DirectAnswer);
+        let visible_tools = enforce_tool_definitions_for_loop(
+            &routed,
+            vec![
+                tool_def("memory_store"),
+                tool_def("memory_recall"),
+                tool_def("read_file"),
+                tool_def("write_file"),
+                tool_def("bash"),
+            ],
+        );
+        let names: Vec<&str> = visible_tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["memory_store", "memory_recall"]);
     }
 
     #[test]
@@ -2374,7 +2506,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_recall_intent_exposes_memory_read_tools() {
+    fn memory_recall_intent_exposes_memory_and_readonly_tools() {
         let routed = route_work_loop(
             &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
             "what do you remember about me?",
@@ -2386,15 +2518,15 @@ mod tests {
                 tool_def("memory_export"),
                 tool_def("read_file"),
                 tool_def("write_file"),
+                tool_def("grep_search"),
             ],
         );
-        assert_eq!(
-            visible_tools
-                .iter()
-                .map(|tool| tool.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["memory_recall", "memory_export"]
-        );
+        let names: Vec<&str> = visible_tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"memory_recall"));
+        assert!(names.contains(&"memory_export"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"grep_search"));
+        assert!(!names.contains(&"write_file"));
     }
 
     #[test]
@@ -2536,23 +2668,29 @@ mod tests {
     }
 
     #[test]
-    fn work_loop_router_plan_then_confirm_blocks_mutation() {
+    fn work_loop_router_plan_then_confirm_allows_read_and_write_tools() {
         let routed = route_work_loop(
             &decision(ExecutionMode::PlanThenConfirm, ComplexityLevel::Moderate),
             "inspect the repo and propose edits",
         );
         let visible_tools = enforce_tool_definitions_for_loop(
             &routed,
-            vec![tool_def("read_file"), tool_def("write_file")],
+            vec![
+                tool_def("read_file"),
+                tool_def("write_file"),
+                tool_def("file_edit"),
+                tool_def("bash"),
+            ],
         );
-        assert_eq!(
-            visible_tools
-                .iter()
-                .map(|tool| tool.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["read_file"]
-        );
-        assert!(mutation_block_reason(&routed, "write_file", "{}").is_some());
+        let names: Vec<&str> = visible_tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"file_edit"));
+        assert!(!names.contains(&"bash"));
+        // Plan write tools are no longer blocked by mutation_block_reason
+        assert!(mutation_block_reason(&routed, "write_file", "{}").is_none());
+        assert!(mutation_block_reason(&routed, "file_edit", "{}").is_none());
+        // Non-plan-write mutating tools are still blocked
         assert!(mutation_block_reason(&routed, "Config", r#"{"key":"x","value":"y"}"#).is_some());
         assert!(mutation_block_reason(&routed, "read_file", "{}").is_none());
     }
@@ -3017,5 +3155,78 @@ mod tests {
         let out = excerpt_skill_body("baz", raw);
         assert!(out.contains("Short body."));
         assert!(out.contains("[truncated"));
+    }
+
+    #[test]
+    fn upgrade_game_detected_as_tool_required() {
+        assert!(is_tool_required_work_intent("升级五子棋游戏"));
+        assert!(is_tool_required_work_intent("upgrade the gomoku game"));
+        assert!(is_tool_required_work_intent("改进贪吃蛇"));
+        assert!(is_tool_required_work_intent("优化这个项目的代码"));
+        assert!(is_tool_required_work_intent("重写登录页面"));
+        assert!(is_tool_required_work_intent("重构数据库模块"));
+    }
+
+    #[test]
+    fn upgrade_game_routes_to_autonomous_work() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "升级五子棋游戏",
+        );
+        assert_eq!(routed.loop_kind, WorkLoopKind::AutonomousWork);
+        assert!(requires_tool_execution_evidence(&routed));
+    }
+
+    #[test]
+    fn enhance_snake_game_routes_to_autonomous_work() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "增强贪吃蛇游戏的AI",
+        );
+        assert_eq!(routed.loop_kind, WorkLoopKind::AutonomousWork);
+        assert!(requires_tool_execution_evidence(&routed));
+    }
+
+    #[test]
+    fn refactor_project_code_routes_to_autonomous_work() {
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "refactor the project structure",
+        );
+        assert_eq!(routed.loop_kind, WorkLoopKind::AutonomousWork);
+        assert!(requires_tool_execution_evidence(&routed));
+    }
+
+    #[test]
+    fn safety_fallback_restores_tools_when_enforce_returns_empty() {
+        // DirectAnswer with no memory tools → would be empty → safety fallback restores
+        let routed = route_work_loop(
+            &decision(ExecutionMode::DirectExecute, ComplexityLevel::Trivial),
+            "what is this project?",
+        );
+        assert_eq!(routed.loop_kind, WorkLoopKind::DirectAnswer);
+        // build_canonical_tool_pool should restore full list when enforce returns empty
+        let pool = build_canonical_tool_pool(
+            vec![tool_def("read_file"), tool_def("write_file")],
+            &[],
+            &routed,
+        );
+        // No memory tools in input → enforce returns empty → fallback restores all
+        assert_eq!(pool.tool_names.len(), 2);
+    }
+
+    #[test]
+    fn safety_fallback_does_not_restore_for_specialized_surface() {
+        let mut d = decision(ExecutionMode::SpecializedSurface, ComplexityLevel::Simple);
+        d.route_hint = Some(RouteHint("browser".to_string()));
+        let routed = route_work_loop(&d, "open the page");
+        assert_eq!(routed.loop_kind, WorkLoopKind::SpecializedSurface);
+        let pool = build_canonical_tool_pool(
+            vec![tool_def("read_file"), tool_def("write_file")],
+            &[],
+            &routed,
+        );
+        // SpecializedSurface is explicitly empty, no fallback
+        assert!(pool.tool_names.is_empty());
     }
 }

@@ -33,6 +33,7 @@ use tauri::Manager;
 
 use super::TurnService;
 use crate::modules::application::memory_candidate_extractor::{
+    extract_from_assistant_output, extract_from_user_messages,
     extract_memory_store_tool_candidates, lookup_existing_records_for_candidates,
 };
 use crate::modules::application::memory_injection_service::MemoryInjectionDeps;
@@ -55,6 +56,7 @@ use crate::modules::learning::reflection::ReflectionEngine;
 use crate::modules::memory::scope::MemoryExecutionScope;
 use crate::modules::memory::working_memory::WorkingMemory;
 use crate::modules::runtime::compact::{compact_session, should_compact, CompactionConfig};
+use crate::modules::runtime::config::ConfigLoader;
 use crate::modules::runtime::contracts::common::CorrelationIds;
 use crate::modules::runtime::conversation::{ConversationRuntime, RuntimeError};
 use crate::modules::runtime::episodic_compaction::WeibullDecay;
@@ -571,34 +573,91 @@ impl TurnService {
                 };
                 let candidates_run =
                     extract_memory_store_tool_candidates(&new_messages_run, &after_turn_scope_run);
-                let existing_run = lookup_existing_records_for_candidates(
-                    &self.deps.memory_provider,
-                    &after_turn_scope_run,
-                    &candidates_run,
-                )
-                .await;
-                if let Some(handle) = self.deps.app_handle.as_ref() {
-                    dispatch_after_turn(
-                        handle,
-                        harness_event_bus_run.as_ref(),
-                        MemoryInjectionDeps {
-                            pinned_store: self.deps.pinned_store.clone(),
-                            memory_provider: self.deps.memory_provider.clone(),
-                            active_retrieval_manager: self.deps.active_retrieval_manager.clone(),
-                        },
-                        Some(session_ctx_id.clone()),
-                        session_ctx_project.clone(),
-                        candidates_run,
-                        existing_run,
-                        Vec::new(),
-                        "run_agent_turn",
+
+                // MEM-AUTO-EXTRACT + dispatch_after_turn — run entire after-turn
+                // memory pipeline in background so the turn completes immediately.
+                let auto_extract_enabled = ConfigLoader::default_for(&proposal_workdir)
+                    .load()
+                    .map(|c| c.memory().auto_extract_enabled())
+                    .unwrap_or(true);
+                let bg_utility_llm = self.deps.utility_llm.clone();
+                let bg_memory_provider = self.deps.memory_provider.clone();
+                let bg_app_handle = self.deps.app_handle.clone();
+                let bg_pinned_store = self.deps.pinned_store.clone();
+                let bg_active_retrieval_manager = self.deps.active_retrieval_manager.clone();
+                let bg_harness_bus = harness_event_bus_run.clone();
+                let bg_session_id = session_ctx_id.clone();
+                let bg_project_id = session_ctx_project.clone();
+                // Task#33 — collect content_preview from LLM-explicit memory_store
+                // candidates so the auto-extraction prompts can skip already-stored facts.
+                let already_stored_previews: Vec<String> = candidates_run
+                    .iter()
+                    .map(|c| c.content_preview.clone())
+                    .collect();
+                tokio::spawn(async move {
+                    let mut all_candidates_run = candidates_run;
+
+                    if auto_extract_enabled {
+                        let auto = extract_from_user_messages(
+                            &new_messages_run,
+                            bg_utility_llm.as_ref(),
+                            &after_turn_scope_run,
+                            &already_stored_previews,
+                        )
+                        .await;
+                        if !auto.is_empty() {
+                            tracing::debug!(
+                                count = auto.len(),
+                                "[run_agent_turn] auto-extracted memory candidates from user messages"
+                            );
+                            all_candidates_run.extend(auto);
+                        }
+
+                        let assistant_auto = extract_from_assistant_output(
+                            &new_messages_run,
+                            bg_utility_llm.as_ref(),
+                            &after_turn_scope_run,
+                            &already_stored_previews,
+                        )
+                        .await;
+                        if !assistant_auto.is_empty() {
+                            tracing::debug!(
+                                count = assistant_auto.len(),
+                                "[run_agent_turn] auto-extracted memory candidates from assistant output"
+                            );
+                            all_candidates_run.extend(assistant_auto);
+                        }
+                    }
+
+                    let existing_run = lookup_existing_records_for_candidates(
+                        &bg_memory_provider,
+                        &after_turn_scope_run,
+                        &all_candidates_run,
                     )
                     .await;
-                } else {
-                    tracing::debug!(
-                        "[run_agent_turn] dispatch_after_turn skipped (no AppHandle in deps)"
-                    );
-                }
+                    if let Some(handle) = bg_app_handle.as_ref() {
+                        dispatch_after_turn(
+                            handle,
+                            bg_harness_bus.as_ref(),
+                            MemoryInjectionDeps {
+                                pinned_store: bg_pinned_store.clone(),
+                                memory_provider: bg_memory_provider.clone(),
+                                active_retrieval_manager: bg_active_retrieval_manager.clone(),
+                            },
+                            Some(bg_session_id.clone()),
+                            bg_project_id.clone(),
+                            all_candidates_run,
+                            existing_run,
+                            Vec::new(),
+                            "run_agent_turn",
+                        )
+                        .await;
+                    } else {
+                        tracing::debug!(
+                            "[run_agent_turn] dispatch_after_turn skipped (no AppHandle in deps)"
+                        );
+                    }
+                });
 
                 // LearningModule: record turn outcome.
                 if let Some(lm_arc) = &self.deps.learning_module {

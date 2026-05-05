@@ -12,8 +12,8 @@ use tauri::AppHandle;
 use crate::modules::runtime::contracts::common::{
     CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
 };
-use crate::modules::runtime::evolution_emitter::{emit_evolution_event, EmitError};
 use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::evolution_emitter::{emit_evolution_event, EmitError};
 
 /// Emit one canonical runtime envelope and (best-effort) append it to
 /// the run log via `append_sync_from_envelope`.
@@ -54,15 +54,16 @@ mod tests {
                 stream_id: Some("s1".into()),
                 ..CorrelationIds::default()
             },
-            &ChatPayload { event_type: "text_delta", text: "hi" },
+            &ChatPayload {
+                event_type: "text_delta",
+                text: "hi",
+            },
             None,
         )
         .expect("dispatch ok with kill-switch");
         assert_eq!(env.event_type, RuntimeEventType::Conversation);
         assert_eq!(env.payload_family.0, "text_delta");
         assert_eq!(env.correlation.run_id.as_deref(), Some("run-1"));
-        std::env::remove_var(
-            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
-        );
+        std::env::remove_var(crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV);
     }
 }

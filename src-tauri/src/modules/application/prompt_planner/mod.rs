@@ -107,6 +107,7 @@ mod tests {
                     },
                     priority: 100,
                     is_sensitive: true,
+                    cache_hint: crate::modules::memory::inject::CacheHint::None,
                 },
                 PromptBlock {
                     id: "retrieved_memory-0".to_string(),
@@ -119,6 +120,7 @@ mod tests {
                     },
                     priority: 50,
                     is_sensitive: true,
+                    cache_hint: crate::modules::memory::inject::CacheHint::None,
                 },
             ],
         };

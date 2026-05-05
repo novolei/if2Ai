@@ -45,7 +45,9 @@ fn cached_prompt_round_trips() {
     let fp = PromptFingerprint::compute(&["skill-a"], &["bash"]);
     let cache = CachedSystemPrompt {
         content: "system text".into(),
+        tool_defs: vec![],
         fingerprint: fp.clone(),
+        cached_at_iteration: 0,
     };
     let again = PromptFingerprint::compute(&["skill-a"], &["bash"]);
     assert_eq!(cache.fingerprint, again);

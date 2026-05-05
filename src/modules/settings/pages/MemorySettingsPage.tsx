@@ -20,6 +20,10 @@ import { PinnedMemoryEditor } from '@/components/memory/pinned/PinnedMemoryEdito
 import { CompiledMemoryViewer } from '@/components/memory/compiled/CompiledMemoryViewer'
 import { MemoryNarrativeViewer } from '@/components/memory/narrative/MemoryNarrativeViewer'
 import { MemoryDebugTab } from './MemoryDebugTab'
+import { DayDreamPanel } from '@/components/memory/DayDreamPanel'
+import { EvolutionTimeline } from '@/components/memory/EvolutionTimeline'
+import { InsightPanel } from '@/components/memory/InsightPanel'
+import { MemoryGraphPanel } from '@/components/memory/MemoryGraphPanel'
 import {
   getMemoryConfig,
   setMemoryConfig,
@@ -65,7 +69,7 @@ export function MemorySettingsPage() {
   // Phase 8B Phase C verification — header tab switcher.
   // 'settings' renders the production memory configuration UI;
   // 'debug' renders MemoryDebugTab (一键 5 步编译测试).
-  const [activeTab, setActiveTab] = useState<'settings' | 'debug'>('settings')
+  const [activeTab, setActiveTab] = useState<'settings' | 'daydream' | 'evolution' | 'graph' | 'debug'>('settings')
 
   // Memory Control Plane V1 feature flags (FE-B / FE-Settings).
   const [controlPlaneEnabled, setControlPlaneEnabled] = useState(true)
@@ -224,6 +228,36 @@ export function MemorySettingsPage() {
           ⚙️ 设置
         </button>
         <button
+          onClick={() => setActiveTab('daydream')}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
+            activeTab === 'daydream'
+              ? 'bg-white text-foreground shadow-sm dark:bg-black/40'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          🌙 巩固
+        </button>
+        <button
+          onClick={() => setActiveTab('evolution')}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
+            activeTab === 'evolution'
+              ? 'bg-white text-foreground shadow-sm dark:bg-black/40'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          ✨ 进化
+        </button>
+        <button
+          onClick={() => setActiveTab('graph')}
+          className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
+            activeTab === 'graph'
+              ? 'bg-white text-foreground shadow-sm dark:bg-black/40'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          🕸️ 图谱
+        </button>
+        <button
           onClick={() => setActiveTab('debug')}
           className={`flex-1 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all ${
             activeTab === 'debug'
@@ -234,9 +268,20 @@ export function MemorySettingsPage() {
           🧪 编译流水线测试 (Phase 8B)
         </button>
       </div>
-
+      
       {activeTab === 'debug' ? (
         <MemoryDebugTab />
+      ) : activeTab === 'daydream' ? (
+        <DayDreamPanel />
+      ) : activeTab === 'evolution' ? (
+        <div className="flex flex-col gap-4">
+          <EvolutionTimeline />
+          <InsightPanel />
+        </div>
+      ) : activeTab === 'graph' ? (
+        <div className="h-[600px]">
+          <MemoryGraphPanel />
+        </div>
       ) : (
         <>
           {/* ── Aggregate overview (Memory Audit P1 #8) ──

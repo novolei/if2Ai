@@ -150,34 +150,54 @@ mod tests {
 
     #[test]
     fn adaptive_zero_tools_returns_base() {
-        let s = IterationStrategy::Adaptive { min: 5, max: 30, base: 10 };
+        let s = IterationStrategy::Adaptive {
+            min: 5,
+            max: 30,
+            base: 10,
+        };
         assert_eq!(s.resolve(0), 10);
     }
 
     #[test]
     fn adaptive_few_tools_scales_1_5x() {
-        let s = IterationStrategy::Adaptive { min: 5, max: 30, base: 10 };
+        let s = IterationStrategy::Adaptive {
+            min: 5,
+            max: 30,
+            base: 10,
+        };
         assert_eq!(s.resolve(1), 15);
         assert_eq!(s.resolve(3), 15);
     }
 
     #[test]
     fn adaptive_many_tools_scales_2x() {
-        let s = IterationStrategy::Adaptive { min: 5, max: 30, base: 10 };
+        let s = IterationStrategy::Adaptive {
+            min: 5,
+            max: 30,
+            base: 10,
+        };
         assert_eq!(s.resolve(4), 20);
         assert_eq!(s.resolve(10), 20);
     }
 
     #[test]
     fn adaptive_clamps_to_max() {
-        let s = IterationStrategy::Adaptive { min: 5, max: 15, base: 10 };
+        let s = IterationStrategy::Adaptive {
+            min: 5,
+            max: 15,
+            base: 10,
+        };
         // 10 * 2 = 20, clamped to 15
         assert_eq!(s.resolve(4), 15);
     }
 
     #[test]
     fn adaptive_clamps_to_min() {
-        let s = IterationStrategy::Adaptive { min: 12, max: 30, base: 10 };
+        let s = IterationStrategy::Adaptive {
+            min: 12,
+            max: 30,
+            base: 10,
+        };
         // base=10, but min=12
         assert_eq!(s.resolve(0), 12);
     }

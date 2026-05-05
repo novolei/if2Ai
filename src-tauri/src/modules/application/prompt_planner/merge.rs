@@ -3,8 +3,10 @@
 //! Allows subsystems (Memory, MCP, Skills, Learning) to contribute
 //! prompt blocks without modifying the planner core.
 
+use super::block::{PromptBlock, PromptBlockKind, PromptBlockSource, PromptContribution};
 use super::planner::PromptPlannerError;
-use super::{PromptBlock, PromptBlockKind, PromptContribution, PromptValidationIssue};
+use super::PromptValidationIssue;
+use crate::modules::memory::inject::CacheHint;
 use crate::modules::runtime::prompt::PromptBuildError;
 
 /// Merge external contributions into core blocks.
@@ -80,6 +82,7 @@ pub(super) fn merge_external_contributions(
                 source: ext.source.clone(),
                 priority: 10,        // External contributions have lower priority
                 is_sensitive: false, // External contributions are non-sensitive by validation
+                cache_hint: CacheHint::None,
             });
             consumed[idx] = true;
         }
@@ -98,6 +101,7 @@ pub(super) fn merge_external_contributions(
             source: ext.source,
             priority: 10,
             is_sensitive: false,
+            cache_hint: CacheHint::None,
         });
     }
 
@@ -113,6 +117,7 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::WebToolsRoutingGuide => "web_tools",
         PromptBlockKind::MemoryInjectionPinned => "memory_pinned",
         PromptBlockKind::MemoryInjectionCompiled => "memory_compiled",
+        PromptBlockKind::MemoryInjectionProcedural => "memory_procedural",
         PromptBlockKind::MemoryInjectionRules => "memory_rules",
         PromptBlockKind::RetrievedMemory => "retrieved_memory",
         PromptBlockKind::ActiveStrategyOverlay => "active_strategy",
@@ -123,5 +128,6 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::DayAwareness => "day_awareness",
         PromptBlockKind::LearnedTraits => "learned_traits",
         PromptBlockKind::MiniIndex => "mini_index",
+        PromptBlockKind::MemoryToolsGuide => "memory_tools_guide",
     }
 }

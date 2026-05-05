@@ -52,9 +52,7 @@ use super::conversation::{
 };
 use super::permissions::PermissionPrompter;
 use super::session::{ContentBlock, ConversationMessage};
-use super::working_checkpoint::{
-    extract_checkpoint, CheckpointInjectionConfig, WorkingCheckpoint,
-};
+use super::working_checkpoint::{extract_checkpoint, CheckpointInjectionConfig, WorkingCheckpoint};
 
 use crate::modules::runtime::agent_loop::{
     ContextCompressionLevel, LoopContext, LoopDelegate, LoopOutcome, LoopSignal, RespondResult,
@@ -101,8 +99,8 @@ fn is_rate_limited_runtime_error(err: &RuntimeError) -> bool {
 
 /// Compute exponential backoff with jitter, capped at [`RUN_DELEGATE_MAX_BACKOFF`].
 fn retry_backoff(attempt: u32) -> Duration {
-    let exp = RUN_DELEGATE_BASE_BACKOFF
-        .saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX));
+    let exp =
+        RUN_DELEGATE_BASE_BACKOFF.saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX));
     let jitter_ms = rand::random::<u64>() % 300;
     let with_jitter = exp.saturating_add(Duration::from_millis(jitter_ms));
     with_jitter.min(RUN_DELEGATE_MAX_BACKOFF)
@@ -254,7 +252,9 @@ where
         // overlapping mutable/immutable borrows on `runtime_guard`.
         let messages_for_request = if runtime_guard.working_memory.is_some() {
             let msgs = runtime_guard.session.messages.clone();
-            let wm = runtime_guard.working_memory.as_mut()
+            let wm = runtime_guard
+                .working_memory
+                .as_mut()
                 .expect("working_memory checked above");
             ConversationRuntime::<C, T>::sync_working_memory(&msgs, wm);
             wm.messages().to_vec()
@@ -335,8 +335,8 @@ where
                 match runtime_guard.api_client.stream(request.clone()).await {
                     Ok(events) => break events,
                     Err(err) => {
-                        let retryable = is_retryable_runtime_error(&err)
-                            || is_rate_limited_runtime_error(&err);
+                        let retryable =
+                            is_retryable_runtime_error(&err) || is_rate_limited_runtime_error(&err);
                         if !retryable || attempt >= RUN_DELEGATE_MAX_RETRIES {
                             let msg = err.to_string();
                             *self.pending_error.lock().await = Some(err);
@@ -397,7 +397,10 @@ where
             .collect::<String>();
         let finish_reason = assistant_message.finish_reason.clone().unwrap_or_default();
 
-        runtime_guard.session.messages.push(assistant_message.clone());
+        runtime_guard
+            .session
+            .messages
+            .push(assistant_message.clone());
         state.assistant_messages.push(assistant_message);
 
         if pending_tool_uses.is_empty() {
@@ -472,9 +475,7 @@ where
 
         if extraction.should_clear {
             *self.working_checkpoint.lock().await = None;
-            tracing::debug!(
-                "[RunDelegate::after_iteration] checkpoint cleared (task_complete)"
-            );
+            tracing::debug!("[RunDelegate::after_iteration] checkpoint cleared (task_complete)");
         } else if let Some(ref key_info) = extraction.key_info {
             let mut cp_guard = self.working_checkpoint.lock().await;
             let turn = iter as u64;
