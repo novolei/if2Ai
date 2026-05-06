@@ -158,6 +158,7 @@ async fn force_text_engages_after_threshold_truncations() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
+        ..Default::default()
     };
     let _ = run_agentic_loop(&d, &cfg).await;
 
@@ -279,6 +280,7 @@ async fn truncation_count_resets_after_text_response() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
+        ..Default::default()
     };
     let _ = run_agentic_loop(&d, &cfg).await;
     let observed = d.force_text_observed.lock().unwrap().clone();
