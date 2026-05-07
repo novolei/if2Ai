@@ -113,6 +113,7 @@ fn kind_slug(kind: PromptBlockKind) -> &'static str {
         PromptBlockKind::WebToolsRoutingGuide => "web_tools",
         PromptBlockKind::MemoryInjectionPinned => "memory_pinned",
         PromptBlockKind::MemoryInjectionCompiled => "memory_compiled",
+        PromptBlockKind::MemoryInjectionProcedural => "memory_procedural",
         PromptBlockKind::MemoryInjectionRules => "memory_rules",
         PromptBlockKind::RetrievedMemory => "retrieved_memory",
         PromptBlockKind::ActiveStrategyOverlay => "active_strategy",

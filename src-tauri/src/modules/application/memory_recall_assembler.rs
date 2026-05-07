@@ -143,6 +143,11 @@ pub async fn assemble_recall(
         match s.kind {
             MemoryInjectionSectionKind::Pinned => pinned = Some(s.content.clone()),
             MemoryInjectionSectionKind::Compiled => compiled = Some(s.content.clone()),
+            // Procedural memory is reserved here for exhaustive
+            // matching; it has no slot in this 6-slot recall layout
+            // and is recalled via the dedicated procedural-injection
+            // path (lands in subsequent A.1 PRs).
+            MemoryInjectionSectionKind::Procedural => {}
             MemoryInjectionSectionKind::Rules => rules = Some(s.content.clone()),
             MemoryInjectionSectionKind::Retrieved => retrieved = Some(s.content.clone()),
         }
