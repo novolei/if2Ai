@@ -110,6 +110,9 @@ pub enum RuntimeEventType {
     /// blocked, unblocked, streaming, completed, failed, cancelled,
     /// closed). Payload is `SupervisorSnapshot` (camelCase).
     Supervisor,
+    /// A.2 — A daydream consolidation cycle finished. Payload is
+    /// `DayDreamReport` (camelCase JSON).
+    DaydreamCycle,
 }
 
 /// Family-tag string constants for [`RuntimeEventType::Supervisor`]
@@ -132,6 +135,15 @@ pub mod supervisor_family {
     pub const CANCELLED: &str = "cancelled";
     /// The session was closed (any → closed).
     pub const CLOSED: &str = "closed";
+}
+
+/// Family-tag string constants for [`RuntimeEventType::DaydreamCycle`]
+/// envelopes (A.2).
+pub mod daydream_family {
+    /// A cycle completed successfully (all steps `error: None`).
+    pub const COMPLETED: &str = "completed";
+    /// A cycle finished with at least one step in error.
+    pub const FAILED: &str = "failed";
 }
 
 /// Canonical payload family marker, used as a free-form tag inside
@@ -327,5 +339,17 @@ mod tests {
         let back: CorrelationIds = serde_json::from_str(&json).unwrap();
         assert_eq!(back.team_id.as_deref(), Some("t1"));
         assert_eq!(back.delegation_id.as_deref(), Some("d1"));
+    }
+
+    #[test]
+    fn daydream_cycle_serializes_snake_case() {
+        let s = serde_json::to_string(&RuntimeEventType::DaydreamCycle).unwrap();
+        assert_eq!(s, "\"daydream_cycle\"");
+    }
+
+    #[test]
+    fn daydream_family_constants_match_wire() {
+        assert_eq!(daydream_family::COMPLETED, "completed");
+        assert_eq!(daydream_family::FAILED, "failed");
     }
 }
