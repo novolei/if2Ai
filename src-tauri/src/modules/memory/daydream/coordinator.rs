@@ -57,7 +57,13 @@ impl DayDreamCoordinator {
     }
 }
 
-/// Spawn the long-running poll loop. Cancel by dropping the returned `JoinHandle`.
+/// Spawn the long-running poll loop using `tokio::spawn`.
+///
+/// **Caller must already be inside a Tokio runtime context** (e.g. inside an
+/// `async fn` or a `#[tokio::test]`). The Tauri `setup` hook is NOT such a
+/// context — the production path in `main.rs` inlines the loop body via
+/// `tauri::async_runtime::spawn` instead. This helper is kept for tests and
+/// any future caller that already has a runtime entered.
 pub fn spawn_poll_loop<F>(
     coord: Arc<DayDreamCoordinator>,
     on_report: F,
