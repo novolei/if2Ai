@@ -89,7 +89,10 @@ impl SqliteMemoryProvider {
     /// Expected column order:
     ///   0=key, 1=content, 2=category, 3=created_at, 4=updated_at,
     ///   5=importance, 6=access_count, 7=trust_score,
-    ///   8=session_id, 9=project_id
+    ///   8=session_id, 9=project_id,
+    ///   10=quality_score, 11=source_reliability,
+    ///   12=last_validated_at, 13=contradiction_count,
+    ///   14=cognitive_layer, 15=context_tags
     fn row_to_entry(row: &rusqlite::Row<'_>) -> Result<MemoryEntry, rusqlite::Error> {
         let key: String = row.get(0)?;
         let content: String = row.get(1)?;
@@ -102,6 +105,14 @@ impl SqliteMemoryProvider {
         // Columns 8 and 9 are optional scope fields added in Memory Control Plane V1.
         let session_id: Option<String> = row.get(8).unwrap_or(None);
         let project_id: Option<String> = row.get(9).unwrap_or(None);
+        // Columns 10-13 are quality scoring fields added in v7 migration.
+        let quality_score: f64 = row.get(10).unwrap_or(0.5);
+        let source_reliability: f64 = row.get(11).unwrap_or(0.5);
+        let last_validated_at_str: Option<String> = row.get(12).unwrap_or(None);
+        let contradiction_count: i64 = row.get(13).unwrap_or(0);
+        // Columns 14-15 are cognitive layer fields added in v8 migration.
+        let cognitive_layer_raw: i32 = row.get(14).unwrap_or(2);
+        let context_tags_json: String = row.get(15).unwrap_or_else(|_| "[]".to_string());
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -134,6 +145,16 @@ impl SqliteMemoryProvider {
             trust_score,
             session_id,
             project_id,
+            quality_score,
+            source_reliability,
+            last_validated_at: last_validated_at_str.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .ok()
+            }),
+            contradiction_count: contradiction_count as u32,
+            cognitive_layer: cognitive_layer_raw.clamp(1, 4) as u8,
+            context_tags: serde_json::from_str(&context_tags_json).unwrap_or_default(),
         })
     }
 
@@ -201,8 +222,10 @@ impl SqliteMemoryProvider {
                         "INSERT INTO memory_entries
                             (key, content, category, created_at, updated_at,
                              importance, access_count, trust_score,
-                             session_id, project_id)
-                         VALUES (?1, ?2, ?3, ?4, ?5, 0.5, 0, 0.0, NULL, NULL)
+                             session_id, project_id,
+                             quality_score, source_reliability, last_validated_at, contradiction_count,
+                             cognitive_layer, context_tags)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 0.5, 0, 0.0, NULL, NULL, 0.5, 0.5, NULL, 0, 2, '[]')
                          ON CONFLICT(key) DO NOTHING",
                         params![
                             entry.key,

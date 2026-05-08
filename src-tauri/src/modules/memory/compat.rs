@@ -59,6 +59,13 @@ mod tests {
 
     fn make_entry(key: &str, content: &str, category: MemoryCategory) -> MemoryEntry {
         let now = Utc::now();
+        let cl: u8 = match &category {
+            MemoryCategory::Conversation => 1,
+            MemoryCategory::Working | MemoryCategory::Daily => 2,
+            MemoryCategory::Reflection | MemoryCategory::Procedural => 3,
+            MemoryCategory::Core => 4,
+            MemoryCategory::Custom(_) => 2,
+        };
         MemoryEntry {
             key: key.to_string(),
             content: content.to_string(),
@@ -70,6 +77,12 @@ mod tests {
             trust_score: 0.3,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            cognitive_layer: cl,
+            context_tags: Vec::new(),
         }
     }
 

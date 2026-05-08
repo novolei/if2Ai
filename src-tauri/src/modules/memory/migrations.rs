@@ -239,6 +239,16 @@ const MEMORY_MIGRATIONS: &[Migration] = &[
         name: "conversation_recall_embeddings",
         up: memory_v6_conversation_recall_embeddings,
     },
+    Migration {
+        version: 7,
+        name: "quality_scoring_columns",
+        up: memory_v7_quality_scoring,
+    },
+    Migration {
+        version: 8,
+        name: "cognitive_layer_columns",
+        up: memory_v8_cognitive_layer,
+    },
 ];
 
 /// v1 — the historical schema, captured as a single migration.  Stays
@@ -424,6 +434,66 @@ fn memory_v6_conversation_recall_embeddings(conn: &Connection) -> rusqlite::Resu
     Ok(())
 }
 
+fn memory_v7_quality_scoring(conn: &Connection) -> rusqlite::Result<()> {
+    fn add_column_if_not_exists(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(e) if e.to_string().contains("duplicate column name") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN quality_score REAL DEFAULT 0.5",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN source_reliability REAL DEFAULT 0.5",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN last_validated_at TEXT",
+    )?;
+    add_column_if_not_exists(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN contradiction_count INTEGER DEFAULT 0",
+    )?;
+    Ok(())
+}
+
+fn memory_v8_cognitive_layer(conn: &Connection) -> rusqlite::Result<()> {
+    fn add_col(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
+        match conn.execute(sql, []) {
+            Ok(_) => Ok(()),
+            Err(e) if e.to_string().contains("duplicate column name") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    add_col(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN cognitive_layer INTEGER DEFAULT 2",
+    )?;
+    add_col(
+        conn,
+        "ALTER TABLE memory_entries ADD COLUMN context_tags TEXT DEFAULT '[]'",
+    )?;
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_memory_cognitive_layer ON memory_entries(cognitive_layer);",
+    )?;
+
+    // Back-fill cognitive_layer from category for existing rows.
+    conn.execute_batch(
+        "UPDATE memory_entries SET cognitive_layer = 1 WHERE category = 'conversation';
+         UPDATE memory_entries SET cognitive_layer = 2 WHERE category IN ('working', 'daily');
+         UPDATE memory_entries SET cognitive_layer = 3 WHERE category IN ('reflection', 'procedural');
+         UPDATE memory_entries SET cognitive_layer = 4 WHERE category = 'core';",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,7 +507,7 @@ mod tests {
     fn fresh_install_applies_all_migrations() {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
-        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(report.skipped.is_empty());
         assert!(!report.v1_backfilled);
         assert!(table_exists(&c, "schema_migrations").unwrap());
@@ -465,8 +535,8 @@ mod tests {
         assert!(report.v1_backfilled);
         assert_eq!(
             report.applied,
-            vec![2, 3, 4, 5, 6],
-            "v1 backfilled, v2..=v6 fresh"
+            vec![2, 3, 4, 5, 6, 7, 8],
+            "v1 backfilled, v2..=v8 fresh"
         );
         assert_eq!(report.skipped, vec![1]);
         assert!(table_exists(&c, "memory_links").unwrap());
@@ -482,7 +552,7 @@ mod tests {
         run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         let report = run_migrations(&c, memory_migrations(), Some("memory_entries")).unwrap();
         assert!(report.applied.is_empty());
-        assert_eq!(report.skipped, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.skipped, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -513,6 +583,92 @@ mod tests {
         let c = open();
         let report = run_migrations(&c, memory_migrations(), None).unwrap();
         assert!(!report.v1_backfilled);
-        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(report.applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[tokio::test]
+    async fn v7_columns_round_trip_via_sqlite_provider() {
+        // Spec 2026-05-08-a1-pr2-pr6a-memory-foundation-design.md §5.1:
+        // open fresh SQLite, apply all migrations, store entry, verify all
+        // 6 new columns have default values, call update_decay_scores,
+        // re-read, assert values land. Confirm KeyNotFound on missing key.
+        use crate::modules::memory::{
+            MemoryCategory, MemoryError, MemoryProvider, SqliteMemoryProvider,
+        };
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let provider =
+            SqliteMemoryProvider::new(dir.path().join("memory.db")).expect("provider init");
+
+        // Store an entry — exercises INSERT path that includes new fields.
+        // Use Custom("episodic") because the v8 back-fill SQL only matches
+        // conversation / working|daily / reflection|procedural / core; a
+        // custom category leaves the column at its DEFAULT 2 (Deliberative).
+        let key = "v7-rt-key";
+        provider
+            .store(
+                key,
+                "round-trip content",
+                MemoryCategory::Custom("episodic".to_string()),
+            )
+            .await
+            .expect("store ok");
+
+        // Read back — verify defaults.
+        let entries = provider.export(None).await.expect("export ok");
+        let entry = entries
+            .iter()
+            .find(|e| e.key == key)
+            .expect("entry present");
+        assert!(
+            (entry.quality_score - 0.5).abs() < f64::EPSILON,
+            "default quality_score should be 0.5, got {}",
+            entry.quality_score
+        );
+        assert!(
+            (entry.source_reliability - 0.5).abs() < f64::EPSILON,
+            "default source_reliability should be 0.5, got {}",
+            entry.source_reliability
+        );
+        assert!(
+            entry.last_validated_at.is_none(),
+            "default last_validated_at should be None"
+        );
+        assert_eq!(entry.contradiction_count, 0);
+        assert_eq!(entry.cognitive_layer, 2);
+        assert_eq!(entry.context_tags.len(), 0);
+
+        // Update decay scores — exercises the new trait method.
+        provider
+            .update_decay_scores(key, 0.7, 0.85)
+            .await
+            .expect("update_decay_scores ok");
+
+        // Re-read — verify values landed.
+        let entries = provider.export(None).await.expect("export ok 2");
+        let entry = entries
+            .iter()
+            .find(|e| e.key == key)
+            .expect("entry present 2");
+        assert!(
+            (entry.importance - 0.7).abs() < f64::EPSILON,
+            "importance should be 0.7 after update, got {}",
+            entry.importance
+        );
+        assert!(
+            (entry.quality_score - 0.85).abs() < f64::EPSILON,
+            "quality_score should be 0.85 after update, got {}",
+            entry.quality_score
+        );
+
+        // Missing key — should error with KeyNotFound.
+        let result = provider
+            .update_decay_scores("does-not-exist", 0.5, 0.5)
+            .await;
+        assert!(
+            matches!(result, Err(MemoryError::KeyNotFound(_))),
+            "expected KeyNotFound for missing key, got {result:?}"
+        );
     }
 }

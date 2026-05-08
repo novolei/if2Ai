@@ -132,6 +132,42 @@ pub struct MemoryEntry {
     ///
     /// When `Some`, this entry is only visible to callers with matching project scope.
     pub project_id: Option<String>,
+    /// Composite quality score in `[0, 1]` derived from source / freshness / usage / consistency.
+    /// PR-2 QualityScorer writes this; PR-3 forgetting sweep + PR-4 conflict resolver consume it.
+    /// Default 0.5 for entries pre-dating PR-6a (v7 column DEFAULT 0.5 in SQLite).
+    #[serde(default = "default_quality_score")]
+    pub quality_score: f64,
+
+    /// Source reliability factor in `[0, 1]`. Tags origin (manual user / agent_extracted / etc.).
+    /// Default 0.5 for unspecified.
+    #[serde(default = "default_quality_score")]
+    pub source_reliability: f64,
+
+    /// RFC-3339 timestamp of the last quality re-validation; None if never validated.
+    #[serde(default)]
+    pub last_validated_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// Count of times this entry was contradicted by a competing memory write.
+    /// Drives QualityScorer's consistency factor.
+    #[serde(default)]
+    pub contradiction_count: u32,
+
+    /// CoALA cognitive tier: 1=Reactive, 2=Deliberative (default), 3=Reflective, 4=Meta.
+    /// Schema column ships in v8 even though CognitiveLayerManager is shelved (replan §3.3).
+    #[serde(default = "default_cognitive_layer")]
+    pub cognitive_layer: u8,
+
+    /// JSON-encoded array of contextual tags (project, scope, source_kind, etc.).
+    #[serde(default)]
+    pub context_tags: Vec<String>,
+}
+
+fn default_quality_score() -> f64 {
+    0.5
+}
+
+fn default_cognitive_layer() -> u8 {
+    2
 }
 
 /// MEM-MOD-P6 — One historical snapshot of a memory entry as captured
@@ -481,6 +517,26 @@ pub trait MemoryProvider: Send + Sync {
         ))
     }
 
+    /// Persist updated `importance` and `quality_score` for a single entry.
+    /// Used by the forgetting-curve sweep after computing decay (PR-3).
+    ///
+    /// The default implementation is a no-op so providers that don't yet
+    /// support partial field updates remain functional. Production providers
+    /// (SQLite) override this to issue an UPDATE; missing key returns
+    /// `MemoryError::KeyNotFound`. Does NOT bump `updated_at` — forgetting
+    /// modifies decay scores, not user-visible content.
+    ///
+    /// Spec: docs/superpowers/specs/2026-05-08-a1-pr2-pr6a-memory-foundation-design.md §2.4
+    async fn update_decay_scores(
+        &self,
+        key: &str,
+        importance: f64,
+        quality_score: f64,
+    ) -> Result<(), MemoryError> {
+        let _ = (key, importance, quality_score);
+        Ok(())
+    }
+
     /// MEM-MOD-P3 — Create a typed link `source → target` (e.g.
     /// `"supersedes"`, `"evidence_for"`, `"contradicts"`).  Idempotent:
     /// the underlying SQLite table has a UNIQUE constraint on
@@ -613,6 +669,12 @@ impl MemoryProvider for InMemoryMemoryProvider {
             trust_score: 0.0,
             session_id: None,
             project_id: None,
+            quality_score: 0.5,
+            source_reliability: 0.5,
+            last_validated_at: None,
+            contradiction_count: 0,
+            cognitive_layer: 2,
+            context_tags: Vec::new(),
         };
         let mut entries = self.entries.write().await;
         entries.insert(key.to_string(), entry);
