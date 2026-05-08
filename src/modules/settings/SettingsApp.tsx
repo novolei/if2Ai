@@ -39,6 +39,7 @@ import { PromptDiagnosticsPage } from "./pages/PromptDiagnosticsPage";
 import { AgentIdentitySettingsPage } from "./pages/AgentIdentitySettingsPage";
 import { AgentLimitsSettingsPage } from "./pages/AgentLimitsSettingsPage";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { wireRuntimeProjectionListeners } from "@/runtime-projection";
 
 interface SettingsAppProps {
   onClose: () => void;
@@ -47,6 +48,16 @@ interface SettingsAppProps {
 const DEFAULT_FONT_MODE: FontMode = "sans";
 
 export function SettingsApp({ onClose }: SettingsAppProps) {
+  // The settings window runs in its own webview with its own React tree
+  // and its own runtime-projection store. The main App.tsx mounts the
+  // projection bridge via <RuntimeProjectionWiring />; the settings
+  // window has to subscribe its own copy or it never sees runtime_event
+  // envelopes (e.g. A.2 daydream cycle reports surface here).
+  useEffect(() => {
+    const unwire = wireRuntimeProjectionListeners();
+    return () => unwire();
+  }, []);
+
   const [activeSection, setActiveSection] =
     useState<SettingsSectionId>("general");
   const { theme, setTheme } = useTheme();

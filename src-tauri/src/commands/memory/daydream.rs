@@ -38,7 +38,15 @@ pub async fn daydream_run_cycle(
     } else {
         crate::modules::runtime::contracts::common::daydream_family::FAILED
     };
-    let _ = crate::modules::runtime::runtime_event::dispatch(
+    tracing::info!(
+        target: "daydream",
+        cycle_id = %report.cycle_id,
+        trigger = %report.trigger,
+        family = %family,
+        steps = report.steps.len(),
+        "[daydream] dispatching runtime_event envelope"
+    );
+    let dispatch_result = crate::modules::runtime::runtime_event::dispatch(
         Some(&app),
         crate::modules::runtime::contracts::common::RuntimeEventType::DaydreamCycle,
         family,
@@ -46,6 +54,19 @@ pub async fn daydream_run_cycle(
         &report,
         None,
     );
+    match dispatch_result {
+        Ok(envelope) => tracing::info!(
+            target: "daydream",
+            event_type = ?envelope.event_type,
+            payload_family = %envelope.payload_family.0,
+            "[daydream] dispatch ok"
+        ),
+        Err(err) => tracing::warn!(
+            target: "daydream",
+            error = %err,
+            "[daydream] dispatch failed"
+        ),
+    }
 
     Ok(report)
 }
