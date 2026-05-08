@@ -12,10 +12,11 @@
 pub mod audit;
 pub mod compat;
 pub mod compiler;
+pub mod conflict;
 pub mod conversation_recall_vector;
 pub mod decision_tree;
 pub mod embedding;
-pub mod conflict;
+pub mod evolution;
 pub mod forgetting;
 pub mod hrr;
 pub mod inject;
