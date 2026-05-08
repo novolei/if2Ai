@@ -18,6 +18,8 @@ pub(super) struct MemoryBootstrap {
     /// running).
     pub learned_traits: Option<modules::memory::learned_traits::LearnedTraitsStore>,
     pub daydream_coordinator: Arc<modules::memory::daydream::DayDreamCoordinator>,
+    pub trajectory_collector:
+        std::sync::Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 pub(super) fn build_memory_bootstrap(
@@ -171,8 +173,7 @@ pub(super) fn build_memory_bootstrap(
     // A.2 — daydream consolidation engine.
     let daydream_config = crate::bootstrap::daydream_config::load(&paths.if2ai_dir);
     let daydream_scorer = Arc::new(modules::memory::quality::QualityScorer::new());
-    let daydream_forgetting =
-        Arc::new(modules::memory::forgetting::ForgettingCurveEngine::new());
+    let daydream_forgetting = Arc::new(modules::memory::forgetting::ForgettingCurveEngine::new());
     let daydream_reflector = Arc::new(
         modules::memory::evolution::reflector::SelfReflector::new(memory_provider.clone())
             .with_llm(utility_llm.clone()),
@@ -182,8 +183,13 @@ pub(super) fn build_memory_bootstrap(
             memory_provider.clone(),
         ),
     );
+    let trajectory_collector = std::sync::Arc::new(
+        modules::memory::evolution::trajectory::TrajectoryCollector::new(),
+    );
     let daydream_trajectories: Arc<dyn modules::memory::daydream::TrajectorySource> =
-        Arc::new(modules::memory::daydream::EmptyTrajectorySource);
+        Arc::new(modules::memory::daydream::CollectorTrajectorySource::new(
+            trajectory_collector.clone(),
+        ));
     let daydream_engine = Arc::new(modules::memory::daydream::DayDreamEngine::new(
         memory_provider.clone(),
         daydream_scorer,
@@ -194,8 +200,9 @@ pub(super) fn build_memory_bootstrap(
         daydream_trajectories,
         daydream_config,
     ));
-    let daydream_coordinator =
-        Arc::new(modules::memory::daydream::DayDreamCoordinator::new(daydream_engine));
+    let daydream_coordinator = Arc::new(modules::memory::daydream::DayDreamCoordinator::new(
+        daydream_engine,
+    ));
 
     MemoryBootstrap {
         job_runner,
@@ -208,6 +215,7 @@ pub(super) fn build_memory_bootstrap(
         memory_provider,
         learned_traits,
         daydream_coordinator,
+        trajectory_collector,
     }
 }
 
