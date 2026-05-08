@@ -621,6 +621,50 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn auto_resolve_threshold_01_picks_higher_quality_at_small_gaps() {
+        // Spec §5.2: store A (quality 0.4); construct a conflict with
+        // new at quality 0.55 (gap=0.15 ≥ 0.1) → expect auto-pick KeepNew.
+        use crate::modules::memory::providers::SqliteMemoryProvider;
+        use crate::modules::memory::{MemoryCategory, MemoryProvider};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("test_memory.db");
+        let provider = SqliteMemoryProvider::new(db_path).expect("provider init");
+
+        let key_a = "fact-old";
+        provider
+            .store(key_a, "old content", MemoryCategory::Core)
+            .await
+            .expect("store a");
+
+        let mut existing = provider
+            .export(None)
+            .await
+            .expect("export")
+            .into_iter()
+            .find(|e| e.key == key_a)
+            .expect("present");
+        existing.quality_score = 0.40;
+
+        let conflict = Conflict {
+            new_key: "fact-new".to_string(),
+            new_content: "new content".to_string(),
+            existing_entry: existing,
+            conflict_type: ConflictType::Contradiction,
+            similarity_score: 0.78,
+        };
+
+        let resolver = ConflictDetector::with_config(ConflictConfig::default());
+        let resolution = resolver.resolve(&conflict, 0.55);
+
+        assert!(
+            matches!(resolution, ConflictResolution::KeepNew),
+            "gap=0.15 >= 0.1 should auto-pick KeepNew, got {resolution:?}"
+        );
+    }
+
     #[test]
     fn conflict_default_threshold_is_01() {
         let cfg = ConflictConfig::default();
