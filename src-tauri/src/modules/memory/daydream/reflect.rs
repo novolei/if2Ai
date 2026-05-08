@@ -24,15 +24,21 @@ pub async fn run(
     let started = std::time::Instant::now();
     let examined = trajectories.len();
 
-    let mut insights: Vec<Insight> = Vec::new();
+    let mut all_insights: Vec<Insight> = Vec::new();
     for t in &trajectories {
         if was_successful(t) {
-            insights.extend(reflector.reflect_on_success(t));
+            all_insights.extend(reflector.reflect_on_success(t));
         } else {
-            insights.extend(reflector.reflect_on_failure(t));
+            all_insights.extend(reflector.reflect_on_failure(t));
         }
     }
-    insights.retain(|i| i.confidence >= MIN_INSIGHT_CONFIDENCE);
+    let extracted_count = all_insights.len();
+    let promoted: Vec<Insight> = all_insights
+        .into_iter()
+        .filter(|i| i.confidence >= MIN_INSIGHT_CONFIDENCE)
+        .collect();
+    let rejected_count = extracted_count - promoted.len();
+    let insights = promoted;
 
     let scope = MemoryExecutionScope::global();
     let mut mutated = 0;
@@ -49,6 +55,8 @@ pub async fn run(
                         kind: "provider".into(),
                         message: format!("internalize_insight failed: {e}"),
                     }),
+                    extracted_count: Some(extracted_count),
+                    rejected_count: Some(rejected_count),
                 };
             }
         }
@@ -60,6 +68,8 @@ pub async fn run(
         mutated,
         duration_ms: started.elapsed().as_millis() as u64,
         error: None,
+        extracted_count: Some(extracted_count),
+        rejected_count: Some(rejected_count),
     }
 }
 

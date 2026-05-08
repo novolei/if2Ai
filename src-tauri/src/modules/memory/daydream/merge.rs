@@ -96,6 +96,8 @@ pub async fn run(
                     kind: "provider".into(),
                     message: format!("export failed: {err}"),
                 }),
+                extracted_count: None,
+                rejected_count: None,
             };
         }
     };
@@ -131,6 +133,8 @@ pub async fn run(
                         budget.token_cap
                     ),
                 }),
+                extracted_count: None,
+                rejected_count: None,
             };
         }
 
@@ -166,6 +170,8 @@ pub async fn run(
                             kind: "provider".into(),
                             message: format!("store failed for key '{}': {err}", winner.key),
                         }),
+                        extracted_count: None,
+                        rejected_count: None,
                     };
                 }
 
@@ -180,6 +186,8 @@ pub async fn run(
                             kind: "provider".into(),
                             message: format!("delete failed for key '{}': {err}", loser.key),
                         }),
+                        extracted_count: None,
+                        rejected_count: None,
                     };
                 }
 
@@ -195,6 +203,8 @@ pub async fn run(
                         kind: "llm".into(),
                         message: format!("LLM consolidation failed: {err}"),
                     }),
+                    extracted_count: None,
+                    rejected_count: None,
                 };
             }
         }
@@ -206,6 +216,8 @@ pub async fn run(
         mutated,
         duration_ms: started.elapsed().as_millis() as u64,
         error: None,
+        extracted_count: None,
+        rejected_count: None,
     }
 }
 

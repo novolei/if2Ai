@@ -22,6 +22,8 @@ pub async fn run(
             mutated: r.archived_count,
             duration_ms: started.elapsed().as_millis() as u64,
             error: None,
+            extracted_count: None,
+            rejected_count: None,
         },
         Err(e) => StepOutcome {
             step: "prune".into(),
@@ -32,6 +34,8 @@ pub async fn run(
                 kind: "provider".into(),
                 message: format!("forgetting sweep failed: {e}"),
             }),
+            extracted_count: None,
+            rejected_count: None,
         },
     }
 }
