@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod report;
+pub mod prune;
 
 pub use config::{ConsolidationStrategy, DayDreamConfig};
 pub use report::{DayDreamReport, StepError, StepOutcome};
