@@ -27,6 +27,7 @@ fn main() {
         app_bootstrap.app_state_config,
         app_bootstrap.learned_traits,
     );
+    let daydream_coordinator = host_composition.app_state.daydream_coordinator.clone();
 
     modules::desktop_host::attach_native_host(
         tauri::Builder::default(),
@@ -37,7 +38,26 @@ fn main() {
         host_composition.tts_download_state,
     )
     .invoke_handler(crate::if2ai_command_surface!())
-    .setup(|app| Ok(modules::desktop_host::setup_desktop_host(app)?))
+    .setup(move |app| {
+        modules::desktop_host::setup_desktop_host(app)?;
+        let app_handle = app.handle().clone();
+        modules::memory::daydream::spawn_poll_loop(daydream_coordinator, move |report| {
+            let family = if report.all_succeeded() {
+                modules::runtime::contracts::common::daydream_family::COMPLETED
+            } else {
+                modules::runtime::contracts::common::daydream_family::FAILED
+            };
+            let _ = modules::runtime::runtime_event::dispatch(
+                Some(&app_handle),
+                modules::runtime::contracts::common::RuntimeEventType::DaydreamCycle,
+                family,
+                modules::runtime::contracts::common::CorrelationIds::default(),
+                &report,
+                None,
+            );
+        });
+        Ok(())
+    })
     // SAFETY: run() error is unrecoverable for a desktop app
     .run(tauri::generate_context!())
     .map_err(|e| tracing::error!("Tauri application exited with error: {e}"))
