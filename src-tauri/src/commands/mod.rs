@@ -175,6 +175,11 @@ pub struct AppState {
     #[allow(dead_code)]
     pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
 
+    /// A.2 daydream coordinator — owns idle timer + activity stamp; spawned
+    /// by `main.rs::setup` via `spawn_poll_loop`. Manual trigger is the
+    /// `daydream_run_cycle` Tauri command.
+    pub daydream_coordinator: Arc<crate::modules::memory::daydream::DayDreamCoordinator>,
+
     /// MEM-MOD-P7 — cross-session learned-traits store.  `None` until
     /// bootstrap calls [`AppState::with_learned_traits`].  IPCs that
     /// touch this field degrade to "no traits" while it is `None`.
@@ -228,6 +233,8 @@ pub struct AppStateConfig {
     /// Shared turn-based memory scheduler; see
     /// [`AppState::memory_ticker`].
     pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
+    /// A.2 — see [`AppState::daydream_coordinator`].
+    pub daydream_coordinator: Arc<crate::modules::memory::daydream::DayDreamCoordinator>,
 }
 
 impl AppState {
@@ -265,6 +272,7 @@ impl AppState {
             pinned_store: cfg.pinned_store,
             memory_compiler: cfg.memory_compiler,
             memory_ticker: cfg.memory_ticker,
+            daydream_coordinator: cfg.daydream_coordinator,
             learned_traits: None,
         }
     }
