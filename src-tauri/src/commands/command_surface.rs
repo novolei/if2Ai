@@ -432,6 +432,7 @@ macro_rules! if2ai_command_surface {
             crate::commands::memory::daydream::daydream_get_config,
             crate::commands::memory::daydream::daydream_set_config,
             crate::commands::memory::narrative::memory_summaries_list,
+            crate::commands::memory::procedural::procedural_memory_list,
             crate::commands::pinned::pinned_get,
             crate::commands::pinned::pinned_add,
             crate::commands::pinned::pinned_delete,
