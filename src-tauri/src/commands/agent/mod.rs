@@ -58,6 +58,7 @@ fn make_turn_service(state: &AppState, app_handle: Option<AppHandle>) -> TurnSer
         learned_traits: state.learned_traits.clone(),
         rolling_summarizer: state.rolling_summarizer.clone(),
         utility_llm: state.utility_llm.clone(),
+        trajectory_collector: state.trajectory_collector.clone(),
         // T11 — preserve the env-var-derived `IF2AI_AGENT_MAX_ITERATIONS`
         // cap (default 10) at the AppState construction seam.  Without
         // this override, `AgenticLoopConfig::default()` would let
