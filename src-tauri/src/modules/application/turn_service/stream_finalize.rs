@@ -151,6 +151,12 @@ pub(super) struct FinalizeStreamInputs {
     pub active_retrieval_manager_for_after_turn: Option<Arc<ActiveRetrievalManager>>,
     pub stream_session_id_for_after_turn: String,
     pub stream_project_id_for_after_turn: Option<String>,
+    /// A.3.1 — trajectory collector forwarded from `StreamTaskInputs`.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
+    /// A.3.1 — task description (user_message[..200]) captured at run entry,
+    /// reused here when synthesising the final TurnRecord.
+    pub trajectory_task_description: String,
 }
 
 /// Run the post-loop finalize block for one streaming chat turn.
@@ -229,6 +235,8 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         active_retrieval_manager_for_after_turn,
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
+        trajectory_collector,
+        trajectory_task_description,
     } = inputs;
 
     // Guardrail: do not allow "operation completed" claims without a successful
@@ -1170,6 +1178,57 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         accumulated_text: accumulated_text.clone(),
         app_handle: app_handle_for_after_turn.clone(),
     });
+
+    // A.3.1 — finalize trajectory based on terminal_status / stream_failed.
+    // Mirrors run.rs::run_turn outcome classification (PR #4).
+    let trajectory_outcome =
+        if stream_failed || matches!(terminal_status, Some("cancelled")) {
+            let category = if matches!(terminal_status, Some("cancelled")) {
+                "cancelled".to_string()
+            } else {
+                last_stream_error_reason
+                    .as_deref()
+                    .map(classify_streaming_error)
+                    .unwrap_or_else(|| "unknown".to_string())
+            };
+            let root_cause = last_stream_error_reason
+                .clone()
+                .unwrap_or_else(|| terminal_status.unwrap_or("unknown").to_string());
+            crate::modules::memory::evolution::trajectory::TaskOutcome::Failure {
+                error_category: category,
+                root_cause,
+            }
+        } else {
+            crate::modules::memory::evolution::trajectory::TaskOutcome::Success {
+                quality_score: 1.0,
+            }
+        };
+    let trajectory_success = matches!(
+        trajectory_outcome,
+        crate::modules::memory::evolution::trajectory::TaskOutcome::Success { .. }
+    );
+    let trajectory_agent_action = if trajectory_success {
+        crate::modules::memory::evolution::trajectory::AgentAction::Reply
+    } else {
+        crate::modules::memory::evolution::trajectory::AgentAction::Error
+    };
+    trajectory_collector
+        .record_turn(
+            &session_id,
+            crate::modules::memory::evolution::trajectory::TurnRecord {
+                turn_id: 0,
+                timestamp: chrono::Utc::now(),
+                user_input_summary: Some(trajectory_task_description),
+                agent_action: trajectory_agent_action,
+                tool_calls: Vec::new(),
+                success: trajectory_success,
+                self_assessment: None,
+            },
+        )
+        .await;
+    trajectory_collector
+        .finish_trajectory(&session_id, trajectory_outcome)
+        .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,6 +1364,7 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
             }
         });
     }
+
 }
 
 fn should_rewrite_unverified_completion(
@@ -1358,5 +1418,24 @@ mod tests {
             "已创建 r.md。",
             false,
         ));
+    }
+}
+
+/// A.3.1 — coarse error categorization for streaming-path failures.
+/// Mirrors `classify_trajectory_error` in `run.rs` but without
+/// importing it (run.rs is a sibling, the helper is intentionally
+/// duplicated to avoid pub-ing it for one reuse).
+fn classify_streaming_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        "timeout".into()
+    } else if lower.contains("cancel") {
+        "cancelled".into()
+    } else if lower.contains("tool") {
+        "tool_error".into()
+    } else if lower.contains("provider") || lower.contains("api") {
+        "provider_error".into()
+    } else {
+        "unknown".into()
     }
 }
