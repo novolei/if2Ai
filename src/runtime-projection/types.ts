@@ -17,6 +17,7 @@
 import type {
   ConflictResolutionPayload,
   ContextBudgetUsage,
+  DaydreamReportPayload,
   MemoryContextItem,
   MemoryEventPayload,
   MemoryWriteDecisionPayload,
@@ -146,7 +147,8 @@ export type CanonicalRuntimeEvent =
   | ProjectionDiscardSessionRunsEvent
   | SupervisorSnapshotEvent
   | SmartBrowserProjectionEvent
-  | ToolAttemptTimelineEvent;
+  | ToolAttemptTimelineEvent
+  | DaydreamCycleEvent;
 
 export interface StreamRunBoundEvent {
   kind: "stream_run_bound";
@@ -625,6 +627,13 @@ export interface ToolAttemptTimelineEvent {
   receivedAt: number;
 }
 
+/** A.2 — emitted when a daydream consolidation cycle completes or fails. */
+export interface DaydreamCycleEvent {
+  kind: "daydream_cycle";
+  report: DaydreamReportPayload;
+  receivedAt: number;
+}
+
 /** T-014 — top-level attempt timeline projection. */
 export interface AttemptTimelineProjection {
   sessionId: string;
@@ -809,6 +818,8 @@ export interface RuntimeProjectionSnapshot {
    *  `null` means "no session scope guard" — every event is accepted
    *  (legacy / pre-swap behavior). */
   currentSessionId: string | null;
+  /** A.2 — newest-first ring of recent daydream cycle reports (cap 20). */
+  daydreamHistory: DaydreamReportPayload[];
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -831,6 +842,7 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     browsers: {},
     attemptTimeline: null,
     currentSessionId: null,
+    daydreamHistory: [],
   };
 }
 

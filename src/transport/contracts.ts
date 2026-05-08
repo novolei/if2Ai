@@ -64,6 +64,8 @@ export type RuntimeEventType =
   | 'content_simplified'
   // ── DR-01 — supervisor lifecycle transitions ──
   | 'supervisor'
+  // ── A.2 — daydream consolidation cycle ──
+  | 'daydream_cycle'
 
 /** Family-tag constants for `RuntimeEventType = 'supervisor'`
  * envelopes (DR-01). Payload is `SupervisorSnapshot`. Mirror of
@@ -950,4 +952,42 @@ export interface McpWorkbenchActivityEntry {
   params?: unknown
   resultSummary?: unknown
   error?: string | null
+}
+
+// ───────────────────────── A.2 daydream cycle ─────────────────────
+
+/** Family-tag constants for `RuntimeEventType = 'daydream_cycle'` envelopes (A.2).
+ * Mirror of `daydream_family` in `common.rs`. */
+export const DAYDREAM_FAMILY = {
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+} as const
+
+export type DaydreamFamily = (typeof DAYDREAM_FAMILY)[keyof typeof DAYDREAM_FAMILY]
+
+export interface DaydreamStepOutcome {
+  step: 'prune' | 'merge' | 'refresh' | 'reflect'
+  examined: number
+  mutated: number
+  durationMs: number
+  error: { kind: string; message: string } | null
+}
+
+/** Payload of `RuntimeEventType = 'daydream_cycle'` envelopes. Mirror of
+ * `DayDreamReport` in `memory/daydream/report.rs` (`#[serde(rename_all = "camelCase")]`). */
+export interface DaydreamReportPayload {
+  cycleId: string
+  trigger: 'idle' | 'manual'
+  strategy: 'conservative' | 'balanced' | 'aggressive'
+  startedAt: string
+  finishedAt: string
+  steps: DaydreamStepOutcome[]
+}
+
+/** Mirror of `DayDreamConfig` in `memory/daydream/config.rs` (camelCase). */
+export interface DaydreamConfig {
+  enabled: boolean
+  idleTriggerMinutes: number
+  maxEntriesPerCycle: number
+  strategy: 'conservative' | 'balanced' | 'aggressive'
 }

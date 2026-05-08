@@ -40,6 +40,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useRuntimeProjectionSelector } from "@/runtime-projection";
+import { getApiClient } from "./client.ts";
+import type { DaydreamConfig, DaydreamReportPayload } from "@/transport/contracts";
 import {
   memoryClearAll,
   memoryCompiledClear,
@@ -242,4 +244,21 @@ export function useMemoryPromotionCandidates(
   }, [refetch, invalidationKey]);
 
   return { candidates, loading, error, refetch };
+}
+
+// ───────────────────────── A.2 daydream ─────────────────────
+
+/** Trigger a manual daydream consolidation cycle and return the report. */
+export async function runDaydreamCycle(): Promise<DaydreamReportPayload> {
+  return getApiClient().call<DaydreamReportPayload>('daydream_run_cycle')
+}
+
+/** Fetch the current daydream configuration. */
+export async function getDaydreamConfig(): Promise<DaydreamConfig> {
+  return getApiClient().call<DaydreamConfig>('daydream_get_config')
+}
+
+/** Persist a new daydream configuration. */
+export async function setDaydreamConfig(config: DaydreamConfig): Promise<void> {
+  return getApiClient().call<void>('daydream_set_config', { config })
 }

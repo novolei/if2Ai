@@ -445,6 +445,10 @@ export function reduceRuntimeEvent(
         attemptTimeline: timeline,
       };
     }
+    case "daydream_cycle": {
+      const next = [event.report, ...prev.daydreamHistory];
+      return { ...prev, daydreamHistory: next.slice(0, 20) };
+    }
     default: {
       // Exhaustiveness assertion. TS will flag a missing case at
       // compile time when a new kind is added in `./types`.
