@@ -541,6 +541,19 @@ pub trait MemoryProvider: Send + Sync {
         Ok(())
     }
 
+    /// Atomically bump the `contradiction_count` column on the entry
+    /// identified by `key`. Default impl is a noop so providers that
+    /// don't track conflicts (e.g. vector-only) continue to compile.
+    /// Used by the conflict resolver when `KeepBothWithFlag` fires.
+    ///
+    /// Returns `Ok(())` even if the key is unknown — this is best-effort
+    /// telemetry, not a load-bearing operation.
+    ///
+    /// Spec: docs/superpowers/specs/2026-05-08-a1-pr3-pr4-forgetting-conflict-design.md §2.3
+    async fn increment_contradiction_count(&self, _key: &str) -> Result<(), MemoryError> {
+        Ok(())
+    }
+
     /// MEM-MOD-P3 — Create a typed link `source → target` (e.g.
     /// `"supersedes"`, `"evidence_for"`, `"contradicts"`).  Idempotent:
     /// the underlying SQLite table has a UNIQUE constraint on
@@ -766,5 +779,24 @@ pub async fn default_memory_provider() -> SharedMemoryProvider {
             let fallback = InMemoryMemoryProvider::new();
             Arc::new(fallback)
         }
+    }
+}
+
+#[cfg(test)]
+mod trait_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn increment_contradiction_count_default_is_noop() {
+        // Spec §5.2: instantiate a provider that does NOT override the
+        // method, call it, assert Ok(()) and no panic. InMemoryMemoryProvider
+        // is the canonical default-impl carrier.
+        #[allow(deprecated)]
+        let provider = InMemoryMemoryProvider::new();
+        let result = provider.increment_contradiction_count("any-key").await;
+        assert!(
+            result.is_ok(),
+            "default impl should return Ok(()), got {result:?}"
+        );
     }
 }
