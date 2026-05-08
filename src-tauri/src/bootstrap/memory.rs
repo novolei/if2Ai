@@ -17,6 +17,7 @@ pub(super) struct MemoryBootstrap {
     /// IPCs degrade to "no traits" but the rest of the app keeps
     /// running).
     pub learned_traits: Option<modules::memory::learned_traits::LearnedTraitsStore>,
+    pub daydream_coordinator: Arc<modules::memory::daydream::DayDreamCoordinator>,
 }
 
 pub(super) fn build_memory_bootstrap(
@@ -167,6 +168,35 @@ pub(super) fn build_memory_bootstrap(
     }
     let memory_ticker = Arc::new(ticker_finished);
 
+    // A.2 — daydream consolidation engine.
+    let daydream_config = crate::bootstrap::daydream_config::load(&paths.if2ai_dir);
+    let daydream_scorer = Arc::new(modules::memory::quality::QualityScorer::new());
+    let daydream_forgetting =
+        Arc::new(modules::memory::forgetting::ForgettingCurveEngine::new());
+    let daydream_reflector = Arc::new(
+        modules::memory::evolution::reflector::SelfReflector::new(memory_provider.clone())
+            .with_llm(utility_llm.clone()),
+    );
+    let daydream_procedural = Arc::new(
+        modules::memory::evolution::procedural::ProceduralMemoryManager::new(
+            memory_provider.clone(),
+        ),
+    );
+    let daydream_trajectories: Arc<dyn modules::memory::daydream::TrajectorySource> =
+        Arc::new(modules::memory::daydream::EmptyTrajectorySource);
+    let daydream_engine = Arc::new(modules::memory::daydream::DayDreamEngine::new(
+        memory_provider.clone(),
+        daydream_scorer,
+        daydream_forgetting,
+        utility_llm.clone(),
+        daydream_reflector,
+        daydream_procedural,
+        daydream_trajectories,
+        daydream_config,
+    ));
+    let daydream_coordinator =
+        Arc::new(modules::memory::daydream::DayDreamCoordinator::new(daydream_engine));
+
     MemoryBootstrap {
         job_runner,
         utility_llm,
@@ -177,6 +207,7 @@ pub(super) fn build_memory_bootstrap(
         pinned_store,
         memory_provider,
         learned_traits,
+        daydream_coordinator,
     }
 }
 
