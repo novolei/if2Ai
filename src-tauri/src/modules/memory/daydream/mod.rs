@@ -6,6 +6,7 @@ pub mod config;
 pub mod merge;
 pub mod report;
 pub mod prune;
+pub mod reflect;
 pub mod refresh;
 
 pub use config::{ConsolidationStrategy, DayDreamConfig};
