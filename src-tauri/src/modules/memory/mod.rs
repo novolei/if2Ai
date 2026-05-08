@@ -15,6 +15,7 @@ pub mod compiler;
 pub mod conversation_recall_vector;
 pub mod decision_tree;
 pub mod embedding;
+pub mod forgetting;
 pub mod hrr;
 pub mod inject;
 pub mod intent;
