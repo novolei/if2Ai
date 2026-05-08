@@ -151,6 +151,12 @@ pub(super) struct ToolExecutionContext {
     pub sanitize_invalid_tool_use_samples: Vec<String>,
     pub run_id: String,
     pub app_data_dir: PathBuf,
+    /// A.3.2 — trajectory collector for per-tool ToolCallRecord observation.
+    /// Each completed tool execution calls
+    /// [`crate::modules::memory::evolution::trajectory::TrajectoryCollector::observe_tool_call`]
+    /// so the run finalize site can drain into `TurnRecord.tool_calls`.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 /// Results produced by executing one batch of tool calls.
@@ -209,6 +215,7 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         mut sanitize_invalid_tool_use_samples,
         run_id,
         app_data_dir,
+        trajectory_collector,
     } = ctx;
 
     let mut force_final_response_next = false;
@@ -740,6 +747,26 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
             !is_error,
             duration_ms,
         );
+
+        // A.3.2 — observe this tool's outcome on the active trajectory so
+        // the run finalize site (stream_finalize.rs) can drain the bucket
+        // into `TurnRecord.tool_calls` for SelfReflector.
+        trajectory_collector
+            .observe_tool_call(
+                &session_id,
+                crate::modules::memory::evolution::trajectory::ToolCallRecord {
+                    tool_name: tool_name.clone(),
+                    args_summary: String::new(),
+                    success: !is_error,
+                    duration_ms,
+                    error_message: if is_error {
+                        Some(result_text.clone())
+                    } else {
+                        None
+                    },
+                },
+            )
+            .await;
 
         if is_mutating_tool_success(&tool_name, &input_json, is_error) {
             has_successful_mutating_tool = true;

@@ -825,6 +825,28 @@ impl TurnService {
                                     Some(&log_correlation),
                                 )
                                 .await;
+                            // A.3.2 — record per-tool signal for SelfReflector.
+                            // Non-streaming run.rs has no per-tool duration_ms
+                            // available here (the summary aggregates tool_results
+                            // without timings); use 0 so the field is present but
+                            // SelfReflector's duration-based rules treat as unknown.
+                            self.deps
+                                .trajectory_collector
+                                .observe_tool_call(
+                                    &session_id,
+                                    crate::modules::memory::evolution::trajectory::ToolCallRecord {
+                                        tool_name: tool_name.clone(),
+                                        args_summary: String::new(),
+                                        success: !*is_error,
+                                        duration_ms: 0,
+                                        error_message: if *is_error {
+                                            Some(output.clone())
+                                        } else {
+                                            None
+                                        },
+                                    },
+                                )
+                                .await;
                         }
                     }
                 }
@@ -884,6 +906,16 @@ impl TurnService {
                         tokens_out: None,
                     },
                 );
+                let recorded_tool_calls = self
+                    .deps
+                    .trajectory_collector
+                    .drain_pending_tool_calls(&session_id)
+                    .await;
+                let agent_action = if recorded_tool_calls.is_empty() {
+                    crate::modules::memory::evolution::trajectory::AgentAction::Reply
+                } else {
+                    crate::modules::memory::evolution::trajectory::AgentAction::ToolUse
+                };
                 self.deps
                     .trajectory_collector
                     .record_turn(
@@ -892,9 +924,8 @@ impl TurnService {
                             turn_id: 0,
                             timestamp: chrono::Utc::now(),
                             user_input_summary: Some(task_description.clone()),
-                            agent_action:
-                                crate::modules::memory::evolution::trajectory::AgentAction::Reply,
-                            tool_calls: Vec::new(),
+                            agent_action,
+                            tool_calls: recorded_tool_calls,
                             success: true,
                             self_assessment: None,
                         },
@@ -918,6 +949,11 @@ impl TurnService {
             Err(e) => {
                 let error_message = friendly_runtime_error_message(&e);
                 let error_category = classify_trajectory_error(&error_message);
+                let recorded_tool_calls = self
+                    .deps
+                    .trajectory_collector
+                    .drain_pending_tool_calls(&session_id)
+                    .await;
                 self.deps
                     .trajectory_collector
                     .record_turn(
@@ -928,7 +964,7 @@ impl TurnService {
                             user_input_summary: Some(task_description.clone()),
                             agent_action:
                                 crate::modules::memory::evolution::trajectory::AgentAction::Error,
-                            tool_calls: Vec::new(),
+                            tool_calls: recorded_tool_calls,
                             success: false,
                             self_assessment: None,
                         },

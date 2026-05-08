@@ -237,6 +237,7 @@ fn build_execute_tools_refs<'r>(
         mode: extras.mode,
         run_id: &extras.run_id_for_ledger,
         app_data_dir: &extras.app_data_dir_for_ledger,
+        trajectory_collector: &inputs.trajectory_collector,
     }
 }
 
