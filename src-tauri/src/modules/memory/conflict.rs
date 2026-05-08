@@ -328,7 +328,7 @@ impl ConflictDetector {
 /// bigram overlap (Sørensen–Dice coefficient).  This is a lightweight
 /// heuristic — the real semantic similarity comes from the vector provider's
 /// recall ranking, but we need a secondary score to classify conflict type.
-fn text_similarity(a: &str, b: &str) -> f64 {
+pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let bigrams_a = char_bigrams(a);
     let bigrams_b = char_bigrams(b);
 

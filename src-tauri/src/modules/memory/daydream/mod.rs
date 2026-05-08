@@ -3,6 +3,7 @@
 //! See `docs/superpowers/specs/2026-05-08-a2-daydream-design.md`.
 
 pub mod config;
+pub mod merge;
 pub mod report;
 pub mod prune;
 
