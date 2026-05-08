@@ -81,6 +81,7 @@ pub enum ConflictType {
 // ---------------------------------------------------------------------------
 
 /// Strategy chosen to resolve a detected conflict.
+#[derive(Debug)]
 pub enum ConflictResolution {
     /// Keep the newer entry and delete the older one.
     KeepNewer,
@@ -279,22 +280,30 @@ impl ConflictDetector {
             }
 
             ConflictResolution::KeepBothWithFlag => {
-                // We cannot directly increment contradiction_count through the
-                // trait surface, so we log the event.  The quality scorer will
-                // pick up the flag on the next rescore pass.
-                //
-                // For the existing entry, attempt a content update which has
-                // the side-effect of bumping updated_at (signals "touched").
-                // The actual contradiction_count increment would require a
-                // dedicated provider method; for now we log so the audit trail
-                // captures it.
-                tracing::info!(
-                    target: "memory.conflict",
-                    existing_key = %conflict.existing_entry.key,
-                    new_key = %conflict.new_key,
-                    similarity = conflict.similarity_score,
-                    "conflict detected — keeping both entries with contradiction flag",
-                );
+                // Spec §2.3 Hybrid C — bump contradiction_count on the
+                // EXISTING entry so future conflict-review UI can
+                // surface "your existing memory has been challenged".
+                // Best-effort: log on error but don't fail the write.
+                if let Err(err) = provider
+                    .increment_contradiction_count(&conflict.existing_entry.key)
+                    .await
+                {
+                    tracing::warn!(
+                        target: "memory.conflict",
+                        existing_key = %conflict.existing_entry.key,
+                        new_key = %conflict.new_key,
+                        error = %err,
+                        "failed to bump contradiction_count; logging only",
+                    );
+                } else {
+                    tracing::info!(
+                        target: "memory.conflict",
+                        existing_key = %conflict.existing_entry.key,
+                        new_key = %conflict.new_key,
+                        similarity = conflict.similarity_score,
+                        "conflict detected — both entries kept; contradiction_count bumped on existing",
+                    );
+                }
             }
 
             ConflictResolution::AskUser { conflict_summary } => {
@@ -547,6 +556,69 @@ mod tests {
             .increment_contradiction_count("does-not-exist")
             .await
             .expect("missing-key should be Ok per spec contract");
+    }
+
+    #[tokio::test]
+    async fn resolver_keep_both_with_flag_bumps_contradiction_count() {
+        // Spec §5.2: drive the full ConflictResolver path against a real
+        // SqliteMemoryProvider. Store A; classify a conflict that produces
+        // KeepBothWithFlag; assert the column on A is incremented.
+        use crate::modules::memory::providers::SqliteMemoryProvider;
+        use crate::modules::memory::{MemoryCategory, MemoryProvider};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("test_memory.db");
+        let provider = SqliteMemoryProvider::new(db_path).expect("provider init");
+
+        let key_a = "fact-shanghai";
+        provider
+            .store(key_a, "User lives in Shanghai", MemoryCategory::Core)
+            .await
+            .expect("store a");
+
+        let existing_entry = provider
+            .export(None)
+            .await
+            .expect("export")
+            .into_iter()
+            .find(|e| e.key == key_a)
+            .expect("entry present");
+        // Force the existing entry's quality_score so the gap is < 0.1.
+        let mut existing_for_test = existing_entry.clone();
+        existing_for_test.quality_score = 0.50;
+
+        let conflict = Conflict {
+            new_key: "fact-tokyo".to_string(),
+            new_content: "User lives in Tokyo".to_string(),
+            existing_entry: existing_for_test,
+            conflict_type: ConflictType::Contradiction,
+            similarity_score: 0.78,
+        };
+
+        let resolver = ConflictDetector::with_config(ConflictConfig::default());
+        let resolution = resolver.resolve(&conflict, 0.55);
+        assert!(
+            matches!(resolution, ConflictResolution::KeepBothWithFlag),
+            "expected KeepBothWithFlag for gap < 0.1 Contradiction, got {resolution:?}"
+        );
+        resolver
+            .apply_resolution(&conflict, &resolution, &provider)
+            .await
+            .expect("apply ok");
+
+        let after = provider
+            .export(None)
+            .await
+            .expect("export")
+            .into_iter()
+            .find(|e| e.key == key_a)
+            .expect("entry present after");
+        assert_eq!(
+            after.contradiction_count, 1,
+            "KeepBothWithFlag should bump contradiction_count by 1, got {}",
+            after.contradiction_count
+        );
     }
 
     #[test]
