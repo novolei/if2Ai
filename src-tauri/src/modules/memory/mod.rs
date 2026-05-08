@@ -26,6 +26,7 @@ pub mod pinned;
 pub mod policy;
 pub mod promotion;
 mod providers;
+pub mod quality;
 pub mod reflection_loop;
 pub mod retrieval;
 pub mod scope;
@@ -55,6 +56,7 @@ pub use llm::ProviderUtilityLlm;
 pub use llm::{ChatProviderUtilityLlm, MockUtilityLlm, UtilityLlm};
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
+pub use quality::{QualityScorer, QualityWeights};
 
 // Session summary store — `SessionSummaryStore` trait + the two
 // implementations are wired into AppState. `SessionSummaryRecord`
