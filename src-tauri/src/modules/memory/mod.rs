@@ -14,6 +14,7 @@ pub mod compat;
 pub mod compiler;
 pub mod conflict;
 pub mod conversation_recall_vector;
+pub mod daydream;
 pub mod decision_tree;
 pub mod embedding;
 pub mod evolution;
