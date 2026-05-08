@@ -128,6 +128,12 @@ pub struct TrajectoryCollector {
     active_trajectories: Arc<RwLock<HashMap<String, Trajectory>>>,
     /// Ring buffer of recently completed trajectories (newest last).
     completed: Arc<RwLock<Vec<Trajectory>>>,
+    /// A.3.2 — per-session bucket of in-flight `ToolCallRecord`s observed
+    /// during a run. Producers call [`Self::observe_tool_call`] after each
+    /// tool execution; the run finalize site calls
+    /// [`Self::drain_pending_tool_calls`] once to populate
+    /// `TurnRecord.tool_calls` before the trajectory is finished.
+    pending_tool_calls: Arc<RwLock<HashMap<String, Vec<ToolCallRecord>>>>,
 }
 
 impl TrajectoryCollector {
@@ -137,7 +143,30 @@ impl TrajectoryCollector {
         Self {
             active_trajectories: Arc::new(RwLock::new(HashMap::new())),
             completed: Arc::new(RwLock::new(Vec::new())),
+            pending_tool_calls: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// A.3.2 — record one tool call observed during the active run for
+    /// `session_id`. Accumulated tool calls are drained by
+    /// [`Self::drain_pending_tool_calls`] when the run finalizes.
+    /// Calls for unknown sessions are accepted (defensive — the producer
+    /// site has no atomicity contract with `start_trajectory`).
+    pub async fn observe_tool_call(&self, session_id: &str, record: ToolCallRecord) {
+        let mut pending = self.pending_tool_calls.write().await;
+        pending
+            .entry(session_id.to_string())
+            .or_default()
+            .push(record);
+    }
+
+    /// A.3.2 — remove + return all pending tool calls accumulated for
+    /// `session_id`. Called by the finalize path right before building
+    /// `TurnRecord`. Returns an empty `Vec` if no calls were observed
+    /// (e.g. text-only turn).
+    pub async fn drain_pending_tool_calls(&self, session_id: &str) -> Vec<ToolCallRecord> {
+        let mut pending = self.pending_tool_calls.write().await;
+        pending.remove(session_id).unwrap_or_default()
     }
 
     /// Start a new trajectory for the given session.
@@ -410,5 +439,51 @@ mod tests {
         let ids: Vec<&str> = failed.iter().map(|t| t.session_id.as_str()).collect();
         assert!(ids.contains(&"s-fail"));
         assert!(ids.contains(&"s-abandon"));
+    }
+
+    // ────────────────── A.3.2 pending-tool-call tests ──────────────────
+
+    #[tokio::test]
+    async fn observe_then_drain_returns_in_order() {
+        let collector = TrajectoryCollector::new();
+        collector
+            .observe_tool_call("s1", make_tool_call("bash", true))
+            .await;
+        collector
+            .observe_tool_call("s1", make_tool_call("file_read", false))
+            .await;
+
+        let drained = collector.drain_pending_tool_calls("s1").await;
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].tool_name, "bash");
+        assert_eq!(drained[1].tool_name, "file_read");
+        // After drain, second drain returns empty.
+        let again = collector.drain_pending_tool_calls("s1").await;
+        assert!(again.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drain_unknown_session_returns_empty() {
+        let collector = TrajectoryCollector::new();
+        let v = collector.drain_pending_tool_calls("never-observed").await;
+        assert!(v.is_empty());
+    }
+
+    #[tokio::test]
+    async fn observe_partitions_by_session() {
+        let collector = TrajectoryCollector::new();
+        collector
+            .observe_tool_call("a", make_tool_call("bash", true))
+            .await;
+        collector
+            .observe_tool_call("b", make_tool_call("file_read", true))
+            .await;
+
+        let a = collector.drain_pending_tool_calls("a").await;
+        let b = collector.drain_pending_tool_calls("b").await;
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].tool_name, "bash");
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].tool_name, "file_read");
     }
 }

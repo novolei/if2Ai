@@ -930,6 +930,11 @@ pub(super) struct ExecuteToolsSharedRefs<'a> {
     pub mode: PermissionMode,
     pub run_id: &'a str,
     pub app_data_dir: &'a PathBuf,
+    /// A.3.2 — forwarded into [`super::stream_tool_execution::ToolExecutionContext`]
+    /// so each completed tool can observe a `ToolCallRecord` on the active
+    /// trajectory.
+    pub trajectory_collector:
+        &'a Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 /// Run phases 13-14 (and the immediate post-batch state mutations) of
@@ -1000,6 +1005,7 @@ pub(super) async fn iteration_execute_tools(
         ),
         run_id: refs.run_id.to_string(),
         app_data_dir: refs.app_data_dir.clone(),
+        trajectory_collector: refs.trajectory_collector.clone(),
     };
     let had_successful_mutating_tool_before = state.has_successful_mutating_tool;
     let tool_result = super::stream_tool_execution::execute_tool_batch(tool_ctx).await;

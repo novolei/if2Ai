@@ -1207,10 +1207,19 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         trajectory_outcome,
         crate::modules::memory::evolution::trajectory::TaskOutcome::Success { .. }
     );
-    let trajectory_agent_action = if trajectory_success {
+    // A.3.2 — drain pending tool-call observations into TurnRecord.tool_calls
+    // so SelfReflector's tool-pattern rules see real signal. agent_action is
+    // ToolUse on a successful run that touched tools; Error on any failure;
+    // Reply on a successful text-only turn.
+    let trajectory_recorded_tool_calls = trajectory_collector
+        .drain_pending_tool_calls(&session_id)
+        .await;
+    let trajectory_agent_action = if !trajectory_success {
+        crate::modules::memory::evolution::trajectory::AgentAction::Error
+    } else if trajectory_recorded_tool_calls.is_empty() {
         crate::modules::memory::evolution::trajectory::AgentAction::Reply
     } else {
-        crate::modules::memory::evolution::trajectory::AgentAction::Error
+        crate::modules::memory::evolution::trajectory::AgentAction::ToolUse
     };
     trajectory_collector
         .record_turn(
@@ -1220,7 +1229,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
                 timestamp: chrono::Utc::now(),
                 user_input_summary: Some(trajectory_task_description),
                 agent_action: trajectory_agent_action,
-                tool_calls: Vec::new(),
+                tool_calls: trajectory_recorded_tool_calls,
                 success: trajectory_success,
                 self_assessment: None,
             },
