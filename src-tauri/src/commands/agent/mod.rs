@@ -112,6 +112,7 @@ pub async fn run_agent_turn(
     user_message: String,
     permission_mode: Option<String>,
 ) -> Result<RunAgentTurnResponse, String> {
+    state.daydream_coordinator.note_activity().await;
     let service = make_turn_service(&state, Some(app_handle));
     service
         .run_turn(crate::modules::application::RunTurnRequest {
@@ -144,6 +145,7 @@ pub async fn start_agent_stream(
     provider_id: Option<String>,
     model_id: Option<String>,
 ) -> Result<String, String> {
+    state.daydream_coordinator.note_activity().await;
     let stream_cancel_senders = state.stream_cancel_senders.clone();
     let permission_senders = state.permission_senders.clone();
     let permission_overrides = state.permission_overrides.clone();
@@ -229,6 +231,7 @@ pub async fn resume_run(
     provider_id: Option<String>,
     model_id: Option<String>,
 ) -> Result<String, String> {
+    state.daydream_coordinator.note_activity().await;
     let session = state
         .session_manager
         .restore_session(&session_id)
