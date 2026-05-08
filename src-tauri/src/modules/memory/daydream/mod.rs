@@ -17,3 +17,6 @@ pub use engine::{CycleError, DayDreamEngine, TrajectorySource};
 
 pub mod coordinator;
 pub use coordinator::{spawn_poll_loop, DayDreamCoordinator};
+
+pub mod trajectory_source;
+pub use trajectory_source::EmptyTrajectorySource;
