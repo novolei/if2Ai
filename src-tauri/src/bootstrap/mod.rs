@@ -5,6 +5,7 @@ use crate::commands;
 use crate::modules;
 
 mod app;
+pub mod daydream_config;
 mod memory;
 mod migration;
 mod runtime;

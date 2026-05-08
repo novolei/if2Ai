@@ -60,6 +60,7 @@ import {
 import { getSessionProjectionCheckpoint, getSupervisorSnapshot, getToolAttemptLedger } from '@/api/sessions'
 import { RUNTIME_EVENT_CHANNEL } from '@/transport/contracts'
 import type {
+  DaydreamReportPayload,
   MemoryAfterTurnPayload,
   MemoryEventPayload,
   PermissionRequestPayload,
@@ -188,6 +189,18 @@ export function wireRuntimeProjectionListeners(
           const candidateId = `${payload.policyVersion}::${decision.decidedAt}`
           store.dispatch(translateMemoryWriteDecision(candidateId, decision))
         }
+      },
+    },
+    {
+      // A.2 — daydream consolidation cycle reports.
+      eventType: 'daydream_cycle',
+      handle: (envelope) => {
+        const report = envelope.payload as DaydreamReportPayload
+        store.dispatch({
+          kind: 'daydream_cycle',
+          report,
+          receivedAt: Date.now(),
+        })
       },
     },
   ]

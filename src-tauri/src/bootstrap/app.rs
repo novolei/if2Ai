@@ -72,6 +72,7 @@ pub fn build_app_bootstrap(paths: &super::BootPaths) -> super::AppBootstrap {
             pinned_store: memory_bootstrap.pinned_store,
             memory_compiler: memory_bootstrap.memory_compiler,
             memory_ticker: memory_bootstrap.memory_ticker.clone(),
+            daydream_coordinator: memory_bootstrap.daydream_coordinator.clone(),
         },
         browser_registry,
         memory_ticker: memory_bootstrap.memory_ticker,

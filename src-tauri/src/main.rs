@@ -27,6 +27,7 @@ fn main() {
         app_bootstrap.app_state_config,
         app_bootstrap.learned_traits,
     );
+    let daydream_coordinator = host_composition.app_state.daydream_coordinator.clone();
 
     modules::desktop_host::attach_native_host(
         tauri::Builder::default(),
@@ -37,7 +38,45 @@ fn main() {
         host_composition.tts_download_state,
     )
     .invoke_handler(crate::if2ai_command_surface!())
-    .setup(|app| Ok(modules::desktop_host::setup_desktop_host(app)?))
+    .setup(move |app| {
+        modules::desktop_host::setup_desktop_host(app)?;
+        // The Tauri setup hook runs synchronously on the main thread before
+        // `.run()` enters the event loop — there is no Tokio reactor entered
+        // here, so `tokio::spawn` panics with "no reactor running". Tauri's
+        // own async_runtime wraps tokio and is the codebase-wide pattern for
+        // long-running background tasks started during setup (see
+        // `desktop_host/setup.rs`, `commands/settings.rs`).
+        let app_handle = app.handle().clone();
+        let coord = daydream_coordinator;
+        tauri::async_runtime::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                let Some(result) = coord.maybe_fire().await else { continue };
+                let report = match result {
+                    Ok(r) => r,
+                    Err(err) => {
+                        tracing::debug!(error = %err, "daydream cycle skipped");
+                        continue;
+                    }
+                };
+                let family = if report.all_succeeded() {
+                    modules::runtime::contracts::common::daydream_family::COMPLETED
+                } else {
+                    modules::runtime::contracts::common::daydream_family::FAILED
+                };
+                let _ = modules::runtime::runtime_event::dispatch(
+                    Some(&app_handle),
+                    modules::runtime::contracts::common::RuntimeEventType::DaydreamCycle,
+                    family,
+                    modules::runtime::contracts::common::CorrelationIds::default(),
+                    &report,
+                    None,
+                );
+            }
+        });
+        Ok(())
+    })
     // SAFETY: run() error is unrecoverable for a desktop app
     .run(tauri::generate_context!())
     .map_err(|e| tracing::error!("Tauri application exited with error: {e}"))

@@ -18,12 +18,14 @@
 //! the same `crate::commands::*` path.
 
 pub mod compile;
+pub mod daydream;
 pub mod narrative;
 
 pub use compile::{
     memory_compile_now, memory_compiled_clear, memory_compiled_read, CompileReport,
     CompiledMemoryDto, CompiledSection,
 };
+pub use daydream::{daydream_get_config, daydream_run_cycle, daydream_set_config};
 pub use narrative::{memory_summaries_list, SessionSummaryDto};
 
 use serde::{Deserialize, Serialize};

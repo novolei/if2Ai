@@ -23,6 +23,7 @@ impl Default for ConsolidationStrategy {
 
 /// User-facing daydream configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DayDreamConfig {
     /// Master switch. Default `false` (opt-in).
     pub enabled: bool,

@@ -31,6 +31,7 @@ import {
   type PromotionThresholds,
 } from '@/lib/tauri'
 import { memoryClearAll } from '@/api/memory'
+import { DaydreamSettingsSection } from '../components/daydream/DaydreamSettingsSection'
 
 interface SlotConfig {
   label: string
@@ -638,6 +639,11 @@ export function MemorySettingsPage() {
           </div>
         </div>
         <LearnedTraitsPanel />
+      </SettingsSurface>
+
+      {/* ── Daydream Consolidation ── */}
+      <SettingsSurface className="px-5 py-4">
+        <DaydreamSettingsSection />
       </SettingsSurface>
 
       {/* ── Day Awareness (MEM-MOD-PD0) ── */}
