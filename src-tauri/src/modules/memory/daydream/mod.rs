@@ -14,3 +14,6 @@ pub use report::{DayDreamReport, StepError, StepOutcome};
 
 pub mod engine;
 pub use engine::{CycleError, DayDreamEngine, TrajectorySource};
+
+pub mod coordinator;
+pub use coordinator::{spawn_poll_loop, DayDreamCoordinator};
