@@ -15,13 +15,39 @@ fn if2ai_dir() -> PathBuf {
 }
 
 /// Trigger one daydream cycle on demand. Bypasses the idle gate.
+///
+/// After the cycle runs, emits a `RuntimeEventType::DaydreamCycle` envelope so
+/// the frontend projection picks it up and updates `daydreamHistory`. Without
+/// this emit the manual path would skip the projection (only the idle poll
+/// loop in `main.rs` dispatches), and the status row would never refresh on
+/// "Run now". The report is still returned via the command result so the UI
+/// can surface a toast on success/failure.
 #[tauri::command]
-pub async fn daydream_run_cycle(state: State<'_, AppState>) -> Result<DayDreamReport, String> {
-    state
+pub async fn daydream_run_cycle(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<DayDreamReport, String> {
+    let report = state
         .daydream_coordinator
         .trigger_manual()
         .await
-        .map_err(|e| format!("daydream cycle failed: {e}"))
+        .map_err(|e| format!("daydream cycle failed: {e}"))?;
+
+    let family = if report.all_succeeded() {
+        crate::modules::runtime::contracts::common::daydream_family::COMPLETED
+    } else {
+        crate::modules::runtime::contracts::common::daydream_family::FAILED
+    };
+    let _ = crate::modules::runtime::runtime_event::dispatch(
+        Some(&app),
+        crate::modules::runtime::contracts::common::RuntimeEventType::DaydreamCycle,
+        family,
+        crate::modules::runtime::contracts::common::CorrelationIds::default(),
+        &report,
+        None,
+    );
+
+    Ok(report)
 }
 
 /// Read the persisted config from `~/.if2ai/daydream.json`. Returns
