@@ -230,6 +230,12 @@ pub struct StreamTaskInputs {
     /// `max_tool_intent_nudges` fields. See `runtime/agent_loop/config.rs`
     /// module docs for full wiring status.
     pub loop_config: crate::modules::application::turn_service::AgenticLoopConfig,
+    /// A.3.1 — trajectory collector for evolution::Trajectory recording.
+    /// Used by `run_stream_task_body` (start_trajectory at entry) and
+    /// passed through to `finalize_stream_task` (record_turn + finish_trajectory
+    /// at terminal point) so daydream's reflect step sees streaming runs too.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 pub(super) async fn append_remembered_permission_events(
@@ -323,6 +329,17 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         .path()
         .app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    // A.3.1 — start trajectory at run entry. Mirrors run.rs::run_turn (A.3).
+    // The collector keys by session_id; if a previous run for this session
+    // never finished (e.g. crash before finalize), it is silently replaced
+    // and treated as abandoned.
+    let trajectory_task_description: String =
+        inputs.user_message_clone.chars().take(200).collect();
+    inputs
+        .trajectory_collector
+        .start_trajectory(&inputs.session_id, &trajectory_task_description)
+        .await;
 
     tracing::info!(
         "[start_agent_stream] Spawned background task for stream_id: {}",
@@ -538,6 +555,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         harness_bus_for_after_turn,
         utility_llm: _,
         loop_config: _,
+        trajectory_collector,
     } = inputs;
 
     // S5b-1: destructure the bag back into locals so the post-loop
@@ -681,6 +699,8 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
         active_retrieval_manager_for_after_turn,
         stream_session_id_for_after_turn,
         stream_project_id_for_after_turn,
+        trajectory_collector,
+        trajectory_task_description,
     })
     .await;
 
