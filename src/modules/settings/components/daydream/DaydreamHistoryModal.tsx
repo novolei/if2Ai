@@ -44,8 +44,17 @@ export function DaydreamHistoryModal({ history, onClose }: Props) {
                   <ol className="text-sm pl-4 list-decimal space-y-0.5">
                     {r.steps.map((s) => (
                       <li key={s.step}>
-                        <span className="font-medium">{s.step}</span>: examined {s.examined} /
-                        mutated {s.mutated} ({s.durationMs}ms)
+                        <span className="font-medium">{s.step}</span>
+                        {s.step === 'reflect' && s.extractedCount !== undefined ? (
+                          <>
+                            : extracted {s.extractedCount} · rejected {s.rejectedCount ?? 0} ·
+                            promoted {s.mutated} ({s.durationMs}ms)
+                          </>
+                        ) : (
+                          <>
+                            : examined {s.examined} / mutated {s.mutated} ({s.durationMs}ms)
+                          </>
+                        )}
                         {s.error ? (
                           <span className="text-destructive">
                             {' '}

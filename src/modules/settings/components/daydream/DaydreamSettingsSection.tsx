@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { getDaydreamConfig, setDaydreamConfig } from '@/api/memory'
 import type { DaydreamConfig } from '@/transport/contracts'
 import { DaydreamStatusRow } from './DaydreamStatusRow'
+import { LearnedProceduresPanel } from './LearnedProceduresPanel'
 
 const STRATEGIES: { value: DaydreamConfig['strategy']; label: string }[] = [
   { value: 'conservative', label: 'Conservative — prune only' },
@@ -69,6 +70,10 @@ export function DaydreamSettingsSection() {
       </label>
 
       <DaydreamStatusRow />
+
+      <div className="pt-3 border-t border-border">
+        <LearnedProceduresPanel />
+      </div>
     </section>
   )
 }
