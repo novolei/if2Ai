@@ -871,6 +871,32 @@ impl MemoryProvider for SqliteMemoryProvider {
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
     }
 
+    /// Spec §2.3 Hybrid C — best-effort SQL UPDATE.  Missing key is
+    /// not an error: the conflict resolver may race against a delete.
+    /// Forward errors only on actual SQL failures so the resolver
+    /// can surface them in its tracing.
+    async fn increment_contradiction_count(&self, key: &str) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), MemoryError> {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            c.execute(
+                "UPDATE memory_entries
+                   SET contradiction_count = contradiction_count + 1
+                 WHERE key = ?1",
+                params![key],
+            )
+            .map_err(|e| {
+                MemoryError::Generic(format!("increment_contradiction_count: sql: {e}"))
+            })?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
     /// MEM-MOD-P1 — clamp `trust_score + delta` into `[-1.0, 1.0]` and
     /// persist the result.  Single-row UPDATE — cheap enough to be
     /// invoked from a per-turn LLM tool without batching.

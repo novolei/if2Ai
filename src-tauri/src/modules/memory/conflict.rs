@@ -501,6 +501,54 @@ mod tests {
         assert!(matches!(ct, ConflictType::Contradiction));
     }
 
+    #[tokio::test]
+    async fn keep_both_increments_contradiction_count_via_sqlite_override() {
+        // Spec §5.2: SqliteMemoryProvider's override actually bumps the
+        // contradiction_count column. Best-effort: missing key returns
+        // Ok(()) per the trait contract.
+        use crate::modules::memory::providers::SqliteMemoryProvider;
+        use crate::modules::memory::{MemoryCategory, MemoryProvider};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("test_memory.db");
+        let provider = SqliteMemoryProvider::new(db_path).expect("provider init");
+
+        let key_a = "fact-shanghai";
+        provider
+            .store(key_a, "User lives in Shanghai", MemoryCategory::Core)
+            .await
+            .expect("store a");
+
+        // Direct override call -- verifies the SQL UPDATE works.
+        provider
+            .increment_contradiction_count(key_a)
+            .await
+            .expect("increment ok");
+        provider
+            .increment_contradiction_count(key_a)
+            .await
+            .expect("increment ok 2nd time");
+
+        // Read back via export and confirm the column was bumped twice.
+        let entries = provider.export(None).await.expect("export ok");
+        let entry = entries
+            .iter()
+            .find(|e| e.key == key_a)
+            .expect("entry present");
+        assert_eq!(
+            entry.contradiction_count, 2,
+            "expected 2 increments to land on contradiction_count, got {}",
+            entry.contradiction_count
+        );
+
+        // Unknown key should not error.
+        provider
+            .increment_contradiction_count("does-not-exist")
+            .await
+            .expect("missing-key should be Ok per spec contract");
+    }
+
     #[test]
     fn conflict_default_threshold_is_01() {
         let cfg = ConflictConfig::default();
