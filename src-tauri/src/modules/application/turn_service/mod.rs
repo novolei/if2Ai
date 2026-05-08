@@ -208,6 +208,11 @@ pub struct TurnServiceDeps {
     /// to `StreamTaskInputs::loop_config` today so future work only
     /// touches the loop body, not the dependency surface.
     pub loop_config: AgenticLoopConfig,
+    /// A.3 — trajectory collector for evolution::Trajectory recording.
+    /// Producer side; consumer is daydream's reflect step via
+    /// `CollectorTrajectorySource`.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 impl TurnServiceDeps {

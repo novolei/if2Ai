@@ -110,6 +110,15 @@ impl TurnService {
             user_message,
             permission_mode,
         } = request;
+        // A.3 — start trajectory at run entry. The collector keys by
+        // session_id; if a previous run for this session never finished
+        // (e.g. crash before finalize), it is silently replaced and treated
+        // as abandoned.
+        let task_description: String = user_message.chars().take(200).collect();
+        self.deps
+            .trajectory_collector
+            .start_trajectory(&session_id, &task_description)
+            .await;
         let run_id = uuid::Uuid::new_v4().to_string();
         let run_event_logger = self
             .deps
@@ -875,6 +884,31 @@ impl TurnService {
                         tokens_out: None,
                     },
                 );
+                self.deps
+                    .trajectory_collector
+                    .record_turn(
+                        &session_id,
+                        crate::modules::memory::evolution::trajectory::TurnRecord {
+                            turn_id: 0,
+                            timestamp: chrono::Utc::now(),
+                            user_input_summary: Some(task_description.clone()),
+                            agent_action:
+                                crate::modules::memory::evolution::trajectory::AgentAction::Reply,
+                            tool_calls: Vec::new(),
+                            success: true,
+                            self_assessment: None,
+                        },
+                    )
+                    .await;
+                self.deps
+                    .trajectory_collector
+                    .finish_trajectory(
+                        &session_id,
+                        crate::modules::memory::evolution::trajectory::TaskOutcome::Success {
+                            quality_score: 1.0,
+                        },
+                    )
+                    .await;
                 Ok(RunTurnResponse {
                     message: final_text,
                     session_id,
@@ -883,6 +917,33 @@ impl TurnService {
             }
             Err(e) => {
                 let error_message = friendly_runtime_error_message(&e);
+                let error_category = classify_trajectory_error(&error_message);
+                self.deps
+                    .trajectory_collector
+                    .record_turn(
+                        &session_id,
+                        crate::modules::memory::evolution::trajectory::TurnRecord {
+                            turn_id: 0,
+                            timestamp: chrono::Utc::now(),
+                            user_input_summary: Some(task_description.clone()),
+                            agent_action:
+                                crate::modules::memory::evolution::trajectory::AgentAction::Error,
+                            tool_calls: Vec::new(),
+                            success: false,
+                            self_assessment: None,
+                        },
+                    )
+                    .await;
+                self.deps
+                    .trajectory_collector
+                    .finish_trajectory(
+                        &session_id,
+                        crate::modules::memory::evolution::trajectory::TaskOutcome::Failure {
+                            error_category,
+                            root_cause: error_message.clone(),
+                        },
+                    )
+                    .await;
                 let _ = run_event_logger
                     .append_with_correlation(
                         "run_error",
@@ -952,6 +1013,24 @@ impl TurnService {
                 Err(error_message)
             }
         }
+    }
+}
+
+/// A.3 — categorize an error message into a coarse `error_category`
+/// string for `TaskOutcome::Failure`. Heuristic; SelfReflector keys
+/// off these for failure-side rule extraction.
+fn classify_trajectory_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        "timeout".into()
+    } else if lower.contains("cancel") {
+        "cancelled".into()
+    } else if lower.contains("tool") {
+        "tool_error".into()
+    } else if lower.contains("provider") || lower.contains("api") {
+        "provider_error".into()
+    } else {
+        "unknown".into()
     }
 }
 

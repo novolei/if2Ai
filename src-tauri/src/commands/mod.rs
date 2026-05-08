@@ -180,6 +180,12 @@ pub struct AppState {
     /// `daydream_run_cycle` Tauri command.
     pub daydream_coordinator: Arc<crate::modules::memory::daydream::DayDreamCoordinator>,
 
+    /// A.3 — in-memory trajectory collector. Producer side is `turn_service::run`
+    /// (start_trajectory at entry, record_turn + finish_trajectory at exit).
+    /// Consumer side is daydream's reflect step via `CollectorTrajectorySource`.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
+
     /// MEM-MOD-P7 — cross-session learned-traits store.  `None` until
     /// bootstrap calls [`AppState::with_learned_traits`].  IPCs that
     /// touch this field degrade to "no traits" while it is `None`.
@@ -235,6 +241,11 @@ pub struct AppStateConfig {
     pub memory_ticker: Arc<crate::modules::memory::MemoryTicker>,
     /// A.2 — see [`AppState::daydream_coordinator`].
     pub daydream_coordinator: Arc<crate::modules::memory::daydream::DayDreamCoordinator>,
+    /// A.3 — in-memory trajectory collector. Producer side is `turn_service::run`
+    /// (start_trajectory at entry, record_turn + finish_trajectory at exit).
+    /// Consumer side is daydream's reflect step via `CollectorTrajectorySource`.
+    pub trajectory_collector:
+        Arc<crate::modules::memory::evolution::trajectory::TrajectoryCollector>,
 }
 
 impl AppState {
@@ -273,6 +284,7 @@ impl AppState {
             memory_compiler: cfg.memory_compiler,
             memory_ticker: cfg.memory_ticker,
             daydream_coordinator: cfg.daydream_coordinator,
+            trajectory_collector: cfg.trajectory_collector,
             learned_traits: None,
         }
     }
