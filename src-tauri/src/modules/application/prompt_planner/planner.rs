@@ -348,6 +348,11 @@ pub async fn build_prompt_plan(
             let (priority, is_sensitive) = match section.kind {
                 MemoryInjectionSectionKind::Pinned => (80, false),
                 MemoryInjectionSectionKind::Compiled => (70, false),
+                // Procedural rules slot between Compiled (70) and Rules (60):
+                // they are derived (not user-pinned) but stable enough to
+                // outrank ad-hoc retrieval guidance. Brainstorm in A.1
+                // PR-2 may revisit if telemetry shows different ordering wins.
+                MemoryInjectionSectionKind::Procedural => (65, false),
                 MemoryInjectionSectionKind::Rules => (60, false),
                 MemoryInjectionSectionKind::Retrieved => (50, true),
             };
@@ -441,6 +446,7 @@ fn title_for_memory_section(kind: MemoryInjectionSectionKind) -> &'static str {
     match kind {
         MemoryInjectionSectionKind::Pinned => "memory_pinned",
         MemoryInjectionSectionKind::Compiled => "memory_compiled",
+        MemoryInjectionSectionKind::Procedural => "memory_procedural",
         MemoryInjectionSectionKind::Rules => "memory_rules",
         MemoryInjectionSectionKind::Retrieved => "retrieved_memory",
     }

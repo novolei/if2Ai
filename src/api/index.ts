@@ -15,6 +15,7 @@ export * from "./client";
 export * from "./conversations";
 export * from "./gateway-re-export";
 export * from "./identity";
+export * from "./models";
 export * from "./onboarding";
 export * from "./projects";
 export * from "./sessions";

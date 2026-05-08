@@ -135,3 +135,78 @@ pub(super) fn should_retry_announced_tool_intent_no_tool(
         && available_tool_count > 0
         && super::work_loop::assistant_signals_tool_intent(accumulated_text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::runtime::contracts::common::CorrelationIds;
+    use crate::modules::runtime::event_log::{RunEventLogger, RunLogEntry};
+    use crate::modules::runtime::stream_emitter::StreamTokenPayload;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_nanos();
+        std::env::temp_dir().join(format!("sp-c-{label}-{nanos}"))
+    }
+
+    #[tokio::test]
+    async fn append_stream_event_preserves_payload_correlation() {
+        let root = unique_temp_root("corr");
+        let logger = RunEventLogger::for_base_dir(&root, "sess-c", "run-c");
+        let mut payload = StreamTokenPayload::skeleton("stream-1", "delta");
+        payload.correlation = Some(CorrelationIds {
+            stream_id: Some("stream-1".into()),
+            team_id: Some("team-a".into()),
+            member_id: Some("mem-1".into()),
+            parent_run_id: Some("parent-7".into()),
+            delegation_id: Some("deleg-9".into()),
+            ..Default::default()
+        });
+
+        append_stream_event(&logger, &payload).await;
+
+        let path = logger.file_path().expect("run log path");
+        let raw = std::fs::read_to_string(path).expect("read run log");
+        let line = raw
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .expect("at least one jsonl line");
+        let entry: RunLogEntry = serde_json::from_str(line).expect("parse RunLogEntry");
+
+        assert_eq!(entry.event_type, "delta");
+        assert_eq!(entry.correlation_id.as_deref(), Some("stream-1"));
+        assert_eq!(entry.team_id.as_deref(), Some("team-a"));
+        assert_eq!(entry.member_id.as_deref(), Some("mem-1"));
+        assert_eq!(entry.parent_run_id.as_deref(), Some("parent-7"));
+        assert_eq!(entry.delegation_id.as_deref(), Some("deleg-9"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn append_stream_event_normalizes_tool_call_update_running_to_tool_call_running() {
+        let root = unique_temp_root("normalize");
+        let logger = RunEventLogger::for_base_dir(&root, "sess-c", "run-c");
+        let mut payload = StreamTokenPayload::skeleton("stream-2", "tool_call_update");
+        payload.tool_status = Some("running".into());
+        payload.correlation = None;
+
+        append_stream_event(&logger, &payload).await;
+
+        let path = logger.file_path().expect("run log path");
+        let raw = std::fs::read_to_string(path).expect("read run log");
+        let line = raw
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .expect("at least one jsonl line");
+        let entry: RunLogEntry = serde_json::from_str(line).expect("parse RunLogEntry");
+
+        assert_eq!(entry.event_type, "tool_call_running");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+}

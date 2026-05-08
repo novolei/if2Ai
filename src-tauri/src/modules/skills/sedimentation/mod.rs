@@ -27,8 +27,12 @@ pub use dedup::{
     cosine_similarity, dedup_drafts, DedupedSkill, Embedder, DEDUP_SIMILARITY_THRESHOLD,
 };
 
+use std::collections::HashSet;
+use std::path::Path;
+
 use crate::modules::api::{InputContentBlock, InputMessage};
 use crate::modules::memory::UtilityLlm;
+use crate::modules::skills::manager::{DefaultSkillManager, SkillManager};
 
 /// Marker constant retained for FEAT-EVO-000 invariants.
 pub const SEDIMENTATION_STUB_VERSION: &str = "FEAT-EVO-000";
@@ -259,6 +263,74 @@ fn parse_frontmatter(body: &str) -> Option<(String, String)> {
     Some((name, description))
 }
 
+/// Automatically persist skill drafts to disk, deduplicating against
+/// existing skills in `skills_dir`.  Returns the names of newly saved
+/// skills.  Designed to be called from the after-turn pipeline inside
+/// a fire-and-forget `tokio::spawn`, so every error path logs and
+/// continues rather than panicking.
+pub fn auto_persist_drafts(drafts: &[SkillDraft], skills_dir: &Path) -> Vec<String> {
+    if drafts.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect existing skill directory names for dedup.
+    let existing_names: HashSet<String> = if skills_dir.exists() {
+        match std::fs::read_dir(skills_dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect(),
+            Err(e) => {
+                tracing::warn!(
+                    "[sedimentation] failed to list existing skills for dedup: {}",
+                    e
+                );
+                return Vec::new();
+            }
+        }
+    } else {
+        HashSet::new()
+    };
+
+    let new_drafts: Vec<&SkillDraft> = drafts
+        .iter()
+        .filter(|d| !existing_names.contains(&d.name))
+        .collect();
+
+    if new_drafts.is_empty() {
+        tracing::debug!(
+            "[sedimentation] all {} drafts already exist, skipping",
+            drafts.len()
+        );
+        return Vec::new();
+    }
+
+    let manager = DefaultSkillManager::new(skills_dir.to_path_buf());
+    let mut saved = Vec::new();
+    for draft in new_drafts {
+        match manager.create(&draft.name, &draft.body, Some("agent_created")) {
+            Ok(_) => {
+                tracing::info!(
+                    "[sedimentation] auto-persisted skill '{}' (source: agent_created, tools: {:?})",
+                    draft.name,
+                    draft.tool_sequence
+                );
+                saved.push(draft.name.clone());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[sedimentation] failed to persist skill '{}': {}",
+                    draft.name,
+                    e
+                );
+            }
+        }
+    }
+
+    saved
+}
+
 fn default_metadata_for(tools: &[String]) -> (String, String) {
     let slug = tools
         .iter()
@@ -271,4 +343,59 @@ fn default_metadata_for(tools: &[String]) -> (String, String) {
         tools.join(" → ")
     );
     (name, description)
+}
+
+#[cfg(test)]
+mod auto_persist_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn make_draft(name: &str) -> SkillDraft {
+        SkillDraft {
+            name: name.to_string(),
+            description: "test draft".to_string(),
+            body: format!(
+                "---\nname: {name}\ndescription: test draft\n---\n\nbody text\n"
+            ),
+            source_turns: vec![0],
+            tool_sequence: vec!["bash".into(), "read".into()],
+        }
+    }
+
+    #[test]
+    fn auto_persist_drafts_writes_new() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path();
+        let drafts = vec![make_draft("alpha"), make_draft("beta")];
+
+        let saved = auto_persist_drafts(&drafts, skills_dir);
+
+        assert_eq!(saved.len(), 2);
+        assert!(saved.contains(&"alpha".to_string()));
+        assert!(saved.contains(&"beta".to_string()));
+        assert!(skills_dir.join("alpha").is_dir());
+        assert!(skills_dir.join("beta").is_dir());
+    }
+
+    #[test]
+    fn auto_persist_drafts_skips_existing() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path();
+        // Pre-create the "alpha" skill directory so it's seen as existing.
+        std::fs::create_dir_all(skills_dir.join("alpha")).unwrap();
+
+        let drafts = vec![make_draft("alpha"), make_draft("beta")];
+        let saved = auto_persist_drafts(&drafts, skills_dir);
+
+        // alpha should be skipped; beta should be saved.
+        assert_eq!(saved, vec!["beta".to_string()]);
+        assert!(skills_dir.join("beta").is_dir());
+    }
+
+    #[test]
+    fn auto_persist_drafts_empty_input_returns_empty() {
+        let dir = tempdir().unwrap();
+        let saved = auto_persist_drafts(&[], dir.path());
+        assert!(saved.is_empty());
+    }
 }

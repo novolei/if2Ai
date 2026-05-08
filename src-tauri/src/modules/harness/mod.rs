@@ -29,6 +29,7 @@ pub mod gate;
 pub mod graders;
 pub mod report_persistence;
 pub mod run_report;
+pub mod runlog_projection;
 pub mod session_recorder;
 pub mod suite_report;
 pub mod telemetry;

@@ -27,6 +27,7 @@ use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
 };
+use crate::modules::runtime::supervisor::SupervisorOps;
 
 /// TauriPermissionPrompter — bridges the sync PermissionPrompter trait
 /// with async Tauri IPC. Emits a `permission-request` event to the
@@ -116,6 +117,18 @@ impl PermissionPrompter for TauriPermissionPrompter {
         //    `runtime_event::dispatch` from the same envelope the
         //    frontend bridge consumes.
         let app_handle = self.window.app_handle().clone();
+
+        // DR-01 PR-B: supervisor running → blocked transition (best-effort).
+        if let Some(dir) = app_data_dir.as_ref() {
+            SupervisorOps {
+                app_data_dir: dir,
+                session_id: &self.session_id,
+                app_handle: Some(&app_handle),
+                run_event_logger: self.event_logger.as_ref(),
+            }
+            .block_permission(&request_id);
+        }
+
         if let Err(err) = emit_permission_prompt(
             Some(&app_handle),
             &request_id,
@@ -162,6 +175,16 @@ impl PermissionPrompter for TauriPermissionPrompter {
                     );
                 }
                 clear_pending_permission_if_possible(&app_data_dir, &self.session_id);
+                // DR-01 PR-B: supervisor blocked → running transition.
+                if let Some(dir) = app_data_dir.as_ref() {
+                    SupervisorOps {
+                        app_data_dir: dir,
+                        session_id: &self.session_id,
+                        app_handle: Some(&app_handle),
+                        run_event_logger: self.event_logger.as_ref(),
+                    }
+                    .unblock_permission(&request_id);
+                }
                 decision
             }
             Err(_) => {
@@ -177,6 +200,16 @@ impl PermissionPrompter for TauriPermissionPrompter {
                     );
                 }
                 clear_pending_permission_if_possible(&app_data_dir, &self.session_id);
+                // DR-01 PR-B: supervisor blocked → running transition (timeout path).
+                if let Some(dir) = app_data_dir.as_ref() {
+                    SupervisorOps {
+                        app_data_dir: dir,
+                        session_id: &self.session_id,
+                        app_handle: Some(&app_handle),
+                        run_event_logger: self.event_logger.as_ref(),
+                    }
+                    .unblock_permission(&request_id);
+                }
                 PermissionPromptDecision::Deny {
                     reason: "Permission request timed out".to_string(),
                 }

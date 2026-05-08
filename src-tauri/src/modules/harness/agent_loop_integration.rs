@@ -29,8 +29,96 @@
 //! | After reflection cycle           | `emit_reflection_completed`       |
 
 use chrono::Utc;
+use serde::Serialize;
 
 use super::event_bus::{AgentEvent, EventBus};
+use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventType};
+use crate::modules::runtime::event_log::RunEventLogger;
+use crate::modules::runtime::runtime_event;
+
+/// DT-01 S1.3 — payload for the canonical
+/// `conversation:turn_finished` envelope mirrored alongside the
+/// harness `AgentEvent::TurnFinished` bus emit.  Closes audit §2
+/// (`docs/superpowers/plans/2026-05-05-dt01-s11-schema-audit.md`).
+///
+/// Carries the minimum field set the
+/// [`crate::modules::harness::runlog_projection::fold_run_log_to_report`]
+/// fold needs to derive `task.turn_count`,
+/// `task.last_turn_succeeded`, `aggregate.turns_completed`,
+/// `aggregate.turns_succeeded`,
+/// `aggregate.total_turn_duration_ms`, and the per-turn token
+/// totals.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnFinishedPayload {
+    /// Monotonically increasing turn number within this session.
+    pub turn_number: u64,
+    /// Whether the turn produced a successful terminal outcome.
+    pub succeeded: bool,
+    /// Wall-clock duration of the turn in milliseconds.
+    pub duration_ms: u64,
+    /// Optional terminal status string (`"completed"`, `"failed"`,
+    /// `"cancelled"`, ...) when known to the call site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_status: Option<String>,
+    /// Optional input-token count attributed to this turn.
+    /// **Wire name** is `inputUsage` (NOT `tokensIn`) so the
+    /// `SENSITIVE_JSON_KEYS` redaction filter (`"token"` substring
+    /// rule) does not strip the integer payload before the fold
+    /// path reads it back from the run-log JSONL.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "inputUsage"
+    )]
+    pub tokens_in: Option<u64>,
+    /// Optional output-token count attributed to this turn.
+    /// See note on `tokens_in` re: wire-name choice.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "outputUsage"
+    )]
+    pub tokens_out: Option<u64>,
+}
+
+/// DT-01 S1.3 — dispatch the canonical
+/// `conversation:turn_finished` envelope and (best-effort) mirror
+/// it onto the run-log JSONL.
+///
+/// `app_handle` may be `None` when no Tauri channel is reachable
+/// (e.g. inside the non-streaming `run_turn` path).  The
+/// `run_event_logger` is what carries the run-log mirror; pass
+/// `Some(&logger)` whenever a logger is in scope so the fold path
+/// (`fold_run_log_to_report`) can recover the turn-level
+/// aggregates.  Failures are logged at TRACE; never propagated.
+pub fn dispatch_turn_finished_envelope(
+    app_handle: Option<&tauri::AppHandle>,
+    run_event_logger: Option<&RunEventLogger>,
+    session_id: &str,
+    run_id: Option<&str>,
+    payload: &TurnFinishedPayload,
+) {
+    let correlation = CorrelationIds {
+        session_id: Some(session_id.to_string()),
+        run_id: run_id.map(str::to_string),
+        turn_index: u32::try_from(payload.turn_number).ok(),
+        ..Default::default()
+    };
+    if let Err(err) = runtime_event::dispatch(
+        app_handle,
+        RuntimeEventType::Conversation,
+        "turn_finished",
+        correlation,
+        payload,
+        run_event_logger,
+    ) {
+        tracing::trace!(
+            error = ?err,
+            "[harness] turn_finished envelope dispatch failed (non-fatal)"
+        );
+    }
+}
 
 /// Emit a [`AgentEvent::TurnStarted`] event.
 ///

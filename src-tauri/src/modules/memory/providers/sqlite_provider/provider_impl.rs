@@ -15,6 +15,19 @@ use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use super::scope::{scope_priority_order_by, scope_visibility_clause, scope_visibility_params};
 use super::SqliteMemoryProvider;
 
+/// Map a [`MemoryCategory`] to its CoALA cognitive layer (1=Reactive,
+/// 2=Deliberative (default), 3=Reflective, 4=Meta). Mirrors the v8
+/// migration back-fill SQL so freshly-stored rows match upgraded ones.
+fn cognitive_layer_from_category(category: &MemoryCategory) -> i32 {
+    match category {
+        MemoryCategory::Conversation => 1,
+        MemoryCategory::Working | MemoryCategory::Daily => 2,
+        MemoryCategory::Reflection | MemoryCategory::Procedural => 3,
+        MemoryCategory::Core => 4,
+        MemoryCategory::Custom(_) => 2,
+    }
+}
+
 #[async_trait]
 impl MemoryProvider for SqliteMemoryProvider {
     async fn store(
@@ -26,6 +39,7 @@ impl MemoryProvider for SqliteMemoryProvider {
         let key = key.to_string();
         let content = content.to_string();
         let category_str = category.as_str().to_string();
+        let cognitive_layer_val = cognitive_layer_from_category(&category);
 
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
@@ -33,8 +47,8 @@ impl MemoryProvider for SqliteMemoryProvider {
             // session_id/project_id are NULL for unscoped store() — use store_scoped() for isolation.
             c.execute(
                 "INSERT INTO memory_entries
-                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
-                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, NULL, NULL)
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id, quality_score, source_reliability, last_validated_at, contradiction_count, cognitive_layer, context_tags)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, NULL, NULL, 0.5, 0.5, NULL, 0, $5, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                      content = excluded.content,
                      category = excluded.category,
@@ -44,6 +58,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                     content,
                     category_str,
                     chrono::Utc::now().to_rfc3339(),
+                    cognitive_layer_val,
                 ],
             )
             .map_err(|e| MemoryError::Generic(format!("Failed to store entry: {e}")))?;
@@ -76,6 +91,7 @@ impl MemoryProvider for SqliteMemoryProvider {
         };
         let key = key.to_string();
         let category_str = category.as_str().to_string();
+        let cognitive_layer_val = cognitive_layer_from_category(&category);
         let session_id = scope.session_id.clone();
         let project_id = scope.project_id.clone();
 
@@ -84,8 +100,8 @@ impl MemoryProvider for SqliteMemoryProvider {
             let c = conn.lock().map_err(|e| MemoryError::Generic(e.to_string()))?;
             c.execute(
                 "INSERT INTO memory_entries
-                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id)
-                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, $5, $6)
+                     (key, content, category, created_at, updated_at, importance, access_count, trust_score, session_id, project_id, quality_score, source_reliability, last_validated_at, contradiction_count, cognitive_layer, context_tags)
+                 VALUES ($1, $2, $3, $4, $4, 0.5, 0, 0.0, $5, $6, 0.5, 0.5, NULL, 0, $7, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                      content = excluded.content,
                      category = excluded.category,
@@ -99,6 +115,7 @@ impl MemoryProvider for SqliteMemoryProvider {
                     chrono::Utc::now().to_rfc3339(),
                     session_id,
                     project_id,
+                    cognitive_layer_val,
                 ],
             )
             .map_err(|e| MemoryError::Generic(format!("Failed to store scoped entry: {e}")))?;
@@ -160,7 +177,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let limit_pos = scope_params.len() + 2;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                        AND category = ?{cat_pos}
@@ -188,7 +207,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let limit_pos = scope_params.len() + 1;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                      ORDER BY {order_by}
@@ -258,7 +279,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE category = ?1
                      ORDER BY updated_at DESC
@@ -266,7 +289,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 )?,
                 None => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      ORDER BY updated_at DESC
                      LIMIT ?1",
@@ -392,12 +417,16 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = match &category_str {
                 Some(_) => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries WHERE category = ?1 ORDER BY updated_at DESC",
                 )?,
                 None => c.prepare(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries ORDER BY updated_at DESC",
                 )?,
             };
@@ -452,7 +481,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 let cat_pos = scope_params.len() + 1;
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                        AND category = ?{cat_pos}
@@ -477,7 +508,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             } else {
                 let sql = format!(
                     "SELECT key, content, category, created_at, updated_at, importance,
-                            access_count, trust_score, session_id, project_id
+                            access_count, trust_score, session_id, project_id,
+                            quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                      FROM memory_entries
                      WHERE ({scope_clause})
                      ORDER BY updated_at DESC"
@@ -574,7 +607,9 @@ impl MemoryProvider for SqliteMemoryProvider {
             let mut stmt = c
                 .prepare(
                     "SELECT key, content, category, created_at, updated_at, \
-                     importance, access_count, trust_score, session_id, project_id \
+                     importance, access_count, trust_score, session_id, project_id, \
+                     quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags \
                      FROM memory_entries",
                 )
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
@@ -620,7 +655,9 @@ impl MemoryProvider for SqliteMemoryProvider {
                 .map_err(|e| MemoryError::Generic(e.to_string()))?;
             let mut stmt = c.prepare(
                 "SELECT key, content, category, created_at, updated_at, importance,
-                        access_count, trust_score, session_id, project_id
+                        access_count, trust_score, session_id, project_id,
+                        quality_score, source_reliability, last_validated_at, contradiction_count,
+                            cognitive_layer, context_tags
                  FROM memory_entries
                  WHERE key = ?1",
             )?;
@@ -774,8 +811,10 @@ impl MemoryProvider for SqliteMemoryProvider {
             c.execute(
                 "INSERT INTO memory_entries
                     (key, content, category, created_at, updated_at,
-                     importance, access_count, trust_score)
-                 VALUES (?1, ?2, ?3, ?4, ?4, 0.6, 0, 0.0)
+                     importance, access_count, trust_score,
+                     quality_score, source_reliability, last_validated_at, contradiction_count,
+                     cognitive_layer, context_tags)
+                 VALUES (?1, ?2, ?3, ?4, ?4, 0.6, 0, 0.0, 0.5, 0.5, NULL, 0, 2, '[]')
                  ON CONFLICT(key) DO UPDATE SET
                     content = excluded.content,
                     category = excluded.category,
@@ -798,6 +837,61 @@ impl MemoryProvider for SqliteMemoryProvider {
                 linked += n;
             }
             Ok(linked)
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Persist updated `importance` and `quality_score` for a single entry.
+    /// Used by the forgetting-curve sweep after computing decay.
+    async fn update_decay_scores(
+        &self,
+        key: &str,
+        importance: f64,
+        quality_score: f64,
+    ) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            let changed = c
+                .execute(
+                    "UPDATE memory_entries SET importance = ?1, quality_score = ?2 WHERE key = ?3",
+                    params![importance, quality_score, key],
+                )
+                .map_err(|e| MemoryError::Generic(format!("update_decay_scores failed: {e}")))?;
+            if changed == 0 {
+                return Err(MemoryError::KeyNotFound(key));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?
+    }
+
+    /// Spec §2.3 Hybrid C — best-effort SQL UPDATE.  Missing key is
+    /// not an error: the conflict resolver may race against a delete.
+    /// Forward errors only on actual SQL failures so the resolver
+    /// can surface them in its tracing.
+    async fn increment_contradiction_count(&self, key: &str) -> Result<(), MemoryError> {
+        let key = key.to_string();
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), MemoryError> {
+            let c = conn
+                .lock()
+                .map_err(|e| MemoryError::Generic(e.to_string()))?;
+            c.execute(
+                "UPDATE memory_entries
+                   SET contradiction_count = contradiction_count + 1
+                 WHERE key = ?1",
+                params![key],
+            )
+            .map_err(|e| {
+                MemoryError::Generic(format!("increment_contradiction_count: sql: {e}"))
+            })?;
+            Ok(())
         })
         .await
         .map_err(|e| MemoryError::Generic(format!("Task panicked: {e}")))?

@@ -62,6 +62,24 @@ export type RuntimeEventType =
   | 'checkpoint_updated'
   | 'verification_decision'
   | 'content_simplified'
+  // ── DR-01 — supervisor lifecycle transitions ──
+  | 'supervisor'
+
+/** Family-tag constants for `RuntimeEventType = 'supervisor'`
+ * envelopes (DR-01). Payload is `SupervisorSnapshot`. Mirror of
+ * `supervisor_family` in `common.rs`. */
+export const SUPERVISOR_FAMILY = {
+  START_RUN: 'start_run',
+  BLOCKED: 'blocked',
+  UNBLOCKED: 'unblocked',
+  STREAMING: 'streaming',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+  CLOSED: 'closed',
+} as const
+
+export type SupervisorFamily = (typeof SUPERVISOR_FAMILY)[keyof typeof SUPERVISOR_FAMILY]
 
 /** Cross-cutting correlation ids carried by every envelope. All
  * fields are optional; absent means "not applicable", not "unknown". */
@@ -613,7 +631,10 @@ export interface ResumeRecoverability {
   retry_budget_remaining: number
 }
 
-/** Permission prompt event emitted on the `permission-request` channel. */
+/** Permission prompt payload. Historically emitted on the
+ *  `permission-request` channel (retired by PR D-1, 2026-05-02);
+ *  now delivered as the `payload` of a `RuntimeEventEnvelope` on
+ *  `RUNTIME_EVENT_CHANNEL` with `event_type === 'permission'`. */
 export interface PermissionRequestPayload {
   session_id: string
   tool_name: string
@@ -624,20 +645,6 @@ export interface PermissionRequestPayload {
 
 /** Active agent permission mode (mirrors backend `PermissionMode`). */
 export type PermissionMode = 'readOnly' | 'workspaceWrite' | 'dangerFullAccess'
-
-/** Canonical Tauri event names used by the agent loop. Centralised
- * here so the runtime-projection translator and any future dev
- * inspector subscribe against the same constants instead of magic
- * strings.
- *
- * @deprecated PR D-1 (2026-05-02) retired the `agent-token`
- * channel. New code MUST subscribe to `RUNTIME_EVENT_CHANNEL`
- * and unwrap `RuntimeEventEnvelope.payload`. The const is kept
- * temporarily for any external integration that still references
- * the historical name; remove after one release cycle. */
-export const AGENT_TOKEN_EVENT = 'agent-token'
-export const PERMISSION_REQUEST_EVENT = 'permission-request'
-export const MEMORY_EVENT = 'memory_event'
 
 /** Phase M3-C closeout — Tauri event name carrying the **batch
  * envelope** emitted by the backend `MemoryCoordinator::after_turn`

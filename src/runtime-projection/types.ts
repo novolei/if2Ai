@@ -803,6 +803,12 @@ export interface RuntimeProjectionSnapshot {
   browsers: Record<string, SmartBrowserProjection>;
   /** T-014 — attempt timeline snapshot, `null` until fetched via bridge seam. */
   attemptTimeline: AttemptTimelineProjection | null;
+  /** ER-03 — id of the session this snapshot is currently scoped to.
+   *  Set via [`RuntimeProjectionStore.swapSession`].  When non-null,
+   *  the reducer drops events whose session id is set and differs.
+   *  `null` means "no session scope guard" — every event is accepted
+   *  (legacy / pre-swap behavior). */
+  currentSessionId: string | null;
 }
 
 /** Build a fresh empty snapshot. Used by both the reducer module
@@ -824,5 +830,16 @@ export function emptyProjectionSnapshot(): RuntimeProjectionSnapshot {
     supervisor: null,
     browsers: {},
     attemptTimeline: null,
+    currentSessionId: null,
   };
+}
+
+/** ER-03 — build a fresh empty snapshot scoped to a session id.
+ *  Used by [`RuntimeProjectionStore.swapSession`] so the new
+ *  snapshot's `currentSessionId` guard is established atomically
+ *  alongside the cleared per-run state. */
+export function emptyProjectionSnapshotForSession(
+  sessionId: string | null,
+): RuntimeProjectionSnapshot {
+  return { ...emptyProjectionSnapshot(), currentSessionId: sessionId };
 }

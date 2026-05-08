@@ -137,7 +137,14 @@ export function ChatWorkspace({
   onBranchChange,
   onWorktreeProjectCreated,
   activeTitle,
-  activeMessages,
+  // GF-01 PR-09 (DT-03) — `activeMessages` is no longer forwarded
+  // to <ChatUI>; the chat surface reads its own messages from the
+  // runtime projection store + chat-store conversation slice. The
+  // prop is still accepted (and consumed by App.tsx for the
+  // title-stage rename and prompt-diagnostics surfaces) so we keep
+  // it in the destructure even though this component does not
+  // forward it anywhere.
+  activeMessages: _activeMessages,
   activeSessionTotals,
   input,
   isLoading,
@@ -520,7 +527,6 @@ export function ChatWorkspace({
                       isGitRepo={isGitRepo ?? null}
                       onGitRepoChanged={onGitRepoChanged}
                       onBranchChange={onBranchChange}
-                      messages={activeMessages}
                       input={input}
                       onInputChange={onInputChange}
                       onSubmit={onSubmit}

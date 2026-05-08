@@ -8,7 +8,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
 // MIG-012 — canonical App.tsx transport seam.
 //
 // Business helpers come from `@/api/*` domain facades;
@@ -21,94 +20,59 @@ import {
   createPermanentWorktree,
   createProject,
   createSession,
-  closeSession,
   deleteProject,
   deleteSession,
   ensureDefaultWorkdir,
-  executeSlashCommand,
   getOnboardingState,
-  getSession,
-  getSessionHistoryPage,
-  generateSessionTitle,
-  listenToChatPrefill,
   listProjects,
   listProjectSessions,
   openProjectInFinder,
   openSettingsWindow,
   pickFolderDialog,
   renameProject,
-  renameSession,
-  resolveSkillSlash,
-  respondPermission,
-  sessionRedo,
-  sessionUndo,
-  sessionUndoStatus,
   setSessionPinned,
-  startChatTurn,
-  suggestSlashCommands,
   updateSessionIdentity,
-  type Project,
-  type ConversationUndoStatus,
   type ProjectMeta,
   type SessionIdentityInput,
   type SessionMeta,
 } from "@/api";
-import {
-  checkAppUpdater,
-  downloadAndInstallAppUpdate,
-  getAppUpdaterState,
-  onAppUpdaterState,
-  type UpdaterRuntimeState,
-} from "@/api/updater";
-import { invoke } from "@/lib/tauri";
-import type {
-  PermissionMode,
-  PermissionRequestPayload,
-  StreamTokenPayload,
-} from "@/transport/contracts";
+import type { PermissionMode } from "@/transport/contracts";
 import { toast } from "sonner";
 import appIconAsset from "@/assets/app-icon.png";
 import {
   projectConversationMessagesFromRuns,
-  replayRunLogEntriesToMessages,
   runtimeProjectionStore,
   useExecutionModePreview,
   useRuntimeProjectionSelector,
-  wireRuntimeProjectionListeners,
 } from "@/runtime-projection";
+import { RuntimeProjectionWiring } from "@/app-effects/RuntimeProjectionWiring";
+import { useUpdaterBanner } from "@/app-effects/useUpdaterBanner";
+import { useGlobalHotkeys } from "@/app-effects/useGlobalHotkeys";
+import { useChatPrefill } from "@/app-effects/useChatPrefill";
+import { loadConversationHistory } from "@/session/loadConversationHistory";
+import {
+  PLACEHOLDER_SESSION_TITLE,
+  isMeaningfulUserMessage,
+} from "@/session/titleStage";
+import { useSessionTitleStage } from "@/session/useSessionTitleStage";
+import { useSessionRuntime } from "@/session/SessionEffects";
 // MIG-013 — AppShell is the canonical top-level shell container
 // (BootShell + MainShell + ContentRouter). Boot state lives in
 // the bootstrap-store; App.tsx is now a data-flow host, not a
 // render / boot orchestrator.
 import { AppShell } from "@/modules/app-shell/AppShell";
 import { runBootSequence } from "@/boot/boot-orchestrator";
-import { bootstrapStore, evolutionEventStore, useBootstrapSelector } from "@/state";
-// MIG-014 — chat + session stores own per-session runtime
-// state. App.tsx no longer holds the canonical truth; the
-// `setX` wrappers below diff against the store snapshot and
-// dispatch the store's explicit actions so the React-shaped
-// `Dispatch<SetStateAction<T>>` API is preserved at every
-// existing call site.
-import {
-  getConversationSnapshot,
-  removeSession,
-  setConversation,
-  setSessionLoading as setStoreSessionLoading,
-  setSessionTodos as setStoreSessionTodos,
-  setStreamAbortHandle as setStoreStreamAbortHandle,
-  clearStreamAbortHandle as clearStoreStreamAbortHandle,
-  initTitleState as initStoreTitleState,
-  setTitleState as setStoreTitleState,
-  useChatStore,
-} from "@/stores";
-import { sessionStore, useSessionSelector } from "@/stores";
+import { bootstrapStore } from "@/state";
+// MIG-014 + GF-03 PR-3 — chat + session store wiring lives in
+// `useAppStateSetters()`; App.tsx only consumes the destructured
+// shims so the `Dispatch<SetStateAction<T>>` shape is preserved
+// at every existing call site without per-store imports here.
+import { useAppStateSetters } from "@/stores/use-store-setter-shims";
 // AppVersionWatermark moved into MainShell (Phase M2.7).
 import { SectionWorkspace } from "@/modules/app-shell/components/SectionWorkspace";
 import type { AppSection } from "@/modules/app-shell/types";
 import { ChatWorkspace } from "@/modules/chat/components/ChatWorkspace";
 import type {
-  Conversation,
-  Message,
   RecentSession,
   SessionTitleState,
 } from "@/modules/chat/types";
@@ -116,44 +80,19 @@ import { useAgentVoiceBridge } from "@/modules/chat/useAgentVoiceBridge";
 import { useMemoryWriteToasts } from "@/components/memory/useMemoryWriteToasts";
 import { AgentVoiceIndicator } from "@/modules/chat/AgentVoiceIndicator";
 import { broadcastChange, useCrossWindowChange } from "@/lib/crossWindowSync";
-import {
-  publishLatestPromptDiagnosticsSnapshot,
-  type PromptDiagnosticsSnapshot,
-} from "@/modules/prompt-diagnostics/storage";
+import type { PromptDiagnosticsSnapshot } from "@/modules/prompt-diagnostics/storage";
 // OnboardingApp moved into BootShell (Phase M2.7).
 import { MemoryBrowser } from "@/components/memory/MemoryBrowser";
 // If2AiLoadingScreen moved into BootShell (Phase M2.7).
 import { TelemetryDrawer } from "@/components/chat/TelemetryDrawer";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import type { TodoItem } from "@/components/ui/TodoPanel";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { PermissionOverlayHost } from "@/permission/PermissionOverlayHost";
 
 const appIconSrc = appIconAsset;
-const PLACEHOLDER_SESSION_TITLE = "新对话";
-const MAX_AUTO_RENAME_COUNT = 1;
-const GENERIC_USER_PROMPTS = [
-  "继续",
-  "继续完成",
-  "帮我看看",
-  "看一下",
-  "改一下",
-  "优化一下",
-  "修一下",
-  "处理一下",
-  "请继续",
-  "开始",
-  "你好",
-  "hi",
-  "hello",
-];
+// GF-03 PR-4 — title-stage constants + helpers extracted to
+// `src/session/titleStage.ts` (pure) and the React surface to
+// `src/session/useSessionTitleStage.ts`.
 
 function App() {
   const appWindow = getCurrentWindow();
@@ -174,6 +113,16 @@ function App() {
   // sonner toast on the chat surface so the user can see "AI 记住了
   // X 件事" without opening Settings.
   useMemoryWriteToasts();
+
+  // GF-03 PR-1 — runtime/effect wiring extracted to `src/app-effects/`.
+  const {
+    appUpdaterState,
+    latestUpdaterVersion,
+    updaterBannerVisible,
+    dismiss: handleDismissUpdaterBanner,
+    runUpdater: handleRunUpdaterFromRail,
+  } = useUpdaterBanner();
+  const { isTelemetryDrawerOpen, setTelemetryDrawerOpen } = useGlobalHotkeys();
 
   // 跨窗口监听 Onboarding 重置：设置窗口点重置后，主窗口立即跳回 Onboarding 流程
   useCrossWindowChange("cross:onboarding-reset", () => {
@@ -208,67 +157,21 @@ function App() {
   // MIG-013 — boot orchestration moved to `src/boot/boot-orchestrator.ts`.
   // The `useEffect` below is now a thin call into the canonical
   // runner; the store transitions own every phase change.
+  // GF-03 PR-1 — models-changed listener + `runtime_event` evolution
+  // listener moved into `<RuntimeProjectionWiring />` (mounted in the
+  // render tree below).
   useEffect(() => {
     const signal = { cancelled: false };
-    let unlistenModelsChanged: (() => void) | null = null;
-    const refreshActiveModel = async () => {
-      try {
-        const activeModel = await invoke<{
-          provider_id: string;
-          model_id: string;
-        } | null>("model_get_active");
-        if (activeModel) {
-          setSelectedModel(
-            `${activeModel.provider_id}/${activeModel.model_id}`,
-          );
-        }
-      } catch {
-        // Fallback: leave empty so chat-ui shows first available model from list
-      }
-    };
-    void (async () => {
-      await runBootSequence(bootstrapStore, {
-        awaitGatewayReady,
-        getOnboardingState,
-        ensureDefaultWorkdir,
-        listProjects,
-        listProjectSessions,
-        signal,
-      });
-      if (signal.cancelled) return;
-      // Model bootstrap is orthogonal to project-list bootstrap;
-      // kept inline here until the future settings-store pack
-      // picks it up.
-      await refreshActiveModel();
-    })();
-    // Refresh the active model whenever settings emit a change (provider
-    // saved / role reassigned) so the chat dropdown follows ModelSettings.
-    const onModelsChanged = () => {
-      void refreshActiveModel();
-    };
-    window.addEventListener("if2ai:models-changed", onModelsChanged);
-    void listen("if2ai://models-changed", onModelsChanged).then((unlisten) => {
-      unlistenModelsChanged = unlisten;
-    });
-    // WU-001 — subscribe to the Agent Evolution `runtime_event`
-    // channel and pipe every envelope through the typed translator
-    // into `evolutionEventStore`. Failures are swallowed so a
-    // listener glitch never breaks boot.
-    let unlistenEvolution: (() => void) | null = null;
-    void listen<unknown>("runtime_event", (event) => {
-      try {
-        evolutionEventStore.applyEnvelope(event.payload);
-      } catch (err) {
-        console.warn("[evolution_emitter] applyEnvelope failed", err);
-      }
-    }).then((unlisten) => {
-      unlistenEvolution = unlisten;
+    void runBootSequence(bootstrapStore, {
+      awaitGatewayReady,
+      getOnboardingState,
+      ensureDefaultWorkdir,
+      listProjects,
+      listProjectSessions,
+      signal,
     });
     return () => {
       signal.cancelled = true;
-      window.removeEventListener("if2ai:models-changed", onModelsChanged);
-      unlistenModelsChanged?.();
-      unlistenEvolution?.();
     };
   }, []);
 
@@ -282,205 +185,49 @@ function App() {
       ? stored
       : "chat";
   });
-  // MIG-013 — these four slices live in the bootstrap store.
-  // Reads go through `useBootstrapSelector` so React re-renders
-  // only when the slice changes; writes go through store-aware
-  // setters that preserve React's `Dispatch<SetStateAction<T>>`
-  // shape so existing call sites (`setProjects(prev => ...)`,
-  // `setCurrentProject({ ... })`) compile unchanged.
-  const projects = useBootstrapSelector((s) => s.projects);
-  const setProjects = useCallback(
-    (next: ProjectMeta[] | ((prev: ProjectMeta[]) => ProjectMeta[])) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: ProjectMeta[]) => ProjectMeta[])(
-              bootstrapStore.getSnapshot().projects,
-            )
-          : next;
-      bootstrapStore.setProjectList(value);
-    },
-    [],
-  );
-  const projectSessions = useBootstrapSelector((s) => s.projectSessions);
-  const setProjectSessions = useCallback(
-    (
-      next:
-        | Record<string, SessionMeta[]>
-        | ((
-            prev: Record<string, SessionMeta[]>,
-          ) => Record<string, SessionMeta[]>),
-    ) => {
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                prev: Record<string, SessionMeta[]>,
-              ) => Record<string, SessionMeta[]>
-            )(bootstrapStore.getSnapshot().projectSessions)
-          : next;
-      bootstrapStore.setProjectSessions(value);
-    },
-    [],
-  );
-  const currentProject = useBootstrapSelector((s) => s.currentProject);
-  const activeProjectId = useBootstrapSelector((s) => s.activeProjectId);
-  const setCurrentProject = useCallback(
-    (next: Project | null | ((prev: Project | null) => Project | null)) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: Project | null) => Project | null)(
-              bootstrapStore.getSnapshot().currentProject,
-            )
-          : next;
-      bootstrapStore.selectProject({
-        projectId: bootstrapStore.getSnapshot().activeProjectId,
-        currentProject: value,
-      });
-    },
-    [],
-  );
-  const setActiveProjectId = useCallback(
-    (next: string | null | ((prev: string | null) => string | null)) => {
-      const value =
-        typeof next === "function"
-          ? (next as (prev: string | null) => string | null)(
-              bootstrapStore.getSnapshot().activeProjectId,
-            )
-          : next;
-      bootstrapStore.selectProject({
-        projectId: value,
-        currentProject: bootstrapStore.getSnapshot().currentProject,
-      });
-    },
-    [],
-  );
-  // MIG-014 — activeSessionId moved to the canonical session
-  // store; reads via `useSessionSelector`, writes via the
-  // store-backed wrapper that keeps React's
-  // `Dispatch<SetStateAction<string | null>>` shape so existing
-  // call sites compile unchanged.
-  const activeSessionId = useSessionSelector((s) => s.activeSessionId);
-  const setActiveSessionId = useCallback(
-    (next: string | null | ((prev: string | null) => string | null)) => {
-      const previous = sessionStore.getSnapshot().activeSessionId;
-      const value =
-        typeof next === "function"
-          ? (next as (prev: string | null) => string | null)(previous)
-          : next;
-      // MEM-MOD-WIRE-FIX-2 — fire `on_session_end` for the session
-      // we're about to leave so the rolling-summary / compile_today
-      // / reflection / learned_traits pipelines actually run.  Best-
-      // effort: a failed close never blocks the switch.
-      if (previous && previous !== value) {
-        void closeSession(previous).catch((err) => {
-          console.warn("[session_close] failed", previous, err);
-        });
-      }
-      sessionStore.setActiveSessionId(value);
-    },
-    [],
-  );
+  // GF-03 PR-3 — bootstrap / session / chat store setter shims
+  // are composed in a single hook so App.tsx no longer carries
+  // ~330 LOC of `useCallback` boilerplate. Behavior is identical
+  // to the inline definitions; see `use-store-setter-shims.ts`.
+  const {
+    projects,
+    setProjects,
+    projectSessions,
+    setProjectSessions,
+    currentProject,
+    setCurrentProject,
+    activeProjectId,
+    setActiveProjectId,
+    activeSessionId,
+    setActiveSessionId,
+    conversations,
+    setConversations,
+    sessionLoading,
+    setSessionLoading,
+    sessionTodos,
+    setSessionTodos,
+    sessionTitleStates,
+    setSessionTitleStates,
+    streamAbortHandles,
+    setStreamAbortHandles,
+  } = useAppStateSetters();
   const [leftPaneWidth, setLeftPaneWidth] = useState(240);
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [appUpdaterState, setAppUpdaterState] =
-    useState<UpdaterRuntimeState | null>(null);
-  const [dismissedUpdaterBannerVersion, setDismissedUpdaterBannerVersion] =
-    useState<string | null>(() =>
-      localStorage.getItem("if2ai:app-updater:dismissed-banner-version"),
-    );
-  // MIG-014 — `conversations` lives in the chat store
-  // (conversation-slice.ts). Reads go through `useChatStore`;
-  // writes go through `setConversations` wrapper that diffs
-  // against the previous record and dispatches the appropriate
-  // chat-store mutation so call sites that use
-  // `setConversations(prev => ({ ...prev, [id]: conv }))`
-  // continue to compile unchanged.
-  const chatSlice = useChatStore();
-  const conversations = chatSlice.conversations;
-  const setConversations = useCallback(
-    (
-      next:
-        | Record<string, Conversation>
-        | ((
-            prev: Record<string, Conversation>,
-          ) => Record<string, Conversation>),
-    ) => {
-      // Always read the latest snapshot from the store, not the
-      // stale React-rendered chatSlice.conversations. This ensures
-      // that multiple setConversations calls within the same
-      // sendMessage invocation see each other's updates.
-      const prev = getConversationSnapshot().conversations;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, Conversation>,
-              ) => Record<string, Conversation>
-            )(prev)
-          : next;
-      // Compute add/update/delete diff against the slice and
-      // dispatch through the canonical actions so subscribers
-      // (chat workspace, telemetry drawer, etc.) see the same
-      // events whether the call came through the wrapper or
-      // through a direct `setConversation(...)` import.
-      const prevIds = new Set(Object.keys(prev));
-      const nextIds = new Set(Object.keys(value));
-      for (const id of nextIds) {
-        if (value[id] !== prev[id]) {
-          setConversation(value[id]);
-        }
-      }
-      for (const id of prevIds) {
-        if (!nextIds.has(id)) {
-          removeSession(id);
-        }
-      }
-    },
-    [],
-  );
+  // GF-03 PR-1 — updater banner state machine moved to
+  // `useUpdaterBanner()` (see top of component).
   const [input, setInput] = useState("");
+  // GF-03 PR-1 — chat-prefill listener (Tauri tray / deeplink → chat).
+  useChatPrefill({ setActiveSection, setInput });
   // Phase M2.6 — opt-in classifier preview. Watches the active
   // chat draft and dispatches the deterministic
   // `ExecutionModeDecision` into the projection store. Developer
   // telemetry renders the resulting judgment.
   // Honest scope: pure preview, the agent loop is NOT auto-routed.
   useExecutionModePreview(input, { sessionId: activeSessionId ?? undefined });
-  // MIG-014 — sessionLoading lives in the chat store. Wrapper
-  // diffs against the previous record and dispatches the
-  // canonical `setSessionLoading(id, bool)` action per id
-  // change.
-  const sessionLoading = chatSlice.sessionLoading;
-  const setSessionLoading = useCallback(
-    (
-      next:
-        | Record<string, boolean>
-        | ((prev: Record<string, boolean>) => Record<string, boolean>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionLoading;
-      const value =
-        typeof next === "function"
-          ? (next as (p: Record<string, boolean>) => Record<string, boolean>)(
-              prev,
-            )
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id] === true;
-        const current = prev[id] === true;
-        if (wanted !== current) {
-          setStoreSessionLoading(id, wanted);
-        }
-      }
-    },
-    [],
-  );
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [isRightRailOpen, setIsRightRailOpen] = useState(false);
-  const [conversationUndoStatus, setConversationUndoStatus] =
-    useState<ConversationUndoStatus | null>(null);
 
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(() => {
     if (typeof window === "undefined") return "dangerFullAccess";
@@ -494,155 +241,32 @@ function App() {
     }
     return "dangerFullAccess";
   });
-  // MIG-014 — sessionTodos + sessionTitleStates live in the
-  // chat store. Wrappers preserve `Dispatch<SetStateAction<T>>`.
-  const sessionTodos = chatSlice.sessionTodos;
-  const setSessionTodos = useCallback(
-    (
-      next:
-        | Record<string, TodoItem[]>
-        | ((prev: Record<string, TodoItem[]>) => Record<string, TodoItem[]>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionTodos;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, TodoItem[]>,
-              ) => Record<string, TodoItem[]>
-            )(prev)
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id] ?? [];
-        const current = prev[id];
-        if (wanted !== current) {
-          setStoreSessionTodos(id, wanted);
-        }
-      }
-    },
-    [],
-  );
-  const sessionTitleStates = chatSlice.sessionTitleStates;
-  const setSessionTitleStates = useCallback(
-    (
-      next:
-        | Record<string, SessionTitleState>
-        | ((
-            prev: Record<string, SessionTitleState>,
-          ) => Record<string, SessionTitleState>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().sessionTitleStates;
-      const value =
-        typeof next === "function"
-          ? (
-              next as (
-                p: Record<string, SessionTitleState>,
-              ) => Record<string, SessionTitleState>
-            )(prev)
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id];
-        const current = prev[id];
-        if (!wanted) continue;
-        if (current === wanted) continue;
-        // Replace wholesale via the canonical `setTitleState`
-        // action so both `stage` and `autoRenameCount` end up
-        // synced (the previous "stage-only" wrapper silently
-        // dropped autoRenameCount mutations and broke the
-        // `MAX_AUTO_RENAME_COUNT` guard in
-        // `maybeAutoRenameSession`).
-        if (!current) initStoreTitleState(id);
-        setStoreTitleState(id, wanted);
-      }
-    },
-    [],
-  );
-  // Ref to allow reading sessionTitleStates inside async callbacks (e.g. refreshProjectSessions)
+  // GF-03 PR-4 — sessionTitleStatesRef + pendingAutoTitleSessionIdsRef
+  // are owned here but mutated by `useSessionTitleStage` (which also
+  // owns the ref-sync useEffect).
   const sessionTitleStatesRef = useRef<Record<string, SessionTitleState>>({});
   const pendingAutoTitleSessionIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    sessionTitleStatesRef.current = sessionTitleStates;
-  }, [sessionTitleStates]);
-  const setRecoveryStateForCursor = (
-    sessionId: string,
-    resumeCursor: string,
-    isRecovering: boolean,
-  ) => {
-    setConversations((prev) => {
-      const currentConv = prev[sessionId];
-      if (!currentConv) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...currentConv,
-          messages: currentConv.messages.map((msg) => {
-            if (msg.taskOutcome !== "partial_success") return msg;
-            if (msg.resumeCursor !== resumeCursor) return msg;
-            return { ...msg, isRecovering };
-          }),
-        },
-      };
-    });
-  };
-
-  // MIG-014 — streamAbortHandles live in the chat store.
-  // Wrapper diffs and dispatches `setStreamAbortHandle` /
-  // `clearStreamAbortHandle` per id.
-  const streamAbortHandles = chatSlice.streamAbortHandles;
-  const setStreamAbortHandles = useCallback(
-    (
-      next:
-        | Record<string, string>
-        | ((prev: Record<string, string>) => Record<string, string>),
-    ) => {
-      // Always read the latest snapshot from the store
-      const prev = getConversationSnapshot().streamAbortHandles;
-      const value =
-        typeof next === "function"
-          ? (next as (p: Record<string, string>) => Record<string, string>)(
-              prev,
-            )
-          : next;
-      const ids = new Set([...Object.keys(prev), ...Object.keys(value)]);
-      for (const id of ids) {
-        const wanted = value[id];
-        const current = prev[id];
-        if (wanted === current) continue;
-        if (wanted) {
-          setStoreStreamAbortHandle(id, wanted);
-        } else {
-          clearStoreStreamAbortHandle(id);
-        }
-      }
+  const { maybeAutoRenameSession, handleRenameSession } = useSessionTitleStage(
+    {
+      conversations,
+      projectSessions,
+      sessionTitleStates,
+      setConversations,
+      setProjectSessions,
+      setSessionTitleStates,
+      sessionTitleStatesRef,
+      pendingAutoTitleSessionIdsRef,
     },
-    [],
   );
-  // Phase M2.8 — permission prompt now reads from the canonical
-  // projection store (`snapshot.approvals`).  The bridge feeds the
-  // store via `translatePermissionRequestPayload`; we pick the
-  // first pending approval (single-prompt UX preserved) and
-  // dispatch `permission_resolved` after the user decides so the
-  // reducer clears the entry.  No more `useState<PermissionRequestPayload>`.
-  const approvals = useRuntimeProjectionSelector((s) => s.approvals);
-  const permissionPrompt = useMemo<PermissionRequestPayload | null>(() => {
-    const ids = Object.keys(approvals);
-    if (ids.length === 0) return null;
-    const a = approvals[ids[0]];
-    return {
-      session_id: a.sessionId,
-      tool_name: a.toolName,
-      permission_mode: a.permissionMode,
-      current_mode: a.currentMode,
-      message: a.message,
-    };
-  }, [approvals]);
-  const sessionLoadingRef = useRef<Record<string, boolean>>({});
-  const autoResumeAttemptsRef = useRef<Record<string, number>>({});
-  const attemptedAutoResumeCursorsRef = useRef<Set<string>>(new Set());
+  // GF-03 PR-5 — permission overlay state + decide handler are
+  // owned by `usePermissionOverlay()` and rendered via
+  // `<PermissionOverlayHost />` in the overlays slot below.  The
+  // hook continues to read `snapshot.approvals` from the canonical
+  // projection store and dispatches `permission_resolved` so the
+  // reducer clears the entry — behavior is unchanged.
+  // GF-03 PR-6 — sessionLoadingRef / autoResumeAttemptsRef /
+  // attemptedAutoResumeCursorsRef + their sync useEffect now live
+  // inside `useSessionRuntime` (see `src/session/SessionEffects.tsx`).
   const leftPaneCollapsedBeforePreviewRef = useRef(false);
   const wasPreviewFocusModeRef = useRef(false);
   const resizeRef = useRef<{
@@ -761,413 +385,6 @@ function App() {
     return Object.keys(out).length > 0 ? out : null;
   };
 
-  const buildLoopCompletionStatus = (
-    messages: Message[],
-    streamId: string | undefined,
-    taskOutcome?: Message["taskOutcome"],
-    degradedReason?: string,
-  ): { label: string; kind: NonNullable<Message["statusKind"]> } => {
-    const scopedToolMessages = messages.filter((msg) => {
-      if (msg.role !== "tool") return false;
-      if (!streamId) return true;
-      return msg.streamId === streamId;
-    });
-    const total = scopedToolMessages.length;
-    const completed = scopedToolMessages.filter(
-      (msg) => msg.toolStatus === "completed",
-    ).length;
-    const failed = scopedToolMessages.filter(
-      (msg) => msg.toolStatus === "error",
-    ).length;
-
-    if (taskOutcome === "partial_success") {
-      if (degradedReason?.includes("max_iterations_reached")) {
-        return {
-          label:
-            total > 0
-              ? `本轮已完成 ${completed}/${total} 个步骤，达到迭代上限，可继续未完成部分`
-              : "达到迭代上限，可继续未完成部分",
-          kind: "partial",
-        };
-      }
-      return {
-        label:
-          total > 0
-            ? `本轮部分完成：已完成 ${completed}/${total} 个步骤`
-            : "本轮任务部分完成，可继续补全",
-        kind: "partial",
-      };
-    }
-
-    if (taskOutcome === "failed") {
-      return {
-        label:
-          total > 0
-            ? `本轮执行失败：已完成 ${completed}/${total} 个步骤`
-            : "本轮执行失败",
-        kind: "failed",
-      };
-    }
-
-    if (total === 0) return { label: "本轮执行完成", kind: "success" };
-    if (failed > 0) {
-      return {
-        label: `本轮执行完成：成功 ${completed} 个，失败 ${failed} 个`,
-        kind: "partial",
-      };
-    }
-    return {
-      label: `本轮执行完成：共完成 ${completed} 个步骤`,
-      kind: "success",
-    };
-  };
-
-  const normalizeSessionTitleSource = (raw: string): string => {
-    const cleaned = raw
-      .replace(/\[resume_cursor\][\s\S]*$/gi, "")
-      .replace(
-        /^(请|帮我|麻烦|继续|继续帮我|继续把|我想|想要|我要|需要|请先|先帮我)\s*/u,
-        "",
-      )
-      .replace(/(一下|一下子|好吗|可以吗|吧|谢谢|thanks|thank you)\s*$/giu, "")
-      .replace(/`+/g, "")
-      .replace(/[#>*_\-\[\]]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return cleaned;
-  };
-
-  // P3: accept the owning conversation so [resume_cursor] falls back to its title,
-  // not the currently-visible activeConv (which may differ mid-rename).
-  const formatSessionTitle = (raw: string, conv?: Conversation): string => {
-    if (raw.includes("[resume_cursor]")) {
-      return conv?.title ?? activeConv?.title ?? "继续当前任务";
-    }
-    const cleaned = normalizeSessionTitleSource(raw);
-
-    if (!cleaned) return PLACEHOLDER_SESSION_TITLE;
-    const firstLine =
-      cleaned
-        .split(/[\n。！？!?]/)
-        .find((segment) => segment.trim())
-        ?.trim() ?? cleaned;
-    return firstLine.slice(0, 30) || PLACEHOLDER_SESSION_TITLE;
-  };
-
-  const normalizeTitleComparison = (value: string): string =>
-    value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-
-  const areTitlesSimilar = (a: string, b: string): boolean => {
-    const normalizedA = normalizeTitleComparison(a);
-    const normalizedB = normalizeTitleComparison(b);
-    if (!normalizedA || !normalizedB) return false;
-    return (
-      normalizedA === normalizedB ||
-      normalizedA.includes(normalizedB) ||
-      normalizedB.includes(normalizedA)
-    );
-  };
-
-  const currentTitleIsResolved = (title: string): boolean => {
-    const normalized = title.trim();
-    return Boolean(normalized && normalized !== PLACEHOLDER_SESSION_TITLE);
-  };
-
-  const isMeaningfulUserMessage = (content: string): boolean => {
-    const normalized = normalizeSessionTitleSource(content);
-    if (!normalized) return false;
-    if (normalized.includes("[resume_cursor]")) return false;
-    if (normalized.length < 2) return false;
-    const lower = normalized.toLowerCase();
-    return !GENERIC_USER_PROMPTS.some((prompt) => lower === prompt);
-  };
-
-  const getMeaningfulUserMessages = (messages: Message[]): Message[] =>
-    messages.filter(
-      (message) =>
-        message.role === "user" && isMeaningfulUserMessage(message.content),
-    );
-
-  const getInitialSessionTitleCandidate = (
-    messages: Message[],
-    conv?: Conversation,
-  ): string | null => {
-    const meaningfulMessages = getMeaningfulUserMessages(messages);
-    const seedMessage =
-      meaningfulMessages.find(
-        (message) =>
-          formatSessionTitle(message.content, conv) !==
-          PLACEHOLDER_SESSION_TITLE,
-      ) ?? meaningfulMessages[0];
-    if (!seedMessage) return null;
-    const nextTitle = formatSessionTitle(seedMessage.content, conv);
-    return nextTitle === PLACEHOLDER_SESSION_TITLE ? null : nextTitle;
-  };
-
-  const getCorrectionTitleCandidate = (
-    messages: Message[],
-    currentTitle: string,
-    conv?: Conversation,
-  ): string | null => {
-    const userMessages = getMeaningfulUserMessages(messages);
-    if (userMessages.length < 2) return null;
-    const recentCandidates = userMessages
-      .slice(-2)
-      .map((message) => formatSessionTitle(message.content, conv))
-      .filter(
-        (candidate) => candidate && candidate !== PLACEHOLDER_SESSION_TITLE,
-      );
-    if (recentCandidates.length === 0) return null;
-    const [previousCandidate, latestCandidate] = recentCandidates;
-    const resolvedCandidate = latestCandidate ?? previousCandidate;
-    if (!resolvedCandidate) return null;
-    if (areTitlesSimilar(resolvedCandidate, currentTitle)) return null;
-    return resolvedCandidate;
-  };
-
-  const getInitialSessionTitleState = (
-    title: string,
-    _existingMessages: Message[] = [],
-  ): SessionTitleState => {
-    if (title && title !== PLACEHOLDER_SESSION_TITLE) {
-      return {
-        stage: "locked",
-        autoRenameCount: MAX_AUTO_RENAME_COUNT,
-      };
-    }
-
-    return {
-      stage: "placeholder",
-      autoRenameCount: 0,
-    };
-  };
-
-  const maybeAutoRenameSession = (
-    projectId: string,
-    sessionId: string,
-    conversation: Conversation,
-  ) => {
-    const titleState =
-      sessionTitleStates[sessionId] ??
-      getInitialSessionTitleState(conversation.title, conversation.messages);
-
-    // P0: manual stage = user-initiated rename; never auto-override
-    if (titleState.stage === "manual" || titleState.stage === "locked") return;
-
-    const meaningfulUserMessages = getMeaningfulUserMessages(
-      conversation.messages,
-    );
-    const meaningfulTurnCount = meaningfulUserMessages.length;
-
-    if (meaningfulTurnCount === 0) return;
-
-    // P2: wait until AI has responded at least once before setting any title,
-    // so the session title reflects real context rather than just the first user prompt.
-    const hasAiReply = conversation.messages.some(
-      (m) => m.role === "assistant",
-    );
-    if (!hasAiReply) return;
-
-    if (conversation.titlePending || pendingAutoTitleSessionIdsRef.current.has(sessionId)) {
-      return;
-    }
-
-    if (currentTitleIsResolved(conversation.title)) {
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: {
-          ...titleState,
-          stage: "locked",
-          autoRenameCount: Math.max(titleState.autoRenameCount, 1),
-        },
-      }));
-      return;
-    }
-
-    // P3: pass the owning conversation so [resume_cursor] resolves correctly
-    const initialCandidate = getInitialSessionTitleCandidate(
-      conversation.messages,
-      conversation,
-    );
-    if (titleState.stage === "placeholder" && initialCandidate) {
-      syncGeneratedSessionTitle(projectId, sessionId, initialCandidate);
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: {
-          stage: "locked",
-          autoRenameCount: MAX_AUTO_RENAME_COUNT,
-        },
-      }));
-      return;
-    }
-  };
-
-  const syncSessionTitle = (
-    projectId: string,
-    sessionId: string,
-    title: string,
-  ) => {
-    const nextTitle = title.trim();
-    if (!nextTitle) return;
-
-    // Capture previous title for rollback before the optimistic update
-    const previousTitle =
-      conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE;
-
-    setConversations((prev) => {
-      const conversation = prev[sessionId];
-      if (!conversation || conversation.title === nextTitle) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...conversation,
-          title: nextTitle,
-        },
-      };
-    });
-
-    setProjectSessions((prev) => {
-      const sessions = prev[projectId];
-      if (!sessions) return prev;
-      let changed = false;
-      const nextSessions = sessions.map((session) => {
-        if (session.id !== sessionId || session.title === nextTitle)
-          return session;
-        changed = true;
-        return { ...session, title: nextTitle };
-      });
-      return changed ? { ...prev, [projectId]: nextSessions } : prev;
-    });
-
-    // P1: rollback optimistic update and show error toast on persistence failure
-    void renameSession(sessionId, nextTitle).catch((err) => {
-      console.error("Failed to rename session:", err);
-      toast.error("重命名失败，已恢复原名称", { duration: 3000 });
-      setConversations((prev) => {
-        const conversation = prev[sessionId];
-        if (!conversation || conversation.title !== nextTitle) return prev;
-        return {
-          ...prev,
-          [sessionId]: { ...conversation, title: previousTitle },
-        };
-      });
-      setProjectSessions((prev) => {
-        const sessions = prev[projectId];
-        if (!sessions) return prev;
-        return {
-          ...prev,
-          [projectId]: sessions.map((s) =>
-            s.id === sessionId && s.title === nextTitle
-              ? { ...s, title: previousTitle }
-              : s,
-          ),
-        };
-      });
-    });
-  };
-
-  const syncGeneratedSessionTitle = (
-    projectId: string,
-    sessionId: string,
-    titleHint: string,
-  ) => {
-    const nextTitle = titleHint.trim();
-    if (!nextTitle) return;
-
-    const previousTitle =
-      conversations[sessionId]?.title ?? PLACEHOLDER_SESSION_TITLE;
-    const previousSession =
-      projectSessions[projectId]?.find((session) => session.id === sessionId) ??
-      null;
-    pendingAutoTitleSessionIdsRef.current.add(sessionId);
-
-    setConversations((prev) => {
-      const conversation = prev[sessionId];
-      if (!conversation || conversation.title === nextTitle) return prev;
-      return {
-        ...prev,
-        [sessionId]: {
-          ...conversation,
-          title: nextTitle,
-          titlePending: true,
-        },
-      };
-    });
-
-    setProjectSessions((prev) => {
-      const sessions = prev[projectId];
-      if (!sessions) return prev;
-      return {
-        ...prev,
-        [projectId]: sessions.map((session) =>
-          session.id === sessionId
-            ? { ...session, title: nextTitle, title_pending: true }
-            : session,
-        ),
-      };
-    });
-
-    void generateSessionTitle(sessionId, nextTitle)
-      .then((updated) => {
-        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
-        setConversations((prev) => {
-          const conversation = prev[sessionId];
-          if (!conversation) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...conversation,
-              title: updated.title,
-              titleIcon: updated.title_icon ?? null,
-              titlePending: Boolean(updated.title_pending),
-            },
-          };
-        });
-        setProjectSessions((prev) => {
-          const sessions = prev[projectId];
-          if (!sessions) return prev;
-          return {
-            ...prev,
-            [projectId]: sessions.map((session) =>
-              session.id === sessionId ? { ...session, ...updated } : session,
-            ),
-          };
-        });
-      })
-      .catch((err) => {
-        pendingAutoTitleSessionIdsRef.current.delete(sessionId);
-        console.error("Failed to generate session title:", err);
-        setConversations((prev) => {
-          const conversation = prev[sessionId];
-          if (!conversation || conversation.title !== nextTitle) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...conversation,
-              title: previousTitle,
-              titlePending: false,
-            },
-          };
-        });
-        setProjectSessions((prev) => {
-          const sessions = prev[projectId];
-          if (!sessions) return prev;
-          return {
-            ...prev,
-            [projectId]: sessions.map((session) =>
-              session.id === sessionId
-                ? previousSession ?? {
-                    ...session,
-                    title: previousTitle,
-                    title_pending: false,
-                  }
-                : session,
-            ),
-          };
-        });
-      });
-  };
 
   const activeConv = activeSessionId ? conversations[activeSessionId] : null;
   const activeSessionMeta = useMemo(() => {
@@ -1349,10 +566,6 @@ function App() {
     localStorage.setItem("permissionMode", permissionMode);
   }, [permissionMode]);
 
-  useEffect(() => {
-    sessionLoadingRef.current = sessionLoading;
-  }, [sessionLoading]);
-
   // P1: compute stable counters so the rename effect only fires when truly necessary,
   // not on every streaming token that updates message content.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1391,173 +604,13 @@ function App() {
   // which `permissionPrompt` (above) reads via
   // `useRuntimeProjectionSelector`.
 
-  // Phase M2.4 — wire the canonical runtime projection pipeline.
-  // The bridge subscribes broadly to `agent-token` /
-  // `permission-request` / `memory_event`, normalises each via the
-  // translator family and feeds the projection store.  Existing
-  // per-stream listeners and the legacy permission/memory wiring
-  // continue to drive the current ChatWorkspace + TelemetryDrawer
-  // surfaces in parallel — M2.5+ will swap consumers over to the
-  // projection store and retire the per-stream callbacks.
-  useEffect(() => {
-    const unwire = wireRuntimeProjectionListeners();
-    return () => unwire();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void getAppUpdaterState()
-      .then((state) => {
-        if (!cancelled) setAppUpdaterState(state);
-      })
-      .catch((error) => {
-        console.debug("[app-updater] failed to load state", error);
-      });
-    void onAppUpdaterState((state) => {
-      setAppUpdaterState(state);
-    }).then((dispose) => {
-      if (cancelled) dispose();
-      else unlisten = dispose;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const lastCheckKey = "if2ai:app-updater:last-check-ms";
-    const lastToastKey = "if2ai:app-updater:last-toast-version";
-    const now = Date.now();
-    const lastCheck = Number(localStorage.getItem(lastCheckKey) || "0");
-    if (now - lastCheck < 6 * 60 * 60 * 1000) return;
-    localStorage.setItem(lastCheckKey, String(now));
-    void getAppUpdaterState()
-      .then((state) => {
-        if (!cancelled) setAppUpdaterState(state);
-        if (!state.auto_check_enabled) return null;
-        return checkAppUpdater();
-      })
-      .then((result) => {
-        if (!result) return;
-        if (!cancelled) {
-          setAppUpdaterState((state) =>
-            state
-              ? {
-                  ...state,
-                  status:
-                    result.status === "update_available"
-                      ? "available"
-                      : result.status === "no_update"
-                        ? "latest"
-                        : "error",
-                  latest_version: result.latest_version ?? state.latest_version,
-                  release_notes_url:
-                    result.release_notes_url ?? state.release_notes_url,
-                  artifact_url: result.artifact_url ?? state.artifact_url,
-                  diagnostic: result.diagnostic ?? null,
-                }
-              : state,
-          );
-        }
-        if (cancelled || result.status !== "update_available") return;
-        const latest = result.latest_version ?? "新版本";
-        if (localStorage.getItem(lastToastKey) === latest) return;
-        localStorage.setItem(lastToastKey, latest);
-        toast.info(`If2Ai ${latest} 可更新`, {
-          description: "已发现 GitHub Release 更新包，可在设置 > 关于中下载并安装。",
-          duration: 9000,
-        });
-      })
-      .catch((error) => {
-        console.debug("[app-updater] background check failed", error);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Auto-compact: when the backend's stream_finalize crosses
-  // `IF2AI_AUTO_COMPACT_THRESHOLD` (default 85%) it spawns a
-  // background fold and emits `chat_compact_completed` with a tiny
-  // report. Show a single-line toast so the user knows the next turn
-  // will ship with a leaner context.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    void (async () => {
-      const { listenChatCompactCompleted } = await import("@/lib/tauri");
-      unlisten = await listenChatCompactCompleted((report) => {
-        if (!report.didCompact) return;
-        const freed =
-          report.freedTokens > 0
-            ? `${(report.freedTokens / 1000).toFixed(1)}k`
-            : "0";
-        toast.success(
-          `上下文接近上限，已自动压缩 ${report.summarizedMessages} 条消息`,
-          {
-            description: `释放约 ${freed} tokens · 摘要：${report.summaryExcerpt}…`,
-            duration: 5000,
-          },
-        );
-      });
-    })();
-    return () => {
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listenToChatPrefill((payload) => {
-      setActiveSection("chat");
-      if (typeof payload?.prompt === "string" && payload.prompt.trim()) {
-        setInput(payload.prompt);
-      }
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch((err) => {
-        console.error("Failed to listen chat prefill event:", err);
-      });
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Cmd+, (macOS) / Ctrl+, (Win/Linux) — universal shortcut to open settings
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-        e.preventDefault();
-        void openSettingsWindow();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // ⌘+Shift+D (macOS) / Ctrl+Shift+D — developer shortcut that toggles
-  // the TelemetryDrawer for the active session.  Drives the Phase 6E
-  // harness observability surface visible from the chat workspace.
-  const [isTelemetryDrawerOpen, setIsTelemetryDrawerOpen] = useState(false);
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        (e.code === "KeyD" || e.key.toLowerCase() === "d")
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsTelemetryDrawerOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, []);
+  // GF-03 PR-1 / ER-04 — runtime + updater + hotkeys + chat-prefill +
+  // auto-compact effects moved to `src/app-effects/`.  The runtime
+  // projection bridge is mounted as `<RuntimeProjectionWiring />`
+  // below; it subscribes to the canonical `runtime_event` envelope
+  // routed via the projection bridge (`agent-token` / permission /
+  // memory channels were retired in PR D-1 / D-2 / FIX-14) and feeds
+  // `snapshot.approvals` plus the evolution event store.
 
   const loadProjects = async (): Promise<ProjectMeta[]> => {
     try {
@@ -1634,6 +687,11 @@ function App() {
     projectOverride?: ProjectMeta,
     options?: { forceReload?: boolean },
   ) => {
+    // ER-03 — atomically clear the projection and bind it to the new
+    // session before any history loads.  Drops in-flight events that
+    // still reference the previous session via the reducer guard
+    // (see runtime-event-reducer.ts `shouldDropForSessionGuard`).
+    runtimeProjectionStore.swapSession(sessionId);
     setActiveSection("chat");
     setActiveProjectId(projectId);
     setActiveSessionId(sessionId);
@@ -1657,200 +715,20 @@ function App() {
       (session) => session.id === sessionId,
     );
 
-    try {
-      const [fullSession, historyPage] = await Promise.all([
-        getSession(sessionId),
-        getSessionHistoryPage(sessionId, { limit: 1000 }).catch((error) => {
-          console.warn("Failed to load session run-log history:", error);
-          return null;
-        }),
-      ]);
-      const baseTimestamp = new Date(fullSession.updated_at);
-      let convertedMessages: Message[] = [];
-      const replayedMessages =
-        historyPage && historyPage.eventPage.entries.length > 0
-          ? replayRunLogEntriesToMessages(
-              historyPage.eventPage.entries,
-              sessionId,
-            ).map((message) => ({
-              ...message,
-              disableAnimation: true,
-            }))
-          : [];
-      const toolMessageIndexById = new Map<string, number>();
-      let recoveredTodos: TodoItem[] = [];
-
-      const upsertToolMessage = (toolCallId: string, nextMessage: Message) => {
-        const existingIndex = toolMessageIndexById.get(toolCallId);
-        if (existingIndex !== undefined) {
-          convertedMessages[existingIndex] = {
-            ...convertedMessages[existingIndex],
-            ...nextMessage,
-            id: convertedMessages[existingIndex].id,
-            toolCallId,
-          };
-          return;
-        }
-
-        const index = convertedMessages.push(nextMessage) - 1;
-        toolMessageIndexById.set(toolCallId, index);
-      };
-
-      for (const msg of fullSession.messages) {
-        if (msg.role === "system") {
-          continue;
-        }
-        const messageOutcome = {
-          requestId: msg.request_id,
-          taskOutcome: msg.task_outcome,
-          degradedReason: msg.degraded_reason,
-          resumeAvailable: msg.resume_available,
-          resumeCursor: msg.resume_cursor,
-        };
-        let pushedAssistantText = false;
-        for (const block of msg.blocks) {
-          if (block.type === "tool_use" && block.tool_use_block) {
-            const toolCallId = block.tool_use_block.id;
-            upsertToolMessage(toolCallId, {
-              id: `tool-use-${toolCallId}`,
-              role: "tool",
-              content: "",
-              timestamp: baseTimestamp,
-              toolCallId,
-              toolName: block.tool_use_block.name,
-              toolArgs: block.tool_use_block.input as
-                | Record<string, unknown>
-                | undefined,
-              toolStatus: "running",
-              policyDecision: "prompt",
-              evidenceId: toolCallId,
-              effectiveWorkdir: project?.workdir,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-            continue;
-          }
-
-          if (block.type === "tool_result" && block.tool_use_id) {
-            const toolCallId = block.tool_use_id;
-            const existingIndex = toolMessageIndexById.get(toolCallId);
-            const toolArgs =
-              existingIndex !== undefined
-                ? convertedMessages[existingIndex]?.toolArgs
-                : undefined;
-            upsertToolMessage(toolCallId, {
-              id: `tool-${toolCallId}-${Date.now()}`,
-              role: "tool",
-              content: block.output || "",
-              timestamp: baseTimestamp,
-              toolCallId,
-              toolName: block.tool_name || "unknown",
-              toolArgs,
-              toolStatus: "completed",
-              policyDecision: "allow",
-              evidenceId: toolCallId,
-              effectiveWorkdir: project?.workdir,
-              isError: false,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-            const isTodoWriteResult =
-              (block.tool_name ?? "").trim() === "TodoWrite" ||
-              (existingIndex !== undefined &&
-                convertedMessages[existingIndex]?.toolName?.trim() ===
-                  "TodoWrite");
-            if (isTodoWriteResult) {
-              const nextTodos = extractTodosFromToolResult(block.output);
-              if (nextTodos) {
-                recoveredTodos = nextTodos;
-              }
-            }
-            continue;
-          }
-
-          if (block.type === "text" && block.text) {
-            pushedAssistantText = true;
-            convertedMessages.push({
-              id: `${msg.role}-${crypto.randomUUID()}`,
-              role: msg.role as "user" | "assistant",
-              content: block.text,
-              timestamp: baseTimestamp,
-              thinking: msg.thinking,
-              disableAnimation: true,
-              ...messageOutcome,
-            });
-          }
-        }
-
-        if (msg.role === "assistant" && msg.thinking && !pushedAssistantText) {
-          convertedMessages.push({
-            id: `${msg.role}-${crypto.randomUUID()}`,
-            role: "assistant",
-            content: "",
-            timestamp: baseTimestamp,
-            thinking: msg.thinking,
-            disableAnimation: true,
-            ...messageOutcome,
-          });
-        }
-      }
-
-      if (
-        replayedMessages.some(
-          (message) => message.role === "assistant" || message.role === "tool",
-        )
-      ) {
-        convertedMessages = replayedMessages;
-      }
-
-      setConversations((prev) => ({
-        ...prev,
-        [sessionId]: {
-          id: sessionId,
-          projectId,
-          title:
-            fullSession.title ||
-            sessionMeta?.title ||
-            PLACEHOLDER_SESSION_TITLE,
-          titleIcon: fullSession.title_icon ?? sessionMeta?.title_icon ?? null,
-          titlePending: Boolean(
-            fullSession.title_pending ?? sessionMeta?.title_pending,
-          ),
-          messages: convertedMessages,
-          updatedAt: new Date(fullSession.updated_at),
-          sessionTotals: fullSession.session_totals,
-        },
-      }));
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: getInitialSessionTitleState(
-          fullSession.title || sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-          convertedMessages,
-        ),
-      }));
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: recoveredTodos }));
-    } catch (err) {
-      console.error("Failed to load session:", err);
-      setConversations((prev) => ({
-        ...prev,
-        [sessionId]: {
-          id: sessionId,
-          projectId,
-          title: sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-          titleIcon: sessionMeta?.title_icon ?? null,
-          titlePending: Boolean(sessionMeta?.title_pending),
-          messages: [],
-          updatedAt: new Date(),
-        },
-      }));
-      setSessionTitleStates((prev) => ({
-        ...prev,
-        [sessionId]: getInitialSessionTitleState(
-          sessionMeta?.title || PLACEHOLDER_SESSION_TITLE,
-        ),
-      }));
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }));
-    }
+    // GF-03 PR-2 — history → Message reducer extracted to
+    // `src/session/loadConversationHistory.ts`.  This handler now
+    // orchestrates the three slice writes; the helper is the sole
+    // owner of the (legacy `messages[]` × canonical run-log) merge.
+    const { conversation, recoveredTodos, titleState } =
+      await loadConversationHistory({
+        sessionId,
+        projectId,
+        sessionMeta,
+        projectWorkdir: project?.workdir,
+      });
+    setConversations((prev) => ({ ...prev, [sessionId]: conversation }));
+    setSessionTitleStates((prev) => ({ ...prev, [sessionId]: titleState }));
+    setSessionTodos((prev) => ({ ...prev, [sessionId]: recoveredTodos }));
   };
 
   const handleNewChat = async (projectId: string): Promise<string | null> => {
@@ -2006,20 +884,7 @@ function App() {
     }
   };
 
-  // P0: user-initiated rename — marks stage as 'manual' so auto-rename never overrides again
-  const handleRenameSession = (sessionId: string, newTitle: string) => {
-    const conv = conversations[sessionId];
-    if (!conv) return;
-    // Lock the stage first so any in-flight auto-rename is a no-op once it checks the stage
-    setSessionTitleStates((prev) => ({
-      ...prev,
-      [sessionId]: {
-        stage: "manual",
-        autoRenameCount: MAX_AUTO_RENAME_COUNT,
-      },
-    }));
-    syncSessionTitle(conv.projectId, sessionId, newTitle);
-  };
+  // GF-03 PR-4 — `handleRenameSession` moved to `useSessionTitleStage`.
 
   const handleTogglePinSession = async (
     projectId: string,
@@ -2101,718 +966,55 @@ function App() {
     }
   };
 
-  const stopAgentStream = async (sessionIdOverride?: string) => {
-    const sessionId = sessionIdOverride ?? activeSessionId;
-    if (!sessionId) return;
-    const streamAbortHandle = streamAbortHandles[sessionId];
-    if (streamAbortHandle) {
-      try {
-        await invoke<string>("stop_agent_stream", {
-          streamId: streamAbortHandle,
-        });
-      } catch (err) {
-        console.error("Failed to stop stream:", err);
-      }
-      setStreamAbortHandles((prev) => {
-        const { [sessionId]: _removed, ...rest } = prev;
-        return rest;
-      });
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-    }
-  };
+  // GF-03 PR-6 — sendChatTurn / stopAgentStream / undo+redo /
+  // resume-from-cursor + supporting refs (sessionLoadingRef etc.)
+  // moved to `useSessionRuntime` (`src/session/SessionEffects.tsx`).
+  // The hook is bound below once `handleSelectSession` and
+  // `refreshProjectSessions` are in scope.
 
-  const refreshConversationUndoStatus = useCallback(async () => {
-    if (!activeSessionId) {
-      setConversationUndoStatus(null);
-      return;
-    }
-    try {
-      setConversationUndoStatus(await sessionUndoStatus(activeSessionId));
-    } catch {
-      setConversationUndoStatus(null);
-    }
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    void refreshConversationUndoStatus();
-  }, [
-    refreshConversationUndoStatus,
-    activeSessionId,
-    activeConv?.messages.length,
-  ]);
-
-  const handleConversationUndo = useCallback(async () => {
-    if (!activeSessionId || !activeProjectId) return;
-    if (sessionLoading[activeSessionId]) {
-      const ok = window.confirm(
-        "当前会话仍在生成回复，撤销将先停止流式输出。是否继续？",
-      );
-      if (!ok) return;
-      await stopAgentStream(activeSessionId);
-    }
-    try {
-      await sessionUndo(activeSessionId);
-      runtimeProjectionStore.dispatch({
-        kind: "projection_discard_session_runs",
-        sessionId: activeSessionId,
-        receivedAt: Date.now(),
-      });
-      runtimeProjectionStore.flush();
-      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
+  const reloadSession = useCallback(
+    (projectId: string, sessionId: string) =>
+      handleSelectSession(projectId, sessionId, undefined, {
         forceReload: true,
-      });
-      toast.success("已撤销");
-    } catch (err) {
-      toast.error("撤销失败", { description: String(err) });
-    }
-    void refreshConversationUndoStatus();
-    // handleSelectSession is stable enough for UX; omitting from deps avoids a large refactor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
-  }, [
-    activeSessionId,
-    activeProjectId,
-    sessionLoading,
+      }),
+    // handleSelectSession is captured from the surrounding closure;
+    // identical to App.tsx pre-extraction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const {
+    sendChatTurn: sendMessage,
     stopAgentStream,
-    refreshConversationUndoStatus,
-  ]);
-
-  const handleConversationRedo = useCallback(async () => {
-    if (!activeSessionId || !activeProjectId) return;
-    if (sessionLoading[activeSessionId]) {
-      const ok = window.confirm(
-        "当前会话仍在生成回复，重做将先停止流式输出。是否继续？",
-      );
-      if (!ok) return;
-      await stopAgentStream(activeSessionId);
-    }
-    try {
-      await sessionRedo(activeSessionId);
-      runtimeProjectionStore.dispatch({
-        kind: "projection_discard_session_runs",
-        sessionId: activeSessionId,
-        receivedAt: Date.now(),
-      });
-      runtimeProjectionStore.flush();
-      await handleSelectSession(activeProjectId, activeSessionId, undefined, {
-        forceReload: true,
-      });
-      toast.success("已重做");
-    } catch (err) {
-      toast.error("重做失败", { description: String(err) });
-    }
-    void refreshConversationUndoStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSelectSession closure
-  }, [
-    activeSessionId,
+    handleResumeFromCursor,
+    handleConversationUndo,
+    handleConversationRedo,
+    conversationUndoStatus,
+  } = useSessionRuntime({
     activeProjectId,
+    activeSessionId,
+    projects,
+    conversations,
     sessionLoading,
-    stopAgentStream,
-    refreshConversationUndoStatus,
-  ]);
+    streamAbortHandles,
+    input,
+    permissionMode,
+    selectedModel,
+    currentProjectWorkdir: currentProject?.workdir,
+    agentVoice,
+    setInput,
+    setSessionLoading,
+    setSessionTodos,
+    setStreamAbortHandles,
+    setConversations,
+    handleNewChat,
+    maybeAutoRenameSession,
+    refreshProjectSessions,
+    reloadSession,
+    extractTodosFromToolResult,
+    activeMessagesLength: activeConv?.messages.length ?? 0,
+  });
 
-  const handlePermissionDecision = async (
-    decision: "allow" | "deny",
-    scope: "once" | "session" = "once",
-  ) => {
-    if (!permissionPrompt) return;
-    const sessionId = permissionPrompt.session_id;
-    try {
-      await respondPermission(sessionId, decision, {
-        toolName: permissionPrompt.tool_name,
-        scope,
-      });
-    } catch (err) {
-      console.error("Failed to respond permission:", err);
-    } finally {
-      // Phase M2.8 — clear the projection-store approval so the
-      // dialog closes.  Local `setPermissionPrompt(null)` removed.
-      runtimeProjectionStore.dispatch({
-        kind: "permission_resolved",
-        sessionId,
-        decision,
-        scope,
-        receivedAt: Date.now(),
-      });
-    }
-  };
-
-  const buildResumePrompt = (resumeCursor: string) =>
-    `[resume_cursor] ${resumeCursor}\n` +
-    "请从该游标继续完成上一次任务，仅补全未完成步骤，禁止重复已确认的副作用操作。";
-
-  const sendMessage = async (
-    overrideText?: string,
-    options?: {
-      sessionIdOverride?: string;
-      isInternalResume?: boolean;
-      resumeCursor?: string;
-    },
-  ) => {
-    const messageText = (overrideText ?? input).trim();
-    let targetSessionId = options?.sessionIdOverride ?? activeSessionId;
-    let freshProjectId: string | undefined;
-    if (!targetSessionId && !options?.sessionIdOverride) {
-      const fallbackProjectId = activeProjectId ?? projects[0]?.id ?? null;
-      if (fallbackProjectId) {
-        freshProjectId = fallbackProjectId;
-        targetSessionId = await handleNewChat(fallbackProjectId);
-      }
-    }
-    if (!messageText || !targetSessionId) return;
-    const sessionId = targetSessionId;
-    if (sessionLoadingRef.current[sessionId]) return;
-    if (!options?.isInternalResume) {
-      setSessionTodos((prev) => ({ ...prev, [sessionId]: [] }));
-    }
-
-    // When handleNewChat just created this session the React state hasn't
-    // re-rendered yet, so conversations[sessionId] is still undefined.
-    // Construct a synthetic conv for new sessions rather than bailing out.
-    const conv =
-      conversations[sessionId] ??
-      (freshProjectId
-        ? {
-            id: sessionId,
-            projectId: freshProjectId,
-            title: PLACEHOLDER_SESSION_TITLE,
-            messages: [],
-            updatedAt: new Date(),
-          }
-        : null);
-    if (!conv) return;
-
-    if (!options?.isInternalResume) {
-      autoResumeAttemptsRef.current[sessionId] = 0;
-    } else if (options.resumeCursor) {
-      setRecoveryStateForCursor(sessionId, options.resumeCursor, true);
-    }
-
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: messageText,
-      timestamp: new Date(),
-    };
-
-    const updatedConv = {
-      ...conv,
-      messages: [...conv.messages, userMsg],
-      updatedAt: new Date(),
-    };
-
-    setConversations((prev) => ({ ...prev, [sessionId]: updatedConv }));
-    maybeAutoRenameSession(conv.projectId, sessionId, updatedConv);
-    if (!overrideText) {
-      setInput("");
-    }
-    setSessionLoading((prev) => ({ ...prev, [sessionId]: true }));
-
-    const startTime = Date.now();
-    let accumulatedText = "";
-    let accumulatedThinking = "";
-    let assistantMsgId: string | null = null;
-    let hasPendingTextDelta = false;
-    let hasPendingThinkingDelta = false;
-    let streamRafId: number | null = null;
-    const seenToolCallIds = new Set<string>();
-
-    const createAssistantMessage = (streamId?: string) => {
-      if (assistantMsgId) {
-        if (streamId) {
-          const currentAssistantId = assistantMsgId;
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: currentConv.messages.map((msg) =>
-                  msg.id === currentAssistantId ? { ...msg, streamId } : msg,
-                ),
-              },
-            };
-          });
-        }
-        return;
-      }
-      assistantMsgId = crypto.randomUUID();
-      const assistantMsg: Message = {
-        id: assistantMsgId,
-        role: "assistant",
-        content: "",
-        timestamp: new Date(),
-        streamId,
-        isStreaming: true,
-        statusLabel: options?.isInternalResume
-          ? "正在恢复未完成任务…"
-          : undefined,
-        statusKind: options?.isInternalResume ? "info" : undefined,
-      };
-
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: [...currentConv.messages, assistantMsg],
-          },
-        };
-      });
-    };
-
-    const finalizeCurrentAssistantSegment = () => {
-      if (!assistantMsgId) return;
-
-      const finalizedAssistantId = assistantMsgId;
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.id === finalizedAssistantId
-                ? {
-                    ...msg,
-                    isStreaming: false,
-                    statusLabel: undefined,
-                    statusKind: undefined,
-                  }
-                : msg,
-            ),
-          },
-        };
-      });
-
-      assistantMsgId = null;
-      accumulatedText = "";
-      accumulatedThinking = "";
-    };
-
-    const ensureAssistantMessage = (streamId?: string) => {
-      if (!assistantMsgId) {
-        createAssistantMessage(streamId);
-      } else if (streamId) {
-        createAssistantMessage(streamId);
-      }
-
-      return assistantMsgId;
-    };
-
-    const flushAssistantDeltas = () => {
-      if (!assistantMsgId) return;
-      if (!hasPendingTextDelta && !hasPendingThinkingDelta) return;
-      const currentAssistantId = assistantMsgId;
-      const nextText = accumulatedText;
-      const nextThinking = accumulatedThinking;
-
-      hasPendingTextDelta = false;
-      hasPendingThinkingDelta = false;
-
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.id === currentAssistantId
-                ? {
-                    ...msg,
-                    content: nextText,
-                    thinking: nextThinking || msg.thinking,
-                    statusLabel: undefined,
-                    statusKind: undefined,
-                  }
-                : msg,
-            ),
-          },
-        };
-      });
-    };
-
-    const cancelScheduledAssistantFlush = () => {
-      if (streamRafId !== null) {
-        window.cancelAnimationFrame(streamRafId);
-        streamRafId = null;
-      }
-    };
-
-    const scheduleAssistantFlush = () => {
-      if (streamRafId !== null) return;
-      streamRafId = window.requestAnimationFrame(() => {
-        streamRafId = null;
-        flushAssistantDeltas();
-      });
-    };
-
-    const finishProjectedStream = (
-      payload: StreamTokenPayload,
-      unlisten: () => void,
-    ) => {
-      cancelScheduledAssistantFlush();
-      void agentVoice.flushAndStop();
-      if (payload.prompt_diagnostics) {
-        void publishLatestPromptDiagnosticsSnapshot({
-          sessionId,
-          projectId: conv.projectId,
-          assistantMessageId: assistantMsgId ?? null,
-          updatedAt: Date.now(),
-          summary: payload.prompt_diagnostics,
-        });
-      }
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-      setStreamAbortHandles((prev) => {
-        const { [sessionId]: _removed, ...rest } = prev;
-        return rest;
-      });
-      void refreshProjectSessions(conv.projectId).catch((error) => {
-        console.error("Failed to refresh session counts:", error);
-      });
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.isRecovering ? { ...msg, isRecovering: false } : msg,
-            ),
-          },
-        };
-      });
-      unlisten();
-    };
-
-    const handleProjectedStreamSideEffect = (
-      payload: StreamTokenPayload,
-      unlisten: () => void,
-    ) => {
-      if (payload.event_type === "text_delta" && payload.text) {
-        agentVoice.feed(payload.text);
-        return;
-      }
-
-      if (payload.event_type === "tool_call_update") {
-        if (payload.tool_name === "TodoWrite" && payload.tool_result) {
-          const nextTodos = extractTodosFromToolResult(payload.tool_result);
-          if (nextTodos) {
-            setSessionTodos((prev) => ({ ...prev, [sessionId]: nextTodos }));
-          }
-        }
-        return;
-      }
-
-      if (payload.event_type === "stream_complete") {
-        finishProjectedStream(payload, unlisten);
-        autoResumeAttemptsRef.current[sessionId] = 0;
-        attemptedAutoResumeCursorsRef.current.clear();
-        return;
-      }
-
-      if (payload.event_type === "stream_error") {
-        finishProjectedStream(payload, unlisten);
-        const errMsg = payload.tool_result || "Agent 执行失败，请稍后重试。";
-        const taskOutcome = payload.task_outcome ?? "failed";
-        const resumeAvailable = payload.resume_available ?? false;
-        const resumeCursor = payload.resume_cursor;
-        if (
-          taskOutcome === "partial_success" &&
-          resumeAvailable &&
-          resumeCursor
-        ) {
-          const cursorKey = `${sessionId}:${resumeCursor}`;
-          const attemptCount = autoResumeAttemptsRef.current[sessionId] ?? 0;
-          if (
-            !attemptedAutoResumeCursorsRef.current.has(cursorKey) &&
-            attemptCount < 2
-          ) {
-            attemptedAutoResumeCursorsRef.current.add(cursorKey);
-            autoResumeAttemptsRef.current[sessionId] = attemptCount + 1;
-            setRecoveryStateForCursor(sessionId, resumeCursor, true);
-            window.setTimeout(() => {
-              void sendMessage(buildResumePrompt(resumeCursor), {
-                sessionIdOverride: sessionId,
-                isInternalResume: true,
-                resumeCursor,
-              });
-            }, 80);
-          }
-        }
-      }
-    };
-
-    // Detect slash commands
-    if (messageText.startsWith("/")) {
-      const cmdPrefix = messageText.split(/\s+/)[0];
-      const suggestions = await suggestSlashCommands(cmdPrefix, 1);
-      if (suggestions.length > 0) {
-        // Check if this is a skill-based slash command: resolve the invocation
-        // message (contains full SKILL.md) and send it to the agent for LLM
-        // processing.  Builtin commands (/help, /clear, /skills, /agents) always
-        // start with a known prefix that does NOT resolve via resolveSkillSlash,
-        // so they fall through to executeSlashCommand as before.
-        const cwd = currentProject?.workdir;
-        const skillInvocation = await resolveSkillSlash(messageText, cwd);
-        if (skillInvocation) {
-          // Skill slash: route through the agent so the LLM activates the skill
-          // via the skill() tool and then responds according to its instructions.
-          try {
-            createAssistantMessage();
-            const handle = await startChatTurn({
-              sessionId,
-              userMessage: skillInvocation,
-              permissionMode,
-              selectedModel,
-            });
-            runtimeProjectionStore.dispatch({
-              kind: "stream_run_bound",
-              runId: handle.streamId,
-              sessionId,
-              receivedAt: Date.now(),
-            });
-            createAssistantMessage(handle.streamId);
-            setStreamAbortHandles((prev) => ({
-              ...prev,
-              [sessionId]: handle.streamId,
-            }));
-            const unlisten = await handle.subscribe(
-              (payload: StreamTokenPayload) => {
-                handleProjectedStreamSideEffect(payload, unlisten);
-              },
-            );
-          } catch (err) {
-            setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-          }
-          return;
-        }
-
-        // /compact — manual context compaction (opt-out of skill / builtin
-        // slash routes). Calls the chat_compact_session IPC, then renders
-        // a tiny "已压缩 N 条消息，释放 X tokens" assistant message.
-        const trimmedSlash = messageText.trim();
-        if (trimmedSlash === "/compact" || trimmedSlash.startsWith("/compact ")) {
-          setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-          try {
-            const { chatCompactSession } = await import("@/lib/tauri");
-            const report = await chatCompactSession(sessionId);
-            const assistantMsgId = crypto.randomUUID();
-            const content = report.didCompact
-              ? `已压缩 ${report.summarizedMessages} 条消息，释放约 ${
-                  report.freedTokens > 0
-                    ? `${(report.freedTokens / 1000).toFixed(1)}k`
-                    : "0"
-                } tokens。\n\n摘要预览：${report.summaryExcerpt}…`
-              : "上下文已是最新，无需压缩。";
-            const assistantMsg: Message = {
-              id: assistantMsgId,
-              role: "assistant",
-              content,
-              timestamp: new Date(),
-              isStreaming: false,
-              slashCommand: "/compact",
-            };
-            setConversations((prev) => {
-              const currentConv = prev[sessionId];
-              if (!currentConv) return prev;
-              return {
-                ...prev,
-                [sessionId]: {
-                  ...currentConv,
-                  messages: [...currentConv.messages, assistantMsg],
-                },
-              };
-            });
-          } catch (err) {
-            const errorMsg: Message = {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `/compact 失败: ${String(err)}`,
-              timestamp: new Date(),
-              isStreaming: false,
-            };
-            setConversations((prev) => {
-              const currentConv = prev[sessionId];
-              if (!currentConv) return prev;
-              return {
-                ...prev,
-                [sessionId]: {
-                  ...currentConv,
-                  messages: [...currentConv.messages, errorMsg],
-                },
-              };
-            });
-          }
-          return;
-        }
-
-        // Builtin slash command: execute and display result as a static message
-        setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-        try {
-          const result = await executeSlashCommand(messageText, sessionId);
-          const assistantMsgId = crypto.randomUUID();
-          const slashToken = messageText
-            .trim()
-            .split(/\s+/, 1)[0];
-          const assistantMsg: Message = {
-            id: assistantMsgId,
-            role: "assistant",
-            content: result,
-            timestamp: new Date(),
-            isStreaming: false,
-            slashCommand:
-              slashToken && slashToken.startsWith("/") ? slashToken : undefined,
-          };
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: [...currentConv.messages, assistantMsg],
-              },
-            };
-          });
-        } catch (err) {
-          const errorMsg: Message = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: String(err),
-            timestamp: new Date(),
-            isStreaming: false,
-          };
-          setConversations((prev) => {
-            const currentConv = prev[sessionId];
-            if (!currentConv) return prev;
-            return {
-              ...prev,
-              [sessionId]: {
-                ...currentConv,
-                messages: [...currentConv.messages, errorMsg],
-              },
-            };
-          });
-        }
-        return;
-      }
-    }
-
-    try {
-      createAssistantMessage();
-      const handle = await startChatTurn({
-        sessionId,
-        userMessage: userMsg.content,
-        permissionMode,
-        selectedModel,
-      });
-      runtimeProjectionStore.dispatch({
-        kind: "stream_run_bound",
-        runId: handle.streamId,
-        sessionId,
-        receivedAt: Date.now(),
-      });
-      createAssistantMessage(handle.streamId);
-      setStreamAbortHandles((prev) => ({
-        ...prev,
-        [sessionId]: handle.streamId,
-      }));
-
-      const unlisten = await handle.subscribe((payload: StreamTokenPayload) => {
-        handleProjectedStreamSideEffect(payload, unlisten);
-      });
-    } catch (err) {
-      console.error("startAgentStream error:", err);
-
-      const errorMessage =
-        err && typeof err === "object" && "message" in err
-          ? String(
-              (err as { message?: string }).message ||
-                "Agent 执行失败，请稍后重试。",
-            )
-          : err instanceof Error
-            ? err.message
-            : "Agent 执行失败，请稍后重试。";
-
-      if (assistantMsgId) {
-        setConversations((prev) => {
-          const currentConv = prev[sessionId];
-          if (!currentConv) return prev;
-          return {
-            ...prev,
-            [sessionId]: {
-              ...currentConv,
-              messages: currentConv.messages.map((msg) =>
-                msg.id === assistantMsgId
-                  ? {
-                      ...msg,
-                      content: "",
-                      isStreaming: false,
-                      isError: true,
-                      statusLabel: undefined,
-                      statusKind: undefined,
-                      toolArgs: { rawError: errorMessage },
-                    }
-                  : msg,
-              ),
-            },
-          };
-        });
-      } else {
-        // No assistant message yet — create one with the error
-        const errorMsgId = crypto.randomUUID();
-        const errorMsg: Message = {
-          id: errorMsgId,
-          role: "assistant",
-          content: "",
-          timestamp: new Date(),
-          isStreaming: false,
-          isError: true,
-          toolArgs: { rawError: errorMessage },
-        };
-        setConversations((prev) => ({
-          ...prev,
-          [sessionId]: {
-            ...updatedConv,
-            messages: [...updatedConv.messages, errorMsg],
-          },
-        }));
-      }
-      setSessionLoading((prev) => ({ ...prev, [sessionId]: false }));
-      void refreshProjectSessions(conv.projectId).catch((error) => {
-        console.error("Failed to refresh session counts:", error);
-      });
-      setConversations((prev) => {
-        const currentConv = prev[sessionId];
-        if (!currentConv) return prev;
-        return {
-          ...prev,
-          [sessionId]: {
-            ...currentConv,
-            messages: currentConv.messages.map((msg) =>
-              msg.isRecovering ? { ...msg, isRecovering: false } : msg,
-            ),
-          },
-        };
-      });
-    } finally {
-      // Don't set isLoading=false here — stream_complete or stopAgentStream handles it
-    }
-  };
-
-  const handleResumeFromCursor = async (resumeCursor: string) => {
-    await sendMessage(buildResumePrompt(resumeCursor), {
-      isInternalResume: true,
-      resumeCursor,
-    });
-  };
 
   const beginResize = (
     startX: number,
@@ -3017,114 +1219,9 @@ function App() {
     void promptDownloadSenseVoiceAfterOnboarding();
   };
 
-  const latestUpdaterVersion = appUpdaterState?.latest_version ?? null;
-  const updaterBannerVisible =
-    appUpdaterState?.status === "available" &&
-    Boolean(latestUpdaterVersion) &&
-    dismissedUpdaterBannerVersion !== latestUpdaterVersion;
-
-  const handleDismissUpdaterBanner = useCallback(() => {
-    const version = latestUpdaterVersion;
-    if (!version) return;
-    localStorage.setItem("if2ai:app-updater:dismissed-banner-version", version);
-    setDismissedUpdaterBannerVersion(version);
-  }, [latestUpdaterVersion]);
-
-  const handleRunUpdaterFromRail = useCallback(async () => {
-    const status = appUpdaterState?.status;
-    if (
-      status === "checking" ||
-      status === "downloading" ||
-      status === "installing"
-    ) {
-      return;
-    }
-
-    if (status !== "available") {
-      setAppUpdaterState((state) =>
-        state ? { ...state, status: "checking", diagnostic: null } : state,
-      );
-      const result = await checkAppUpdater();
-      if (result.status !== "update_available") {
-        setAppUpdaterState((state) =>
-          state
-            ? {
-                ...state,
-                status: result.status === "no_update" ? "latest" : "error",
-                diagnostic: result.diagnostic ?? null,
-                checked_at: new Date().toISOString(),
-              }
-            : state,
-        );
-        if (result.status === "no_update") {
-          toast.success("已是最新版本");
-        } else {
-          toast.error("检查更新失败", {
-            description: result.diagnostic ?? "请稍后重试。",
-          });
-        }
-        return;
-      }
-      setAppUpdaterState((state) =>
-        state
-          ? {
-              ...state,
-              status: "available",
-              latest_version: result.latest_version ?? state.latest_version,
-              release_notes_url:
-                result.release_notes_url ?? state.release_notes_url,
-              artifact_url: result.artifact_url ?? state.artifact_url,
-              diagnostic: null,
-              checked_at: new Date().toISOString(),
-            }
-          : state,
-      );
-    }
-
-    setAppUpdaterState((state) =>
-      state ? { ...state, status: "downloading", diagnostic: null } : state,
-    );
-    try {
-      const result = await downloadAndInstallAppUpdate();
-      if (result.status === "installing" || result.status === "downloaded") {
-        setAppUpdaterState((state) =>
-          state
-            ? {
-                ...state,
-                status: result.status,
-                latest_version: result.latest_version ?? state.latest_version,
-                artifact_url: result.artifact_url ?? state.artifact_url,
-                diagnostic: null,
-              }
-            : state,
-        );
-        toast.success("更新安装已启动", {
-          description: "系统安装器已接管流程，If2Ai 可能会自动退出或重启。",
-        });
-      } else if (result.status === "no_update") {
-        setAppUpdaterState((state) =>
-          state ? { ...state, status: "latest", diagnostic: null } : state,
-        );
-        toast.success("已是最新版本");
-      } else {
-        setAppUpdaterState((state) =>
-          state
-            ? { ...state, status: "error", diagnostic: result.diagnostic ?? null }
-            : state,
-        );
-        toast.error("下载更新失败", {
-          description: result.diagnostic ?? "请稍后重试。",
-        });
-      }
-    } catch (error) {
-      setAppUpdaterState((state) =>
-        state
-          ? { ...state, status: "error", diagnostic: String(error) }
-          : state,
-      );
-      toast.error("下载更新失败", { description: String(error) });
-    }
-  }, [appUpdaterState?.status]);
+  // GF-03 PR-1 — `latestUpdaterVersion`, `updaterBannerVisible`,
+  // `handleDismissUpdaterBanner`, `handleRunUpdaterFromRail` are now
+  // returned from `useUpdaterBanner()` at the top of the component.
 
   // MIG-013 — App.tsx renders via the canonical
   // `<AppShell>` container. Boot phase / boot surface decision
@@ -3132,6 +1229,8 @@ function App() {
   // internally); AppShell reads activation-gate state via the
   // existing `useBootRoute` hook inside its own body.
   return (
+    <>
+      <RuntimeProjectionWiring onActiveModelChanged={setSelectedModel} />
     <AppShell
       navbar={{
         activeSection,
@@ -3241,73 +1340,18 @@ function App() {
             onSubmit={handleCreateProject}
           />
 
-          <Dialog open={Boolean(permissionPrompt)}>
-            <DialogContent
-              showCloseButton={false}
-              onEscapeKeyDown={(e) => e.preventDefault()}
-              onPointerDownOutside={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle>权限请求</DialogTitle>
-                <DialogDescription>
-                  {permissionPrompt?.message ?? "该操作需要更高权限。"}
-                </DialogDescription>
-              </DialogHeader>
-              {permissionPrompt && (
-                <div className="rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2 text-[12px] text-black/60">
-                  工具：{permissionPrompt.tool_name} · 当前模式：
-                  {permissionPrompt.current_mode}
-                </div>
-              )}
-              <DialogFooter className="sm:justify-between">
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("deny", "once")}
-                  >
-                    拒绝本次
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("deny", "session")}
-                  >
-                    本会话拒绝
-                  </Button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("allow", "once")}
-                  >
-                    允许本次
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => handlePermissionDecision("allow", "session")}
-                  >
-                    本会话允许
-                  </Button>
-                </div>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <PermissionOverlayHost />
 
           <TelemetryDrawer
             sessionId={activeSessionId}
             latestPromptDiagnostics={latestPromptDiagnosticsSnapshot}
             open={isTelemetryDrawerOpen}
-            onClose={() => setIsTelemetryDrawerOpen(false)}
+            onClose={() => setTelemetryDrawerOpen(false)}
           />
         </>
       }
     />
+    </>
   );
 }
 

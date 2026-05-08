@@ -77,6 +77,13 @@ pub struct MemoryInjectionRequest {
 pub enum MemoryInjectionSectionKind {
     Pinned,
     Compiled,
+    /// Procedural memory — learned heuristic rules / anti-patterns
+    /// promoted by the evolution reflector. Reserved here so the
+    /// downstream prompt planner can match exhaustively. The producer
+    /// (memory candidate extractor + procedural memory manager) lands
+    /// in subsequent A.1 PRs per
+    /// docs/superpowers/plans/2026-05-05-memory-evolution-product-replan.md.
+    Procedural,
     Rules,
     Retrieved,
 }

@@ -29,6 +29,7 @@
 //! `crate::commands::*`.
 
 use serde::Serialize;
+use tauri::Manager;
 
 use super::TurnService;
 use crate::modules::application::memory_candidate_extractor::{
@@ -60,6 +61,7 @@ use crate::modules::runtime::episodic_compaction::WeibullDecay;
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::session::{ContentBlock, ConversationMessage};
 use crate::modules::runtime::snapshot::FrozenSnapshot;
+use crate::modules::runtime::supervisor::SupervisorOps;
 
 /// Per-turn input bundle for [`TurnService::run_turn`].
 ///
@@ -123,6 +125,20 @@ impl TurnService {
             run_id: Some(run_id.clone()),
             ..Default::default()
         };
+
+        // MIG-020 (T-006) / DR-01 PR-B: Record supervisor lifecycle event — idle → running.
+        // Best-effort: persistence / emit failures must never fail the turn.
+        if let Some(app_handle) = self.deps.app_handle.as_ref() {
+            if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                SupervisorOps {
+                    app_data_dir: &app_data_dir,
+                    session_id: &session_id,
+                    app_handle: Some(app_handle),
+                    run_event_logger: Some(&run_event_logger),
+                }
+                .start_run(&run_id);
+            }
+        }
 
         tracing::info!(
             "[run_agent_turn] Starting - session_id: {}, run_id: {}, message: {}",
@@ -281,13 +297,28 @@ impl TurnService {
                         Some(&log_correlation),
                     )
                     .await;
+                let dur_ms_specialized = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     false,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_specialized,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: false,
+                        duration_ms: dur_ms_specialized,
+                        terminal_status: Some("specialized_surface".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 return Err(routed_message);
             }
@@ -802,19 +833,47 @@ impl TurnService {
                     )
                     .await;
 
+                // DR-01 PR-B: supervisor terminal-success hook (best-effort).
+                if let Some(app_handle) = self.deps.app_handle.as_ref() {
+                    if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                        SupervisorOps {
+                            app_data_dir: &app_data_dir,
+                            session_id: &session_id,
+                            app_handle: Some(app_handle),
+                            run_event_logger: Some(&run_event_logger),
+                        }
+                        .run_completed();
+                    }
+                }
+
                 tracing::info!(
                     "[run_agent_turn] Returning response with message length: {}, thinking length: {:?}, session_id: {}",
                     final_text.len(),
                     thinking_content.as_ref().map(|s| s.len()),
                     session_id
                 );
+                let dur_ms_success = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     true,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_success,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: true,
+                        duration_ms: dur_ms_success,
+                        terminal_status: Some("completed".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 Ok(RunTurnResponse {
                     message: final_text,
@@ -834,13 +893,61 @@ impl TurnService {
                         Some(&log_correlation),
                     )
                     .await;
+
+                // DR-01 PR-B: supervisor terminal-failure hook (best-effort).
+                // Non-streaming run.rs has no explicit retry budget, so we
+                // record as recoverable — `run_failed_recoverable` will
+                // decrement the supervisor's internal budget (default 3
+                // from `start_run`) and flip to non-recoverable when the
+                // budget hits 0.
+                if let Some(app_handle) = self.deps.app_handle.as_ref() {
+                    if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                        let ops = SupervisorOps {
+                            app_data_dir: &app_data_dir,
+                            session_id: &session_id,
+                            app_handle: Some(app_handle),
+                            run_event_logger: Some(&run_event_logger),
+                        };
+                        let snap =
+                            crate::modules::runtime::supervisor::SessionSupervisor::load_or_create(
+                                &app_data_dir,
+                                &session_id,
+                            )
+                            .ok();
+                        let recoverable = snap
+                            .as_ref()
+                            .map(|s| s.retry_budget_remaining > 0)
+                            .unwrap_or(true);
+                        if recoverable {
+                            ops.run_failed_recoverable(&error_message);
+                        } else {
+                            ops.run_failed_final(&error_message);
+                        }
+                    }
+                }
+
+                let dur_ms_failed = turn_started_at_run.elapsed().as_millis() as u64;
                 crate::modules::harness::agent_loop_integration::emit_turn_finished(
                     harness_event_bus_run.as_ref(),
                     &session_id,
                     turn_number_run,
                     false,
                     0,
-                    turn_started_at_run.elapsed().as_millis() as u64,
+                    dur_ms_failed,
+                );
+                crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+                    self.deps.app_handle.as_ref(),
+                    Some(&run_event_logger),
+                    &session_id,
+                    Some(&run_id),
+                    &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+                        turn_number: turn_number_run,
+                        succeeded: false,
+                        duration_ms: dur_ms_failed,
+                        terminal_status: Some("failed".to_string()),
+                        tokens_in: None,
+                        tokens_out: None,
+                    },
                 );
                 Err(error_message)
             }

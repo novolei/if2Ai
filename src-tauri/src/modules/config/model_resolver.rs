@@ -277,16 +277,20 @@ impl ModelResolver {
     }
 
     /// Get the current active model selection.
+    ///
+    /// Resolution priority:
+    /// 1. The chat role's `model_ref` ("provider/model") — but recover the
+    ///    `auth_variant` from `cfg.active_model` when (provider_id, model_id)
+    ///    match (the chat role string format does not carry variant).
+    /// 2. Fall back to `cfg.active_model` directly.
     pub async fn get_active_model() -> Result<Option<ModelSelection>, String> {
         let config = Self::load_config().await?;
         if let Some(chat_role) = config.role_models.iter().find(|r| r.role == "chat") {
             if let Some(model_ref) = chat_role.model_ref.as_deref() {
                 if let Some(model) = ModelRef::parse(model_ref) {
-                    return Ok(Some(ModelSelection {
-                        provider_id: model.provider_id,
-                        model_id: model.model_id,
-                        auth_variant: None,
-                    }));
+                    let recovered =
+                        recover_active_model_with_variant(&model, config.active_model.as_ref());
+                    return Ok(Some(recovered));
                 }
             }
         }
@@ -294,10 +298,19 @@ impl ModelResolver {
     }
 
     /// Set the active model selection.
-    pub async fn set_active_model(provider_id: &str, model_id: &str) -> Result<(), String> {
-        crate::modules::provider::service::select_model(provider_id, model_id).await?;
+    ///
+    /// `auth_variant` is propagated end-to-end so that multi-auth providers
+    /// (e.g. moonshot-cn vs moonshot-code) round-trip correctly through
+    /// `get_active_model()` after a restart. See ER-01.
+    pub async fn set_active_model(
+        provider_id: &str,
+        model_id: &str,
+        auth_variant: Option<&str>,
+    ) -> Result<(), String> {
+        crate::modules::provider::service::select_model(provider_id, model_id, auth_variant)
+            .await?;
         let model_ref = format!("{provider_id}/{model_id}");
-        Self::set_role_config("chat", &model_ref).await
+        Self::set_role_config_with_variant("chat", &model_ref, auth_variant).await
     }
 
     /// Get all role-based model assignments.
@@ -306,8 +319,21 @@ impl ModelResolver {
         Ok(config.role_models.clone())
     }
 
-    /// Set a role's model assignment.
+    /// Set a role's model assignment (no `auth_variant` — preserved for
+    /// callers that don't carry variant information). For the chat role,
+    /// `cfg.active_model.auth_variant` is written as `None`.
     pub async fn set_role_config(role: &str, model_ref: &str) -> Result<(), String> {
+        Self::set_role_config_with_variant(role, model_ref, None).await
+    }
+
+    /// Set a role's model assignment, propagating `auth_variant` into
+    /// `cfg.active_model` when the role is `"chat"` (the user-visible
+    /// composer default). See ER-01.
+    pub async fn set_role_config_with_variant(
+        role: &str,
+        model_ref: &str,
+        auth_variant: Option<&str>,
+    ) -> Result<(), String> {
         let config = Self::load_config().await?;
 
         // Validate the model reference format
@@ -347,16 +373,60 @@ impl ModelResolver {
                 let mut cfg = config;
                 cfg.role_models = role_models;
                 if role == "chat" {
-                    cfg.active_model = Some(crate::modules::config::ModelSelection {
-                        provider_id: model.provider_id.clone(),
-                        model_id: model.model_id.clone(),
-                        auth_variant: None,
-                    });
+                    cfg.active_model = Some(build_active_model_selection(
+                        &model.provider_id,
+                        &model.model_id,
+                        auth_variant,
+                    ));
                 }
                 cfg
             })
             .await
             .map_err(|e| format!("Failed to save role config: {e}"))
+    }
+}
+
+// ── Pure helpers (ER-01) ───────────────────────────────────────────────────
+//
+// Variant-handling logic is extracted into pure functions so the round-trip
+// invariant ("auth_variant survives set → get") can be unit-tested without
+// touching the filesystem.
+
+/// Construct a [`ModelSelection`] preserving the optional `auth_variant`.
+///
+/// Used everywhere `cfg.active_model` is written so we never silently drop
+/// the variant for multi-auth providers (e.g. moonshot-cn vs moonshot-code).
+#[must_use]
+pub fn build_active_model_selection(
+    provider_id: &str,
+    model_id: &str,
+    auth_variant: Option<&str>,
+) -> ModelSelection {
+    ModelSelection {
+        provider_id: provider_id.to_string(),
+        model_id: model_id.to_string(),
+        auth_variant: auth_variant.map(str::to_string),
+    }
+}
+
+/// Recover the full [`ModelSelection`] (including `auth_variant`) for the
+/// given `parsed_chat_ref`. The chat role only stores `"provider/model"`
+/// without variant; we look at the provided snapshot of `cfg.active_model`
+/// and copy the variant when (provider_id, model_id) match.
+#[must_use]
+pub fn recover_active_model_with_variant(
+    parsed_chat_ref: &ModelRef,
+    cfg_active_model: Option<&ModelSelection>,
+) -> ModelSelection {
+    let auth_variant = cfg_active_model
+        .filter(|m| {
+            m.provider_id == parsed_chat_ref.provider_id && m.model_id == parsed_chat_ref.model_id
+        })
+        .and_then(|m| m.auth_variant.clone());
+    ModelSelection {
+        provider_id: parsed_chat_ref.provider_id.clone(),
+        model_id: parsed_chat_ref.model_id.clone(),
+        auth_variant,
     }
 }
 
@@ -385,6 +455,66 @@ mod tests {
     fn test_model_ref_display() {
         let model = ModelRef::parse("openai/gpt-4o").unwrap();
         assert_eq!(model.to_string(), "openai/gpt-4o");
+    }
+
+    // ── ER-01 round-trip: auth_variant must survive set → get ──────────────
+    //
+    // Bug: `set_active_model` and `get_active_model` previously hardcoded
+    // `auth_variant: None`, silently dropping the variant for multi-auth
+    // providers (e.g. moonshot-cn vs moonshot-code). These tests target
+    // the pure mapping helpers so we don't depend on filesystem I/O.
+
+    #[test]
+    fn build_active_model_selection_carries_variant() {
+        let sel = build_active_model_selection("moonshot", "kimi-k2-0905-preview", Some("cn"));
+        assert_eq!(sel.provider_id, "moonshot");
+        assert_eq!(sel.model_id, "kimi-k2-0905-preview");
+        assert_eq!(sel.auth_variant.as_deref(), Some("cn"));
+    }
+
+    #[test]
+    fn build_active_model_selection_without_variant_is_none() {
+        let sel = build_active_model_selection("ollama", "qwen3:4b", None);
+        assert_eq!(sel.provider_id, "ollama");
+        assert_eq!(sel.model_id, "qwen3:4b");
+        assert!(sel.auth_variant.is_none());
+    }
+
+    #[test]
+    fn recover_active_model_with_variant_uses_snapshot_when_match() {
+        // chat role only stores "provider_id/model_id"; variant must be
+        // recovered from cfg.active_model when (provider_id, model_id) match.
+        let parsed = ModelRef::parse("moonshot/kimi-k2-0905-preview").unwrap();
+        let snapshot = ModelSelection {
+            provider_id: "moonshot".into(),
+            model_id: "kimi-k2-0905-preview".into(),
+            auth_variant: Some("cn".into()),
+        };
+        let recovered = recover_active_model_with_variant(&parsed, Some(&snapshot));
+        assert_eq!(recovered.auth_variant.as_deref(), Some("cn"));
+    }
+
+    #[test]
+    fn recover_active_model_with_variant_ignores_snapshot_on_mismatch() {
+        // If the snapshot points at a different (provider, model), the
+        // variant must NOT leak into the chat-role-derived selection.
+        let parsed = ModelRef::parse("anthropic/claude-sonnet-4-6").unwrap();
+        let snapshot = ModelSelection {
+            provider_id: "moonshot".into(),
+            model_id: "kimi-k2-0905-preview".into(),
+            auth_variant: Some("cn".into()),
+        };
+        let recovered = recover_active_model_with_variant(&parsed, Some(&snapshot));
+        assert!(recovered.auth_variant.is_none());
+        assert_eq!(recovered.provider_id, "anthropic");
+        assert_eq!(recovered.model_id, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn recover_active_model_with_variant_handles_missing_snapshot() {
+        let parsed = ModelRef::parse("ollama/qwen3:4b").unwrap();
+        let recovered = recover_active_model_with_variant(&parsed, None);
+        assert!(recovered.auth_variant.is_none());
     }
 
     #[test]

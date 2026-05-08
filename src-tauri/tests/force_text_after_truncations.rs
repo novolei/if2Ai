@@ -76,6 +76,7 @@ async fn force_text_engages_after_threshold_truncations() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
+        ..Default::default()
     };
     let outcome = run_agentic_loop(&d, &cfg).await;
     assert!(
@@ -125,6 +126,7 @@ async fn force_text_does_not_engage_below_threshold() {
     let cfg = AgenticLoopConfig {
         max_iterations: 10,
         force_text_after_truncations: 2,
+        ..Default::default()
     };
     let _ = run_agentic_loop(&d, &cfg).await;
     let observed_call = d.force_text_in_call_llm.lock().unwrap().clone();

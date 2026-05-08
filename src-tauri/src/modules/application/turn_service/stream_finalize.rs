@@ -52,7 +52,7 @@ use crate::modules::runtime::stream_emitter::{
 use crate::modules::runtime::stream_outcome::{
     ConversationTruth, ExecutionTruth, TaskOutcomeResolver,
 };
-use crate::modules::runtime::supervisor::SessionSupervisor;
+use crate::modules::runtime::supervisor::SupervisorOps;
 use crate::modules::runtime::timeline_flush::{
     flush_assistant_timeline_segment, PersistedTurnOutcome,
 };
@@ -998,6 +998,24 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         token_count,
         turn_duration_ms,
     );
+    // DT-01 S1.3 — mirror the canonical `conversation:turn_finished`
+    // envelope onto the run-log so the runlog-fold path
+    // (`fold_run_log_to_report`) can derive turn-level aggregates
+    // without reaching into the harness EventBus.  Audit §2.
+    crate::modules::harness::agent_loop_integration::dispatch_turn_finished_envelope(
+        Some(&app_handle_for_after_turn),
+        Some(&run_event_logger),
+        &session_id,
+        Some(run_event_logger.run_id()),
+        &crate::modules::harness::agent_loop_integration::TurnFinishedPayload {
+            turn_number: turn_number_for_stream,
+            succeeded: !stream_failed,
+            duration_ms: turn_duration_ms,
+            terminal_status: terminal_status.map(str::to_string),
+            tokens_in: None,
+            tokens_out: Some(u64::from(token_count)),
+        },
+    );
     crate::modules::learning::estimation::record_turn_duration_ms(turn_duration_ms);
     crate::modules::observability::emit(
         "stream_turn_finished",
@@ -1095,31 +1113,26 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
         last_stream_error_reason.as_deref().unwrap_or("none"),
     );
 
-    // MIG-020 (T-006): Record supervisor lifecycle event on run completion.
+    // MIG-020 (T-006) / DR-01: Record supervisor lifecycle event on run completion.
     // Best-effort: supervisor persistence failures must never fail the turn.
     if let Ok(app_data_dir) = app_handle_for_after_turn.path().app_data_dir() {
-        if let Ok(mut snap) = SessionSupervisor::load_or_create(&app_data_dir, &session_id) {
-            if stream_failed {
-                let reason = degraded_reason
-                    .clone()
-                    .unwrap_or_else(|| "stream_error".to_string());
-                if user_visible_truth.resume_available {
-                    SessionSupervisor::run_failed_recoverable(&mut snap, reason);
-                } else {
-                    SessionSupervisor::run_failed_final(&mut snap, reason);
-                }
+        let ops = SupervisorOps {
+            app_data_dir: &app_data_dir,
+            session_id: &session_id,
+            app_handle: Some(&app_handle_for_after_turn),
+            run_event_logger: Some(&run_event_logger),
+        };
+        if stream_failed {
+            let reason = degraded_reason
+                .clone()
+                .unwrap_or_else(|| "stream_error".to_string());
+            if user_visible_truth.resume_available {
+                ops.run_failed_recoverable(&reason);
             } else {
-                SessionSupervisor::run_completed(&mut snap);
+                ops.run_failed_final(&reason);
             }
-            if let Err(e) =
-                crate::modules::runtime::supervisor::write_supervisor_snapshot(&app_data_dir, &snap)
-            {
-                tracing::warn!(
-                    session_id = %session_id,
-                    error = %e,
-                    "[supervisor] failed to persist completion"
-                );
-            }
+        } else {
+            ops.run_completed();
         }
 
         // T-020: save projection checkpoint with latest seq.

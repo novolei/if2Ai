@@ -32,6 +32,12 @@ pub enum PromptBlockKind {
     MemoryInjectionPinned,
     /// Compiled-memory section.
     MemoryInjectionCompiled,
+    /// Procedural-memory section — learned heuristic rules /
+    /// anti-patterns promoted by the evolution reflector. Reserved
+    /// here for exhaustive matching; the producer ships in subsequent
+    /// A.1 PRs (see
+    /// docs/superpowers/plans/2026-05-05-memory-evolution-product-replan.md).
+    MemoryInjectionProcedural,
     /// Memory-rules section (always emitted by
     /// [`crate::modules::memory::build_memory_injection`] when memory
     /// injection is enabled).
@@ -82,6 +88,7 @@ impl PromptBlockKind {
         match kind {
             MemoryInjectionSectionKind::Pinned => Self::MemoryInjectionPinned,
             MemoryInjectionSectionKind::Compiled => Self::MemoryInjectionCompiled,
+            MemoryInjectionSectionKind::Procedural => Self::MemoryInjectionProcedural,
             MemoryInjectionSectionKind::Rules => Self::MemoryInjectionRules,
             MemoryInjectionSectionKind::Retrieved => Self::RetrievedMemory,
         }
