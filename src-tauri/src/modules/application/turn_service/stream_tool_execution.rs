@@ -121,6 +121,20 @@ fn infer_file_write_path_from_content(content: &str) -> Option<&'static str> {
     Some("output.txt")
 }
 
+/// A.3.2-fix — sanitize and truncate a tool input JSON string for
+/// `ToolCallRecord.args_summary`. SelfReflector's tool-pattern rules
+/// look at this for intent context (e.g. distinguish `file_read /tmp/foo`
+/// from `file_read /etc/hosts`); 200 chars is enough for the head of any
+/// reasonable invocation. Newlines collapse to spaces so the field stays
+/// single-line for log readability.
+fn truncate_args_for_trajectory(input_json: &str) -> String {
+    let single_line: String = input_json
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    single_line.chars().take(200).collect()
+}
+
 /// All context needed to execute one batch of pending tool calls.
 pub(super) struct ToolExecutionContext {
     pub pending_tool_uses: Vec<(String, String, String)>,
@@ -751,12 +765,18 @@ pub(super) async fn execute_tool_batch(ctx: ToolExecutionContext) -> ToolExecuti
         // A.3.2 — observe this tool's outcome on the active trajectory so
         // the run finalize site (stream_finalize.rs) can drain the bucket
         // into `TurnRecord.tool_calls` for SelfReflector.
+        // A.3.2-fix — args_summary is the first 200 chars of the input JSON
+        // (sanitized to single-line). Previously empty, which starved
+        // SelfReflector's tool-pattern rules. The post-A.4 smoke showed
+        // `extracted 4 / rejected 4 / promoted 0` — populating args_summary
+        // gives the rules concrete intent context per call (e.g. distinguish
+        // "file_read /tmp/foo" from "file_read /etc/hosts").
         trajectory_collector
             .observe_tool_call(
                 &session_id,
                 crate::modules::memory::evolution::trajectory::ToolCallRecord {
                     tool_name: tool_name.clone(),
-                    args_summary: String::new(),
+                    args_summary: truncate_args_for_trajectory(&input_json),
                     success: !is_error,
                     duration_ms,
                     error_message: if is_error {
