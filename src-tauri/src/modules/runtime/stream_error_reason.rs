@@ -10,7 +10,10 @@ pub(crate) fn format_stream_error_reason(error: &impl std::fmt::Display) -> Stri
     let lower = raw.to_ascii_lowercase();
     let kind = if lower.contains("timed out") || lower.contains("timeout") {
         "network_timeout"
-    } else if lower.contains("429") || lower.contains("too many requests") || lower.contains("rate limit") {
+    } else if lower.contains("429")
+        || lower.contains("too many requests")
+        || lower.contains("rate limit")
+    {
         "rate_limited"
     } else if lower.contains("invalid_request_error")
         || lower.contains("invalid params")

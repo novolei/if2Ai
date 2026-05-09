@@ -310,10 +310,18 @@ mod tests {
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
 
         // User messages: last 2 annotated
-        assert_eq!(body["messages"][0]["content"][0]["cache_control"]["type"], "ephemeral");
-        assert_eq!(body["messages"][2]["content"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert_eq!(
+            body["messages"][2]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
         // Assistant untouched
-        assert!(body["messages"][1]["content"][0].get("cache_control").is_none());
+        assert!(body["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_none());
 
         // Tools: last annotated
         assert!(body["tools"][0].get("cache_control").is_none());

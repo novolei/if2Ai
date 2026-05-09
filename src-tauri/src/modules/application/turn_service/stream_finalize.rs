@@ -1182,28 +1182,25 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
 
     // A.3.1 — finalize trajectory based on terminal_status / stream_failed.
     // Mirrors run.rs::run_turn outcome classification (PR #4).
-    let trajectory_outcome =
-        if stream_failed || matches!(terminal_status, Some("cancelled")) {
-            let category = if matches!(terminal_status, Some("cancelled")) {
-                "cancelled".to_string()
-            } else {
-                last_stream_error_reason
-                    .as_deref()
-                    .map(classify_streaming_error)
-                    .unwrap_or_else(|| "unknown".to_string())
-            };
-            let root_cause = last_stream_error_reason
-                .clone()
-                .unwrap_or_else(|| terminal_status.unwrap_or("unknown").to_string());
-            crate::modules::memory::evolution::trajectory::TaskOutcome::Failure {
-                error_category: category,
-                root_cause,
-            }
+    let trajectory_outcome = if stream_failed || matches!(terminal_status, Some("cancelled")) {
+        let category = if matches!(terminal_status, Some("cancelled")) {
+            "cancelled".to_string()
         } else {
-            crate::modules::memory::evolution::trajectory::TaskOutcome::Success {
-                quality_score: 1.0,
-            }
+            last_stream_error_reason
+                .as_deref()
+                .map(classify_streaming_error)
+                .unwrap_or_else(|| "unknown".to_string())
         };
+        let root_cause = last_stream_error_reason
+            .clone()
+            .unwrap_or_else(|| terminal_status.unwrap_or("unknown").to_string());
+        crate::modules::memory::evolution::trajectory::TaskOutcome::Failure {
+            error_category: category,
+            root_cause,
+        }
+    } else {
+        crate::modules::memory::evolution::trajectory::TaskOutcome::Success { quality_score: 1.0 }
+    };
     let trajectory_success = matches!(
         trajectory_outcome,
         crate::modules::memory::evolution::trajectory::TaskOutcome::Success { .. }
@@ -1374,7 +1371,6 @@ fn spawn_evolution_finalize_hooks(args: EvolutionFinalizeArgs) {
             }
         });
     }
-
 }
 
 fn should_rewrite_unverified_completion(

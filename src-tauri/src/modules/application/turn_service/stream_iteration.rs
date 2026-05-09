@@ -57,9 +57,8 @@ use crate::modules::tools::ToolRegistry;
 
 use super::stream_loop_state::StreamLoopState;
 use super::stream_task::{
-    apply_memory_recall_success_finalization_guard,
-    should_retry_announced_tool_intent_no_tool, should_retry_tool_required_no_tool,
-    tool_batch_signature, REPEATED_TOOL_BATCH_LIMIT,
+    apply_memory_recall_success_finalization_guard, should_retry_announced_tool_intent_no_tool,
+    should_retry_tool_required_no_tool, tool_batch_signature, REPEATED_TOOL_BATCH_LIMIT,
 };
 use super::stream_task_run_log::append_stream_event;
 

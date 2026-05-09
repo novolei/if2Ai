@@ -24,7 +24,9 @@ use std::sync::Arc;
 
 use crate::modules::api::{InputContentBlock, InputMessage};
 use crate::modules::memory::UtilityLlm;
-use crate::modules::runtime::context_compression::{apply_digest, CompressedMessage, MessageDigester};
+use crate::modules::runtime::context_compression::{
+    apply_digest, CompressedMessage, MessageDigester,
+};
 use crate::modules::runtime::working_checkpoint::{
     inject_checkpoint, CheckpointInjectionConfig, WorkingCheckpoint,
 };
@@ -180,7 +182,9 @@ pub async fn digest_messages_for_preflight_cached(
     // Slow path: digest only the new/changed tail.
     let digester = MessageDigester::new(llm);
     let results = if reuse_count > 0 {
-        let cached = cache.as_ref().expect("reuse_count > 0 implies cache exists");
+        let cached = cache
+            .as_ref()
+            .expect("reuse_count > 0 implies cache exists");
         let mut results = cached.results[..reuse_count].to_vec();
         tracing::debug!(
             "[digest_cache] partial HIT: reusing {} of {} messages, digesting {} new",

@@ -61,7 +61,7 @@ impl IterationTracker {
 
         // 1) Progress check every N iterations.
         if self.cfg.progress_check_interval > 0
-            && iter_1based % self.cfg.progress_check_interval == 0
+            && iter_1based.is_multiple_of(self.cfg.progress_check_interval)
         {
             hints.push(ProgressHint {
                 content: format!(
@@ -75,7 +75,7 @@ impl IterationTracker {
 
         // 2) Memory re-injection every M iterations.
         if self.cfg.memory_reinject_interval > 0
-            && iter_1based % self.cfg.memory_reinject_interval == 0
+            && iter_1based.is_multiple_of(self.cfg.memory_reinject_interval)
         {
             hints.push(ProgressHint {
                 content: format!(
@@ -88,9 +88,8 @@ impl IterationTracker {
 
         // 3) Approaching max_iterations — wrap-up warning (once).
         if !self.wrap_up_warned && self.max_iterations > 0 {
-            let threshold =
-                self.max_iterations / 100 * self.cfg.wrap_up_threshold_pct
-                    + (self.max_iterations % 100) * self.cfg.wrap_up_threshold_pct / 100;
+            let threshold = self.max_iterations / 100 * self.cfg.wrap_up_threshold_pct
+                + (self.max_iterations % 100) * self.cfg.wrap_up_threshold_pct / 100;
             if iter_1based >= threshold {
                 self.wrap_up_warned = true;
                 hints.push(ProgressHint {
@@ -114,11 +113,7 @@ impl IterationTracker {
     /// `tool_name` is the name of the tool that failed; `error_msg` is the
     /// (potentially long) error string. Only the first 256 chars of
     /// `error_msg` are used for dedup comparison.
-    pub fn record_failure(
-        &mut self,
-        tool_name: &str,
-        error_msg: &str,
-    ) -> Option<ProgressHint> {
+    pub fn record_failure(&mut self, tool_name: &str, error_msg: &str) -> Option<ProgressHint> {
         let snippet: String = error_msg.chars().take(256).collect();
 
         if tool_name == self.last_failed_tool && snippet == self.last_error_snippet {
@@ -192,7 +187,9 @@ mod tests {
     fn memory_reinject_fires_at_interval() {
         let mut t = IterationTracker::new(50, &default_cfg());
         let hints = t.check_progress(9); // iteration 10
-        assert!(hints.iter().any(|h| h.content.contains("[MEMORY_REINJECT]")));
+        assert!(hints
+            .iter()
+            .any(|h| h.content.contains("[MEMORY_REINJECT]")));
     }
 
     #[test]
@@ -200,10 +197,14 @@ mod tests {
         let mut t = IterationTracker::new(50, &default_cfg());
         // threshold = 50 * 80 / 100 = 40 → fires at iteration 39 (1-based 40).
         let hints = t.check_progress(39);
-        assert!(hints.iter().any(|h| h.content.contains("[WRAP_UP_WARNING]")));
+        assert!(hints
+            .iter()
+            .any(|h| h.content.contains("[WRAP_UP_WARNING]")));
         // Second call should not fire again.
         let hints2 = t.check_progress(40);
-        assert!(!hints2.iter().any(|h| h.content.contains("[WRAP_UP_WARNING]")));
+        assert!(!hints2
+            .iter()
+            .any(|h| h.content.contains("[WRAP_UP_WARNING]")));
     }
 
     #[test]
@@ -211,13 +212,19 @@ mod tests {
         let mut t = IterationTracker::new(50, &default_cfg());
 
         let h1 = t.record_failure("read_file", "not found");
-        assert!(h1.as_ref().map_or(false, |h| h.content.contains("[RETRY_HINT]")));
+        assert!(h1
+            .as_ref()
+            .map_or(false, |h| h.content.contains("[RETRY_HINT]")));
 
         let h2 = t.record_failure("read_file", "not found");
-        assert!(h2.as_ref().map_or(false, |h| h.content.contains("[PROBE_HINT]")));
+        assert!(h2
+            .as_ref()
+            .map_or(false, |h| h.content.contains("[PROBE_HINT]")));
 
         let h3 = t.record_failure("read_file", "not found");
-        assert!(h3.as_ref().map_or(false, |h| h.content.contains("[STRATEGY_SWITCH]")));
+        assert!(h3
+            .as_ref()
+            .map_or(false, |h| h.content.contains("[STRATEGY_SWITCH]")));
     }
 
     #[test]

@@ -323,7 +323,7 @@ mod tests {
             &tool_required_work_loop(),
             Some("model_stop"),
             Some(&unfinished_snapshot()), // total_count=2, completed=0
-            true, // mutating tool succeeded but only 1 of 2 steps
+            true,                         // mutating tool succeeded but only 1 of 2 steps
         );
         assert_eq!(status, Some("todo_ledger_incomplete"));
         assert!(warning.is_some());

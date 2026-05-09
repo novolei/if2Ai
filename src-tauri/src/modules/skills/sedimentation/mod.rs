@@ -354,9 +354,7 @@ mod auto_persist_tests {
         SkillDraft {
             name: name.to_string(),
             description: "test draft".to_string(),
-            body: format!(
-                "---\nname: {name}\ndescription: test draft\n---\n\nbody text\n"
-            ),
+            body: format!("---\nname: {name}\ndescription: test draft\n---\n\nbody text\n"),
             source_turns: vec![0],
             tool_sequence: vec!["bash".into(), "read".into()],
         }
