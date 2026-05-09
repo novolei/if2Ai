@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(envelope.correlation.session_id.as_deref(), Some("sess-1"));
 
         let path = logger.file_path().expect("run-log path");
-        let raw = std::fs::read_to_string(&path).expect("read run-log");
+        let raw = std::fs::read_to_string(path).expect("read run-log");
         // RunLogEntry serializes event_type as "<event_type>:<family>"
         // (see RunLogEntry::from_envelope). Assert on the canonical
         // joined shape so a regression to the legacy "permission_requested"
