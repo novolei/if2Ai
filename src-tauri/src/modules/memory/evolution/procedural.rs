@@ -215,7 +215,7 @@ fn category_to_tag(cat: &InsightCategory) -> &'static str {
 }
 
 /// Extract a human-readable category label from a proc key.
-fn extract_category_label(key: &str) -> &str {
+pub(crate) fn extract_category_label(key: &str) -> &str {
     // key format: "proc:{category_tag}:{hash}"
     let parts: Vec<&str> = key.splitn(3, ':').collect();
     if parts.len() >= 2 {

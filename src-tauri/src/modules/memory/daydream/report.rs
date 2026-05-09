@@ -19,6 +19,17 @@ pub struct StepOutcome {
     pub duration_ms: u64,
     /// `Some(reason)` if the step short-circuited or errored.
     pub error: Option<StepError>,
+    /// A.4 — number of items the step considered before any internal
+    /// filter. For `reflect`: insights produced by `SelfReflector` before
+    /// the confidence floor. `None` for steps where the concept doesn't
+    /// apply (prune / merge / refresh).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extracted_count: Option<usize>,
+    /// A.4 — number of items the step dropped by an internal filter.
+    /// For `reflect`: insights below `MIN_INSIGHT_CONFIDENCE` (0.7).
+    /// `None` for steps where the concept doesn't apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,8 +75,8 @@ mod tests {
             started_at: now,
             finished_at: now,
             steps: vec![
-                StepOutcome { step: "prune".into(), examined: 10, mutated: 2, duration_ms: 5, error: None },
-                StepOutcome { step: "merge".into(), examined: 0, mutated: 0, duration_ms: 1, error: Some(StepError { kind: "token_cap".into(), message: "exceeded budget".into() }) },
+                StepOutcome { step: "prune".into(), examined: 10, mutated: 2, duration_ms: 5, error: None, extracted_count: None, rejected_count: None },
+                StepOutcome { step: "merge".into(), examined: 0, mutated: 0, duration_ms: 1, error: Some(StepError { kind: "token_cap".into(), message: "exceeded budget".into() }), extracted_count: None, rejected_count: None },
             ],
         };
         assert!(!r.all_succeeded());

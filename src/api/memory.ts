@@ -41,7 +41,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useRuntimeProjectionSelector } from "@/runtime-projection";
 import { getApiClient } from "./client.ts";
-import type { DaydreamConfig, DaydreamReportPayload } from "@/transport/contracts";
+import type { DaydreamConfig, DaydreamReportPayload, ProceduralEntryDto } from "@/transport/contracts";
 import {
   memoryClearAll,
   memoryCompiledClear,
@@ -261,4 +261,11 @@ export async function getDaydreamConfig(): Promise<DaydreamConfig> {
 /** Persist a new daydream configuration. */
 export async function setDaydreamConfig(config: DaydreamConfig): Promise<void> {
   return getApiClient().call<void>('daydream_set_config', { config })
+}
+
+// ───────────────────────── A.4 procedural memory ─────────────────────
+
+/** List all procedural memory entries. */
+export async function listProceduralEntries(): Promise<ProceduralEntryDto[]> {
+  return getApiClient().call<ProceduralEntryDto[]>('procedural_memory_list')
 }

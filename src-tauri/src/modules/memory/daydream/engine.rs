@@ -155,6 +155,8 @@ impl DayDreamEngine {
                             kind: "provider".into(),
                             message: format!("trajectory source failed: {e}"),
                         }),
+                        extracted_count: None,
+                        rejected_count: None,
                     });
                 }
             }

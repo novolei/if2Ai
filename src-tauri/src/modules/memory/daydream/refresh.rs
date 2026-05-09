@@ -32,6 +32,8 @@ pub async fn run(provider: &SharedMemoryProvider, max_entries: usize) -> StepOut
                     kind: "provider".into(),
                     message: format!("export failed: {e}"),
                 }),
+                extracted_count: None,
+                rejected_count: None,
             };
         }
     };
@@ -48,6 +50,8 @@ pub async fn run(provider: &SharedMemoryProvider, max_entries: usize) -> StepOut
         mutated: 0, // re-embedding API not yet available — Wave A.5
         duration_ms: started.elapsed().as_millis() as u64,
         error: None,
+        extracted_count: None,
+        rejected_count: None,
     }
 }
 

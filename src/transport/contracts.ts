@@ -971,6 +971,11 @@ export interface DaydreamStepOutcome {
   mutated: number
   durationMs: number
   error: { kind: string; message: string } | null
+  /** A.4 — reflect step only: total insights produced before the
+   * confidence filter. `undefined` for non-reflect steps. */
+  extractedCount?: number
+  /** A.4 — reflect step only: insights dropped by the confidence floor. */
+  rejectedCount?: number
 }
 
 /** Payload of `RuntimeEventType = 'daydream_cycle'` envelopes. Mirror of
@@ -990,4 +995,15 @@ export interface DaydreamConfig {
   idleTriggerMinutes: number
   maxEntriesPerCycle: number
   strategy: 'conservative' | 'balanced' | 'aggressive'
+}
+
+/** A.4 — procedural memory entry surfaced in the Memory Settings UI.
+ *  Mirrors `ProceduralEntryDto` in `commands/memory/procedural.rs`. */
+export interface ProceduralEntryDto {
+  key: string
+  category: string
+  content: string
+  trustScore: number
+  accessCount: number
+  updatedAt: string
 }
