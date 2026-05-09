@@ -128,6 +128,9 @@ async fn make_service() -> (TurnService, PathBuf) {
         rolling_summarizer: make_rolling_summarizer(),
         utility_llm: Arc::new(if2ai_backend::modules::memory::MockUtilityLlm::empty()),
         loop_config: Default::default(),
+        trajectory_collector: Arc::new(
+            if2ai_backend::modules::memory::evolution::trajectory::TrajectoryCollector::new(),
+        ),
     };
 
     (TurnService::new(deps), root)

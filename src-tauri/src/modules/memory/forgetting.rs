@@ -389,8 +389,11 @@ mod tests {
         // run 14 sweeps × 12h, assert ≥80% of high-importance (≥0.7)
         // entries retain quality_score ≥0.5.
         use crate::modules::memory::quality::QualityScorer;
-        use crate::modules::memory::{InMemoryMemoryProvider, MemoryCategory, MemoryProvider};
+        use crate::modules::memory::{MemoryCategory, MemoryProvider};
+        #[allow(deprecated)]
+        use crate::modules::memory::InMemoryMemoryProvider;
 
+        #[allow(deprecated)]
         let provider = InMemoryMemoryProvider::new();
         for i in 0..100 {
             let key = format!("entry-{i}");

@@ -214,17 +214,17 @@ mod tests {
         let h1 = t.record_failure("read_file", "not found");
         assert!(h1
             .as_ref()
-            .map_or(false, |h| h.content.contains("[RETRY_HINT]")));
+            .is_some_and(|h| h.content.contains("[RETRY_HINT]")));
 
         let h2 = t.record_failure("read_file", "not found");
         assert!(h2
             .as_ref()
-            .map_or(false, |h| h.content.contains("[PROBE_HINT]")));
+            .is_some_and(|h| h.content.contains("[PROBE_HINT]")));
 
         let h3 = t.record_failure("read_file", "not found");
         assert!(h3
             .as_ref()
-            .map_or(false, |h| h.content.contains("[STRATEGY_SWITCH]")));
+            .is_some_and(|h| h.content.contains("[STRATEGY_SWITCH]")));
     }
 
     #[test]

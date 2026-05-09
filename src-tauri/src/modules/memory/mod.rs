@@ -60,6 +60,7 @@ pub use llm::ProviderUtilityLlm;
 pub use llm::{ChatProviderUtilityLlm, MockUtilityLlm, UtilityLlm};
 
 pub use providers::{SqliteMemoryProvider, VectorMemoryProvider, VectorProviderConfig};
+#[allow(unused_imports)]
 pub use quality::{QualityScorer, QualityWeights};
 
 // Session summary store — `SessionSummaryStore` trait + the two

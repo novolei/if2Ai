@@ -26,8 +26,13 @@ pub use compile::{
     memory_compile_now, memory_compiled_clear, memory_compiled_read, CompileReport,
     CompiledMemoryDto, CompiledSection,
 };
+// Tauri command re-exports — consumed by `commands/command_surface.rs`
+// `generate_handler!` macro, which doesn't show up to clippy as a use site
+// when only the lib half (`--lib`) is checked.
+#[allow(unused_imports)]
 pub use daydream::{daydream_get_config, daydream_run_cycle, daydream_set_config};
 pub use narrative::{memory_summaries_list, SessionSummaryDto};
+#[allow(unused_imports)]
 pub use procedural::{procedural_memory_list, ProceduralEntryDto};
 
 use serde::{Deserialize, Serialize};

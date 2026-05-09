@@ -1385,6 +1385,25 @@ fn should_rewrite_unverified_completion(
         && !has_successful_mutating_tool
 }
 
+/// A.3.1 — coarse error categorization for streaming-path failures.
+/// Mirrors `classify_trajectory_error` in `run.rs` but without
+/// importing it (run.rs is a sibling, the helper is intentionally
+/// duplicated to avoid pub-ing it for one reuse).
+fn classify_streaming_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        "timeout".into()
+    } else if lower.contains("cancel") {
+        "cancelled".into()
+    } else if lower.contains("tool") {
+        "tool_error".into()
+    } else if lower.contains("provider") || lower.contains("api") {
+        "provider_error".into()
+    } else {
+        "unknown".into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1427,21 +1446,3 @@ mod tests {
     }
 }
 
-/// A.3.1 — coarse error categorization for streaming-path failures.
-/// Mirrors `classify_trajectory_error` in `run.rs` but without
-/// importing it (run.rs is a sibling, the helper is intentionally
-/// duplicated to avoid pub-ing it for one reuse).
-fn classify_streaming_error(msg: &str) -> String {
-    let lower = msg.to_lowercase();
-    if lower.contains("timeout") || lower.contains("timed out") {
-        "timeout".into()
-    } else if lower.contains("cancel") {
-        "cancelled".into()
-    } else if lower.contains("tool") {
-        "tool_error".into()
-    } else if lower.contains("provider") || lower.contains("api") {
-        "provider_error".into()
-    } else {
-        "unknown".into()
-    }
-}

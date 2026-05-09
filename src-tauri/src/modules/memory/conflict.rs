@@ -370,7 +370,9 @@ fn classify_conflict(similarity: f64, _new_content: &str, _existing_content: &st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::memory::{InMemoryMemoryProvider, MemoryCategory};
+    #[allow(deprecated)]
+    use crate::modules::memory::InMemoryMemoryProvider;
+    use crate::modules::memory::MemoryCategory;
     use std::sync::Arc;
 
     #[allow(deprecated)]

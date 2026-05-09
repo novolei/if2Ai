@@ -14,6 +14,7 @@ pub mod procedural;
 pub mod reflector;
 pub mod trajectory;
 
+#[allow(unused_imports)]
 pub use procedural::ProceduralMemoryManager;
 #[allow(unused_imports)]
 pub use reflector::{Insight, InsightCategory, Pattern, ReflectionReport, SelfReflector};
