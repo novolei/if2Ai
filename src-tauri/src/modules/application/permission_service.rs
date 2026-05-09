@@ -16,10 +16,11 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 use crate::modules::harness::{AgentEvent, HarnessState};
-use crate::modules::runtime::contracts::common::{CorrelationIds, RuntimeEventEnvelope, RuntimeEventType};
+use crate::modules::runtime::contracts::common::{
+    CorrelationIds, RuntimeEventEnvelope, RuntimeEventType,
+};
 use crate::modules::runtime::event_log::RunEventLogger;
 use crate::modules::runtime::evolution_emitter::EmitError;
-use crate::modules::runtime::runtime_event;
 use crate::modules::runtime::pending_permission::{
     clear_pending_permission, write_pending_permission, PendingPermissionRecord,
 };
@@ -27,6 +28,7 @@ use crate::modules::runtime::permissions::{
     PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
     PermissionRequest,
 };
+use crate::modules::runtime::runtime_event;
 use crate::modules::runtime::supervisor::SupervisorOps;
 
 /// TauriPermissionPrompter — bridges the sync PermissionPrompter trait
@@ -448,10 +450,7 @@ mod tests {
 
         assert_eq!(envelope.event_type, RuntimeEventType::Permission);
         assert_eq!(envelope.payload_family.0, "prompt_opened");
-        assert_eq!(
-            envelope.correlation.session_id.as_deref(),
-            Some("sess-1")
-        );
+        assert_eq!(envelope.correlation.session_id.as_deref(), Some("sess-1"));
 
         let path = logger.file_path().expect("run-log path");
         let raw = std::fs::read_to_string(&path).expect("read run-log");

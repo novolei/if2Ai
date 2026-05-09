@@ -183,13 +183,11 @@ pub(super) fn build_memory_bootstrap(
             memory_provider.clone(),
         ),
     );
-    let trajectory_collector = std::sync::Arc::new(
-        modules::memory::evolution::trajectory::TrajectoryCollector::new(),
+    let trajectory_collector =
+        std::sync::Arc::new(modules::memory::evolution::trajectory::TrajectoryCollector::new());
+    let daydream_trajectories: Arc<dyn modules::memory::daydream::TrajectorySource> = Arc::new(
+        modules::memory::daydream::CollectorTrajectorySource::new(trajectory_collector.clone()),
     );
-    let daydream_trajectories: Arc<dyn modules::memory::daydream::TrajectorySource> =
-        Arc::new(modules::memory::daydream::CollectorTrajectorySource::new(
-            trajectory_collector.clone(),
-        ));
     let daydream_engine = Arc::new(modules::memory::daydream::DayDreamEngine::new(
         memory_provider.clone(),
         daydream_scorer,

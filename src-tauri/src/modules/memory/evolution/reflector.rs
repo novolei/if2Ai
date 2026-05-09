@@ -343,8 +343,8 @@ impl SelfReflector {
             .flat_map(|t| t.tool_calls.iter())
             .filter(|tc| tc.success)
             .count();
-        let multi_step_clean =
-            trajectory.error_count == 0 && (trajectory.turns.len() > 1 || successful_tool_calls >= 2);
+        let multi_step_clean = trajectory.error_count == 0
+            && (trajectory.turns.len() > 1 || successful_tool_calls >= 2);
         if multi_step_clean {
             let qualifier = if trajectory.turns.len() > 1 {
                 format!("{} turns", trajectory.turns.len())

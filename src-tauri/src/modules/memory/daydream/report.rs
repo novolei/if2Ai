@@ -75,8 +75,27 @@ mod tests {
             started_at: now,
             finished_at: now,
             steps: vec![
-                StepOutcome { step: "prune".into(), examined: 10, mutated: 2, duration_ms: 5, error: None, extracted_count: None, rejected_count: None },
-                StepOutcome { step: "merge".into(), examined: 0, mutated: 0, duration_ms: 1, error: Some(StepError { kind: "token_cap".into(), message: "exceeded budget".into() }), extracted_count: None, rejected_count: None },
+                StepOutcome {
+                    step: "prune".into(),
+                    examined: 10,
+                    mutated: 2,
+                    duration_ms: 5,
+                    error: None,
+                    extracted_count: None,
+                    rejected_count: None,
+                },
+                StepOutcome {
+                    step: "merge".into(),
+                    examined: 0,
+                    mutated: 0,
+                    duration_ms: 1,
+                    error: Some(StepError {
+                        kind: "token_cap".into(),
+                        message: "exceeded budget".into(),
+                    }),
+                    extracted_count: None,
+                    rejected_count: None,
+                },
             ],
         };
         assert!(!r.all_succeeded());

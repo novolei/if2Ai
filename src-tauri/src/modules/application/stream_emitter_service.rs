@@ -169,8 +169,6 @@ mod tests {
         .expect("dispatch ok");
         assert_eq!(env.event_type, RuntimeEventType::Memory);
         assert_eq!(env.payload_family.0, "after_turn");
-        std::env::remove_var(
-            crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV,
-        );
+        std::env::remove_var(crate::modules::runtime::evolution_emitter::DISABLE_EMIT_ENV);
     }
 }

@@ -506,9 +506,7 @@ impl<'a> LoopDelegate for StreamDelegate<'a> {
         if extraction.should_clear {
             // Agent signalled <task_complete/> — drop the checkpoint.
             *self.working_checkpoint.lock().await = None;
-            tracing::debug!(
-                "[StreamDelegate::after_iteration] checkpoint cleared (task_complete)"
-            );
+            tracing::debug!("[StreamDelegate::after_iteration] checkpoint cleared (task_complete)");
         } else if let Some(ref key_info) = extraction.key_info {
             let mut cp_guard = self.working_checkpoint.lock().await;
             let turn = iter as u64;

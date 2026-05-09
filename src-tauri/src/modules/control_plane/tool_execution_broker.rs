@@ -77,12 +77,7 @@ const DEFAULT_MAX_RETRY_ATTEMPTS: u32 = 2;
 const RETRY_INTERVAL_SECS: u64 = 1;
 
 /// Network-oriented tools that get an extra retry attempt.
-const NETWORK_TOOLS: &[&str] = &[
-    "web_fetch",
-    "web_search",
-    "web_research",
-    "http_request",
-];
+const NETWORK_TOOLS: &[&str] = &["web_fetch", "web_search", "web_research", "http_request"];
 
 /// Determine the max retry attempts for a given tool.
 fn max_attempts_for_tool(tool_name: &str) -> u32 {
@@ -306,7 +301,8 @@ impl ToolExecutionBroker {
         }
 
         // Should not reach here, but handle defensively.
-        Err(last_error.unwrap_or_else(|| ToolError::Handler("retry loop ended unexpectedly".to_string())))
+        Err(last_error
+            .unwrap_or_else(|| ToolError::Handler("retry loop ended unexpectedly".to_string())))
     }
 
     /// Execute a single attempt of tool dispatch (extracted from the

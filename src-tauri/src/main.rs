@@ -52,7 +52,9 @@ fn main() {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 ticker.tick().await;
-                let Some(result) = coord.maybe_fire().await else { continue };
+                let Some(result) = coord.maybe_fire().await else {
+                    continue;
+                };
                 let report = match result {
                     Ok(r) => r,
                     Err(err) => {

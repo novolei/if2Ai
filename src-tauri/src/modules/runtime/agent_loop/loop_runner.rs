@@ -165,11 +165,11 @@ pub async fn run_agentic_loop(
     // Effective cap starts at the configured `max_iterations`; it may be
     // adjusted after the first LLM response when using `Adaptive` strategy.
     let mut effective_max = config.max_iterations;
-    let mut strategy_resolved = !matches!(config.iteration_strategy, IterationStrategy::Adaptive { .. });
-    let mut tracker = IterationTracker::new(
-        config.max_iterations,
-        &config.progress_check,
+    let mut strategy_resolved = !matches!(
+        config.iteration_strategy,
+        IterationStrategy::Adaptive { .. }
     );
+    let mut tracker = IterationTracker::new(config.max_iterations, &config.progress_check);
 
     let mut iteration: usize = 0;
     while iteration < effective_max {
@@ -220,9 +220,7 @@ pub async fn run_agentic_loop(
                     }
                     match delegate.call_llm(&mut ctx).await {
                         Ok(r) => {
-                            tracing::info!(
-                                "[agentic_loop] compression level {level:?} succeeded"
-                            );
+                            tracing::info!("[agentic_loop] compression level {level:?} succeeded");
                             recovered = Some(r);
                             break;
                         }
@@ -345,7 +343,9 @@ mod tests {
         assert!(is_context_length_error("request too large for model"));
         assert!(is_context_length_error("input too long"));
         assert!(is_context_length_error("prompt is too long"));
-        assert!(is_context_length_error("max_tokens exceeded for this model"));
+        assert!(is_context_length_error(
+            "max_tokens exceeded for this model"
+        ));
         assert!(is_context_length_error("context is too long"));
         // True negatives.
         assert!(!is_context_length_error("network timeout"));

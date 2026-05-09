@@ -413,10 +413,7 @@ where
     /// containing volatile content (session IDs, PIDs) are logged via
     /// [`crate::modules::memory::verification_gate::volatile_content_hints`]
     /// so operators can audit ephemeral data entering the working window.
-    pub(super) fn sync_working_memory(
-        messages: &[ConversationMessage],
-        wm: &mut WorkingMemory,
-    ) {
+    pub(super) fn sync_working_memory(messages: &[ConversationMessage], wm: &mut WorkingMemory) {
         wm.clear();
         for msg in messages {
             // Volatile-content audit: surface hints for messages that

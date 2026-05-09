@@ -370,7 +370,9 @@ mod tests {
         let grep_result = grep_task.await;
         switching.store(false, Ordering::Relaxed);
         switch_task.await.expect("switch task should stop cleanly");
-        let output = grep_result.expect("grep should succeed under explicit context").output;
+        let output = grep_result
+            .expect("grep should succeed under explicit context")
+            .output;
         assert!(
             output.contains("a.txt"),
             "grep output should stay inside session A workdir"

@@ -41,7 +41,7 @@ pub async fn run(provider: &SharedMemoryProvider, max_entries: usize) -> StepOut
     let stale_count = entries
         .into_iter()
         .take(max_entries)
-        .filter(|e| e.last_validated_at.map_or(true, |t| t < cutoff))
+        .filter(|e| e.last_validated_at.is_none_or(|t| t < cutoff))
         .count();
 
     StepOutcome {

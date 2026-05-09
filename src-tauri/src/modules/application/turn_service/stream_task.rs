@@ -334,8 +334,7 @@ pub(super) async fn run_stream_task_body(mut inputs: StreamTaskInputs) -> AgentL
     // The collector keys by session_id; if a previous run for this session
     // never finished (e.g. crash before finalize), it is silently replaced
     // and treated as abandoned.
-    let trajectory_task_description: String =
-        inputs.user_message_clone.chars().take(200).collect();
+    let trajectory_task_description: String = inputs.user_message_clone.chars().take(200).collect();
     inputs
         .trajectory_collector
         .start_trajectory(&inputs.session_id, &trajectory_task_description)

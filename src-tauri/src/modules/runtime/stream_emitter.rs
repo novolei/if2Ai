@@ -510,7 +510,9 @@ mod tests {
             run_id: Some("run-9".into()),
             ..CorrelationIds::default()
         });
-        let env = p.to_envelope().expect("text_delta should map to Conversation");
+        let env = p
+            .to_envelope()
+            .expect("text_delta should map to Conversation");
         assert_eq!(env.event_type, RuntimeEventType::Conversation);
         assert_eq!(env.payload_family.0, "text_delta");
         assert_eq!(env.correlation.run_id.as_deref(), Some("run-9"));
