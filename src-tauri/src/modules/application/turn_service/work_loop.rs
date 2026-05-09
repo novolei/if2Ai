@@ -1144,8 +1144,80 @@ fn looks_like_direct_answer(user_message: &str, complexity: ComplexityLevel) -> 
     !toolish.iter().any(|needle| lower.contains(needle))
 }
 
+/// Wave A retro #4 — recognize clearly trivial single-tool requests so
+/// they don't get promoted to AutonomousWork mode (which would trigger
+/// TodoWrite discipline + the `todo_ledger_incomplete` safety check on
+/// model_stop without formal ledger closure).
+///
+/// Conservative by design: only excludes when ALL conditions hold:
+/// 1. Single-line input
+/// 2. ≤ 80 characters total
+/// 3. No multi-step or complex-artifact signals (网页/网站/系统/项目/完整/and/then/...)
+/// 4. References a "primitive single-target" artifact (文件夹 / 目录 /
+///    folder / directory) — these are clearly 1-tool tasks (mkdir /
+///    delete / move). Plain "文件" alone is excluded because creating
+///    a source code file or config can legitimately be multi-step.
+///
+/// False-negative tolerated: a long message that's still single-tool
+/// will go through the main classifier and possibly hit the
+/// downstream `terminal_status_with_todo_ledger` bypass (PR #8
+/// commit 57402e4) instead. False-positive impact is high (every
+/// false positive blocks the agent), false-negative impact is low
+/// (just goes through the well-tested main path).
+fn is_trivially_simple_single_tool_intent(lower: &str) -> bool {
+    if lower.lines().count() != 1 {
+        return false;
+    }
+    if lower.chars().count() > 80 {
+        return false;
+    }
+    let multi_step_signals = [
+        "完整",
+        "系统",
+        "项目",
+        "网页",
+        "网站",
+        "应用",
+        "页面",
+        "游戏",
+        "组件",
+        " and ",
+        " then ",
+        "并且",
+        "然后",
+        "complete",
+        "full ",
+        "system",
+        "project",
+        "webpage",
+        "website",
+        " app ",
+        "appli",
+        "component",
+    ];
+    if multi_step_signals.iter().any(|n| lower.contains(n)) {
+        return false;
+    }
+    let trivial_artifact = ["文件夹", "目录", "folder", "directory"];
+    trivial_artifact.iter().any(|n| lower.contains(n))
+}
+
 fn is_tool_required_work_intent(user_message: &str) -> bool {
     let lower = user_message.to_lowercase();
+
+    // Wave A retro #4 — early-out for obvious 1-tool requests. Without
+    // this, "在工作目录创建一个新的文件夹叫eee" (17 chars, 1 mkdir
+    // call) gets promoted to AutonomousWork mode, which triggers
+    // TodoWrite discipline, which fires `todo_ledger_incomplete` when
+    // the agent forgets to formally close its 1-step plan even though
+    // mkdir succeeded. The `terminal_status_with_todo_ledger` bypass
+    // (PR #8 commit 57402e4) is a downstream safety net; this is the
+    // upstream fix that prevents the safety net from being needed in
+    // the first place.
+    if is_trivially_simple_single_tool_intent(&lower) {
+        return false;
+    }
+
     let completion_action = [
         "完整网页",
         "完整网站",
@@ -3017,5 +3089,75 @@ mod tests {
         let out = excerpt_skill_body("baz", raw);
         assert!(out.contains("Short body."));
         assert!(out.contains("[truncated"));
+    }
+
+    // ────────── Wave A retro #4 — trivial single-tool intent bypass ──────────
+
+    /// The reproducer from the user's smoke after PR #7 — must NOT be
+    /// classified as autonomous_work (which would trigger TodoWrite
+    /// discipline). The downstream `terminal_status_with_todo_ledger`
+    /// bypass (PR #8 commit 57402e4) is a safety net; this test pins
+    /// the upstream classifier behavior so the safety net rarely fires.
+    #[test]
+    fn classifier_skips_simple_create_folder_zh() {
+        assert!(!is_tool_required_work_intent(
+            "在工作目录创建一个新的文件夹叫eee"
+        ));
+    }
+
+    #[test]
+    fn classifier_skips_simple_delete_folder_zh() {
+        assert!(!is_tool_required_work_intent("删除文件夹 eee"));
+    }
+
+    #[test]
+    fn classifier_skips_simple_create_directory_en() {
+        assert!(!is_tool_required_work_intent(
+            "create a folder named build at /tmp"
+        ));
+    }
+
+    /// REGRESSION GUARD — the classifier MUST still catch genuine
+    /// multi-step asks. "完整的待办事项管理网页应用" is multi-step
+    /// (HTML + CSS + JS + state) and needs TodoWrite discipline.
+    #[test]
+    fn classifier_keeps_complex_app_request_zh() {
+        assert!(is_tool_required_work_intent(
+            "请帮我创建一个完整的待办事项管理网页应用"
+        ));
+    }
+
+    #[test]
+    fn classifier_keeps_complex_app_request_en() {
+        assert!(is_tool_required_work_intent(
+            "build a complete TODO web app with persistence"
+        ));
+    }
+
+    /// Long messages bypass the trivial bail-out and go through the
+    /// main classifier — a long message asking for a folder is
+    /// suspicious and should be classified normally.
+    #[test]
+    fn classifier_does_not_bail_on_long_messages_even_if_trivial_artifact() {
+        let long = "请帮我在工作目录下创建一个名为 eee 的新文件夹，然后在里面初始化 git 仓库并写一个 README";
+        // "并" + "然后" are multi-step signals → bail-out skipped → main classifier path
+        // → matches 创建 + 文件夹 → returns true (correctly: there's clearly more than mkdir here).
+        assert!(is_tool_required_work_intent(long));
+    }
+
+    /// Direct unit test on the helper so future tuning of the trivial
+    /// signals doesn't accidentally re-introduce the false-positive case.
+    #[test]
+    fn trivially_simple_helper_recognizes_folder_only_artifacts() {
+        assert!(is_trivially_simple_single_tool_intent(
+            "在工作目录创建一个新的文件夹叫eee"
+        ));
+        assert!(is_trivially_simple_single_tool_intent("delete folder build"));
+    }
+
+    #[test]
+    fn trivially_simple_helper_skips_complex_artifacts() {
+        assert!(!is_trivially_simple_single_tool_intent("创建一个网站"));
+        assert!(!is_trivially_simple_single_tool_intent("build a system"));
     }
 }
