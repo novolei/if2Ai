@@ -338,6 +338,7 @@ pub(super) async fn finalize_stream_task(inputs: FinalizeStreamInputs) {
             &work_loop_decision,
             terminal_status,
             todo_snapshot.as_ref(),
+            has_successful_mutating_tool,
         );
     if guarded_terminal_status != terminal_status {
         tracing::warn!(

@@ -162,6 +162,7 @@ pub(super) fn terminal_status_with_todo_ledger(
     work_loop_decision: &WorkLoopDecision,
     terminal_status: Option<&'static str>,
     snapshot: Option<&TodoLedgerSnapshot>,
+    has_successful_mutating_tool: bool,
 ) -> (Option<&'static str>, Option<String>) {
     if !work_loop::requires_tool_execution_evidence(work_loop_decision) {
         return (terminal_status, None);
@@ -172,6 +173,27 @@ pub(super) fn terminal_status_with_todo_ledger(
     if !snapshot.has_unfinished_work() {
         return (terminal_status, None);
     }
+
+    // Single-step plan bypass: when the user issues a one-shot task like
+    // "create folder eee", the work-loop classifier flips into
+    // autonomous_work mode (`is_tool_required_work_intent` matches "创建"
+    // + "文件夹"). The agent then opens a 1-step TodoWrite ledger, runs
+    // the mutating tool successfully, and forgets to formally close the
+    // ledger before model_stop. The pre-fix behavior surfaced this as
+    // `todo_ledger_incomplete` even though the user got what they asked
+    // for.
+    //
+    // Heuristic: if there is exactly one unfinished step AND a mutating
+    // tool succeeded this turn, treat the work as done. This preserves
+    // the safety check for genuine multi-step abandonments (e.g. 5-step
+    // plan, only step 3 had mutating evidence → still flagged).
+    let unfinished = snapshot
+        .total_count
+        .saturating_sub(snapshot.completed_count);
+    if has_successful_mutating_tool && unfinished == 1 {
+        return (terminal_status, None);
+    }
+
     let next_status = if matches!(
         terminal_status,
         None | Some("model_stop") | Some("model_stop_no_tools")
@@ -226,6 +248,7 @@ mod tests {
             &tool_required_work_loop(),
             Some("model_stop"),
             Some(&unfinished_snapshot()),
+            false,
         );
         assert_eq!(status, Some("todo_ledger_incomplete"));
         assert!(warning
@@ -245,6 +268,7 @@ mod tests {
             &tool_required_work_loop(),
             Some("model_stop"),
             Some(&snapshot),
+            false,
         );
         assert_eq!(status, Some("model_stop"));
         assert!(warning.is_none());
@@ -256,8 +280,76 @@ mod tests {
             &tool_required_work_loop(),
             Some("invalid_tool_args_repeated"),
             Some(&unfinished_snapshot()),
+            false,
         );
         assert_eq!(status, Some("invalid_tool_args_repeated"));
+        assert!(warning.is_some());
+    }
+
+    /// Single-step plan + successful mutating tool → bypass the safety
+    /// flip. Captures the "create folder eee" → mkdir succeeded → agent
+    /// forgot to formally close the 1-step ledger" case from the live
+    /// smoke. Without this bypass, simple one-shot tasks surface as
+    /// `todo_ledger_incomplete` errors even when the user got the work.
+    #[test]
+    fn single_step_plan_with_successful_mutating_tool_bypasses_flip() {
+        let snapshot = TodoLedgerSnapshot {
+            active: Some(TodoLedgerStep {
+                content: "Create folder eee".to_string(),
+                active_form: "Creating folder eee".to_string(),
+                status: "in_progress".to_string(),
+            }),
+            pending: Vec::new(),
+            completed_count: 0,
+            total_count: 1,
+        };
+        let (status, warning) = terminal_status_with_todo_ledger(
+            &tool_required_work_loop(),
+            Some("model_stop"),
+            Some(&snapshot),
+            true, // mkdir succeeded
+        );
+        assert_eq!(status, Some("model_stop"));
+        assert!(warning.is_none());
+    }
+
+    /// Multi-step plan with only one successful mutating tool MUST still
+    /// flag — the bypass should not mask genuine partial-completion.
+    /// (e.g. 5-step plan, agent did step 1's mkdir but abandoned the
+    /// rest → user did not get full task done.)
+    #[test]
+    fn multi_step_plan_with_one_mutating_tool_still_flags() {
+        let (status, warning) = terminal_status_with_todo_ledger(
+            &tool_required_work_loop(),
+            Some("model_stop"),
+            Some(&unfinished_snapshot()), // total_count=2, completed=0
+            true, // mutating tool succeeded but only 1 of 2 steps
+        );
+        assert_eq!(status, Some("todo_ledger_incomplete"));
+        assert!(warning.is_some());
+    }
+
+    /// 1-step plan but no mutating evidence → still flag. The bypass
+    /// requires both conditions (single step AND mutating success).
+    #[test]
+    fn single_step_plan_without_mutating_evidence_still_flags() {
+        let snapshot = TodoLedgerSnapshot {
+            active: Some(TodoLedgerStep {
+                content: "Create folder eee".to_string(),
+                active_form: "Creating folder eee".to_string(),
+                status: "in_progress".to_string(),
+            }),
+            pending: Vec::new(),
+            completed_count: 0,
+            total_count: 1,
+        };
+        let (status, warning) = terminal_status_with_todo_ledger(
+            &tool_required_work_loop(),
+            Some("model_stop"),
+            Some(&snapshot),
+            false, // no mutating tool succeeded
+        );
+        assert_eq!(status, Some("todo_ledger_incomplete"));
         assert!(warning.is_some());
     }
 }

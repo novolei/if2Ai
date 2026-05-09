@@ -329,15 +329,34 @@ impl SelfReflector {
             });
         }
 
-        // Rule 2: clean execution
-        if trajectory.error_count == 0 && trajectory.turns.len() > 1 {
+        // Rule 2: clean execution.
+        //
+        // A.3.2-fix-2: also fire on single-turn trajectories that exercised
+        // multiple successful tool calls. Wave A.3 producer creates exactly
+        // one TurnRecord per run (Q1=B brainstorm decision), so the original
+        // `turns.len() > 1` gate was structurally unreachable. The
+        // multi-tool variant captures the same signal — "agent completed a
+        // non-trivial task without errors" — at the same 0.8 confidence.
+        let successful_tool_calls: usize = trajectory
+            .turns
+            .iter()
+            .flat_map(|t| t.tool_calls.iter())
+            .filter(|tc| tc.success)
+            .count();
+        let multi_step_clean =
+            trajectory.error_count == 0 && (trajectory.turns.len() > 1 || successful_tool_calls >= 2);
+        if multi_step_clean {
+            let qualifier = if trajectory.turns.len() > 1 {
+                format!("{} turns", trajectory.turns.len())
+            } else {
+                format!("{successful_tool_calls} successful tool calls")
+            };
             insights.push(Insight {
                 id: Uuid::new_v4().to_string(),
                 category: InsightCategory::BestPractice,
                 content: format!(
-                    "Clean execution of '{}' with {} turns and zero errors — replicate this approach.",
-                    trajectory.task_description,
-                    trajectory.turns.len(),
+                    "Clean execution of '{}' with {} and zero errors — replicate this approach.",
+                    trajectory.task_description, qualifier,
                 ),
                 confidence: 0.8,
                 applicable_contexts: vec![trajectory.task_description.clone()],
@@ -755,6 +774,74 @@ mod tests {
         assert!(insights
             .iter()
             .all(|i| i.category == InsightCategory::BestPractice));
+    }
+
+    /// A.3.2-fix-2: Wave A.3 producer creates single-turn trajectories.
+    /// Rule 2's clean-execution insight must fire on a single-turn run
+    /// that exercised at least 2 successful tool calls (otherwise the
+    /// 0.8-confidence path is unreachable for streaming chat traffic).
+    #[test]
+    fn reflect_on_success_fires_on_single_turn_multi_tool_clean_run() {
+        let reflector = SelfReflector::new(test_provider());
+        let turns = vec![make_turn(
+            1,
+            true,
+            vec![
+                make_tool_call("search", true),
+                make_tool_call("read_file", true),
+            ],
+        )];
+        let traj = make_trajectory(
+            "t-single",
+            "s-single",
+            turns,
+            TaskOutcome::Success { quality_score: 1.0 },
+        );
+
+        let insights = reflector.reflect_on_success(&traj);
+        let clean = insights
+            .iter()
+            .find(|i| i.content.contains("Clean execution"));
+        assert!(
+            clean.is_some(),
+            "single-turn multi-tool clean run must produce a clean-execution insight"
+        );
+        let clean = clean.unwrap();
+        assert!(
+            clean.confidence >= 0.7,
+            "clean-execution confidence must clear the 0.7 promotion floor (got {})",
+            clean.confidence
+        );
+        assert_eq!(clean.category, InsightCategory::BestPractice);
+        assert!(
+            clean.content.contains("2 successful tool calls"),
+            "qualifier should mention tool count: {}",
+            clean.content
+        );
+    }
+
+    /// A.3.2-fix-2: a single-turn run with only 1 tool call (the most
+    /// common shape for trivial chats) should NOT trigger the clean-
+    /// execution insight — otherwise procedural memory fills with
+    /// noise like "Clean execution of 'what's 2+2'".
+    #[test]
+    fn reflect_on_success_skips_single_turn_single_tool_run() {
+        let reflector = SelfReflector::new(test_provider());
+        let turns = vec![make_turn(1, true, vec![make_tool_call("search", true)])];
+        let traj = make_trajectory(
+            "t-trivial",
+            "s-trivial",
+            turns,
+            TaskOutcome::Success { quality_score: 1.0 },
+        );
+
+        let insights = reflector.reflect_on_success(&traj);
+        assert!(
+            insights
+                .iter()
+                .all(|i| !i.content.contains("Clean execution")),
+            "trivial 1-tool run must not produce clean-execution insight"
+        );
     }
 
     #[test]
