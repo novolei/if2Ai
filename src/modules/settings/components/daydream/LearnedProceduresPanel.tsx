@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProceduralEntries } from './use-procedural-entries'
+import { useDaydreamHistory } from './use-daydream-history'
 import type { ProceduralEntryDto } from '@/transport/contracts'
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -48,6 +49,20 @@ function ProcedureRow({ entry }: { entry: ProceduralEntryDto }) {
 
 export function LearnedProceduresPanel() {
   const { entries, refresh } = useProceduralEntries()
+  const history = useDaydreamHistory()
+
+  // A.4 polish — auto-refresh when a new daydream cycle completes. Each
+  // arriving cycle's `runtime_event` is reduced into `daydreamHistory`,
+  // so subscribing to the array length covers both manual + idle paths.
+  // The previous-length ref skips the initial mount (where the hook
+  // already fetches once) so we only refresh on actual increases.
+  const lastSeenLength = useRef(history.length)
+  useEffect(() => {
+    if (history.length > lastSeenLength.current) {
+      lastSeenLength.current = history.length
+      void refresh()
+    }
+  }, [history.length, refresh])
 
   if (entries === null) {
     return <p className="text-xs text-muted-foreground">Loading…</p>
