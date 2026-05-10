@@ -169,6 +169,13 @@ impl RuntimeEventPayloadFamily {
 /// produced before M1 will have a `run_id` yet (e.g. `system` boot
 /// events happen before any run exists). Consumers MUST treat absent
 /// ids as "not applicable", not as "unknown".
+///
+/// **Population convention** (DR-04): which fields to populate at
+/// each emit site is documented at
+/// [`docs/references/correlation-ids-convention.md`](../../../../../docs/references/correlation-ids-convention.md).
+/// Quick rule: emit every id observable at the call site; defaulting
+/// to `CorrelationIds::default()` outside system / boot events drops
+/// signal that consumers expect.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorrelationIds {
